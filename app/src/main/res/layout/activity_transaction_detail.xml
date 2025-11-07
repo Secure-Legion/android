@@ -1,0 +1,284 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.constraintlayout.widget.ConstraintLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/header_bg">
+
+    <!-- Header -->
+    <LinearLayout
+        android:id="@+id/transactionDetailHeader"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:background="@drawable/header_bg"
+        android:padding="16dp"
+        android:gravity="center_vertical"
+        app:layout_constraintTop_toTopOf="parent">
+
+        <TextView
+            android:id="@+id/backButton"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:text="‹"
+            android:textSize="32sp"
+            android:textColor="@color/text_white"
+            android:gravity="center"
+            android:clickable="true"
+            android:focusable="true"
+            android:background="?attr/selectableItemBackgroundBorderless" />
+
+        <ImageView
+            android:layout_width="60dp"
+            android:layout_height="60dp"
+            android:src="@drawable/secure_logo"
+            android:layout_marginStart="24dp"
+            android:contentDescription="Secure Legion Logo" />
+
+        <TextView
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="TRANSACTION DETAILS"
+            android:textSize="18sp"
+            android:textStyle="bold"
+            android:textColor="@color/text_white"
+            android:gravity="center"
+            android:layout_marginEnd="64dp" />
+
+    </LinearLayout>
+
+    <!-- Content -->
+    <ScrollView
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:fillViewport="true"
+        app:layout_constraintTop_toBottomOf="@id/transactionDetailHeader"
+        app:layout_constraintBottom_toTopOf="@id/bottomNav">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:padding="24dp">
+
+            <!-- Transaction Amount Card -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:background="@drawable/info_box_bg"
+                android:padding="24dp"
+                android:gravity="center"
+                android:layout_marginBottom="24dp">
+
+                <TextView
+                    android:id="@+id/transactionType"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Received"
+                    android:textSize="16sp"
+                    android:textColor="@color/text_gray"
+                    android:layout_marginBottom="8dp" />
+
+                <TextView
+                    android:id="@+id/transactionAmount"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="+0.0008 SOL"
+                    android:textSize="32sp"
+                    android:textStyle="bold"
+                    android:textColor="@color/success_green"
+                    android:layout_marginBottom="8dp" />
+
+                <TextView
+                    android:id="@+id/transactionStatus"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="✓ Confirmed"
+                    android:textSize="14sp"
+                    android:textColor="@color/success_green" />
+
+            </LinearLayout>
+
+            <!-- Transaction Details -->
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Transaction Details"
+                android:textSize="18sp"
+                android:textStyle="bold"
+                android:textColor="@color/text_white"
+                android:layout_marginBottom="16dp" />
+
+            <!-- From -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:background="@drawable/settings_item_bg"
+                android:padding="16dp"
+                android:layout_marginBottom="8dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="From"
+                    android:textSize="13sp"
+                    android:textColor="@color/text_gray"
+                    android:layout_marginBottom="4dp" />
+
+                <TextView
+                    android:id="@+id/transactionFrom"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="7xKXtg2CW87d97TXJSDpbD5jBkheMKvZkRqJa4RsXU9wQ"
+                    android:textSize="12sp"
+                    android:textColor="@color/text_white"
+                    android:fontFamily="monospace" />
+
+            </LinearLayout>
+
+            <!-- To -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:background="@drawable/settings_item_bg"
+                android:padding="16dp"
+                android:layout_marginBottom="8dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="To"
+                    android:textSize="13sp"
+                    android:textColor="@color/text_gray"
+                    android:layout_marginBottom="4dp" />
+
+                <TextView
+                    android:id="@+id/transactionTo"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="9vKq7XRmKsH3bCnPfTw4LgYsWdRzNpVxAqBh2FmEuTcK"
+                    android:textSize="12sp"
+                    android:textColor="@color/text_white"
+                    android:fontFamily="monospace" />
+
+            </LinearLayout>
+
+            <!-- Transaction Hash -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:background="@drawable/settings_item_bg"
+                android:padding="16dp"
+                android:layout_marginBottom="8dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Transaction Hash"
+                    android:textSize="13sp"
+                    android:textColor="@color/text_gray"
+                    android:layout_marginBottom="4dp" />
+
+                <TextView
+                    android:id="@+id/transactionHash"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="3Qz8vK9Y7nB2xR4wP6tM8hF5jL1sD9cA7vN4qX2mE6pS"
+                    android:textSize="12sp"
+                    android:textColor="@color/primary_blue"
+                    android:fontFamily="monospace" />
+
+            </LinearLayout>
+
+            <!-- Date/Time -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:background="@drawable/settings_item_bg"
+                android:padding="16dp"
+                android:layout_marginBottom="8dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Date &amp; Time"
+                    android:textSize="13sp"
+                    android:textColor="@color/text_gray"
+                    android:layout_marginBottom="4dp" />
+
+                <TextView
+                    android:id="@+id/transactionDate"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Dec 28, 2024 at 2:45 PM"
+                    android:textSize="14sp"
+                    android:textColor="@color/text_white" />
+
+            </LinearLayout>
+
+            <!-- Network Fee -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:background="@drawable/settings_item_bg"
+                android:padding="16dp"
+                android:layout_marginBottom="24dp">
+
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="Network Fee"
+                    android:textSize="14sp"
+                    android:textColor="@color/text_gray" />
+
+                <TextView
+                    android:id="@+id/transactionFee"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="0.000005 SOL"
+                    android:textSize="14sp"
+                    android:textColor="@color/text_white"
+                    android:fontFamily="monospace" />
+
+            </LinearLayout>
+
+            <!-- View on Explorer Button -->
+            <TextView
+                android:id="@+id/viewOnExplorerButton"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="View on Solana Explorer"
+                android:textSize="16sp"
+                android:textStyle="bold"
+                android:textColor="@color/text_white"
+                android:background="@drawable/metallic_button_bg"
+                android:gravity="center"
+                android:padding="16dp"
+                android:clickable="true"
+                android:focusable="true"
+                android:elevation="6dp" />
+
+        </LinearLayout>
+
+    </ScrollView>
+
+    <!-- Bottom Navigation -->
+    <include
+        android:id="@+id/bottomNav"
+        layout="@layout/bottom_navigation"
+        android:layout_width="match_parent"
+        android:layout_height="90dp"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent" />
+
+</androidx.constraintlayout.widget.ConstraintLayout>

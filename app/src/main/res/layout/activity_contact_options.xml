@@ -1,0 +1,187 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.constraintlayout.widget.ConstraintLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/header_bg">
+
+    <!-- Header -->
+    <LinearLayout
+        android:id="@+id/contactOptionsHeader"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:background="@drawable/header_bg"
+        android:padding="16dp"
+        android:gravity="center_vertical"
+        app:layout_constraintTop_toTopOf="parent">
+
+        <TextView
+            android:id="@+id/backButton"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:text="‹"
+            android:textSize="32sp"
+            android:textColor="@color/text_white"
+            android:gravity="center"
+            android:clickable="true"
+            android:focusable="true"
+            android:background="?attr/selectableItemBackgroundBorderless" />
+
+        <ImageView
+            android:layout_width="60dp"
+            android:layout_height="60dp"
+            android:src="@drawable/secure_logo"
+            android:layout_marginStart="24dp"
+            android:contentDescription="Secure Legion Logo" />
+
+        <TextView
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="CONTACT OPTIONS"
+            android:textSize="18sp"
+            android:textStyle="bold"
+            android:textColor="@color/text_white"
+            android:gravity="center"
+            android:layout_marginEnd="64dp" />
+
+    </LinearLayout>
+
+    <!-- Content -->
+    <ScrollView
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:fillViewport="true"
+        app:layout_constraintTop_toBottomOf="@id/contactOptionsHeader"
+        app:layout_constraintBottom_toTopOf="@id/bottomNav">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:padding="24dp">
+
+            <!-- Contact Info Display -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:background="@drawable/info_box_bg"
+                android:padding="20dp"
+                android:layout_marginBottom="24dp">
+
+                <TextView
+                    android:id="@+id/contactName"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@nighthawk"
+                    android:textSize="22sp"
+                    android:textStyle="bold"
+                    android:textColor="@color/text_white"
+                    android:layout_marginBottom="8dp" />
+
+                <LinearLayout
+                    android:id="@+id/copyAddressContainer"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:gravity="top"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:background="?attr/selectableItemBackground"
+                    android:padding="8dp">
+
+                    <TextView
+                        android:id="@+id/contactAddress"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="7xKXtg2CW87d97TXJSDpbD5jBkhe..."
+                        android:textSize="11sp"
+                        android:textColor="@color/primary_blue"
+                        android:fontFamily="monospace"
+                        android:lineSpacingMultiplier="1.2" />
+
+                    <ImageView
+                        android:layout_width="18dp"
+                        android:layout_height="18dp"
+                        android:src="@drawable/ic_copy"
+                        android:layout_marginStart="8dp"
+                        android:layout_marginTop="2dp"
+                        android:contentDescription="Copy Address" />
+
+                </LinearLayout>
+
+            </LinearLayout>
+
+            <!-- Change Display Name Section -->
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Change Display Name"
+                android:textSize="14sp"
+                android:textStyle="bold"
+                android:textColor="@color/text_white"
+                android:layout_marginBottom="8dp" />
+
+            <EditText
+                android:id="@+id/displayNameInput"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:background="@drawable/input_field_bg"
+                android:hint="Enter new display name"
+                android:textColorHint="@color/text_gray"
+                android:textColor="@color/text_white"
+                android:textSize="16sp"
+                android:padding="16dp"
+                android:layout_marginBottom="16dp" />
+
+            <TextView
+                android:id="@+id/saveDisplayNameButton"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Save Display Name"
+                android:textSize="16sp"
+                android:textStyle="bold"
+                android:textColor="@color/text_white"
+                android:background="@drawable/metallic_button_bg"
+                android:gravity="center"
+                android:padding="16dp"
+                android:clickable="true"
+                android:focusable="true"
+                android:elevation="6dp"
+                android:layout_marginBottom="24dp" />
+
+            <!-- Open Messages Button -->
+            <TextView
+                android:id="@+id/openMessagesButton"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Open Messages"
+                android:textSize="16sp"
+                android:textStyle="bold"
+                android:textColor="@color/text_white"
+                android:background="@drawable/metallic_button_bg"
+                android:gravity="center"
+                android:padding="16dp"
+                android:clickable="true"
+                android:focusable="true"
+                android:elevation="6dp" />
+
+        </LinearLayout>
+
+    </ScrollView>
+
+    <!-- Bottom Navigation -->
+    <include
+        android:id="@+id/bottomNav"
+        layout="@layout/bottom_navigation"
+        android:layout_width="match_parent"
+        android:layout_height="90dp"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent" />
+
+</androidx.constraintlayout.widget.ConstraintLayout>

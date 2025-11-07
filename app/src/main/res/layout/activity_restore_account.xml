@@ -1,0 +1,165 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.constraintlayout.widget.ConstraintLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/dark_bg">
+
+    <!-- Header -->
+    <LinearLayout
+        android:id="@+id/restoreAccountHeader"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:background="#000000"
+        android:padding="16dp"
+        android:gravity="center_vertical"
+        app:layout_constraintTop_toTopOf="parent">
+
+        <TextView
+            android:id="@+id/backButton"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:text="‹"
+            android:textSize="32sp"
+            android:textColor="@color/text_white"
+            android:gravity="center"
+            android:clickable="true"
+            android:focusable="true"
+            android:background="?attr/selectableItemBackgroundBorderless" />
+
+        <ImageView
+            android:layout_width="60dp"
+            android:layout_height="60dp"
+            android:src="@drawable/secure_logo"
+            android:layout_marginStart="24dp"
+            android:contentDescription="Secure Legion Logo" />
+
+        <TextView
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="RESTORE ACCOUNT"
+            android:textSize="18sp"
+            android:textStyle="bold"
+            android:textColor="@color/text_white"
+            android:gravity="center"
+            android:layout_marginEnd="64dp" />
+
+    </LinearLayout>
+
+    <!-- Content -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:orientation="vertical"
+        android:padding="24dp"
+        app:layout_constraintTop_toBottomOf="@id/restoreAccountHeader"
+        app:layout_constraintBottom_toBottomOf="parent">
+
+        <ScrollView
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            android:fillViewport="true">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical">
+
+                <!-- Private Key Field -->
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Private Key"
+                    android:textSize="14sp"
+                    android:textStyle="bold"
+                    android:textColor="@color/text_white"
+                    android:layout_marginBottom="8dp" />
+
+                <EditText
+                    android:id="@+id/privateKeyInput"
+                    android:layout_width="match_parent"
+                    android:layout_height="120dp"
+                    android:background="@drawable/input_field_bg"
+                    android:hint="Enter your private key"
+                    android:textColorHint="@color/text_gray"
+                    android:textColor="@color/text_white"
+                    android:textSize="14sp"
+                    android:fontFamily="monospace"
+                    android:padding="16dp"
+                    android:gravity="top"
+                    android:inputType="textMultiLine"
+                    android:layout_marginBottom="16dp" />
+
+                <!-- New Password Field -->
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="New Password"
+                    android:textSize="14sp"
+                    android:textStyle="bold"
+                    android:textColor="@color/text_white"
+                    android:layout_marginBottom="8dp" />
+
+                <EditText
+                    android:id="@+id/newPasswordInput"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:background="@drawable/input_field_bg"
+                    android:hint="Enter new password"
+                    android:inputType="textPassword"
+                    android:textColorHint="@color/text_gray"
+                    android:textColor="@color/text_white"
+                    android:textSize="16sp"
+                    android:padding="16dp"
+                    android:layout_marginBottom="16dp" />
+
+                <!-- Confirm Password Field -->
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Confirm Password"
+                    android:textSize="14sp"
+                    android:textStyle="bold"
+                    android:textColor="@color/text_white"
+                    android:layout_marginBottom="8dp" />
+
+                <EditText
+                    android:id="@+id/confirmPasswordInput"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:background="@drawable/input_field_bg"
+                    android:hint="Confirm password"
+                    android:inputType="textPassword"
+                    android:textColorHint="@color/text_gray"
+                    android:textColor="@color/text_white"
+                    android:textSize="16sp"
+                    android:padding="16dp" />
+
+            </LinearLayout>
+
+        </ScrollView>
+
+        <!-- Import Button at Bottom -->
+        <TextView
+            android:id="@+id/importButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Import"
+            android:textSize="16sp"
+            android:textStyle="bold"
+            android:textColor="@color/text_white"
+            android:background="@drawable/metallic_button_bg"
+            android:gravity="center"
+            android:padding="16dp"
+            android:clickable="true"
+            android:focusable="true"
+            android:elevation="6dp"
+            android:layout_marginTop="24dp" />
+
+    </LinearLayout>
+
+</androidx.constraintlayout.widget.ConstraintLayout>

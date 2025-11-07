@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+
+    <!-- Rounded Square -->
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="1.5"
+        android:pathData="M3,5 C3,3.895 3.895,3 5,3 L19,3 C20.105,3 21,3.895 21,5 L21,19 C21,20.105 20.105,21 19,21 L5,21 C3.895,21 3,20.105 3,19 Z"/>
+
+    <!-- Pencil body -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M17,2 L20,5 L10,15 L7,15 L7,12 Z"/>
+
+    <!-- Pencil tip -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M20.5,4.5 L23,2 L21,0 L18.5,2.5 Z"/>
+</vector>

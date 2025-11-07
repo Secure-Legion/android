@@ -1,0 +1,205 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.constraintlayout.widget.ConstraintLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#000000">
+
+    <!-- Header -->
+    <LinearLayout
+        android:id="@+id/composeHeader"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:background="@color/dark_bg"
+        android:paddingStart="16dp"
+        android:paddingEnd="16dp"
+        android:paddingTop="12dp"
+        android:paddingBottom="12dp"
+        android:gravity="center_vertical"
+        app:layout_constraintTop_toTopOf="parent">
+
+        <TextView
+            android:id="@+id/backButton"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:text="‹"
+            android:textSize="32sp"
+            android:textColor="@color/text_white"
+            android:gravity="center"
+            android:clickable="true"
+            android:focusable="true"
+            android:background="?attr/selectableItemBackgroundBorderless" />
+
+        <TextView
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="New Message"
+            android:textSize="18sp"
+            android:textStyle="bold"
+            android:textColor="@color/text_white"
+            android:layout_marginStart="8dp" />
+
+        <TextView
+            android:id="@+id/sendButton"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Send"
+            android:textSize="16sp"
+            android:textStyle="bold"
+            android:textColor="@color/text_white"
+            android:paddingStart="20dp"
+            android:paddingEnd="20dp"
+            android:paddingTop="8dp"
+            android:paddingBottom="8dp"
+            android:gravity="center"
+            android:clickable="true"
+            android:focusable="true"
+            android:background="@drawable/metallic_button_bg"
+            android:elevation="6dp" />
+
+    </LinearLayout>
+
+    <!-- Content -->
+    <ScrollView
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:paddingStart="24dp"
+        android:paddingEnd="24dp"
+        android:paddingTop="16dp"
+        app:layout_constraintTop_toBottomOf="@id/composeHeader"
+        app:layout_constraintBottom_toBottomOf="parent">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical">
+
+            <!-- To Field -->
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="To"
+                android:textSize="13sp"
+                android:textColor="@color/text_gray"
+                android:layout_marginBottom="8dp" />
+
+            <EditText
+                android:id="@+id/recipientInput"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:background="@drawable/input_field_bg"
+                android:hint="@username or wallet address"
+                android:textColorHint="@color/text_gray"
+                android:textColor="@color/text_white"
+                android:textSize="16sp"
+                android:padding="16dp"
+                android:layout_marginBottom="24dp" />
+
+            <!-- Message Field -->
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Message"
+                android:textSize="13sp"
+                android:textColor="@color/text_gray"
+                android:layout_marginBottom="8dp" />
+
+            <EditText
+                android:id="@+id/messageInput"
+                android:layout_width="match_parent"
+                android:layout_height="200dp"
+                android:background="@drawable/input_field_bg"
+                android:hint="Type your encrypted message..."
+                android:textColorHint="@color/text_gray"
+                android:textColor="@color/text_white"
+                android:textSize="16sp"
+                android:padding="16dp"
+                android:gravity="top"
+                android:inputType="textMultiLine"
+                android:layout_marginBottom="24dp" />
+
+            <!-- Security Options -->
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Security Options"
+                android:textSize="13sp"
+                android:textColor="@color/text_gray"
+                android:layout_marginBottom="12dp" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:layout_marginBottom="32dp">
+
+                <!-- Self-Destruct Option -->
+                <LinearLayout
+                    android:id="@+id/selfDestructOption"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:orientation="horizontal"
+                    android:background="@drawable/settings_item_bg"
+                    android:padding="16dp"
+                    android:layout_marginEnd="8dp"
+                    android:gravity="center"
+                    android:clickable="true"
+                    android:focusable="true">
+
+                    <ImageView
+                        android:layout_width="20dp"
+                        android:layout_height="20dp"
+                        android:src="@drawable/ic_timer"
+                        android:layout_marginEnd="8dp"
+                        android:contentDescription="Timer icon" />
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Self-Destruct"
+                        android:textSize="14sp"
+                        android:textColor="@color/text_white" />
+
+                </LinearLayout>
+
+                <!-- Read Receipt Option -->
+                <LinearLayout
+                    android:id="@+id/readReceiptOption"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:orientation="horizontal"
+                    android:background="@drawable/settings_item_bg"
+                    android:padding="16dp"
+                    android:layout_marginStart="8dp"
+                    android:gravity="center"
+                    android:clickable="true"
+                    android:focusable="true">
+
+                    <ImageView
+                        android:layout_width="20dp"
+                        android:layout_height="20dp"
+                        android:src="@drawable/ic_eye"
+                        android:layout_marginEnd="8dp"
+                        android:contentDescription="Eye icon" />
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Read Receipt"
+                        android:textSize="14sp"
+                        android:textColor="@color/text_white" />
+
+                </LinearLayout>
+
+            </LinearLayout>
+
+        </LinearLayout>
+
+    </ScrollView>
+
+</androidx.constraintlayout.widget.ConstraintLayout>

@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- QR Code Placeholder - Replace with actual PNG -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="250dp"
+    android:height="250dp"
+    android:viewportWidth="250"
+    android:viewportHeight="250">
+
+    <!-- White background -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M0,0 L250,0 L250,250 L0,250 Z"/>
+
+    <!-- QR Code pattern (simplified) -->
+    <!-- Top-left corner -->
+    <path
+        android:fillColor="#000000"
+        android:pathData="M20,20 L80,20 L80,80 L20,80 Z"/>
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M30,30 L70,30 L70,70 L30,70 Z"/>
+    <path
+        android:fillColor="#000000"
+        android:pathData="M40,40 L60,40 L60,60 L40,60 Z"/>
+
+    <!-- Top-right corner -->
+    <path
+        android:fillColor="#000000"
+        android:pathData="M170,20 L230,20 L230,80 L170,80 Z"/>
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M180,30 L220,30 L220,70 L180,70 Z"/>
+    <path
+        android:fillColor="#000000"
+        android:pathData="M190,40 L210,40 L210,60 L190,60 Z"/>
+
+    <!-- Bottom-left corner -->
+    <path
+        android:fillColor="#000000"
+        android:pathData="M20,170 L80,170 L80,230 L20,230 Z"/>
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M30,180 L70,180 L70,220 L30,220 Z"/>
+    <path
+        android:fillColor="#000000"
+        android:pathData="M40,190 L60,190 L60,210 L40,210 Z"/>
+
+    <!-- Some random QR pattern blocks -->
+    <path
+        android:fillColor="#000000"
+        android:pathData="M100,30 L110,30 L110,40 L100,40 Z"/>
+    <path
+        android:fillColor="#000000"
+        android:pathData="M120,30 L130,30 L130,40 L120,40 Z"/>
+    <path
+        android:fillColor="#000000"
+        android:pathData="M150,50 L160,50 L160,60 L150,60 Z"/>
+    <path
+        android:fillColor="#000000"
+        android:pathData="M100,100 L110,100 L110,110 L100,110 Z"/>
+    <path
+        android:fillColor="#000000"
+        android:pathData="M130,120 L140,120 L140,130 L130,130 Z"/>
+    <path
+        android:fillColor="#000000"
+        android:pathData="M160,140 L170,140 L170,150 L160,150 Z"/>
+
+</vector>

@@ -1,0 +1,139 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.constraintlayout.widget.ConstraintLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/dark_bg">
+
+    <!-- Header -->
+    <LinearLayout
+        android:id="@+id/chatHeader"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:background="#000000"
+        android:paddingStart="16dp"
+        android:paddingEnd="16dp"
+        android:paddingTop="12dp"
+        android:paddingBottom="12dp"
+        android:gravity="center_vertical"
+        app:layout_constraintTop_toTopOf="parent">
+
+        <TextView
+            android:id="@+id/backButton"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:text="‹"
+            android:textSize="32sp"
+            android:textColor="@color/text_white"
+            android:gravity="center"
+            android:clickable="true"
+            android:focusable="true"
+            android:background="?attr/selectableItemBackgroundBorderless" />
+
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:orientation="vertical"
+            android:layout_marginStart="12dp">
+
+            <TextView
+                android:id="@+id/chatName"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@nighthawk"
+                android:textSize="18sp"
+                android:textStyle="bold"
+                android:textColor="@color/text_white" />
+
+            <TextView
+                android:id="@+id/chatStatus"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="● Online • Active"
+                android:textSize="13sp"
+                android:textColor="@color/success_green" />
+
+        </LinearLayout>
+
+        <TextView
+            android:id="@+id/optionsButton"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:text="◈"
+            android:textSize="20sp"
+            android:textColor="@color/text_white"
+            android:gravity="center"
+            android:clickable="true"
+            android:focusable="true"
+            android:background="?attr/selectableItemBackgroundBorderless" />
+
+    </LinearLayout>
+
+    <!-- Messages Container -->
+    <androidx.recyclerview.widget.RecyclerView
+        android:id="@+id/messagesRecyclerView"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:padding="16dp"
+        android:clipToPadding="false"
+        app:layout_constraintTop_toBottomOf="@id/chatHeader"
+        app:layout_constraintBottom_toTopOf="@id/messageInputContainer" />
+
+    <!-- Message Input -->
+    <LinearLayout
+        android:id="@+id/messageInputContainer"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:background="#000000"
+        android:paddingStart="16dp"
+        android:paddingEnd="16dp"
+        android:paddingTop="12dp"
+        android:paddingBottom="12dp"
+        android:gravity="center_vertical"
+        app:layout_constraintBottom_toTopOf="@id/bottomNav">
+
+        <EditText
+            android:id="@+id/messageInput"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:background="@drawable/message_input_bg"
+            android:hint="Message..."
+            android:textColorHint="@color/text_gray"
+            android:textColor="@color/text_white"
+            android:textSize="16sp"
+            android:padding="14dp"
+            android:maxLines="4" />
+
+        <TextView
+            android:id="@+id/sendButton"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:layout_marginStart="12dp"
+            android:text="▸"
+            android:textSize="28sp"
+            android:textColor="@color/text_white"
+            android:background="@drawable/metallic_button_bg"
+            android:gravity="center"
+            android:clickable="true"
+            android:focusable="true"
+            android:elevation="6dp"
+            android:includeFontPadding="false" />
+
+    </LinearLayout>
+
+    <!-- Bottom Navigation -->
+    <include
+        android:id="@+id/bottomNav"
+        layout="@layout/bottom_navigation"
+        android:layout_width="match_parent"
+        android:layout_height="90dp"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent" />
+
+</androidx.constraintlayout.widget.ConstraintLayout>

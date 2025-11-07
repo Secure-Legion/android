@@ -1,0 +1,114 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <!-- Tor Network Permissions -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+
+    <!-- Biometric Authentication -->
+    <uses-permission android:name="android.permission.USE_BIOMETRIC" />
+
+    <application
+        android:allowBackup="true"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:fullBackupContent="@xml/backup_rules"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.SecureLegion">
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="false" />
+
+        <activity
+            android:name=".ChatActivity"
+            android:exported="false" />
+
+        <activity
+            android:name=".ComposeActivity"
+            android:exported="false" />
+
+        <activity
+            android:name=".AddFriendActivity"
+            android:exported="false" />
+
+        <activity
+            android:name=".SplashActivity"
+            android:exported="true"
+            android:theme="@style/Theme.SecureLegion">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <activity
+            android:name=".LockActivity"
+            android:exported="false" />
+
+        <activity
+            android:name=".SettingsActivity"
+            android:exported="false" />
+
+        <activity
+            android:name=".SecurityModeActivity"
+            android:exported="false" />
+
+        <activity
+            android:name=".DuressPinActivity"
+            android:exported="false" />
+
+        <activity
+            android:name=".WalletIdentityActivity"
+            android:exported="false" />
+
+        <activity
+            android:name=".DevicePasswordActivity"
+            android:exported="false" />
+
+        <activity
+            android:name=".NotificationsActivity"
+            android:exported="false" />
+
+        <activity
+            android:name=".WipeAccountActivity"
+            android:exported="false" />
+
+        <activity
+            android:name=".CreateAccountActivity"
+            android:exported="false" />
+
+        <activity
+            android:name=".RestoreAccountActivity"
+            android:exported="false" />
+
+        <activity
+            android:name=".ReceiveActivity"
+            android:exported="false" />
+
+        <activity
+            android:name=".SendActivity"
+            android:exported="false" />
+
+        <activity
+            android:name=".ContactOptionsActivity"
+            android:exported="false" />
+
+        <activity
+            android:name=".ManageTokensActivity"
+            android:exported="false" />
+
+        <activity
+            android:name=".TransactionsActivity"
+            android:exported="false" />
+
+        <activity
+            android:name=".TransactionDetailActivity"
+            android:exported="false" />
+
+    </application>
+
+</manifest>

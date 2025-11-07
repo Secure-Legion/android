@@ -1,0 +1,187 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.constraintlayout.widget.ConstraintLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/dark_bg">
+
+    <ScrollView
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:fillViewport="true"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintBottom_toTopOf="@id/bottomNav">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical">
+
+            <!-- Header -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:background="#000000"
+                android:padding="24dp"
+                android:gravity="center_vertical">
+
+                <TextView
+                    android:id="@+id/backButton"
+                    android:layout_width="40dp"
+                    android:layout_height="40dp"
+                    android:text="‹"
+                    android:textSize="32sp"
+                    android:textColor="@color/text_white"
+                    android:gravity="center"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:background="?attr/selectableItemBackgroundBorderless" />
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:orientation="horizontal"
+                    android:gravity="center"
+                    android:layout_marginEnd="40dp">
+
+                    <ImageView
+                        android:layout_width="60dp"
+                        android:layout_height="60dp"
+                        android:src="@drawable/secure_logo"
+                        android:layout_marginEnd="12dp"
+                        android:contentDescription="Secure Legion Logo" />
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="RECEIVE"
+                        android:textSize="28sp"
+                        android:textStyle="bold"
+                        android:textColor="@color/text_white"
+                        android:fontFamily="sans-serif-black" />
+
+                </LinearLayout>
+
+            </LinearLayout>
+
+            <!-- Content -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:paddingStart="24dp"
+                android:paddingEnd="24dp"
+                android:paddingTop="32dp"
+                android:gravity="center_horizontal">
+
+                <!-- Crypto Type -->
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Receiving"
+                    android:textSize="19sp"
+                    android:textStyle="bold"
+                    android:textColor="@color/text_gray"
+                    android:layout_marginBottom="8dp" />
+
+                <LinearLayout
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:gravity="center"
+                    android:layout_marginBottom="8dp">
+
+                    <ImageView
+                        android:layout_width="32dp"
+                        android:layout_height="32dp"
+                        android:src="@drawable/ic_solana"
+                        android:layout_marginEnd="12dp"
+                        android:contentDescription="Solana" />
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="SOL"
+                        android:textSize="32sp"
+                        android:textStyle="bold"
+                        android:textColor="@color/primary_blue"
+                        android:fontFamily="sans-serif-black" />
+
+                </LinearLayout>
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Solana"
+                    android:textSize="14sp"
+                    android:textColor="@color/text_gray"
+                    android:layout_marginBottom="32dp" />
+
+                <!-- QR Code -->
+                <ImageView
+                    android:id="@+id/qrCodeImage"
+                    android:layout_width="250dp"
+                    android:layout_height="250dp"
+                    android:src="@drawable/qr_code"
+                    android:layout_marginBottom="24dp"
+                    android:contentDescription="QR Code" />
+
+                <!-- Deposit Address -->
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Deposit Address"
+                    android:textSize="13sp"
+                    android:textColor="@color/text_gray"
+                    android:fontFamily="sans-serif"
+                    android:layout_marginBottom="8dp" />
+
+                <TextView
+                    android:id="@+id/depositAddress"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU"
+                    android:textSize="13sp"
+                    android:textColor="@color/text_white"
+                    android:fontFamily="monospace"
+                    android:background="@drawable/input_field_bg"
+                    android:padding="16dp"
+                    android:layout_marginBottom="32dp" />
+
+                <!-- Copy Button -->
+                <TextView
+                    android:id="@+id/copyAddressButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Copy Address"
+                    android:textSize="16sp"
+                    android:textStyle="bold"
+                    android:textColor="@color/text_white"
+                    android:background="@drawable/metallic_button_bg"
+                    android:gravity="center"
+                    android:padding="16dp"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:elevation="6dp"
+                    android:layout_marginBottom="32dp" />
+
+            </LinearLayout>
+
+        </LinearLayout>
+
+    </ScrollView>
+
+    <!-- Bottom Navigation -->
+    <include
+        android:id="@+id/bottomNav"
+        layout="@layout/bottom_navigation"
+        android:layout_width="match_parent"
+        android:layout_height="90dp"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent" />
+
+</androidx.constraintlayout.widget.ConstraintLayout>

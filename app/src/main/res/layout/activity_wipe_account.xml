@@ -1,0 +1,191 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.constraintlayout.widget.ConstraintLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/dark_bg">
+
+<ScrollView
+    android:layout_width="match_parent"
+    android:layout_height="0dp"
+    android:fillViewport="true"
+    app:layout_constraintTop_toTopOf="parent"
+    app:layout_constraintBottom_toTopOf="@id/bottomNav">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical">
+
+        <!-- Header -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:background="@color/dark_bg"
+            android:padding="24dp"
+            android:gravity="center_vertical">
+
+            <TextView
+                android:id="@+id/backButton"
+                android:layout_width="40dp"
+                android:layout_height="40dp"
+                android:text="‹"
+                android:textSize="32sp"
+                android:textColor="@color/text_white"
+                android:gravity="center"
+                android:clickable="true"
+                android:focusable="true"
+                android:background="?attr/selectableItemBackgroundBorderless" />
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:orientation="horizontal"
+                android:gravity="center"
+                android:layout_marginEnd="40dp">
+
+                <ImageView
+                    android:layout_width="60dp"
+                    android:layout_height="60dp"
+                    android:src="@drawable/secure_logo"
+                    android:layout_marginEnd="12dp"
+                    android:contentDescription="Secure Legion Logo" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="WIPE ACCOUNT"
+                    android:textSize="28sp"
+                    android:textStyle="bold"
+                    android:fontFamily="sans-serif-black"
+                    android:textColor="@color/text_white" />
+
+            </LinearLayout>
+
+        </LinearLayout>
+
+        <!-- Content -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:padding="24dp">
+
+            <!-- Password Confirmation -->
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Confirm Account Wipe"
+                android:textSize="14sp"
+                android:textStyle="bold"
+                android:textColor="@color/text_white"
+                android:layout_marginBottom="8dp" />
+
+            <EditText
+                android:id="@+id/wipePasswordInput"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:background="@drawable/input_field_bg"
+                android:hint="Enter your password to confirm"
+                android:inputType="textPassword"
+                android:textColorHint="@color/text_gray"
+                android:textColor="@color/text_white"
+                android:textSize="16sp"
+                android:padding="16dp"
+                android:layout_marginBottom="24dp" />
+
+            <!-- Type DELETE Confirmation -->
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Type &quot;DELETE&quot; to confirm"
+                android:textSize="14sp"
+                android:textStyle="bold"
+                android:textColor="@color/text_white"
+                android:layout_marginBottom="8dp" />
+
+            <EditText
+                android:id="@+id/wipeConfirmInput"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:background="@drawable/input_field_bg"
+                android:hint="Type DELETE in capital letters"
+                android:textColorHint="@color/text_gray"
+                android:textColor="@color/text_white"
+                android:textSize="16sp"
+                android:padding="16dp"
+                android:layout_marginBottom="16dp" />
+
+            <TextView
+                android:id="@+id/wipeAccountButton"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Wipe Account"
+                android:textSize="16sp"
+                android:textStyle="bold"
+                android:textColor="@color/text_white"
+                android:background="@drawable/metallic_button_bg"
+                android:gravity="center"
+                android:padding="16dp"
+                android:clickable="true"
+                android:focusable="true"
+                android:elevation="6dp"
+                android:layout_marginBottom="24dp" />
+
+            <!-- Info Box -->
+            <androidx.cardview.widget.CardView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                app:cardBackgroundColor="#15FFFFFF"
+                app:cardCornerRadius="12dp"
+                app:cardElevation="0dp"
+                app:strokeWidth="1dp"
+                app:strokeColor="#40FFFFFF">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:padding="16dp">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Before You Proceed"
+                        android:textSize="16sp"
+                        android:textStyle="bold"
+                        android:textColor="@color/text_white"
+                        android:layout_marginBottom="8dp" />
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Make sure you have backed up your recovery phrase and any important data. Once wiped, your account cannot be recovered from this device."
+                        android:textSize="14sp"
+                        android:textColor="@color/text_gray"
+                        android:lineSpacingMultiplier="1.3" />
+
+                </LinearLayout>
+
+            </androidx.cardview.widget.CardView>
+
+        </LinearLayout>
+
+    </LinearLayout>
+
+</ScrollView>
+
+<!-- Bottom Navigation -->
+<include
+    android:id="@+id/bottomNav"
+    layout="@layout/bottom_navigation"
+    android:layout_width="match_parent"
+    android:layout_height="90dp"
+    app:layout_constraintBottom_toBottomOf="parent"
+    app:layout_constraintStart_toStartOf="parent"
+    app:layout_constraintEnd_toEndOf="parent" />
+
+</androidx.constraintlayout.widget.ConstraintLayout>

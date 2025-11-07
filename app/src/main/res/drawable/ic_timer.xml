@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+
+    <!-- Timer/Clock icon -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M15,1 L9,1 L9,3 L15,3 Z M11,14 L13,14 L13,8 L11,8 Z M19.03,7.39 L20.45,5.97 C20.02,5.46 19.55,4.98 19.04,4.56 L17.62,5.98 C16.07,4.74 14.12,4 12,4 C7.03,4 3,8.03 3,13 C3,17.97 7.03,22 12,22 C16.97,22 21,17.97 21,13 C21,10.88 20.26,8.93 19.03,7.39 Z M12,20 C8.13,20 5,16.87 5,13 C5,9.13 8.13,6 12,6 C15.87,6 19,9.13 19,13 C19,16.87 15.87,20 12,20 Z"/>
+</vector>

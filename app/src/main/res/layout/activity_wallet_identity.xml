@@ -1,0 +1,223 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.constraintlayout.widget.ConstraintLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/header_bg">
+
+<ScrollView
+    android:layout_width="match_parent"
+    android:layout_height="0dp"
+    android:fillViewport="true"
+    app:layout_constraintTop_toTopOf="parent"
+    app:layout_constraintBottom_toTopOf="@id/bottomNav">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical">
+
+        <!-- Header -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:background="@color/dark_bg"
+            android:padding="24dp"
+            android:gravity="center_vertical">
+
+            <TextView
+                android:id="@+id/backButton"
+                android:layout_width="40dp"
+                android:layout_height="40dp"
+                android:text="‹"
+                android:textSize="32sp"
+                android:textColor="@color/text_white"
+                android:gravity="center"
+                android:clickable="true"
+                android:focusable="true"
+                android:background="?attr/selectableItemBackgroundBorderless" />
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:orientation="horizontal"
+                android:gravity="center"
+                android:layout_marginEnd="40dp">
+
+                <ImageView
+                    android:layout_width="60dp"
+                    android:layout_height="60dp"
+                    android:src="@drawable/secure_logo"
+                    android:layout_marginEnd="12dp"
+                    android:contentDescription="Secure Legion Logo" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="IDENTITY"
+                    android:textSize="28sp"
+                    android:textStyle="bold"
+                    android:fontFamily="sans-serif-black"
+                    android:textColor="@color/text_white" />
+
+            </LinearLayout>
+
+        </LinearLayout>
+
+        <!-- Content -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:padding="24dp">
+
+            <!-- Wallet Address -->
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Wallet Address"
+                android:textSize="13sp"
+                android:textStyle="bold"
+                android:textColor="@color/text_gray"
+                android:layout_marginBottom="8dp" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:background="@drawable/settings_item_bg"
+                android:padding="16dp"
+                android:layout_marginBottom="16dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU"
+                    android:textSize="14sp"
+                    android:textStyle="bold"
+                    android:textColor="@color/text_white"
+                    android:fontFamily="monospace"
+                    android:lineSpacingMultiplier="1.4"
+                    android:layout_marginBottom="4dp" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Your Solana blockchain identity"
+                    android:textSize="13sp"
+                    android:textColor="@color/text_gray" />
+
+            </LinearLayout>
+
+            <!-- Username -->
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Username"
+                android:textSize="13sp"
+                android:textStyle="bold"
+                android:textColor="@color/text_gray"
+                android:layout_marginBottom="8dp" />
+
+            <EditText
+                android:id="@+id/usernameInput"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:background="@drawable/input_field_bg"
+                android:hint="@secure.legion.user"
+                android:text="@secure.legion.user"
+                android:textColorHint="@color/text_gray"
+                android:textColor="@color/text_white"
+                android:textSize="16sp"
+                android:padding="14dp"
+                android:layout_marginBottom="16dp" />
+
+            <TextView
+                android:id="@+id/updateUsernameButton"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Update Username"
+                android:textSize="16sp"
+                android:textStyle="bold"
+                android:textColor="@color/text_white"
+                android:background="@drawable/metallic_button_bg"
+                android:gravity="center"
+                android:padding="16dp"
+                android:clickable="true"
+                android:focusable="true"
+                android:elevation="6dp"
+                android:layout_marginBottom="16dp" />
+
+            <!-- Wallet Management -->
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Wallet Management"
+                android:textSize="13sp"
+                android:textStyle="bold"
+                android:textColor="@color/text_gray"
+                android:layout_marginBottom="8dp" />
+
+            <TextView
+                android:id="@+id/createNewWalletButton"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Create New Wallet"
+                android:textSize="16sp"
+                android:textStyle="bold"
+                android:textColor="@color/text_white"
+                android:background="@drawable/metallic_button_bg"
+                android:gravity="center"
+                android:padding="16dp"
+                android:clickable="true"
+                android:focusable="true"
+                android:elevation="6dp"
+                android:layout_marginBottom="24dp" />
+
+            <!-- Info Box -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:background="@drawable/info_box_bg"
+                android:padding="16dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Blockchain Identity"
+                    android:textSize="16sp"
+                    android:textStyle="bold"
+                    android:textColor="@color/text_white"
+                    android:layout_marginBottom="8dp" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="You need 0.0008 SOL in your wallet to write your new encrypted contact card to the blockchain."
+                    android:textSize="14sp"
+                    android:textColor="@color/text_gray"
+                    android:lineSpacingMultiplier="1.4" />
+
+            </LinearLayout>
+
+        </LinearLayout>
+
+    </LinearLayout>
+
+</ScrollView>
+
+<!-- Bottom Navigation -->
+<include
+    android:id="@+id/bottomNav"
+    layout="@layout/bottom_navigation"
+    android:layout_width="match_parent"
+    android:layout_height="90dp"
+    app:layout_constraintBottom_toBottomOf="parent"
+    app:layout_constraintStart_toStartOf="parent"
+    app:layout_constraintEnd_toEndOf="parent" />
+
+</androidx.constraintlayout.widget.ConstraintLayout>

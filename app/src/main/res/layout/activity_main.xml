@@ -1,0 +1,390 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.constraintlayout.widget.ConstraintLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/header_bg"
+    tools:context=".MainActivity">
+
+    <!-- Header -->
+    <LinearLayout
+        android:id="@+id/header"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:background="@drawable/header_bg"
+        android:paddingTop="24dp"
+        android:paddingBottom="0dp"
+        app:layout_constraintTop_toTopOf="parent">
+
+        <!-- App Title Bar -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:paddingStart="24dp"
+            android:paddingEnd="24dp"
+            android:paddingBottom="20dp"
+            android:gravity="center_vertical">
+
+            <ImageView
+                android:id="@+id/appLogo"
+                android:layout_width="60dp"
+                android:layout_height="60dp"
+                android:src="@drawable/secure_logo"
+                android:layout_marginEnd="12dp"
+                android:contentDescription="Secure Legion Logo" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="SECURE "
+                android:textSize="28sp"
+                android:textStyle="bold"
+                android:textColor="@color/text_white"
+                android:fontFamily="sans-serif-black"
+                android:letterSpacing="-0.02" />
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="LEGION"
+                android:textSize="28sp"
+                android:textStyle="bold"
+                android:textColor="@color/primary_blue"
+                android:fontFamily="sans-serif-black"
+                android:letterSpacing="-0.02" />
+
+        </LinearLayout>
+
+        <!-- Tabs -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:paddingStart="24dp"
+            android:paddingEnd="24dp"
+            android:background="@drawable/tabs_bg"
+            android:paddingBottom="0dp">
+
+            <LinearLayout
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:layout_marginEnd="24dp">
+
+                <TextView
+                    android:id="@+id/tabContacts"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Contacts"
+                    android:textSize="16sp"
+                    android:textColor="@color/text_gray"
+                    android:paddingTop="12dp"
+                    android:paddingBottom="12dp"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:background="?attr/selectableItemBackgroundBorderless" />
+
+                <View
+                    android:id="@+id/indicatorContacts"
+                    android:layout_width="match_parent"
+                    android:layout_height="2dp"
+                    android:background="@android:color/transparent" />
+
+            </LinearLayout>
+
+            <LinearLayout
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:layout_marginStart="24dp">
+
+                <TextView
+                    android:id="@+id/tabSettings"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Settings"
+                    android:textSize="16sp"
+                    android:textColor="@color/text_gray"
+                    android:paddingTop="12dp"
+                    android:paddingBottom="12dp"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:background="?attr/selectableItemBackgroundBorderless" />
+
+                <View
+                    android:id="@+id/indicatorSettings"
+                    android:layout_width="match_parent"
+                    android:layout_height="2dp"
+                    android:background="@android:color/transparent" />
+
+            </LinearLayout>
+
+        </LinearLayout>
+
+    </LinearLayout>
+
+    <!-- Content Container -->
+    <FrameLayout
+        android:id="@+id/contentContainer"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        app:layout_constraintTop_toBottomOf="@id/header"
+        app:layout_constraintBottom_toTopOf="@id/bottomNav">
+
+        <!-- Chat List Container with Search -->
+        <LinearLayout
+            android:id="@+id/chatListContainer"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:orientation="vertical"
+            android:background="@color/header_bg">
+
+            <!-- Search Bar -->
+            <androidx.cardview.widget.CardView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginHorizontal="16dp"
+                android:layout_marginTop="16dp"
+                android:layout_marginBottom="12dp"
+                app:cardBackgroundColor="@color/card_bg"
+                app:cardCornerRadius="14dp"
+                app:cardElevation="0dp"
+                app:strokeWidth="1dp"
+                app:strokeColor="@color/border_color">
+
+                <RelativeLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content">
+
+                    <EditText
+                        android:id="@+id/searchBar"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:background="@android:color/transparent"
+                        android:hint="Search conversations..."
+                        android:textColorHint="@color/text_gray"
+                        android:textColor="@color/text_white"
+                        android:textSize="16sp"
+                        android:padding="14dp"
+                        android:paddingEnd="48dp"
+                        android:drawableStart="@drawable/ic_search"
+                        android:drawablePadding="12dp" />
+
+                    <ImageView
+                        android:id="@+id/newMessageBtn"
+                        android:layout_width="24dp"
+                        android:layout_height="24dp"
+                        android:layout_alignParentEnd="true"
+                        android:layout_centerVertical="true"
+                        android:layout_marginEnd="12dp"
+                        android:src="@drawable/ic_compose"
+                        android:clickable="true"
+                        android:focusable="true"
+                        android:background="?attr/selectableItemBackgroundBorderless"
+                        android:contentDescription="New Message" />
+
+                </RelativeLayout>
+
+            </androidx.cardview.widget.CardView>
+
+            <!-- Chat List -->
+            <androidx.recyclerview.widget.RecyclerView
+                android:id="@+id/chatList"
+                android:layout_width="match_parent"
+                android:layout_height="0dp"
+                android:layout_weight="1"
+                android:background="@color/header_bg" />
+
+        </LinearLayout>
+
+        <!-- Contacts View -->
+        <include
+            android:id="@+id/contactsView"
+            layout="@layout/fragment_contacts"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:visibility="gone" />
+
+        <!-- Empty State (visible when no chats) -->
+        <LinearLayout
+            android:id="@+id/emptyState"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:gravity="center"
+            android:padding="48dp"
+            android:visibility="gone"
+            android:layout_gravity="center">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="💬"
+            android:textSize="64sp"
+            android:alpha="0.3"
+            android:layout_marginBottom="16dp" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="No Conversations Yet"
+            android:textSize="20sp"
+            android:textStyle="bold"
+            android:textColor="@color/text_white"
+            android:layout_marginBottom="8dp" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Start a secure conversation"
+            android:textSize="16sp"
+            android:textColor="@color/text_gray" />
+
+    </LinearLayout>
+
+        <!-- Wallet View -->
+        <include
+            android:id="@+id/walletView"
+            layout="@layout/fragment_wallet"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:visibility="gone" />
+
+    </FrameLayout>
+
+    <!-- Bottom Navigation -->
+    <LinearLayout
+        android:id="@+id/bottomNav"
+        android:layout_width="match_parent"
+        android:layout_height="90dp"
+        android:orientation="horizontal"
+        android:background="@drawable/bottom_nav_bg"
+        android:gravity="center"
+        android:paddingTop="8dp"
+        android:paddingBottom="8dp"
+        app:layout_constraintBottom_toBottomOf="parent">
+
+        <!-- Messages Nav Item -->
+        <LinearLayout
+            android:id="@+id/navMessages"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:orientation="vertical"
+            android:gravity="center"
+            android:background="@drawable/nav_item_ripple"
+            android:clickable="true"
+            android:focusable="true">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="💬"
+                android:textSize="24sp"
+                android:textColor="@color/text_white"
+                android:layout_marginBottom="4dp" />
+
+            <TextView
+                android:id="@+id/navMessagesLabel"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Messages"
+                android:textSize="11sp"
+                android:textColor="@color/text_gray" />
+
+        </LinearLayout>
+
+        <!-- Wallet Nav Item -->
+        <LinearLayout
+            android:id="@+id/navWallet"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:orientation="vertical"
+            android:gravity="center"
+            android:background="@drawable/nav_item_ripple"
+            android:clickable="true"
+            android:focusable="true">
+
+            <ImageView
+                android:layout_width="24dp"
+                android:layout_height="24dp"
+                android:src="@drawable/ic_wallet"
+                android:layout_marginBottom="4dp"
+                android:contentDescription="Wallet" />
+
+            <TextView
+                android:id="@+id/navWalletLabel"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Wallet"
+                android:textSize="11sp"
+                android:textColor="@color/text_gray" />
+
+        </LinearLayout>
+
+        <!-- Add Friend Nav Item -->
+        <LinearLayout
+            android:id="@+id/navAddFriend"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:orientation="vertical"
+            android:gravity="center"
+            android:background="@drawable/nav_item_ripple"
+            android:clickable="true"
+            android:focusable="true">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="👥"
+                android:textSize="24sp"
+                android:textColor="@color/text_white"
+                android:layout_marginBottom="4dp" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Add Friend"
+                android:textSize="11sp"
+                android:textColor="@color/text_gray" />
+
+        </LinearLayout>
+
+        <!-- Lock Nav Item -->
+        <LinearLayout
+            android:id="@+id/navLock"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:orientation="vertical"
+            android:gravity="center"
+            android:background="@drawable/nav_item_ripple"
+            android:clickable="true"
+            android:focusable="true">
+
+            <ImageView
+                android:layout_width="24dp"
+                android:layout_height="24dp"
+                android:src="@drawable/ic_lock"
+                android:layout_marginBottom="4dp"
+                android:contentDescription="Lock" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Lock"
+                android:textSize="11sp"
+                android:textColor="@color/text_gray" />
+
+        </LinearLayout>
+
+    </LinearLayout>
+
+</androidx.constraintlayout.widget.ConstraintLayout>

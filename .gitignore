@@ -1,0 +1,42 @@
+# Android Studio
+*.iml
+.gradle/
+.idea/
+local.properties
+.DS_Store
+.kotlin/
+
+# Android builds
+build/
+app/build/
+*/build/
+captures/
+.externalNativeBuild/
+.cxx/
+
+# APK files
+*.apk
+*.aab
+*.ap_
+*.dex
+
+# Native libraries (built by Rust)
+app/src/main/jniLibs/
+*.so
+*.dylib
+*.dll
+
+# Rust
+secure-legion-core/target/
+secure-legion-core/**/*.rs.bk
+secure-legion-core/Cargo.lock
+
+# Old/duplicate projects
+secure-legion-android/
+conductor/
+relay-server/
+
+# Misc
+nul
+*.log
+TODO.md

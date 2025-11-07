@@ -1,0 +1,124 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Bottom Navigation - Reusable Component -->
+<LinearLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/bottomNav"
+    android:layout_width="match_parent"
+    android:layout_height="90dp"
+    android:orientation="horizontal"
+    android:background="@drawable/bottom_nav_bg"
+    android:gravity="center"
+    android:paddingTop="8dp"
+    android:paddingBottom="8dp">
+
+    <!-- Messages Nav Item -->
+    <LinearLayout
+        android:id="@+id/navMessages"
+        android:layout_width="0dp"
+        android:layout_height="match_parent"
+        android:layout_weight="1"
+        android:orientation="vertical"
+        android:gravity="center"
+        android:background="@android:color/transparent">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="💬"
+            android:textSize="24sp"
+            android:textColor="@color/text_white"
+            android:layout_marginBottom="4dp" />
+
+        <TextView
+            android:id="@+id/navMessagesLabel"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Messages"
+            android:textSize="11sp"
+            android:textColor="@color/text_gray" />
+
+    </LinearLayout>
+
+    <!-- Wallet Nav Item -->
+    <LinearLayout
+        android:id="@+id/navWallet"
+        android:layout_width="0dp"
+        android:layout_height="match_parent"
+        android:layout_weight="1"
+        android:orientation="vertical"
+        android:gravity="center"
+        android:background="@android:color/transparent">
+
+        <ImageView
+            android:layout_width="24dp"
+            android:layout_height="24dp"
+            android:src="@drawable/ic_wallet"
+            android:layout_marginTop="2dp"
+            android:layout_marginBottom="4dp"
+            android:contentDescription="Wallet" />
+
+        <TextView
+            android:id="@+id/navWalletLabel"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Wallet"
+            android:textSize="11sp"
+            android:textColor="@color/text_gray" />
+
+    </LinearLayout>
+
+    <!-- Add Friend Nav Item -->
+    <LinearLayout
+        android:id="@+id/navAddFriend"
+        android:layout_width="0dp"
+        android:layout_height="match_parent"
+        android:layout_weight="1"
+        android:orientation="vertical"
+        android:gravity="center"
+        android:background="@android:color/transparent">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="👥"
+            android:textSize="24sp"
+            android:textColor="@color/text_white"
+            android:layout_marginBottom="4dp" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Add Friend"
+            android:textSize="11sp"
+            android:textColor="@color/text_gray" />
+
+    </LinearLayout>
+
+    <!-- Lock Nav Item -->
+    <LinearLayout
+        android:id="@+id/navLock"
+        android:layout_width="0dp"
+        android:layout_height="match_parent"
+        android:layout_weight="1"
+        android:orientation="vertical"
+        android:gravity="center"
+        android:background="@android:color/transparent">
+
+        <ImageView
+            android:layout_width="24dp"
+            android:layout_height="24dp"
+            android:src="@drawable/ic_lock"
+            android:layout_marginTop="2dp"
+            android:layout_marginBottom="4dp"
+            android:contentDescription="Lock" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Lock"
+            android:textSize="11sp"
+            android:textColor="@color/text_gray" />
+
+    </LinearLayout>
+
+</LinearLayout>

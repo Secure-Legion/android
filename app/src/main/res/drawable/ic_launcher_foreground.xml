@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- Blue Shield -->
+    <path
+        android:fillColor="#1E88E5"
+        android:pathData="M54,33 L38,39 L38,53 C38,65 44,75 54,81 C64,75 70,65 70,53 L70,39 Z"/>
+
+    <!-- Shield border/outline -->
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#1565C0"
+        android:strokeWidth="2.5"
+        android:pathData="M54,33 L38,39 L38,53 C38,65 44,75 54,81 C64,75 70,65 70,53 L70,39 Z"/>
+
+    <!-- Vertical line through middle -->
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#1565C0"
+        android:strokeWidth="2"
+        android:pathData="M54,33 L54,81"/>
+
+</vector>

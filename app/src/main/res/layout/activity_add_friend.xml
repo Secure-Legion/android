@@ -1,0 +1,130 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.constraintlayout.widget.ConstraintLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/header_bg">
+
+    <!-- Header -->
+    <LinearLayout
+        android:id="@+id/addFriendHeader"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:background="@color/dark_bg"
+        android:padding="24dp"
+        android:gravity="center_vertical"
+        app:layout_constraintTop_toTopOf="parent">
+
+        <TextView
+            android:id="@+id/backButton"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:text="‹"
+            android:textSize="32sp"
+            android:textColor="@color/text_white"
+            android:gravity="center"
+            android:clickable="true"
+            android:focusable="true"
+            android:background="?attr/selectableItemBackgroundBorderless" />
+
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:orientation="horizontal"
+            android:gravity="center"
+            android:layout_marginEnd="40dp">
+
+            <ImageView
+                android:layout_width="60dp"
+                android:layout_height="60dp"
+                android:src="@drawable/secure_logo"
+                android:layout_marginEnd="12dp"
+                android:contentDescription="Secure Legion Logo" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="ADD FRIEND"
+                android:textSize="28sp"
+                android:textStyle="bold"
+                android:fontFamily="sans-serif-black"
+                android:textColor="@color/text_white" />
+
+        </LinearLayout>
+
+    </LinearLayout>
+
+    <!-- Content -->
+    <ScrollView
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:padding="24dp"
+        app:layout_constraintTop_toBottomOf="@id/addFriendHeader"
+        app:layout_constraintBottom_toBottomOf="parent">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Find Friend"
+                android:textSize="14sp"
+                android:textStyle="bold"
+                android:textColor="@color/text_gray"
+                android:layout_marginBottom="8dp" />
+
+            <EditText
+                android:id="@+id/handleInput"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:background="@drawable/message_input_bg"
+                android:hint="@username or Solana address"
+                android:textColorHint="@color/text_gray"
+                android:textColor="@color/text_white"
+                android:padding="14dp"
+                android:layout_marginBottom="16dp" />
+
+            <TextView
+                android:id="@+id/searchButton"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Search"
+                android:textSize="16sp"
+                android:textStyle="bold"
+                android:textColor="@color/text_white"
+                android:background="@drawable/metallic_button_bg"
+                android:gravity="center"
+                android:padding="16dp"
+                android:clickable="true"
+                android:focusable="true"
+                android:elevation="6dp"
+                android:layout_marginBottom="32dp" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="How It Works"
+                android:textSize="18sp"
+                android:textStyle="bold"
+                android:textColor="@color/text_white"
+                android:layout_marginBottom="12dp" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Enter a friend's @username or Solana address to find them on the Secure Legion network. Their contact card is stored encrypted on IPFS and referenced on the Solana blockchain."
+                android:textSize="14sp"
+                android:textColor="@color/text_gray"
+                android:lineSpacingMultiplier="1.2" />
+
+        </LinearLayout>
+
+    </ScrollView>
+
+</androidx.constraintlayout.widget.ConstraintLayout>

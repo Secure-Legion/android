@@ -1,0 +1,142 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Wallet Balance Card - Matches HTML Demo -->
+<LinearLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:layout_marginStart="16dp"
+    android:layout_marginEnd="16dp"
+    android:layout_marginTop="12dp"
+    android:layout_marginBottom="12dp"
+    android:orientation="vertical">
+
+    <!-- Balance Card -->
+    <androidx.cardview.widget.CardView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        app:cardBackgroundColor="@color/card_bg"
+        app:cardCornerRadius="12dp"
+        app:cardElevation="0dp"
+        app:strokeWidth="1dp"
+        app:strokeColor="@color/border_color">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:padding="16dp">
+
+            <!-- Balance Label -->
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Total Balance"
+                android:textSize="11sp"
+                android:textColor="@color/text_gray"
+                android:layout_marginBottom="6dp"
+                android:textAllCaps="true"
+                android:letterSpacing="0.1" />
+
+            <!-- Balance Amount -->
+            <TextView
+                android:id="@+id/balanceAmount"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="0.0008 SOL"
+                android:textSize="24sp"
+                android:textStyle="bold"
+                android:textColor="@color/text_white"
+                android:layout_marginBottom="4dp" />
+
+            <!-- USD Value -->
+            <TextView
+                android:id="@+id/balanceUSD"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="$0.18 USD"
+                android:textSize="14sp"
+                android:textColor="@color/text_gray" />
+
+        </LinearLayout>
+
+    </androidx.cardview.widget.CardView>
+
+    <!-- Quick Actions -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:layout_marginTop="10dp"
+        android:weightSum="2"
+        android:baselineAligned="false">
+
+        <!-- Receive Button -->
+        <LinearLayout
+            android:id="@+id/receiveButton"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:layout_marginEnd="5dp"
+            android:orientation="vertical"
+            android:gravity="center"
+            android:padding="16dp"
+            android:background="@drawable/metallic_button_bg"
+            android:elevation="6dp"
+            android:clickable="true"
+            android:focusable="true">
+
+            <ImageView
+                android:layout_width="32dp"
+                android:layout_height="32dp"
+                android:src="@drawable/ic_qr_code"
+                app:tint="@color/text_white"
+                android:layout_marginBottom="8dp"
+                android:contentDescription="Receive" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Receive"
+                android:textSize="16sp"
+                android:textStyle="bold"
+                android:textColor="@color/text_white" />
+
+        </LinearLayout>
+
+        <!-- Send Button -->
+        <LinearLayout
+            android:id="@+id/sendButton"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:layout_marginStart="5dp"
+            android:orientation="vertical"
+            android:gravity="center"
+            android:padding="16dp"
+            android:background="@drawable/metallic_button_bg"
+            android:elevation="6dp"
+            android:clickable="true"
+            android:focusable="true">
+
+            <ImageView
+                android:layout_width="32dp"
+                android:layout_height="32dp"
+                android:src="@drawable/ic_send_arrow"
+                app:tint="@color/text_white"
+                android:layout_marginBottom="8dp"
+                android:contentDescription="Send" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Send"
+                android:textSize="16sp"
+                android:textStyle="bold"
+                android:textColor="@color/text_white" />
+
+        </LinearLayout>
+
+    </LinearLayout>
+
+</LinearLayout>
