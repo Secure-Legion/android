@@ -1,0 +1,75 @@
+[package]
+name = "securelegion"
+version = "1.0.0"
+edition = "2021"
+authors = ["Secure Legion Team"]
+description = "Secure Legion core library - Privacy-focused messaging with zero metadata"
+
+[lib]
+name = "securelegion"
+crate-type = ["cdylib", "staticlib"]
+
+[dependencies]
+# Cryptography
+chacha20poly1305 = "0.10"
+ed25519-dalek = { version = "2.1", features = ["rand_core"] }
+x25519-dalek = { version = "2.0", features = ["static_secrets"] }
+argon2 = "0.5"
+rand = "0.8"
+rand_core = { version = "0.6", features = ["getrandom"] }
+getrandom = { version = "0.2", features = ["custom"] }
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+bincode = "1.3"
+serde-big-array = "0.5"
+
+# Encoding
+bs58 = "0.5"
+base64 = "0.21"
+hex = "0.4"
+
+# JNI (Android)
+jni = "0.21"
+
+# Error handling
+thiserror = "1.0"
+anyhow = "1.0"
+
+# Logging
+log = "0.4"
+
+# Time
+chrono = "0.4"
+
+# UUID
+uuid = { version = "1.6", features = ["v4"] }
+
+# Async runtime (for Ping-Pong protocol)
+tokio = { version = "1.35", features = ["sync", "time", "macros", "rt-multi-thread"] }
+
+# Tor integration
+arti-client = { version = "0.20", features = ["tokio", "native-tls"] }
+tor-rtcompat = { version = "0.20", features = ["tokio", "native-tls"] }
+
+# Networking (optional - for future Tor/P2P implementation)
+reqwest = { version = "0.11", features = ["blocking"], optional = true }
+
+[dev-dependencies]
+hex-literal = "0.4"
+
+[features]
+default = ["std"]
+std = []
+network = ["reqwest"]
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"
+
+[profile.dev]
+opt-level = 0

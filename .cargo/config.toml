@@ -1,0 +1,18 @@
+# Android NDK configuration
+# Using NDK r26d from standard Android Studio SDK location
+
+[target.aarch64-linux-android]
+ar = "C:/Users/Eddie/AppData/Local/Android/Sdk/ndk/android-ndk-r26d/toolchains/llvm/prebuilt/windows-x86_64/bin/llvm-ar.exe"
+linker = "C:/Users/Eddie/AppData/Local/Android/Sdk/ndk/android-ndk-r26d/toolchains/llvm/prebuilt/windows-x86_64/bin/aarch64-linux-android21-clang.cmd"
+
+[target.armv7-linux-androideabi]
+ar = "C:/Users/Eddie/AppData/Local/Android/Sdk/ndk/android-ndk-r26d/toolchains/llvm/prebuilt/windows-x86_64/bin/llvm-ar.exe"
+linker = "C:/Users/Eddie/AppData/Local/Android/Sdk/ndk/android-ndk-r26d/toolchains/llvm/prebuilt/windows-x86_64/bin/armv7a-linux-androideabi21-clang.cmd"
+
+[target.i686-linux-android]
+ar = "C:/Users/Eddie/AppData/Local/Android/Sdk/ndk/android-ndk-r26d/toolchains/llvm/prebuilt/windows-x86_64/bin/llvm-ar.exe"
+linker = "C:/Users/Eddie/AppData/Local/Android/Sdk/ndk/android-ndk-r26d/toolchains/llvm/prebuilt/windows-x86_64/bin/i686-linux-android21-clang.cmd"
+
+[target.x86_64-linux-android]
+ar = "C:/Users/Eddie/AppData/Local/Android/Sdk/ndk/android-ndk-r26d/toolchains/llvm/prebuilt/windows-x86_64/bin/llvm-ar.exe"
+linker = "C:/Users/Eddie/AppData/Local/Android/Sdk/ndk/android-ndk-r26d/toolchains/llvm/prebuilt/windows-x86_64/bin/x86_64-linux-android21-clang.cmd"
