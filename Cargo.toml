@@ -18,6 +18,7 @@ argon2 = "0.5"
 rand = "0.8"
 rand_core = { version = "0.6", features = ["getrandom"] }
 getrandom = { version = "0.2", features = ["custom"] }
+sha3 = "0.10"
 
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
@@ -29,6 +30,7 @@ serde-big-array = "0.5"
 bs58 = "0.5"
 base64 = "0.21"
 hex = "0.4"
+base32 = "0.5"
 
 # JNI (Android)
 jni = "0.21"
@@ -46,15 +48,29 @@ chrono = "0.4"
 # UUID
 uuid = { version = "1.6", features = ["v4"] }
 
+# Sync primitives
+once_cell = "1.19"
+
 # Async runtime (for Ping-Pong protocol)
 tokio = { version = "1.35", features = ["sync", "time", "macros", "rt-multi-thread"] }
 
-# Tor integration
-arti-client = { version = "0.20", features = ["tokio", "native-tls"] }
-tor-rtcompat = { version = "0.20", features = ["tokio", "native-tls"] }
+# Tor integration (Arti 1.7.0)
+arti-client = { version = "0.36", default-features = false, features = ["tokio", "rustls", "onion-service-service"] }
+tor-rtcompat = { version = "0.36", default-features = false, features = ["tokio", "rustls"] }
+tor-hsservice = { version = "0.36", default-features = false }
+tor-hscrypto = { version = "0.36" }
 
 # Networking (optional - for future Tor/P2P implementation)
-reqwest = { version = "0.11", features = ["blocking"], optional = true }
+reqwest = { version = "0.11", default-features = false, features = ["blocking", "rustls-tls"], optional = true }
+
+# SQLite with bundled static library (required for Tor dependencies on Android)
+rusqlite = { version = "0.37", features = ["bundled"] }
+
+# Solana blockchain integration (using compatible versions)
+# Note: Actual Solana RPC integration will be added later
+# For now, we implement the encryption/storage layer only
+borsh = "0.10"
+borsh-derive = "0.10"
 
 [dev-dependencies]
 hex-literal = "0.4"

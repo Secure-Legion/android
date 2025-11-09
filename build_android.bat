@@ -39,21 +39,21 @@ echo.
 echo Copying libraries to Android project...
 
 REM Create jniLibs directories if they don't exist
-if not exist "..\secure-legion-android\app\src\main\jniLibs\arm64-v8a" (
-    mkdir "..\secure-legion-android\app\src\main\jniLibs\arm64-v8a"
+if not exist "..\app\src\main\jniLibs\arm64-v8a" (
+    mkdir "..\app\src\main\jniLibs\arm64-v8a"
 )
-if not exist "..\secure-legion-android\app\src\main\jniLibs\armeabi-v7a" (
-    mkdir "..\secure-legion-android\app\src\main\jniLibs\armeabi-v7a"
+if not exist "..\app\src\main\jniLibs\armeabi-v7a" (
+    mkdir "..\app\src\main\jniLibs\armeabi-v7a"
 )
 
 REM Copy libraries
-copy /Y "target\aarch64-linux-android\release\libsecurelegion.so" "..\secure-legion-android\app\src\main\jniLibs\arm64-v8a\"
-copy /Y "target\armv7-linux-androideabi\release\libsecurelegion.so" "..\secure-legion-android\app\src\main\jniLibs\armeabi-v7a\"
+copy /Y "target\aarch64-linux-android\release\libsecurelegion.so" "..\app\src\main\jniLibs\arm64-v8a\"
+copy /Y "target\armv7-linux-androideabi\release\libsecurelegion.so" "..\app\src\main\jniLibs\armeabi-v7a\"
 
 echo.
 echo Done! Libraries copied to:
-echo   - secure-legion-android/app/src/main/jniLibs/arm64-v8a/libsecurelegion.so
-echo   - secure-legion-android/app/src/main/jniLibs/armeabi-v7a/libsecurelegion.so
+echo   - app/src/main/jniLibs/arm64-v8a/libsecurelegion.so
+echo   - app/src/main/jniLibs/armeabi-v7a/libsecurelegion.so
 echo.
 echo You can now build the Android app in Android Studio!
 pause

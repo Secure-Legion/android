@@ -2,11 +2,17 @@ use jni::objects::{JByteArray, JClass, JObject, JString};
 use jni::sys::{jboolean, jbyteArray, jint, jlong, jstring, jobjectArray};
 use jni::JNIEnv;
 use std::panic;
+use std::sync::{Arc, Mutex};
+use once_cell::sync::OnceCell;
 
 use crate::crypto::{
     decrypt_message, encrypt_message, generate_keypair, hash_handle, hash_password, sign_data,
     verify_signature,
 };
+use crate::network::TorManager;
+use crate::protocol::ContactCard;
+use crate::blockchain::{register_username, lookup_username};
+use tokio::sync::mpsc;
 
 // ==================== HELPER FUNCTIONS ====================
 
@@ -46,6 +52,22 @@ macro_rules! catch_panic {
             }
         }
     };
+}
+
+// ==================== GLOBAL TOR MANAGER ====================
+
+/// Global TorManager instance
+static GLOBAL_TOR_MANAGER: OnceCell<Arc<Mutex<TorManager>>> = OnceCell::new();
+static GLOBAL_PING_RECEIVER: OnceCell<Arc<Mutex<mpsc::UnboundedReceiver<Vec<u8>>>>> = OnceCell::new();
+
+/// Get or initialize the global TorManager
+fn get_tor_manager() -> Arc<Mutex<TorManager>> {
+    GLOBAL_TOR_MANAGER
+        .get_or_init(|| {
+            let tor_manager = TorManager::new().expect("Failed to create TorManager");
+            Arc::new(Mutex::new(tor_manager))
+        })
+        .clone()
 }
 
 // ==================== CRYPTOGRAPHY ====================
@@ -337,19 +359,177 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_hashPassword(
     }, std::ptr::null_mut())
 }
 
-// ==================== NETWORK (Stubs for future implementation) ====================
+// ==================== NETWORK (Tor Integration) ====================
 
+/// Initialize Tor client and bootstrap connection to Tor network
+/// Returns status message
 #[no_mangle]
 pub extern "C" fn Java_com_securelegion_crypto_RustBridge_initializeTor(
     mut env: JNIEnv,
     _class: JClass,
 ) -> jstring {
     catch_panic!(env, {
-        // TODO: Implement Tor initialization
-        // For now, return a dummy onion address
-        match string_to_jstring(&mut env, "dummy123abc.onion") {
-            Ok(s) => s.into_raw(),
-            Err(_) => std::ptr::null_mut(),
+        let tor_manager = get_tor_manager();
+
+        // Run async initialization in blocking context
+        let runtime = tokio::runtime::Runtime::new().expect("Failed to create Tokio runtime");
+        let result = runtime.block_on(async {
+            let mut manager = tor_manager.lock().unwrap();
+            manager.initialize().await
+        });
+
+        match result {
+            Ok(status) => match string_to_jstring(&mut env, &status) {
+                Ok(s) => s.into_raw(),
+                Err(_) => {
+                    let _ = env.throw_new("java/lang/RuntimeException", "Failed to create status string");
+                    std::ptr::null_mut()
+                }
+            },
+            Err(e) => {
+                let error_msg = format!("Tor initialization failed: {}", e);
+                let _ = env.throw_new("java/lang/RuntimeException", error_msg);
+                std::ptr::null_mut()
+            }
+        }
+    }, std::ptr::null_mut())
+}
+
+/// Create a hidden service and get the .onion address
+/// Returns the .onion address for receiving connections
+///
+/// # Arguments
+/// * `service_port` - The virtual port on the .onion address (e.g., 80, 9150)
+/// * `local_port` - The local port to forward connections to (e.g., 9150)
+#[no_mangle]
+pub extern "C" fn Java_com_securelegion_crypto_RustBridge_createHiddenService(
+    mut env: JNIEnv,
+    _class: JClass,
+    service_port: jint,
+    local_port: jint,
+) -> jstring {
+    catch_panic!(env, {
+        let tor_manager = get_tor_manager();
+
+        // Run async hidden service creation in blocking context
+        let runtime = tokio::runtime::Runtime::new().expect("Failed to create Tokio runtime");
+        let result = runtime.block_on(async {
+            let mut manager = tor_manager.lock().unwrap();
+            manager.create_hidden_service(service_port as u16, local_port as u16, None).await
+        });
+
+        match result {
+            Ok(onion_address) => match string_to_jstring(&mut env, &onion_address) {
+                Ok(s) => s.into_raw(),
+                Err(_) => {
+                    let _ = env.throw_new("java/lang/RuntimeException", "Failed to create onion address string");
+                    std::ptr::null_mut()
+                }
+            },
+            Err(e) => {
+                let error_msg = format!("Hidden service creation failed: {}", e);
+                let _ = env.throw_new("java/lang/RuntimeException", error_msg);
+                std::ptr::null_mut()
+            }
+        }
+    }, std::ptr::null_mut())
+}
+
+/// Get the current hidden service .onion address (if created)
+/// Returns the .onion address or null if not created yet
+#[no_mangle]
+pub extern "C" fn Java_com_securelegion_crypto_RustBridge_getHiddenServiceAddress(
+    mut env: JNIEnv,
+    _class: JClass,
+) -> jstring {
+    catch_panic!(env, {
+        let tor_manager = get_tor_manager();
+        let manager = tor_manager.lock().unwrap();
+
+        match manager.get_hidden_service_address() {
+            Some(address) => match string_to_jstring(&mut env, address) {
+                Ok(s) => s.into_raw(),
+                Err(_) => std::ptr::null_mut(),
+            },
+            None => std::ptr::null_mut(),
+        }
+    }, std::ptr::null_mut())
+}
+
+/// Start the hidden service listener on the specified port
+/// This enables receiving incoming Ping tokens
+/// Returns true if listener started successfully
+#[no_mangle]
+pub extern "C" fn Java_com_securelegion_crypto_RustBridge_startHiddenServiceListener(
+    mut env: JNIEnv,
+    _class: JClass,
+    port: jint,
+) -> jboolean {
+    catch_panic!(env, {
+        let tor_manager = get_tor_manager();
+
+        // Run async listener start in blocking context
+        let runtime = tokio::runtime::Runtime::new().expect("Failed to create Tokio runtime");
+        let result = runtime.block_on(async {
+            let mut manager = tor_manager.lock().unwrap();
+            manager.start_listener(Some(port as u16)).await
+        });
+
+        match result {
+            Ok(receiver) => {
+                // Store the receiver globally
+                let _ = GLOBAL_PING_RECEIVER.set(Arc::new(Mutex::new(receiver)));
+                1 as jboolean
+            }
+            Err(e) => {
+                let error_msg = format!("Failed to start listener: {}", e);
+                let _ = env.throw_new("java/lang/RuntimeException", error_msg);
+                0 as jboolean
+            }
+        }
+    }, 0 as jboolean)
+}
+
+/// Stop the hidden service listener
+#[no_mangle]
+pub extern "C" fn Java_com_securelegion_crypto_RustBridge_stopHiddenServiceListener(
+    mut env: JNIEnv,
+    _class: JClass,
+) {
+    catch_panic!(env, {
+        let tor_manager = get_tor_manager();
+        let mut manager = tor_manager.lock().unwrap();
+        manager.stop_listener();
+    }, ())
+}
+
+/// Poll for an incoming Ping token (non-blocking)
+/// Returns the Ping token bytes or null if no ping available
+#[no_mangle]
+pub extern "C" fn Java_com_securelegion_crypto_RustBridge_pollIncomingPing(
+    mut env: JNIEnv,
+    _class: JClass,
+) -> jbyteArray {
+    catch_panic!(env, {
+        if let Some(receiver) = GLOBAL_PING_RECEIVER.get() {
+            let mut rx = receiver.lock().unwrap();
+
+            // Try to receive without blocking
+            match rx.try_recv() {
+                Ok(ping_bytes) => {
+                    match vec_to_jbytearray(&mut env, &ping_bytes) {
+                        Ok(array) => array.into_raw(),
+                        Err(_) => std::ptr::null_mut(),
+                    }
+                }
+                Err(_) => {
+                    // No ping available
+                    std::ptr::null_mut()
+                }
+            }
+        } else {
+            // Listener not started
+            std::ptr::null_mut()
         }
     }, std::ptr::null_mut())
 }
@@ -1138,33 +1318,126 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendSolanaTransaction(
     }, std::ptr::null_mut())
 }
 
+/// Register username on Solana Name Service with PIN protection
+/// Args:
+///   username - Username to register (e.g., "alice")
+///   pin - PIN for encrypting contact card
+///   contactCardJson - ContactCard serialized as JSON
+/// Returns: Full SNS domain (e.g., "alice.securelegion.sol")
 #[no_mangle]
-pub extern "C" fn Java_com_securelegion_crypto_RustBridge_publishContactCard(
+pub extern "C" fn Java_com_securelegion_crypto_RustBridge_registerUsername(
     mut env: JNIEnv,
     _class: JClass,
-    _encrypted_card: JByteArray,
-    _handle_hash: JByteArray,
+    username: JString,
+    pin: JString,
+    contact_card_json: JString,
 ) -> jstring {
     catch_panic!(env, {
-        // TODO: Implement contact card publishing
-        match string_to_jstring(&mut env, "QmIPFS123abc") {
-            Ok(s) => s.into_raw(),
-            Err(_) => std::ptr::null_mut(),
+        // Convert Java strings to Rust
+        let username_str = match jstring_to_string(&mut env, username) {
+            Ok(s) => s,
+            Err(e) => {
+                let _ = env.throw_new("java/lang/IllegalArgumentException", e);
+                return std::ptr::null_mut();
+            }
+        };
+
+        let pin_str = match jstring_to_string(&mut env, pin) {
+            Ok(s) => s,
+            Err(e) => {
+                let _ = env.throw_new("java/lang/IllegalArgumentException", e);
+                return std::ptr::null_mut();
+            }
+        };
+
+        let card_json = match jstring_to_string(&mut env, contact_card_json) {
+            Ok(s) => s,
+            Err(e) => {
+                let _ = env.throw_new("java/lang/IllegalArgumentException", e);
+                return std::ptr::null_mut();
+            }
+        };
+
+        // Deserialize ContactCard
+        let contact_card = match ContactCard::from_json(&card_json) {
+            Ok(card) => card,
+            Err(e) => {
+                let _ = env.throw_new("java/lang/IllegalArgumentException",
+                    format!("Failed to parse ContactCard JSON: {}", e));
+                return std::ptr::null_mut();
+            }
+        };
+
+        // Register username
+        match register_username(&username_str, &pin_str, &contact_card) {
+            Ok(domain) => {
+                match string_to_jstring(&mut env, &domain) {
+                    Ok(s) => s.into_raw(),
+                    Err(_) => std::ptr::null_mut(),
+                }
+            }
+            Err(e) => {
+                let _ = env.throw_new("java/lang/RuntimeException",
+                    format!("Username registration failed: {}", e));
+                std::ptr::null_mut()
+            }
         }
     }, std::ptr::null_mut())
 }
 
+/// Lookup username on Solana Name Service and decrypt with PIN
+/// Args:
+///   username - Username to lookup (e.g., "alice")
+///   pin - PIN to decrypt contact card
+/// Returns: ContactCard as JSON string
 #[no_mangle]
-pub extern "C" fn Java_com_securelegion_crypto_RustBridge_fetchContactCard(
+pub extern "C" fn Java_com_securelegion_crypto_RustBridge_lookupUsername(
     mut env: JNIEnv,
     _class: JClass,
-    _handle: JString,
-) -> jbyteArray {
+    username: JString,
+    pin: JString,
+) -> jstring {
     catch_panic!(env, {
-        // TODO: Implement contact card fetching
-        match vec_to_jbytearray(&mut env, &[]) {
-            Ok(arr) => arr.into_raw(),
-            Err(_) => std::ptr::null_mut(),
+        // Convert Java strings to Rust
+        let username_str = match jstring_to_string(&mut env, username) {
+            Ok(s) => s,
+            Err(e) => {
+                let _ = env.throw_new("java/lang/IllegalArgumentException", e);
+                return std::ptr::null_mut();
+            }
+        };
+
+        let pin_str = match jstring_to_string(&mut env, pin) {
+            Ok(s) => s,
+            Err(e) => {
+                let _ = env.throw_new("java/lang/IllegalArgumentException", e);
+                return std::ptr::null_mut();
+            }
+        };
+
+        // Lookup and decrypt
+        match lookup_username(&username_str, &pin_str) {
+            Ok(contact_card) => {
+                // Serialize to JSON
+                match contact_card.to_json() {
+                    Ok(json) => {
+                        match string_to_jstring(&mut env, &json) {
+                            Ok(s) => s.into_raw(),
+                            Err(_) => std::ptr::null_mut(),
+                        }
+                    }
+                    Err(e) => {
+                        let _ = env.throw_new("java/lang/RuntimeException",
+                            format!("Failed to serialize ContactCard: {}", e));
+                        std::ptr::null_mut()
+                    }
+                }
+            }
+            Err(e) => {
+                let _ = env.throw_new("java/lang/RuntimeException",
+                    format!("Username lookup failed: {}", e));
+                std::ptr::null_mut()
+            }
         }
     }, std::ptr::null_mut())
 }

@@ -1,6 +1,7 @@
 pub mod crypto;
 pub mod protocol;
 pub mod network;
+pub mod blockchain;
 pub mod ffi;
 
 // Re-export main types
@@ -12,6 +13,7 @@ pub use crypto::{
 
 pub use protocol::{Message, ContactCard, SecurityMode, MessageType};
 pub use network::{PingToken, PongToken, PingPongManager, TorManager};
+pub use blockchain::{register_username, lookup_username, EncryptedContactCard};
 
 // Library version
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
