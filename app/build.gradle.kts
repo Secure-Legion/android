@@ -4,13 +4,13 @@ plugins {
 }
 
 android {
-    namespace = "com.example.securelegion"
+    namespace = "com.securelegion"
     compileSdk {
         version = release(36)
     }
 
     defaultConfig {
-        applicationId = "com.example.securelegion"
+        applicationId = "com.securelegion"
         minSdk = 25
         targetSdk = 36
         versionCode = 1
