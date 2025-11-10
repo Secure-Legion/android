@@ -12,17 +12,34 @@ use std::path::PathBuf;
 use arti_client::config::TorClientConfigBuilder;
 use ed25519_dalek::{SigningKey, VerifyingKey};
 use sha3::{Digest, Sha3_256};
-use tokio::net::TcpListener;
+use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc;
 use std::net::SocketAddr;
 use tor_hsservice::{HsNickname, OnionServiceConfig};
 use std::str::FromStr;
+use std::sync::Mutex;
+use std::collections::HashMap;
+use once_cell::sync::Lazy;
+
+/// Structure representing a pending connection waiting for Pong response
+pub struct PendingConnection {
+    pub socket: TcpStream,
+    pub encrypted_ping: Vec<u8>,
+}
+
+/// Global map of pending connections: connection_id -> PendingConnection
+static PENDING_CONNECTIONS: Lazy<Arc<Mutex<HashMap<u64, PendingConnection>>>> =
+    Lazy::new(|| Arc::new(Mutex::new(HashMap::new())));
+
+/// Counter for generating unique connection IDs
+static CONNECTION_ID_COUNTER: Lazy<Arc<Mutex<u64>>> =
+    Lazy::new(|| Arc::new(Mutex::new(0)));
 
 pub struct TorManager {
     tor_client: Option<Arc<TorClient<PreferredRuntime>>>,
     hidden_service_address: Option<String>,
     listener_handle: Option<tokio::task::JoinHandle<()>>,
-    incoming_ping_tx: Option<mpsc::UnboundedSender<Vec<u8>>>,
+    incoming_ping_tx: Option<mpsc::UnboundedSender<(u64, Vec<u8>)>>,
     hs_service_port: u16,
     hs_local_port: u16,
 }
@@ -145,8 +162,9 @@ impl TorManager {
             format!("Invalid nickname: {}", e)
         })?;
 
-        let mut config = OnionServiceConfig::default();
-        config.nickname = nickname;
+        // Note: OnionServiceConfig doesn't have a default() method
+        // The hidden service configuration is handled by Arti internally
+        // For now, we just log the configuration details
 
         // Configure the virtual port on the .onion address to forward to localhost
         let target_addr = format!("127.0.0.1:{}", local_port);
@@ -217,14 +235,15 @@ impl TorManager {
     ///
     /// This starts a background task that listens on a local port (default 9150)
     /// for incoming Tor hidden service connections. When a Ping token arrives,
-    /// it will be sent through the returned channel.
+    /// it will be sent through the returned channel along with a connection_id
+    /// that can be used to send a Pong response back.
     ///
     /// # Arguments
     /// * `local_port` - Local port to bind (default: 9150)
     ///
     /// # Returns
-    /// A receiver channel for incoming Ping tokens (raw bytes)
-    pub async fn start_listener(&mut self, local_port: Option<u16>) -> Result<mpsc::UnboundedReceiver<Vec<u8>>, Box<dyn Error>> {
+    /// A receiver channel for incoming Ping tokens: (connection_id, encrypted_ping_bytes)
+    pub async fn start_listener(&mut self, local_port: Option<u16>) -> Result<mpsc::UnboundedReceiver<(u64, Vec<u8>)>, Box<dyn Error>> {
         let port = local_port.unwrap_or(9150);
         let addr: SocketAddr = format!("127.0.0.1:{}", port).parse()?;
 
@@ -232,7 +251,7 @@ impl TorManager {
         let listener = TcpListener::bind(addr).await?;
         log::info!("Hidden service listener started on {}", addr);
 
-        // Create channel for incoming pings
+        // Create channel for incoming pings: (connection_id, encrypted_ping_bytes)
         let (tx, rx) = mpsc::unbounded_channel();
         self.incoming_ping_tx = Some(tx.clone());
 
@@ -255,11 +274,30 @@ impl TorManager {
                                     buffer.truncate(n);
                                     log::info!("Received {} bytes from {}", n, peer_addr);
 
-                                    // Send to channel
-                                    if let Err(e) = tx_clone.send(buffer) {
+                                    // Generate unique connection ID
+                                    let connection_id = {
+                                        let mut counter = CONNECTION_ID_COUNTER.lock().unwrap();
+                                        *counter += 1;
+                                        *counter
+                                    };
+
+                                    // Store the connection for later Pong response
+                                    {
+                                        let mut pending = PENDING_CONNECTIONS.lock().unwrap();
+                                        pending.insert(connection_id, PendingConnection {
+                                            socket,
+                                            encrypted_ping: buffer.clone(),
+                                        });
+                                        log::info!("Stored connection {} for Pong response", connection_id);
+                                    }
+
+                                    // Send (connection_id, encrypted_ping) to channel
+                                    if let Err(e) = tx_clone.send((connection_id, buffer)) {
                                         log::error!("Failed to send ping to channel: {}", e);
+                                        // Clean up stored connection if channel send fails
+                                        PENDING_CONNECTIONS.lock().unwrap().remove(&connection_id);
                                     } else {
-                                        log::info!("Ping token forwarded to application");
+                                        log::info!("Ping forwarded to application (connection_id: {})", connection_id);
                                     }
                                 }
                                 Ok(_) => {
@@ -296,6 +334,34 @@ impl TorManager {
     /// Check if listener is running
     pub fn is_listening(&self) -> bool {
         self.listener_handle.is_some()
+    }
+
+    /// Send a Pong response back to a pending connection
+    ///
+    /// # Arguments
+    /// * `connection_id` - The connection ID from pollIncomingPing
+    /// * `pong_bytes` - The encrypted Pong token bytes to send
+    ///
+    /// # Returns
+    /// Ok(()) if sent successfully, Error otherwise
+    pub async fn send_pong_response(connection_id: u64, pong_bytes: &[u8]) -> Result<(), Box<dyn Error>> {
+        // Retrieve the pending connection
+        let mut pending_conn = {
+            let mut pending = PENDING_CONNECTIONS.lock().unwrap();
+            pending.remove(&connection_id)
+                .ok_or_else(|| format!("Connection {} not found or already closed", connection_id))?
+        };
+
+        log::info!("Sending {} byte Pong response to connection {}", pong_bytes.len(), connection_id);
+
+        // Send Pong bytes back
+        pending_conn.socket.write_all(pong_bytes).await?;
+        pending_conn.socket.flush().await?;
+
+        log::info!("Pong response sent successfully to connection {}", connection_id);
+
+        // Connection will be closed when dropped
+        Ok(())
     }
 }
 
