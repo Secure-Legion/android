@@ -5,13 +5,11 @@ plugins {
 
 android {
     namespace = "com.securelegion"
-    compileSdk {
-        version = release(36)
-    }
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "com.securelegion"
-        minSdk = 25
+        minSdk = 26
         targetSdk = 36
         versionCode = 1
         versionName = "1.0"
@@ -45,6 +43,17 @@ dependencies {
 
     // SwipeRefreshLayout
     implementation("androidx.swiperefreshlayout:swiperefreshlayout:1.1.0")
+
+    // Security - Encrypted storage
+    implementation("androidx.security:security-crypto:1.1.0-alpha06")
+
+    // Cryptography libraries
+    implementation("com.goterl:lazysodium-android:5.1.0@aar")
+    implementation("net.java.dev.jna:jna:5.13.0@aar")
+
+    // BIP39/BIP44
+    implementation("org.web3j:crypto:4.9.8")
+    implementation("org.bouncycastle:bcprov-jdk15on:1.70")
 
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)

@@ -114,19 +114,35 @@ object RustBridge {
 
     /**
      * Poll for an incoming Ping token (non-blocking)
-     * @return The Ping token bytes or null if no ping available
+     * @return Encoded data: [connection_id (8 bytes)][encrypted_ping_bytes] or null if no ping available
      */
     external fun pollIncomingPing(): ByteArray?
+
+    /**
+     * Send encrypted Pong response back to a pending connection
+     * @param connectionId The connection ID extracted from pollIncomingPing
+     * @param encryptedPongBytes The encrypted Pong token bytes (from respondToPing)
+     */
+    external fun sendPongBytes(connectionId: Long, encryptedPongBytes: ByteArray)
+
+    /**
+     * Decrypt an incoming encrypted Ping token and store it
+     * Wire format: [Sender X25519 Public Key - 32 bytes][Encrypted Ping Token]
+     * @param encryptedPingWire The encrypted wire message from pollIncomingPing
+     * @return Ping ID (String) to pass to respondToPing, or null on failure
+     */
+    external fun decryptIncomingPing(encryptedPingWire: ByteArray): String?
 
     // ==================== PING-PONG PROTOCOL ====================
 
     /**
-     * Send a Ping token to a recipient
-     * @param recipientPublicKey The recipient's Ed25519 public key
+     * Send an encrypted Ping token to a recipient
+     * @param recipientEd25519PublicKey The recipient's Ed25519 public key (for signature verification)
+     * @param recipientX25519PublicKey The recipient's X25519 public key (for encryption)
      * @param recipientOnion The recipient's .onion address
      * @return Ping ID for tracking
      */
-    external fun sendPing(recipientPublicKey: ByteArray, recipientOnion: String): String
+    external fun sendPing(recipientEd25519PublicKey: ByteArray, recipientX25519PublicKey: ByteArray, recipientOnion: String): String
 
     /**
      * Wait for a Pong response
@@ -138,11 +154,11 @@ object RustBridge {
 
     /**
      * Respond to an incoming Ping with a Pong
-     * @param pingId The Ping ID
+     * @param pingId The Ping ID from decryptIncomingPing
      * @param authenticated Whether user successfully authenticated
-     * @return Pong token bytes
+     * @return Encrypted Pong wire message to send via sendPongBytes, or null if denied
      */
-    external fun respondToPing(pingId: String, authenticated: Boolean): ByteArray
+    external fun respondToPing(pingId: String, authenticated: Boolean): ByteArray?
 
     // ==================== HELPER FUNCTIONS ====================
 

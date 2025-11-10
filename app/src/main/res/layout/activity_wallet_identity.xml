@@ -93,6 +93,7 @@
                 android:layout_marginBottom="16dp">
 
                 <TextView
+                    android:id="@+id/walletAddressText"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU"

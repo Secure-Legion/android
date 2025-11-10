@@ -12,6 +12,7 @@ import android.widget.ProgressBar
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
+import com.securelegion.crypto.KeyManager
 import com.securelegion.crypto.RustBridge
 import com.securelegion.crypto.TorManager
 import com.securelegion.services.TorService
@@ -48,49 +49,38 @@ class SplashActivity : AppCompatActivity() {
             .setStartDelay(400)
             .start()
 
-        // Start Tor foreground service for persistent connection
+        // Start Tor foreground service for persistent connection (if not already running)
         Log.i("SplashActivity", "Starting Tor foreground service...")
         TorService.start(this)
 
-        // Test Tor initialization
+        // Check Tor status without re-initializing
         Handler(Looper.getMainLooper()).postDelayed({
-            testTorInitialization()
+            checkTorStatus()
         }, SPLASH_DELAY)
     }
 
-    private fun testTorInitialization() {
-        Log.d("SplashActivity", "Testing Tor initialization...")
-        val statusText = findViewById<TextView>(R.id.torStatusText)
+    private fun checkTorStatus() {
+        Log.d("SplashActivity", "Checking Tor status...")
 
         try {
-            updateStatus("Initializing Tor client...")
             val torManager = TorManager.getInstance(this)
-            torManager.initializeAsync { success, onionAddress ->
-                runOnUiThread {
-                    if (success && onionAddress != null) {
-                        val message = "Tor initialized! .onion: $onionAddress"
-                        Log.i("SplashActivity", message)
-                        updateStatus("Connected to Tor network!")
-                        Toast.makeText(this, "Tor connected", Toast.LENGTH_SHORT).show()
-                    } else {
-                        val message = "Tor initialization failed"
-                        Log.e("SplashActivity", message)
-                        updateStatus("Connection failed")
-                        Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
-                    }
 
-                    // Navigate to MainActivity after initialization (success or failure)
-                    navigateToMain()
-                }
+            // Check if already initialized (don't re-initialize)
+            if (torManager.isInitialized()) {
+                val onionAddress = torManager.getOnionAddress()
+                Log.i("SplashActivity", "Tor already running: $onionAddress")
+                updateStatus("Connected to Tor network!")
+            } else {
+                Log.d("SplashActivity", "Tor initializing in background service...")
+                updateStatus("Connecting to Tor...")
             }
         } catch (e: Exception) {
-            Log.e("SplashActivity", "Error testing Tor", e)
-            updateStatus("Error: ${e.message}")
-            Toast.makeText(this, "Error: ${e.message}", Toast.LENGTH_SHORT).show()
-
-            // Navigate to main even if there's an error
-            navigateToMain()
+            Log.e("SplashActivity", "Error checking Tor status", e)
+            updateStatus("Checking connection...")
         }
+
+        // Navigate to main screen (TorService will continue in background)
+        navigateToMain()
     }
 
     private fun updateStatus(status: String) {
@@ -101,7 +91,9 @@ class SplashActivity : AppCompatActivity() {
 
     private fun navigateToMain() {
         Handler(Looper.getMainLooper()).postDelayed({
-            val intent = Intent(this, MainActivity::class.java)
+            // Always go to lock screen first for authentication
+            Log.d("SplashActivity", "Tor connected, navigating to LockActivity")
+            val intent = Intent(this, LockActivity::class.java)
             startActivity(intent)
             finish()
         }, 500) // Small delay to allow Toast to be visible

@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.1] - 2025-11-09
+
+### Fixed
+- **App crash on x86_64 emulators** - Built and packaged Rust native library for x86_64 architecture alongside existing ARM64 build. The app was crashing on Android emulators with `dlopen failed: library "libsecurelegion.so" not found` error.
+- **Tor reconnection on every app launch** - Fixed SplashActivity redundantly re-initializing Tor every time the app opened. Now properly checks if Tor is already initialized and reuses existing connection, preventing 15-30 second bootstrap delays.
+- **Memory leak warning in KeyManager** - Fixed singleton pattern to use applicationContext instead of Activity context to prevent memory leaks. Added proper `@Suppress("StaticFieldLeak")` annotation with safety justification.
+- **Back navigation in account creation** - Fixed issue where pressing back button in CreateAccountActivity or RestoreAccountActivity would close the app. Now properly returns to lock screen.
+
+### Added
+- **Production cryptography integration** - Integrated real cryptographic libraries (LazySodium for Ed25519/X25519, web3j for BIP39, BouncyCastle) into KeyManager. Replaced all placeholder crypto implementations.
+- **Wallet UI integration** - Connected wallet-related activities to KeyManager:
+  - SplashActivity now checks wallet initialization status on startup
+  - CreateAccountActivity generates real BIP39 12-word mnemonics and derives Solana addresses
+  - WalletIdentityActivity displays actual wallet address from KeyManager
+- **Multi-architecture native library support** - Added x86_64 native library build to jniLibs alongside ARM64, enabling app to run on both physical devices and emulators.
+- **Proper authentication flow** - Implemented lock screen that appears after Tor connection. Shows password entry for existing wallets, or account creation/import options for new users. Prevents unauthorized access to the app.
+
+### Changed
+- **Code quality improvements** - Fixed all IDE warnings:
+  - Removed unused imports
+  - Changed to use Kotlin KTX extensions (`SharedPreferences.edit { }`)
+  - Implemented proper equals/hashCode for KeyPair data class with ByteArray properties
+  - Added `@Suppress("unused")` annotations to JNI-called methods with explanatory comments
+- **Improved Tor persistence** - Modified `SplashActivity.testTorInitialization()` to `checkTorStatus()` which verifies existing connection instead of creating new one. TorService remains the single source of Tor initialization.
+- **SplashActivity navigation** - Now always navigates to LockActivity after Tor connects, instead of directly to MainActivity or CreateAccountActivity. Ensures proper authentication on every app launch.
+- **Account creation flow** - After successfully creating or restoring an account, the app now clears the back stack and navigates directly to MainActivity, preventing accidental return to account setup screens.
+
+---
+
+## [Unreleased]
+
 ### Added
 - **Ping-Pong Wake Protocol - Incoming Request Handling**
   - Implemented persistent foreground service (TorService) that keeps Tor running 24/7

@@ -96,12 +96,17 @@ class TorManager(private val context: Context) {
 
     /**
      * Send a Ping token to a contact
-     * @param contactPublicKey The contact's Ed25519 public key
+     * @param contactEd25519PublicKey The contact's Ed25519 public key (for signature verification)
+     * @param contactX25519PublicKey The contact's X25519 public key (for encryption)
      * @param contactOnionAddress The contact's .onion address
      * @return Ping ID for tracking
      */
-    fun sendPing(contactPublicKey: ByteArray, contactOnionAddress: String): String {
-        return RustBridge.sendPing(contactPublicKey, contactOnionAddress)
+    fun sendPing(
+        contactEd25519PublicKey: ByteArray,
+        contactX25519PublicKey: ByteArray,
+        contactOnionAddress: String
+    ): String {
+        return RustBridge.sendPing(contactEd25519PublicKey, contactX25519PublicKey, contactOnionAddress)
     }
 
     /**
@@ -118,9 +123,9 @@ class TorManager(private val context: Context) {
      * Respond to incoming Ping with Pong
      * @param pingId The Ping ID
      * @param authenticated Whether user successfully authenticated
-     * @return Pong token bytes
+     * @return Pong token bytes, or null if authentication denied
      */
-    fun respondToPing(pingId: String, authenticated: Boolean): ByteArray {
+    fun respondToPing(pingId: String, authenticated: Boolean): ByteArray? {
         return RustBridge.respondToPing(pingId, authenticated)
     }
 

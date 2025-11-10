@@ -203,11 +203,57 @@ class TorService : Service() {
         }.start()
     }
 
-    private fun handleIncomingPing(pingBytes: ByteArray) {
-        // TODO: Parse Ping token, show notification, request user authentication
-        // For now, just log it
-        Log.i(TAG, "Handling Ping: ${pingBytes.size} bytes")
-        Toast.makeText(this, "Incoming message notification!", Toast.LENGTH_SHORT).show()
+    private fun handleIncomingPing(encodedData: ByteArray) {
+        try {
+            // Wire format: [connection_id (8 bytes LE)][encrypted_ping_wire]
+            if (encodedData.size < 8) {
+                Log.e(TAG, "Invalid ping data: too short")
+                return
+            }
+
+            // Extract connection_id (first 8 bytes, little-endian)
+            val connectionId = java.nio.ByteBuffer.wrap(encodedData, 0, 8)
+                .order(java.nio.ByteOrder.LITTLE_ENDIAN)
+                .long
+
+            // Extract encrypted ping wire message (rest of bytes)
+            val encryptedPingWire = encodedData.copyOfRange(8, encodedData.size)
+
+            Log.i(TAG, "Received Ping on connection $connectionId: ${encryptedPingWire.size} bytes")
+
+            // Decrypt and store the Ping, get ping_id
+            val pingId = RustBridge.decryptIncomingPing(encryptedPingWire)
+            if (pingId == null) {
+                Log.e(TAG, "Failed to decrypt Ping")
+                return
+            }
+
+            Log.i(TAG, "Ping decrypted successfully. Ping ID: $pingId")
+
+            // TODO: Show notification to user asking for authentication
+            // For now, auto-accept for testing
+            Log.i(TAG, "Auto-accepting Ping for testing (TODO: show auth dialog)")
+
+            // Create encrypted Pong response
+            val encryptedPong = RustBridge.respondToPing(pingId, true)
+            if (encryptedPong == null) {
+                Log.e(TAG, "Failed to create Pong response")
+                return
+            }
+
+            Log.i(TAG, "Created encrypted Pong: ${encryptedPong.size} bytes")
+
+            // Send Pong back to sender
+            RustBridge.sendPongBytes(connectionId, encryptedPong)
+
+            Log.i(TAG, "Pong sent successfully!")
+
+            // Show toast for testing
+            Toast.makeText(this, "Incoming message authenticated!", Toast.LENGTH_SHORT).show()
+
+        } catch (e: Exception) {
+            Log.e(TAG, "Error handling incoming Ping", e)
+        }
     }
 
     private fun stopTorService() {

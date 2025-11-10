@@ -2,17 +2,21 @@ package com.securelegion
 
 import android.content.Intent
 import android.os.Bundle
+import android.util.Log
 import android.view.View
 import android.widget.Button
 import android.widget.EditText
+import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
+import com.securelegion.crypto.KeyManager
 
 class WalletIdentityActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_wallet_identity)
 
+        loadWalletAddress()
         setupBottomNavigation()
 
         // Back button
@@ -31,6 +35,23 @@ class WalletIdentityActivity : AppCompatActivity() {
         findViewById<View>(R.id.createNewWalletButton).setOnClickListener {
             Toast.makeText(this, "Creating new wallet...", Toast.LENGTH_SHORT).show()
             // TODO: Create new wallet
+        }
+    }
+
+    private fun loadWalletAddress() {
+        try {
+            val keyManager = KeyManager.getInstance(this)
+            if (keyManager.isInitialized()) {
+                val walletAddress = keyManager.getSolanaAddress()
+                findViewById<TextView>(R.id.walletAddressText).text = walletAddress
+                Log.i("WalletIdentity", "Loaded wallet address: $walletAddress")
+            } else {
+                findViewById<TextView>(R.id.walletAddressText).text = "No wallet initialized"
+                Log.w("WalletIdentity", "Wallet not initialized")
+            }
+        } catch (e: Exception) {
+            Log.e("WalletIdentity", "Failed to load wallet address", e)
+            findViewById<TextView>(R.id.walletAddressText).text = "Error loading address"
         }
     }
 
