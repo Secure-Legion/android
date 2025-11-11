@@ -141,7 +141,7 @@ mod tests {
 
     #[test]
     fn test_hash_handle() {
-        let handle = "alice";
+        let handle = "testuser";
         let salt = b"global_salt_12345";
 
         let hash1 = hash_handle(handle, salt).unwrap();

@@ -15,7 +15,7 @@ use sha3::{Digest, Sha3_256};
 /// Encrypted contact card stored on Solana blockchain
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EncryptedContactCard {
-    /// Username (e.g., "alice")
+    /// Username (e.g., "john")
     pub username: String,
 
     /// Encrypted ContactCard data
@@ -260,18 +260,18 @@ mod tests {
         let contact = ContactCard::new(
             vec![1, 2, 3, 4],
             "SolanaAddress123".to_string(),
-            "alice".to_string(),
+            "user1".to_string(),
             Some("test123.onion".to_string()),
         );
 
         let pin = "MySecretPIN123";
 
         // Encrypt
-        let encrypted = EncryptedContactCard::new("alice".to_string(), &contact, pin).unwrap();
+        let encrypted = EncryptedContactCard::new("user1".to_string(), &contact, pin).unwrap();
 
         // Decrypt with correct PIN
         let decrypted = encrypted.decrypt(pin).unwrap();
-        assert_eq!(decrypted.handle, "alice");
+        assert_eq!(decrypted.handle, "user1");
         assert_eq!(decrypted.onion_address, Some("test123.onion".to_string()));
 
         // Decrypt with wrong PIN should fail
@@ -281,8 +281,8 @@ mod tests {
 
     #[test]
     fn test_username_validation() {
-        assert!(validate_username("alice").is_ok());
-        assert!(validate_username("bob123").is_ok());
+        assert!(validate_username("user1").is_ok());
+        assert!(validate_username("user123").is_ok());
         assert!(validate_username("user_name").is_ok());
         assert!(validate_username("user-name").is_ok());
 

@@ -78,7 +78,7 @@ mod tests {
         let card = ContactCard::new(
             vec![1, 2, 3, 4],
             "SoL1234...".to_string(),
-            "alice".to_string(),
+            "user1".to_string(),
             Some("abc123.onion".to_string()),
         );
 
@@ -94,7 +94,7 @@ mod tests {
         let card = ContactCard::new(
             vec![1, 2, 3, 4],
             "SoL1234...".to_string(),
-            "bob".to_string(),
+            "user2".to_string(),
             None,
         );
 

@@ -174,15 +174,15 @@ let valid = verify_signature(data, &signature, &public_key)?;
 ```rust
 use securelegion::crypto::derive_shared_secret;
 
-// Alice's keypair
-let alice_private = [/* 32 bytes */];
-let alice_public = [/* 32 bytes */];
+// User1's keypair
+let user1_private = [/* 32 bytes */];
+let user1_public = [/* 32 bytes */];
 
-// Bob's public key
-let bob_public = [/* 32 bytes */];
+// User2's public key
+let user2_public = [/* 32 bytes */];
 
 // Derive shared secret
-let shared_secret = derive_shared_secret(&alice_private, &bob_public)?;
+let shared_secret = derive_shared_secret(&user1_private, &user2_public)?;
 ```
 
 ### Password Hashing (Argon2id)

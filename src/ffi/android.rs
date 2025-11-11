@@ -406,7 +406,7 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_initializeTor(
     }, std::ptr::null_mut())
 }
 
-/// Create a hidden service and get the .onion address
+/// Create a deterministic hidden service from seed-derived key
 /// Returns the .onion address for receiving connections
 ///
 /// # Arguments
@@ -420,13 +420,44 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_createHiddenService(
     local_port: jint,
 ) -> jstring {
     catch_panic!(env, {
+        // Get KeyManager to retrieve seed-derived hidden service key
+        let context = match env.call_static_method(
+            "android/app/ActivityThread",
+            "currentApplication",
+            "()Landroid/app/Application;",
+            &[],
+        ) {
+            Ok(ctx) => ctx.l().unwrap(),
+            Err(e) => {
+                let _ = env.throw_new("java/lang/RuntimeException", format!("Failed to get context: {}", e));
+                return std::ptr::null_mut();
+            }
+        };
+
+        let key_manager = match crate::ffi::keystore::get_key_manager(&mut env, &context) {
+            Ok(km) => km,
+            Err(e) => {
+                let _ = env.throw_new("java/lang/RuntimeException", format!("Failed to get KeyManager: {}", e));
+                return std::ptr::null_mut();
+            }
+        };
+
+        // Get hidden service private key (deterministic from seed)
+        let hs_private_key = match crate::ffi::keystore::get_hidden_service_private_key(&mut env, &key_manager) {
+            Ok(k) => k,
+            Err(e) => {
+                let _ = env.throw_new("java/lang/RuntimeException", format!("Failed to get hidden service key: {}", e));
+                return std::ptr::null_mut();
+            }
+        };
+
         let tor_manager = get_tor_manager();
 
-        // Run async hidden service creation in blocking context
+        // Run async hidden service creation with seed-derived key
         let runtime = tokio::runtime::Runtime::new().expect("Failed to create Tokio runtime");
         let result = runtime.block_on(async {
             let mut manager = tor_manager.lock().unwrap();
-            manager.create_hidden_service(service_port as u16, local_port as u16, None).await
+            manager.create_hidden_service(service_port as u16, local_port as u16, &hs_private_key).await
         });
 
         match result {
@@ -1833,10 +1864,10 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendSolanaTransaction(
 
 /// Register username on Solana Name Service with PIN protection
 /// Args:
-///   username - Username to register (e.g., "alice")
+///   username - Username to register (e.g., "john")
 ///   pin - PIN for encrypting contact card
 ///   contactCardJson - ContactCard serialized as JSON
-/// Returns: Full SNS domain (e.g., "alice.securelegion.sol")
+/// Returns: Full SNS domain (e.g., "john.securelegion.sol")
 #[no_mangle]
 pub extern "C" fn Java_com_securelegion_crypto_RustBridge_registerUsername(
     mut env: JNIEnv,
@@ -1900,7 +1931,7 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_registerUsername(
 
 /// Lookup username on Solana Name Service and decrypt with PIN
 /// Args:
-///   username - Username to lookup (e.g., "alice")
+///   username - Username to lookup (e.g., "john")
 ///   pin - PIN to decrypt contact card
 /// Returns: ContactCard as JSON string
 #[no_mangle]

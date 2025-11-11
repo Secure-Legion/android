@@ -80,53 +80,36 @@ impl TorManager {
         Ok("Tor client initialized successfully".to_string())
     }
 
-    /// Create a persistent .onion address and configure hidden service
+    /// Create a deterministic .onion address from seed-derived key
     ///
-    /// Generates a cryptographically-derived .onion address from a persistent Ed25519 keypair.
-    /// The address will be the same each time for the same keys.
+    /// Uses the Ed25519 key derived from BIP39 seed (via KeyManager) to generate
+    /// a deterministic .onion address. Same seed = same .onion address forever.
     /// Also configures Arti to accept incoming connections and route them to local_port.
     ///
     /// # Arguments
     /// * `service_port` - The virtual port on the .onion address (e.g., 80, 9150)
     /// * `local_port` - The local port to forward connections to (e.g., 9150)
-    /// * `data_dir` - Directory to store hidden service keys
+    /// * `hs_private_key` - 32-byte Ed25519 private key from KeyManager (seed-derived)
     ///
     /// # Returns
-    /// A persistent v3 .onion address
+    /// A deterministic v3 .onion address
     pub async fn create_hidden_service(
         &mut self,
         service_port: u16,
         local_port: u16,
-        data_dir: Option<PathBuf>,
+        hs_private_key: &[u8],
     ) -> Result<String, Box<dyn Error>> {
         let tor_client = self.get_client()?;
 
-        // Set up hidden service directory
-        let hs_dir = data_dir.unwrap_or_else(|| {
-            PathBuf::from("/data/data/com.securelegion/files/tor_hs")
-        });
+        // Validate key length
+        if hs_private_key.len() != 32 {
+            return Err("Hidden service private key must be 32 bytes".into());
+        }
 
-        // Create directory if it doesn't exist
-        std::fs::create_dir_all(&hs_dir)?;
-
-        // Check if we have existing keys
-        let key_path = hs_dir.join("hs_ed25519_secret_key");
-        let signing_key = if key_path.exists() {
-            // Load existing keypair
-            let key_data = std::fs::read(&key_path)?;
-            if key_data.len() != 32 {
-                return Err("Invalid key file".into());
-            }
-            let mut key_bytes = [0u8; 32];
-            key_bytes.copy_from_slice(&key_data);
-            SigningKey::from_bytes(&key_bytes)
-        } else {
-            // Generate new keypair
-            let signing_key = SigningKey::generate(&mut rand::rngs::OsRng);
-            // Save it for persistence
-            std::fs::write(&key_path, signing_key.to_bytes())?;
-            signing_key
-        };
+        // Create Ed25519 signing key from provided seed-derived key
+        let mut key_bytes = [0u8; 32];
+        key_bytes.copy_from_slice(hs_private_key);
+        let signing_key = SigningKey::from_bytes(&key_bytes);
 
         // Get public key
         let verifying_key: VerifyingKey = signing_key.verifying_key();

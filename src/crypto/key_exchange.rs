@@ -129,34 +129,34 @@ mod tests {
 
     #[test]
     fn test_derive_shared_secret() {
-        // Alice generates keypair
-        let (alice_public, alice_private) = generate_static_keypair();
+        // User1 generates keypair
+        let (user1_public, user1_private) = generate_static_keypair();
 
-        // Bob generates keypair
-        let (bob_public, bob_private) = generate_static_keypair();
+        // User2 generates keypair
+        let (user2_public, user2_private) = generate_static_keypair();
 
         // Both derive same shared secret
-        let alice_shared = derive_shared_secret(&alice_private, &bob_public).unwrap();
-        let bob_shared = derive_shared_secret(&bob_private, &alice_public).unwrap();
+        let user1_shared = derive_shared_secret(&user1_private, &user2_public).unwrap();
+        let user2_shared = derive_shared_secret(&user2_private, &user1_public).unwrap();
 
-        assert_eq!(alice_shared, bob_shared);
+        assert_eq!(user1_shared, user2_shared);
     }
 
     #[test]
     fn test_ephemeral_key_exchange() {
-        // Alice generates ephemeral key
-        let (alice_public, alice_secret) = generate_ephemeral_key();
+        // User1 generates ephemeral key
+        let (user1_public, user1_secret) = generate_ephemeral_key();
 
-        // Bob generates static keypair
-        let (bob_public, bob_private) = generate_static_keypair();
+        // User2 generates static keypair
+        let (user2_public, user2_private) = generate_static_keypair();
 
-        // Alice derives shared secret
-        let alice_shared = derive_shared_secret_ephemeral(alice_secret, &bob_public).unwrap();
+        // User1 derives shared secret
+        let user1_shared = derive_shared_secret_ephemeral(user1_secret, &user2_public).unwrap();
 
-        // Bob derives shared secret
-        let bob_shared = derive_shared_secret(&bob_private, &alice_public).unwrap();
+        // User2 derives shared secret
+        let user2_shared = derive_shared_secret(&user2_private, &user1_public).unwrap();
 
-        assert_eq!(alice_shared, bob_shared);
+        assert_eq!(user1_shared, user2_shared);
     }
 
     #[test]

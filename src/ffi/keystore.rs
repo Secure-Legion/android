@@ -161,6 +161,37 @@ pub fn get_encryption_public_key(env: &mut JNIEnv, key_manager: &JObject) -> Res
     Ok(buf)
 }
 
+/// Get hidden service Ed25519 private key from Android KeyStore
+pub fn get_hidden_service_private_key(env: &mut JNIEnv, key_manager: &JObject) -> Result<Vec<u8>, KeyStoreError> {
+    let result = env
+        .call_method(
+            key_manager,
+            "getHiddenServiceKeyBytes",
+            "()[B",
+            &[],
+        )
+        .map_err(|e| KeyStoreError::JniError(format!("Failed to call getHiddenServiceKeyBytes: {}", e)))?;
+
+    let byte_array = result.l()
+        .map_err(|e| KeyStoreError::JniError(format!("Failed to get byte array: {}", e)))?;
+
+    let jbyte_array = JByteArray::from(byte_array);
+    let len = env.get_array_length(&jbyte_array)
+        .map_err(|e| KeyStoreError::JniError(format!("Failed to get array length: {}", e)))?;
+
+    let mut buf = vec![0i8; len as usize];
+    env.get_byte_array_region(&jbyte_array, 0, &mut buf)
+        .map_err(|e| KeyStoreError::JniError(format!("Failed to copy bytes: {}", e)))?;
+
+    let buf: Vec<u8> = buf.into_iter().map(|b| b as u8).collect();
+
+    if buf.len() != 32 {
+        return Err(KeyStoreError::KeyNotFound);
+    }
+
+    Ok(buf)
+}
+
 /// Sign data using Ed25519 key from Android KeyStore
 ///
 /// Delegates the actual signing operation to Android KeyStore for maximum security
