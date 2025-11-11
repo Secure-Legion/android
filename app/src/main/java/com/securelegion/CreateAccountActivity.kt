@@ -11,6 +11,12 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import com.securelegion.crypto.KeyManager
+import com.securelegion.models.ContactCard
+import com.securelegion.services.ContactCardManager
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.web3j.crypto.MnemonicUtils
 import java.security.SecureRandom
 import java.util.UUID
@@ -32,6 +38,8 @@ class CreateAccountActivity : AppCompatActivity() {
 
     private var generatedWalletAddress: String = ""
     private var isUsernameAvailable: Boolean = false
+    private var contactCardCid: String = ""
+    private var contactCardPin: String = ""
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -100,14 +108,12 @@ class CreateAccountActivity : AppCompatActivity() {
         // Create Account button
         createAccountButton.setOnClickListener {
             if (isUsernameAvailable) {
-                Toast.makeText(this, "Account created successfully!", Toast.LENGTH_SHORT).show()
-                // TODO: Actually create the account on blockchain
+                // Disable button to prevent double-click
+                createAccountButton.isEnabled = false
 
-                // Navigate to MainActivity and clear back stack
-                val intent = Intent(this, MainActivity::class.java)
-                intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
-                startActivity(intent)
-                finish()
+                // Generate and upload contact card with the confirmed username
+                // This is async, so we need to wait for it to complete
+                generateContactCard()
             }
         }
     }
@@ -146,12 +152,93 @@ class CreateAccountActivity : AppCompatActivity() {
 
             Toast.makeText(this, "Wallet created successfully!", Toast.LENGTH_SHORT).show()
 
-            // TODO: Show the mnemonic to user for backup
-            Log.w("CreateAccount", "IMPORTANT: User should backup mnemonic: $mnemonic")
+            // Show backup seed phrase screen
+            Log.i("CreateAccount", "Navigating to backup seed phrase screen")
+            val intent = Intent(this, BackupSeedPhraseActivity::class.java)
+            intent.putExtra(BackupSeedPhraseActivity.EXTRA_SEED_PHRASE, mnemonic)
+            startActivity(intent)
 
         } catch (e: Exception) {
             Log.e("CreateAccount", "Failed to generate wallet", e)
             Toast.makeText(this, "Failed to create wallet: ${e.message}", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    private fun generateContactCard() {
+        CoroutineScope(Dispatchers.Main).launch {
+            try {
+                Log.d("CreateAccount", "Generating contact card...")
+
+                // Show loading state
+                createAccountButton.text = "Creating Account..."
+
+                val keyManager = KeyManager.getInstance(this@CreateAccountActivity)
+
+                // Create contact card with user info
+                val contactCard = ContactCard(
+                    displayName = usernameInput.text.toString().ifEmpty { "Anonymous" },
+                    solanaPublicKey = keyManager.getSolanaPublicKey(),
+                    solanaAddress = keyManager.getSolanaAddress(),
+                    torOnionAddress = keyManager.getTorOnionAddress(),
+                    timestamp = System.currentTimeMillis()
+                )
+
+                // Generate random PIN
+                val cardManager = ContactCardManager(this@CreateAccountActivity)
+                contactCardPin = cardManager.generateRandomPin()
+
+                Log.d("CreateAccount", "Uploading contact card to IPFS...")
+                Toast.makeText(
+                    this@CreateAccountActivity,
+                    "Uploading contact card...",
+                    Toast.LENGTH_SHORT
+                ).show()
+
+                // Upload to IPFS with PIN encryption
+                val result = withContext(Dispatchers.IO) {
+                    cardManager.uploadContactCard(contactCard, contactCardPin)
+                }
+
+                if (result.isSuccess) {
+                    val (cid, size) = result.getOrThrow()
+                    contactCardCid = cid
+
+                    // Store CID, PIN, and username in encrypted storage
+                    keyManager.storeContactCardInfo(contactCardCid, contactCardPin)
+                    keyManager.storeUsername(usernameInput.text.toString())
+
+                    Log.i("CreateAccount", "Contact card uploaded successfully")
+                    Log.i("CreateAccount", "CID: $contactCardCid")
+                    Log.i("CreateAccount", "PIN: $contactCardPin")
+                    Log.i("CreateAccount", "Size: $size bytes")
+
+                    Toast.makeText(
+                        this@CreateAccountActivity,
+                        "Account created successfully!",
+                        Toast.LENGTH_LONG
+                    ).show()
+
+                    // Navigate to Wallet Identity screen to show CID and PIN
+                    val intent = Intent(this@CreateAccountActivity, WalletIdentityActivity::class.java)
+                    intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+                    intent.putExtra("SHOW_CONTACT_CARD_INFO", true)
+                    startActivity(intent)
+                    finish()
+                } else {
+                    throw result.exceptionOrNull()!!
+                }
+            } catch (e: Exception) {
+                Log.e("CreateAccount", "Failed to generate contact card", e)
+                Toast.makeText(
+                    this@CreateAccountActivity,
+                    "Failed to create contact card: ${e.message}",
+                    Toast.LENGTH_LONG
+                ).show()
+
+                // Re-enable button so user can retry
+                createAccountButton.isEnabled = true
+                createAccountButton.text = "Create Account"
+            }
         }
     }
 
@@ -168,11 +255,10 @@ class CreateAccountActivity : AppCompatActivity() {
 
             // Show create account section
             createSection.visibility = View.VISIBLE
-            createAccountButton.isClickable = false
-            createAccountButton.alpha = 0.5f
+            createAccountButton.isClickable = true
+            createAccountButton.alpha = 1.0f
 
-            // Note: User needs to fund the account first
-            Toast.makeText(this, "Fund your wallet to continue", Toast.LENGTH_LONG).show()
+            Toast.makeText(this, "Click 'Create Account' to finish", Toast.LENGTH_LONG).show()
         }, 1500)
     }
 }

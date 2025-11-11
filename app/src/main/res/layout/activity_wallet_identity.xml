@@ -140,7 +140,7 @@
                 android:id="@+id/updateUsernameButton"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="Update Username"
+                android:text="New Identity"
                 android:textSize="16sp"
                 android:textStyle="bold"
                 android:textColor="@color/text_white"
@@ -151,6 +151,81 @@
                 android:focusable="true"
                 android:elevation="6dp"
                 android:layout_marginBottom="16dp" />
+
+            <!-- Contact Card Info -->
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Contact Card (Share with Friends)"
+                android:textSize="13sp"
+                android:textStyle="bold"
+                android:textColor="@color/text_gray"
+                android:layout_marginBottom="8dp" />
+
+            <LinearLayout
+                android:id="@+id/contactCardSection"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:background="@drawable/settings_item_bg"
+                android:padding="16dp"
+                android:layout_marginBottom="16dp"
+                android:visibility="gone">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="CID (Public - Tap to Copy)"
+                    android:textSize="12sp"
+                    android:textStyle="bold"
+                    android:textColor="@color/text_gray"
+                    android:layout_marginBottom="4dp" />
+
+                <TextView
+                    android:id="@+id/contactCardCid"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Loading..."
+                    android:textSize="14sp"
+                    android:textColor="@color/accent_blue"
+                    android:fontFamily="monospace"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:background="?attr/selectableItemBackground"
+                    android:padding="8dp"
+                    android:layout_marginStart="-8dp"
+                    android:layout_marginBottom="12dp" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="PIN (Private - Share Separately)"
+                    android:textSize="12sp"
+                    android:textStyle="bold"
+                    android:textColor="@color/text_gray"
+                    android:layout_marginBottom="4dp" />
+
+                <TextView
+                    android:id="@+id/contactCardPin"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="------"
+                    android:textSize="20sp"
+                    android:textStyle="bold"
+                    android:textColor="@color/text_white"
+                    android:fontFamily="monospace"
+                    android:letterSpacing="0.2"
+                    android:layout_marginBottom="8dp" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Share CID publicly, but keep PIN private for security"
+                    android:textSize="12sp"
+                    android:textColor="@color/text_gray"
+                    android:lineSpacingMultiplier="1.3" />
+
+            </LinearLayout>
 
             <!-- Wallet Management -->
             <TextView

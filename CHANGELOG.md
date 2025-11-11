@@ -7,6 +7,93 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.2] - 2025-11-11
+
+### Added
+- **IPFS Contact Card System** - Implemented decentralized contact sharing via IPFS (Pinata)
+  - PIN-protected contact card encryption using libsodium (XSalsa20-Poly1305)
+  - Argon2id key derivation for PIN-based encryption
+  - Contact cards stored on IPFS with CID addressing
+  - Share CID + PIN separately for defense-in-depth security
+  - ContactCard model with display name, Solana address, and Tor onion address
+  - ContactCardManager handles encryption, upload, download, and decryption
+  - PinataService for IPFS gateway operations
+
+- **Username Storage** - Persistent username across app sessions
+  - Added username storage methods to KeyManager (encrypted storage)
+  - Username automatically saved during account creation
+  - Username displayed in Wallet Identity screen
+
+- **Backup Seed Phrase Activity** - Interface for displaying and backing up 12-word mnemonic
+  - Activity layout created for seed phrase display
+  - BackupSeedPhraseActivity implementation ready for integration
+
+- **Copy CID Functionality** - One-tap CID copying for easy sharing
+  - CID text is clickable with visual indication (blue color)
+  - Tap CID to copy to clipboard with confirmation toast
+  - PIN remains non-copyable for security (manual sharing only)
+
+### Fixed
+- **CID Format Validation** - Fixed invalid CID format errors
+  - Updated validation to accept all CIDv1 formats (baf* prefix)
+  - Previously only accepted "bafy" but Pinata generates "bafkrei" (raw codec)
+  - Now supports both CIDv0 (Qm*) and all CIDv1 variants (baf*)
+
+- **Account Creation Flow** - Fixed contact card upload and navigation
+  - App now waits for contact card upload before navigation
+  - Fixed issue where CID/PIN were not displayed after creation
+  - Navigates to Wallet Identity screen after successful upload
+  - Shows "Creating Account..." loading state during upload
+  - Proper error handling with retry option
+
+- **Username Display** - Fixed username not appearing in Identity screen
+  - Username now loads from encrypted storage on activity creation
+  - Properly persists across app restarts
+  - EditText pre-populated with stored username
+
+### Changed
+- **UI Improvements**
+  - Changed "Update Username" button to "New Identity"
+  - Contact Card section label: "CID (Public - Tap to Copy)"
+  - CID displayed in blue with tap feedback
+  - PIN displayed in white (non-interactive)
+
+- **Contact Card Security Model**
+  - CID is public and shareable (IPFS hash)
+  - PIN provides additional authentication layer
+  - Prevents spam and unauthorized contact card access
+  - Generic IPFS filenames for privacy (no username in file info)
+
+### Technical Details
+
+**New Files:**
+- app/src/main/java/com/securelegion/services/PinataService.kt - IPFS gateway integration
+- app/src/main/java/com/securelegion/services/ContactCardManager.kt - Contact card encryption/decryption
+- app/src/main/java/com/securelegion/models/ContactCard.kt - Contact card data model
+- app/src/main/java/com/securelegion/BackupSeedPhraseActivity.kt - Seed phrase backup UI
+- app/src/main/res/layout/activity_backup_seed_phrase.xml - Backup layout
+
+**Dependencies Added:**
+- OkHttp for IPFS API calls
+- LazySodium for PIN-based encryption
+- JSON serialization for contact cards
+
+**Encryption Specs:**
+- Algorithm: XSalsa20-Poly1305 (authenticated encryption)
+- Key derivation: Argon2id with interactive parameters
+- PIN format: 6-digit numeric PIN
+- Encrypted format: [salt (16B)][nonce (24B)][ciphertext + MAC]
+
+**Testing:**
+- Contact card upload to IPFS
+- CID + PIN generation and storage
+- Contact card download and decryption
+- CID validation for all formats
+- Username persistence across restarts
+- Copy CID functionality
+
+---
+
 ## [0.1.1] - 2025-11-09
 
 ### Fixed

@@ -53,7 +53,12 @@ dependencies {
 
     // BIP39/BIP44
     implementation("org.web3j:crypto:4.9.8")
-    implementation("org.bouncycastle:bcprov-jdk15on:1.70")
+
+    // HTTP Client for Pinata IPFS
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
+
+    // JSON processing
+    implementation("org.json:json:20231013")
 
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)

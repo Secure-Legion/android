@@ -1,5 +1,8 @@
 package com.securelegion
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import android.content.Intent
 import android.os.Bundle
 import android.util.Log
@@ -17,6 +20,8 @@ class WalletIdentityActivity : AppCompatActivity() {
         setContentView(R.layout.activity_wallet_identity)
 
         loadWalletAddress()
+        loadUsername()
+        loadContactCardInfo()
         setupBottomNavigation()
 
         // Back button
@@ -53,6 +58,58 @@ class WalletIdentityActivity : AppCompatActivity() {
             Log.e("WalletIdentity", "Failed to load wallet address", e)
             findViewById<TextView>(R.id.walletAddressText).text = "Error loading address"
         }
+    }
+
+    private fun loadUsername() {
+        try {
+            val keyManager = KeyManager.getInstance(this)
+            val username = keyManager.getUsername()
+            if (username != null) {
+                findViewById<EditText>(R.id.usernameInput).setText(username)
+                Log.i("WalletIdentity", "Loaded username: $username")
+            } else {
+                Log.d("WalletIdentity", "No username stored yet")
+            }
+        } catch (e: Exception) {
+            Log.e("WalletIdentity", "Failed to load username", e)
+        }
+    }
+
+    private fun loadContactCardInfo() {
+        try {
+            val keyManager = KeyManager.getInstance(this)
+            if (keyManager.hasContactCardInfo()) {
+                val cid = keyManager.getContactCardCid()
+                val pin = keyManager.getContactCardPin()
+
+                if (cid != null && pin != null) {
+                    findViewById<View>(R.id.contactCardSection).visibility = View.VISIBLE
+
+                    val cidTextView = findViewById<TextView>(R.id.contactCardCid)
+                    cidTextView.text = cid
+
+                    // Make CID clickable to copy
+                    cidTextView.setOnClickListener {
+                        copyToClipboard(cid, "CID")
+                    }
+
+                    findViewById<TextView>(R.id.contactCardPin).text = pin
+                    Log.i("WalletIdentity", "Loaded contact card info")
+                }
+            } else {
+                Log.d("WalletIdentity", "No contact card info stored yet")
+            }
+        } catch (e: Exception) {
+            Log.e("WalletIdentity", "Failed to load contact card info", e)
+        }
+    }
+
+    private fun copyToClipboard(text: String, label: String) {
+        val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        val clip = ClipData.newPlainText(label, text)
+        clipboard.setPrimaryClip(clip)
+        Toast.makeText(this, "$label copied to clipboard", Toast.LENGTH_SHORT).show()
+        Log.i("WalletIdentity", "$label copied to clipboard")
     }
 
     private fun setupBottomNavigation() {

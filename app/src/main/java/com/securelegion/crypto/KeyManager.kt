@@ -41,6 +41,7 @@ class KeyManager private constructor(context: Context) {
         private const val WALLET_SEED_ALIAS = "${KEYSTORE_ALIAS_PREFIX}wallet_seed"
         private const val ED25519_SIGNING_KEY_ALIAS = "${KEYSTORE_ALIAS_PREFIX}signing_key"
         private const val X25519_ENCRYPTION_KEY_ALIAS = "${KEYSTORE_ALIAS_PREFIX}encryption_key"
+        private const val HIDDEN_SERVICE_KEY_ALIAS = "${KEYSTORE_ALIAS_PREFIX}hidden_service_key"
 
         @Volatile
         private var instance: KeyManager? = null
@@ -85,9 +86,13 @@ class KeyManager private constructor(context: Context) {
             // Generate X25519 encryption key (for message encryption)
             val x25519KeyPair = deriveX25519KeyPair(seed)
 
+            // Generate Ed25519 hidden service key (for deterministic .onion address)
+            val hiddenServiceKeyPair = deriveHiddenServiceKeyPair(seed)
+
             // Store keys securely in encrypted preferences
             storeKeyPair(ED25519_SIGNING_KEY_ALIAS, ed25519KeyPair)
             storeKeyPair(X25519_ENCRYPTION_KEY_ALIAS, x25519KeyPair)
+            storeKeyPair(HIDDEN_SERVICE_KEY_ALIAS, hiddenServiceKeyPair)
 
             // Store seed (encrypted by EncryptedSharedPreferences)
             encryptedPrefs.edit {
@@ -146,12 +151,101 @@ class KeyManager private constructor(context: Context) {
     }
 
     /**
+     * Get hidden service Ed25519 private key (32 bytes)
+     * Used for deterministic .onion address generation
+     * Called via JNI from Rust code
+     */
+    @Suppress("unused")
+    fun getHiddenServiceKeyBytes(): ByteArray {
+        return getStoredKey("${HIDDEN_SERVICE_KEY_ALIAS}_private")
+            ?: throw KeyManagerException("Hidden service key not found. Initialize wallet first.")
+    }
+
+    /**
+     * Get hidden service Ed25519 public key (32 bytes)
+     * Used to derive the .onion address
+     * Called via JNI from Rust code
+     */
+    @Suppress("unused")
+    fun getHiddenServicePublicKey(): ByteArray {
+        return getStoredKey("${HIDDEN_SERVICE_KEY_ALIAS}_public")
+            ?: throw KeyManagerException("Hidden service public key not found")
+    }
+
+    /**
      * Get Solana wallet address (base58-encoded public key)
      */
     @Suppress("unused") // Will be used to display wallet address
     fun getSolanaAddress(): String {
         val publicKey = getSigningPublicKey()
         return base58Encode(publicKey)
+    }
+
+    /**
+     * Get Solana public key (raw 32 bytes)
+     */
+    fun getSolanaPublicKey(): ByteArray {
+        return getSigningPublicKey()
+    }
+
+    /**
+     * Get Tor onion address derived from hidden service key
+     */
+    fun getTorOnionAddress(): String {
+        val publicKey = getStoredKey("${HIDDEN_SERVICE_KEY_ALIAS}_public")
+            ?: throw KeyManagerException("Hidden service key not found")
+
+        // Convert Ed25519 public key to onion address v3 format
+        // Format: base32(public_key + checksum + version).onion
+        val onionAddress = publicKeyToOnionAddress(publicKey)
+        return "$onionAddress:9050" // Default Tor port
+    }
+
+    /**
+     * Convert Ed25519 public key to Tor v3 onion address
+     */
+    private fun publicKeyToOnionAddress(publicKey: ByteArray): String {
+        // Tor v3 address = base32(public_key || checksum || version)
+        // This is a simplified version - full implementation requires Tor spec
+        val version = byteArrayOf(0x03)
+        val checksumInput = ".onion checksum".toByteArray() + publicKey + version
+        val checksum = sha256(checksumInput).take(2).toByteArray()
+
+        val combined = publicKey + checksum + version
+        return base32Encode(combined).lowercase()
+    }
+
+    /**
+     * Base32 encoding for Tor addresses
+     */
+    private fun base32Encode(bytes: ByteArray): String {
+        val alphabet = "abcdefghijklmnopqrstuvwxyz234567"
+        val output = StringBuilder()
+        var buffer = 0
+        var bitsLeft = 0
+
+        for (byte in bytes) {
+            buffer = (buffer shl 8) or (byte.toInt() and 0xFF)
+            bitsLeft += 8
+            while (bitsLeft >= 5) {
+                output.append(alphabet[(buffer shr (bitsLeft - 5)) and 0x1F])
+                bitsLeft -= 5
+            }
+        }
+
+        if (bitsLeft > 0) {
+            output.append(alphabet[(buffer shl (5 - bitsLeft)) and 0x1F])
+        }
+
+        return output.toString()
+    }
+
+    /**
+     * SHA-256 hash
+     */
+    private fun sha256(data: ByteArray): ByteArray {
+        val digest = MessageDigest.getInstance("SHA-256")
+        return digest.digest(data)
     }
 
     /**
@@ -245,6 +339,32 @@ class KeyManager private constructor(context: Context) {
     }
 
     /**
+     * Derive Ed25519 keypair for Tor hidden service from seed
+     * Uses domain separation: SHA-256(seed || "tor_hs")
+     * This ensures the same seed always produces the same .onion address
+     */
+    private fun deriveHiddenServiceKeyPair(seed: ByteArray): KeyPair {
+        // Domain separation: hash seed with "tor_hs" to derive different key
+        val messageDigest = MessageDigest.getInstance("SHA-256")
+        messageDigest.update(seed)
+        messageDigest.update("tor_hs".toByteArray())
+        val hsSeed = messageDigest.digest()
+
+        // Generate Ed25519 keypair from seed using libsodium
+        val publicKey = ByteArray(Sign.ED25519_PUBLICKEYBYTES)
+        val privateKeyFull = ByteArray(Sign.ED25519_SECRETKEYBYTES) // 64 bytes
+
+        lazySodium.cryptoSignSeedKeypair(publicKey, privateKeyFull, hsSeed)
+
+        // Extract 32-byte private key (libsodium returns 64 bytes: seed || public_key)
+        val privateKey = privateKeyFull.copyOfRange(0, 32)
+
+        Log.d(TAG, "Derived hidden service Ed25519 keypair (private: ${privateKey.size} bytes, public: ${publicKey.size} bytes)")
+
+        return KeyPair(privateKey, publicKey)
+    }
+
+    /**
      * Store keypair in encrypted preferences
      */
     private fun storeKeyPair(alias: String, keyPair: KeyPair) {
@@ -306,6 +426,59 @@ class KeyManager private constructor(context: Context) {
 
         return publicKey
     }
+
+    // ==================== CONTACT CARD STORAGE ====================
+
+    /**
+     * Store contact card CID and PIN in encrypted storage
+     */
+    fun storeContactCardInfo(cid: String, pin: String) {
+        encryptedPrefs.edit {
+            putString("contact_card_cid", cid)
+            putString("contact_card_pin", pin)
+        }
+        Log.i(TAG, "Stored contact card info")
+    }
+
+    /**
+     * Get contact card CID
+     */
+    fun getContactCardCid(): String? {
+        return encryptedPrefs.getString("contact_card_cid", null)
+    }
+
+    /**
+     * Get contact card PIN
+     */
+    fun getContactCardPin(): String? {
+        return encryptedPrefs.getString("contact_card_pin", null)
+    }
+
+    /**
+     * Check if contact card info is stored
+     */
+    fun hasContactCardInfo(): Boolean {
+        return getContactCardCid() != null && getContactCardPin() != null
+    }
+
+    /**
+     * Store username in encrypted storage
+     */
+    fun storeUsername(username: String) {
+        encryptedPrefs.edit {
+            putString("username", username)
+        }
+        Log.i(TAG, "Stored username: $username")
+    }
+
+    /**
+     * Get stored username
+     */
+    fun getUsername(): String? {
+        return encryptedPrefs.getString("username", null)
+    }
+
+    // ==================== HELPER FUNCTIONS ====================
 
     /**
      * Base58 encode (for Solana addresses)

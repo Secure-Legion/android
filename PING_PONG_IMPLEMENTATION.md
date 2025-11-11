@@ -339,5 +339,5 @@ Solution:
 
 ---
 
-**Status**: ✅ Core implementation complete, FFI wiring pending
+**Status**:  Core implementation complete, FFI wiring pending
 **Next Priority**: Build Rust library and test end-to-end handshake

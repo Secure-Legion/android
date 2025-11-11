@@ -1,0 +1,328 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.constraintlayout.widget.ConstraintLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/header_bg">
+
+<ScrollView
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:fillViewport="true">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="24dp">
+
+        <!-- Header -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:layout_marginBottom="24dp">
+
+            <ImageView
+                android:layout_width="48dp"
+                android:layout_height="48dp"
+                android:src="@drawable/secure_logo"
+                android:layout_marginEnd="12dp"
+                android:contentDescription="Secure Legion Logo" />
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="BACKUP SEED PHRASE"
+                android:textSize="20sp"
+                android:textStyle="bold"
+                android:textColor="@color/text_white" />
+
+        </LinearLayout>
+
+        <!-- Warning Box -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:background="@drawable/info_box_bg"
+            android:padding="16dp"
+            android:layout_marginBottom="24dp">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="CRITICAL: Don't Share With Anyone"
+                android:textSize="16sp"
+                android:textStyle="bold"
+                android:textColor="@color/text_white"
+                android:layout_marginBottom="8dp" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Your seed phrase is the ONLY way to recover your wallet. If you lose it, your funds are gone forever."
+                android:textSize="14sp"
+                android:textColor="@color/text_gray"
+                android:lineSpacingMultiplier="1.4" />
+
+        </LinearLayout>
+
+        <!-- Seed Phrase Grid -->
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Your 12-Word Seed Phrase"
+            android:textSize="16sp"
+            android:textStyle="bold"
+            android:textColor="@color/text_white"
+            android:layout_marginBottom="12dp" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:background="@drawable/settings_item_bg"
+            android:padding="16dp"
+            android:layout_marginBottom="24dp">
+
+            <!-- Row 1 -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:layout_marginBottom="12dp">
+
+                <TextView
+                    android:id="@+id/word1"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="1. word"
+                    android:textSize="14sp"
+                    android:textColor="@color/text_white"
+                    android:fontFamily="monospace"
+                    android:padding="8dp"
+                    android:background="@drawable/input_field_bg"
+                    android:layout_marginEnd="8dp" />
+
+                <TextView
+                    android:id="@+id/word2"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="2. word"
+                    android:textSize="14sp"
+                    android:textColor="@color/text_white"
+                    android:fontFamily="monospace"
+                    android:padding="8dp"
+                    android:background="@drawable/input_field_bg" />
+
+            </LinearLayout>
+
+            <!-- Row 2 -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:layout_marginBottom="12dp">
+
+                <TextView
+                    android:id="@+id/word3"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="3. word"
+                    android:textSize="14sp"
+                    android:textColor="@color/text_white"
+                    android:fontFamily="monospace"
+                    android:padding="8dp"
+                    android:background="@drawable/input_field_bg"
+                    android:layout_marginEnd="8dp" />
+
+                <TextView
+                    android:id="@+id/word4"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="4. word"
+                    android:textSize="14sp"
+                    android:textColor="@color/text_white"
+                    android:fontFamily="monospace"
+                    android:padding="8dp"
+                    android:background="@drawable/input_field_bg" />
+
+            </LinearLayout>
+
+            <!-- Row 3 -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:layout_marginBottom="12dp">
+
+                <TextView
+                    android:id="@+id/word5"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="5. word"
+                    android:textSize="14sp"
+                    android:textColor="@color/text_white"
+                    android:fontFamily="monospace"
+                    android:padding="8dp"
+                    android:background="@drawable/input_field_bg"
+                    android:layout_marginEnd="8dp" />
+
+                <TextView
+                    android:id="@+id/word6"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="6. word"
+                    android:textSize="14sp"
+                    android:textColor="@color/text_white"
+                    android:fontFamily="monospace"
+                    android:padding="8dp"
+                    android:background="@drawable/input_field_bg" />
+
+            </LinearLayout>
+
+            <!-- Row 4 -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:layout_marginBottom="12dp">
+
+                <TextView
+                    android:id="@+id/word7"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="7. word"
+                    android:textSize="14sp"
+                    android:textColor="@color/text_white"
+                    android:fontFamily="monospace"
+                    android:padding="8dp"
+                    android:background="@drawable/input_field_bg"
+                    android:layout_marginEnd="8dp" />
+
+                <TextView
+                    android:id="@+id/word8"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="8. word"
+                    android:textSize="14sp"
+                    android:textColor="@color/text_white"
+                    android:fontFamily="monospace"
+                    android:padding="8dp"
+                    android:background="@drawable/input_field_bg" />
+
+            </LinearLayout>
+
+            <!-- Row 5 -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:layout_marginBottom="12dp">
+
+                <TextView
+                    android:id="@+id/word9"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="9. word"
+                    android:textSize="14sp"
+                    android:textColor="@color/text_white"
+                    android:fontFamily="monospace"
+                    android:padding="8dp"
+                    android:background="@drawable/input_field_bg"
+                    android:layout_marginEnd="8dp" />
+
+                <TextView
+                    android:id="@+id/word10"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="10. word"
+                    android:textSize="14sp"
+                    android:textColor="@color/text_white"
+                    android:fontFamily="monospace"
+                    android:padding="8dp"
+                    android:background="@drawable/input_field_bg" />
+
+            </LinearLayout>
+
+            <!-- Row 6 -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal">
+
+                <TextView
+                    android:id="@+id/word11"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="11. word"
+                    android:textSize="14sp"
+                    android:textColor="@color/text_white"
+                    android:fontFamily="monospace"
+                    android:padding="8dp"
+                    android:background="@drawable/input_field_bg"
+                    android:layout_marginEnd="8dp" />
+
+                <TextView
+                    android:id="@+id/word12"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="12. word"
+                    android:textSize="14sp"
+                    android:textColor="@color/text_white"
+                    android:fontFamily="monospace"
+                    android:padding="8dp"
+                    android:background="@drawable/input_field_bg" />
+
+            </LinearLayout>
+
+        </LinearLayout>
+
+        <!-- Continue Button -->
+        <TextView
+            android:id="@+id/continueButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="I've Written It Down"
+            android:textSize="16sp"
+            android:textStyle="bold"
+            android:textColor="@color/text_white"
+            android:background="@drawable/metallic_button_bg"
+            android:gravity="center"
+            android:padding="16dp"
+            android:clickable="true"
+            android:focusable="true"
+            android:elevation="6dp"
+            android:layout_marginBottom="16dp" />
+
+        <!-- Final Warning -->
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Secure Legion cannot recover your seed phrase. You are responsible for keeping it safe."
+            android:textSize="12sp"
+            android:textColor="@color/text_gray"
+            android:gravity="center"
+            android:lineSpacingMultiplier="1.4" />
+
+    </LinearLayout>
+
+</ScrollView>
+
+</androidx.constraintlayout.widget.ConstraintLayout>
