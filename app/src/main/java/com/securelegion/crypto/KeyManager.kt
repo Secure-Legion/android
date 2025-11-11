@@ -478,6 +478,40 @@ class KeyManager private constructor(context: Context) {
         return encryptedPrefs.getString("username", null)
     }
 
+    // ==================== DATABASE ENCRYPTION ====================
+
+    /**
+     * Get the raw seed bytes from encrypted storage
+     */
+    private fun getSeedBytes(): ByteArray {
+        val hexSeed = encryptedPrefs.getString(WALLET_SEED_ALIAS, null)
+            ?: throw IllegalStateException("Wallet seed not found")
+        return hexToBytes(hexSeed)
+    }
+
+    /**
+     * Derive database encryption passphrase from BIP39 seed
+     * Uses SHA-256(seed + "database_key" salt) for deterministic key
+     * @return 32-byte passphrase for SQLCipher
+     */
+    fun getDatabasePassphrase(): ByteArray {
+        if (!isInitialized()) {
+            throw IllegalStateException("KeyManager not initialized")
+        }
+
+        val seed = getSeedBytes()
+
+        // Derive database key using SHA-256 with application-specific salt
+        // This ensures database key is deterministic and unique per wallet
+        val digest = MessageDigest.getInstance("SHA-256")
+        digest.update(seed)
+        digest.update("secure_legion_database_v1".toByteArray(Charsets.UTF_8))
+        val databaseKey = digest.digest()
+
+        Log.i(TAG, "Derived database encryption key")
+        return databaseKey
+    }
+
     // ==================== HELPER FUNCTIONS ====================
 
     /**

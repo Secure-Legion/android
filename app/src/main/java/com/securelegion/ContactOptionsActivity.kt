@@ -5,19 +5,31 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.os.Bundle
+import android.util.Log
 import android.view.View
 import android.widget.EditText
 import android.widget.TextView
 import android.widget.Toast
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
+import com.securelegion.crypto.KeyManager
+import com.securelegion.database.SecureLegionDatabase
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class ContactOptionsActivity : AppCompatActivity() {
+
+    companion object {
+        private const val TAG = "ContactOptions"
+    }
 
     private lateinit var contactName: TextView
     private lateinit var contactAddress: TextView
     private lateinit var displayNameInput: EditText
     private lateinit var saveDisplayNameButton: TextView
-    private lateinit var openMessagesButton: TextView
+    private lateinit var deleteContactButton: TextView
     private var fullAddress: String = ""
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -40,7 +52,7 @@ class ContactOptionsActivity : AppCompatActivity() {
         contactAddress = findViewById(R.id.contactAddress)
         displayNameInput = findViewById(R.id.displayNameInput)
         saveDisplayNameButton = findViewById(R.id.saveDisplayNameButton)
-        openMessagesButton = findViewById(R.id.openMessagesButton)
+        deleteContactButton = findViewById(R.id.deleteContactButton)
     }
 
     private fun setupContactInfo(name: String, address: String) {
@@ -83,12 +95,68 @@ class ContactOptionsActivity : AppCompatActivity() {
             displayNameInput.text.clear()
         }
 
-        // Open messages button
-        openMessagesButton.setOnClickListener {
-            val intent = Intent(this, ChatActivity::class.java)
-            intent.putExtra("CHAT_NAME", name)
-            intent.putExtra("IS_ONLINE", false)
-            startActivity(intent)
+        // Delete contact button
+        deleteContactButton.setOnClickListener {
+            showDeleteConfirmationDialog(name)
+        }
+    }
+
+    private fun showDeleteConfirmationDialog(name: String) {
+        AlertDialog.Builder(this)
+            .setTitle("Delete Contact")
+            .setMessage("Are you sure you want to delete $name from your contacts? This action cannot be undone.")
+            .setPositiveButton("Delete") { _, _ ->
+                deleteContact()
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun deleteContact() {
+        CoroutineScope(Dispatchers.Main).launch {
+            try {
+                Log.d(TAG, "Deleting contact with address: $fullAddress")
+
+                val keyManager = KeyManager.getInstance(this@ContactOptionsActivity)
+                val dbPassphrase = keyManager.getDatabasePassphrase()
+                val database = SecureLegionDatabase.getInstance(this@ContactOptionsActivity, dbPassphrase)
+
+                // Find and delete the contact by Solana address
+                val contact = withContext(Dispatchers.IO) {
+                    database.contactDao().getContactBySolanaAddress(fullAddress)
+                }
+
+                if (contact != null) {
+                    withContext(Dispatchers.IO) {
+                        database.contactDao().deleteContact(contact)
+                    }
+                    Log.i(TAG, "Contact deleted successfully: ${contact.displayName}")
+                    Toast.makeText(
+                        this@ContactOptionsActivity,
+                        "Contact deleted",
+                        Toast.LENGTH_SHORT
+                    ).show()
+
+                    // Navigate back to MainActivity
+                    val intent = Intent(this@ContactOptionsActivity, MainActivity::class.java)
+                    startActivity(intent)
+                    finish()
+                } else {
+                    Log.w(TAG, "Contact not found in database")
+                    Toast.makeText(
+                        this@ContactOptionsActivity,
+                        "Contact not found",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to delete contact", e)
+                Toast.makeText(
+                    this@ContactOptionsActivity,
+                    "Failed to delete contact: ${e.message}",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
         }
     }
 

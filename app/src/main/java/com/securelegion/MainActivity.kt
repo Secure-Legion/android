@@ -1,17 +1,24 @@
 package com.securelegion
 
 import android.os.Bundle
+import android.util.Log
 import android.view.View
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.securelegion.adapters.ChatAdapter
 import com.securelegion.adapters.ContactAdapter
+import com.securelegion.crypto.KeyManager
+import com.securelegion.database.SecureLegionDatabase
 import com.securelegion.models.Chat
 import com.securelegion.models.Contact
 import com.securelegion.utils.startActivityWithSlideAnimation
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -117,44 +124,61 @@ class MainActivity : AppCompatActivity() {
         val contactsList = contactsView.findViewById<RecyclerView>(R.id.contactsList)
         val emptyContactsState = contactsView.findViewById<View>(R.id.emptyContactsState)
 
-        // Sample contact data
-        val contacts = listOf(
-            Contact(
-                id = "1",
-                name = "@nighthawk",
-                address = "7xKXtg2CW87d97TXJSDpbD5jBkheMKvZkRqJa4RsXU9wQ"
-            ),
-            Contact(
-                id = "2",
-                name = "@cryptowolf",
-                address = "9vKq7XRmKsH3bCnPfTw4LgYsWdRzNpVxAqBh2FmEuTcK"
-            ),
-            Contact(
-                id = "3",
-                name = "@phantom",
-                address = "5mQ9YnHfJp8KxLs3DpTw7VgRdNkMhBzXyFt2AvPcUqEj"
-            ),
-            Contact(
-                id = "4",
-                name = "@shadowtech",
-                address = "3hN7xTpKq2CwDs9YmLgFvRbZaWtXjHnPy8KuMfDcSeGk"
-            )
-        )
+        // Load contacts from encrypted database
+        lifecycleScope.launch {
+            try {
+                val keyManager = KeyManager.getInstance(this@MainActivity)
+                val dbPassphrase = keyManager.getDatabasePassphrase()
+                val database = SecureLegionDatabase.getInstance(this@MainActivity, dbPassphrase)
 
-        if (contacts.isNotEmpty()) {
-            emptyContactsState.visibility = View.GONE
-            contactsList.visibility = View.VISIBLE
-            contactsList.layoutManager = LinearLayoutManager(this)
-            contactsList.adapter = ContactAdapter(contacts) { contact ->
-                // Open contact options screen
-                val intent = android.content.Intent(this, ContactOptionsActivity::class.java)
-                intent.putExtra("CONTACT_NAME", contact.name)
-                intent.putExtra("CONTACT_ADDRESS", contact.address)
-                startActivityWithSlideAnimation(intent)
+                // Load all contacts from database
+                val dbContacts = withContext(Dispatchers.IO) {
+                    database.contactDao().getAllContacts()
+                }
+
+                Log.i("MainActivity", "Loaded ${dbContacts.size} contacts from database")
+
+                // Convert database entities to UI models
+                val contacts = dbContacts.map { dbContact ->
+                    Contact(
+                        id = dbContact.id.toString(),
+                        name = dbContact.displayName,
+                        address = dbContact.solanaAddress
+                    )
+                }
+
+                // Update UI on main thread
+                withContext(Dispatchers.Main) {
+                    if (contacts.isNotEmpty()) {
+                        Log.i("MainActivity", "Displaying ${contacts.size} contacts in UI")
+                        contacts.forEach { contact ->
+                            Log.i("MainActivity", "  - ${contact.name} (${contact.address})")
+                        }
+                        emptyContactsState.visibility = View.GONE
+                        contactsList.visibility = View.VISIBLE
+                        contactsList.layoutManager = LinearLayoutManager(this@MainActivity)
+                        contactsList.adapter = ContactAdapter(contacts) { contact ->
+                            // Open contact options screen
+                            val intent = android.content.Intent(this@MainActivity, ContactOptionsActivity::class.java)
+                            intent.putExtra("CONTACT_NAME", contact.name)
+                            intent.putExtra("CONTACT_ADDRESS", contact.address)
+                            startActivityWithSlideAnimation(intent)
+                        }
+                        Log.i("MainActivity", "RecyclerView adapter set with ${contacts.size} items")
+                    } else {
+                        Log.w("MainActivity", "No contacts to display, showing empty state")
+                        emptyContactsState.visibility = View.VISIBLE
+                        contactsList.visibility = View.GONE
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e("MainActivity", "Failed to load contacts from database", e)
+                // Show empty state on error
+                withContext(Dispatchers.Main) {
+                    emptyContactsState.visibility = View.VISIBLE
+                    contactsList.visibility = View.GONE
+                }
             }
-        } else {
-            emptyContactsState.visibility = View.VISIBLE
-            contactsList.visibility = View.GONE
         }
     }
 

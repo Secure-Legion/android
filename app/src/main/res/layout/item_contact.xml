@@ -5,7 +5,7 @@
     android:orientation="vertical"
     android:clickable="true"
     android:focusable="true"
-    android:background="@drawable/chat_item_ripple">
+    android:background="@color/header_bg">
 
     <LinearLayout
         android:layout_width="match_parent"
@@ -13,27 +13,27 @@
         android:orientation="vertical"
         android:paddingStart="24dp"
         android:paddingEnd="24dp"
-        android:paddingTop="16dp"
-        android:paddingBottom="16dp">
+        android:paddingTop="20dp"
+        android:paddingBottom="20dp">
 
         <!-- Contact Name -->
         <TextView
             android:id="@+id/contactName"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="@nighthawk"
-            android:textSize="17sp"
+            android:text="Contact Name"
+            android:textSize="20sp"
             android:textStyle="bold"
-            android:textColor="@color/text_white"
-            android:layout_marginBottom="4dp" />
+            android:textColor="@color/primary_blue"
+            android:layout_marginBottom="8dp" />
 
         <!-- Contact Address -->
         <TextView
             android:id="@+id/contactAddress"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="7xKXtg2CW87d97TXJSDpbD5jBkhe..."
-            android:textSize="11sp"
+            android:text="Solana Address..."
+            android:textSize="13sp"
             android:textColor="@color/text_gray"
             android:fontFamily="monospace" />
 

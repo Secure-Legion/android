@@ -7,6 +7,115 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.3] - 2025-11-11
+
+### Added
+- **Encrypted Contact Database (SQLCipher + Room)**
+  - AES-256 full database encryption using SQLCipher
+  - Encryption key derived from BIP39 seed via KeyManager
+  - Room database with ContactDao and MessageDao for type-safe queries
+  - Contact entity with displayName, solanaAddress, publicKeyBase64, torOnionAddress
+  - Message entity with encryption status, delivery tracking, and signatures
+  - Secure deletion enabled (PRAGMA secure_delete = ON)
+  - WAL mode disabled for maximum security (DELETE journal mode)
+  - Database passphrase derived using SHA-256(seed + salt)
+
+- **Contact Management UI**
+  - Contacts now load from encrypted database in MainActivity
+  - Custom dark-themed contact list item layout
+  - Contacts displayed with name and truncated Solana address
+  - Contact options screen with rounded corner info box
+  - Delete contact functionality with confirmation dialog
+  - Contact deletion removes from encrypted database
+  - Automatic navigation back to main screen after deletion
+
+### Changed
+- **Contact List Display**
+  - Replaced hardcoded sample contacts with real database queries
+  - ContactAdapter now uses custom item_contact.xml layout
+  - Dark card background (#151B26) matching app theme
+  - Blue contact name text (#1E90FF) for visibility
+  - Gray monospace address text for readability
+  - Rounded corners (16dp) on contact info boxes
+
+- **Contact Options Screen**
+  - Contact info box now uses dark theme colors
+  - Rounded corners on contact display card
+  - Removed "Open Messages" button (simplified interface)
+  - Delete button styled with subtle border and gray text
+
+### Fixed
+- **SQLCipher PRAGMA Errors**
+  - Fixed "Queries cannot be performed using execSQL()" error
+  - Changed both secure_delete and journal_mode to use query() instead of execSQL()
+  - SQLCipher requires query() method even for PRAGMAs that don't return meaningful results
+
+- **Contact Display Issues**
+  - Fixed ContactAdapter not showing contact text
+  - Added proper TextView binding in ViewHolder
+  - Contacts now display correctly in RecyclerView
+
+### Technical Details
+
+**New Files:**
+- app/src/main/java/com/securelegion/database/SecureLegionDatabase.kt - Encrypted database singleton
+- app/src/main/java/com/securelegion/database/entities/Contact.kt - Contact entity
+- app/src/main/java/com/securelegion/database/entities/Message.kt - Message entity
+- app/src/main/java/com/securelegion/database/dao/ContactDao.kt - Contact DAO with queries
+- app/src/main/java/com/securelegion/database/dao/MessageDao.kt - Message DAO with delivery tracking
+- app/src/main/res/drawable/contact_info_box_bg.xml - Rounded corner background
+- app/src/main/res/drawable/delete_button_bg.xml - Delete button styling
+
+**Dependencies Added:**
+- androidx.room:room-runtime:2.6.1 - Room database ORM
+- androidx.room:room-ktx:2.6.1 - Kotlin coroutines support
+- net.zetetic:android-database-sqlcipher:4.5.4 - SQLCipher encryption
+- androidx.sqlite:sqlite:2.4.0 - SQLite support library
+
+**Database Schema:**
+```sql
+CREATE TABLE contacts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  displayName TEXT NOT NULL,
+  solanaAddress TEXT NOT NULL UNIQUE,
+  publicKeyBase64 TEXT NOT NULL,
+  torOnionAddress TEXT NOT NULL UNIQUE,
+  addedTimestamp INTEGER NOT NULL,
+  lastContactTimestamp INTEGER NOT NULL,
+  trustLevel INTEGER NOT NULL DEFAULT 0,
+  notes TEXT
+);
+
+CREATE TABLE messages (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  contactId INTEGER NOT NULL,
+  messageId TEXT NOT NULL UNIQUE,
+  encryptedContent BLOB NOT NULL,
+  timestamp INTEGER NOT NULL,
+  isOutgoing INTEGER NOT NULL,
+  deliveryStatus TEXT NOT NULL,
+  readTimestamp INTEGER,
+  senderSignature BLOB,
+  FOREIGN KEY (contactId) REFERENCES contacts(id) ON DELETE CASCADE
+);
+```
+
+**Security Considerations:**
+- Database file stored at /data/data/com.securelegion/databases/secure_legion.db
+- No plaintext data ever touches disk
+- Encryption key never stored, derived fresh from BIP39 seed on each session
+- Database verification method confirms encryption is active
+- Secure deletion ensures deleted data cannot be recovered
+
+**Testing:**
+- Contact successfully saved to encrypted database (ID: 1)
+- Contact loaded and displayed in MainActivity contacts tab
+- Contact deletion removes from database and updates UI
+- Database encryption verified (cannot open without passphrase)
+- PRAGMA statements execute correctly with SQLCipher
+
+---
+
 ## [0.1.2] - 2025-11-11
 
 ### Added

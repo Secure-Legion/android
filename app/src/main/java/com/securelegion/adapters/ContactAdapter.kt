@@ -1,8 +1,10 @@
 package com.securelegion.adapters
 
+import android.util.Log
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import android.widget.TextView
 import androidx.recyclerview.widget.RecyclerView
 import com.securelegion.R
 import com.securelegion.models.Contact
@@ -12,16 +14,33 @@ class ContactAdapter(
     private val onContactClick: (Contact) -> Unit
 ) : RecyclerView.Adapter<ContactAdapter.ContactViewHolder>() {
 
-    class ContactViewHolder(view: View) : RecyclerView.ViewHolder(view)
+    class ContactViewHolder(view: View) : RecyclerView.ViewHolder(view) {
+        val nameView: TextView = view.findViewById(R.id.contactName)
+        val addressView: TextView = view.findViewById(R.id.contactAddress)
+    }
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): ContactViewHolder {
         val view = LayoutInflater.from(parent.context)
-            .inflate(android.R.layout.simple_list_item_1, parent, false)
+            .inflate(R.layout.item_contact, parent, false)
         return ContactViewHolder(view)
     }
 
     override fun onBindViewHolder(holder: ContactViewHolder, position: Int) {
         val contact = contacts[position]
+
+        // Display contact name
+        holder.nameView.text = contact.name
+
+        // Display truncated Solana address
+        val truncatedAddress = if (contact.address.length > 40) {
+            contact.address.take(40) + "..."
+        } else {
+            contact.address
+        }
+        holder.addressView.text = truncatedAddress
+
+        Log.d("ContactAdapter", "Binding contact: ${contact.name}")
+
         holder.itemView.setOnClickListener { onContactClick(contact) }
     }
 

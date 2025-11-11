@@ -73,28 +73,60 @@
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="Find Friend"
+                android:text="Contact IPFS CID"
                 android:textSize="14sp"
                 android:textStyle="bold"
                 android:textColor="@color/text_gray"
                 android:layout_marginBottom="8dp" />
 
             <EditText
-                android:id="@+id/handleInput"
+                android:id="@+id/cidInput"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:background="@drawable/message_input_bg"
-                android:hint="@username or Solana address"
+                android:hint="bafkrei..."
                 android:textColorHint="@color/text_gray"
                 android:textColor="@color/text_white"
+                android:fontFamily="monospace"
+                android:textSize="13sp"
                 android:padding="14dp"
                 android:layout_marginBottom="16dp" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="PIN"
+                android:textSize="14sp"
+                android:textStyle="bold"
+                android:textColor="@color/text_gray"
+                android:layout_marginBottom="8dp" />
+
+            <EditText
+                android:id="@+id/pinInput"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:background="@drawable/message_input_bg"
+                android:hint="6-digit PIN"
+                android:inputType="number"
+                android:maxLength="6"
+                android:textColorHint="@color/text_gray"
+                android:textColor="@color/text_white"
+                android:fontFamily="monospace"
+                android:textSize="16sp"
+                android:padding="14dp"
+                android:layout_marginBottom="16dp" />
+
+            <EditText
+                android:id="@+id/handleInput"
+                android:layout_width="0dp"
+                android:layout_height="0dp"
+                android:visibility="gone" />
 
             <TextView
                 android:id="@+id/searchButton"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="Search"
+                android:text="Add Friend"
                 android:textSize="16sp"
                 android:textStyle="bold"
                 android:textColor="@color/text_white"

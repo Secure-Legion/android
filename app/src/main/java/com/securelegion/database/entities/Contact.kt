@@ -1,0 +1,72 @@
+package com.securelegion.database.entities
+
+import androidx.room.Entity
+import androidx.room.Index
+import androidx.room.PrimaryKey
+
+/**
+ * Contact entity stored in encrypted SQLCipher database
+ * Represents a contact with their identity and cryptographic keys
+ */
+@Entity(
+    tableName = "contacts",
+    indices = [
+        Index(value = ["solanaAddress"], unique = true),
+        Index(value = ["torOnionAddress"], unique = true)
+    ]
+)
+data class Contact(
+    @PrimaryKey(autoGenerate = true)
+    val id: Long = 0,
+
+    /**
+     * Display name (username) of the contact
+     */
+    val displayName: String,
+
+    /**
+     * Solana wallet address (Base58-encoded)
+     */
+    val solanaAddress: String,
+
+    /**
+     * Ed25519 public key (32 bytes) for message encryption
+     * Stored as Base64 for database compatibility
+     */
+    val publicKeyBase64: String,
+
+    /**
+     * Tor v3 onion address with port (e.g., "abc123...xyz.onion:9050")
+     * Used for establishing direct P2P connections
+     */
+    val torOnionAddress: String,
+
+    /**
+     * Unix timestamp when contact was added (milliseconds)
+     */
+    val addedTimestamp: Long,
+
+    /**
+     * Unix timestamp of last message exchange (milliseconds)
+     * Updated on send or receive
+     */
+    val lastContactTimestamp: Long = addedTimestamp,
+
+    /**
+     * Trust level indicator
+     * 0 = Untrusted, 1 = Verified, 2 = Trusted
+     */
+    val trustLevel: Int = 0,
+
+    /**
+     * Optional notes about the contact
+     */
+    val notes: String? = null
+) {
+    companion object {
+        // Trust levels
+        const val TRUST_UNTRUSTED = 0
+        const val TRUST_VERIFIED = 1
+        const val TRUST_TRUSTED = 2
+    }
+}

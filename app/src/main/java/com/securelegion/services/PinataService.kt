@@ -28,7 +28,7 @@ class PinataService(context: Context) {
 
         // Note: API keys in APK are not truly secure, only obfuscated
         // Keys are scoped to Files:Write only and can be rotated if compromised
-        // TODO: Move these to BuildConfig or secure key storage
+        // TODO: Replace with your own Pinata API credentials
         private const val PINATA_API_KEY = "YOUR_PINATA_API_KEY"
         private const val PINATA_API_SECRET = "YOUR_PINATA_API_SECRET"
     }

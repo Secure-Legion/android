@@ -68,7 +68,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:orientation="vertical"
-                android:background="@drawable/info_box_bg"
+                android:background="@drawable/contact_info_box_bg"
                 android:padding="20dp"
                 android:layout_marginBottom="24dp">
 
@@ -152,23 +152,22 @@
                 android:clickable="true"
                 android:focusable="true"
                 android:elevation="6dp"
-                android:layout_marginBottom="24dp" />
+                android:layout_marginBottom="32dp" />
 
-            <!-- Open Messages Button -->
+            <!-- Delete Contact Button -->
             <TextView
-                android:id="@+id/openMessagesButton"
+                android:id="@+id/deleteContactButton"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="Open Messages"
-                android:textSize="16sp"
+                android:text="Delete Contact"
+                android:textSize="15sp"
                 android:textStyle="bold"
-                android:textColor="@color/text_white"
-                android:background="@drawable/metallic_button_bg"
+                android:textColor="@color/text_gray"
+                android:background="@drawable/delete_button_bg"
                 android:gravity="center"
-                android:padding="16dp"
+                android:padding="14dp"
                 android:clickable="true"
-                android:focusable="true"
-                android:elevation="6dp" />
+                android:focusable="true" />
 
         </LinearLayout>
 
