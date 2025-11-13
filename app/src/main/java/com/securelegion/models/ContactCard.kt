@@ -11,7 +11,8 @@ import org.json.JSONObject
  */
 data class ContactCard(
     val displayName: String,            // User-facing name (e.g., "John Doe")
-    val solanaPublicKey: ByteArray,     // Ed25519 public key (32 bytes)
+    val solanaPublicKey: ByteArray,     // Ed25519 public key for signing (32 bytes)
+    val x25519PublicKey: ByteArray,     // X25519 public key for encryption (32 bytes)
     val solanaAddress: String,          // Base58-encoded Solana address
     val torOnionAddress: String,        // .onion:port (REQUIRED for messaging)
     val timestamp: Long                 // Creation timestamp (Unix seconds)
@@ -22,12 +23,17 @@ data class ContactCard(
     fun toJson(): String {
         val json = JSONObject()
 
-        // Convert byte array to list of integers
+        // Convert Ed25519 public key to array
         val pubKeyArray = JSONArray()
         solanaPublicKey.forEach { pubKeyArray.put(it.toInt() and 0xFF) }
 
+        // Convert X25519 public key to array
+        val x25519KeyArray = JSONArray()
+        x25519PublicKey.forEach { x25519KeyArray.put(it.toInt() and 0xFF) }
+
         json.put("handle", displayName)
         json.put("public_key", pubKeyArray)
+        json.put("x25519_public_key", x25519KeyArray)
         json.put("solana_address", solanaAddress)
         json.put("onion_address", torOnionAddress)
         json.put("timestamp", timestamp)
@@ -51,15 +57,22 @@ data class ContactCard(
         fun fromJson(jsonString: String): ContactCard {
             val json = JSONObject(jsonString)
 
-            // Parse public key from array
+            // Parse Ed25519 public key from array
             val pubKeyArray = json.getJSONArray("public_key")
             val publicKey = ByteArray(pubKeyArray.length()) { i ->
                 pubKeyArray.getInt(i).toByte()
             }
 
+            // Parse X25519 public key from array
+            val x25519KeyArray = json.getJSONArray("x25519_public_key")
+            val x25519PublicKey = ByteArray(x25519KeyArray.length()) { i ->
+                x25519KeyArray.getInt(i).toByte()
+            }
+
             return ContactCard(
                 displayName = json.getString("handle"),
                 solanaPublicKey = publicKey,
+                x25519PublicKey = x25519PublicKey,
                 solanaAddress = json.getString("solana_address"),
                 torOnionAddress = json.getString("onion_address"),
                 timestamp = json.getLong("timestamp")
@@ -75,6 +88,7 @@ data class ContactCard(
 
         if (displayName != other.displayName) return false
         if (!solanaPublicKey.contentEquals(other.solanaPublicKey)) return false
+        if (!x25519PublicKey.contentEquals(other.x25519PublicKey)) return false
         if (solanaAddress != other.solanaAddress) return false
         if (torOnionAddress != other.torOnionAddress) return false
         if (timestamp != other.timestamp) return false
@@ -85,6 +99,7 @@ data class ContactCard(
     override fun hashCode(): Int {
         var result = displayName.hashCode()
         result = 31 * result + solanaPublicKey.contentHashCode()
+        result = 31 * result + x25519PublicKey.contentHashCode()
         result = 31 * result + solanaAddress.hashCode()
         result = 31 * result + torOnionAddress.hashCode()
         result = 31 * result + timestamp.hashCode()

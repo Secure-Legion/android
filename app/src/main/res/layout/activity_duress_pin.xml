@@ -136,30 +136,67 @@
                 android:elevation="6dp"
                 android:layout_marginBottom="24dp" />
 
-            <!-- Info Box -->
+            <!-- Options Section -->
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="DISTRESS OPTIONS"
+                android:textSize="12sp"
+                android:textStyle="bold"
+                android:textColor="@color/text_gray"
+                android:layout_marginTop="8dp"
+                android:layout_marginBottom="12dp" />
+
+            <!-- Wipe Phone Toggle -->
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:orientation="vertical"
-                android:background="@drawable/info_box_bg"
-                android:padding="16dp">
+                android:orientation="horizontal"
+                android:background="@drawable/settings_item_bg"
+                android:padding="16dp"
+                android:layout_marginBottom="8dp"
+                android:gravity="center_vertical">
 
                 <TextView
-                    android:layout_width="wrap_content"
+                    android:layout_width="0dp"
                     android:layout_height="wrap_content"
-                    android:text="Emergency Protection"
+                    android:layout_weight="1"
+                    android:text="Wipe Phone"
                     android:textSize="16sp"
                     android:textStyle="bold"
-                    android:textColor="@color/text_white"
-                    android:layout_marginBottom="8dp" />
+                    android:textColor="@color/text_white" />
 
-                <TextView
+                <androidx.appcompat.widget.SwitchCompat
+                    android:id="@+id/wipePhoneSwitch"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="If forced to unlock your device, enter your duress PIN to automatically wipe sensitive data while appearing normal."
-                    android:textSize="14sp"
-                    android:textColor="@color/text_gray"
-                    android:lineSpacingMultiplier="1.4" />
+                    android:checked="true" />
+
+            </LinearLayout>
+
+            <!-- UnitedPush Relay Toggle -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:background="@drawable/settings_item_bg"
+                android:padding="16dp"
+                android:gravity="center_vertical">
+
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="Use Relay for Panic"
+                    android:textSize="16sp"
+                    android:textStyle="bold"
+                    android:textColor="@color/text_white" />
+
+                <androidx.appcompat.widget.SwitchCompat
+                    android:id="@+id/unitedPushSwitch"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:checked="false" />
 
             </LinearLayout>
 

@@ -138,4 +138,18 @@ interface MessageDao {
      */
     @Query("SELECT EXISTS(SELECT 1 FROM messages WHERE messageId = :messageId)")
     suspend fun messageExists(messageId: String): Boolean
+
+    /**
+     * Get all messages that have expired (self-destruct time has passed)
+     * Used by background worker to delete expired messages
+     */
+    @Query("SELECT * FROM messages WHERE selfDestructAt IS NOT NULL AND selfDestructAt <= :currentTime")
+    suspend fun getExpiredMessages(currentTime: Long = System.currentTimeMillis()): List<Message>
+
+    /**
+     * Delete expired self-destruct messages
+     * Returns number of messages deleted
+     */
+    @Query("DELETE FROM messages WHERE selfDestructAt IS NOT NULL AND selfDestructAt <= :currentTime")
+    suspend fun deleteExpiredMessages(currentTime: Long = System.currentTimeMillis()): Int
 }

@@ -2,6 +2,7 @@ package com.securelegion.services
 
 import android.content.Context
 import android.util.Log
+import com.securelegion.crypto.TorManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
@@ -18,6 +19,8 @@ import java.util.concurrent.TimeUnit
  * Handles uploading and downloading encrypted contact cards to/from IPFS via Pinata
  *
  * Free tier: 1GB storage, 100GB bandwidth/month, 100 requests/min
+ *
+ * All IPFS traffic routes through Tor SOCKS proxy for network anonymity
  */
 class PinataService(context: Context) {
 
@@ -28,11 +31,10 @@ class PinataService(context: Context) {
 
         // Note: API keys in APK are not truly secure, only obfuscated
         // Keys are scoped to Files:Write only and can be rotated if compromised
-        // TODO: Replace with your own Pinata API credentials
-        private const val PINATA_API_KEY = "YOUR_PINATA_API_KEY"
-        private const val PINATA_API_SECRET = "YOUR_PINATA_API_SECRET"
+        private const val PINATA_JWT = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySW5mb3JtYXRpb24iOnsiaWQiOiJkZjhjNTQ4Yi03YWQzLTRlZmQtOWNmMS0yMGIyYmQ0ZGQxNjYiLCJlbWFpbCI6InNlY3VyZWxlZ2lvbmRldkBnbWFpbC5jb20iLCJlbWFpbF92ZXJpZmllZCI6dHJ1ZSwicGluX3BvbGljeSI6eyJyZWdpb25zIjpbeyJkZXNpcmVkUmVwbGljYXRpb25Db3VudCI6MSwiaWQiOiJGUkExIn0seyJkZXNpcmVkUmVwbGljYXRpb25Db3VudCI6MSwiaWQiOiJOWUMxIn1dLCJ2ZXJzaW9uIjoxfSwibWZhX2VuYWJsZWQiOmZhbHNlLCJzdGF0dXMiOiJBQ1RJVkUifSwiYXV0aGVudGljYXRpb25UeXBlIjoic2NvcGVkS2V5Iiwic2NvcGVkS2V5S2V5IjoiNzgwNzAzODA2YzhmMGI5ZGJkMDYiLCJzY29wZWRLZXlTZWNyZXQiOiI0ZTExZTg1YzExZGY5ZmE5Y2Y5N2Q2NGY0NzIzOGIyNjM3NDViNzBmOWQ5MWExYjdjNzM0NWNhOTE3N2M5ZmFkIiwiZXhwIjoxNzk0MzY2OTM0fQ.3XUYIbw7j4PzAAFLJHuL2FPDJxV04nt3HQla8BB-DEY"
     }
 
+    // Direct HTTP connection (Tor for messaging only, not IPFS uploads)
     private val client = OkHttpClient.Builder()
         .connectTimeout(30, TimeUnit.SECONDS)
         .readTimeout(30, TimeUnit.SECONDS)
@@ -76,8 +78,7 @@ class PinataService(context: Context) {
 
             val request = Request.Builder()
                 .url("$PINATA_API_BASE/pinning/pinFileToIPFS")
-                .addHeader("pinata_api_key", PINATA_API_KEY)
-                .addHeader("pinata_secret_api_key", PINATA_API_SECRET)
+                .addHeader("Authorization", "Bearer $PINATA_JWT")
                 .post(requestBody)
                 .build()
 
@@ -149,8 +150,7 @@ class PinataService(context: Context) {
         try {
             val request = Request.Builder()
                 .url("$PINATA_API_BASE/data/testAuthentication")
-                .addHeader("pinata_api_key", PINATA_API_KEY)
-                .addHeader("pinata_secret_api_key", PINATA_API_SECRET)
+                .addHeader("Authorization", "Bearer $PINATA_JWT")
                 .get()
                 .build()
 

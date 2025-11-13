@@ -11,8 +11,17 @@ import android.widget.Button
 import android.widget.EditText
 import android.widget.TextView
 import android.widget.Toast
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
+import androidx.lifecycle.lifecycleScope
 import com.securelegion.crypto.KeyManager
+import com.securelegion.models.ContactCard
+import com.securelegion.services.ContactCardManager
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import org.web3j.crypto.MnemonicUtils
+import java.security.SecureRandom
 
 class WalletIdentityActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -29,17 +38,108 @@ class WalletIdentityActivity : AppCompatActivity() {
             finish()
         }
 
-        // Update Username button
+        // New Identity button - Creates new wallet, CID, username, and onion address
         findViewById<View>(R.id.updateUsernameButton).setOnClickListener {
-            val username = findViewById<EditText>(R.id.usernameInput).text.toString()
-            Toast.makeText(this, "Username updated: $username", Toast.LENGTH_SHORT).show()
-            // TODO: Update username on blockchain
+            showNewIdentityConfirmation()
         }
+    }
 
-        // Create New Wallet button
-        findViewById<View>(R.id.createNewWalletButton).setOnClickListener {
-            Toast.makeText(this, "Creating new wallet...", Toast.LENGTH_SHORT).show()
-            // TODO: Create new wallet
+    private fun showNewIdentityConfirmation() {
+        AlertDialog.Builder(this)
+            .setTitle("Create New Identity?")
+            .setMessage("This will generate:\n\n• New Wallet Address\n• New Contact Card (CID/PIN)\n• New Tor Onion Address\n\nYour current identity will be replaced. Make sure to backup your seed phrase first!")
+            .setPositiveButton("Create New Identity") { _, _ ->
+                createNewIdentity()
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun createNewIdentity() {
+        lifecycleScope.launch {
+            try {
+                Log.i("WalletIdentity", "Creating new identity...")
+
+                // Show loading
+                findViewById<View>(R.id.updateUsernameButton).isEnabled = false
+                Toast.makeText(this@WalletIdentityActivity, "Creating new identity...", Toast.LENGTH_LONG).show()
+
+                // Step 1: Generate new BIP39 mnemonic (12 words)
+                val entropy = ByteArray(16)
+                SecureRandom().nextBytes(entropy)
+                val mnemonic = MnemonicUtils.generateMnemonic(entropy)
+                Log.i("WalletIdentity", "Generated new mnemonic")
+
+                // Step 2: Initialize KeyManager with new seed (creates new wallet & Tor address)
+                val keyManager = KeyManager.getInstance(this@WalletIdentityActivity)
+                withContext(Dispatchers.IO) {
+                    keyManager.initializeFromSeed(mnemonic)
+                }
+                Log.i("WalletIdentity", "Initialized new wallet")
+
+                // Get new addresses
+                val newWalletAddress = keyManager.getSolanaAddress()
+                val newOnionAddress = keyManager.getTorOnionAddress()
+                Log.i("WalletIdentity", "New wallet: $newWalletAddress")
+                Log.i("WalletIdentity", "New onion: $newOnionAddress")
+
+                // Step 3: Generate username
+                val username = findViewById<EditText>(R.id.usernameInput).text.toString().ifEmpty {
+                    "User${System.currentTimeMillis().toString().takeLast(6)}"
+                }
+
+                // Step 4: Create and upload new contact card
+                Toast.makeText(this@WalletIdentityActivity, "Uploading contact card...", Toast.LENGTH_SHORT).show()
+
+                val contactCard = ContactCard(
+                    displayName = username,
+                    solanaPublicKey = keyManager.getSolanaPublicKey(),
+                    x25519PublicKey = keyManager.getEncryptionPublicKey(),
+                    solanaAddress = newWalletAddress,
+                    torOnionAddress = newOnionAddress,
+                    timestamp = System.currentTimeMillis()
+                )
+
+                val cardManager = ContactCardManager(this@WalletIdentityActivity)
+                val newPin = cardManager.generateRandomPin()
+
+                val result = withContext(Dispatchers.IO) {
+                    cardManager.uploadContactCard(contactCard, newPin)
+                }
+
+                if (result.isSuccess) {
+                    val (cid, size) = result.getOrThrow()
+
+                    // Step 5: Store everything
+                    keyManager.storeContactCardInfo(cid, newPin)
+                    keyManager.storeUsername(username)
+
+                    Log.i("WalletIdentity", "New identity created successfully!")
+                    Log.i("WalletIdentity", "CID: $cid")
+                    Log.i("WalletIdentity", "PIN: $newPin")
+
+                    // Refresh UI
+                    loadWalletAddress()
+                    loadUsername()
+                    loadContactCardInfo()
+
+                    // Show seed phrase backup screen
+                    Toast.makeText(this@WalletIdentityActivity, "New identity created! Backup your seed phrase!", Toast.LENGTH_LONG).show()
+
+                    val intent = Intent(this@WalletIdentityActivity, BackupSeedPhraseActivity::class.java)
+                    intent.putExtra(BackupSeedPhraseActivity.EXTRA_SEED_PHRASE, mnemonic)
+                    startActivity(intent)
+                } else {
+                    throw result.exceptionOrNull()!!
+                }
+
+                findViewById<View>(R.id.updateUsernameButton).isEnabled = true
+
+            } catch (e: Exception) {
+                Log.e("WalletIdentity", "Failed to create new identity", e)
+                Toast.makeText(this@WalletIdentityActivity, "Failed to create new identity: ${e.message}", Toast.LENGTH_LONG).show()
+                findViewById<View>(R.id.updateUsernameButton).isEnabled = true
+            }
         }
     }
 

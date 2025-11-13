@@ -10,7 +10,7 @@ import com.securelegion.R
 import com.securelegion.models.Contact
 
 class ContactAdapter(
-    private val contacts: List<Contact>,
+    private var contacts: List<Contact>,
     private val onContactClick: (Contact) -> Unit
 ) : RecyclerView.Adapter<ContactAdapter.ContactViewHolder>() {
 
@@ -45,4 +45,9 @@ class ContactAdapter(
     }
 
     override fun getItemCount() = contacts.size
+
+    fun updateContacts(newContacts: List<Contact>) {
+        contacts = newContacts
+        notifyDataSetChanged()
+    }
 }

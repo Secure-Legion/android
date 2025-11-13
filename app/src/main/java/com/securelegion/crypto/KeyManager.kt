@@ -42,11 +42,13 @@ class KeyManager private constructor(context: Context) {
         private const val ED25519_SIGNING_KEY_ALIAS = "${KEYSTORE_ALIAS_PREFIX}signing_key"
         private const val X25519_ENCRYPTION_KEY_ALIAS = "${KEYSTORE_ALIAS_PREFIX}encryption_key"
         private const val HIDDEN_SERVICE_KEY_ALIAS = "${KEYSTORE_ALIAS_PREFIX}hidden_service_key"
+        private const val DEVICE_PASSWORD_HASH_ALIAS = "${KEYSTORE_ALIAS_PREFIX}device_password_hash"
 
         @Volatile
         private var instance: KeyManager? = null
 
         @Suppress("unused") // Called via JNI from Rust code
+        @JvmStatic
         fun getInstance(context: Context): KeyManager {
             return instance ?: synchronized(this) {
                 instance ?: KeyManager(context.applicationContext).also { instance = it }
@@ -462,6 +464,17 @@ class KeyManager private constructor(context: Context) {
     }
 
     /**
+     * Check if account setup is complete (has wallet, contact card, AND username)
+     */
+    fun isAccountSetupComplete(): Boolean {
+        val hasWallet = isInitialized()
+        val hasContactCard = hasContactCardInfo()
+        val hasUsername = getUsername() != null
+        Log.d(TAG, "Account setup check - Wallet: $hasWallet, Contact card: $hasContactCard, Username: $hasUsername")
+        return hasWallet && hasContactCard && hasUsername
+    }
+
+    /**
      * Store username in encrypted storage
      */
     fun storeUsername(username: String) {
@@ -476,6 +489,51 @@ class KeyManager private constructor(context: Context) {
      */
     fun getUsername(): String? {
         return encryptedPrefs.getString("username", null)
+    }
+
+    // ==================== DEVICE PASSWORD MANAGEMENT ====================
+
+    /**
+     * Set device password (stores SHA-256 hash)
+     * Called during account creation
+     */
+    fun setDevicePassword(password: String) {
+        if (password.isBlank()) {
+            throw IllegalArgumentException("Password cannot be blank")
+        }
+
+        // Hash password with SHA-256
+        val passwordHash = sha256(password.toByteArray(Charsets.UTF_8))
+
+        // Store hash in encrypted preferences
+        encryptedPrefs.edit {
+            putString(DEVICE_PASSWORD_HASH_ALIAS, bytesToHex(passwordHash))
+        }
+
+        Log.i(TAG, "Device password set successfully")
+    }
+
+    /**
+     * Verify device password
+     * Returns true if password matches stored hash
+     */
+    fun verifyDevicePassword(password: String): Boolean {
+        val storedHashHex = encryptedPrefs.getString(DEVICE_PASSWORD_HASH_ALIAS, null)
+            ?: return false
+
+        // Hash provided password
+        val providedHash = sha256(password.toByteArray(Charsets.UTF_8))
+
+        // Compare hashes (constant-time comparison)
+        val storedHash = hexToBytes(storedHashHex)
+        return storedHash.contentEquals(providedHash)
+    }
+
+    /**
+     * Check if device password is set
+     */
+    fun isDevicePasswordSet(): Boolean {
+        return encryptedPrefs.contains(DEVICE_PASSWORD_HASH_ALIAS)
     }
 
     // ==================== DATABASE ENCRYPTION ====================
@@ -555,6 +613,150 @@ class KeyManager private constructor(context: Context) {
      */
     private fun hexToBytes(hex: String): ByteArray {
         return hex.chunked(2).map { it.toInt(16).toByte() }.toByteArray()
+    }
+
+    // ==================== MULTI-WALLET SUPPORT ====================
+
+    /**
+     * Generate a new wallet with a unique seed
+     * @return walletId and Solana address
+     */
+    fun generateNewWallet(): Pair<String, String> {
+        try {
+            Log.d(TAG, "Generating new wallet")
+
+            // Generate new random seed phrase
+            val entropy = ByteArray(16)
+            java.security.SecureRandom().nextBytes(entropy)
+            val seedPhrase = MnemonicUtils.generateMnemonic(entropy)
+
+            // Derive keys from seed
+            val seed = mnemonicToSeed(seedPhrase)
+            val ed25519KeyPair = deriveEd25519KeyPair(seed)
+
+            // Generate unique wallet ID
+            val walletId = java.util.UUID.randomUUID().toString()
+
+            // Store keypair with wallet ID prefix
+            val walletKeyAlias = "${KEYSTORE_ALIAS_PREFIX}wallet_${walletId}_ed25519"
+            storeKeyPair(walletKeyAlias, ed25519KeyPair)
+
+            // Store seed phrase for this wallet
+            val walletSeedAlias = "${KEYSTORE_ALIAS_PREFIX}wallet_${walletId}_seed"
+            encryptedPrefs.edit {
+                putString(walletSeedAlias, seedPhrase)
+            }
+
+            // Get Solana address
+            val solanaAddress = base58Encode(ed25519KeyPair.publicKey)
+
+            Log.i(TAG, "New wallet generated: $walletId -> $solanaAddress")
+            return Pair(walletId, solanaAddress)
+
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to generate new wallet", e)
+            throw KeyManagerException("Failed to generate new wallet", e)
+        }
+    }
+
+    /**
+     * Get Solana address for a specific wallet
+     */
+    fun getWalletSolanaAddress(walletId: String): String {
+        try {
+            if (walletId == "main") {
+                return getSolanaAddress()
+            }
+
+            val walletKeyAlias = "${KEYSTORE_ALIAS_PREFIX}wallet_${walletId}_ed25519"
+            val publicKey = getStoredKey("${walletKeyAlias}_public")
+                ?: throw KeyManagerException("Wallet not found: $walletId")
+
+            return base58Encode(publicKey)
+
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to get wallet address", e)
+            throw KeyManagerException("Failed to get wallet address", e)
+        }
+    }
+
+    /**
+     * Get private key for a specific wallet (for export)
+     * NOTE: Main wallet (walletId="main") will return null for security
+     */
+    fun getWalletPrivateKey(walletId: String): ByteArray? {
+        try {
+            // Don't allow exporting main wallet private key
+            if (walletId == "main") {
+                Log.w(TAG, "Cannot export main wallet private key")
+                return null
+            }
+
+            val walletKeyAlias = "${KEYSTORE_ALIAS_PREFIX}wallet_${walletId}_ed25519"
+            val privateKey = getStoredKey("${walletKeyAlias}_private")
+                ?: throw KeyManagerException("Wallet not found: $walletId")
+
+            Log.i(TAG, "Retrieved private key for wallet: $walletId")
+            return privateKey
+
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to get wallet private key", e)
+            throw KeyManagerException("Failed to get wallet private key", e)
+        }
+    }
+
+    /**
+     * Get seed phrase for a specific wallet (for backup)
+     * NOTE: Main wallet will return null for security
+     */
+    fun getWalletSeedPhrase(walletId: String): String? {
+        try {
+            // Don't allow exporting main wallet seed
+            if (walletId == "main") {
+                Log.w(TAG, "Cannot export main wallet seed phrase")
+                return null
+            }
+
+            val walletSeedAlias = "${KEYSTORE_ALIAS_PREFIX}wallet_${walletId}_seed"
+            val seedPhrase = encryptedPrefs.getString(walletSeedAlias, null)
+                ?: throw KeyManagerException("Wallet seed not found: $walletId")
+
+            Log.i(TAG, "Retrieved seed phrase for wallet: $walletId")
+            return seedPhrase
+
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to get wallet seed phrase", e)
+            throw KeyManagerException("Failed to get wallet seed phrase", e)
+        }
+    }
+
+    /**
+     * Delete a wallet (NOT allowed for main wallet)
+     */
+    fun deleteWallet(walletId: String): Boolean {
+        try {
+            // Don't allow deleting main wallet
+            if (walletId == "main") {
+                Log.w(TAG, "Cannot delete main wallet")
+                return false
+            }
+
+            val walletKeyAlias = "${KEYSTORE_ALIAS_PREFIX}wallet_${walletId}_ed25519"
+            val walletSeedAlias = "${KEYSTORE_ALIAS_PREFIX}wallet_${walletId}_seed"
+
+            encryptedPrefs.edit {
+                remove(walletKeyAlias + "_private")
+                remove(walletKeyAlias + "_public")
+                remove(walletSeedAlias)
+            }
+
+            Log.i(TAG, "Deleted wallet: $walletId")
+            return true
+
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to delete wallet", e)
+            return false
+        }
     }
 
     /**

@@ -38,7 +38,7 @@
                 android:layout_height="wrap_content"
                 android:text="●"
                 android:textSize="10sp"
-                android:textColor="#10B981"
+                android:textColor="@color/primary_blue"
                 android:layout_marginEnd="6dp"
                 android:visibility="gone" />
 
@@ -100,6 +100,22 @@
         </LinearLayout>
 
     </LinearLayout>
+
+    <!-- Download Button for Pending Messages -->
+    <androidx.appcompat.widget.AppCompatButton
+        android:id="@+id/downloadButton"
+        android:layout_width="wrap_content"
+        android:layout_height="32dp"
+        android:layout_marginStart="8dp"
+        android:background="@drawable/primary_button_bg"
+        android:paddingStart="12dp"
+        android:paddingEnd="12dp"
+        android:text="Download"
+        android:textSize="12sp"
+        android:textStyle="bold"
+        android:textColor="@color/text_white"
+        android:textAllCaps="false"
+        android:visibility="gone" />
 
     <!-- Unread Badge -->
     <TextView

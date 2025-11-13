@@ -49,6 +49,12 @@ interface ContactDao {
     suspend fun getContactByOnionAddress(onionAddress: String): Contact?
 
     /**
+     * Get contact by Ed25519 public key (Base64)
+     */
+    @Query("SELECT * FROM contacts WHERE publicKeyBase64 = :publicKeyBase64")
+    fun getContactByPublicKey(publicKeyBase64: String): Contact?
+
+    /**
      * Get all contacts ordered by most recent contact
      * Returns Flow for reactive updates
      */
@@ -78,6 +84,24 @@ interface ContactDao {
      */
     @Query("UPDATE contacts SET trustLevel = :trustLevel WHERE id = :contactId")
     suspend fun updateTrustLevel(contactId: Long, trustLevel: Int)
+
+    /**
+     * Update contact display name
+     */
+    @Query("UPDATE contacts SET displayName = :displayName WHERE id = :contactId")
+    suspend fun updateContactDisplayName(contactId: Long, displayName: String)
+
+    /**
+     * Update distress contact status
+     */
+    @Query("UPDATE contacts SET isDistressContact = :isDistressContact WHERE id = :contactId")
+    suspend fun updateDistressContactStatus(contactId: Long, isDistressContact: Boolean)
+
+    /**
+     * Get all distress contacts
+     */
+    @Query("SELECT * FROM contacts WHERE isDistressContact = 1 ORDER BY displayName ASC")
+    suspend fun getDistressContacts(): List<Contact>
 
     /**
      * Get contact count

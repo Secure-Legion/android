@@ -20,11 +20,6 @@ class SettingsActivity : AppCompatActivity() {
             finish()
         }
 
-        // Security Mode
-        findViewById<View>(R.id.securityModeItem).setOnClickListener {
-            startActivity(Intent(this, SecurityModeActivity::class.java))
-        }
-
         // Duress PIN
         findViewById<View>(R.id.duressPinItem).setOnClickListener {
             startActivity(Intent(this, DuressPinActivity::class.java))
@@ -43,6 +38,11 @@ class SettingsActivity : AppCompatActivity() {
         // Notifications
         findViewById<View>(R.id.notificationsItem).setOnClickListener {
             startActivity(Intent(this, NotificationsActivity::class.java))
+        }
+
+        // About
+        findViewById<View>(R.id.aboutItem).setOnClickListener {
+            startActivity(Intent(this, AboutActivity::class.java))
         }
 
         // Wipe Account

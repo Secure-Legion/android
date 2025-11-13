@@ -11,6 +11,8 @@
     <color name="border_color">#1F2937</color>
     <color name="success_green">#10B981</color>
     <color name="warning_red">#EF4444</color>
+    <color name="warning_yellow">#F59E0B</color>
+    <color name="danger_red">#DC2626</color>
 
     <!-- Legacy colors -->
     <color name="purple_200">#FFBB86FC</color>

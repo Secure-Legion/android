@@ -19,8 +19,8 @@
 
         <!-- Logo -->
         <ImageView
-            android:layout_width="280dp"
-            android:layout_height="280dp"
+            android:layout_width="250dp"
+            android:layout_height="250dp"
             android:src="@drawable/secure_logo"
             android:layout_marginBottom="16dp"
             android:contentDescription="Secure Legion Logo" />
@@ -81,23 +81,6 @@
             android:orientation="vertical"
             android:gravity="center"
             android:visibility="gone">
-
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="Welcome to Secure Legion"
-                android:textSize="20sp"
-                android:textStyle="bold"
-                android:textColor="@color/text_white"
-                android:layout_marginBottom="8dp" />
-
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="Create a new account or import existing"
-                android:textSize="14sp"
-                android:textColor="@color/text_gray"
-                android:layout_marginBottom="32dp" />
 
             <TextView
                 android:id="@+id/newAccountLink"

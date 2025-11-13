@@ -4,7 +4,7 @@
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="@color/dark_bg">
+    android:background="@color/header_bg">
 
     <!-- Header -->
     <LinearLayout
@@ -12,7 +12,7 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="horizontal"
-        android:background="#000000"
+        android:background="@drawable/header_bg"
         android:padding="16dp"
         android:gravity="center_vertical"
         app:layout_constraintTop_toTopOf="parent">
@@ -32,7 +32,7 @@
         <ImageView
             android:layout_width="60dp"
             android:layout_height="60dp"
-            android:src="@drawable/secure_logo"
+            android:src="@drawable/icon_header"
             android:layout_marginStart="24dp"
             android:contentDescription="Secure Legion Logo" />
 
@@ -63,51 +63,60 @@
             android:orientation="vertical"
             android:padding="24dp">
 
-            <!-- Password Field -->
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="Password"
-                android:textSize="14sp"
-                android:textStyle="bold"
-                android:textColor="@color/text_white"
-                android:layout_marginBottom="8dp" />
-
-            <EditText
-                android:id="@+id/passwordInput"
+            <!-- Password Section (hidden after wallet creation) -->
+            <LinearLayout
+                android:id="@+id/passwordSection"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:background="@drawable/input_field_bg"
-                android:hint="Enter password"
-                android:inputType="textPassword"
-                android:textColorHint="@color/text_gray"
-                android:textColor="@color/text_white"
-                android:textSize="16sp"
-                android:padding="16dp"
-                android:layout_marginBottom="16dp" />
+                android:orientation="vertical">
 
-            <!-- Confirm Password Field -->
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="Confirm Password"
-                android:textSize="14sp"
-                android:textStyle="bold"
-                android:textColor="@color/text_white"
-                android:layout_marginBottom="8dp" />
+                <!-- Password Field -->
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Password"
+                    android:textSize="14sp"
+                    android:textStyle="bold"
+                    android:textColor="@color/text_white"
+                    android:layout_marginBottom="8dp" />
 
-            <EditText
-                android:id="@+id/confirmPasswordInput"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:background="@drawable/input_field_bg"
-                android:hint="Confirm password"
-                android:inputType="textPassword"
-                android:textColorHint="@color/text_gray"
-                android:textColor="@color/text_white"
-                android:textSize="16sp"
-                android:padding="16dp"
-                android:layout_marginBottom="24dp" />
+                <EditText
+                    android:id="@+id/passwordInput"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:background="@drawable/input_field_bg"
+                    android:hint="Enter password"
+                    android:inputType="textPassword"
+                    android:textColorHint="@color/text_gray"
+                    android:textColor="@color/text_white"
+                    android:textSize="16sp"
+                    android:padding="16dp"
+                    android:layout_marginBottom="16dp" />
+
+                <!-- Confirm Password Field -->
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Confirm Password"
+                    android:textSize="14sp"
+                    android:textStyle="bold"
+                    android:textColor="@color/text_white"
+                    android:layout_marginBottom="8dp" />
+
+                <EditText
+                    android:id="@+id/confirmPasswordInput"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:background="@drawable/input_field_bg"
+                    android:hint="Confirm password"
+                    android:inputType="textPassword"
+                    android:textColorHint="@color/text_gray"
+                    android:textColor="@color/text_white"
+                    android:textSize="16sp"
+                    android:padding="16dp"
+                    android:layout_marginBottom="24dp" />
+
+            </LinearLayout>
 
             <!-- Create Wallet Button -->
             <TextView
@@ -187,40 +196,6 @@
 
             </LinearLayout>
 
-            <!-- Search Section (hidden initially) -->
-            <LinearLayout
-                android:id="@+id/searchSection"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="vertical"
-                android:visibility="gone">
-
-                <TextView
-                    android:id="@+id/searchButton"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:text="Search Blockchain"
-                    android:textSize="16sp"
-                    android:textStyle="bold"
-                    android:textColor="@color/text_white"
-                    android:background="@drawable/metallic_button_bg"
-                    android:gravity="center"
-                    android:padding="16dp"
-                    android:clickable="true"
-                    android:focusable="true"
-                    android:elevation="6dp"
-                    android:layout_marginBottom="16dp" />
-
-                <TextView
-                    android:id="@+id/usernameStatus"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:textSize="15sp"
-                    android:textColor="@color/text_white"
-                    android:gravity="center"
-                    android:layout_marginBottom="16dp" />
-
-            </LinearLayout>
 
             <!-- Create Account Section (hidden initially) -->
             <LinearLayout
@@ -241,20 +216,10 @@
                     android:background="@drawable/metallic_button_bg"
                     android:gravity="center"
                     android:padding="16dp"
-                    android:clickable="false"
-                    android:focusable="false"
+                    android:clickable="true"
+                    android:focusable="true"
                     android:elevation="6dp"
-                    android:alpha="0.5"
                     android:layout_marginBottom="12dp" />
-
-                <TextView
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:text="You must fund your account to pay for the gas fee to create encrypted contacts on blockchain"
-                    android:textSize="11sp"
-                    android:textColor="@color/text_gray"
-                    android:gravity="center"
-                    android:lineSpacingMultiplier="1.3" />
 
             </LinearLayout>
 

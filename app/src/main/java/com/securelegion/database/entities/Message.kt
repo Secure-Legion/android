@@ -87,7 +87,18 @@ data class Message(
     /**
      * Message has been read locally
      */
-    val isRead: Boolean = false
+    val isRead: Boolean = false,
+
+    /**
+     * Self-destruct timestamp (Unix milliseconds)
+     * null = no self-destruct, otherwise delete message after this time
+     */
+    val selfDestructAt: Long? = null,
+
+    /**
+     * Whether sender wants read receipts for this message
+     */
+    val requiresReadReceipt: Boolean = true
 ) {
     companion object {
         // Message status constants
@@ -96,5 +107,8 @@ data class Message(
         const val STATUS_DELIVERED = 2
         const val STATUS_READ = 3
         const val STATUS_FAILED = 4
+
+        // Self-destruct duration (24 hours in milliseconds)
+        const val SELF_DESTRUCT_DURATION = 24 * 60 * 60 * 1000L
     }
 }

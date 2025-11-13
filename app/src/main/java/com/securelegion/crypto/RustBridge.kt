@@ -41,9 +41,10 @@ object RustBridge {
      * Decrypt a message using XChaCha20-Poly1305
      * @param ciphertext The encrypted message
      * @param senderPublicKey The sender's Ed25519 public key (32 bytes)
-     * @return Decrypted plaintext string
+     * @param privateKey Our private Ed25519 key (32 bytes)
+     * @return Decrypted plaintext string, or null if decryption fails
      */
-    external fun decryptMessage(ciphertext: ByteArray, senderPublicKey: ByteArray): String
+    external fun decryptMessage(ciphertext: ByteArray, senderPublicKey: ByteArray, privateKey: ByteArray): String?
 
     /**
      * Generate a new Ed25519 keypair
@@ -76,7 +77,29 @@ object RustBridge {
      */
     external fun hashPassword(password: String, salt: ByteArray): ByteArray
 
-    // ==================== TOR NETWORK ====================
+    // ==================== TOR NETWORK & MESSAGING ====================
+
+    /**
+     * Send encrypted message via Tor using Ping-Pong wake protocol
+     * @param recipientEd25519PublicKey Recipient's Ed25519 public key (32 bytes)
+     * @param recipientX25519PublicKey Recipient's X25519 public key (32 bytes)
+     * @param recipientOnion Recipient's .onion address
+     * @param encryptedMessage Pre-encrypted message bytes
+     * @return True if message sent successfully
+     */
+    external fun sendDirectMessage(
+        recipientEd25519PublicKey: ByteArray,
+        recipientX25519PublicKey: ByteArray,
+        recipientOnion: String,
+        encryptedMessage: ByteArray
+    ): Boolean
+
+    /**
+     * Receive incoming message after Pong is sent
+     * @param connectionId Connection ID from Ping-Pong handshake
+     * @return Encrypted message bytes, or null if no message
+     */
+    external fun receiveIncomingMessage(connectionId: Long): ByteArray?
 
     /**
      * Initialize Tor client and bootstrap connection to Tor network
@@ -113,6 +136,24 @@ object RustBridge {
     external fun stopHiddenServiceListener()
 
     /**
+     * Start SOCKS5 proxy server on 127.0.0.1:9050
+     * Routes all HTTP traffic (wallet RPC, IPFS) through Tor for privacy
+     * @return True if proxy started successfully
+     */
+    external fun startSocksProxy(): Boolean
+
+    /**
+     * Stop SOCKS5 proxy server
+     */
+    external fun stopSocksProxy()
+
+    /**
+     * Check if SOCKS5 proxy is currently running
+     * @return True if proxy is active
+     */
+    external fun isSocksProxyRunning(): Boolean
+
+    /**
      * Poll for an incoming Ping token (non-blocking)
      * @return Encoded data: [connection_id (8 bytes)][encrypted_ping_bytes] or null if no ping available
      */
@@ -132,6 +173,13 @@ object RustBridge {
      * @return Ping ID (String) to pass to respondToPing, or null on failure
      */
     external fun decryptIncomingPing(encryptedPingWire: ByteArray): String?
+
+    /**
+     * Get the sender's Ed25519 public key from a stored Ping
+     * @param pingId The Ping ID from decryptIncomingPing
+     * @return Sender's Ed25519 public key (32 bytes), or null if not found
+     */
+    external fun getPingSenderPublicKey(pingId: String): ByteArray?
 
     // ==================== PING-PONG PROTOCOL ====================
 

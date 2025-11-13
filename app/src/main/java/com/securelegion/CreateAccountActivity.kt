@@ -11,6 +11,8 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import com.securelegion.crypto.KeyManager
+import com.securelegion.database.SecureLegionDatabase
+import com.securelegion.database.entities.Wallet
 import com.securelegion.models.ContactCard
 import com.securelegion.services.ContactCardManager
 import kotlinx.coroutines.CoroutineScope
@@ -23,6 +25,7 @@ import java.util.UUID
 
 class CreateAccountActivity : AppCompatActivity() {
 
+    private lateinit var passwordSection: LinearLayout
     private lateinit var passwordInput: EditText
     private lateinit var confirmPasswordInput: EditText
     private lateinit var createWalletButton: TextView
@@ -30,14 +33,10 @@ class CreateAccountActivity : AppCompatActivity() {
     private lateinit var walletAddressText: TextView
     private lateinit var usernameSection: LinearLayout
     private lateinit var usernameInput: EditText
-    private lateinit var searchSection: LinearLayout
-    private lateinit var searchButton: TextView
-    private lateinit var usernameStatus: TextView
     private lateinit var createSection: LinearLayout
     private lateinit var createAccountButton: TextView
 
     private var generatedWalletAddress: String = ""
-    private var isUsernameAvailable: Boolean = false
     private var contactCardCid: String = ""
     private var contactCardPin: String = ""
 
@@ -47,9 +46,54 @@ class CreateAccountActivity : AppCompatActivity() {
 
         initializeViews()
         setupClickListeners()
+
+        // Check if resuming incomplete account setup
+        val resumeSetup = intent.getBooleanExtra("RESUME_SETUP", false)
+        if (resumeSetup) {
+            Log.i("CreateAccount", "Resuming incomplete account setup")
+            resumeAccountSetup()
+        }
+    }
+
+    /**
+     * Resume account setup from incomplete state
+     * User has wallet/password but no contact card
+     */
+    private fun resumeAccountSetup() {
+        val keyManager = KeyManager.getInstance(this)
+
+        // Get wallet address from existing keys
+        generatedWalletAddress = keyManager.getSolanaAddress()
+        Log.i("CreateAccount", "Resuming with existing wallet: $generatedWalletAddress")
+
+        // Hide password section, show wallet address and username sections
+        passwordSection.visibility = View.GONE
+        createWalletButton.visibility = View.GONE
+        walletAddressText.text = generatedWalletAddress
+        walletAddressSection.visibility = View.VISIBLE
+        usernameSection.visibility = View.VISIBLE
+        createSection.visibility = View.VISIBLE
+
+        Toast.makeText(this, "Enter your username to complete setup", Toast.LENGTH_LONG).show()
+    }
+
+    override fun onResume() {
+        super.onResume()
+
+        // If wallet address was generated (user returned from backup seed phrase screen)
+        // Show the wallet address and username sections, hide password section
+        if (generatedWalletAddress.isNotEmpty()) {
+            walletAddressText.text = generatedWalletAddress
+            passwordSection.visibility = View.GONE
+            walletAddressSection.visibility = View.VISIBLE
+            usernameSection.visibility = View.VISIBLE
+            createSection.visibility = View.VISIBLE
+            createWalletButton.visibility = View.GONE
+        }
     }
 
     private fun initializeViews() {
+        passwordSection = findViewById(R.id.passwordSection)
         passwordInput = findViewById(R.id.passwordInput)
         confirmPasswordInput = findViewById(R.id.confirmPasswordInput)
         createWalletButton = findViewById(R.id.createWalletButton)
@@ -57,9 +101,6 @@ class CreateAccountActivity : AppCompatActivity() {
         walletAddressText = findViewById(R.id.walletAddressText)
         usernameSection = findViewById(R.id.usernameSection)
         usernameInput = findViewById(R.id.usernameInput)
-        searchSection = findViewById(R.id.searchSection)
-        searchButton = findViewById(R.id.searchButton)
-        usernameStatus = findViewById(R.id.usernameStatus)
         createSection = findViewById(R.id.createSection)
         createAccountButton = findViewById(R.id.createAccountButton)
     }
@@ -93,8 +134,8 @@ class CreateAccountActivity : AppCompatActivity() {
             generateWalletAddress()
         }
 
-        // Search blockchain button
-        searchButton.setOnClickListener {
+        // Create Account button
+        createAccountButton.setOnClickListener {
             val username = usernameInput.text.toString()
 
             if (username.isEmpty()) {
@@ -102,19 +143,12 @@ class CreateAccountActivity : AppCompatActivity() {
                 return@setOnClickListener
             }
 
-            searchUsername(username)
-        }
+            // Disable button to prevent double-click
+            createAccountButton.isEnabled = false
 
-        // Create Account button
-        createAccountButton.setOnClickListener {
-            if (isUsernameAvailable) {
-                // Disable button to prevent double-click
-                createAccountButton.isEnabled = false
-
-                // Generate and upload contact card with the confirmed username
-                // This is async, so we need to wait for it to complete
-                generateContactCard()
-            }
+            // Generate and upload contact card with the confirmed username
+            // This is async, so we need to wait for it to complete
+            generateContactCard()
         }
     }
 
@@ -135,24 +169,17 @@ class CreateAccountActivity : AppCompatActivity() {
             keyManager.initializeFromSeed(mnemonic)
             Log.i("CreateAccount", "KeyManager initialized from seed")
 
+            // Set device password
+            val password = passwordInput.text.toString()
+            keyManager.setDevicePassword(password)
+            Log.i("CreateAccount", "Device password set")
+
             // Get the real Solana wallet address (Base58-encoded Ed25519 public key)
             generatedWalletAddress = keyManager.getSolanaAddress()
             Log.i("CreateAccount", "Solana address: $generatedWalletAddress")
 
-            // Show the wallet address
-            walletAddressText.text = generatedWalletAddress
-            walletAddressSection.visibility = View.VISIBLE
-
-            // Show username section
-            usernameSection.visibility = View.VISIBLE
-            searchSection.visibility = View.VISIBLE
-
-            // Hide the create wallet button
-            createWalletButton.visibility = View.GONE
-
-            Toast.makeText(this, "Wallet created successfully!", Toast.LENGTH_SHORT).show()
-
-            // Show backup seed phrase screen
+            // Navigate to backup seed phrase screen first
+            // When user returns, they'll see wallet address and username section
             Log.i("CreateAccount", "Navigating to backup seed phrase screen")
             val intent = Intent(this, BackupSeedPhraseActivity::class.java)
             intent.putExtra(BackupSeedPhraseActivity.EXTRA_SEED_PHRASE, mnemonic)
@@ -178,6 +205,7 @@ class CreateAccountActivity : AppCompatActivity() {
                 val contactCard = ContactCard(
                     displayName = usernameInput.text.toString().ifEmpty { "Anonymous" },
                     solanaPublicKey = keyManager.getSolanaPublicKey(),
+                    x25519PublicKey = keyManager.getEncryptionPublicKey(),
                     solanaAddress = keyManager.getSolanaAddress(),
                     torOnionAddress = keyManager.getTorOnionAddress(),
                     timestamp = System.currentTimeMillis()
@@ -207,21 +235,29 @@ class CreateAccountActivity : AppCompatActivity() {
                     keyManager.storeContactCardInfo(contactCardCid, contactCardPin)
                     keyManager.storeUsername(usernameInput.text.toString())
 
+                    // Initialize main wallet in database
+                    val dbPassphrase = keyManager.getDatabasePassphrase()
+                    val database = SecureLegionDatabase.getInstance(this@CreateAccountActivity, dbPassphrase)
+                    val timestamp = System.currentTimeMillis()
+                    val mainWallet = Wallet(
+                        walletId = "main",
+                        name = "Wallet 1",
+                        solanaAddress = keyManager.getSolanaAddress(),
+                        isMainWallet = true,
+                        createdAt = timestamp,
+                        lastUsedAt = timestamp
+                    )
+                    database.walletDao().insertWallet(mainWallet)
+                    Log.i("CreateAccount", "Main wallet initialized in database")
+
                     Log.i("CreateAccount", "Contact card uploaded successfully")
                     Log.i("CreateAccount", "CID: $contactCardCid")
                     Log.i("CreateAccount", "PIN: $contactCardPin")
                     Log.i("CreateAccount", "Size: $size bytes")
 
-                    Toast.makeText(
-                        this@CreateAccountActivity,
-                        "Account created successfully!",
-                        Toast.LENGTH_LONG
-                    ).show()
-
-                    // Navigate to Wallet Identity screen to show CID and PIN
-                    val intent = Intent(this@CreateAccountActivity, WalletIdentityActivity::class.java)
+                    // Navigate to Account Created screen to show all info
+                    val intent = Intent(this@CreateAccountActivity, AccountCreatedActivity::class.java)
                     intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
-                    intent.putExtra("SHOW_CONTACT_CARD_INFO", true)
                     startActivity(intent)
                     finish()
                 } else {
@@ -242,23 +278,4 @@ class CreateAccountActivity : AppCompatActivity() {
         }
     }
 
-    private fun searchUsername(username: String) {
-        // Simulate blockchain search (in production, actually query the blockchain)
-        usernameStatus.text = "Searching blockchain..."
-
-        // Simulate network delay
-        usernameStatus.postDelayed({
-            // For demo purposes, always return available
-            isUsernameAvailable = true
-            usernameStatus.text = "✓ Username is available!"
-            usernameStatus.setTextColor(getColor(R.color.success_green))
-
-            // Show create account section
-            createSection.visibility = View.VISIBLE
-            createAccountButton.isClickable = true
-            createAccountButton.alpha = 1.0f
-
-            Toast.makeText(this, "Click 'Create Account' to finish", Toast.LENGTH_LONG).show()
-        }, 1500)
-    }
 }

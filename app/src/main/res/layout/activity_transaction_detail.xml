@@ -14,7 +14,7 @@
         android:orientation="horizontal"
         android:background="@drawable/header_bg"
         android:padding="16dp"
-        android:gravity="center_vertical"
+        android:gravity="center"
         app:layout_constraintTop_toTopOf="parent">
 
         <TextView
@@ -30,16 +30,15 @@
             android:background="?attr/selectableItemBackgroundBorderless" />
 
         <ImageView
-            android:layout_width="60dp"
-            android:layout_height="60dp"
-            android:src="@drawable/secure_logo"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:src="@drawable/icon_header"
             android:layout_marginStart="24dp"
             android:contentDescription="Secure Legion Logo" />
 
         <TextView
-            android:layout_width="0dp"
+            android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_weight="1"
             android:text="TRANSACTION DETAILS"
             android:textSize="18sp"
             android:textStyle="bold"
@@ -233,9 +232,8 @@
                 android:layout_marginBottom="24dp">
 
                 <TextView
-                    android:layout_width="0dp"
+                    android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:layout_weight="1"
                     android:text="Network Fee"
                     android:textSize="14sp"
                     android:textColor="@color/text_gray" />

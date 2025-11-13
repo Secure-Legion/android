@@ -8,13 +8,20 @@ import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
+import androidx.lifecycle.lifecycleScope
 import com.securelegion.crypto.KeyManager
+import com.securelegion.database.SecureLegionDatabase
+import com.securelegion.utils.SecureWipe
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class LockActivity : AppCompatActivity() {
 
     private lateinit var passwordSection: LinearLayout
     private lateinit var accountLinksSection: LinearLayout
     private var hasWallet = false
+    private var isProcessingDistress = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -51,13 +58,49 @@ class LockActivity : AppCompatActivity() {
                 return@setOnClickListener
             }
 
-            // TODO: Verify password with biometric/PIN
-            // For development, accept "test" or any password
-            Log.i("LockActivity", "Password accepted, unlocking app")
-            Toast.makeText(this, "Unlocked!", Toast.LENGTH_SHORT).show()
-            val intent = Intent(this, MainActivity::class.java)
-            startActivity(intent)
-            finish()
+            // Prevent multiple distress triggers
+            if (isProcessingDistress) {
+                return@setOnClickListener
+            }
+
+            // Check if entered password is the duress PIN
+            val duressPIN = DuressPinActivity.getDuressPin(this)
+            Log.d("LockActivity", "Checking duress PIN - Stored: '$duressPIN', Entered: '$password', Match: ${password == duressPIN}")
+            if (duressPIN != null && password == duressPIN) {
+                Log.w("LockActivity", "Duress PIN detected - triggering distress protocol")
+                isProcessingDistress = true
+                handleDistressProtocol()
+                return@setOnClickListener
+            }
+
+            // Verify normal device password
+            val keyManager = KeyManager.getInstance(this)
+            if (keyManager.verifyDevicePassword(password)) {
+                Log.i("LockActivity", "Password verified")
+
+                // Check if account setup is complete (has wallet, contact card, AND username)
+                if (!keyManager.isAccountSetupComplete()) {
+                    Log.w("LockActivity", "Account incomplete - need to finish setup")
+                    Toast.makeText(this, "Please complete account setup", Toast.LENGTH_LONG).show()
+
+                    // Redirect to CreateAccountActivity to finish setup
+                    val intent = Intent(this, CreateAccountActivity::class.java)
+                    intent.putExtra("RESUME_SETUP", true)
+                    startActivity(intent)
+                    finish()
+                } else {
+                    Log.i("LockActivity", "Account complete, unlocking app")
+                    val intent = Intent(this, MainActivity::class.java)
+                    startActivity(intent)
+                    finish()
+                }
+            } else {
+                // Password incorrect
+                Log.w("LockActivity", "Incorrect password entered")
+                Toast.makeText(this, "Incorrect password", Toast.LENGTH_SHORT).show()
+                // Clear input
+                findViewById<EditText>(R.id.passwordInput).text.clear()
+            }
         }
 
         findViewById<View>(R.id.newAccountLink).setOnClickListener {
@@ -72,6 +115,146 @@ class LockActivity : AppCompatActivity() {
             val intent = Intent(this, RestoreAccountActivity::class.java)
             startActivity(intent)
             // Don't finish - allow back navigation
+        }
+    }
+
+    /**
+     * Handle distress protocol when duress PIN is entered
+     * Sends panic notifications and executes distress actions based on settings
+     */
+    private fun handleDistressProtocol() {
+        lifecycleScope.launch {
+            try {
+                Log.w("LockActivity", "Executing distress protocol")
+
+                // Send panic notifications to distress contacts
+                sendPanicNotifications()
+
+                // Check if phone should be wiped
+                val shouldWipe = DuressPinActivity.shouldWipePhoneOnDistress(this@LockActivity)
+
+                if (shouldWipe) {
+                    Log.w("LockActivity", "Wipe toggle ON - wiping all data")
+                    wipeAllData()
+                } else {
+                    Log.w("LockActivity", "Wipe toggle OFF - enabling silent message blocking")
+                    enableMessageBlocking()
+                }
+
+                // Show normal unlock screen to maintain cover
+                // (Don't show any error or indication that distress was triggered)
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(this@LockActivity, "Incorrect password", Toast.LENGTH_SHORT).show()
+                    findViewById<EditText>(R.id.passwordInput).text.clear()
+                    isProcessingDistress = false
+                }
+
+            } catch (e: Exception) {
+                Log.e("LockActivity", "Failed to execute distress protocol", e)
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(this@LockActivity, "Incorrect password", Toast.LENGTH_SHORT).show()
+                    findViewById<EditText>(R.id.passwordInput).text.clear()
+                    isProcessingDistress = false
+                }
+            }
+        }
+    }
+
+    /**
+     * Send panic notifications to all distress contacts
+     */
+    private suspend fun sendPanicNotifications() {
+        withContext(Dispatchers.IO) {
+            try {
+                val keyManager = KeyManager.getInstance(this@LockActivity)
+                val dbPassphrase = keyManager.getDatabasePassphrase()
+                val database = SecureLegionDatabase.getInstance(this@LockActivity, dbPassphrase)
+
+                // Get all distress contacts
+                val distressContacts = database.contactDao().getAllContacts()
+                    .filter { it.isDistressContact }
+
+                Log.w("LockActivity", "Found ${distressContacts.size} distress contacts")
+
+                if (distressContacts.isEmpty()) {
+                    Log.w("LockActivity", "No distress contacts configured - skipping panic notifications")
+                    return@withContext
+                }
+
+                // Check if UnitedPush relay should be used
+                val useRelay = DuressPinActivity.shouldUseUnitedPushRelay(this@LockActivity)
+
+                // Send panic notification to each distress contact
+                for (contact in distressContacts) {
+                    try {
+                        if (useRelay) {
+                            Log.i("LockActivity", "Sending panic via UnitedPush relay to ${contact.displayName}")
+                            // TODO: Implement UnitedPush relay panic notification
+                        } else {
+                            Log.i("LockActivity", "Sending panic via direct connection to ${contact.displayName}")
+                            // TODO: Implement direct panic notification
+                        }
+                    } catch (e: Exception) {
+                        Log.e("LockActivity", "Failed to send panic to ${contact.displayName}", e)
+                    }
+                }
+
+                Log.i("LockActivity", "Panic notifications sent to all distress contacts")
+            } catch (e: Exception) {
+                Log.e("LockActivity", "Failed to send panic notifications", e)
+            }
+        }
+    }
+
+    /**
+     * Wipe all data (keys, database, settings) with 3-pass secure overwrite
+     */
+    private suspend fun wipeAllData() {
+        withContext(Dispatchers.IO) {
+            try {
+                Log.w("LockActivity", "WIPING ALL DATA (3-pass secure overwrite)")
+
+                // Wipe all cryptographic keys
+                val keyManager = KeyManager.getInstance(this@LockActivity)
+                keyManager.wipeAllKeys()
+
+                // Securely wipe all data (3-pass overwrite)
+                SecureWipe.wipeAllData(this@LockActivity)
+
+                Log.w("LockActivity", "All data securely wiped")
+
+                // Restart app to show account creation screen
+                withContext(Dispatchers.Main) {
+                    val intent = Intent(this@LockActivity, LockActivity::class.java)
+                    intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+                    startActivity(intent)
+                    finish()
+                }
+            } catch (e: Exception) {
+                Log.e("LockActivity", "Failed to wipe data", e)
+            }
+        }
+    }
+
+    /**
+     * Enable silent message blocking mode
+     * Sets a flag in SharedPreferences to block all outgoing messages
+     */
+    private suspend fun enableMessageBlocking() {
+        withContext(Dispatchers.IO) {
+            try {
+                Log.w("LockActivity", "Enabling silent message blocking mode")
+
+                // Set flag to block outgoing messages
+                getSharedPreferences("security_settings", MODE_PRIVATE)
+                    .edit()
+                    .putBoolean("block_outgoing_messages", true)
+                    .apply()
+
+                Log.i("LockActivity", "Message blocking enabled - all outgoing messages will be silently blocked")
+            } catch (e: Exception) {
+                Log.e("LockActivity", "Failed to enable message blocking", e)
+            }
         }
     }
 

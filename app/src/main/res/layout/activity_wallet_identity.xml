@@ -134,23 +134,7 @@
                 android:textColor="@color/text_white"
                 android:textSize="16sp"
                 android:padding="14dp"
-                android:layout_marginBottom="16dp" />
-
-            <TextView
-                android:id="@+id/updateUsernameButton"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="New Identity"
-                android:textSize="16sp"
-                android:textStyle="bold"
-                android:textColor="@color/text_white"
-                android:background="@drawable/metallic_button_bg"
-                android:gravity="center"
-                android:padding="16dp"
-                android:clickable="true"
-                android:focusable="true"
-                android:elevation="6dp"
-                android:layout_marginBottom="16dp" />
+                android:layout_marginBottom="24dp" />
 
             <!-- Contact Card Info -->
             <TextView
@@ -227,21 +211,12 @@
 
             </LinearLayout>
 
-            <!-- Wallet Management -->
+            <!-- New Identity Button -->
             <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="Wallet Management"
-                android:textSize="13sp"
-                android:textStyle="bold"
-                android:textColor="@color/text_gray"
-                android:layout_marginBottom="8dp" />
-
-            <TextView
-                android:id="@+id/createNewWalletButton"
+                android:id="@+id/updateUsernameButton"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="Create New Wallet"
+                android:text="New Identity"
                 android:textSize="16sp"
                 android:textStyle="bold"
                 android:textColor="@color/text_white"
@@ -251,34 +226,8 @@
                 android:clickable="true"
                 android:focusable="true"
                 android:elevation="6dp"
+                android:layout_marginTop="8dp"
                 android:layout_marginBottom="24dp" />
-
-            <!-- Info Box -->
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="vertical"
-                android:background="@drawable/info_box_bg"
-                android:padding="16dp">
-
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="Blockchain Identity"
-                    android:textSize="16sp"
-                    android:textStyle="bold"
-                    android:textColor="@color/text_white"
-                    android:layout_marginBottom="8dp" />
-
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="You need 0.0008 SOL in your wallet to write your new encrypted contact card to the blockchain."
-                    android:textSize="14sp"
-                    android:textColor="@color/text_gray"
-                    android:lineSpacingMultiplier="1.4" />
-
-            </LinearLayout>
 
         </LinearLayout>
 

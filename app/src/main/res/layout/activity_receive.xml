@@ -4,7 +4,7 @@
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="@color/dark_bg">
+    android:background="@color/header_bg">
 
     <ScrollView
         android:layout_width="match_parent"
@@ -23,9 +23,9 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:orientation="horizontal"
-                android:background="#000000"
+                android:background="@drawable/header_bg"
                 android:padding="24dp"
-                android:gravity="center_vertical">
+                android:gravity="center">
 
                 <TextView
                     android:id="@+id/backButton"
@@ -40,17 +40,16 @@
                     android:background="?attr/selectableItemBackgroundBorderless" />
 
                 <LinearLayout
-                    android:layout_width="0dp"
+                    android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:layout_weight="1"
                     android:orientation="horizontal"
                     android:gravity="center"
                     android:layout_marginEnd="40dp">
 
                     <ImageView
-                        android:layout_width="60dp"
-                        android:layout_height="60dp"
-                        android:src="@drawable/secure_logo"
+                        android:layout_width="48dp"
+                        android:layout_height="48dp"
+                        android:src="@drawable/icon_header"
                         android:layout_marginEnd="12dp"
                         android:contentDescription="Secure Legion Logo" />
 

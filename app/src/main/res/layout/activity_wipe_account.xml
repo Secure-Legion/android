@@ -4,7 +4,7 @@
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="@color/dark_bg">
+    android:background="#000000">
 
 <ScrollView
     android:layout_width="match_parent"
@@ -16,15 +16,19 @@
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:orientation="vertical">
+        android:orientation="vertical"
+        android:background="#000000">
 
         <!-- Header -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="horizontal"
-            android:background="@color/dark_bg"
-            android:padding="24dp"
+            android:background="@drawable/header_bg"
+            android:paddingTop="24dp"
+            android:paddingStart="24dp"
+            android:paddingEnd="24dp"
+            android:paddingBottom="24dp"
             android:gravity="center_vertical">
 
             <TextView
@@ -48,9 +52,9 @@
                 android:layout_marginEnd="40dp">
 
                 <ImageView
-                    android:layout_width="60dp"
-                    android:layout_height="60dp"
-                    android:src="@drawable/secure_logo"
+                    android:layout_width="48dp"
+                    android:layout_height="48dp"
+                    android:src="@drawable/icon_header"
                     android:layout_marginEnd="12dp"
                     android:contentDescription="Secure Legion Logo" />
 
@@ -163,7 +167,7 @@
                     <TextView
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="Make sure you have backed up your recovery phrase and any important data. Once wiped, your account cannot be recovered from this device."
+                        android:text="Make sure you have backed up your seed phrase to access funds or transfer out. You will lose your contacts and will need to readd them as you will have to create a new identity."
                         android:textSize="14sp"
                         android:textColor="@color/text_gray"
                         android:lineSpacingMultiplier="1.3" />

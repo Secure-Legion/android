@@ -1,21 +1,47 @@
 package com.securelegion
 
+import android.Manifest
+import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
+import android.util.Log
 import android.view.View
 import android.widget.Toast
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.ContextCompat
 
 class NotificationsActivity : AppCompatActivity() {
 
-    private var notificationsEnabled = true
+    private var notificationsEnabled = false
     private var messageContentEnabled = false
     private var soundEnabled = true
+
+    private val requestPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { isGranted: Boolean ->
+        if (isGranted) {
+            Log.i("Notifications", "POST_NOTIFICATIONS permission granted")
+            notificationsEnabled = true
+            saveSettings()
+            updateToggleBackground(R.id.toggleNotifications, true)
+            Toast.makeText(this, "Notifications enabled", Toast.LENGTH_SHORT).show()
+        } else {
+            Log.w("Notifications", "POST_NOTIFICATIONS permission denied")
+            notificationsEnabled = false
+            saveSettings()
+            updateToggleBackground(R.id.toggleNotifications, false)
+            Toast.makeText(this, "Notification permission denied", Toast.LENGTH_SHORT).show()
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_notifications)
 
+        loadSettings()
         setupBottomNavigation()
         setupToggleSwitches()
 
@@ -28,24 +54,93 @@ class NotificationsActivity : AppCompatActivity() {
     private fun setupToggleSwitches() {
         // Toggle Notifications
         findViewById<View>(R.id.toggleNotifications).setOnClickListener {
-            notificationsEnabled = !notificationsEnabled
-            updateToggleBackground(R.id.toggleNotifications, notificationsEnabled)
-            Toast.makeText(this, if (notificationsEnabled) "Notifications enabled" else "Notifications disabled", Toast.LENGTH_SHORT).show()
+            if (!notificationsEnabled) {
+                // Trying to enable notifications
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    // Android 13+ requires permission
+                    when {
+                        ContextCompat.checkSelfPermission(
+                            this,
+                            Manifest.permission.POST_NOTIFICATIONS
+                        ) == PackageManager.PERMISSION_GRANTED -> {
+                            // Permission already granted
+                            notificationsEnabled = true
+                            saveSettings()
+                            updateToggleBackground(R.id.toggleNotifications, true)
+                            Toast.makeText(this, "Notifications enabled", Toast.LENGTH_SHORT).show()
+                        }
+                        else -> {
+                            // Request permission
+                            requestPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                        }
+                    }
+                } else {
+                    // Android 12 and below - no permission needed
+                    notificationsEnabled = true
+                    saveSettings()
+                    updateToggleBackground(R.id.toggleNotifications, true)
+                    Toast.makeText(this, "Notifications enabled", Toast.LENGTH_SHORT).show()
+                }
+            } else {
+                // Disabling notifications
+                notificationsEnabled = false
+                saveSettings()
+                updateToggleBackground(R.id.toggleNotifications, false)
+                Toast.makeText(this, "Notifications disabled", Toast.LENGTH_SHORT).show()
+            }
         }
 
         // Toggle Message Content
         findViewById<View>(R.id.toggleMessageContent).setOnClickListener {
             messageContentEnabled = !messageContentEnabled
+            saveSettings()
             updateToggleBackground(R.id.toggleMessageContent, messageContentEnabled)
-            Toast.makeText(this, if (messageContentEnabled) "Message content enabled" else "Message content disabled", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, if (messageContentEnabled) "Message content will be shown" else "Message content hidden", Toast.LENGTH_SHORT).show()
         }
 
         // Toggle Sound
         findViewById<View>(R.id.toggleSound).setOnClickListener {
             soundEnabled = !soundEnabled
+            saveSettings()
             updateToggleBackground(R.id.toggleSound, soundEnabled)
             Toast.makeText(this, if (soundEnabled) "Sound enabled" else "Sound disabled", Toast.LENGTH_SHORT).show()
         }
+    }
+
+    private fun loadSettings() {
+        val prefs = getSharedPreferences("notifications_prefs", Context.MODE_PRIVATE)
+
+        // Check if permission is granted for Android 13+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            val hasPermission = ContextCompat.checkSelfPermission(
+                this,
+                Manifest.permission.POST_NOTIFICATIONS
+            ) == PackageManager.PERMISSION_GRANTED
+            notificationsEnabled = prefs.getBoolean("notifications_enabled", false) && hasPermission
+        } else {
+            notificationsEnabled = prefs.getBoolean("notifications_enabled", false)
+        }
+
+        messageContentEnabled = prefs.getBoolean("message_content_enabled", false)
+        soundEnabled = prefs.getBoolean("sound_enabled", true)
+
+        // Update UI to reflect loaded settings
+        updateToggleBackground(R.id.toggleNotifications, notificationsEnabled)
+        updateToggleBackground(R.id.toggleMessageContent, messageContentEnabled)
+        updateToggleBackground(R.id.toggleSound, soundEnabled)
+
+        Log.i("Notifications", "Loaded settings - Notifications: $notificationsEnabled, Content: $messageContentEnabled, Sound: $soundEnabled")
+    }
+
+    private fun saveSettings() {
+        val prefs = getSharedPreferences("notifications_prefs", Context.MODE_PRIVATE)
+        prefs.edit().apply {
+            putBoolean("notifications_enabled", notificationsEnabled)
+            putBoolean("message_content_enabled", messageContentEnabled)
+            putBoolean("sound_enabled", soundEnabled)
+            apply()
+        }
+        Log.i("Notifications", "Saved settings - Notifications: $notificationsEnabled, Content: $messageContentEnabled, Sound: $soundEnabled")
     }
 
     private fun updateToggleBackground(viewId: Int, isActive: Boolean) {

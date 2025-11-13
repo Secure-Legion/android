@@ -3,6 +3,10 @@ package com.securelegion.crypto
 import android.content.Context
 import android.content.SharedPreferences
 import android.util.Log
+import okhttp3.OkHttpClient
+import java.net.InetSocketAddress
+import java.net.Proxy
+import java.util.concurrent.TimeUnit
 
 /**
  * Manages Tor network initialization and hidden service setup
@@ -18,6 +22,14 @@ class TorManager(private val context: Context) {
     private val prefs: SharedPreferences by lazy {
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
     }
+
+    @Volatile
+    private var isInitializing = false
+
+    @Volatile
+    private var isInitialized = false
+
+    private val initCallbacks = mutableListOf<(Boolean, String?) -> Unit>()
 
     companion object {
         private const val TAG = "TorManager"
@@ -39,8 +51,29 @@ class TorManager(private val context: Context) {
     /**
      * Initialize Tor client and create hidden service if needed
      * Should be called once on app startup (from Application class)
+     * Prevents concurrent initializations - queues callbacks if already initializing
      */
     fun initializeAsync(onComplete: (Boolean, String?) -> Unit) {
+        synchronized(this) {
+            // If already initialized, immediately return cached result
+            if (isInitialized) {
+                Log.d(TAG, "Tor already initialized, returning cached result")
+                onComplete(true, getOnionAddress())
+                return
+            }
+
+            // If currently initializing, queue the callback
+            if (isInitializing) {
+                Log.d(TAG, "Tor initialization already in progress, queuing callback")
+                initCallbacks.add(onComplete)
+                return
+            }
+
+            // Start initialization
+            isInitializing = true
+            initCallbacks.add(onComplete)
+        }
+
         Thread {
             try {
                 // Initialize Tor client
@@ -51,11 +84,18 @@ class TorManager(private val context: Context) {
                 // Create hidden service if we don't have one yet
                 val existingAddress = getOnionAddress()
                 val onionAddress = if (existingAddress == null) {
-                    Log.d(TAG, "Creating new hidden service...")
-                    val address = RustBridge.createHiddenService(DEFAULT_SERVICE_PORT)
-                    saveOnionAddress(address)
-                    Log.d(TAG, "Hidden service created: $address")
-                    address
+                    // Check if user has created an account (required for hidden service key)
+                    val keyManager = KeyManager.getInstance(context)
+                    if (keyManager.isInitialized()) {
+                        Log.d(TAG, "Creating new hidden service...")
+                        val address = RustBridge.createHiddenService(DEFAULT_SERVICE_PORT)
+                        saveOnionAddress(address)
+                        Log.d(TAG, "Hidden service created: $address")
+                        address
+                    } else {
+                        Log.d(TAG, "Skipping hidden service creation - no account yet")
+                        null
+                    }
                 } else {
                     Log.d(TAG, "Using existing .onion address: $existingAddress")
                     existingAddress
@@ -64,10 +104,22 @@ class TorManager(private val context: Context) {
                 // Mark as initialized
                 prefs.edit().putBoolean(KEY_TOR_INITIALIZED, true).apply()
 
-                onComplete(true, onionAddress)
+                // Mark as complete and notify all queued callbacks
+                synchronized(this) {
+                    isInitializing = false
+                    isInitialized = true
+                    val callbacks = initCallbacks.toList()
+                    initCallbacks.clear()
+                    callbacks.forEach { it(true, onionAddress) }
+                }
             } catch (e: Exception) {
                 Log.e(TAG, "Tor initialization failed", e)
-                onComplete(false, null)
+                synchronized(this) {
+                    isInitializing = false
+                    val callbacks = initCallbacks.toList()
+                    initCallbacks.clear()
+                    callbacks.forEach { it(false, null) }
+                }
             }
         }.start()
     }
@@ -127,6 +179,21 @@ class TorManager(private val context: Context) {
      */
     fun respondToPing(pingId: String, authenticated: Boolean): ByteArray? {
         return RustBridge.respondToPing(pingId, authenticated)
+    }
+
+    /**
+     * Get an OkHttpClient configured to route traffic through Tor SOCKS proxy
+     * Use this for all HTTP/HTTPS requests to preserve network anonymity
+     *
+     * @return OkHttpClient with Tor SOCKS proxy at 127.0.0.1:9050
+     */
+    fun getTorProxyClient(): OkHttpClient {
+        return OkHttpClient.Builder()
+            .proxy(Proxy(Proxy.Type.SOCKS, InetSocketAddress("127.0.0.1", 9050)))
+            .connectTimeout(30, TimeUnit.SECONDS) // Tor routing is slower
+            .readTimeout(30, TimeUnit.SECONDS)
+            .writeTimeout(30, TimeUnit.SECONDS)
+            .build()
     }
 
     /**

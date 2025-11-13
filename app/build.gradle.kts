@@ -53,13 +53,22 @@ dependencies {
     implementation("net.java.dev.jna:jna:5.13.0@aar")
 
     // BIP39/BIP44
-    implementation("org.web3j:crypto:4.9.8")
+    implementation("org.web3j:crypto:4.9.8") {
+        exclude(group = "org.bouncycastle")
+    }
 
     // HTTP Client for Pinata IPFS
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
 
     // JSON processing
     implementation("org.json:json:20231013")
+
+    // QR Code generation
+    implementation("com.google.zxing:core:3.5.2")
+    implementation("com.journeyapps:zxing-android-embedded:4.3.0")
+
+    // Base58 encoding for Solana addresses
+    implementation("org.bitcoinj:bitcoinj-core:0.16.2")
 
     // Room Database with SQLCipher encryption
     val roomVersion = "2.6.1"
@@ -70,6 +79,9 @@ dependencies {
     // SQLCipher for database encryption
     implementation("net.zetetic:android-database-sqlcipher:4.5.4")
     implementation("androidx.sqlite:sqlite:2.4.0")
+
+    // WorkManager for background tasks
+    implementation("androidx.work:work-runtime-ktx:2.9.0")
 
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)

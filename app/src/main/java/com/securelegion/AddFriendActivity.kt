@@ -1,5 +1,6 @@
 package com.securelegion
 
+import android.content.Intent
 import android.os.Bundle
 import android.util.Base64
 import android.util.Log
@@ -54,6 +55,8 @@ class AddFriendActivity : AppCompatActivity() {
 
             downloadContactCard(cid, pin)
         }
+
+        setupBottomNav()
     }
 
     private fun downloadContactCard(cid: String, pin: String) {
@@ -145,6 +148,10 @@ class AddFriendActivity : AppCompatActivity() {
                         contactCard.solanaPublicKey,
                         Base64.NO_WRAP
                     ),
+                    x25519PublicKeyBase64 = Base64.encodeToString(
+                        contactCard.x25519PublicKey,
+                        Base64.NO_WRAP
+                    ),
                     torOnionAddress = contactCard.torOnionAddress,
                     addedTimestamp = System.currentTimeMillis(),
                     lastContactTimestamp = System.currentTimeMillis(),
@@ -190,6 +197,34 @@ class AddFriendActivity : AppCompatActivity() {
                     Toast.LENGTH_LONG
                 ).show()
             }
+        }
+    }
+
+    private fun setupBottomNav() {
+        findViewById<View>(R.id.navMessages).setOnClickListener {
+            val intent = Intent(this, MainActivity::class.java)
+            startActivity(intent)
+            overridePendingTransition(0, 0)
+            finish()
+        }
+
+        findViewById<View>(R.id.navWallet).setOnClickListener {
+            val intent = Intent(this, MainActivity::class.java)
+            intent.putExtra("SHOW_WALLET", true)
+            startActivity(intent)
+            overridePendingTransition(0, 0)
+            finish()
+        }
+
+        findViewById<View>(R.id.navAddFriend).setOnClickListener {
+            // Already on Add Friend screen, do nothing
+        }
+
+        findViewById<View>(R.id.navLock).setOnClickListener {
+            val intent = Intent(this, LockActivity::class.java)
+            startActivity(intent)
+            overridePendingTransition(0, 0)
+            finish()
         }
     }
 }

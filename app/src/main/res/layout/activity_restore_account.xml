@@ -4,7 +4,7 @@
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="@color/dark_bg">
+    android:background="@color/header_bg">
 
     <!-- Header -->
     <LinearLayout
@@ -12,7 +12,7 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="horizontal"
-        android:background="#000000"
+        android:background="@drawable/header_bg"
         android:padding="16dp"
         android:gravity="center_vertical"
         app:layout_constraintTop_toTopOf="parent">
@@ -32,7 +32,7 @@
         <ImageView
             android:layout_width="60dp"
             android:layout_height="60dp"
-            android:src="@drawable/secure_logo"
+            android:src="@drawable/icon_header"
             android:layout_marginStart="24dp"
             android:contentDescription="Secure Legion Logo" />
 

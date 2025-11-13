@@ -25,38 +25,67 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="vertical"
-            android:padding="16dp">
+            android:padding="8dp">
 
             <!-- Balance Label -->
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:text="Total Balance"
-                android:textSize="11sp"
+                android:textSize="10sp"
                 android:textColor="@color/text_gray"
-                android:layout_marginBottom="6dp"
                 android:textAllCaps="true"
                 android:letterSpacing="0.1" />
 
-            <!-- Balance Amount -->
-            <TextView
-                android:id="@+id/balanceAmount"
-                android:layout_width="wrap_content"
+            <!-- Balance Row with Amount and Refresh -->
+            <LinearLayout
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="0.0008 SOL"
-                android:textSize="24sp"
-                android:textStyle="bold"
-                android:textColor="@color/text_white"
-                android:layout_marginBottom="4dp" />
+                android:orientation="horizontal"
+                android:gravity="center_vertical">
 
-            <!-- USD Value -->
-            <TextView
-                android:id="@+id/balanceUSD"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="$0.18 USD"
-                android:textSize="14sp"
-                android:textColor="@color/text_gray" />
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:orientation="vertical">
+
+                    <!-- Balance Amount -->
+                    <TextView
+                        android:id="@+id/balanceAmount"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="0.0008 SOL"
+                        android:textSize="20sp"
+                        android:textStyle="bold"
+                        android:textColor="@color/text_white"
+                        android:layout_marginBottom="1dp" />
+
+                    <!-- USD Value -->
+                    <TextView
+                        android:id="@+id/balanceUSD"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="$0.18 USD"
+                        android:textSize="12sp"
+                        android:textColor="@color/text_gray" />
+
+                </LinearLayout>
+
+                <ImageView
+                    android:id="@+id/refreshBalanceButton"
+                    android:layout_width="40dp"
+                    android:layout_height="40dp"
+                    android:src="@drawable/ic_refresh"
+                    app:tint="@color/text_gray"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:background="?attr/selectableItemBackgroundBorderless"
+                    android:padding="4dp"
+                    android:layout_gravity="center_vertical"
+                    android:contentDescription="Refresh Balance" />
+
+            </LinearLayout>
 
         </LinearLayout>
 
@@ -80,25 +109,25 @@
             android:layout_marginEnd="5dp"
             android:orientation="vertical"
             android:gravity="center"
-            android:padding="16dp"
+            android:padding="12dp"
             android:background="@drawable/metallic_button_bg"
             android:elevation="6dp"
             android:clickable="true"
             android:focusable="true">
 
             <ImageView
-                android:layout_width="32dp"
-                android:layout_height="32dp"
+                android:layout_width="28dp"
+                android:layout_height="28dp"
                 android:src="@drawable/ic_qr_code"
                 app:tint="@color/text_white"
-                android:layout_marginBottom="8dp"
+                android:layout_marginBottom="6dp"
                 android:contentDescription="Receive" />
 
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:text="Receive"
-                android:textSize="16sp"
+                android:textSize="15sp"
                 android:textStyle="bold"
                 android:textColor="@color/text_white" />
 
@@ -113,25 +142,25 @@
             android:layout_marginStart="5dp"
             android:orientation="vertical"
             android:gravity="center"
-            android:padding="16dp"
+            android:padding="12dp"
             android:background="@drawable/metallic_button_bg"
             android:elevation="6dp"
             android:clickable="true"
             android:focusable="true">
 
             <ImageView
-                android:layout_width="32dp"
-                android:layout_height="32dp"
+                android:layout_width="28dp"
+                android:layout_height="28dp"
                 android:src="@drawable/ic_send_arrow"
                 app:tint="@color/text_white"
-                android:layout_marginBottom="8dp"
+                android:layout_marginBottom="6dp"
                 android:contentDescription="Send" />
 
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:text="Send"
-                android:textSize="16sp"
+                android:textSize="15sp"
                 android:textStyle="bold"
                 android:textColor="@color/text_white" />
 

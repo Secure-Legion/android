@@ -12,9 +12,12 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="horizontal"
-        android:background="@color/dark_bg"
-        android:padding="24dp"
-        android:gravity="center_vertical"
+        android:background="@drawable/header_bg"
+        android:paddingTop="24dp"
+        android:paddingStart="24dp"
+        android:paddingEnd="24dp"
+        android:paddingBottom="24dp"
+        android:gravity="center"
         app:layout_constraintTop_toTopOf="parent">
 
         <TextView
@@ -30,17 +33,16 @@
             android:background="?attr/selectableItemBackgroundBorderless" />
 
         <LinearLayout
-            android:layout_width="0dp"
+            android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_weight="1"
             android:orientation="horizontal"
             android:gravity="center"
             android:layout_marginEnd="40dp">
 
             <ImageView
-                android:layout_width="60dp"
-                android:layout_height="60dp"
-                android:src="@drawable/secure_logo"
+                android:layout_width="48dp"
+                android:layout_height="48dp"
+                android:src="@drawable/icon_header"
                 android:layout_marginEnd="12dp"
                 android:contentDescription="Secure Legion Logo" />
 
@@ -79,51 +81,6 @@
                 android:textStyle="bold"
                 android:textColor="@color/text_gray"
                 android:layout_marginBottom="12dp" />
-
-            <!-- Security Mode Item -->
-            <LinearLayout
-                android:id="@+id/securityModeItem"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="horizontal"
-                android:background="@drawable/settings_item_bg"
-                android:padding="16dp"
-                android:layout_marginBottom="8dp"
-                android:gravity="center_vertical"
-                android:clickable="true"
-                android:focusable="true">
-
-                <LinearLayout
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:orientation="vertical">
-
-                    <TextView
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="Security Mode"
-                        android:textSize="16sp"
-                        android:textStyle="bold"
-                        android:textColor="@color/text_white" />
-
-                    <TextView
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="Configure messaging security"
-                        android:textSize="13sp"
-                        android:textColor="@color/text_gray" />
-
-                </LinearLayout>
-
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="›"
-                    android:textSize="24sp"
-                    android:textColor="@color/text_gray" />
-
-            </LinearLayout>
 
             <!-- Duress PIN Item -->
             <LinearLayout
@@ -311,6 +268,51 @@
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:text="Manage alert preferences"
+                        android:textSize="13sp"
+                        android:textColor="@color/text_gray" />
+
+                </LinearLayout>
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="›"
+                    android:textSize="24sp"
+                    android:textColor="@color/text_gray" />
+
+            </LinearLayout>
+
+            <!-- About Item -->
+            <LinearLayout
+                android:id="@+id/aboutItem"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:background="@drawable/settings_item_bg"
+                android:padding="16dp"
+                android:layout_marginBottom="8dp"
+                android:gravity="center_vertical"
+                android:clickable="true"
+                android:focusable="true">
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:orientation="vertical">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="About"
+                        android:textSize="16sp"
+                        android:textStyle="bold"
+                        android:textColor="@color/text_white" />
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="App info and terms"
                         android:textSize="13sp"
                         android:textColor="@color/text_gray" />
 

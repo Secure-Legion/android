@@ -14,7 +14,7 @@
         android:orientation="horizontal"
         android:background="@drawable/header_bg"
         android:padding="16dp"
-        android:gravity="center_vertical"
+        android:gravity="center"
         app:layout_constraintTop_toTopOf="parent">
 
         <TextView
@@ -30,16 +30,15 @@
             android:background="?attr/selectableItemBackgroundBorderless" />
 
         <ImageView
-            android:layout_width="60dp"
-            android:layout_height="60dp"
-            android:src="@drawable/secure_logo"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:src="@drawable/icon_header"
             android:layout_marginStart="24dp"
             android:contentDescription="Secure Legion Logo" />
 
         <TextView
-            android:layout_width="0dp"
+            android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_weight="1"
             android:text="CONTACT OPTIONS"
             android:textSize="18sp"
             android:textStyle="bold"
@@ -72,15 +71,34 @@
                 android:padding="20dp"
                 android:layout_marginBottom="24dp">
 
-                <TextView
-                    android:id="@+id/contactName"
-                    android:layout_width="wrap_content"
+                <LinearLayout
+                    android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:text="@nighthawk"
-                    android:textSize="22sp"
-                    android:textStyle="bold"
-                    android:textColor="@color/text_white"
-                    android:layout_marginBottom="8dp" />
+                    android:orientation="horizontal"
+                    android:gravity="center"
+                    android:layout_marginBottom="8dp">
+
+                    <TextView
+                        android:id="@+id/contactName"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="@nighthawk"
+                        android:textSize="22sp"
+                        android:textStyle="bold"
+                        android:textColor="@color/text_white" />
+
+                    <ImageView
+                        android:id="@+id/distressStarIcon"
+                        android:layout_width="32dp"
+                        android:layout_height="32dp"
+                        android:src="@drawable/ic_star_outline"
+                        android:clickable="true"
+                        android:focusable="true"
+                        android:background="?attr/selectableItemBackgroundBorderless"
+                        android:padding="4dp"
+                        android:contentDescription="Distress Contact Star" />
+
+                </LinearLayout>
 
                 <LinearLayout
                     android:id="@+id/copyAddressContainer"
@@ -95,9 +113,8 @@
 
                     <TextView
                         android:id="@+id/contactAddress"
-                        android:layout_width="0dp"
+                        android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:layout_weight="1"
                         android:text="7xKXtg2CW87d97TXJSDpbD5jBkhe..."
                         android:textSize="11sp"
                         android:textColor="@color/primary_blue"

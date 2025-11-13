@@ -70,7 +70,7 @@
         android:paddingEnd="24dp"
         android:paddingTop="16dp"
         app:layout_constraintTop_toBottomOf="@id/composeHeader"
-        app:layout_constraintBottom_toBottomOf="parent">
+        app:layout_constraintBottom_toTopOf="@id/bottomNav">
 
         <LinearLayout
             android:layout_width="match_parent"
@@ -96,6 +96,15 @@
                 android:textColor="@color/text_white"
                 android:textSize="16sp"
                 android:padding="16dp"
+                android:layout_marginBottom="8dp" />
+
+            <!-- Contact Search Results -->
+            <androidx.recyclerview.widget.RecyclerView
+                android:id="@+id/contactSearchResults"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:maxHeight="200dp"
+                android:visibility="gone"
                 android:layout_marginBottom="24dp" />
 
             <!-- Message Field -->
@@ -201,5 +210,15 @@
         </LinearLayout>
 
     </ScrollView>
+
+    <!-- Bottom Navigation -->
+    <include
+        android:id="@+id/bottomNav"
+        layout="@layout/bottom_navigation"
+        android:layout_width="match_parent"
+        android:layout_height="90dp"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent" />
 
 </androidx.constraintlayout.widget.ConstraintLayout>

@@ -30,10 +30,16 @@ data class Contact(
     val solanaAddress: String,
 
     /**
-     * Ed25519 public key (32 bytes) for message encryption
+     * Ed25519 public key (32 bytes) for message signing/verification
      * Stored as Base64 for database compatibility
      */
     val publicKeyBase64: String,
+
+    /**
+     * X25519 public key (32 bytes) for message encryption (ECDH)
+     * Stored as Base64 for database compatibility
+     */
+    val x25519PublicKeyBase64: String,
 
     /**
      * Tor v3 onion address with port (e.g., "abc123...xyz.onion:9050")
@@ -57,6 +63,12 @@ data class Contact(
      * 0 = Untrusted, 1 = Verified, 2 = Trusted
      */
     val trustLevel: Int = 0,
+
+    /**
+     * Whether this contact will receive distress signals
+     * True if contact is marked with blue star for emergency notifications
+     */
+    val isDistressContact: Boolean = false,
 
     /**
      * Optional notes about the contact

@@ -9,11 +9,17 @@
     <!-- Biometric Authentication -->
     <uses-permission android:name="android.permission.USE_BIOMETRIC" />
 
+    <!-- Audio Recording for Voice Messages -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+
     <!-- Foreground Service for Tor (Ping-Pong Protocol) -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+
+    <!-- Notifications (Android 13+) -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <application
         android:allowBackup="true"
@@ -40,6 +46,10 @@
 
         <activity
             android:name=".AddFriendActivity"
+            android:exported="false" />
+
+        <activity
+            android:name=".RecentTransactionsActivity"
             android:exported="false" />
 
         <activity
@@ -86,11 +96,19 @@
             android:exported="false" />
 
         <activity
+            android:name=".AboutActivity"
+            android:exported="false" />
+
+        <activity
             android:name=".WipeAccountActivity"
             android:exported="false" />
 
         <activity
             android:name=".CreateAccountActivity"
+            android:exported="false" />
+
+        <activity
+            android:name=".AccountCreatedActivity"
             android:exported="false" />
 
         <activity
@@ -119,6 +137,10 @@
 
         <activity
             android:name=".TransactionDetailActivity"
+            android:exported="false" />
+
+        <activity
+            android:name=".WalletSettingsActivity"
             android:exported="false" />
 
         <!-- Tor Service - Keeps hidden service running for Ping-Pong Protocol -->

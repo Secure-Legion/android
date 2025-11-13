@@ -28,7 +28,7 @@
             <ImageView
                 android:layout_width="48dp"
                 android:layout_height="48dp"
-                android:src="@drawable/secure_logo"
+                android:src="@drawable/icon_header"
                 android:layout_marginEnd="12dp"
                 android:contentDescription="Secure Legion Logo" />
 
