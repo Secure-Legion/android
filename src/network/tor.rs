@@ -20,6 +20,7 @@ use std::str::FromStr;
 use std::sync::Mutex;
 use std::collections::HashMap;
 use once_cell::sync::Lazy;
+use bytes::{Buf, BytesMut};
 
 /// Structure representing a pending connection waiting for Pong response
 pub struct PendingConnection {
@@ -28,11 +29,11 @@ pub struct PendingConnection {
 }
 
 /// Global map of pending connections: connection_id -> PendingConnection
-static PENDING_CONNECTIONS: Lazy<Arc<Mutex<HashMap<u64, PendingConnection>>>> =
+pub static PENDING_CONNECTIONS: Lazy<Arc<Mutex<HashMap<u64, PendingConnection>>>> =
     Lazy::new(|| Arc::new(Mutex::new(HashMap::new())));
 
 /// Counter for generating unique connection IDs
-static CONNECTION_ID_COUNTER: Lazy<Arc<Mutex<u64>>> =
+pub static CONNECTION_ID_COUNTER: Lazy<Arc<Mutex<u64>>> =
     Lazy::new(|| Arc::new(Mutex::new(0)));
 
 pub struct TorManager {
@@ -42,6 +43,7 @@ pub struct TorManager {
     incoming_ping_tx: Option<mpsc::UnboundedSender<(u64, Vec<u8>)>>,
     hs_service_port: u16,
     hs_local_port: u16,
+    socks_proxy_handle: Option<tokio::task::JoinHandle<()>>,
 }
 
 impl TorManager {
@@ -54,6 +56,7 @@ impl TorManager {
             incoming_ping_tx: None,
             hs_service_port: 9150,
             hs_local_port: 9150,
+            socks_proxy_handle: None,
         })
     }
 
@@ -346,6 +349,206 @@ impl TorManager {
         // Connection will be closed when dropped
         Ok(())
     }
+
+    /// Start SOCKS5 proxy server that routes traffic through Tor
+    ///
+    /// Listens on 127.0.0.1:9050 and accepts SOCKS5 connections from OkHttpClient.
+    /// All HTTP traffic will be routed through the Tor network via Arti TorClient.
+    ///
+    /// # Returns
+    /// Ok(()) if proxy started successfully
+    pub async fn start_socks_proxy(&mut self) -> Result<(), Box<dyn Error>> {
+        if self.socks_proxy_handle.is_some() {
+            return Err("SOCKS proxy already running".into());
+        }
+
+        let tor_client = self.get_client()?;
+        let addr: SocketAddr = "127.0.0.1:9050".parse()?;
+
+        // Create TCP socket with SO_REUSEADDR to allow quick restart
+        let socket = tokio::net::TcpSocket::new_v4()?;
+        socket.set_reuseaddr(true)?;
+        socket.bind(addr)?;
+
+        // Convert socket to listener
+        let listener = socket.listen(128)?;
+        log::info!("SOCKS5 proxy started on {} (SO_REUSEADDR enabled)", addr);
+
+        // Spawn background task to handle SOCKS connections
+        let handle = tokio::spawn(async move {
+            loop {
+                match listener.accept().await {
+                    Ok((client_stream, client_addr)) => {
+                        log::debug!("SOCKS proxy accepted connection from {}", client_addr);
+                        let tor_client_clone = tor_client.clone();
+
+                        // Spawn task to handle this SOCKS connection
+                        tokio::spawn(async move {
+                            if let Err(e) = handle_socks_connection(client_stream, tor_client_clone).await {
+                                log::error!("SOCKS connection error: {}", e);
+                            }
+                        });
+                    }
+                    Err(e) => {
+                        log::error!("Failed to accept SOCKS connection: {}", e);
+                    }
+                }
+            }
+        });
+
+        self.socks_proxy_handle = Some(handle);
+        Ok(())
+    }
+
+    /// Stop the SOCKS5 proxy server
+    pub fn stop_socks_proxy(&mut self) {
+        if let Some(handle) = self.socks_proxy_handle.take() {
+            handle.abort();
+            log::info!("SOCKS5 proxy stopped");
+        }
+    }
+
+    /// Check if SOCKS proxy is running
+    pub fn is_socks_proxy_running(&self) -> bool {
+        self.socks_proxy_handle.is_some()
+    }
+}
+
+/// Handle a single SOCKS5 connection
+///
+/// Implements minimal SOCKS5 protocol to support OkHttpClient:
+/// 1. Authentication handshake (no auth)
+/// 2. Connection request parsing
+/// 3. Tor connection establishment
+/// 4. Bidirectional data relay
+async fn handle_socks_connection(
+    mut client_stream: TcpStream,
+    tor_client: Arc<TorClient<PreferredRuntime>>,
+) -> Result<(), Box<dyn Error>> {
+    // Step 1: SOCKS5 greeting
+    // Client sends: [VERSION(5), NMETHODS(1+), METHODS...]
+    let mut buf = [0u8; 257];
+    let n = client_stream.read(&mut buf).await?;
+
+    if n < 2 || buf[0] != 0x05 {
+        return Err("Invalid SOCKS5 version".into());
+    }
+
+    // Respond with no authentication required: [VERSION(5), METHOD(0)]
+    client_stream.write_all(&[0x05, 0x00]).await?;
+
+    // Step 2: SOCKS5 connection request
+    // Client sends: [VERSION(5), CMD(1=CONNECT), RESERVED(0), ATYP, DST.ADDR, DST.PORT]
+    let n = client_stream.read(&mut buf).await?;
+
+    if n < 10 || buf[0] != 0x05 || buf[1] != 0x01 {
+        // Send failure response
+        client_stream.write_all(&[0x05, 0x01, 0x00, 0x01, 0, 0, 0, 0, 0, 0]).await?;
+        return Err("Invalid SOCKS5 request".into());
+    }
+
+    // Parse address type and extract target host
+    let atyp = buf[3];
+    let (target_host, target_port, addr_end) = match atyp {
+        // IPv4
+        0x01 => {
+            if n < 10 {
+                return Err("Invalid IPv4 address".into());
+            }
+            let ip = format!("{}.{}.{}.{}", buf[4], buf[5], buf[6], buf[7]);
+            let port = u16::from_be_bytes([buf[8], buf[9]]);
+            (ip, port, 10)
+        }
+        // Domain name
+        0x03 => {
+            let len = buf[4] as usize;
+            if n < 7 + len {
+                return Err("Invalid domain name".into());
+            }
+            let domain = String::from_utf8_lossy(&buf[5..5 + len]).to_string();
+            let port = u16::from_be_bytes([buf[5 + len], buf[6 + len]]);
+            (domain, port, 7 + len)
+        }
+        // IPv6
+        0x04 => {
+            if n < 22 {
+                return Err("Invalid IPv6 address".into());
+            }
+            let ip = format!(
+                "{:02x}{:02x}:{:02x}{:02x}:{:02x}{:02x}:{:02x}{:02x}:{:02x}{:02x}:{:02x}{:02x}:{:02x}{:02x}:{:02x}{:02x}",
+                buf[4], buf[5], buf[6], buf[7], buf[8], buf[9], buf[10], buf[11],
+                buf[12], buf[13], buf[14], buf[15], buf[16], buf[17], buf[18], buf[19]
+            );
+            let port = u16::from_be_bytes([buf[20], buf[21]]);
+            (ip, port, 22)
+        }
+        _ => {
+            client_stream.write_all(&[0x05, 0x08, 0x00, 0x01, 0, 0, 0, 0, 0, 0]).await?;
+            return Err("Unsupported address type".into());
+        }
+    };
+
+    log::info!("SOCKS5 connecting to {}:{} via Tor", target_host, target_port);
+
+    // Step 3: Connect through Tor
+    let target = format!("{}:{}", target_host, target_port);
+    let mut tor_stream = match tor_client.connect(target).await {
+        Ok(stream) => stream,
+        Err(e) => {
+            log::error!("Tor connection failed: {}", e);
+            // Send connection refused: [VERSION, REP(5=connection refused), ...]
+            client_stream.write_all(&[0x05, 0x05, 0x00, 0x01, 0, 0, 0, 0, 0, 0]).await?;
+            return Err(Box::new(e));
+        }
+    };
+
+    // Send success response: [VERSION(5), REP(0=success), RESERVED(0), ATYP(1), BIND.ADDR(0.0.0.0), BIND.PORT(0)]
+    client_stream.write_all(&[0x05, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0, 0]).await?;
+
+    log::debug!("SOCKS5 connection established, relaying data...");
+
+    // Step 4: Bidirectional relay between client and Tor
+    let (mut client_read, mut client_write) = client_stream.split();
+    let (mut tor_read, mut tor_write) = tokio::io::split(tor_stream);
+
+    let client_to_tor = async {
+        let mut buf = vec![0u8; 8192];
+        loop {
+            match client_read.read(&mut buf).await {
+                Ok(0) => break,
+                Ok(n) => {
+                    if tor_write.write_all(&buf[..n]).await.is_err() {
+                        break;
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+    };
+
+    let tor_to_client = async {
+        let mut buf = vec![0u8; 8192];
+        loop {
+            match tor_read.read(&mut buf).await {
+                Ok(0) => break,
+                Ok(n) => {
+                    if client_write.write_all(&buf[..n]).await.is_err() {
+                        break;
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+    };
+
+    // Run both directions concurrently
+    tokio::select! {
+        _ = client_to_tor => {},
+        _ = tor_to_client => {},
+    }
+
+    log::debug!("SOCKS5 connection closed");
+    Ok(())
 }
 
 /// Represents an active Tor connection to a hidden service

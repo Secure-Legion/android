@@ -10,4 +10,4 @@ pub use pingpong::{
     remove_ping_session,
     cleanup_expired_pings,
 };
-pub use tor::TorManager;
+pub use tor::{TorManager, PENDING_CONNECTIONS, PendingConnection};
