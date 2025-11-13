@@ -2,6 +2,7 @@ package com.securelegion.services
 
 import android.content.Context
 import android.util.Log
+import com.securelegion.BuildConfig
 import com.securelegion.crypto.TorManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -28,11 +29,10 @@ class PinataService(context: Context) {
         private const val TAG = "PinataService"
         private const val PINATA_API_BASE = "https://api.pinata.cloud"
         private const val PINATA_GATEWAY = "https://gateway.pinata.cloud"
-
-        // Note: API keys in APK are not truly secure, only obfuscated
-        // Keys are scoped to Files:Write only and can be rotated if compromised
-        private const val PINATA_JWT = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySW5mb3JtYXRpb24iOnsiaWQiOiJkZjhjNTQ4Yi03YWQzLTRlZmQtOWNmMS0yMGIyYmQ0ZGQxNjYiLCJlbWFpbCI6InNlY3VyZWxlZ2lvbmRldkBnbWFpbC5jb20iLCJlbWFpbF92ZXJpZmllZCI6dHJ1ZSwicGluX3BvbGljeSI6eyJyZWdpb25zIjpbeyJkZXNpcmVkUmVwbGljYXRpb25Db3VudCI6MSwiaWQiOiJGUkExIn0seyJkZXNpcmVkUmVwbGljYXRpb25Db3VudCI6MSwiaWQiOiJOWUMxIn1dLCJ2ZXJzaW9uIjoxfSwibWZhX2VuYWJsZWQiOmZhbHNlLCJzdGF0dXMiOiJBQ1RJVkUifSwiYXV0aGVudGljYXRpb25UeXBlIjoic2NvcGVkS2V5Iiwic2NvcGVkS2V5S2V5IjoiNzgwNzAzODA2YzhmMGI5ZGJkMDYiLCJzY29wZWRLZXlTZWNyZXQiOiI0ZTExZTg1YzExZGY5ZmE5Y2Y5N2Q2NGY0NzIzOGIyNjM3NDViNzBmOWQ5MWExYjdjNzM0NWNhOTE3N2M5ZmFkIiwiZXhwIjoxNzk0MzY2OTM0fQ.3XUYIbw7j4PzAAFLJHuL2FPDJxV04nt3HQla8BB-DEY"
     }
+
+    // API key loaded from BuildConfig (stored in local.properties, not in git)
+    private val pinataJwt = BuildConfig.PINATA_JWT
 
     // Direct HTTP connection (Tor for messaging only, not IPFS uploads)
     private val client = OkHttpClient.Builder()
@@ -78,7 +78,7 @@ class PinataService(context: Context) {
 
             val request = Request.Builder()
                 .url("$PINATA_API_BASE/pinning/pinFileToIPFS")
-                .addHeader("Authorization", "Bearer $PINATA_JWT")
+                .addHeader("Authorization", "Bearer $pinataJwt")
                 .post(requestBody)
                 .build()
 
@@ -150,7 +150,7 @@ class PinataService(context: Context) {
         try {
             val request = Request.Builder()
                 .url("$PINATA_API_BASE/data/testAuthentication")
-                .addHeader("Authorization", "Bearer $PINATA_JWT")
+                .addHeader("Authorization", "Bearer $pinataJwt")
                 .get()
                 .build()
 
