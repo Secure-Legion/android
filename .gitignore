@@ -41,3 +41,12 @@ nul
 *.log
 TODO.md
 OWASP_MASTG_Assessment.md
+
+# Files to keep locally but not in git
+ANDROID_BUILD_SUCCESS.md
+QUICKSTART.md
+gradlew.bat
+*.png
+notification_*.png
+screenshot_*.png
+pixel6a.png
