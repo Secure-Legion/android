@@ -15,6 +15,7 @@ chacha20poly1305 = "0.10"
 ed25519-dalek = { version = "2.1", features = ["rand_core"] }
 x25519-dalek = { version = "2.0", features = ["static_secrets"] }
 argon2 = "0.5"
+zeroize = { version = "1.7", features = ["derive"] }
 rand = "0.8"
 rand_core = { version = "0.6", features = ["getrandom"] }
 getrandom = { version = "0.2", features = ["custom"] }
@@ -41,6 +42,7 @@ anyhow = "1.0"
 
 # Logging
 log = "0.4"
+android_logger = "0.14"
 
 # Time
 chrono = "0.4"
@@ -51,22 +53,17 @@ uuid = { version = "1.6", features = ["v4"] }
 # Sync primitives
 once_cell = "1.19"
 
-# Async runtime (for Ping-Pong protocol)
-tokio = { version = "1.35", features = ["sync", "time", "macros", "rt-multi-thread", "net", "io-util"] }
+# Async runtime (for Ping-Pong protocol and Tor control)
+tokio = { version = "1.35", features = ["sync", "time", "macros", "rt-multi-thread", "net", "io-util", "process", "io-std"] }
 tokio-util = { version = "0.7", features = ["codec"] }
 bytes = "1.5"
 
-# Tor integration (Arti 1.7.0)
-arti-client = { version = "0.36", default-features = false, features = ["tokio", "rustls", "onion-service-service"] }
-tor-rtcompat = { version = "0.36", default-features = false, features = ["tokio", "rustls"] }
-tor-hsservice = { version = "0.36", default-features = false }
-tor-hscrypto = { version = "0.36" }
+# Tor integration (C Tor via subprocess + control port)
+# Note: Arti removed - using C Tor from tor-android library
+# Control port and SOCKS5 will be implemented directly
 
 # Networking (optional - for future Tor/P2P implementation)
 reqwest = { version = "0.11", default-features = false, features = ["blocking", "rustls-tls"], optional = true }
-
-# SQLite with bundled static library (required for Tor dependencies on Android)
-rusqlite = { version = "0.37", features = ["bundled"] }
 
 # Solana blockchain integration (using compatible versions)
 # Note: Actual Solana RPC integration will be added later

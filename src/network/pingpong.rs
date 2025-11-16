@@ -11,11 +11,17 @@ use super::tor::{TorManager, TorConnection};
 /// Ping Token - sent from sender to recipient to initiate handshake
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct PingToken {
-    /// Sender's public key (32 bytes Ed25519)
+    /// Sender's Ed25519 signing public key (32 bytes)
     pub sender_pubkey: [u8; 32],
 
-    /// Recipient's public key (32 bytes Ed25519)
+    /// Recipient's Ed25519 signing public key (32 bytes)
     pub recipient_pubkey: [u8; 32],
+
+    /// Sender's X25519 encryption public key (32 bytes)
+    pub sender_x25519_pubkey: [u8; 32],
+
+    /// Recipient's X25519 encryption public key (32 bytes)
+    pub recipient_x25519_pubkey: [u8; 32],
 
     /// Cryptographic nonce to prevent replay attacks (24 bytes)
     pub nonce: [u8; 24],
@@ -23,7 +29,7 @@ pub struct PingToken {
     /// Unix timestamp when Ping was created
     pub timestamp: i64,
 
-    /// Ed25519 signature of (sender_pubkey || recipient_pubkey || nonce || timestamp)
+    /// Ed25519 signature of (sender_pubkey || recipient_pubkey || sender_x25519_pubkey || recipient_x25519_pubkey || nonce || timestamp)
     #[serde(with = "BigArray")]
     pub signature: [u8; 64],
 }
@@ -167,6 +173,12 @@ fn get_pong_sessions() -> Arc<Mutex<HashMap<String, StoredPongSession>>> {
 
 /// Store a received Pong token by ping_id (hex-encoded nonce from original Ping)
 pub fn store_pong_session(ping_id: &str, pong_token: PongToken) {
+    log::info!("╔════════════════════════════════════════");
+    log::info!("║ 💾 STORING PONG SESSION");
+    log::info!("║ Ping ID: {}", ping_id);
+    log::info!("║ Authenticated: {}", pong_token.authenticated);
+    log::info!("╚════════════════════════════════════════");
+
     let sessions = get_pong_sessions();
     let mut sessions_lock = sessions.lock().unwrap();
 
@@ -179,13 +191,22 @@ pub fn store_pong_session(ping_id: &str, pong_token: PongToken) {
     };
 
     sessions_lock.insert(ping_id.to_string(), session);
+    log::info!("✓ Pong stored successfully. Total Pongs in storage: {}", sessions_lock.len());
 }
 
 /// Retrieve a stored Pong token by ping_id
 pub fn get_pong_session(ping_id: &str) -> Option<StoredPongSession> {
     let sessions = get_pong_sessions();
     let sessions_lock = sessions.lock().unwrap();
-    sessions_lock.get(ping_id).cloned()
+    let result = sessions_lock.get(ping_id).cloned();
+
+    if result.is_some() {
+        log::info!("✓ Found Pong for Ping ID: {}", ping_id);
+    } else {
+        log::debug!("✗ No Pong found for Ping ID: {} (have {} Pongs in storage)", ping_id, sessions_lock.len());
+    }
+
+    result
 }
 
 /// Remove a Pong session after it's been processed
@@ -218,6 +239,8 @@ impl PingToken {
     pub fn new(
         sender_keypair: &SigningKey,
         recipient_pubkey: &VerifyingKey,
+        sender_x25519_pubkey: &[u8; 32],
+        recipient_x25519_pubkey: &[u8; 32],
     ) -> Result<Self, Box<dyn std::error::Error>> {
 
         // Generate random nonce
@@ -233,6 +256,8 @@ impl PingToken {
         let mut ping = PingToken {
             sender_pubkey: sender_keypair.verifying_key().to_bytes(),
             recipient_pubkey: recipient_pubkey.to_bytes(),
+            sender_x25519_pubkey: *sender_x25519_pubkey,
+            recipient_x25519_pubkey: *recipient_x25519_pubkey,
             nonce,
             timestamp,
             signature: [0u8; 64],
@@ -265,6 +290,8 @@ impl PingToken {
         let mut bytes = Vec::new();
         bytes.extend_from_slice(&self.sender_pubkey);
         bytes.extend_from_slice(&self.recipient_pubkey);
+        bytes.extend_from_slice(&self.sender_x25519_pubkey);
+        bytes.extend_from_slice(&self.recipient_x25519_pubkey);
         bytes.extend_from_slice(&self.nonce);
         bytes.extend_from_slice(&self.timestamp.to_le_bytes());
         bytes
@@ -365,11 +392,13 @@ impl PingPongManager {
     pub async fn send_ping(
         &self,
         recipient_pubkey: &VerifyingKey,
+        sender_x25519_pubkey: &[u8; 32],
+        recipient_x25519_pubkey: &[u8; 32],
         recipient_onion: &str,
     ) -> Result<String, Box<dyn std::error::Error>> {
 
         // Create Ping token
-        let ping = PingToken::new(&self.keypair, recipient_pubkey)?;
+        let ping = PingToken::new(&self.keypair, recipient_pubkey, sender_x25519_pubkey, recipient_x25519_pubkey)?;
         let ping_id = hex::encode(&ping.nonce);
 
         // Store Ping session

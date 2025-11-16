@@ -59,8 +59,10 @@ impl Message {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PingToken {
-    pub sender_pubkey: [u8; 32],
-    pub recipient_pubkey: [u8; 32],
+    pub sender_pubkey: [u8; 32],          // Ed25519 signing public key
+    pub recipient_pubkey: [u8; 32],        // Ed25519 signing public key
+    pub sender_x25519_pubkey: [u8; 32],    // X25519 encryption public key
+    pub recipient_x25519_pubkey: [u8; 32], // X25519 encryption public key
     pub nonce: [u8; 24],
     pub timestamp: i64,
     #[serde(with = "BigArray")]
@@ -80,6 +82,8 @@ impl PingToken {
         let mut data = Vec::new();
         data.extend_from_slice(&self.sender_pubkey);
         data.extend_from_slice(&self.recipient_pubkey);
+        data.extend_from_slice(&self.sender_x25519_pubkey);
+        data.extend_from_slice(&self.recipient_x25519_pubkey);
         data.extend_from_slice(&self.nonce);
         data.extend_from_slice(&self.timestamp.to_le_bytes());
         data

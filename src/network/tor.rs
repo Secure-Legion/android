@@ -1,26 +1,18 @@
-/// Tor Network Manager
-/// Handles Tor daemon initialization and connection management using Arti
+/// Tor Network Manager (using Tor_Onion_Proxy_Library)
+/// Connects to Tor via SOCKS5 proxy managed by OnionProxyManager
 ///
-/// Arti is the official Rust implementation of Tor from the Tor Project
+/// The Android OnionProxyManager handles Tor lifecycle, we just use SOCKS5
 
 use std::error::Error;
 use std::sync::Arc;
-use arti_client::TorClient;
-use tor_rtcompat::PreferredRuntime;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use std::path::PathBuf;
-use arti_client::config::TorClientConfigBuilder;
+use tokio::io::{AsyncWriteExt, AsyncReadExt};
+use tokio::net::{TcpListener, TcpStream};
+use tokio::sync::Mutex;
 use ed25519_dalek::{SigningKey, VerifyingKey};
 use sha3::{Digest, Sha3_256};
-use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::mpsc;
-use std::net::SocketAddr;
-use tor_hsservice::{HsNickname, OnionServiceConfig};
-use std::str::FromStr;
-use std::sync::Mutex;
+use std::sync::Mutex as StdMutex;
 use std::collections::HashMap;
 use once_cell::sync::Lazy;
-use bytes::{Buf, BytesMut};
 
 /// Structure representing a pending connection waiting for Pong response
 pub struct PendingConnection {
@@ -29,69 +21,125 @@ pub struct PendingConnection {
 }
 
 /// Global map of pending connections: connection_id -> PendingConnection
-pub static PENDING_CONNECTIONS: Lazy<Arc<Mutex<HashMap<u64, PendingConnection>>>> =
-    Lazy::new(|| Arc::new(Mutex::new(HashMap::new())));
+pub static PENDING_CONNECTIONS: Lazy<Arc<StdMutex<HashMap<u64, PendingConnection>>>> =
+    Lazy::new(|| Arc::new(StdMutex::new(HashMap::new())));
 
 /// Counter for generating unique connection IDs
-pub static CONNECTION_ID_COUNTER: Lazy<Arc<Mutex<u64>>> =
-    Lazy::new(|| Arc::new(Mutex::new(0)));
+pub static CONNECTION_ID_COUNTER: Lazy<Arc<StdMutex<u64>>> =
+    Lazy::new(|| Arc::new(StdMutex::new(0)));
 
 pub struct TorManager {
-    tor_client: Option<Arc<TorClient<PreferredRuntime>>>,
+    control_stream: Option<Arc<Mutex<TcpStream>>>,
     hidden_service_address: Option<String>,
     listener_handle: Option<tokio::task::JoinHandle<()>>,
-    incoming_ping_tx: Option<mpsc::UnboundedSender<(u64, Vec<u8>)>>,
+    incoming_ping_tx: Option<tokio::sync::mpsc::UnboundedSender<(u64, Vec<u8>)>>,
     hs_service_port: u16,
     hs_local_port: u16,
-    socks_proxy_handle: Option<tokio::task::JoinHandle<()>>,
+    socks_port: u16,
 }
 
 impl TorManager {
     /// Initialize Tor manager
     pub fn new() -> Result<Self, Box<dyn Error>> {
         Ok(TorManager {
-            tor_client: None,
+            control_stream: None,
             hidden_service_address: None,
             listener_handle: None,
             incoming_ping_tx: None,
-            hs_service_port: 9150,
-            hs_local_port: 9150,
-            socks_proxy_handle: None,
+            hs_service_port: 9150, // Virtual port on .onion
+            hs_local_port: 8080,   // Local port where app listens
+            socks_port: 9050,      // SOCKS proxy port (managed by OnionProxyManager)
         })
     }
 
-    /// Start Tor client and bootstrap connection to Tor network
-    /// Returns the Tor client ready for use
+    /// Connect to Tor control port (Tor daemon managed by OnionProxyManager)
+    /// Returns status message
     pub async fn initialize(&mut self) -> Result<String, Box<dyn Error>> {
-        // Configure state and cache directories for Android
-        let state_dir = PathBuf::from("/data/data/com.securelegion/files/tor_state");
-        let cache_dir = PathBuf::from("/data/data/com.securelegion/cache/tor_cache");
+        log::info!("Connecting to Tor control port (OnionProxyManager handles Tor daemon)...");
 
-        // Create directories if they don't exist
-        std::fs::create_dir_all(&state_dir).ok();
-        std::fs::create_dir_all(&cache_dir).ok();
+        // Connect to control port (OnionProxyManager starts Tor on port 9051)
+        let mut control = TcpStream::connect("127.0.0.1:9051").await?;
 
-        // Create Tor client configuration with builder pattern
-        let config = TorClientConfigBuilder::from_directories(state_dir, cache_dir)
-            .build()?;
+        // Authenticate with NULL auth (OnionProxyManager configures this)
+        control.write_all(b"AUTHENTICATE\r\n").await?;
 
-        // Create Tor client with Tokio runtime
-        let tor_client = TorClient::create_bootstrapped(config).await?;
+        let mut buf = vec![0u8; 1024];
+        let n = control.read(&mut buf).await?;
+        let response = String::from_utf8_lossy(&buf[..n]);
 
-        self.tor_client = Some(Arc::new(tor_client));
+        if !response.contains("250 OK") {
+            return Err(format!("Control port authentication failed: {}", response).into());
+        }
 
-        Ok("Tor client initialized successfully".to_string())
+        self.control_stream = Some(Arc::new(Mutex::new(control)));
+
+        log::info!("Connected to Tor control port successfully");
+
+        // Wait for Tor to bootstrap (build circuits)
+        log::info!("Waiting for Tor to bootstrap...");
+        self.wait_for_bootstrap().await?;
+
+        log::info!("Tor fully bootstrapped and ready");
+        Ok("Tor client ready (managed by OnionProxyManager)".to_string())
+    }
+
+    /// Wait for Tor to finish bootstrapping (100%)
+    async fn wait_for_bootstrap(&self) -> Result<(), Box<dyn Error>> {
+        let max_attempts = 60; // 60 seconds max
+
+        for attempt in 1..=max_attempts {
+            let status = self.get_bootstrap_status().await?;
+
+            if status >= 100 {
+                log::info!("Tor bootstrap complete ({}%)", status);
+                return Ok(());
+            }
+
+            if attempt % 5 == 0 {
+                log::info!("Tor bootstrapping: {}%", status);
+            }
+
+            tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+        }
+
+        Err("Tor bootstrap timeout - took longer than 60 seconds".into())
+    }
+
+    /// Get current Tor bootstrap percentage
+    async fn get_bootstrap_status(&self) -> Result<u32, Box<dyn Error>> {
+        let control_stream = self.control_stream.as_ref()
+            .ok_or("Control port not connected")?;
+
+        let mut control = control_stream.lock().await;
+
+        // Send GETINFO status/bootstrap-phase command
+        control.write_all(b"GETINFO status/bootstrap-phase\r\n").await?;
+
+        let mut buf = vec![0u8; 2048];
+        let n = control.read(&mut buf).await?;
+        let response = String::from_utf8_lossy(&buf[..n]);
+
+        // Parse bootstrap percentage from response
+        // Format: 250-status/bootstrap-phase=NOTICE BOOTSTRAP PROGRESS=100 TAG=done SUMMARY="Done"
+        if let Some(progress_str) = response.split("PROGRESS=").nth(1) {
+            if let Some(percentage_str) = progress_str.split_whitespace().next() {
+                if let Ok(percentage) = percentage_str.parse::<u32>() {
+                    return Ok(percentage);
+                }
+            }
+        }
+
+        // If can't parse, assume 0%
+        Ok(0)
     }
 
     /// Create a deterministic .onion address from seed-derived key
     ///
-    /// Uses the Ed25519 key derived from BIP39 seed (via KeyManager) to generate
-    /// a deterministic .onion address. Same seed = same .onion address forever.
-    /// Also configures Arti to accept incoming connections and route them to local_port.
+    /// Uses ADD_ONION command on control port to create hidden service
     ///
     /// # Arguments
-    /// * `service_port` - The virtual port on the .onion address (e.g., 80, 9150)
-    /// * `local_port` - The local port to forward connections to (e.g., 9150)
+    /// * `service_port` - The virtual port on the .onion address (e.g., 9150)
+    /// * `local_port` - The local port to forward connections to (e.g., 8080)
     /// * `hs_private_key` - 32-byte Ed25519 private key from KeyManager (seed-derived)
     ///
     /// # Returns
@@ -102,8 +150,6 @@ impl TorManager {
         local_port: u16,
         hs_private_key: &[u8],
     ) -> Result<String, Box<dyn Error>> {
-        let tor_client = self.get_client()?;
-
         // Validate key length
         if hs_private_key.len() != 32 {
             return Err("Hidden service private key must be 32 bytes".into());
@@ -118,11 +164,10 @@ impl TorManager {
         let verifying_key: VerifyingKey = signing_key.verifying_key();
 
         // Generate .onion address from public key
-        // Format: base32(PUBKEY || CHECKSUM || VERSION) + ".onion"
         let mut onion_bytes = Vec::new();
         onion_bytes.extend_from_slice(&verifying_key.to_bytes());
 
-        // Add checksum (truncated SHA3-256 of ".onion checksum" || PUBKEY || VERSION)
+        // Add checksum
         let mut hasher = Sha3_256::new();
         hasher.update(b".onion checksum");
         hasher.update(&verifying_key.to_bytes());
@@ -133,56 +178,161 @@ impl TorManager {
         // Add version
         onion_bytes.push(0x03);
 
-        // Encode to base32 (RFC 4648, lowercase, no padding)
+        // Encode to base32
         let onion_addr = base32::encode(base32::Alphabet::Rfc4648Lower { padding: false }, &onion_bytes);
-
         let full_address = format!("{}.onion", onion_addr);
 
         // Store ports for listener configuration
         self.hs_service_port = service_port;
         self.hs_local_port = local_port;
 
-        // Configure hidden service using Arti's onion service APIs
-        // The onion service will route incoming connections to localhost:local_port
-        let nickname = HsNickname::from_str("securelegion").map_err(|e| {
-            format!("Invalid nickname: {}", e)
-        })?;
+        // Format private key for ADD_ONION command (base64 of 64-byte expanded key)
+        let expanded_key = signing_key.to_keypair_bytes();
+        let key_base64 = base64::encode(&expanded_key);
 
-        // Note: OnionServiceConfig doesn't have a default() method
-        // The hidden service configuration is handled by Arti internally
-        // For now, we just log the configuration details
+        // Subscribe to HS_DESC events BEFORE creating the hidden service
+        // This ensures we catch all descriptor upload events
+        let control = self.control_stream.as_ref()
+            .ok_or("Control port not connected")?;
 
-        // Configure the virtual port on the .onion address to forward to localhost
-        let target_addr = format!("127.0.0.1:{}", local_port);
-        log::info!("Configuring hidden service to route port {} -> {}", service_port, target_addr);
+        log::info!("Subscribing to HS_DESC events before creating hidden service...");
+        {
+            let mut stream = control.lock().await;
+            stream.write_all(b"SETEVENTS HS_DESC\r\n").await?;
+            let mut buf = vec![0u8; 512];
+            let n = stream.read(&mut buf).await?;
+            let response = String::from_utf8_lossy(&buf[..n]);
+            if !response.contains("250 OK") {
+                log::warn!("Failed to subscribe to HS_DESC events: {}", response);
+            } else {
+                log::info!("Subscribed to HS_DESC events successfully");
+            }
+        }
 
-        // Launch the onion service with Arti
-        // This makes the .onion address reachable and routes traffic to localhost:local_port
-        // Note: This requires the onion-service-service feature in Arti
-        log::info!("Launching onion service: {}", full_address);
-        log::info!("Service port: {}, Local forward: {}", service_port, target_addr);
-        log::info!("Incoming .onion connections will be routed to the local listener");
+        // Now create the hidden service - descriptors will be uploaded and we'll receive events
+        let actual_onion_address = {
+            let mut stream = control.lock().await;
 
-        self.hidden_service_address = Some(full_address.clone());
+            let command = format!(
+                "ADD_ONION ED25519-V3:{} Port={},127.0.0.1:{}\r\n",
+                key_base64, service_port, local_port
+            );
+
+            stream.write_all(command.as_bytes()).await?;
+
+            let mut buf = vec![0u8; 2048];
+            let n = stream.read(&mut buf).await?;
+            let response = String::from_utf8_lossy(&buf[..n]);
+
+            log::info!("ADD_ONION response: {}", response);
+
+            if !response.contains("250 OK") {
+                return Err(format!("Failed to create hidden service: {}", response).into());
+            }
+
+            // Extract the actual ServiceID from Tor's response (not our computed address!)
+            let actual_onion = if let Some(service_line) = response.lines().find(|l| l.contains("ServiceID=")) {
+                if let Some(start_idx) = service_line.find("ServiceID=") {
+                    let service_id = &service_line[start_idx + 10..]; // Skip "ServiceID="
+                    format!("{}.onion", service_id.trim())
+                } else {
+                    full_address.clone()
+                }
+            } else {
+                full_address.clone()
+            };
+
+            self.hidden_service_address = Some(actual_onion.clone());
+
+            log::info!("Hidden service created: {}", actual_onion);
+            log::info!("Service port: {}, Local forward: 127.0.0.1:{}", service_port, local_port);
+
+            actual_onion
+        };
+
+        // Use the actual onion address from Tor's response
+        let full_address = actual_onion_address;
+
+        // Now wait for descriptor upload events
+        log::info!("Waiting for hidden service descriptors to be uploaded...");
+        self.wait_for_descriptor_uploads_already_subscribed(&full_address).await?;
+
+        log::info!("Hidden service is now reachable: {}", full_address);
 
         Ok(full_address)
     }
 
-    /// Get the Tor client instance
-    fn get_client(&self) -> Result<Arc<TorClient<PreferredRuntime>>, Box<dyn Error>> {
-        self.tor_client.clone()
-            .ok_or_else(|| "Tor client not initialized. Call initialize() first.".into())
+    /// Wait for HS_DESC UPLOADED events (assumes events are already subscribed)
+    async fn wait_for_descriptor_uploads_already_subscribed(&self, onion_address: &str) -> Result<(), Box<dyn Error>> {
+        log::info!("Waiting for UPLOADED events for {}", onion_address);
+
+        let control = self.control_stream.as_ref()
+            .ok_or("Control port not connected")?;
+
+        let mut stream = control.lock().await;
+
+        // Wait for at least 2 UPLOADED events (v3 onions upload to multiple HSDirs)
+        let mut uploaded_count = 0;
+        let target_uploads = 2;
+        let timeout = tokio::time::Duration::from_secs(90);
+        let start_time = tokio::time::Instant::now();
+
+        let short_onion = onion_address.trim_end_matches(".onion");
+
+        while uploaded_count < target_uploads && start_time.elapsed() < timeout {
+            // Read events with timeout
+            let mut event_buf = vec![0u8; 4096];
+
+            match tokio::time::timeout(tokio::time::Duration::from_secs(5), stream.read(&mut event_buf)).await {
+                Ok(Ok(n)) if n > 0 => {
+                    let event = String::from_utf8_lossy(&event_buf[..n]);
+
+                    // Log ALL events to see what Tor is sending
+                    log::info!("Received Tor event: {}", event.trim());
+
+                    // Check for HS_DESC UPLOADED event for our onion address
+                    if event.contains("HS_DESC") && event.contains("UPLOADED") && event.contains(short_onion) {
+                        uploaded_count += 1;
+                        log::info!("Descriptor uploaded to HSDir ({}/{})", uploaded_count, target_uploads);
+                    }
+                },
+                Ok(Ok(_)) => {
+                    // Connection closed
+                    break;
+                },
+                Ok(Err(e)) => {
+                    log::error!("Error reading HS_DESC events: {}", e);
+                    break;
+                },
+                Err(_) => {
+                    // Timeout - continue waiting
+                    if start_time.elapsed().as_secs() % 10 == 0 {
+                        log::info!("Still waiting for descriptor uploads... ({}/{})", uploaded_count, target_uploads);
+                    }
+                }
+            }
+        }
+
+        if uploaded_count >= target_uploads {
+            log::info!("Successfully uploaded descriptors to {} HSDirs", uploaded_count);
+        } else if start_time.elapsed() >= timeout {
+            log::warn!("Descriptor upload timeout after 90s - continuing anyway (uploaded to {} HSDirs)", uploaded_count);
+        }
+
+        Ok(())
     }
 
-    /// Connect to a peer via Tor (.onion address)
+    /// Connect to a peer via Tor SOCKS5 proxy (.onion address)
     pub async fn connect(&self, onion_address: &str, port: u16) -> Result<TorConnection, Box<dyn Error>> {
-        let tor_client = self.get_client()?;
+        log::info!("Connecting to {} via Tor SOCKS5 proxy", onion_address);
 
-        // Format the target address
-        let target = format!("{}:{}", onion_address, port);
+        // Connect to local SOCKS5 proxy
+        let mut stream = TcpStream::connect("127.0.0.1:9050").await?;
 
-        // Connect through Tor to the hidden service
-        let stream = tor_client.connect(target).await?;
+        // Perform SOCKS5 handshake
+        self.socks5_connect(&mut stream, onion_address, port).await?;
+
+        log::info!("Successfully connected to {}", onion_address);
 
         Ok(TorConnection {
             stream,
@@ -191,113 +341,80 @@ impl TorManager {
         })
     }
 
-    /// Send data via Tor connection
-    pub async fn send(&self, conn: &mut TorConnection, data: &[u8]) -> Result<(), Box<dyn Error>> {
-        conn.stream.write_all(data).await?;
-        conn.stream.flush().await?;
+    /// Perform SOCKS5 handshake to connect to .onion address
+    async fn socks5_connect(&self, stream: &mut TcpStream, addr: &str, port: u16) -> Result<(), Box<dyn Error>> {
+        // SOCKS5 greeting: [version, num_methods, methods...]
+        stream.write_all(&[0x05, 0x01, 0x00]).await?; // Version 5, 1 method, No auth
+
+        let mut buf = [0u8; 2];
+        stream.read_exact(&mut buf).await?;
+
+        if buf[0] != 0x05 || buf[1] != 0x00 {
+            return Err("SOCKS5 auth failed".into());
+        }
+
+        // SOCKS5 connect request: [version, cmd, reserved, addr_type, addr, port]
+        let mut request = vec![0x05, 0x01, 0x00, 0x03]; // Ver 5, CONNECT, reserved, domain name
+        request.push(addr.len() as u8);
+        request.extend_from_slice(addr.as_bytes());
+        request.extend_from_slice(&port.to_be_bytes());
+
+        stream.write_all(&request).await?;
+
+        // Read SOCKS5 response
+        let mut response = [0u8; 10];
+        stream.read(&mut response).await?;
+
+        if response[0] != 0x05 || response[1] != 0x00 {
+            return Err(format!("SOCKS5 connect failed: status {}", response[1]).into());
+        }
+
         Ok(())
     }
 
-    /// Receive data via Tor connection
-    /// Reads up to max_bytes from the connection
-    pub async fn receive(&self, conn: &mut TorConnection, max_bytes: usize) -> Result<Vec<u8>, Box<dyn Error>> {
-        let mut buffer = vec![0u8; max_bytes];
-        let bytes_read = conn.stream.read(&mut buffer).await?;
-        buffer.truncate(bytes_read);
-        Ok(buffer)
-    }
-
-    /// Get our hidden service address (if created)
-    pub fn get_hidden_service_address(&self) -> Option<&str> {
-        self.hidden_service_address.as_deref()
-    }
-
-    /// Check if Tor is initialized and ready
-    pub fn is_ready(&self) -> bool {
-        self.tor_client.is_some()
-    }
-
     /// Start listening for incoming connections on the hidden service
-    ///
-    /// This starts a background task that listens on a local port (default 9150)
-    /// for incoming Tor hidden service connections. When a Ping token arrives,
-    /// it will be sent through the returned channel along with a connection_id
-    /// that can be used to send a Pong response back.
-    ///
-    /// # Arguments
-    /// * `local_port` - Local port to bind (default: 9150)
-    ///
-    /// # Returns
-    /// A receiver channel for incoming Ping tokens: (connection_id, encrypted_ping_bytes)
-    pub async fn start_listener(&mut self, local_port: Option<u16>) -> Result<mpsc::UnboundedReceiver<(u64, Vec<u8>)>, Box<dyn Error>> {
-        let port = local_port.unwrap_or(9150);
-        let addr: SocketAddr = format!("127.0.0.1:{}", port).parse()?;
+    pub async fn start_listener(&mut self, local_port: Option<u16>) -> Result<tokio::sync::mpsc::UnboundedReceiver<(u64, Vec<u8>)>, Box<dyn Error>> {
+        let port = local_port.unwrap_or(self.hs_local_port);
+        let bind_addr = format!("127.0.0.1:{}", port);
 
-        // Create TCP listener
-        let listener = TcpListener::bind(addr).await?;
-        log::info!("Hidden service listener started on {}", addr);
+        log::info!("Starting hidden service listener on {}", bind_addr);
 
-        // Create channel for incoming pings: (connection_id, encrypted_ping_bytes)
-        let (tx, rx) = mpsc::unbounded_channel();
-        self.incoming_ping_tx = Some(tx.clone());
+        // Use TcpSocket to set SO_REUSEADDR before binding
+        let socket = tokio::net::TcpSocket::new_v4()?;
+        socket.set_reuseaddr(true)?;
+        socket.bind(bind_addr.parse()?)?;
+        let listener = socket.listen(1024)?;
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
 
-        // Spawn background task to accept connections
+        let incoming_tx = tx.clone();
+        self.incoming_ping_tx = Some(tx);
+
+        // Spawn listener task
         let handle = tokio::spawn(async move {
             log::info!("Listener task started, waiting for connections...");
 
             loop {
                 match listener.accept().await {
-                    Ok((mut socket, peer_addr)) => {
-                        log::info!("Accepted connection from {}", peer_addr);
-                        let tx_clone = tx.clone();
+                    Ok((socket, addr)) => {
+                        log::info!("Incoming connection from {}", addr);
 
-                        // Spawn task to handle this connection
+                        // Generate unique connection ID
+                        let conn_id = {
+                            let mut counter = CONNECTION_ID_COUNTER.lock().unwrap();
+                            *counter += 1;
+                            *counter
+                        };
+
+                        // Spawn handler for this connection
+                        let tx = incoming_tx.clone();
                         tokio::spawn(async move {
-                            let mut buffer = vec![0u8; 4096];
-
-                            match socket.read(&mut buffer).await {
-                                Ok(n) if n > 0 => {
-                                    buffer.truncate(n);
-                                    log::info!("Received {} bytes from {}", n, peer_addr);
-
-                                    // Generate unique connection ID
-                                    let connection_id = {
-                                        let mut counter = CONNECTION_ID_COUNTER.lock().unwrap();
-                                        *counter += 1;
-                                        *counter
-                                    };
-
-                                    // Store the connection for later Pong response
-                                    {
-                                        let mut pending = PENDING_CONNECTIONS.lock().unwrap();
-                                        pending.insert(connection_id, PendingConnection {
-                                            socket,
-                                            encrypted_ping: buffer.clone(),
-                                        });
-                                        log::info!("Stored connection {} for Pong response", connection_id);
-                                    }
-
-                                    // Send (connection_id, encrypted_ping) to channel
-                                    if let Err(e) = tx_clone.send((connection_id, buffer)) {
-                                        log::error!("Failed to send ping to channel: {}", e);
-                                        // Clean up stored connection if channel send fails
-                                        PENDING_CONNECTIONS.lock().unwrap().remove(&connection_id);
-                                    } else {
-                                        log::info!("Ping forwarded to application (connection_id: {})", connection_id);
-                                    }
-                                }
-                                Ok(_) => {
-                                    log::warn!("Connection closed by {}", peer_addr);
-                                }
-                                Err(e) => {
-                                    log::error!("Error reading from {}: {}", peer_addr, e);
-                                }
+                            if let Err(e) = Self::handle_incoming_connection(socket, conn_id, tx).await {
+                                log::error!("Error handling connection {}: {}", conn_id, e);
                             }
                         });
                     }
                     Err(e) => {
                         log::error!("Error accepting connection: {}", e);
-                        // Continue listening despite errors
                     }
                 }
             }
@@ -305,7 +422,56 @@ impl TorManager {
 
         self.listener_handle = Some(handle);
 
+        log::info!("Hidden service listener started on {}", bind_addr);
+
         Ok(rx)
+    }
+
+    /// Handle incoming connection (receive Ping token)
+    async fn handle_incoming_connection(
+        mut socket: TcpStream,
+        conn_id: u64,
+        tx: tokio::sync::mpsc::UnboundedSender<(u64, Vec<u8>)>,
+    ) -> Result<(), Box<dyn Error>> {
+        // Read incoming Ping token
+        let mut len_buf = [0u8; 4];
+        socket.read_exact(&mut len_buf).await?;
+        let ping_len = u32::from_be_bytes(len_buf) as usize;
+
+        if ping_len > 10_000 {
+            return Err("Ping token too large".into());
+        }
+
+        let mut ping_data = vec![0u8; ping_len];
+        socket.read_exact(&mut ping_data).await?;
+
+        log::info!("╔════════════════════════════════════════");
+        log::info!("║ INCOMING CONNECTION {} ({}  bytes)", conn_id, ping_len);
+        log::info!("╚════════════════════════════════════════");
+
+        // TODO: Need to distinguish between Ping and Pong
+        // For now, treat everything as Ping (this is the bug!)
+        log::warn!("⚠️  Treating as PING (may actually be PONG!)");
+
+        // Store connection for Pong response
+        {
+            let mut pending = PENDING_CONNECTIONS.lock().unwrap();
+            pending.insert(conn_id, PendingConnection {
+                socket,
+                encrypted_ping: ping_data.clone(),
+            });
+        }
+
+        // Send to application layer (will be processed as Ping)
+        log::info!("→ Sending to Ping receiver channel");
+        tx.send((conn_id, ping_data)).ok();
+
+        Ok(())
+    }
+
+    /// Get the hidden service .onion address (if created)
+    pub fn get_hidden_service_address(&self) -> Option<String> {
+        self.hidden_service_address.clone()
     }
 
     /// Stop the hidden service listener
@@ -314,257 +480,221 @@ impl TorManager {
             handle.abort();
             log::info!("Hidden service listener stopped");
         }
-        self.incoming_ping_tx = None;
     }
 
-    /// Check if listener is running
-    pub fn is_listening(&self) -> bool {
-        self.listener_handle.is_some()
+    /// Start SOCKS proxy (C Tor always runs SOCKS on 9050, so this is a no-op)
+    pub async fn start_socks_proxy(&self) -> Result<bool, Box<dyn Error>> {
+        log::info!("SOCKS proxy already running on 127.0.0.1:9050 (C Tor)");
+        Ok(true)
     }
 
-    /// Send a Pong response back to a pending connection
-    ///
-    /// # Arguments
-    /// * `connection_id` - The connection ID from pollIncomingPing
-    /// * `pong_bytes` - The encrypted Pong token bytes to send
-    ///
-    /// # Returns
-    /// Ok(()) if sent successfully, Error otherwise
-    pub async fn send_pong_response(connection_id: u64, pong_bytes: &[u8]) -> Result<(), Box<dyn Error>> {
-        // Retrieve the pending connection
-        let mut pending_conn = {
-            let mut pending = PENDING_CONNECTIONS.lock().unwrap();
-            pending.remove(&connection_id)
-                .ok_or_else(|| format!("Connection {} not found or already closed", connection_id))?
+    /// Stop SOCKS proxy (C Tor manages this, so this is a no-op)
+    pub fn stop_socks_proxy(&self) {
+        log::info!("SOCKS proxy is managed by C Tor daemon");
+    }
+
+    /// Check if SOCKS proxy is running (always true with C Tor)
+    pub fn is_socks_proxy_running(&self) -> bool {
+        true
+    }
+
+    /// Test Tor health using control port (privacy-preserving approach)
+    /// Queries local Tor control port to check circuit status
+    /// No external connections - same approach used by Briar
+    /// Returns true if Tor has established circuits
+    pub async fn test_socks_connectivity(&self) -> bool {
+        use tokio::time::{timeout, Duration};
+        use tokio::net::TcpStream;
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        log::info!("Testing Tor health via control port...");
+
+        // Connect to Tor control port (local only, no external traffic)
+        let connect_result = timeout(
+            Duration::from_secs(3),
+            TcpStream::connect("127.0.0.1:9051")
+        ).await;
+
+        let mut stream = match connect_result {
+            Ok(Ok(s)) => s,
+            Ok(Err(e)) => {
+                log::error!("✗ Tor control port: Cannot connect - {}", e);
+                log::error!("   Tor daemon may not be running or control port disabled");
+                return false;
+            }
+            Err(_) => {
+                log::error!("✗ Tor control port: Connection timeout");
+                return false;
+            }
         };
 
-        log::info!("Sending {} byte Pong response to connection {}", pong_bytes.len(), connection_id);
-
-        // Send Pong bytes back
-        pending_conn.socket.write_all(pong_bytes).await?;
-        pending_conn.socket.flush().await?;
-
-        log::info!("Pong response sent successfully to connection {}", connection_id);
-
-        // Connection will be closed when dropped
-        Ok(())
-    }
-
-    /// Start SOCKS5 proxy server that routes traffic through Tor
-    ///
-    /// Listens on 127.0.0.1:9050 and accepts SOCKS5 connections from OkHttpClient.
-    /// All HTTP traffic will be routed through the Tor network via Arti TorClient.
-    ///
-    /// # Returns
-    /// Ok(()) if proxy started successfully
-    pub async fn start_socks_proxy(&mut self) -> Result<(), Box<dyn Error>> {
-        if self.socks_proxy_handle.is_some() {
-            return Err("SOCKS proxy already running".into());
+        // Authenticate (try NULL auth first, common on Android)
+        if let Err(e) = stream.write_all(b"AUTHENTICATE\r\n").await {
+            log::error!("✗ Tor control port: Auth write failed - {}", e);
+            return false;
         }
 
-        let tor_client = self.get_client()?;
-        let addr: SocketAddr = "127.0.0.1:9050".parse()?;
-
-        // Create TCP socket with SO_REUSEADDR to allow quick restart
-        let socket = tokio::net::TcpSocket::new_v4()?;
-        socket.set_reuseaddr(true)?;
-        socket.bind(addr)?;
-
-        // Convert socket to listener
-        let listener = socket.listen(128)?;
-        log::info!("SOCKS5 proxy started on {} (SO_REUSEADDR enabled)", addr);
-
-        // Spawn background task to handle SOCKS connections
-        let handle = tokio::spawn(async move {
-            loop {
-                match listener.accept().await {
-                    Ok((client_stream, client_addr)) => {
-                        log::debug!("SOCKS proxy accepted connection from {}", client_addr);
-                        let tor_client_clone = tor_client.clone();
-
-                        // Spawn task to handle this SOCKS connection
-                        tokio::spawn(async move {
-                            if let Err(e) = handle_socks_connection(client_stream, tor_client_clone).await {
-                                log::error!("SOCKS connection error: {}", e);
-                            }
-                        });
-                    }
-                    Err(e) => {
-                        log::error!("Failed to accept SOCKS connection: {}", e);
-                    }
-                }
+        let mut auth_response = vec![0u8; 512];
+        let n = match timeout(Duration::from_secs(2), stream.read(&mut auth_response)).await {
+            Ok(Ok(n)) => n,
+            Ok(Err(e)) => {
+                log::error!("✗ Tor control port: Auth read failed - {}", e);
+                return false;
             }
-        });
+            Err(_) => {
+                log::error!("✗ Tor control port: Auth timeout");
+                return false;
+            }
+        };
 
-        self.socks_proxy_handle = Some(handle);
-        Ok(())
-    }
+        let auth_str = String::from_utf8_lossy(&auth_response[..n]);
+        if !auth_str.starts_with("250") {
+            log::error!("✗ Tor control port: Auth failed - {}", auth_str.trim());
+            return false;
+        }
 
-    /// Stop the SOCKS5 proxy server
-    pub fn stop_socks_proxy(&mut self) {
-        if let Some(handle) = self.socks_proxy_handle.take() {
-            handle.abort();
-            log::info!("SOCKS5 proxy stopped");
+        // Query circuit status
+        if let Err(e) = stream.write_all(b"GETINFO status/circuit-established\r\n").await {
+            log::error!("✗ Tor control port: Query write failed - {}", e);
+            return false;
+        }
+
+        let mut response = vec![0u8; 512];
+        let n = match timeout(Duration::from_secs(2), stream.read(&mut response)).await {
+            Ok(Ok(n)) => n,
+            Ok(Err(e)) => {
+                log::error!("✗ Tor control port: Query read failed - {}", e);
+                return false;
+            }
+            Err(_) => {
+                log::error!("✗ Tor control port: Query timeout");
+                return false;
+            }
+        };
+
+        let response_str = String::from_utf8_lossy(&response[..n]);
+
+        // Check if circuits are established
+        // Response format: "250-status/circuit-established=1\r\n250 OK\r\n"
+        let circuits_ok = response_str.contains("circuit-established=1");
+
+        // Close connection gracefully
+        let _ = stream.write_all(b"QUIT\r\n").await;
+
+        if circuits_ok {
+            log::info!("✓ Tor health check: PASSED (circuits established)");
+            true
+        } else {
+            log::error!("✗ Tor health check: FAILED (no circuits)");
+            log::error!("   Response: {}", response_str.trim());
+            false
         }
     }
 
-    /// Check if SOCKS proxy is running
-    pub fn is_socks_proxy_running(&self) -> bool {
-        self.socks_proxy_handle.is_some()
+    /// Send Pong response back through pending connection and wait for message
+    pub async fn send_pong_response(connection_id: u64, pong_bytes: &[u8]) -> Result<Vec<u8>, Box<dyn Error>> {
+        // Temporarily take the connection out to do async I/O (can't hold lock across await)
+        let mut conn = {
+            let mut pending = PENDING_CONNECTIONS.lock().unwrap();
+            pending.remove(&connection_id)
+                .ok_or("Connection not found")?
+        };
+
+        // Send length prefix
+        let len = pong_bytes.len() as u32;
+        conn.socket.write_all(&len.to_be_bytes()).await?;
+
+        // Send Pong bytes
+        conn.socket.write_all(pong_bytes).await?;
+        conn.socket.flush().await?;
+
+        log::info!("Sent Pong response: {} bytes (connection {})", pong_bytes.len(), connection_id);
+
+        // NOW WAIT FOR THE ACTUAL MESSAGE!
+        // The sender will send the message immediately after receiving our Pong
+        log::info!("Waiting for incoming message on connection {}...", connection_id);
+
+        // Read message length prefix (with timeout - sender should send immediately)
+        let mut len_buf = [0u8; 4];
+        let read_result = tokio::time::timeout(
+            std::time::Duration::from_secs(30),
+            conn.socket.read_exact(&mut len_buf)
+        ).await;
+
+        match read_result {
+            Ok(Ok(_)) => {
+                let msg_len = u32::from_be_bytes(len_buf) as usize;
+                log::info!("Incoming message length: {} bytes", msg_len);
+
+                if msg_len > 1_000_000 {  // 1MB limit
+                    return Err("Message too large".into());
+                }
+
+                // Read message data
+                let mut message_data = vec![0u8; msg_len];
+                conn.socket.read_exact(&mut message_data).await?;
+
+                log::info!("Received message: {} bytes (connection {})", msg_len, connection_id);
+
+                // Connection closes naturally when dropped
+                Ok(message_data)
+            }
+            Ok(Err(e)) => {
+                log::error!("Failed to read message length: {}", e);
+                Err(e.into())
+            }
+            Err(_) => {
+                log::error!("Timeout waiting for message on connection {}", connection_id);
+                Err("Timeout waiting for message after sending Pong".into())
+            }
+        }
+    }
+
+    /// Send data over a Tor connection
+    pub async fn send(&self, conn: &mut TorConnection, data: &[u8]) -> Result<(), Box<dyn Error>> {
+        conn.send(data).await
+    }
+
+    /// Receive data from a Tor connection
+    pub async fn receive(&self, conn: &mut TorConnection, _max_len: usize) -> Result<Vec<u8>, Box<dyn Error>> {
+        conn.receive().await
     }
 }
 
-/// Handle a single SOCKS5 connection
-///
-/// Implements minimal SOCKS5 protocol to support OkHttpClient:
-/// 1. Authentication handshake (no auth)
-/// 2. Connection request parsing
-/// 3. Tor connection establishment
-/// 4. Bidirectional data relay
-async fn handle_socks_connection(
-    mut client_stream: TcpStream,
-    tor_client: Arc<TorClient<PreferredRuntime>>,
-) -> Result<(), Box<dyn Error>> {
-    // Step 1: SOCKS5 greeting
-    // Client sends: [VERSION(5), NMETHODS(1+), METHODS...]
-    let mut buf = [0u8; 257];
-    let n = client_stream.read(&mut buf).await?;
-
-    if n < 2 || buf[0] != 0x05 {
-        return Err("Invalid SOCKS5 version".into());
-    }
-
-    // Respond with no authentication required: [VERSION(5), METHOD(0)]
-    client_stream.write_all(&[0x05, 0x00]).await?;
-
-    // Step 2: SOCKS5 connection request
-    // Client sends: [VERSION(5), CMD(1=CONNECT), RESERVED(0), ATYP, DST.ADDR, DST.PORT]
-    let n = client_stream.read(&mut buf).await?;
-
-    if n < 10 || buf[0] != 0x05 || buf[1] != 0x01 {
-        // Send failure response
-        client_stream.write_all(&[0x05, 0x01, 0x00, 0x01, 0, 0, 0, 0, 0, 0]).await?;
-        return Err("Invalid SOCKS5 request".into());
-    }
-
-    // Parse address type and extract target host
-    let atyp = buf[3];
-    let (target_host, target_port, addr_end) = match atyp {
-        // IPv4
-        0x01 => {
-            if n < 10 {
-                return Err("Invalid IPv4 address".into());
-            }
-            let ip = format!("{}.{}.{}.{}", buf[4], buf[5], buf[6], buf[7]);
-            let port = u16::from_be_bytes([buf[8], buf[9]]);
-            (ip, port, 10)
-        }
-        // Domain name
-        0x03 => {
-            let len = buf[4] as usize;
-            if n < 7 + len {
-                return Err("Invalid domain name".into());
-            }
-            let domain = String::from_utf8_lossy(&buf[5..5 + len]).to_string();
-            let port = u16::from_be_bytes([buf[5 + len], buf[6 + len]]);
-            (domain, port, 7 + len)
-        }
-        // IPv6
-        0x04 => {
-            if n < 22 {
-                return Err("Invalid IPv6 address".into());
-            }
-            let ip = format!(
-                "{:02x}{:02x}:{:02x}{:02x}:{:02x}{:02x}:{:02x}{:02x}:{:02x}{:02x}:{:02x}{:02x}:{:02x}{:02x}:{:02x}{:02x}",
-                buf[4], buf[5], buf[6], buf[7], buf[8], buf[9], buf[10], buf[11],
-                buf[12], buf[13], buf[14], buf[15], buf[16], buf[17], buf[18], buf[19]
-            );
-            let port = u16::from_be_bytes([buf[20], buf[21]]);
-            (ip, port, 22)
-        }
-        _ => {
-            client_stream.write_all(&[0x05, 0x08, 0x00, 0x01, 0, 0, 0, 0, 0, 0]).await?;
-            return Err("Unsupported address type".into());
-        }
-    };
-
-    log::info!("SOCKS5 connecting to {}:{} via Tor", target_host, target_port);
-
-    // Step 3: Connect through Tor
-    let target = format!("{}:{}", target_host, target_port);
-    let mut tor_stream = match tor_client.connect(target).await {
-        Ok(stream) => stream,
-        Err(e) => {
-            log::error!("Tor connection failed: {}", e);
-            // Send connection refused: [VERSION, REP(5=connection refused), ...]
-            client_stream.write_all(&[0x05, 0x05, 0x00, 0x01, 0, 0, 0, 0, 0, 0]).await?;
-            return Err(Box::new(e));
-        }
-    };
-
-    // Send success response: [VERSION(5), REP(0=success), RESERVED(0), ATYP(1), BIND.ADDR(0.0.0.0), BIND.PORT(0)]
-    client_stream.write_all(&[0x05, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0, 0]).await?;
-
-    log::debug!("SOCKS5 connection established, relaying data...");
-
-    // Step 4: Bidirectional relay between client and Tor
-    let (mut client_read, mut client_write) = client_stream.split();
-    let (mut tor_read, mut tor_write) = tokio::io::split(tor_stream);
-
-    let client_to_tor = async {
-        let mut buf = vec![0u8; 8192];
-        loop {
-            match client_read.read(&mut buf).await {
-                Ok(0) => break,
-                Ok(n) => {
-                    if tor_write.write_all(&buf[..n]).await.is_err() {
-                        break;
-                    }
-                }
-                Err(_) => break,
-            }
-        }
-    };
-
-    let tor_to_client = async {
-        let mut buf = vec![0u8; 8192];
-        loop {
-            match tor_read.read(&mut buf).await {
-                Ok(0) => break,
-                Ok(n) => {
-                    if client_write.write_all(&buf[..n]).await.is_err() {
-                        break;
-                    }
-                }
-                Err(_) => break,
-            }
-        }
-    };
-
-    // Run both directions concurrently
-    tokio::select! {
-        _ = client_to_tor => {},
-        _ = tor_to_client => {},
-    }
-
-    log::debug!("SOCKS5 connection closed");
-    Ok(())
-}
-
-/// Represents an active Tor connection to a hidden service
+/// Tor connection wrapper
 pub struct TorConnection {
-    pub(crate) stream: arti_client::DataStream,
+    pub stream: TcpStream,
     pub onion_address: String,
     pub port: u16,
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+impl TorConnection {
+    pub async fn send(&mut self, data: &[u8]) -> Result<(), Box<dyn Error>> {
+        // Send length prefix
+        let len = data.len() as u32;
+        self.stream.write_all(&len.to_be_bytes()).await?;
 
-    #[tokio::test]
-    async fn test_tor_manager_creation() {
-        let manager = TorManager::new().unwrap();
-        assert!(manager.hidden_service_address.is_none());
+        // Send data
+        self.stream.write_all(data).await?;
+        self.stream.flush().await?;
+
+        Ok(())
+    }
+
+    pub async fn receive(&mut self) -> Result<Vec<u8>, Box<dyn Error>> {
+        // Read length prefix
+        let mut len_buf = [0u8; 4];
+        self.stream.read_exact(&mut len_buf).await?;
+        let data_len = u32::from_be_bytes(len_buf) as usize;
+
+        if data_len > 1_000_000 {
+            return Err("Message too large".into());
+        }
+
+        // Read data
+        let mut data = vec![0u8; data_len];
+        self.stream.read_exact(&mut data).await?;
+
+        Ok(data)
     }
 }

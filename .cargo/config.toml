@@ -16,7 +16,8 @@ rustflags = ["-C", "link-arg=--target=aarch64-linux-android21"]
 
 [target.armv7-linux-androideabi]
 ar = "C:/Users/Eddie/AppData/Local/Android/Sdk/ndk/android-ndk-r26d/toolchains/llvm/prebuilt/windows-x86_64/bin/llvm-ar.exe"
-linker = "C:/Users/Eddie/AppData/Local/Android/Sdk/ndk/android-ndk-r26d/toolchains/llvm/prebuilt/windows-x86_64/bin/armv7a-linux-androideabi21-clang.cmd"
+linker = "C:/Users/Eddie/AppData/Local/Android/Sdk/ndk/android-ndk-r26d/toolchains/llvm/prebuilt/windows-x86_64/bin/clang.exe"
+rustflags = ["-C", "link-arg=--target=armv7a-linux-androideabi21"]
 
 [target.i686-linux-android]
 ar = "C:/Users/Eddie/AppData/Local/Android/Sdk/ndk/android-ndk-r26d/toolchains/llvm/prebuilt/windows-x86_64/bin/llvm-ar.exe"
@@ -24,4 +25,5 @@ linker = "C:/Users/Eddie/AppData/Local/Android/Sdk/ndk/android-ndk-r26d/toolchai
 
 [target.x86_64-linux-android]
 ar = "C:/Users/Eddie/AppData/Local/Android/Sdk/ndk/android-ndk-r26d/toolchains/llvm/prebuilt/windows-x86_64/bin/llvm-ar.exe"
-linker = "C:/Users/Eddie/AppData/Local/Android/Sdk/ndk/android-ndk-r26d/toolchains/llvm/prebuilt/windows-x86_64/bin/x86_64-linux-android21-clang.cmd"
+linker = "C:/Users/Eddie/AppData/Local/Android/Sdk/ndk/android-ndk-r26d/toolchains/llvm/prebuilt/windows-x86_64/bin/clang.exe"
+rustflags = ["-C", "link-arg=--target=x86_64-linux-android21"]
