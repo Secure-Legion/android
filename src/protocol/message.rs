@@ -119,6 +119,33 @@ impl PongToken {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeliveryConfirmationToken {
+    pub message_id: String,           // ID of the message being confirmed
+    pub recipient_pubkey: [u8; 32],   // Recipient's signing public key
+    pub timestamp: i64,
+    #[serde(with = "BigArray")]
+    pub signature: [u8; 64],          // Signature over message_id + timestamp
+}
+
+impl DeliveryConfirmationToken {
+    pub fn serialize(&self) -> Result<Vec<u8>, bincode::Error> {
+        bincode::serialize(self)
+    }
+
+    pub fn deserialize(data: &[u8]) -> Result<Self, bincode::Error> {
+        bincode::deserialize(data)
+    }
+
+    pub fn serialize_for_signing(&self) -> Vec<u8> {
+        let mut data = Vec::new();
+        data.extend_from_slice(self.message_id.as_bytes());
+        data.extend_from_slice(&self.recipient_pubkey);
+        data.extend_from_slice(&self.timestamp.to_le_bytes());
+        data
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

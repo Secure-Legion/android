@@ -324,15 +324,30 @@ impl TorManager {
 
     /// Connect to a peer via Tor SOCKS5 proxy (.onion address)
     pub async fn connect(&self, onion_address: &str, port: u16) -> Result<TorConnection, Box<dyn Error>> {
-        log::info!("Connecting to {} via Tor SOCKS5 proxy", onion_address);
+        log::info!("Connecting to {}:{} via Tor SOCKS5 proxy", onion_address, port);
 
         // Connect to local SOCKS5 proxy
-        let mut stream = TcpStream::connect("127.0.0.1:9050").await?;
+        log::info!("Connecting to SOCKS5 proxy at 127.0.0.1:9050...");
+        let mut stream = match TcpStream::connect("127.0.0.1:9050").await {
+            Ok(s) => {
+                log::info!("✓ Connected to SOCKS5 proxy");
+                s
+            }
+            Err(e) => {
+                log::error!("✗ Failed to connect to SOCKS5 proxy at 127.0.0.1:9050: {}", e);
+                log::error!("  Possible causes:");
+                log::error!("  1. Tor daemon not running");
+                log::error!("  2. SOCKS proxy not listening on port 9050");
+                log::error!("  3. Port blocked by firewall");
+                return Err(format!("SOCKS proxy unreachable: {}", e).into());
+            }
+        };
 
         // Perform SOCKS5 handshake
+        log::info!("Performing SOCKS5 handshake for {}:{}...", onion_address, port);
         self.socks5_connect(&mut stream, onion_address, port).await?;
 
-        log::info!("Successfully connected to {}", onion_address);
+        log::info!("✓ Successfully connected to {}", onion_address);
 
         Ok(TorConnection {
             stream,
@@ -350,8 +365,10 @@ impl TorManager {
         stream.read_exact(&mut buf).await?;
 
         if buf[0] != 0x05 || buf[1] != 0x00 {
+            log::error!("SOCKS5 auth failed: version={}, method={}", buf[0], buf[1]);
             return Err("SOCKS5 auth failed".into());
         }
+        log::info!("✓ SOCKS5 auth successful");
 
         // SOCKS5 connect request: [version, cmd, reserved, addr_type, addr, port]
         let mut request = vec![0x05, 0x01, 0x00, 0x03]; // Ver 5, CONNECT, reserved, domain name
@@ -360,15 +377,60 @@ impl TorManager {
         request.extend_from_slice(&port.to_be_bytes());
 
         stream.write_all(&request).await?;
+        log::info!("Sent SOCKS5 connect request for {}:{}", addr, port);
 
         // Read SOCKS5 response
         let mut response = [0u8; 10];
         stream.read(&mut response).await?;
 
         if response[0] != 0x05 || response[1] != 0x00 {
-            return Err(format!("SOCKS5 connect failed: status {}", response[1]).into());
+            let status_code = response[1];
+            let error_message = match status_code {
+                0x00 => "succeeded".to_string(),
+                0x01 => "general SOCKS server failure".to_string(),
+                0x02 => "connection not allowed by ruleset".to_string(),
+                0x03 => "Network unreachable".to_string(),
+                0x04 => "Host unreachable".to_string(),
+                0x05 => "Connection refused".to_string(),
+                0x06 => "TTL expired".to_string(),
+                0x07 => "Command not supported".to_string(),
+                0x08 => "Address type not supported".to_string(),
+                _ => format!("Unknown error code {}", status_code),
+            };
+
+            log::error!("✗ SOCKS5 connect failed: status {} ({})", status_code, error_message);
+            log::error!("  Target: {}:{}", addr, port);
+
+            // Provide specific diagnostic hints based on error code
+            match status_code {
+                0x05 => {
+                    log::error!("  Diagnosis: Connection refused by Tor proxy");
+                    log::error!("  Possible causes:");
+                    log::error!("    1. Tor not fully bootstrapped (check bootstrap status)");
+                    log::error!("    2. Recipient's hidden service not reachable");
+                    log::error!("    3. Recipient's hidden service listener not running on port {}", port);
+                    log::error!("    4. .onion address is invalid or doesn't exist");
+                    log::error!("  Recommended action: Verify Tor bootstrap is 100% before retrying");
+                }
+                0x03 => {
+                    log::error!("  Diagnosis: Network unreachable");
+                    log::error!("  Possible causes:");
+                    log::error!("    1. Tor circuits not established");
+                    log::error!("    2. No network connectivity");
+                }
+                0x04 => {
+                    log::error!("  Diagnosis: Host unreachable");
+                    log::error!("  Possible causes:");
+                    log::error!("    1. Hidden service descriptors not published");
+                    log::error!("    2. Hidden service offline");
+                }
+                _ => {}
+            }
+
+            return Err(format!("SOCKS5 connect failed: status {} ({})", status_code, error_message).into());
         }
 
+        log::info!("✓ SOCKS5 handshake complete");
         Ok(())
     }
 
@@ -433,13 +495,14 @@ impl TorManager {
         conn_id: u64,
         tx: tokio::sync::mpsc::UnboundedSender<(u64, Vec<u8>)>,
     ) -> Result<(), Box<dyn Error>> {
-        // Read incoming Ping token
+        // Read incoming data (can be Ping, Pong, or Message blob)
         let mut len_buf = [0u8; 4];
         socket.read_exact(&mut len_buf).await?;
         let ping_len = u32::from_be_bytes(len_buf) as usize;
 
-        if ping_len > 10_000 {
-            return Err("Ping token too large".into());
+        // Increased limit to support voice messages (typical voice: ~50KB, allow up to 10MB)
+        if ping_len > 10_000_000 {
+            return Err("Message too large (>10MB)".into());
         }
 
         let mut ping_data = vec![0u8; ping_len];

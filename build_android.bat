@@ -34,6 +34,14 @@ if %ERRORLEVEL% NEQ 0 (
 )
 
 echo.
+echo Building for x86_64 (for emulator support)...
+cargo ndk --target x86_64-linux-android --platform 26 build --release
+if %ERRORLEVEL% NEQ 0 (
+    echo ERROR: x86_64 build failed!
+    exit /b 1
+)
+
+echo.
 echo Build successful!
 echo.
 echo Copying libraries to Android project...
@@ -45,15 +53,20 @@ if not exist "..\app\src\main\jniLibs\arm64-v8a" (
 if not exist "..\app\src\main\jniLibs\armeabi-v7a" (
     mkdir "..\app\src\main\jniLibs\armeabi-v7a"
 )
+if not exist "..\app\src\main\jniLibs\x86_64" (
+    mkdir "..\app\src\main\jniLibs\x86_64"
+)
 
 REM Copy libraries
 copy /Y "target\aarch64-linux-android\release\libsecurelegion.so" "..\app\src\main\jniLibs\arm64-v8a\"
 copy /Y "target\armv7-linux-androideabi\release\libsecurelegion.so" "..\app\src\main\jniLibs\armeabi-v7a\"
+copy /Y "target\x86_64-linux-android\release\libsecurelegion.so" "..\app\src\main\jniLibs\x86_64\"
 
 echo.
 echo Done! Libraries copied to:
 echo   - app/src/main/jniLibs/arm64-v8a/libsecurelegion.so
 echo   - app/src/main/jniLibs/armeabi-v7a/libsecurelegion.so
+echo   - app/src/main/jniLibs/x86_64/libsecurelegion.so
 echo.
 echo You can now build the Android app in Android Studio!
 pause
