@@ -30,21 +30,25 @@ object RustBridge {
     // ==================== CRYPTOGRAPHY ====================
 
     /**
-     * Encrypt a message using XChaCha20-Poly1305
+     * Encrypt a message using XChaCha20-Poly1305 with X25519 ECDH
+     * Uses proper ECDH to derive shared secret for encryption
+     * Wire format: [Our X25519 Public Key - 32 bytes][Encrypted Message]
      * @param plaintext The message to encrypt
-     * @param recipientPublicKey The recipient's Ed25519 public key (32 bytes)
-     * @return Encrypted message bytes
+     * @param recipientX25519PublicKey The recipient's X25519 public key (32 bytes)
+     * @return Wire message bytes (our X25519 public key + encrypted data)
      */
-    external fun encryptMessage(plaintext: String, recipientPublicKey: ByteArray): ByteArray
+    external fun encryptMessage(plaintext: String, recipientX25519PublicKey: ByteArray): ByteArray
 
     /**
-     * Decrypt a message using XChaCha20-Poly1305
-     * @param ciphertext The encrypted message
-     * @param senderPublicKey The sender's Ed25519 public key (32 bytes)
-     * @param privateKey Our private Ed25519 key (32 bytes)
+     * Decrypt a message using XChaCha20-Poly1305 with X25519 ECDH
+     * Uses proper ECDH to derive shared secret for decryption
+     * Wire format: [Sender X25519 Public Key - 32 bytes][Encrypted Message]
+     * @param wireMessage The wire message (sender X25519 public key + encrypted data)
+     * @param senderPublicKey DEPRECATED - not used (kept for API compatibility)
+     * @param privateKey DEPRECATED - not used (kept for API compatibility)
      * @return Decrypted plaintext string, or null if decryption fails
      */
-    external fun decryptMessage(ciphertext: ByteArray, senderPublicKey: ByteArray, privateKey: ByteArray): String?
+    external fun decryptMessage(wireMessage: ByteArray, senderPublicKey: ByteArray, privateKey: ByteArray): String?
 
     /**
      * Generate a new Ed25519 keypair
@@ -139,6 +143,14 @@ object RustBridge {
     external fun startTapListener(port: Int = 9151): Boolean
 
     /**
+     * Start the pong listener on the specified port
+     * This enables receiving incoming pong responses
+     * @param port The local port to listen on (default 9152)
+     * @return True if listener started successfully
+     */
+    external fun startPongListener(port: Int = 9152): Boolean
+
+    /**
      * Stop the hidden service listener
      */
     external fun stopHiddenServiceListener()
@@ -195,6 +207,15 @@ object RustBridge {
      * @return True if Pong sent successfully
      */
     external fun sendPongToNewConnection(senderOnionAddress: String, encryptedPongBytes: ByteArray): Boolean
+
+    /**
+     * Send encrypted Pong to sender's Pong listener (port 9152)
+     * Used for delayed downloads - sends pong to sender's listening port
+     * @param senderOnionAddress The sender's .onion address
+     * @param encryptedPongBytes The encrypted Pong token bytes (from respondToPing)
+     * @return True if Pong sent successfully to listener
+     */
+    external fun sendPongToListener(senderOnionAddress: String, encryptedPongBytes: ByteArray): Boolean
 
     /**
      * Decrypt an incoming encrypted Ping token and store it
@@ -289,6 +310,21 @@ object RustBridge {
      * @return Sender's Ed25519 public key (32 bytes), or null if decryption fails
      */
     external fun decryptIncomingTap(tapWire: ByteArray): ByteArray?
+
+    /**
+     * Poll for an incoming pong (non-blocking)
+     * Wire format from recipient: [Recipient X25519 Public Key - 32 bytes][Encrypted Pong]
+     * @return Pong wire message bytes, or null if no pong available
+     */
+    external fun pollIncomingPong(): ByteArray?
+
+    /**
+     * Decrypt incoming pong from listener and store in GLOBAL_PONG_SESSIONS
+     * Wire format: [Recipient X25519 Public Key - 32 bytes][Encrypted Pong]
+     * @param pongWire The encrypted pong wire message from pollIncomingPong
+     * @return True if decryption and storage succeeded
+     */
+    external fun decryptAndStorePongFromListener(pongWire: ByteArray): Boolean
 
     // ==================== HELPER FUNCTIONS ====================
 

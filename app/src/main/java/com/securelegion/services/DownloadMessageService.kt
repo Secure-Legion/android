@@ -126,8 +126,12 @@ class DownloadMessageService : Service() {
             return
         }
 
+        // Get connection ID (may not exist for very old pings)
+        val connectionId = prefs.getLong("ping_${contactId}_connection", -1L)
+
         Log.i(TAG, "Ping ID: $pingId")
         Log.i(TAG, "Sender: $senderOnion")
+        Log.i(TAG, "Connection ID: ${if (connectionId != -1L) connectionId else "not available"}")
 
         // Update notification
         updateNotification(contactName, "Creating response...")
@@ -149,17 +153,45 @@ class DownloadMessageService : Service() {
         // Update notification
         updateNotification(contactName, "Sending response...")
 
-        // Send Pong
-        val pongSent = withContext(Dispatchers.IO) {
-            try {
-                com.securelegion.crypto.RustBridge.sendPongToNewConnection(senderOnion, pongBytes)
-            } catch (e: Exception) {
-                Log.e(TAG, "✗ Failed to send Pong", e)
-                // Report SOCKS failure if this is a connectivity issue
-                if (e.message?.contains("SOCKS", ignoreCase = true) == true) {
-                    TorService.reportSocksFailure(this@DownloadMessageService)
+        // DUAL-PATH APPROACH: Try instant reply first, then fall back to listener
+        var pongSent = false
+
+        // PATH 1: Try sending Pong on original connection (instant messaging)
+        if (connectionId != -1L) {
+            Log.d(TAG, "Attempting instant Pong reply on connection $connectionId...")
+            pongSent = withContext(Dispatchers.IO) {
+                try {
+                    val messageBytes = com.securelegion.crypto.RustBridge.sendPongBytes(connectionId, pongBytes)
+                    if (messageBytes != null) {
+                        Log.i(TAG, "✓ Pong sent on original connection! Received message blob: ${messageBytes.size} bytes")
+                        // Message blob arrived immediately! Process it now
+                        handleInstantMessageBlob(messageBytes, contactId, contactName)
+                        true
+                    } else {
+                        Log.w(TAG, "✗ sendPongBytes returned null (connection likely closed)")
+                        false
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "✗ Instant Pong reply failed (connection closed): ${e.message}")
+                    false
                 }
-                false
+            }
+        }
+
+        // PATH 2: If instant path failed, fall back to listener (delayed messaging)
+        if (!pongSent) {
+            Log.d(TAG, "Falling back to listener-based Pong delivery (delayed download)...")
+            pongSent = withContext(Dispatchers.IO) {
+                try {
+                    com.securelegion.crypto.RustBridge.sendPongToListener(senderOnion, pongBytes)
+                } catch (e: Exception) {
+                    Log.e(TAG, "✗ Failed to send Pong to listener", e)
+                    // Report SOCKS failure if this is a connectivity issue
+                    if (e.message?.contains("SOCKS", ignoreCase = true) == true) {
+                        TorService.reportSocksFailure(this@DownloadMessageService)
+                    }
+                    false
+                }
             }
         }
 
@@ -304,5 +336,131 @@ class DownloadMessageService : Service() {
             .build()
 
         notificationManager?.notify(NOTIFICATION_ID, notification)
+    }
+
+    /**
+     * Handle message blob that arrived immediately via instant path (sendPongBytes)
+     */
+    private suspend fun handleInstantMessageBlob(messageBytes: ByteArray, contactId: Long, contactName: String) {
+        try {
+            Log.i(TAG, "Processing instant message blob: ${messageBytes.size} bytes")
+
+            // Message blob format: [Sender X25519 Public Key - 32 bytes][Encrypted Message]
+            if (messageBytes.size < 32) {
+                Log.e(TAG, "Message blob too small: ${messageBytes.size} bytes")
+                return
+            }
+
+            // Extract sender's X25519 public key (first 32 bytes)
+            val senderX25519PublicKey = messageBytes.copyOfRange(0, 32)
+
+            // Extract encrypted message (rest of bytes)
+            val encryptedMessageWire = messageBytes.copyOfRange(32, messageBytes.size)
+
+            Log.d(TAG, "Sender X25519 key: ${android.util.Base64.encodeToString(senderX25519PublicKey, android.util.Base64.NO_WRAP).take(16)}...")
+            Log.d(TAG, "Encrypted message: ${encryptedMessageWire.size} bytes")
+
+            // Get database
+            val keyManager = KeyManager.getInstance(this@DownloadMessageService)
+            val dbPassphrase = keyManager.getDatabasePassphrase()
+            val database = SecureLegionDatabase.getInstance(this@DownloadMessageService, dbPassphrase)
+
+            // Get contact info
+            val contact = database.contactDao().getContactById(contactId)
+            if (contact == null) {
+                Log.e(TAG, "Contact not found for ID: $contactId")
+                return
+            }
+
+            // Get sender's Ed25519 public key for decryption
+            val senderPublicKey = android.util.Base64.decode(contact.publicKeyBase64, android.util.Base64.NO_WRAP)
+
+            // Decrypt message using Ed25519 key
+            val ourPrivateKey = keyManager.getSigningKeyBytes()
+
+            // Extract type byte and payload
+            val typeByte = encryptedMessageWire[0]
+            val encryptedPayload = encryptedMessageWire.copyOfRange(1, encryptedMessageWire.size)
+
+            Log.d(TAG, "Message type byte: 0x${String.format("%02X", typeByte)}")
+
+            when (typeByte.toInt()) {
+                0x00 -> {
+                    // TEXT message
+                    Log.d(TAG, "Decrypting TEXT message...")
+                    val plaintext = com.securelegion.crypto.RustBridge.decryptMessage(
+                        encryptedPayload,
+                        senderPublicKey,
+                        ourPrivateKey
+                    )
+
+                    if (plaintext != null) {
+                        Log.i(TAG, "✓ Message decrypted: ${plaintext.length} chars")
+
+                        // Save to database via MessageService
+                        val messageService = MessageService(this@DownloadMessageService)
+                        val encryptedBase64 = android.util.Base64.encodeToString(encryptedMessageWire, android.util.Base64.NO_WRAP)
+
+                        val result = messageService.receiveMessage(
+                            encryptedData = encryptedBase64,
+                            senderPublicKey = senderPublicKey,
+                            senderOnionAddress = contact.torOnionAddress
+                        )
+
+                        if (result.isSuccess) {
+                            Log.i(TAG, "✓ Message saved to database")
+                        } else {
+                            Log.e(TAG, "Failed to save message: ${result.exceptionOrNull()?.message}")
+                        }
+                    } else {
+                        Log.e(TAG, "Failed to decrypt message")
+                    }
+                }
+
+                0x01 -> {
+                    // VOICE message
+                    Log.d(TAG, "Processing VOICE message...")
+
+                    // Extract duration (4 bytes, big-endian)
+                    val durationBytes = encryptedPayload.copyOfRange(0, 4)
+                    val duration = (
+                        (durationBytes[0].toInt() and 0xFF shl 24) or
+                        (durationBytes[1].toInt() and 0xFF shl 16) or
+                        (durationBytes[2].toInt() and 0xFF shl 8) or
+                        (durationBytes[3].toInt() and 0xFF)
+                    )
+
+                    val encryptedVoicePayload = encryptedPayload.copyOfRange(4, encryptedPayload.size)
+
+                    Log.d(TAG, "Voice duration: ${duration}s")
+                    Log.d(TAG, "Decrypting voice message...")
+
+                    // Save to database via MessageService
+                    val messageService = MessageService(this@DownloadMessageService)
+                    val encryptedBase64 = android.util.Base64.encodeToString(encryptedMessageWire, android.util.Base64.NO_WRAP)
+
+                    val result = messageService.receiveMessage(
+                        encryptedData = encryptedBase64,
+                        senderPublicKey = senderPublicKey,
+                        senderOnionAddress = contact.torOnionAddress,
+                        messageType = com.securelegion.database.entities.Message.MESSAGE_TYPE_VOICE,
+                        voiceDuration = duration
+                    )
+
+                    if (result.isSuccess) {
+                        Log.i(TAG, "✓ Voice message saved to database")
+                    } else {
+                        Log.e(TAG, "Failed to save voice message: ${result.exceptionOrNull()?.message}")
+                    }
+                }
+
+                else -> {
+                    Log.w(TAG, "Unknown message type: 0x${String.format("%02X", typeByte)}")
+                }
+            }
+
+        } catch (e: Exception) {
+            Log.e(TAG, "Error processing instant message blob", e)
+        }
     }
 }

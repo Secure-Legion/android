@@ -67,8 +67,8 @@ class MessageService(private val context: Context) {
             val ourPublicKey = keyManager.getSigningPublicKey()
             val ourPrivateKey = keyManager.getSigningKeyBytes()
 
-            // Get recipient's public key
-            val recipientPublicKey = Base64.decode(contact.publicKeyBase64, Base64.NO_WRAP)
+            // Get recipient's X25519 public key (for encryption)
+            val recipientX25519PublicKey = Base64.decode(contact.x25519PublicKeyBase64, Base64.NO_WRAP)
 
             // Encrypt the audio bytes
             Log.d(TAG, "Encrypting voice message...")
@@ -77,7 +77,7 @@ class MessageService(private val context: Context) {
 
             val encryptedBytes = RustBridge.encryptMessage(
                 String(audioBytes, Charsets.ISO_8859_1), // Convert bytes to string for encryption
-                recipientPublicKey
+                recipientX25519PublicKey
             )
             Log.d(TAG, "  Encrypted: ${encryptedBytes.size} bytes")
 
@@ -208,12 +208,12 @@ class MessageService(private val context: Context) {
             val ourPublicKey = keyManager.getSigningPublicKey()
             val ourPrivateKey = keyManager.getSigningKeyBytes()
 
-            // Get recipient's public key
-            val recipientPublicKey = Base64.decode(contact.publicKeyBase64, Base64.NO_WRAP)
+            // Get recipient's X25519 public key (for encryption)
+            val recipientX25519PublicKey = Base64.decode(contact.x25519PublicKeyBase64, Base64.NO_WRAP)
 
             // Encrypt the message
             Log.d(TAG, "Encrypting message...")
-            val encryptedBytes = RustBridge.encryptMessage(plaintext, recipientPublicKey)
+            val encryptedBytes = RustBridge.encryptMessage(plaintext, recipientX25519PublicKey)
 
             // Prepend message type byte: 0x00 for TEXT
             val encryptedWithMetadata = byteArrayOf(0x00) + encryptedBytes

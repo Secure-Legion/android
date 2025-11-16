@@ -50,6 +50,7 @@ class TorService : Service() {
     private var isServiceRunning = false
     private var isPingPollerRunning = false
     private var isTapPollerRunning = false
+    private var isPongPollerRunning = false
 
     // Network monitoring
     private var connectivityManager: ConnectivityManager? = null
@@ -403,6 +404,18 @@ class TorService : Service() {
 
             // Start polling for incoming taps
             startTapPoller()
+
+            // PHASE 8: Start pong listener on port 9152
+            Log.d(TAG, "Starting pong listener on port 9152...")
+            val pongSuccess = RustBridge.startPongListener(9152)
+            if (pongSuccess) {
+                Log.i(TAG, "Pong listener started successfully")
+            } else {
+                Log.w(TAG, "Pong listener already running")
+            }
+
+            // Start polling for incoming pongs
+            startPongPoller()
         } catch (e: Exception) {
             Log.e(TAG, "Error starting listener", e)
             // Try to start Ping poller anyway in case listener is already running
@@ -412,6 +425,12 @@ class TorService : Service() {
                 startTapPoller()
             } catch (e2: Exception) {
                 Log.e(TAG, "Error starting tap poller", e2)
+            }
+            // Try to start pong poller
+            try {
+                startPongPoller()
+            } catch (e3: Exception) {
+                Log.e(TAG, "Error starting pong poller", e3)
             }
         }
     }
@@ -569,6 +588,48 @@ class TorService : Service() {
         } catch (e: Exception) {
             Log.e(TAG, "Error handling tap", e)
         }
+    }
+
+    /**
+     * PHASE 8: Start pong poller for receiving delayed pong responses
+     */
+    private fun startPongPoller() {
+        if (isPongPollerRunning) {
+            Log.d(TAG, "Pong poller already running, skipping")
+            return
+        }
+
+        isPongPollerRunning = true
+
+        // Poll for incoming pongs in background thread
+        Thread {
+            Log.d(TAG, "Pong poller thread started")
+            while (isServiceRunning) {
+                try {
+                    val pongBytes = RustBridge.pollIncomingPong()
+                    if (pongBytes != null) {
+                        Log.i(TAG, "Received incoming pong via listener: ${pongBytes.size} bytes")
+
+                        // Decrypt and store pong in GLOBAL_PONG_SESSIONS
+                        val success = RustBridge.decryptAndStorePongFromListener(pongBytes)
+                        if (success) {
+                            Log.i(TAG, "✓ Pong decrypted and stored successfully")
+                        } else {
+                            Log.e(TAG, "✗ Failed to decrypt and store pong")
+                        }
+                    }
+
+                    // Poll every 2 seconds (pongs are relatively infrequent)
+                    Thread.sleep(2000)
+                } catch (e: InterruptedException) {
+                    Log.d(TAG, "Pong poller interrupted")
+                    break
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error polling for pongs", e)
+                }
+            }
+            Log.d(TAG, "Pong poller thread stopped")
+        }.start()
     }
 
     private fun handleIncomingPing(encodedData: ByteArray) {
@@ -1248,8 +1309,8 @@ class TorService : Service() {
                 """.trimIndent()
 
                 // Encrypt receipt
-                val recipientPublicKey = android.util.Base64.decode(contact.publicKeyBase64, android.util.Base64.NO_WRAP)
-                val encryptedReceipt = RustBridge.encryptMessage(receiptPayload, recipientPublicKey)
+                val recipientX25519PublicKey = android.util.Base64.decode(contact.x25519PublicKeyBase64, android.util.Base64.NO_WRAP)
+                val encryptedReceipt = RustBridge.encryptMessage(receiptPayload, recipientX25519PublicKey)
 
                 // Send via Tor to contact's .onion address
                 // TODO: Implement Tor send message protocol
