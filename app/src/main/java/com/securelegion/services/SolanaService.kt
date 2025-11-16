@@ -30,6 +30,8 @@ import java.nio.ByteOrder
  */
 class SolanaService(context: Context) {
 
+    private val keyManager = KeyManager.getInstance(context)
+
     companion object {
         private const val TAG = "SolanaService"
 
@@ -714,6 +716,32 @@ class SolanaService(context: Context) {
         } catch (e: Exception) {
             Log.e(TAG, "Failed to get recent blockhash", e)
             return Result.failure(e)
+        }
+    }
+
+    /**
+     * Sign an arbitrary message with the user's Solana wallet
+     * Used for Lighthouse API key generation and other wallet-based authentication
+     * @param message The message to sign (from Lighthouse API or other services)
+     * @return Signed message as Base64 string
+     */
+    suspend fun signMessage(message: String): Result<String> = withContext(Dispatchers.IO) {
+        try {
+            Log.d(TAG, "Signing message for wallet authentication")
+
+            // Sign message using KeyManager (uses Ed25519 signing key)
+            val messageBytes = message.toByteArray(Charsets.UTF_8)
+            val signatureBytes = keyManager.signData(messageBytes)
+
+            // Return signature as hex (no 0x prefix - Crust format)
+            val signatureHex = signatureBytes.joinToString("") { "%02x".format(it) }
+
+            Log.i(TAG, "Successfully signed message (hex format, no prefix)")
+            Log.d(TAG, "Signature length: ${signatureBytes.size} bytes")
+            Result.success(signatureHex)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to sign message", e)
+            Result.failure(e)
         }
     }
 }

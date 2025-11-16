@@ -58,6 +58,17 @@ class LockActivity : AppCompatActivity() {
                 return@setOnClickListener
             }
 
+            // Check if account is in cooldown
+            if (isInCooldown()) {
+                val remainingSeconds = getRemainingCooldownSeconds()
+                Toast.makeText(
+                    this,
+                    "Too many failed attempts. Try again in $remainingSeconds seconds",
+                    Toast.LENGTH_LONG
+                ).show()
+                return@setOnClickListener
+            }
+
             // Prevent multiple distress triggers
             if (isProcessingDistress) {
                 return@setOnClickListener
@@ -78,6 +89,9 @@ class LockActivity : AppCompatActivity() {
             if (keyManager.verifyDevicePassword(password)) {
                 Log.i("LockActivity", "Password verified")
 
+                // Reset failed attempts counter on successful login
+                resetFailedAttempts()
+
                 // Check if account setup is complete (has wallet, contact card, AND username)
                 if (!keyManager.isAccountSetupComplete()) {
                     Log.w("LockActivity", "Account incomplete - need to finish setup")
@@ -97,6 +111,7 @@ class LockActivity : AppCompatActivity() {
             } else {
                 // Password incorrect
                 Log.w("LockActivity", "Incorrect password entered")
+                handleFailedAttempt()
                 Toast.makeText(this, "Incorrect password", Toast.LENGTH_SHORT).show()
                 // Clear input
                 findViewById<EditText>(R.id.passwordInput).text.clear()
@@ -256,6 +271,85 @@ class LockActivity : AppCompatActivity() {
                 Log.e("LockActivity", "Failed to enable message blocking", e)
             }
         }
+    }
+
+    /**
+     * Handle failed password attempt
+     * Increments counter, triggers cooldown at 5 attempts, and wipes data at 10 (when feature enabled)
+     */
+    private fun handleFailedAttempt() {
+        val prefs = getSharedPreferences("security_prefs", MODE_PRIVATE)
+        val failedAttempts = prefs.getInt("failed_password_attempts", 0) + 1
+        prefs.edit().putInt("failed_password_attempts", failedAttempts).apply()
+
+        Log.w("LockActivity", "Failed password attempt #$failedAttempts")
+
+        // Trigger 30-second cooldown after 5 failed attempts
+        if (failedAttempts >= 5) {
+            val cooldownEndTime = System.currentTimeMillis() + 30_000 // 30 seconds
+            prefs.edit().putLong("cooldown_end_time", cooldownEndTime).apply()
+            Log.w("LockActivity", "5 failed attempts - 30 second cooldown activated")
+
+            val remainingSeconds = 30
+            Toast.makeText(
+                this,
+                "Too many failed attempts. Wait $remainingSeconds seconds",
+                Toast.LENGTH_LONG
+            ).show()
+        }
+
+        // Auto-wipe after 10 attempts (if enabled)
+        val autoWipeEnabled = prefs.getBoolean("auto_wipe_enabled", false)
+        if (autoWipeEnabled && failedAttempts >= 10) {
+            Log.e("LockActivity", "10 failed password attempts reached - triggering auto-wipe")
+            lifecycleScope.launch {
+                wipeAllData()
+            }
+        }
+    }
+
+    /**
+     * Reset failed password attempts counter on successful login
+     */
+    private fun resetFailedAttempts() {
+        val prefs = getSharedPreferences("security_prefs", MODE_PRIVATE)
+        prefs.edit()
+            .putInt("failed_password_attempts", 0)
+            .remove("cooldown_end_time")
+            .apply()
+        Log.d("LockActivity", "Failed password attempts counter and cooldown reset")
+    }
+
+    /**
+     * Check if account is currently in cooldown period
+     */
+    private fun isInCooldown(): Boolean {
+        val prefs = getSharedPreferences("security_prefs", MODE_PRIVATE)
+        val cooldownEndTime = prefs.getLong("cooldown_end_time", 0)
+
+        if (cooldownEndTime == 0L) {
+            return false
+        }
+
+        val currentTime = System.currentTimeMillis()
+        if (currentTime >= cooldownEndTime) {
+            // Cooldown expired - clear it
+            prefs.edit().remove("cooldown_end_time").apply()
+            return false
+        }
+
+        return true
+    }
+
+    /**
+     * Get remaining cooldown time in seconds
+     */
+    private fun getRemainingCooldownSeconds(): Int {
+        val prefs = getSharedPreferences("security_prefs", MODE_PRIVATE)
+        val cooldownEndTime = prefs.getLong("cooldown_end_time", 0)
+        val currentTime = System.currentTimeMillis()
+        val remainingMs = cooldownEndTime - currentTime
+        return ((remainingMs / 1000) + 1).toInt().coerceAtLeast(0)
     }
 
     @Deprecated("Deprecated in Java")

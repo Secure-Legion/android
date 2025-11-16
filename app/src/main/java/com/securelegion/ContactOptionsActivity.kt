@@ -234,11 +234,38 @@ class ContactOptionsActivity : AppCompatActivity() {
 
                 if (contact != null) {
                     withContext(Dispatchers.IO) {
+                        // Get all messages for this contact to check for voice files
+                        val messages = database.messageDao().getMessagesForContact(contact.id)
+
+                        // Securely wipe any voice message audio files using DOD 3-pass
+                        messages.forEach { message ->
+                            if (message.messageType == com.securelegion.database.entities.Message.MESSAGE_TYPE_VOICE &&
+                                message.voiceFilePath != null) {
+                                try {
+                                    val voiceFile = java.io.File(message.voiceFilePath)
+                                    if (voiceFile.exists()) {
+                                        com.securelegion.utils.SecureWipe.secureDeleteFile(voiceFile)
+                                        Log.d(TAG, "✓ Securely wiped voice file: ${voiceFile.name}")
+                                    }
+                                } catch (e: Exception) {
+                                    Log.e(TAG, "Failed to securely wipe voice file", e)
+                                }
+                            }
+                        }
+
                         // Delete all messages for this contact
                         database.messageDao().deleteMessagesForContact(contact.id)
 
                         // Delete the contact
                         database.contactDao().deleteContact(contact)
+
+                        // VACUUM database to compact and remove deleted records
+                        try {
+                            database.openHelper.writableDatabase.execSQL("VACUUM")
+                            Log.d(TAG, "✓ Database vacuumed after contact deletion")
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Failed to vacuum database", e)
+                        }
 
                         // Clear any pending Pings for this contact (breaks Ping-Pong as per user requirement)
                         val prefs = getSharedPreferences("pending_pings", MODE_PRIVATE)
@@ -249,7 +276,7 @@ class ContactOptionsActivity : AppCompatActivity() {
                             apply()
                         }
 
-                        Log.i(TAG, "Contact deleted successfully: ${contact.displayName}")
+                        Log.i(TAG, "Contact and all messages securely deleted (DOD 3-pass): ${contact.displayName}")
                         Log.i(TAG, "Pending Ping cleared for contact ${contact.id} (if any)")
                     }
 

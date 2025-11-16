@@ -44,7 +44,7 @@
                 android:textSize="15sp"
                 android:lineSpacingMultiplier="1.2" />
 
-            <!-- Status indicator (hidden until swipe) -->
+            <!-- Delivery status indicator (checkmarks) -->
             <TextView
                 android:id="@+id/messageStatus"
                 android:layout_width="wrap_content"
@@ -54,7 +54,7 @@
                 android:textSize="11sp"
                 android:layout_gravity="end"
                 android:layout_marginTop="4dp"
-                android:visibility="gone" />
+                android:visibility="visible" />
 
         </LinearLayout>
 
@@ -69,6 +69,16 @@
             android:layout_gravity="center_vertical"
             android:layout_marginStart="8dp"
             android:visibility="gone" />
+
+        <!-- Selection Checkbox (shown in delete mode) -->
+        <CheckBox
+            android:id="@+id/messageCheckbox"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center_vertical"
+            android:layout_marginStart="8dp"
+            android:visibility="gone"
+            android:buttonTint="@color/accent_blue" />
 
     </LinearLayout>
 

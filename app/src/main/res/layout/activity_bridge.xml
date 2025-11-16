@@ -1,0 +1,242 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.constraintlayout.widget.ConstraintLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/header_bg">
+
+    <!-- Header -->
+    <LinearLayout
+        android:id="@+id/bridgeHeader"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:background="@drawable/header_bg"
+        android:fitsSystemWindows="true"
+        android:paddingStart="24dp"
+        android:paddingEnd="24dp"
+        android:paddingBottom="24dp"
+        android:gravity="center"
+        app:layout_constraintTop_toTopOf="parent">
+
+        <TextView
+            android:id="@+id/backButton"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:text="‹"
+            android:textSize="32sp"
+            android:textColor="@color/text_white"
+            android:gravity="center"
+            android:clickable="true"
+            android:focusable="true"
+            android:background="?attr/selectableItemBackgroundBorderless" />
+
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center"
+            android:layout_marginEnd="40dp">
+
+            <ImageView
+                android:layout_width="48dp"
+                android:layout_height="48dp"
+                android:src="@drawable/icon_header"
+                android:layout_marginEnd="12dp"
+                android:contentDescription="Secure Legion Logo" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="TOR BRIDGES"
+                android:textSize="28sp"
+                android:textStyle="bold"
+                android:fontFamily="sans-serif-black"
+                android:textColor="@color/text_white" />
+
+        </LinearLayout>
+
+    </LinearLayout>
+
+    <!-- Bridge Options -->
+    <ScrollView
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:fillViewport="false"
+        android:scrollbars="none"
+        app:layout_constraintTop_toBottomOf="@id/bridgeHeader"
+        app:layout_constraintBottom_toTopOf="@id/saveButton">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:padding="24dp">
+
+            <!-- Description -->
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Bridges help you connect to Tor in censored regions where Tor is blocked. Select a bridge type below."
+                android:textSize="14sp"
+                android:textColor="@color/text_gray"
+                android:layout_marginBottom="24dp" />
+
+            <!-- Radio Group for Bridge Selection -->
+            <RadioGroup
+                android:id="@+id/bridgeRadioGroup"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content">
+
+                <!-- None/Disabled -->
+                <RadioButton
+                    android:id="@+id/bridgeNone"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="None (Default)"
+                    android:textSize="16sp"
+                    android:textColor="@color/text_white"
+                    android:padding="16dp"
+                    android:checked="true"
+                    android:buttonTint="@color/accent_blue" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Connect directly to Tor without bridges"
+                    android:textSize="13sp"
+                    android:textColor="@color/text_gray"
+                    android:paddingStart="56dp"
+                    android:paddingEnd="16dp"
+                    android:paddingBottom="16dp" />
+
+                <!-- Snowflake -->
+                <RadioButton
+                    android:id="@+id/bridgeSnowflake"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Snowflake"
+                    android:textSize="16sp"
+                    android:textColor="@color/text_white"
+                    android:padding="16dp"
+                    android:buttonTint="@color/accent_blue" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Uses temporary proxies from volunteers (recommended for most censored regions)"
+                    android:textSize="13sp"
+                    android:textColor="@color/text_gray"
+                    android:paddingStart="56dp"
+                    android:paddingEnd="16dp"
+                    android:paddingBottom="16dp" />
+
+                <!-- obfs4 -->
+                <RadioButton
+                    android:id="@+id/bridgeObfs4"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="obfs4"
+                    android:textSize="16sp"
+                    android:textColor="@color/text_white"
+                    android:padding="16dp"
+                    android:buttonTint="@color/accent_blue" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Obfuscates traffic to look like random data"
+                    android:textSize="13sp"
+                    android:textColor="@color/text_gray"
+                    android:paddingStart="56dp"
+                    android:paddingEnd="16dp"
+                    android:paddingBottom="16dp" />
+
+                <!-- meek -->
+                <RadioButton
+                    android:id="@+id/bridgeMeek"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="meek-azure"
+                    android:textSize="16sp"
+                    android:textColor="@color/text_white"
+                    android:padding="16dp"
+                    android:buttonTint="@color/accent_blue" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Routes through Microsoft Azure (slower but harder to block)"
+                    android:textSize="13sp"
+                    android:textColor="@color/text_gray"
+                    android:paddingStart="56dp"
+                    android:paddingEnd="16dp"
+                    android:paddingBottom="16dp" />
+
+                <!-- Custom -->
+                <RadioButton
+                    android:id="@+id/bridgeCustom"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Custom Bridge"
+                    android:textSize="16sp"
+                    android:textColor="@color/text_white"
+                    android:padding="16dp"
+                    android:buttonTint="@color/accent_blue" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Enter your own bridge address"
+                    android:textSize="13sp"
+                    android:textColor="@color/text_gray"
+                    android:paddingStart="56dp"
+                    android:paddingEnd="16dp"
+                    android:paddingBottom="8dp" />
+
+            </RadioGroup>
+
+            <!-- Custom Bridge Input (shown when Custom is selected) -->
+            <EditText
+                android:id="@+id/customBridgeInput"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:hint="Paste bridge address here..."
+                android:textColorHint="@color/text_gray"
+                android:textColor="@color/text_white"
+                android:background="@drawable/settings_item_bg"
+                android:padding="16dp"
+                android:layout_marginStart="56dp"
+                android:layout_marginEnd="16dp"
+                android:visibility="gone"
+                android:inputType="textMultiLine"
+                android:minLines="3" />
+
+        </LinearLayout>
+
+    </ScrollView>
+
+    <!-- Save Button -->
+    <TextView
+        android:id="@+id/saveButton"
+        android:layout_width="280dp"
+        android:layout_height="wrap_content"
+        android:text="SAVE"
+        android:textSize="16sp"
+        android:textStyle="bold"
+        android:textColor="@color/text_white"
+        android:background="@drawable/metallic_button_bg"
+        android:gravity="center"
+        android:padding="16dp"
+        android:layout_marginStart="24dp"
+        android:layout_marginEnd="24dp"
+        android:layout_marginBottom="48dp"
+        android:clickable="true"
+        android:focusable="true"
+        android:elevation="6dp"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent" />
+
+</androidx.constraintlayout.widget.ConstraintLayout>

@@ -35,15 +35,17 @@ class ContactCardManager(private val context: Context) {
     }
 
     private val sodium = LazySodiumAndroid(SodiumAndroid())
-    private val pinataService = PinataService(context)
+    private val solanaService = SolanaService(context)
+    private val crustService = CrustService(context, solanaService)
 
     /**
      * Create and upload encrypted contact card
      * @param contactCard The contact card to upload
      * @param pin 6-digit PIN for encryption
+     * @param publicKey User's Solana public key (Base58) for Crust wallet authentication
      * @return Pair of (IPFS CID, encrypted size in bytes)
      */
-    suspend fun uploadContactCard(contactCard: ContactCard, pin: String): Result<Pair<String, Int>> {
+    suspend fun uploadContactCard(contactCard: ContactCard, pin: String, publicKey: String): Result<Pair<String, Int>> {
         return withContext(Dispatchers.IO) {
             try {
                 validatePin(pin)
@@ -56,16 +58,18 @@ class ContactCardManager(private val context: Context) {
                 val encrypted = encryptWithPin(jsonString, pin)
                 Log.d(TAG, "Encrypted contact card: ${encrypted.size} bytes")
 
-                // Upload to IPFS via Pinata
-                val result = pinataService.uploadContactCard(encrypted)
+                // Upload to Crust Network (wallet-based storage)
+                Log.d(TAG, "Uploading to Crust Network...")
+                val result = crustService.uploadContactCard(encrypted, publicKey)
 
                 if (result.isSuccess) {
                     val cid = result.getOrThrow()
-                    Log.i(TAG, "Contact card uploaded successfully")
+                    Log.i(TAG, "Contact card uploaded successfully to Crust Network")
                     Log.i(TAG, "CID: $cid")
                     Log.i(TAG, "PIN: $pin (share this separately!)")
                     Result.success(Pair(cid, encrypted.size))
                 } else {
+                    Log.e(TAG, "Crust Network upload failed: ${result.exceptionOrNull()?.message}")
                     Result.failure(result.exceptionOrNull()!!)
                 }
             } catch (e: Exception) {
@@ -86,9 +90,12 @@ class ContactCardManager(private val context: Context) {
             try {
                 validatePin(pin)
 
-                // Download from IPFS via Pinata
-                val downloadResult = pinataService.downloadContactCard(cid)
+                // Download from IPFS gateway (no auth needed)
+                Log.d(TAG, "Downloading from IPFS...")
+                val downloadResult = crustService.downloadContactCard(cid)
+
                 if (downloadResult.isFailure) {
+                    Log.e(TAG, "IPFS download failed: ${downloadResult.exceptionOrNull()?.message}")
                     return@withContext Result.failure(downloadResult.exceptionOrNull()!!)
                 }
 

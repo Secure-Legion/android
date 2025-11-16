@@ -25,6 +25,7 @@ class SplashActivity : AppCompatActivity() {
 
     private val BOOTSTRAP_DELAY = 2000L // 2 seconds for Tor bootstrap (first time only)
     private val NOTIFICATION_PERMISSION_REQUEST_CODE = 1001
+    private val BRIDGE_CONFIGURATION_REQUEST_CODE = 1002
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -83,11 +84,7 @@ class SplashActivity : AppCompatActivity() {
                             }, 500)
                         } else {
                             Log.e("SplashActivity", "Tor initialization failed")
-                            updateStatus("Connection failed")
-                            // Navigate anyway after a delay
-                            Handler(Looper.getMainLooper()).postDelayed({
-                                navigateToLock()
-                            }, 2000)
+                            showBridgeConfigurationUI()
                         }
                     }
                 }
@@ -137,6 +134,67 @@ class SplashActivity : AppCompatActivity() {
         val intent = Intent(this, LockActivity::class.java)
         startActivity(intent)
         finish()
+    }
+
+    private fun showBridgeConfigurationUI() {
+        Log.w("SplashActivity", "Showing bridge configuration UI due to connection failure")
+        updateStatus("Connection failed - Tor may be blocked in your region")
+
+        // Hide progress bar
+        findViewById<ProgressBar>(R.id.torProgressBar).visibility = View.GONE
+
+        // Show configure bridges button
+        val configureBridgesButton = findViewById<TextView>(R.id.configureBridgesButton)
+        configureBridgesButton.visibility = View.VISIBLE
+        configureBridgesButton.setOnClickListener {
+            Log.i("SplashActivity", "Opening bridge configuration")
+            val intent = Intent(this, BridgeActivity::class.java)
+            startActivityForResult(intent, BRIDGE_CONFIGURATION_REQUEST_CODE)
+        }
+
+        // Show retry button
+        val retryButton = findViewById<TextView>(R.id.retryConnectionButton)
+        retryButton.visibility = View.VISIBLE
+        retryButton.setOnClickListener {
+            Log.i("SplashActivity", "Retrying Tor connection with bridge settings")
+            retryTorConnection()
+        }
+    }
+
+    private fun retryTorConnection() {
+        // Hide buttons and show progress
+        findViewById<TextView>(R.id.configureBridgesButton).visibility = View.GONE
+        findViewById<TextView>(R.id.retryConnectionButton).visibility = View.GONE
+        findViewById<ProgressBar>(R.id.torProgressBar).visibility = View.VISIBLE
+        updateStatus("Retrying connection with bridges...")
+
+        // Note: Currently TorManager doesn't support restarting with new bridge config
+        // For now, just retry the connection - bridge support will be added to TorManager
+        val torManager = TorManager.getInstance(this)
+        torManager.initializeAsync { success, onionAddress ->
+            runOnUiThread {
+                if (success) {
+                    Log.i("SplashActivity", "Tor connected with bridges: $onionAddress")
+                    updateStatus("Connected to Tor!")
+                    Handler(Looper.getMainLooper()).postDelayed({
+                        navigateToLock()
+                    }, 500)
+                } else {
+                    Log.e("SplashActivity", "Tor connection failed again")
+                    showBridgeConfigurationUI()
+                }
+            }
+        }
+    }
+
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+
+        if (requestCode == BRIDGE_CONFIGURATION_REQUEST_CODE) {
+            Log.i("SplashActivity", "Returned from bridge configuration")
+            // User configured bridges - they can now retry connection
+            updateStatus("Bridge configured - tap Retry to reconnect")
+        }
     }
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {

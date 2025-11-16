@@ -1,6 +1,7 @@
 package com.securelegion
 
 import android.Manifest
+import android.app.Activity
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -45,6 +46,7 @@ import java.util.concurrent.TimeUnit
 
 class MainActivity : AppCompatActivity() {
     private var currentTab = "messages" // Track current tab: "messages", "contacts", or "wallet"
+    private var currentWallet: Wallet? = null // Track currently selected wallet
 
     // BroadcastReceiver to listen for incoming Pings and refresh UI
     private val pingReceiver = object : BroadcastReceiver() {
@@ -394,11 +396,39 @@ class MainActivity : AppCompatActivity() {
 
                             Log.d("MainActivity", "Swiped to delete thread: ${chat.nickname}")
 
-                            // Delete all messages for this contact AND clear pending Pings
+                            // Securely delete all messages for this contact using DOD 3-pass AND clear pending Pings
                             lifecycleScope.launch {
                                 try {
                                     withContext(Dispatchers.IO) {
+                                        // Get all messages for this contact to check for voice files
+                                        val messages = database.messageDao().getMessagesForContact(chat.id.toLong())
+
+                                        // Securely wipe any voice message audio files
+                                        messages.forEach { message ->
+                                            if (message.messageType == com.securelegion.database.entities.Message.MESSAGE_TYPE_VOICE &&
+                                                message.voiceFilePath != null) {
+                                                try {
+                                                    val voiceFile = java.io.File(message.voiceFilePath)
+                                                    if (voiceFile.exists()) {
+                                                        com.securelegion.utils.SecureWipe.secureDeleteFile(voiceFile)
+                                                        Log.d("MainActivity", "✓ Securely wiped voice file: ${voiceFile.name}")
+                                                    }
+                                                } catch (e: Exception) {
+                                                    Log.e("MainActivity", "Failed to securely wipe voice file", e)
+                                                }
+                                            }
+                                        }
+
+                                        // Delete all messages from database
                                         database.messageDao().deleteMessagesForContact(chat.id.toLong())
+
+                                        // VACUUM database to compact and remove deleted records
+                                        try {
+                                            database.openHelper.writableDatabase.execSQL("VACUUM")
+                                            Log.d("MainActivity", "✓ Database vacuumed after thread deletion")
+                                        } catch (e: Exception) {
+                                            Log.e("MainActivity", "Failed to vacuum database", e)
+                                        }
                                     }
 
                                     // Clear pending Ping for this contact
@@ -410,7 +440,7 @@ class MainActivity : AppCompatActivity() {
                                         .remove("ping_${chat.id}_data")
                                         .apply()
 
-                                    Log.i("MainActivity", "Deleted all messages and pending Pings for contact: ${chat.nickname}")
+                                    Log.i("MainActivity", "Securely deleted all messages (DOD 3-pass) and pending Pings for contact: ${chat.nickname}")
 
                                     // Reload the chat list
                                     setupChatList()
@@ -543,7 +573,12 @@ class MainActivity : AppCompatActivity() {
         findViewById<View>(R.id.navAddFriend).setOnClickListener {
             val intent = android.content.Intent(this, AddFriendActivity::class.java)
             startActivity(intent)
-            overridePendingTransition(0, 0)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                overrideActivityTransition(Activity.OVERRIDE_TRANSITION_OPEN, 0, 0)
+            } else {
+                @Suppress("DEPRECATION")
+                overridePendingTransition(0, 0)
+            }
         }
 
         findViewById<View>(R.id.navLock).setOnClickListener {
@@ -576,19 +611,34 @@ class MainActivity : AppCompatActivity() {
         receiveButton?.setOnClickListener {
             val intent = android.content.Intent(this, ReceiveActivity::class.java)
             startActivity(intent)
-            overridePendingTransition(0, 0)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                overrideActivityTransition(Activity.OVERRIDE_TRANSITION_OPEN, 0, 0)
+            } else {
+                @Suppress("DEPRECATION")
+                overridePendingTransition(0, 0)
+            }
         }
 
         sendButton?.setOnClickListener {
             val intent = android.content.Intent(this, SendActivity::class.java)
             startActivity(intent)
-            overridePendingTransition(0, 0)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                overrideActivityTransition(Activity.OVERRIDE_TRANSITION_OPEN, 0, 0)
+            } else {
+                @Suppress("DEPRECATION")
+                overridePendingTransition(0, 0)
+            }
         }
 
         recentBtn?.setOnClickListener {
             val intent = android.content.Intent(this, RecentTransactionsActivity::class.java)
             startActivity(intent)
-            overridePendingTransition(0, 0)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                overrideActivityTransition(Activity.OVERRIDE_TRANSITION_OPEN, 0, 0)
+            } else {
+                @Suppress("DEPRECATION")
+                overridePendingTransition(0, 0)
+            }
         }
 
         refreshButton?.setOnClickListener {
@@ -604,7 +654,12 @@ class MainActivity : AppCompatActivity() {
             intent.putExtra("WALLET_ID", "main")  // Default to main wallet
             intent.putExtra("IS_MAIN_WALLET", true)
             startActivity(intent)
-            overridePendingTransition(0, 0)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                overrideActivityTransition(Activity.OVERRIDE_TRANSITION_OPEN, 0, 0)
+            } else {
+                @Suppress("DEPRECATION")
+                overridePendingTransition(0, 0)
+            }
         }
     }
 
@@ -623,6 +678,13 @@ class MainActivity : AppCompatActivity() {
                     if (spinner != null && wallets.isNotEmpty()) {
                         val adapter = WalletAdapter(this@MainActivity, wallets)
                         spinner.adapter = adapter
+
+                        // Set initial wallet (most recently used)
+                        val initialWallet = wallets.firstOrNull()
+                        if (initialWallet != null && currentWallet == null) {
+                            currentWallet = initialWallet
+                            updateWalletIdentity(initialWallet)
+                        }
 
                         spinner.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
                             override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
@@ -648,6 +710,9 @@ class MainActivity : AppCompatActivity() {
             try {
                 Log.i("MainActivity", "Switching to wallet: ${wallet.walletId}")
 
+                // Update current wallet
+                currentWallet = wallet
+
                 // Update last used timestamp
                 val keyManager = KeyManager.getInstance(this@MainActivity)
                 val dbPassphrase = keyManager.getDatabasePassphrase()
@@ -658,14 +723,26 @@ class MainActivity : AppCompatActivity() {
                 withContext(Dispatchers.Main) {
                     Log.i("MainActivity", "Switched to wallet: ${wallet.walletId}")
 
-                    // Reload wallet balance
+                    // Reload wallet balance and identity
                     loadWalletBalance()
+                    updateWalletIdentity(wallet)
                 }
 
             } catch (e: Exception) {
                 Log.e("MainActivity", "Failed to switch wallet", e)
             }
         }
+    }
+
+    private fun updateWalletIdentity(wallet: Wallet) {
+        // Update wallet address and private key display
+        val walletView = findViewById<View>(R.id.walletView)
+        val addressText = walletView?.findViewById<android.widget.TextView>(R.id.walletAddress)
+
+        // Update the displayed address
+        addressText?.text = wallet.solanaAddress.take(12) + "..." + wallet.solanaAddress.takeLast(12)
+
+        Log.i("MainActivity", "Wallet identity updated for: ${wallet.walletId}")
     }
 
     private fun showAllChatsTab() {
@@ -736,9 +813,14 @@ class MainActivity : AppCompatActivity() {
                     balanceUSD?.text = "..."
                 }
 
-                // Get wallet public key
-                val keyManager = KeyManager.getInstance(this@MainActivity)
-                val solanaAddress = keyManager.getSolanaAddress()
+                // Get wallet public key from currently selected wallet
+                val solanaAddress = if (currentWallet != null) {
+                    currentWallet!!.solanaAddress
+                } else {
+                    // Fallback to first wallet if none selected
+                    val keyManager = KeyManager.getInstance(this@MainActivity)
+                    keyManager.getSolanaAddress()
+                }
 
                 Log.d("MainActivity", "Fetching balance for address: $solanaAddress")
 

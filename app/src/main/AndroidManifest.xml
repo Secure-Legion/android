@@ -112,6 +112,10 @@
             android:exported="false" />
 
         <activity
+            android:name=".BridgeActivity"
+            android:exported="false" />
+
+        <activity
             android:name=".WipeAccountActivity"
             android:exported="false"
             android:windowSoftInputMode="adjustPan" />
@@ -158,6 +162,11 @@
         <activity
             android:name=".WalletSettingsActivity"
             android:exported="false" />
+
+        <activity
+            android:name=".CreateWalletActivity"
+            android:exported="false"
+            android:windowSoftInputMode="adjustPan" />
 
         <!-- Tor daemon - In-process Tor via JNI (from tor-android library) -->
         <service

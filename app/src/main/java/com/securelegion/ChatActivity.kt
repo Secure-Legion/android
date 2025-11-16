@@ -1,19 +1,26 @@
 package com.securelegion
 
+import android.Manifest
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.content.pm.PackageManager
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.text.Editable
 import android.text.TextWatcher
 import android.util.Log
+import android.view.MotionEvent
 import android.view.View
 import android.widget.EditText
 import android.widget.ImageView
+import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
@@ -22,10 +29,15 @@ import com.securelegion.adapters.MessageAdapter
 import com.securelegion.crypto.KeyManager
 import com.securelegion.crypto.TorManager
 import com.securelegion.database.SecureLegionDatabase
+import com.securelegion.database.entities.Message
 import com.securelegion.services.MessageService
+import com.securelegion.utils.SecureWipe
+import com.securelegion.utils.VoiceRecorder
+import com.securelegion.utils.VoicePlayer
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.File
 
 class ChatActivity : AppCompatActivity() {
 
@@ -34,6 +46,7 @@ class ChatActivity : AppCompatActivity() {
         const val EXTRA_CONTACT_ID = "CONTACT_ID"
         const val EXTRA_CONTACT_NAME = "CONTACT_NAME"
         const val EXTRA_CONTACT_ADDRESS = "CONTACT_ADDRESS"
+        private const val PERMISSION_REQUEST_CODE = 100
     }
 
     private lateinit var messagesRecyclerView: RecyclerView
@@ -41,12 +54,25 @@ class ChatActivity : AppCompatActivity() {
     private lateinit var messageService: MessageService
     private lateinit var messageInput: EditText
     private lateinit var sendButton: ImageView
+    private lateinit var textInputLayout: LinearLayout
+    private lateinit var voiceRecordingLayout: LinearLayout
+    private lateinit var recordingTimer: TextView
+    private lateinit var cancelRecordingButton: ImageView
+    private lateinit var sendVoiceButton: ImageView
 
     private var contactId: Long = -1
     private var contactName: String = "@user"
     private var contactAddress: String = ""
     private var isShowingSendButton = false
     private var isDownloadInProgress = false
+    private var isSelectionMode = false
+
+    // Voice recording
+    private lateinit var voiceRecorder: VoiceRecorder
+    private lateinit var voicePlayer: VoicePlayer
+    private var recordingFile: File? = null
+    private var recordingHandler: Handler? = null
+    private var currentlyPlayingMessageId: String? = null
 
     // BroadcastReceiver for instant message display and new Pings
     private val messageReceiver = object : BroadcastReceiver() {
@@ -121,6 +147,8 @@ class ChatActivity : AppCompatActivity() {
 
         // Initialize services
         messageService = MessageService(this)
+        voiceRecorder = VoiceRecorder(this)
+        voicePlayer = VoicePlayer(this)
 
         // Setup UI
         findViewById<TextView>(R.id.chatName).text = contactName
@@ -167,6 +195,10 @@ class ChatActivity : AppCompatActivity() {
             // Receiver was not registered, ignore
             Log.w(TAG, "Receiver was not registered during onDestroy")
         }
+
+        // Cleanup voice player
+        voicePlayer.release()
+        recordingHandler?.removeCallbacksAndMessages(null)
     }
 
     private fun setupRecyclerView() {
@@ -174,6 +206,9 @@ class ChatActivity : AppCompatActivity() {
         messageAdapter = MessageAdapter(
             onDownloadClick = {
                 handleDownloadClick()
+            },
+            onVoicePlayClick = { message ->
+                playVoiceMessage(message)
             }
         )
 
@@ -187,27 +222,81 @@ class ChatActivity : AppCompatActivity() {
         // Initialize views
         messageInput = findViewById(R.id.messageInput)
         sendButton = findViewById(R.id.sendButton)
+        textInputLayout = findViewById(R.id.textInputLayout)
+        voiceRecordingLayout = findViewById(R.id.voiceRecordingLayout)
+        recordingTimer = findViewById(R.id.recordingTimer)
+        cancelRecordingButton = findViewById(R.id.cancelRecordingButton)
+        sendVoiceButton = findViewById(R.id.sendVoiceButton)
 
         // Back button
         findViewById<View>(R.id.backButton).setOnClickListener {
-            finish()
+            if (isSelectionMode) {
+                // Exit selection mode
+                toggleSelectionMode()
+            } else {
+                finish()
+            }
         }
 
-        // Options button
-        findViewById<View>(R.id.optionsButton).setOnClickListener {
-            Toast.makeText(this, "Options menu", Toast.LENGTH_SHORT).show()
-            // TODO: Show options menu
+        // Delete button
+        findViewById<View>(R.id.deleteButton).setOnClickListener {
+            if (isSelectionMode) {
+                // If messages are selected, delete them
+                // If no messages selected, exit selection mode
+                val selectedIds = messageAdapter.getSelectedMessageIds()
+                if (selectedIds.isEmpty()) {
+                    toggleSelectionMode()
+                } else {
+                    deleteSelectedMessages()
+                }
+            } else {
+                // Enter selection mode
+                toggleSelectionMode()
+            }
         }
 
         // Send/Mic button - dynamically switches based on text
+        // Use OnTouchListener to detect hold down for voice recording
+        sendButton.setOnTouchListener { view, event ->
+            when (event.action) {
+                MotionEvent.ACTION_DOWN -> {
+                    if (isShowingSendButton) {
+                        // Has text - let click handler send it
+                        false
+                    } else {
+                        // Empty text - start voice recording on hold
+                        startVoiceRecording()
+                        true
+                    }
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    if (isShowingSendButton) {
+                        // Has text - let click handler process it
+                        false
+                    } else {
+                        // Recording mode - do nothing on release
+                        true
+                    }
+                }
+                else -> false
+            }
+        }
+
+        // Fallback click handler for sending text
         sendButton.setOnClickListener {
             if (isShowingSendButton) {
-                // Send button - send text message
                 sendMessage(enableSelfDestruct = false, enableReadReceipt = true)
-            } else {
-                // Mic button - start voice recording
-                startVoiceRecording()
             }
+        }
+
+        // Cancel recording button
+        cancelRecordingButton.setOnClickListener {
+            cancelVoiceRecording()
+        }
+
+        // Send voice message button
+        sendVoiceButton.setOnClickListener {
+            sendVoiceMessage()
         }
 
         // Monitor text input to switch between mic and send button
@@ -233,9 +322,182 @@ class ChatActivity : AppCompatActivity() {
     }
 
     private fun startVoiceRecording() {
-        // TODO: Implement voice recording
-        Toast.makeText(this, "Voice recording coming soon", Toast.LENGTH_SHORT).show()
-        Log.d(TAG, "Voice recording feature - to be implemented")
+        // Check permission
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
+            != PackageManager.PERMISSION_GRANTED) {
+            ActivityCompat.requestPermissions(this,
+                arrayOf(Manifest.permission.RECORD_AUDIO), PERMISSION_REQUEST_CODE)
+            return
+        }
+
+        try {
+            recordingFile = voiceRecorder.startRecording()
+            Log.d(TAG, "Voice recording started")
+
+            // Switch UI to recording mode
+            textInputLayout.visibility = View.GONE
+            voiceRecordingLayout.visibility = View.VISIBLE
+
+            // Start timer
+            startRecordingTimer()
+
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to start recording", e)
+            Toast.makeText(this, "Failed to start recording: ${e.message}", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun startRecordingTimer() {
+        recordingHandler = Handler(Looper.getMainLooper())
+        val timerRunnable = object : Runnable {
+            override fun run() {
+                val duration = voiceRecorder.getCurrentDuration()
+                recordingTimer.text = String.format("%d:%02d",
+                    duration / 60, duration % 60)
+                recordingHandler?.postDelayed(this, 1000)
+            }
+        }
+        recordingHandler?.post(timerRunnable)
+    }
+
+    private fun cancelVoiceRecording() {
+        Log.d(TAG, "Voice recording cancelled")
+        recordingHandler?.removeCallbacksAndMessages(null)
+        voiceRecorder.cancelRecording()
+        recordingFile = null
+
+        // Switch back to text input mode
+        voiceRecordingLayout.visibility = View.GONE
+        textInputLayout.visibility = View.VISIBLE
+    }
+
+    private fun sendVoiceMessage() {
+        recordingHandler?.removeCallbacksAndMessages(null)
+
+        try {
+            val (file, duration) = voiceRecorder.stopRecording()
+            val audioBytes = voiceRecorder.readAudioFile(file)
+
+            Log.d(TAG, "Sending voice message: ${audioBytes.size} bytes, ${duration}s")
+
+            // Switch back to text input mode
+            voiceRecordingLayout.visibility = View.GONE
+            textInputLayout.visibility = View.VISIBLE
+
+            // Send voice message
+            lifecycleScope.launch {
+                try {
+                    val result = messageService.sendVoiceMessage(
+                        contactId = contactId,
+                        audioBytes = audioBytes,
+                        durationSeconds = duration,
+                        selfDestructDurationMs = null
+                    ) { savedMessage ->
+                        // Message saved to DB - update UI immediately
+                        Log.d(TAG, "Voice message saved to DB, updating UI")
+                        runOnUiThread {
+                            lifecycleScope.launch {
+                                loadMessages()
+                            }
+                        }
+                    }
+
+                    if (result.isSuccess) {
+                        Log.i(TAG, "Voice message sent successfully")
+                        withContext(Dispatchers.Main) {
+                            loadMessages()
+                        }
+                    } else {
+                        Log.e(TAG, "Failed to send voice message: ${result.exceptionOrNull()?.message}")
+                        withContext(Dispatchers.Main) {
+                            Toast.makeText(this@ChatActivity,
+                                "Failed to send voice message", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error sending voice message", e)
+                    withContext(Dispatchers.Main) {
+                        Toast.makeText(this@ChatActivity,
+                            "Error: ${e.message}", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            }
+
+            // Cleanup temp file
+            file.delete()
+
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to send voice message", e)
+            Toast.makeText(this, "Failed to send voice message: ${e.message}", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == PERMISSION_REQUEST_CODE) {
+            if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                // Permission granted, start recording
+                startVoiceRecording()
+            } else {
+                Toast.makeText(this, "Microphone permission required for voice messages",
+                    Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    private fun playVoiceMessage(message: com.securelegion.database.entities.Message) {
+        val filePath = message.voiceFilePath
+        if (filePath == null) {
+            Log.e(TAG, "Voice message has no file path")
+            Toast.makeText(this, "Voice file not found", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        val file = File(filePath)
+        if (!file.exists()) {
+            Log.e(TAG, "Voice file does not exist: $filePath")
+            Toast.makeText(this, "Voice file not found", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        Log.d(TAG, "Playing voice message: ${message.messageId}")
+
+        // Check if this message is already playing
+        if (currentlyPlayingMessageId == message.messageId) {
+            // Pause playback
+            voicePlayer.pause()
+            currentlyPlayingMessageId = null
+            messageAdapter.setCurrentlyPlayingMessageId(null)
+            Log.d(TAG, "Paused voice message")
+        } else {
+            // Stop any currently playing message
+            if (currentlyPlayingMessageId != null) {
+                voicePlayer.stop()
+            }
+
+            // Start playing
+            voicePlayer.play(
+                filePath = filePath,
+                onCompletion = {
+                    Log.d(TAG, "Voice message playback completed")
+                    currentlyPlayingMessageId = null
+                    runOnUiThread {
+                        messageAdapter.setCurrentlyPlayingMessageId(null)
+                    }
+                },
+                onProgress = { currentPos, duration ->
+                    // Optionally update progress bar in real-time
+                    // Would need to pass ViewHolder reference to update progress
+                }
+            )
+            currentlyPlayingMessageId = message.messageId
+            messageAdapter.setCurrentlyPlayingMessageId(message.messageId)
+            Log.d(TAG, "Started playing voice message")
+        }
     }
 
     private suspend fun loadMessages() {
@@ -325,7 +587,7 @@ class ChatActivity : AppCompatActivity() {
                 val result = messageService.sendMessage(
                     contactId = contactId,
                     plaintext = messageText,
-                    enableSelfDestruct = enableSelfDestruct,
+                    selfDestructDurationMs = if (enableSelfDestruct) 24 * 60 * 60 * 1000L else null,
                     enableReadReceipt = enableReadReceipt,
                     onMessageSaved = { savedMessage ->
                         // Message saved to DB - update UI immediately to show PENDING message
@@ -373,6 +635,77 @@ class ChatActivity : AppCompatActivity() {
 
         // DON'T reload messages here - let the "downloading" text stay visible
         // The service will broadcast MESSAGE_RECEIVED when done, which will trigger a reload
+    }
+
+    private fun toggleSelectionMode() {
+        isSelectionMode = !isSelectionMode
+        messageAdapter.setSelectionMode(isSelectionMode)
+
+        // Update delete button appearance based on mode
+        val deleteButton = findViewById<ImageView>(R.id.deleteButton)
+        if (isSelectionMode) {
+            deleteButton.setColorFilter(ContextCompat.getColor(this, R.color.accent_blue))
+        } else {
+            deleteButton.clearColorFilter()
+        }
+
+        Log.d(TAG, "Selection mode: $isSelectionMode")
+    }
+
+    private fun deleteSelectedMessages() {
+        val selectedIds = messageAdapter.getSelectedMessageIds()
+
+        if (selectedIds.isEmpty()) {
+            return
+        }
+
+        lifecycleScope.launch {
+            try {
+                withContext(Dispatchers.IO) {
+                    val keyManager = KeyManager.getInstance(this@ChatActivity)
+                    val dbPassphrase = keyManager.getDatabasePassphrase()
+                    val database = SecureLegionDatabase.getInstance(this@ChatActivity, dbPassphrase)
+
+                    // Securely delete each selected message
+                    selectedIds.forEach { messageId ->
+                        // Get the message to check if it's a voice message
+                        val message = database.messageDao().getMessageById(messageId)
+
+                        // If it's a voice message, securely wipe the audio file using DOD 3-pass
+                        if (message?.messageType == Message.MESSAGE_TYPE_VOICE && message.voiceFilePath != null) {
+                            try {
+                                val voiceFile = File(message.voiceFilePath)
+                                if (voiceFile.exists()) {
+                                    SecureWipe.secureDeleteFile(voiceFile)
+                                    Log.d(TAG, "✓ Securely wiped voice file: ${voiceFile.name}")
+                                }
+                            } catch (e: Exception) {
+                                Log.e(TAG, "Failed to securely wipe voice file", e)
+                            }
+                        }
+
+                        // Delete from database
+                        database.messageDao().deleteMessageById(messageId)
+                    }
+
+                    // VACUUM database to compact and remove deleted records
+                    try {
+                        database.openHelper.writableDatabase.execSQL("VACUUM")
+                        Log.d(TAG, "✓ Database vacuumed after message deletion")
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Failed to vacuum database", e)
+                    }
+                }
+
+                Log.d(TAG, "Securely deleted ${selectedIds.size} messages using DOD 3-pass wiping")
+
+                // Exit selection mode and reload messages
+                toggleSelectionMode()
+                loadMessages()
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to delete messages", e)
+            }
+        }
     }
 
 }

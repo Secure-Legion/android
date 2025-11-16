@@ -102,9 +102,10 @@ class WalletIdentityActivity : AppCompatActivity() {
 
                 val cardManager = ContactCardManager(this@WalletIdentityActivity)
                 val newPin = cardManager.generateRandomPin()
+                val publicKey = keyManager.getSolanaAddress() // Get Base58 public key
 
                 val result = withContext(Dispatchers.IO) {
-                    cardManager.uploadContactCard(contactCard, newPin)
+                    cardManager.uploadContactCard(contactCard, newPin, publicKey)
                 }
 
                 if (result.isSuccess) {

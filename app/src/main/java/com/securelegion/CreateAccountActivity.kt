@@ -16,6 +16,7 @@ import com.securelegion.database.SecureLegionDatabase
 import com.securelegion.database.entities.Wallet
 import com.securelegion.models.ContactCard
 import com.securelegion.services.ContactCardManager
+import com.securelegion.utils.PasswordValidator
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -127,8 +128,10 @@ class CreateAccountActivity : AppCompatActivity() {
                 return@setOnClickListener
             }
 
-            if (password.length < 8) {
-                Toast.makeText(this, "Password must be at least 8 characters", Toast.LENGTH_SHORT).show()
+            // Validate password complexity
+            val validation = PasswordValidator.validate(password)
+            if (!validation.isValid) {
+                Toast.makeText(this, validation.errorMessage, Toast.LENGTH_LONG).show()
                 return@setOnClickListener
             }
 
@@ -220,6 +223,7 @@ class CreateAccountActivity : AppCompatActivity() {
                 // Generate random PIN
                 val cardManager = ContactCardManager(this@CreateAccountActivity)
                 contactCardPin = cardManager.generateRandomPin()
+                val publicKey = keyManager.getSolanaAddress() // Get Base58 public key
 
                 Log.d("CreateAccount", "Uploading contact card to IPFS...")
                 Toast.makeText(
@@ -228,9 +232,9 @@ class CreateAccountActivity : AppCompatActivity() {
                     Toast.LENGTH_SHORT
                 ).show()
 
-                // Upload to IPFS with PIN encryption
+                // Upload to IPFS with PIN encryption (tries Lighthouse first, falls back to Pinata)
                 val result = withContext(Dispatchers.IO) {
-                    cardManager.uploadContactCard(contactCard, contactCardPin)
+                    cardManager.uploadContactCard(contactCard, contactCardPin, publicKey)
                 }
 
                 if (result.isSuccess) {

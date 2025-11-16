@@ -74,6 +74,23 @@ data class Message(
     val nonceBase64: String,
 
     /**
+     * Message type
+     * "TEXT" = text message, "VOICE" = voice clip
+     */
+    val messageType: String = MESSAGE_TYPE_TEXT,
+
+    /**
+     * Voice clip duration in seconds (only for VOICE messages)
+     */
+    val voiceDuration: Int? = null,
+
+    /**
+     * Voice clip file path (only for VOICE messages)
+     * Stored in app's private storage: files/voice_messages/
+     */
+    val voiceFilePath: String? = null,
+
+    /**
      * Optional: Media attachment type
      * null = text only, "image", "file", etc.
      */
@@ -125,6 +142,10 @@ data class Message(
     val lastRetryTimestamp: Long? = null
 ) {
     companion object {
+        // Message type constants
+        const val MESSAGE_TYPE_TEXT = "TEXT"
+        const val MESSAGE_TYPE_VOICE = "VOICE"
+
         // Message status constants
         const val STATUS_PENDING = 0
         const val STATUS_SENT = 1

@@ -100,7 +100,10 @@ class TorManager(private val context: Context) {
                     val torrc = TorService.getTorrc(context)
                     torrc.parentFile?.mkdirs()
 
-                    // Write our configuration to torrc
+                    // Read bridge settings
+                    val bridgeConfig = getBridgeConfiguration()
+
+                    // Write our configuration to torrc with bridge support
                     torrc.writeText("""
                         DataDirectory ${torDataDir!!.absolutePath}
                         SocksPort 127.0.0.1:9050
@@ -108,9 +111,13 @@ class TorManager(private val context: Context) {
                         CookieAuthentication 1
                         ClientOnly 1
                         AvoidDiskWrites 1
+                        $bridgeConfig
                     """.trimIndent())
 
                     Log.d(TAG, "Torrc written to: ${torrc.absolutePath}")
+                    if (bridgeConfig.isNotEmpty()) {
+                        Log.i(TAG, "Bridge configuration applied")
+                    }
 
                     // Start TorService as an Android Service
                     val intent = Intent(context, TorService::class.java)
@@ -328,6 +335,61 @@ class TorManager(private val context: Context) {
             .readTimeout(30, TimeUnit.SECONDS)
             .writeTimeout(30, TimeUnit.SECONDS)
             .build()
+    }
+
+    /**
+     * Get bridge configuration for torrc based on user settings
+     * Uses IPtProxy library for obfs4proxy and snowflake pluggable transports
+     */
+    private fun getBridgeConfiguration(): String {
+        val torSettings = context.getSharedPreferences("tor_settings", Context.MODE_PRIVATE)
+        val bridgeType = torSettings.getString("bridge_type", "none") ?: "none"
+
+        // Get path to native libraries (where IPtProxy binaries are located)
+        val nativeLibDir = context.applicationInfo.nativeLibraryDir
+
+        return when (bridgeType) {
+            "snowflake" -> {
+                // Snowflake bridge configuration using IPtProxy
+                // IPtProxy provides libIPtProxy.so which includes snowflake
+                """
+                UseBridges 1
+                ClientTransportPlugin snowflake exec $nativeLibDir/libIPtProxy.so -client
+                Bridge snowflake 192.0.2.3:1 2B280B23E1107BB62ABFC40DDCC8824814F80A72 fingerprint=2B280B23E1107BB62ABFC40DDCC8824814F80A72 url=https://snowflake-broker.torproject.net.global.prod.fastly.net/ front=cdn.sstatic.net ice=stun:stun.l.google.com:19302,stun:stun.voip.blackberry.com:3478,stun:stun.altar.com.pl:3478,stun:stun.antisip.com:3478,stun:stun.bluesip.net:3478,stun:stun.dus.net:3478,stun:stun.epygi.com:3478,stun:stun.sonetel.com:3478,stun:stun.sonetel.net:3478,stun:stun.stunprotocol.org:3478,stun:stun.uls.co.za:3478,stun:stun.voipgate.com:3478,stun:stun.voys.nl:3478 utls-imitate=hellorandomizedalpn
+                """.trimIndent()
+            }
+            "obfs4" -> {
+                // obfs4 bridge configuration using IPtProxy (Lyrebird/obfs4proxy)
+                """
+                UseBridges 1
+                ClientTransportPlugin obfs4 exec $nativeLibDir/libIPtProxy.so
+                Bridge obfs4 192.95.36.142:443 CDF2E852BF539B82BD10E27E9115A31734E378C2 cert=qUVQ0srL1JI/vO6V6m/24anYXiJD3QP2HgzUKQtQ7GRqqUvs7P+tG43RtAqdhLOALP7DJQ iat-mode=1
+                """.trimIndent()
+            }
+            "meek" -> {
+                // Note: IPtProxy doesn't include meek - meek support removed from Tor Browser
+                // Fall back to using obfs4 or document that meek is not supported
+                Log.w(TAG, "Meek bridge requested but not supported by IPtProxy - using obfs4 instead")
+                """
+                UseBridges 1
+                ClientTransportPlugin obfs4 exec $nativeLibDir/libIPtProxy.so
+                Bridge obfs4 192.95.36.142:443 CDF2E852BF539B82BD10E27E9115A31734E378C2 cert=qUVQ0srL1JI/vO6V6m/24anYXiJD3QP2HgzUKQtQ7GRqqUvs7P+tG43RtAqdhLOALP7DJQ iat-mode=1
+                """.trimIndent()
+            }
+            "custom" -> {
+                // Custom bridge provided by user
+                val customBridge = torSettings.getString("custom_bridge", "")
+                if (!customBridge.isNullOrEmpty()) {
+                    """
+                    UseBridges 1
+                    $customBridge
+                    """.trimIndent()
+                } else {
+                    "" // No custom bridge provided
+                }
+            }
+            else -> "" // No bridges (default)
+        }
     }
 
     /**

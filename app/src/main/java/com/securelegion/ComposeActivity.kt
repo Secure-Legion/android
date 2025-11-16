@@ -26,6 +26,12 @@ class ComposeActivity : AppCompatActivity() {
 
     companion object {
         private const val TAG = "ComposeActivity"
+
+        // Self-destruct duration constants (in milliseconds)
+        const val DURATION_1_MIN = 60 * 1000L
+        const val DURATION_5_MIN = 5 * 60 * 1000L
+        const val DURATION_1_HOUR = 60 * 60 * 1000L
+        const val DURATION_24_HOUR = 24 * 60 * 60 * 1000L
     }
 
     private lateinit var recipientInput: EditText
@@ -37,6 +43,7 @@ class ComposeActivity : AppCompatActivity() {
 
     // Security options state
     private var isSelfDestructEnabled = false
+    private var selfDestructDuration = 24 * 60 * 60 * 1000L // Default 24 hours in milliseconds
     private var isReadReceiptEnabled = true // Default enabled
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -70,17 +77,38 @@ class ComposeActivity : AppCompatActivity() {
         updateSecurityOptionUI(selfDestructOption, isSelfDestructEnabled)
         updateSecurityOptionUI(readReceiptOption, isReadReceiptEnabled)
 
-        // Self-destruct toggle
+        // Self-destruct toggle - cycles through durations
         selfDestructOption.setOnClickListener {
-            isSelfDestructEnabled = !isSelfDestructEnabled
-            updateSecurityOptionUI(selfDestructOption, isSelfDestructEnabled)
-
-            val message = if (isSelfDestructEnabled) {
-                "Self-destruct enabled (24h)"
+            if (!isSelfDestructEnabled) {
+                // First tap: enable with 1 minute
+                isSelfDestructEnabled = true
+                selfDestructDuration = DURATION_1_MIN
+                updateSecurityOptionUI(selfDestructOption, true)
+                com.securelegion.utils.ToastUtils.showCustomToast(this, "Self-destruct: 1 minute")
             } else {
-                "Self-destruct disabled"
+                // Cycle through durations
+                selfDestructDuration = when (selfDestructDuration) {
+                    DURATION_1_MIN -> {
+                        com.securelegion.utils.ToastUtils.showCustomToast(this, "Self-destruct: 5 minutes")
+                        DURATION_5_MIN
+                    }
+                    DURATION_5_MIN -> {
+                        com.securelegion.utils.ToastUtils.showCustomToast(this, "Self-destruct: 1 hour")
+                        DURATION_1_HOUR
+                    }
+                    DURATION_1_HOUR -> {
+                        com.securelegion.utils.ToastUtils.showCustomToast(this, "Self-destruct: 24 hours")
+                        DURATION_24_HOUR
+                    }
+                    else -> {
+                        // Last option: disable
+                        isSelfDestructEnabled = false
+                        updateSecurityOptionUI(selfDestructOption, false)
+                        com.securelegion.utils.ToastUtils.showCustomToast(this, "Self-destruct disabled")
+                        DURATION_24_HOUR
+                    }
+                }
             }
-            com.securelegion.utils.ToastUtils.showCustomToast(this, message)
         }
 
         // Read receipt toggle
@@ -200,7 +228,7 @@ class ComposeActivity : AppCompatActivity() {
             messageService.sendMessage(
                 contactId = selectedContact!!.id,
                 plaintext = message,
-                enableSelfDestruct = isSelfDestructEnabled,
+                selfDestructDurationMs = if (isSelfDestructEnabled) selfDestructDuration else null,
                 enableReadReceipt = isReadReceiptEnabled,
                 onMessageSaved = { savedMessage ->
                     // Message saved to DB - navigate back immediately

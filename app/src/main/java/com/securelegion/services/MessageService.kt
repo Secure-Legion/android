@@ -32,10 +32,151 @@ class MessageService(private val context: Context) {
     private val keyManager = KeyManager.getInstance(context)
 
     /**
+     * Send a voice message to a contact via Tor
+     * @param contactId Database ID of the recipient contact
+     * @param audioBytes The recorded audio as ByteArray
+     * @param durationSeconds Duration of the voice clip in seconds
+     * @param enableSelfDestruct Whether to enable self-destruct (24h)
+     * @param onMessageSaved Callback when message is saved to DB (before sending)
+     * @return Result with Message entity if successful
+     */
+    suspend fun sendVoiceMessage(
+        contactId: Long,
+        audioBytes: ByteArray,
+        durationSeconds: Int,
+        selfDestructDurationMs: Long? = null,
+        onMessageSaved: ((Message) -> Unit)? = null
+    ): Result<Message> = withContext(Dispatchers.IO) {
+        try {
+            Log.d(TAG, "Sending voice message to contact ID: $contactId (${audioBytes.size} bytes, ${durationSeconds}s)")
+
+            // Get database instance
+            val dbPassphrase = keyManager.getDatabasePassphrase()
+            val database = SecureLegionDatabase.getInstance(context, dbPassphrase)
+
+            // Get contact details
+            val contact = database.contactDao().getContactById(contactId)
+                ?: return@withContext Result.failure(Exception("Contact not found"))
+
+            Log.d(TAG, "Sending voice to: ${contact.displayName} (${contact.torOnionAddress})")
+
+            // Generate unique message ID
+            val messageId = UUID.randomUUID().toString()
+
+            // Get our keypair for signing
+            val ourPublicKey = keyManager.getSigningPublicKey()
+            val ourPrivateKey = keyManager.getSigningKeyBytes()
+
+            // Get recipient's public key
+            val recipientPublicKey = Base64.decode(contact.publicKeyBase64, Base64.NO_WRAP)
+
+            // Encrypt the audio bytes
+            Log.d(TAG, "Encrypting voice message...")
+            Log.d(TAG, "  Audio bytes: ${audioBytes.size} bytes")
+            Log.d(TAG, "  Duration: ${durationSeconds}s")
+
+            val encryptedBytes = RustBridge.encryptMessage(
+                String(audioBytes, Charsets.ISO_8859_1), // Convert bytes to string for encryption
+                recipientPublicKey
+            )
+            Log.d(TAG, "  Encrypted: ${encryptedBytes.size} bytes")
+
+            // Prepend message type byte: 0x01 for VOICE, followed by duration (4 bytes, big-endian)
+            val durationBytes = ByteArray(4)
+            durationBytes[0] = (durationSeconds shr 24).toByte()
+            durationBytes[1] = (durationSeconds shr 16).toByte()
+            durationBytes[2] = (durationSeconds shr 8).toByte()
+            durationBytes[3] = durationSeconds.toByte()
+            val encryptedWithMetadata = byteArrayOf(0x01) + durationBytes + encryptedBytes
+            val encryptedBase64 = Base64.encodeToString(encryptedWithMetadata, Base64.NO_WRAP)
+
+            Log.d(TAG, "  Metadata: 1 byte type + 4 bytes duration")
+            Log.d(TAG, "  Total payload: ${encryptedWithMetadata.size} bytes (${encryptedBase64.length} Base64 chars)")
+
+            // Generate nonce (first 24 bytes of encrypted data)
+            val nonce = encryptedBytes.take(24).toByteArray()
+            val nonceBase64 = Base64.encodeToString(nonce, Base64.NO_WRAP)
+
+            // Sign the message
+            Log.d(TAG, "Signing voice message...")
+            val messageData = (messageId + durationSeconds.toString() + System.currentTimeMillis()).toByteArray()
+            val signature = RustBridge.signData(messageData, ourPrivateKey)
+            val signatureBase64 = Base64.encodeToString(signature, Base64.NO_WRAP)
+
+            // Save audio to local storage
+            val voiceRecorder = com.securelegion.utils.VoiceRecorder(context)
+            val voiceFilePath = voiceRecorder.saveVoiceMessage(audioBytes, durationSeconds)
+
+            // Calculate self-destruct timestamp if custom duration provided
+            val currentTime = System.currentTimeMillis()
+            val selfDestructAt = selfDestructDurationMs?.let { currentTime + it }
+
+            // Generate Ping ID for persistent messaging
+            val pingId = UUID.randomUUID().toString()
+            Log.d(TAG, "Generated Ping ID: $pingId")
+
+            // Create message entity with VOICE type
+            val message = Message(
+                contactId = contactId,
+                messageId = messageId,
+                encryptedContent = "", // Empty for voice messages
+                messageType = Message.MESSAGE_TYPE_VOICE,
+                voiceDuration = durationSeconds,
+                voiceFilePath = voiceFilePath,
+                isSentByMe = true,
+                timestamp = currentTime,
+                status = Message.STATUS_PING_SENT,
+                signatureBase64 = signatureBase64,
+                nonceBase64 = nonceBase64,
+                selfDestructAt = selfDestructAt,
+                requiresReadReceipt = false, // Voice messages don't need read receipts
+                pingId = pingId,
+                encryptedPayload = encryptedBase64,
+                retryCount = 0,
+                lastRetryTimestamp = currentTime
+            )
+
+            Log.d(TAG, "Voice message queued for persistent delivery (PING_SENT)")
+
+            // Save to database
+            Log.d(TAG, "Saving voice message to database...")
+            val savedMessageId = database.messageDao().insertMessage(message)
+            val savedMessage = message.copy(id = savedMessageId)
+
+            // Notify that message is saved (allows UI to update immediately)
+            onMessageSaved?.invoke(savedMessage)
+
+            // Broadcast to MainActivity to refresh chat list preview
+            val intent = android.content.Intent("com.securelegion.NEW_PING")
+            intent.setPackage(context.packageName)
+            intent.putExtra("CONTACT_ID", contactId)
+            context.sendBroadcast(intent)
+            Log.d(TAG, "Sent explicit NEW_PING broadcast to refresh MainActivity chat list")
+
+            // Immediately attempt to send Ping
+            Log.i(TAG, "Voice message queued successfully: $messageId (Ping ID: $pingId)")
+            Log.d(TAG, "Attempting immediate Ping send...")
+
+            try {
+                sendPingForMessage(savedMessage)
+                Log.d(TAG, "Ping sent immediately, will poll for Pong later")
+            } catch (e: Exception) {
+                Log.w(TAG, "Immediate Ping send failed, retry worker will retry: ${e.message}")
+            }
+
+            Result.success(savedMessage)
+
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to send voice message", e)
+            Result.failure(e)
+        }
+    }
+
+    /**
      * Send an encrypted message to a contact via Tor
      * @param contactId Database ID of the recipient contact
      * @param plaintext The message content
-     * @param enableSelfDestruct Whether to enable self-destruct (24h)
+     * @param selfDestructDurationMs Custom self-destruct duration in milliseconds (null = disabled)
      * @param enableReadReceipt Whether to enable read receipts
      * @param onMessageSaved Callback when message is saved to DB (before sending)
      * @return Result with Message entity if successful
@@ -43,7 +184,7 @@ class MessageService(private val context: Context) {
     suspend fun sendMessage(
         contactId: Long,
         plaintext: String,
-        enableSelfDestruct: Boolean = false,
+        selfDestructDurationMs: Long? = null,
         enableReadReceipt: Boolean = true,
         onMessageSaved: ((Message) -> Unit)? = null
     ): Result<Message> = withContext(Dispatchers.IO) {
@@ -73,7 +214,10 @@ class MessageService(private val context: Context) {
             // Encrypt the message
             Log.d(TAG, "Encrypting message...")
             val encryptedBytes = RustBridge.encryptMessage(plaintext, recipientPublicKey)
-            val encryptedBase64 = Base64.encodeToString(encryptedBytes, Base64.NO_WRAP)
+
+            // Prepend message type byte: 0x00 for TEXT
+            val encryptedWithMetadata = byteArrayOf(0x00) + encryptedBytes
+            val encryptedBase64 = Base64.encodeToString(encryptedWithMetadata, Base64.NO_WRAP)
 
             // Generate nonce (first 24 bytes of encrypted data)
             val nonce = encryptedBytes.take(24).toByteArray()
@@ -85,13 +229,9 @@ class MessageService(private val context: Context) {
             val signature = RustBridge.signData(messageData, ourPrivateKey)
             val signatureBase64 = Base64.encodeToString(signature, Base64.NO_WRAP)
 
-            // Calculate self-destruct timestamp if enabled
+            // Calculate self-destruct timestamp if custom duration provided
             val currentTime = System.currentTimeMillis()
-            val selfDestructAt = if (enableSelfDestruct) {
-                currentTime + Message.SELF_DESTRUCT_DURATION
-            } else {
-                null
-            }
+            val selfDestructAt = selfDestructDurationMs?.let { currentTime + it }
 
             // Generate Ping ID for persistent messaging
             val pingId = UUID.randomUUID().toString()
@@ -115,7 +255,14 @@ class MessageService(private val context: Context) {
                 lastRetryTimestamp = currentTime   // NEW: Track when we last attempted
             )
 
-            Log.d(TAG, "Self-destruct: ${if (enableSelfDestruct) "enabled (24h)" else "disabled"}")
+            val durationText = selfDestructDurationMs?.let { duration ->
+                when {
+                    duration < 60000 -> "${duration / 1000}s"
+                    duration < 3600000 -> "${duration / 60000}min"
+                    else -> "${duration / 3600000}h"
+                }
+            } ?: "disabled"
+            Log.d(TAG, "Self-destruct: $durationText")
             Log.d(TAG, "Read receipt: ${if (enableReadReceipt) "enabled" else "disabled"}")
             Log.d(TAG, "Message queued for persistent delivery (PING_SENT)")
 
@@ -161,6 +308,8 @@ class MessageService(private val context: Context) {
      * @param encryptedData The encrypted message data
      * @param senderPublicKey The sender's public key
      * @param senderOnionAddress The sender's .onion address
+     * @param messageType Message type ("TEXT" or "VOICE")
+     * @param voiceDuration Duration in seconds (for voice messages)
      * @param selfDestructAt Self-destruct timestamp (or null)
      * @param requiresReadReceipt Whether sender wants read receipt
      * @return Result with Message entity if successful
@@ -169,11 +318,13 @@ class MessageService(private val context: Context) {
         encryptedData: String,
         senderPublicKey: ByteArray,
         senderOnionAddress: String,
+        messageType: String = Message.MESSAGE_TYPE_TEXT,
+        voiceDuration: Int? = null,
         selfDestructAt: Long? = null,
         requiresReadReceipt: Boolean = true
     ): Result<Message> = withContext(Dispatchers.IO) {
         try {
-            Log.d(TAG, "Receiving message from: $senderOnionAddress")
+            Log.d(TAG, "Receiving $messageType message from: $senderOnionAddress")
 
             // Get database instance
             val dbPassphrase = keyManager.getDatabasePassphrase()
@@ -188,35 +339,73 @@ class MessageService(private val context: Context) {
             // Decrypt message
             val encryptedBytes = Base64.decode(encryptedData, Base64.NO_WRAP)
             val ourPrivateKey = keyManager.getSigningKeyBytes()
-            val plaintext = RustBridge.decryptMessage(encryptedBytes, senderPublicKey, ourPrivateKey)
+            val decryptedData = RustBridge.decryptMessage(encryptedBytes, senderPublicKey, ourPrivateKey)
                 ?: return@withContext Result.failure(Exception("Failed to decrypt message"))
-
-            // Generate message ID from content hash
-            val messageId = generateMessageId(plaintext, System.currentTimeMillis())
-
-            // Check for duplicate
-            if (database.messageDao().messageExists(messageId)) {
-                Log.w(TAG, "Duplicate message ignored: $messageId")
-                return@withContext Result.failure(Exception("Duplicate message"))
-            }
 
             // Extract nonce
             val nonce = encryptedBytes.take(24).toByteArray()
             val nonceBase64 = Base64.encodeToString(nonce, Base64.NO_WRAP)
 
-            // Create message entity
-            val message = Message(
-                contactId = contact.id,
-                messageId = messageId,
-                encryptedContent = plaintext, // Store plaintext for now
-                isSentByMe = false,
-                timestamp = System.currentTimeMillis(),
-                status = Message.STATUS_DELIVERED,
-                signatureBase64 = "", // TODO: Extract signature
-                nonceBase64 = nonceBase64,
-                selfDestructAt = selfDestructAt,
-                requiresReadReceipt = requiresReadReceipt
-            )
+            // Handle based on message type
+            val message = if (messageType == Message.MESSAGE_TYPE_VOICE) {
+                // Voice message: decryptedData is audio bytes
+                val audioBytes = decryptedData.toByteArray(Charsets.ISO_8859_1)
+
+                // Save audio to local storage
+                val voiceRecorder = com.securelegion.utils.VoiceRecorder(context)
+                val voiceFilePath = voiceRecorder.saveVoiceMessage(audioBytes, voiceDuration ?: 0)
+
+                // Generate message ID from audio hash
+                val messageId = generateMessageId(voiceFilePath, System.currentTimeMillis())
+
+                // Check for duplicate
+                if (database.messageDao().messageExists(messageId)) {
+                    Log.w(TAG, "Duplicate voice message ignored: $messageId")
+                    return@withContext Result.failure(Exception("Duplicate message"))
+                }
+
+                Message(
+                    contactId = contact.id,
+                    messageId = messageId,
+                    encryptedContent = "", // Empty for voice messages
+                    messageType = Message.MESSAGE_TYPE_VOICE,
+                    voiceDuration = voiceDuration,
+                    voiceFilePath = voiceFilePath,
+                    isSentByMe = false,
+                    timestamp = System.currentTimeMillis(),
+                    status = Message.STATUS_DELIVERED,
+                    signatureBase64 = "",
+                    nonceBase64 = nonceBase64,
+                    selfDestructAt = selfDestructAt,
+                    requiresReadReceipt = requiresReadReceipt
+                )
+            } else {
+                // Text message
+                val plaintext = decryptedData
+
+                // Generate message ID from content hash
+                val messageId = generateMessageId(plaintext, System.currentTimeMillis())
+
+                // Check for duplicate
+                if (database.messageDao().messageExists(messageId)) {
+                    Log.w(TAG, "Duplicate message ignored: $messageId")
+                    return@withContext Result.failure(Exception("Duplicate message"))
+                }
+
+                Message(
+                    contactId = contact.id,
+                    messageId = messageId,
+                    encryptedContent = plaintext,
+                    messageType = Message.MESSAGE_TYPE_TEXT,
+                    isSentByMe = false,
+                    timestamp = System.currentTimeMillis(),
+                    status = Message.STATUS_DELIVERED,
+                    signatureBase64 = "",
+                    nonceBase64 = nonceBase64,
+                    selfDestructAt = selfDestructAt,
+                    requiresReadReceipt = requiresReadReceipt
+                )
+            }
 
             if (selfDestructAt != null) {
                 Log.d(TAG, "Message has self-destruct enabled, expires at: $selfDestructAt")
@@ -232,7 +421,7 @@ class MessageService(private val context: Context) {
             context.sendBroadcast(intent)
             Log.d(TAG, "Sent explicit NEW_PING broadcast to refresh MainActivity chat list")
 
-            Log.i(TAG, "Message received and saved: $messageId")
+            Log.i(TAG, "$messageType message received and saved: ${message.messageId}")
             Result.success(message.copy(id = savedMessageId))
 
         } catch (e: Exception) {

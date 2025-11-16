@@ -7,6 +7,7 @@ import android.view.LayoutInflater
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
+import android.widget.CheckBox
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
@@ -22,17 +23,40 @@ class MessageAdapter(
     private var messages: List<Message> = emptyList(),
     private var pendingSenderName: String? = null,
     private var pendingTimestamp: Long? = null,
-    private val onDownloadClick: (() -> Unit)? = null
+    private val onDownloadClick: (() -> Unit)? = null,
+    private val onVoicePlayClick: ((Message) -> Unit)? = null,
+    private var currentlyPlayingMessageId: String? = null
 ) : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
 
     companion object {
         private const val VIEW_TYPE_SENT = 1
         private const val VIEW_TYPE_RECEIVED = 2
         private const val VIEW_TYPE_PENDING = 3
+        private const val VIEW_TYPE_VOICE_SENT = 4
+        private const val VIEW_TYPE_VOICE_RECEIVED = 5
     }
 
     // Track which message is currently showing swipe-revealed time
     private var currentSwipeRevealedPosition = -1
+
+    // Selection mode for deletion
+    private var isSelectionMode = false
+    private val selectedMessages = mutableSetOf<Long>()
+
+    fun setSelectionMode(enabled: Boolean) {
+        isSelectionMode = enabled
+        if (!enabled) {
+            selectedMessages.clear()
+        }
+        notifyDataSetChanged()
+    }
+
+    fun getSelectedMessageIds(): Set<Long> = selectedMessages.toSet()
+
+    fun clearSelection() {
+        selectedMessages.clear()
+        notifyDataSetChanged()
+    }
 
     class SentMessageViewHolder(view: View) : RecyclerView.ViewHolder(view) {
         val timestampHeader: TextView = view.findViewById(R.id.timestampHeader)
@@ -40,6 +64,7 @@ class MessageAdapter(
         val messageText: TextView = view.findViewById(R.id.messageText)
         val messageStatus: TextView = view.findViewById(R.id.messageStatus)
         val swipeRevealedTime: TextView = view.findViewById(R.id.swipeRevealedTime)
+        val messageCheckbox: CheckBox = view.findViewById(R.id.messageCheckbox)
     }
 
     class ReceivedMessageViewHolder(view: View) : RecyclerView.ViewHolder(view) {
@@ -47,6 +72,7 @@ class MessageAdapter(
         val messageBubble: LinearLayout = view.findViewById(R.id.messageBubble)
         val messageText: TextView = view.findViewById(R.id.messageText)
         val swipeRevealedTime: TextView = view.findViewById(R.id.swipeRevealedTime)
+        val messageCheckbox: CheckBox = view.findViewById(R.id.messageCheckbox)
     }
 
     class PendingMessageViewHolder(view: View) : RecyclerView.ViewHolder(view) {
@@ -57,12 +83,35 @@ class MessageAdapter(
         val swipeRevealedTime: TextView = view.findViewById(R.id.swipeRevealedTime)
     }
 
+    class VoiceSentMessageViewHolder(view: View) : RecyclerView.ViewHolder(view) {
+        val playButton: ImageView = view.findViewById(R.id.playButton)
+        val progressBar: android.widget.ProgressBar = view.findViewById(R.id.progressBar)
+        val durationText: TextView = view.findViewById(R.id.durationText)
+        val timestampText: TextView = view.findViewById(R.id.timestampText)
+        val statusIcon: ImageView = view.findViewById(R.id.statusIcon)
+    }
+
+    class VoiceReceivedMessageViewHolder(view: View) : RecyclerView.ViewHolder(view) {
+        val playButton: ImageView = view.findViewById(R.id.playButton)
+        val progressBar: android.widget.ProgressBar = view.findViewById(R.id.progressBar)
+        val durationText: TextView = view.findViewById(R.id.durationText)
+        val timestampText: TextView = view.findViewById(R.id.timestampText)
+    }
+
     override fun getItemViewType(position: Int): Int {
         // Check if this is the pending message (last item when pending exists)
         if (pendingSenderName != null && position == messages.size) {
             return VIEW_TYPE_PENDING
         }
-        return if (messages[position].isSentByMe) VIEW_TYPE_SENT else VIEW_TYPE_RECEIVED
+
+        val message = messages[position]
+
+        return when {
+            message.messageType == Message.MESSAGE_TYPE_VOICE && message.isSentByMe -> VIEW_TYPE_VOICE_SENT
+            message.messageType == Message.MESSAGE_TYPE_VOICE && !message.isSentByMe -> VIEW_TYPE_VOICE_RECEIVED
+            message.isSentByMe -> VIEW_TYPE_SENT
+            else -> VIEW_TYPE_RECEIVED
+        }
     }
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): RecyclerView.ViewHolder {
@@ -76,6 +125,16 @@ class MessageAdapter(
                 val view = LayoutInflater.from(parent.context)
                     .inflate(R.layout.item_message_pending, parent, false)
                 PendingMessageViewHolder(view)
+            }
+            VIEW_TYPE_VOICE_SENT -> {
+                val view = LayoutInflater.from(parent.context)
+                    .inflate(R.layout.item_message_voice_sent, parent, false)
+                VoiceSentMessageViewHolder(view)
+            }
+            VIEW_TYPE_VOICE_RECEIVED -> {
+                val view = LayoutInflater.from(parent.context)
+                    .inflate(R.layout.item_message_voice_received, parent, false)
+                VoiceReceivedMessageViewHolder(view)
             }
             else -> {
                 val view = LayoutInflater.from(parent.context)
@@ -94,6 +153,14 @@ class MessageAdapter(
             is ReceivedMessageViewHolder -> {
                 val message = messages[position]
                 bindReceivedMessage(holder, message, position)
+            }
+            is VoiceSentMessageViewHolder -> {
+                val message = messages[position]
+                bindVoiceSentMessage(holder, message, position)
+            }
+            is VoiceReceivedMessageViewHolder -> {
+                val message = messages[position]
+                bindVoiceReceivedMessage(holder, message, position)
             }
             is PendingMessageViewHolder -> {
                 bindPendingMessage(holder, position)
@@ -117,8 +184,39 @@ class MessageAdapter(
         holder.swipeRevealedTime.text = formatTime(message.timestamp)
         holder.swipeRevealedTime.visibility = if (position == currentSwipeRevealedPosition) View.VISIBLE else View.GONE
 
-        // Setup swipe gesture
-        setupSwipeGesture(holder.messageBubble, holder.swipeRevealedTime, holder.messageStatus, position, isSent = true)
+        // Handle selection mode
+        if (isSelectionMode) {
+            holder.messageCheckbox.visibility = View.VISIBLE
+            holder.messageCheckbox.isChecked = selectedMessages.contains(message.id)
+            holder.messageCheckbox.setOnCheckedChangeListener { _, isChecked ->
+                if (isChecked) {
+                    selectedMessages.add(message.id)
+                } else {
+                    selectedMessages.remove(message.id)
+                }
+            }
+
+            // Allow tapping message bubble to toggle selection
+            holder.messageBubble.setOnClickListener {
+                val isSelected = selectedMessages.contains(message.id)
+                if (isSelected) {
+                    selectedMessages.remove(message.id)
+                    holder.messageCheckbox.isChecked = false
+                } else {
+                    selectedMessages.add(message.id)
+                    holder.messageCheckbox.isChecked = true
+                }
+            }
+        } else {
+            holder.messageCheckbox.visibility = View.GONE
+            holder.messageCheckbox.setOnCheckedChangeListener(null)
+            holder.messageBubble.setOnClickListener(null)
+        }
+
+        // Setup swipe gesture (disabled in selection mode)
+        if (!isSelectionMode) {
+            setupSwipeGesture(holder.messageBubble, holder.swipeRevealedTime, holder.messageStatus, position, isSent = true)
+        }
     }
 
     private fun bindReceivedMessage(holder: ReceivedMessageViewHolder, message: Message, position: Int) {
@@ -136,8 +234,39 @@ class MessageAdapter(
         holder.swipeRevealedTime.text = formatTime(message.timestamp)
         holder.swipeRevealedTime.visibility = if (position == currentSwipeRevealedPosition) View.VISIBLE else View.GONE
 
-        // Setup swipe gesture
-        setupSwipeGesture(holder.messageBubble, holder.swipeRevealedTime, null, position, isSent = false)
+        // Handle selection mode
+        if (isSelectionMode) {
+            holder.messageCheckbox.visibility = View.VISIBLE
+            holder.messageCheckbox.isChecked = selectedMessages.contains(message.id)
+            holder.messageCheckbox.setOnCheckedChangeListener { _, isChecked ->
+                if (isChecked) {
+                    selectedMessages.add(message.id)
+                } else {
+                    selectedMessages.remove(message.id)
+                }
+            }
+
+            // Allow tapping message bubble to toggle selection
+            holder.messageBubble.setOnClickListener {
+                val isSelected = selectedMessages.contains(message.id)
+                if (isSelected) {
+                    selectedMessages.remove(message.id)
+                    holder.messageCheckbox.isChecked = false
+                } else {
+                    selectedMessages.add(message.id)
+                    holder.messageCheckbox.isChecked = true
+                }
+            }
+        } else {
+            holder.messageCheckbox.visibility = View.GONE
+            holder.messageCheckbox.setOnCheckedChangeListener(null)
+            holder.messageBubble.setOnClickListener(null)
+        }
+
+        // Setup swipe gesture (disabled in selection mode)
+        if (!isSelectionMode) {
+            setupSwipeGesture(holder.messageBubble, holder.swipeRevealedTime, null, position, isSent = false)
+        }
     }
 
     private fun bindPendingMessage(holder: PendingMessageViewHolder, position: Int) {
@@ -168,6 +297,61 @@ class MessageAdapter(
 
         // Setup swipe gesture
         setupSwipeGesture(holder.messageBubble, holder.swipeRevealedTime, null, position, isSent = false)
+    }
+
+    private fun bindVoiceSentMessage(holder: VoiceSentMessageViewHolder, message: Message, position: Int) {
+        val duration = message.voiceDuration ?: 0
+        holder.durationText.text = formatDuration(duration)
+        holder.timestampText.text = formatTime(message.timestamp)
+
+        // Set status icon
+        val statusDrawable = when (message.status) {
+            Message.STATUS_PENDING, Message.STATUS_PING_SENT -> R.drawable.ic_timer
+            Message.STATUS_SENT, Message.STATUS_DELIVERED -> R.drawable.ic_check
+            Message.STATUS_FAILED -> R.drawable.ic_delete
+            else -> R.drawable.ic_check
+        }
+        holder.statusIcon.setImageResource(statusDrawable)
+
+        // Set play/pause icon based on current playback state
+        val isPlaying = currentlyPlayingMessageId == message.messageId
+        holder.playButton.setImageResource(
+            if (isPlaying) R.drawable.ic_pause else R.drawable.ic_play
+        )
+
+        // Play/pause logic
+        holder.playButton.setOnClickListener {
+            onVoicePlayClick?.invoke(message)
+        }
+
+        // Reset progress
+        holder.progressBar.progress = 0
+    }
+
+    private fun bindVoiceReceivedMessage(holder: VoiceReceivedMessageViewHolder, message: Message, position: Int) {
+        val duration = message.voiceDuration ?: 0
+        holder.durationText.text = formatDuration(duration)
+        holder.timestampText.text = formatTime(message.timestamp)
+
+        // Set play/pause icon based on current playback state
+        val isPlaying = currentlyPlayingMessageId == message.messageId
+        holder.playButton.setImageResource(
+            if (isPlaying) R.drawable.ic_pause else R.drawable.ic_play
+        )
+
+        // Play/pause logic
+        holder.playButton.setOnClickListener {
+            onVoicePlayClick?.invoke(message)
+        }
+
+        // Reset progress
+        holder.progressBar.progress = 0
+    }
+
+    private fun formatDuration(seconds: Int): String {
+        val minutes = seconds / 60
+        val secs = seconds % 60
+        return String.format("%d:%02d", minutes, secs)
     }
 
     private fun setupSwipeGesture(
@@ -295,16 +479,22 @@ class MessageAdapter(
     private fun getStatusIcon(status: Int): String {
         return when (status) {
             Message.STATUS_PENDING -> "○"  // Pending
-            Message.STATUS_SENT -> "✓"     // Sent
-            Message.STATUS_DELIVERED -> "✓✓" // Delivered
-            Message.STATUS_READ -> "✓✓"    // Read (could make blue)
+            Message.STATUS_PING_SENT -> "✓"     // Ping sent (1 checkmark)
+            Message.STATUS_SENT -> "✓"     // Sent (1 checkmark)
+            Message.STATUS_DELIVERED -> "✓✓" // Delivered (2 checkmarks)
+            Message.STATUS_READ -> "✓✓"    // Read (2 checkmarks)
             Message.STATUS_FAILED -> "✗"   // Failed
-            else -> ""
+            else -> "✓"  // Default to single checkmark
         }
     }
 
     override fun getItemCount(): Int {
         return messages.size + (if (pendingSenderName != null) 1 else 0)
+    }
+
+    fun setCurrentlyPlayingMessageId(messageId: String?) {
+        currentlyPlayingMessageId = messageId
+        notifyDataSetChanged() // Update all voice message icons
     }
 
     fun updateMessages(

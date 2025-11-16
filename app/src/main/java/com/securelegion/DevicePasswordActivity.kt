@@ -10,6 +10,7 @@ import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
 import com.securelegion.crypto.KeyManager
+import com.securelegion.utils.PasswordValidator
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -42,12 +43,12 @@ class DevicePasswordActivity : AppCompatActivity() {
                 return@setOnClickListener
             }
 
-            if (newPassword.length < 9) {
-                Toast.makeText(this, "New password must be at least 9 characters", Toast.LENGTH_SHORT).show()
+            // Validate password complexity
+            val validation = PasswordValidator.validate(newPassword)
+            if (!validation.isValid) {
+                Toast.makeText(this, validation.errorMessage, Toast.LENGTH_LONG).show()
                 return@setOnClickListener
             }
-
-            // TODO: Add stronger password requirements (special characters, uppercase, lowercase, numbers)
 
             // Disable button while changing password
             findViewById<View>(R.id.changePasswordButton).isEnabled = false

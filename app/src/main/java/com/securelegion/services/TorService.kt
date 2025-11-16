@@ -714,13 +714,64 @@ class TorService : Service() {
             val ourEd25519PublicKey = keyManager.getSigningPublicKey()
             val ourPrivateKey = keyManager.getSigningKeyBytes()
 
-            val plaintext = RustBridge.decryptMessage(encryptedMessage, ourEd25519PublicKey, ourPrivateKey)
+            // Check if message has metadata (version byte)
+            var messageType = com.securelegion.database.entities.Message.MESSAGE_TYPE_TEXT
+            var voiceDuration: Int? = null
+            var actualEncryptedMessage = encryptedMessage
+            var voiceFilePath: String? = null
+
+            Log.d(TAG, "Parsing message metadata from ${encryptedMessage.size} bytes")
+            if (encryptedMessage.isNotEmpty()) {
+                Log.d(TAG, "First byte: 0x${String.format("%02X", encryptedMessage[0])}")
+            }
+
+            // Check for metadata byte (0x00 = TEXT, 0x01 = VOICE)
+            if (encryptedMessage.isNotEmpty()) {
+                when (encryptedMessage[0].toInt()) {
+                    0x00 -> {
+                        // TEXT message - strip metadata byte
+                        Log.d(TAG, "Message type: TEXT (v2)")
+                        actualEncryptedMessage = encryptedMessage.copyOfRange(1, encryptedMessage.size)
+                        Log.d(TAG, "  Stripped 1 byte metadata, encrypted payload: ${actualEncryptedMessage.size} bytes")
+                    }
+                    0x01 -> {
+                        // VOICE message - extract duration and strip metadata
+                        if (encryptedMessage.size >= 5) {
+                            Log.d(TAG, "Message type: VOICE (v2)")
+                            messageType = com.securelegion.database.entities.Message.MESSAGE_TYPE_VOICE
+                            // Extract duration (4 bytes, big-endian)
+                            voiceDuration = ((encryptedMessage[1].toInt() and 0xFF) shl 24) or
+                                          ((encryptedMessage[2].toInt() and 0xFF) shl 16) or
+                                          ((encryptedMessage[3].toInt() and 0xFF) shl 8) or
+                                          (encryptedMessage[4].toInt() and 0xFF)
+                            actualEncryptedMessage = encryptedMessage.copyOfRange(5, encryptedMessage.size)
+                            Log.d(TAG, "  Voice duration: ${voiceDuration}s")
+                            Log.d(TAG, "  Stripped 5 bytes metadata, encrypted payload: ${actualEncryptedMessage.size} bytes")
+                        } else {
+                            Log.e(TAG, "✗ VOICE message too short - missing duration metadata (only ${encryptedMessage.size} bytes)")
+                            return
+                        }
+                    }
+                    else -> {
+                        // Legacy message without metadata - treat as TEXT
+                        Log.d(TAG, "Message type: TEXT (legacy, no metadata)")
+                    }
+                }
+            }
+
+            Log.d(TAG, "Attempting to decrypt ${actualEncryptedMessage.size} bytes...")
+            val plaintext = RustBridge.decryptMessage(actualEncryptedMessage, ourEd25519PublicKey, ourPrivateKey)
             if (plaintext == null) {
                 Log.e(TAG, "✗ Failed to decrypt message from ${contact.displayName}")
+                Log.e(TAG, "  Encrypted payload size: ${actualEncryptedMessage.size} bytes")
+                Log.e(TAG, "  Message type: ${messageType}")
+                if (messageType == com.securelegion.database.entities.Message.MESSAGE_TYPE_VOICE) {
+                    Log.e(TAG, "  Voice duration: ${voiceDuration}s")
+                }
                 return
             }
 
-            Log.i(TAG, "✓ Decrypted message: ${plaintext.take(50)}...")
+            Log.i(TAG, "✓ Decrypted message (${messageType}): ${if (messageType == com.securelegion.database.entities.Message.MESSAGE_TYPE_TEXT) plaintext.take(50) else "${voiceDuration}s voice, ${plaintext.length} bytes"}...")
 
             // Save message directly to database (already decrypted)
             kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
@@ -738,11 +789,27 @@ class TorService : Service() {
                         return@launch
                     }
 
+                    // If it's a voice message, save the audio file
+                    if (messageType == com.securelegion.database.entities.Message.MESSAGE_TYPE_VOICE) {
+                        try {
+                            val voiceRecorder = com.securelegion.utils.VoiceRecorder(this@TorService)
+                            val audioBytes = plaintext.toByteArray(Charsets.ISO_8859_1)
+                            voiceFilePath = voiceRecorder.saveVoiceMessage(audioBytes, voiceDuration ?: 0)
+                            Log.d(TAG, "✓ Saved voice file: $voiceFilePath")
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Failed to save voice file", e)
+                            // Continue anyway, will just show broken voice message
+                        }
+                    }
+
                     // Create message entity (store plaintext in encryptedContent field for now)
                     val message = com.securelegion.database.entities.Message(
                         contactId = contact.id,
                         messageId = messageId,
-                        encryptedContent = plaintext, // Store plaintext for now
+                        encryptedContent = if (messageType == com.securelegion.database.entities.Message.MESSAGE_TYPE_TEXT) plaintext else "", // Store plaintext for TEXT, empty for VOICE
+                        messageType = messageType,
+                        voiceDuration = voiceDuration,
+                        voiceFilePath = voiceFilePath,
                         isSentByMe = false,
                         timestamp = System.currentTimeMillis(),
                         status = com.securelegion.database.entities.Message.STATUS_DELIVERED,
@@ -753,6 +820,19 @@ class TorService : Service() {
                     // Save to database
                     val savedMessageId = database.messageDao().insertMessage(message)
                     Log.i(TAG, "✓ Message saved to database: $savedMessageId")
+
+                    // Clear pending Ping from SharedPreferences (message has been downloaded)
+                    val prefs = getSharedPreferences("pending_pings", Context.MODE_PRIVATE)
+                    prefs.edit().apply {
+                        remove("ping_${contact.id}_id")
+                        remove("ping_${contact.id}_connection")
+                        remove("ping_${contact.id}_name")
+                        remove("ping_${contact.id}_timestamp")
+                        remove("ping_${contact.id}_data")
+                        remove("ping_${contact.id}_onion")
+                        apply()
+                    }
+                    Log.i(TAG, "✓ Cleared pending Ping for contact ${contact.id}")
 
                     // Broadcast to ChatActivity so it can refresh (explicit broadcast)
                     val intentChat = Intent("com.securelegion.MESSAGE_RECEIVED")

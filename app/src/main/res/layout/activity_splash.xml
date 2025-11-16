@@ -78,7 +78,47 @@
             android:layout_height="wrap_content"
             android:text="Connecting to Tor network..."
             android:textSize="14sp"
-            android:textColor="@color/text_gray" />
+            android:textColor="@color/text_gray"
+            android:layout_marginBottom="24dp" />
+
+        <!-- Configure Bridges Button (shown on connection failure) -->
+        <TextView
+            android:id="@+id/configureBridgesButton"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="CONFIGURE BRIDGES"
+            android:textSize="14sp"
+            android:textStyle="bold"
+            android:textColor="@color/text_white"
+            android:background="@drawable/settings_item_bg"
+            android:gravity="center"
+            android:paddingStart="24dp"
+            android:paddingEnd="24dp"
+            android:paddingTop="12dp"
+            android:paddingBottom="12dp"
+            android:layout_marginBottom="12dp"
+            android:clickable="true"
+            android:focusable="true"
+            android:visibility="gone" />
+
+        <!-- Retry Connection Button (shown after bridge configuration) -->
+        <TextView
+            android:id="@+id/retryConnectionButton"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="RETRY CONNECTION"
+            android:textSize="14sp"
+            android:textStyle="bold"
+            android:textColor="@color/text_white"
+            android:background="@drawable/settings_item_bg"
+            android:gravity="center"
+            android:paddingStart="24dp"
+            android:paddingEnd="24dp"
+            android:paddingTop="12dp"
+            android:paddingBottom="12dp"
+            android:clickable="true"
+            android:focusable="true"
+            android:visibility="gone" />
 
     </LinearLayout>
 

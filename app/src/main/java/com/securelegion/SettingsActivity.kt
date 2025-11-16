@@ -4,6 +4,7 @@ import android.content.Intent
 import android.os.Bundle
 import android.view.View
 import androidx.appcompat.app.AppCompatActivity
+import androidx.appcompat.widget.SwitchCompat
 
 class SettingsActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -12,6 +13,7 @@ class SettingsActivity : AppCompatActivity() {
 
         BottomNavigationHelper.setupBottomNavigation(this)
         setupClickListeners()
+        setupAutoWipeToggle()
     }
 
     private fun setupClickListeners() {
@@ -48,6 +50,29 @@ class SettingsActivity : AppCompatActivity() {
         // Wipe Account
         findViewById<View>(R.id.wipeAccountButton).setOnClickListener {
             startActivity(Intent(this, WipeAccountActivity::class.java))
+        }
+
+        // Bridge
+        findViewById<View>(R.id.bridgeItem).setOnClickListener {
+            startActivity(Intent(this, BridgeActivity::class.java))
+        }
+    }
+
+    private fun setupAutoWipeToggle() {
+        val autoWipeSwitch = findViewById<SwitchCompat>(R.id.autoWipeSwitch)
+        val prefs = getSharedPreferences("security_prefs", MODE_PRIVATE)
+
+        // Load saved state (default off)
+        autoWipeSwitch.isChecked = prefs.getBoolean("auto_wipe_enabled", false)
+
+        // Save state when toggled
+        autoWipeSwitch.setOnCheckedChangeListener { _, isChecked ->
+            prefs.edit().putBoolean("auto_wipe_enabled", isChecked).apply()
+
+            // Reset failed attempts counter when toggling
+            if (!isChecked) {
+                prefs.edit().putInt("failed_password_attempts", 0).apply()
+            }
         }
     }
 }
