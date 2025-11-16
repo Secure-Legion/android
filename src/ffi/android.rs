@@ -113,17 +113,14 @@ fn get_tor_manager() -> Arc<Mutex<TorManager>> {
 // ==================== CRYPTOGRAPHY ====================
 
 /// Encrypt a message using XChaCha20-Poly1305 with X25519 ECDH
-/// NOTE: This is a temporary MVP implementation that uses the recipient's
-/// public key as the encryption key. In production, this should:
-/// 1. Accept sender's X25519 private key as parameter
-/// 2. Derive shared secret via ECDH: deriveSharedSecret(senderPrivate, recipientPublic)
-/// 3. Use that shared secret for encryption
+/// Uses proper X25519 ECDH key exchange to derive shared secret
+/// Wire format: [Our X25519 Public Key - 32 bytes][Encrypted Message]
 #[no_mangle]
 pub extern "C" fn Java_com_securelegion_crypto_RustBridge_encryptMessage(
     mut env: JNIEnv,
     _class: JClass,
     plaintext: JString,
-    recipient_public_key: JByteArray,
+    recipient_x25519_public_key: JByteArray,
 ) -> jbyteArray {
     catch_panic!(env, {
         // Convert Java types to Rust types
@@ -135,7 +132,7 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_encryptMessage(
             }
         };
 
-        let pub_key = match jbytearray_to_vec(&mut env, recipient_public_key) {
+        let recipient_x25519_bytes = match jbytearray_to_vec(&mut env, recipient_x25519_public_key) {
             Ok(v) => v,
             Err(e) => {
                 let _ = env.throw_new("java/lang/IllegalArgumentException", e);
@@ -143,60 +140,111 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_encryptMessage(
             }
         };
 
-        // MVP: Use recipient public key as encryption key (32 bytes)
-        // TODO: Change signature to accept sender's X25519 private key and derive shared secret
-        let mut key = if pub_key.len() >= 32 {
-            let mut arr = [0u8; 32];
-            arr.copy_from_slice(&pub_key[0..32]);
-            arr
-        } else {
-            let _ = env.throw_new("java/lang/IllegalArgumentException", "Invalid public key length");
+        if recipient_x25519_bytes.len() != 32 {
+            let _ = env.throw_new("java/lang/IllegalArgumentException", "Invalid X25519 public key length (expected 32 bytes)");
             return std::ptr::null_mut();
+        }
+
+        // Get application context
+        let context = match env.call_static_method(
+            "android/app/ActivityThread",
+            "currentApplication",
+            "()Landroid/app/Application;",
+            &[],
+        ) {
+            Ok(ctx) => ctx.l().unwrap(),
+            Err(e) => {
+                let _ = env.throw_new("java/lang/RuntimeException", format!("Failed to get context: {}", e));
+                return std::ptr::null_mut();
+            }
         };
 
-        // Encrypt
-        let result = match encrypt_message(plaintext_str.as_bytes(), &key) {
-            Ok(encrypted) => match vec_to_jbytearray(&mut env, &encrypted) {
-                Ok(arr) => arr.into_raw(),
-                Err(e) => {
-                    let _ = env.throw_new("java/lang/RuntimeException", e);
-                    std::ptr::null_mut()
-                }
-            },
+        // Get KeyManager instance
+        let key_manager = match crate::ffi::keystore::get_key_manager(&mut env, &context) {
+            Ok(km) => km,
             Err(e) => {
-                let _ = env.throw_new("java/lang/RuntimeException", format!("{}", e));
+                let _ = env.throw_new("java/lang/RuntimeException", format!("Failed to get KeyManager: {}", e));
+                return std::ptr::null_mut();
+            }
+        };
+
+        // Get our X25519 encryption private key
+        let our_x25519_private = match crate::ffi::keystore::get_encryption_private_key(&mut env, &key_manager) {
+            Ok(k) => k,
+            Err(e) => {
+                let _ = env.throw_new("java/lang/RuntimeException", format!("Failed to get encryption private key: {}", e));
+                return std::ptr::null_mut();
+            }
+        };
+
+        // Get our X25519 public key (needed for wire format)
+        let our_x25519_public = match crate::ffi::keystore::get_encryption_public_key(&mut env, &key_manager) {
+            Ok(k) => k,
+            Err(e) => {
+                let _ = env.throw_new("java/lang/RuntimeException", format!("Failed to get encryption public key: {}", e));
+                return std::ptr::null_mut();
+            }
+        };
+
+        // Derive shared secret using X25519 ECDH
+        let mut shared_secret = match crate::crypto::key_exchange::derive_shared_secret(
+            &our_x25519_private,
+            &recipient_x25519_bytes,
+        ) {
+            Ok(secret) => secret,
+            Err(e) => {
+                let _ = env.throw_new("java/lang/RuntimeException", format!("ECDH failed: {}", e));
+                return std::ptr::null_mut();
+            }
+        };
+
+        // Encrypt with shared secret
+        let encrypted = match encrypt_message(plaintext_str.as_bytes(), &shared_secret) {
+            Ok(enc) => enc,
+            Err(e) => {
+                shared_secret.zeroize();
+                let _ = env.throw_new("java/lang/RuntimeException", format!("Encryption failed: {}", e));
+                return std::ptr::null_mut();
+            }
+        };
+
+        // Wire format: [Our X25519 Public Key - 32 bytes][Encrypted Message]
+        let mut wire_message = Vec::new();
+        wire_message.extend_from_slice(&our_x25519_public);
+        wire_message.extend_from_slice(&encrypted);
+
+        let result = match vec_to_jbytearray(&mut env, &wire_message) {
+            Ok(arr) => arr.into_raw(),
+            Err(e) => {
+                let _ = env.throw_new("java/lang/RuntimeException", e);
                 std::ptr::null_mut()
             }
         };
 
         // SECURITY: Zeroize sensitive data before dropping
         unsafe {
-            // Zeroize plaintext string
             plaintext_str.as_bytes_mut().zeroize();
         }
-        key.zeroize();
+        shared_secret.zeroize();
 
         result
     }, std::ptr::null_mut())
 }
 
 /// Decrypt a message using XChaCha20-Poly1305 with X25519 ECDH
-/// NOTE: This is a temporary MVP implementation that uses the sender's
-/// public key as the decryption key. In production, this should:
-/// 1. Derive shared secret via ECDH: deriveSharedSecret(ourPrivate, senderPublic)
-/// 2. Use that shared secret for decryption
-/// For MVP: Both sides must use the same key (sender's X25519 pubkey)
+/// Uses proper X25519 ECDH key exchange to derive shared secret
+/// Wire format: [Sender X25519 Public Key - 32 bytes][Encrypted Message]
 #[no_mangle]
 pub extern "C" fn Java_com_securelegion_crypto_RustBridge_decryptMessage(
     mut env: JNIEnv,
     _class: JClass,
-    ciphertext: JByteArray,
-    sender_public_key: JByteArray,
-    private_key: JByteArray,
+    wire_message: JByteArray,
+    _sender_public_key: JByteArray,
+    _private_key: JByteArray,
 ) -> jstring {
     catch_panic!(env, {
-        // Convert Java types
-        let ciphertext_vec = match jbytearray_to_vec(&mut env, ciphertext) {
+        // Convert wire message (sender X25519 pubkey + encrypted data)
+        let wire_bytes = match jbytearray_to_vec(&mut env, wire_message) {
             Ok(v) => v,
             Err(e) => {
                 let _ = env.throw_new("java/lang/IllegalArgumentException", e);
@@ -204,35 +252,65 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_decryptMessage(
             }
         };
 
-        let sender_pub = match jbytearray_to_vec(&mut env, sender_public_key) {
-            Ok(v) => v,
-            Err(e) => {
-                let _ = env.throw_new("java/lang/IllegalArgumentException", e);
-                return std::ptr::null_mut();
-            }
-        };
-
-        let mut _priv_key = match jbytearray_to_vec(&mut env, private_key) {
-            Ok(v) => v,
-            Err(e) => {
-                let _ = env.throw_new("java/lang/IllegalArgumentException", e);
-                return std::ptr::null_mut();
-            }
-        };
-
-        // MVP: Use sender public key as decryption key (matches encryption)
-        // TODO: Derive shared secret: deriveSharedSecret(ourPrivate, senderPublic)
-        let mut key = if sender_pub.len() >= 32 {
-            let mut arr = [0u8; 32];
-            arr.copy_from_slice(&sender_pub[0..32]);
-            arr
-        } else {
-            let _ = env.throw_new("java/lang/IllegalArgumentException", "Invalid public key length");
+        // Wire format: [Sender X25519 Public Key - 32 bytes][Encrypted Message]
+        if wire_bytes.len() < 32 + 24 + 16 {
+            let _ = env.throw_new("java/lang/IllegalArgumentException", "Invalid wire message length (too short)");
             return std::ptr::null_mut();
+        }
+
+        // Extract sender's X25519 public key (first 32 bytes)
+        let mut sender_x25519_public = [0u8; 32];
+        sender_x25519_public.copy_from_slice(&wire_bytes[0..32]);
+
+        // Extract encrypted message (remaining bytes)
+        let encrypted_data = &wire_bytes[32..];
+
+        // Get application context
+        let context = match env.call_static_method(
+            "android/app/ActivityThread",
+            "currentApplication",
+            "()Landroid/app/Application;",
+            &[],
+        ) {
+            Ok(ctx) => ctx.l().unwrap(),
+            Err(e) => {
+                let _ = env.throw_new("java/lang/RuntimeException", format!("Failed to get context: {}", e));
+                return std::ptr::null_mut();
+            }
         };
 
-        // Decrypt
-        let result = match decrypt_message(&ciphertext_vec, &key) {
+        // Get KeyManager instance
+        let key_manager = match crate::ffi::keystore::get_key_manager(&mut env, &context) {
+            Ok(km) => km,
+            Err(e) => {
+                let _ = env.throw_new("java/lang/RuntimeException", format!("Failed to get KeyManager: {}", e));
+                return std::ptr::null_mut();
+            }
+        };
+
+        // Get our X25519 encryption private key
+        let our_x25519_private = match crate::ffi::keystore::get_encryption_private_key(&mut env, &key_manager) {
+            Ok(k) => k,
+            Err(e) => {
+                let _ = env.throw_new("java/lang/RuntimeException", format!("Failed to get encryption private key: {}", e));
+                return std::ptr::null_mut();
+            }
+        };
+
+        // Derive shared secret using X25519 ECDH
+        let mut shared_secret = match crate::crypto::key_exchange::derive_shared_secret(
+            &our_x25519_private,
+            &sender_x25519_public,
+        ) {
+            Ok(secret) => secret,
+            Err(e) => {
+                let _ = env.throw_new("java/lang/RuntimeException", format!("ECDH failed: {}", e));
+                return std::ptr::null_mut();
+            }
+        };
+
+        // Decrypt with shared secret
+        let result = match decrypt_message(encrypted_data, &shared_secret) {
             Ok(mut plaintext) => {
                 let plaintext_str = String::from_utf8_lossy(&plaintext);
                 let result = match string_to_jstring(&mut env, &plaintext_str) {
@@ -247,14 +325,13 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_decryptMessage(
                 result
             }
             Err(e) => {
-                let _ = env.throw_new("java/lang/RuntimeException", format!("{}", e));
+                let _ = env.throw_new("java/lang/RuntimeException", format!("Decryption failed: {}", e));
                 std::ptr::null_mut()
             }
         };
 
         // SECURITY: Zeroize sensitive data before dropping
-        key.zeroize();
-        _priv_key.zeroize();
+        shared_secret.zeroize();
 
         result
     }, std::ptr::null_mut())
@@ -853,6 +930,71 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendPongToNewConnectio
     }, 0)
 }
 
+/// Send encrypted Pong to sender's Pong listener (port 9152)
+/// Used for delayed downloads - sends pong to sender's listening port
+#[no_mangle]
+pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendPongToListener(
+    mut env: JNIEnv,
+    _class: JClass,
+    sender_onion: JString,
+    encrypted_pong_bytes: JByteArray,
+) -> jboolean {
+    catch_panic!(env, {
+        // Convert parameters
+        let onion_address = match jstring_to_string(&mut env, sender_onion) {
+            Ok(s) => s,
+            Err(e) => {
+                log::error!("Failed to convert onion address: {}", e);
+                return 0;
+            }
+        };
+
+        let pong_bytes = match jbytearray_to_vec(&mut env, encrypted_pong_bytes) {
+            Ok(v) => v,
+            Err(e) => {
+                log::error!("Failed to convert Pong bytes: {}", e);
+                return 0;
+            }
+        };
+
+        log::info!("Sending Pong to listener at {}:9152 ({} bytes)", onion_address, pong_bytes.len());
+
+        // Get Tor manager
+        let tor_manager = get_tor_manager();
+
+        // Open connection to sender's Pong listener and send Pong
+        let runtime = match tokio::runtime::Runtime::new() {
+            Ok(rt) => rt,
+            Err(e) => {
+                log::error!("Failed to create runtime: {}", e);
+                return 0;
+            }
+        };
+
+        let result = runtime.block_on(async {
+            const PONG_LISTENER_PORT: u16 = 9152;
+
+            // Connect to sender's Pong listener
+            let tor = tor_manager.lock().unwrap();
+            let mut conn = tor.connect(&onion_address, PONG_LISTENER_PORT).await?;
+
+            // Send Pong bytes
+            tor.send(&mut conn, &pong_bytes).await?;
+
+            log::info!("Pong sent successfully to listener at {}:9152", onion_address);
+            Ok::<(), Box<dyn std::error::Error>>(())
+        });
+
+        match result {
+            Ok(_) => 1, // success
+            Err(e) => {
+                log::error!("Failed to send Pong to listener: {}", e);
+                0 // failure
+            }
+        }
+    }, 0)
+}
+
 #[no_mangle]
 pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendPing(
     mut env: JNIEnv,
@@ -1368,6 +1510,197 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_decryptIncomingTap(
             Err(_) => std::ptr::null_mut(),
         }
     }, std::ptr::null_mut())
+}
+
+/// Start pong listener on port 9152
+#[no_mangle]
+pub extern "C" fn Java_com_securelegion_crypto_RustBridge_startPongListener(
+    mut env: JNIEnv,
+    _class: JClass,
+    port: jint,
+) -> jboolean {
+    catch_panic!(env, {
+        log::info!("Starting pong listener on port {}", port);
+
+        let tor_manager = get_tor_manager();
+
+        // Run async listener start using the global runtime
+        let result = GLOBAL_RUNTIME.block_on(async {
+            let mut manager = tor_manager.lock().unwrap();
+            manager.start_listener(Some(port as u16)).await
+        });
+
+        match result {
+            Ok(mut receiver) => {
+                // Create channel for pong messages (converting from (u64, Vec<u8>) to just Vec<u8>)
+                let (tx, rx) = mpsc::unbounded_channel::<Vec<u8>>();
+
+                // Store receiver globally
+                let _ = GLOBAL_PONG_RECEIVER.set(Arc::new(Mutex::new(rx)));
+
+                // Spawn task to receive from TorManager and forward to pong channel
+                GLOBAL_RUNTIME.spawn(async move {
+                    while let Some((_connection_id, pong_bytes)) = receiver.recv().await {
+                        log::info!("Received pong via listener: {} bytes", pong_bytes.len());
+
+                        // Send to pong channel
+                        if let Err(e) = tx.send(pong_bytes) {
+                            log::error!("Failed to send pong to channel: {}", e);
+                            break;
+                        }
+                    }
+                    log::warn!("Pong listener receiver closed");
+                });
+
+                log::info!("Pong listener started on port {}", port);
+                1 // success
+            }
+            Err(e) => {
+                log::error!("Failed to start pong listener: {}", e);
+                0 // failure
+            }
+        }
+    }, 0)
+}
+
+/// Poll for an incoming pong (non-blocking)
+#[no_mangle]
+pub extern "C" fn Java_com_securelegion_crypto_RustBridge_pollIncomingPong(
+    mut env: JNIEnv,
+    _class: JClass,
+) -> jbyteArray {
+    catch_panic!(env, {
+        if let Some(receiver) = GLOBAL_PONG_RECEIVER.get() {
+            let mut rx = receiver.lock().unwrap();
+
+            // Try to receive without blocking
+            match rx.try_recv() {
+                Ok(pong_bytes) => {
+                    log::info!("Polled pong: {} bytes", pong_bytes.len());
+                    match vec_to_jbytearray(&mut env, &pong_bytes) {
+                        Ok(array) => array.into_raw(),
+                        Err(_) => std::ptr::null_mut(),
+                    }
+                }
+                Err(_) => {
+                    // No pong available
+                    std::ptr::null_mut()
+                }
+            }
+        } else {
+            // Listener not started
+            std::ptr::null_mut()
+        }
+    }, std::ptr::null_mut())
+}
+
+/// Decrypt incoming pong from listener and store in GLOBAL_PONG_SESSIONS
+/// Wire format: [Recipient X25519 Public Key - 32 bytes][Encrypted Pong]
+#[no_mangle]
+pub extern "C" fn Java_com_securelegion_crypto_RustBridge_decryptAndStorePongFromListener(
+    mut env: JNIEnv,
+    _class: JClass,
+    pong_wire: JByteArray,
+) -> jboolean {
+    catch_panic!(env, {
+        let wire_bytes = match jbytearray_to_vec(&mut env, pong_wire) {
+            Ok(v) => v,
+            Err(e) => {
+                log::error!("Failed to convert pong wire bytes: {}", e);
+                return 0;
+            }
+        };
+
+        if wire_bytes.len() < 32 {
+            log::error!("Pong wire too short: {} bytes", wire_bytes.len());
+            return 0;
+        }
+
+        // Extract recipient's X25519 public key (first 32 bytes)
+        let recipient_x25519_pubkey: [u8; 32] = wire_bytes[0..32].try_into().unwrap();
+        let encrypted_pong = &wire_bytes[32..];
+
+        log::info!("Decrypting pong from recipient X25519: {}", hex::encode(&recipient_x25519_pubkey));
+
+        // Get our X25519 private key from KeyManager
+        let context = match env.call_static_method(
+            "android/app/ActivityThread",
+            "currentApplication",
+            "()Landroid/app/Application;",
+            &[],
+        ) {
+            Ok(ctx) => ctx.l().unwrap(),
+            Err(e) => {
+                log::error!("Failed to get context: {}", e);
+                return 0;
+            }
+        };
+
+        let key_manager = match crate::ffi::keystore::get_key_manager(&mut env, &context) {
+            Ok(km) => km,
+            Err(e) => {
+                log::error!("Failed to get KeyManager: {}", e);
+                return 0;
+            }
+        };
+
+        let our_x25519_private = match crate::ffi::keystore::get_encryption_private_key(&mut env, &key_manager) {
+            Ok(k) => k,
+            Err(e) => {
+                log::error!("Failed to get encryption private key: {}", e);
+                return 0;
+            }
+        };
+
+        // Derive shared secret
+        let shared_secret = match crate::crypto::key_exchange::derive_shared_secret(
+            &our_x25519_private,
+            &recipient_x25519_pubkey.to_vec(),
+        ) {
+            Ok(secret) => secret,
+            Err(e) => {
+                log::error!("ECDH failed: {}", e);
+                return 0;
+            }
+        };
+
+        // Decrypt the Pong token
+        let decrypted_pong = match crate::crypto::encryption::decrypt_message(encrypted_pong, &shared_secret) {
+            Ok(plaintext) => plaintext,
+            Err(e) => {
+                log::error!("Pong decryption failed: {}", e);
+                return 0;
+            }
+        };
+
+        // Deserialize Pong token
+        let pong_token: crate::protocol::message::PongToken = match bincode::deserialize(&decrypted_pong) {
+            Ok(token) => token,
+            Err(e) => {
+                log::error!("Failed to deserialize Pong token: {}", e);
+                return 0;
+            }
+        };
+
+        // Use ping_nonce as ping_id (hex-encoded)
+        let ping_id = hex::encode(&pong_token.ping_nonce);
+        log::info!("Received Pong for ping_id: {}", ping_id);
+
+        // Convert message::PongToken to pingpong::PongToken
+        let pingpong_token = crate::network::pingpong::PongToken {
+            ping_nonce: pong_token.ping_nonce,
+            pong_nonce: pong_token.pong_nonce,
+            timestamp: pong_token.timestamp,
+            authenticated: pong_token.authenticated,
+            signature: pong_token.signature,
+        };
+
+        // Store in GLOBAL_PONG_SESSIONS
+        crate::network::pingpong::store_pong_session(&ping_id, pingpong_token);
+        log::info!("Stored Pong in GLOBAL_PONG_SESSIONS");
+
+        1 // success
+    }, 0)
 }
 
 #[no_mangle]
