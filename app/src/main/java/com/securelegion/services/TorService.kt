@@ -48,28 +48,41 @@ class TorService : Service() {
     private lateinit var torManager: TorManager
     private var wakeLock: PowerManager.WakeLock? = null
     private var isServiceRunning = false
+    private var isPingPollerRunning = false
+    private var isTapPollerRunning = false
 
     // Network monitoring
     private var connectivityManager: ConnectivityManager? = null
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
     private var hasNetworkConnection = false
 
+    // AlarmManager for service restart
+    private var alarmManager: AlarmManager? = null
+
     // Reconnection state
     private var isReconnecting = false
     private var reconnectAttempts = 0
     private var lastReconnectTime = 0L
     private val reconnectHandler = Handler(Looper.getMainLooper())
-    private val healthCheckHandler = Handler(Looper.getMainLooper())
+
+    // SOCKS failure tracking
+    private var socksFailureCount = 0
+    private var lastSocksFailureTime = 0L
+    private val SOCKS_FAILURE_THRESHOLD = 3  // Restart Tor after 3 consecutive failures
+    private val SOCKS_FAILURE_WINDOW = 60000L  // 60 second window
 
     // Reconnection constants
     private val INITIAL_RETRY_DELAY = 5000L        // 5 seconds
     private val MAX_RETRY_DELAY = 60000L           // 60 seconds
-    private val HEALTH_CHECK_INTERVAL = 30000L     // 30 seconds
     private val MIN_RETRY_INTERVAL = 3000L         // 3 seconds minimum between retries
+
+    // AlarmManager constants
+    private val RESTART_CHECK_INTERVAL = 15 * 60 * 1000L  // 15 minutes
 
     companion object {
         private const val TAG = "TorService"
         private const val NOTIFICATION_ID = 1001
+        private const val RESTART_REQUEST_CODE = 1001
         private const val CHANNEL_ID = "tor_service_channel"
         private const val CHANNEL_NAME = "Tor Hidden Service"
         private const val AUTH_CHANNEL_ID = "message_auth_channel"
@@ -117,6 +130,17 @@ class TorService : Service() {
             }
             context.startService(intent)
         }
+
+        /**
+         * Report a SOCKS failure from MessageService or other components
+         * TorService will track failures and automatically restart Tor if needed
+         */
+        fun reportSocksFailure(context: Context) {
+            val intent = Intent(context, TorService::class.java).apply {
+                action = "com.securelegion.action.REPORT_SOCKS_FAILURE"
+            }
+            context.startService(intent)
+        }
     }
 
     override fun onCreate() {
@@ -131,9 +155,6 @@ class TorService : Service() {
 
         // Setup network monitoring
         setupNetworkMonitoring()
-
-        // Start health check monitoring
-        startHealthCheckMonitoring()
 
         // Acquire partial wake lock to keep CPU running
         val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
@@ -153,11 +174,33 @@ class TorService : Service() {
             ACTION_STOP_TOR -> stopTorService()
             ACTION_ACCEPT_MESSAGE -> handleAcceptMessage(intent)
             ACTION_DECLINE_MESSAGE -> handleDeclineMessage(intent)
+            "com.securelegion.action.REPORT_SOCKS_FAILURE" -> handleSocksFailure()
             else -> startTorService() // Default to starting
         }
 
         // Service should restart if killed by system
         return START_STICKY
+    }
+
+    /**
+     * Android 15+: Handle foreground service timeout gracefully
+     * Called when the service exceeds its allotted time limit
+     */
+    override fun onTimeout(startId: Int) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM) {
+            Log.w(TAG, "Foreground service timeout reached - stopping gracefully")
+
+            // Show notification to user
+            updateNotification("Service timeout - Please restart")
+
+            // Clean up resources
+            isServiceRunning = false
+            running = false
+            torConnected = false
+
+            // Stop the service gracefully
+            stopSelf(startId)
+        }
     }
 
     private fun handleAcceptMessage(intent: Intent) {
@@ -235,14 +278,15 @@ class TorService : Service() {
         Log.d(TAG, "Notification created")
 
         // Android 14+ requires specifying foreground service type
+        // Using SPECIAL_USE for Tor connectivity (24/7 operation required for message protocol)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-            Log.d(TAG, "Using Android 14+ startForeground with service type")
+            Log.d(TAG, "Using Android 14+ startForeground with SPECIAL_USE service type")
             startForeground(
                 NOTIFICATION_ID,
                 notification,
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
             )
-            Log.i(TAG, "startForeground called successfully (Android 14+)")
+            Log.i(TAG, "startForeground called successfully (Android 14+, SPECIAL_USE)")
         } else {
             Log.d(TAG, "Using legacy startForeground")
             startForeground(NOTIFICATION_ID, notification)
@@ -254,6 +298,9 @@ class TorService : Service() {
 
         isServiceRunning = true
         running = true
+
+        // Schedule AlarmManager backup for service restart
+        scheduleServiceRestart()
 
         // Initialize Tor in BACKGROUND THREAD to avoid ANR
         Thread {
@@ -269,8 +316,19 @@ class TorService : Service() {
                             reconnectAttempts = 0
                             torConnected = true
 
+                            // Ensure SOCKS proxy is running for outgoing connections
+                            ensureSocksProxyRunning()
+
+                            // Test SOCKS connectivity immediately after login
+                            updateNotification("Testing connection...")
+                            Thread.sleep(2000) // Give SOCKS proxy time to fully initialize
+                            testSocksConnectivityAtStartup()
+
                             // Start listening for incoming Ping tokens
                             startIncomingListener()
+
+                            // PHASE 6: Send taps to all contacts to notify them we're online
+                            sendTapsToAllContacts()
 
                             updateNotification("Connected to Tor")
                         } else {
@@ -295,8 +353,14 @@ class TorService : Service() {
                         Log.i(TAG, "Tor already connected - skipping reconnect")
                         updateNotification("Connected to Tor")
 
+                        // Ensure SOCKS proxy is running for outgoing connections
+                        ensureSocksProxyRunning()
+
                         // Ensure listener is started (in case service was restarted)
                         startIncomingListener()
+
+                        // PHASE 6: Send taps to all contacts to notify them we're online
+                        sendTapsToAllContacts()
                     }
                 }
             } catch (e: Exception) {
@@ -310,22 +374,57 @@ class TorService : Service() {
 
     private fun startIncomingListener() {
         try {
-            Log.d(TAG, "Starting hidden service listener on port 9150...")
-            val success = RustBridge.startHiddenServiceListener(9150)
+            // First, stop any existing listener to release the port
+            Log.d(TAG, "Stopping any existing listener...")
+            RustBridge.stopHiddenServiceListener()
+
+            // Wait for port to be fully released
+            Thread.sleep(500)
+
+            Log.d(TAG, "Starting hidden service listener on port 8080...")
+            val success = RustBridge.startHiddenServiceListener(8080)
             if (success) {
                 Log.i(TAG, "Hidden service listener started successfully")
-
-                // Start polling for incoming Pings
-                startPingPoller()
             } else {
-                Log.e(TAG, "Failed to start hidden service listener")
+                Log.w(TAG, "Listener already running (started by TorManager)")
             }
+
+            // Start polling for incoming Pings (whether we started the listener or it's already running)
+            startPingPoller()
+
+            // PHASE 7: Start tap listener on port 9151
+            Log.d(TAG, "Starting tap listener on port 9151...")
+            val tapSuccess = RustBridge.startTapListener(9151)
+            if (tapSuccess) {
+                Log.i(TAG, "Tap listener started successfully")
+            } else {
+                Log.w(TAG, "Tap listener already running")
+            }
+
+            // Start polling for incoming taps
+            startTapPoller()
         } catch (e: Exception) {
             Log.e(TAG, "Error starting listener", e)
+            // Try to start Ping poller anyway in case listener is already running
+            startPingPoller()
+            // Try to start tap poller
+            try {
+                startTapPoller()
+            } catch (e2: Exception) {
+                Log.e(TAG, "Error starting tap poller", e2)
+            }
         }
     }
 
     private fun startPingPoller() {
+        // Check if already running
+        if (isPingPollerRunning) {
+            Log.d(TAG, "Ping poller already running, skipping")
+            return
+        }
+
+        isPingPollerRunning = true
+
         // Poll for incoming Pings in background thread
         Thread {
             Log.d(TAG, "Ping poller thread started")
@@ -350,6 +449,128 @@ class TorService : Service() {
         }.start()
     }
 
+    /**
+     * PHASE 7: Start tap poller with bidirectional handling
+     */
+    private fun startTapPoller() {
+        if (isTapPollerRunning) {
+            Log.d(TAG, "Tap poller already running, skipping")
+            return
+        }
+
+        isTapPollerRunning = true
+
+        // Poll for incoming taps in background thread
+        Thread {
+            Log.d(TAG, "Tap poller thread started")
+            while (isServiceRunning) {
+                try {
+                    val tapBytes = RustBridge.pollIncomingTap()
+                    if (tapBytes != null) {
+                        Log.i(TAG, "Received incoming tap: ${tapBytes.size} bytes")
+                        handleIncomingTap(tapBytes)
+                    }
+
+                    // Poll every 2 seconds (taps are less frequent than Pings)
+                    Thread.sleep(2000)
+                } catch (e: InterruptedException) {
+                    Log.d(TAG, "Tap poller interrupted")
+                    break
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error polling for taps", e)
+                }
+            }
+            Log.d(TAG, "Tap poller thread stopped")
+        }.start()
+    }
+
+    /**
+     * PHASE 7: Handle incoming tap with bidirectional retry logic
+     * When we receive a tap from Contact X, we check:
+     * 1. Do we have a pending Ping FROM them? → Send Pong
+     * 2. Do we have pending messages TO them? → Retry Ping
+     */
+    private fun handleIncomingTap(tapWireBytes: ByteArray) {
+        try {
+            Log.i(TAG, "Handling incoming tap (${tapWireBytes.size} bytes)")
+
+            // Decrypt tap to get sender's X25519 public key
+            val senderX25519PubKey = RustBridge.decryptIncomingTap(tapWireBytes)
+            if (senderX25519PubKey == null) {
+                Log.e(TAG, "Failed to decrypt tap")
+                return
+            }
+
+            Log.i(TAG, "Tap decrypted, sender X25519: ${android.util.Base64.encodeToString(senderX25519PubKey, android.util.Base64.NO_WRAP)}")
+
+            // Look up contact by X25519 public key
+            val keyManager = com.securelegion.crypto.KeyManager.getInstance(this)
+            val dbPassphrase = keyManager.getDatabasePassphrase()
+            val database = com.securelegion.database.SecureLegionDatabase.getInstance(this, dbPassphrase)
+
+            val senderX25519Base64 = android.util.Base64.encodeToString(senderX25519PubKey, android.util.Base64.NO_WRAP)
+            val contact = database.contactDao().getContactByX25519PublicKey(senderX25519Base64)
+
+            if (contact == null) {
+                Log.w(TAG, "Tap from unknown contact (not in database)")
+                return
+            }
+
+            Log.i(TAG, "Tap from contact: ${contact.displayName} (ID: ${contact.id})")
+
+            // ==== BIDIRECTIONAL HANDLING ====
+
+            // CHECK 1: Do we have a pending Ping FROM them?
+            val prefs = getSharedPreferences("pending_pings", MODE_PRIVATE)
+            val hasPendingPing = prefs.contains("ping_${contact.id}_id")
+
+            if (hasPendingPing) {
+                Log.i(TAG, "Found pending Ping from ${contact.displayName} - will download on user request")
+                // Note: We DON'T auto-download - user manually clicks download button
+                // This is by design for privacy/security
+            }
+
+            // CHECK 2: Do we have pending messages TO them?
+            // Wrap in coroutine scope since we're calling suspend functions
+            CoroutineScope(Dispatchers.IO).launch {
+                try {
+                    val pendingMessages = database.messageDao().getMessagesAwaitingPong()
+                        .filter { it.contactId == contact.id }
+
+                    if (pendingMessages.isNotEmpty()) {
+                        Log.i(TAG, "Found ${pendingMessages.size} pending message(s) to ${contact.displayName} - triggering retry")
+
+                        // Trigger retry for each pending message
+                        val messageService = com.securelegion.services.MessageService(this@TorService)
+                        for (message in pendingMessages) {
+                            try {
+                                val result = messageService.sendPingForMessage(message)
+                                if (result.isSuccess) {
+                                    // Update retry counter
+                                    val updatedMessage = message.copy(
+                                        retryCount = message.retryCount + 1,
+                                        lastRetryTimestamp = System.currentTimeMillis()
+                                    )
+                                    database.messageDao().updateMessage(updatedMessage)
+                                    Log.i(TAG, "Retried Ping for message ${message.messageId} after tap")
+                                }
+                            } catch (e: Exception) {
+                                Log.e(TAG, "Failed to retry Ping for message ${message.messageId}", e)
+                            }
+                        }
+                    } else {
+                        Log.d(TAG, "No pending messages to ${contact.displayName}")
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error checking pending messages", e)
+                }
+            }
+
+        } catch (e: Exception) {
+            Log.e(TAG, "Error handling tap", e)
+        }
+    }
+
     private fun handleIncomingPing(encodedData: ByteArray) {
         try {
             // Wire format: [connection_id (8 bytes LE)][encrypted_ping_wire]
@@ -368,14 +589,55 @@ class TorService : Service() {
 
             Log.i(TAG, "Received Ping on connection $connectionId: ${encryptedPingWire.size} bytes")
 
-            // Decrypt and store the Ping, get ping_id
-            val pingId = RustBridge.decryptIncomingPing(encryptedPingWire)
+            // Try to decrypt as Ping first (may throw exception if it's actually a Pong)
+            var pingId: String? = null
+            try {
+                pingId = RustBridge.decryptIncomingPing(encryptedPingWire)
+            } catch (e: Exception) {
+                Log.w(TAG, "⚠️  decryptIncomingPing threw exception: ${e.message}")
+            }
+
             if (pingId == null) {
-                Log.e(TAG, "Failed to decrypt Ping")
+                Log.w(TAG, "⚠️  Failed to decrypt as Ping - trying as Pong...")
+
+                // This might be a Pong response! Try to decrypt as Pong
+                try {
+                    val pongPingId = RustBridge.decryptIncomingPong(encryptedPingWire)
+
+                    if (pongPingId != null) {
+                        Log.i(TAG, "✓ Successfully decrypted as Pong for Ping ID: $pongPingId")
+                        Log.i(TAG, "Pong stored - immediately sending message payload...")
+
+                        // IMMEDIATELY trigger sending the message payload (don't wait for retry worker!)
+                        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+                            try {
+                                val messageService = MessageService(this@TorService)
+                                val result = messageService.pollForPongsAndSendMessages()
+
+                                if (result.isSuccess) {
+                                    val sentCount = result.getOrNull() ?: 0
+                                    Log.i(TAG, "✓ Sent $sentCount message payload(s) immediately after Pong")
+                                } else {
+                                    Log.e(TAG, "✗ Failed to send message payload: ${result.exceptionOrNull()?.message}")
+                                }
+                            } catch (e: Exception) {
+                                Log.e(TAG, "Error sending message payload after Pong", e)
+                            }
+                        }
+                        return
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "⚠️  decryptIncomingPong also threw exception: ${e.message}")
+                }
+
+                // Neither Ping nor Pong - must be a message blob!
+                Log.i(TAG, "→ Not a Ping or Pong - treating as MESSAGE BLOB")
+                handleIncomingMessageBlob(encryptedPingWire)
                 return
             }
 
-            Log.i(TAG, "Ping decrypted successfully. Ping ID: $pingId")
+            // Successfully decrypted as Ping
+            Log.i(TAG, "✓ Decrypted as Ping. Ping ID: $pingId")
 
             // Get sender information from the Ping token
             val senderPublicKey = RustBridge.getPingSenderPublicKey(pingId)
@@ -389,14 +651,129 @@ class TorService : Service() {
 
             Log.i(TAG, "Incoming message request from: $senderName")
 
-            // Store pending Ping for user to download later
-            storePendingPing(pingId, connectionId, senderPublicKey, senderName)
+            // Store pending Ping for user to download later (including encrypted bytes for restore)
+            val contactId = storePendingPing(pingId, connectionId, senderPublicKey, senderName, encryptedPingWire)
 
             // Show simple notification - no preview or accept/decline
             showNewMessageNotification()
 
+            // Broadcast to update MainActivity and ChatActivity if open (explicit broadcast)
+            val intent = Intent("com.securelegion.NEW_PING")
+            intent.setPackage(packageName) // Make it explicit
+            if (contactId != null) {
+                intent.putExtra("CONTACT_ID", contactId)
+            }
+            sendBroadcast(intent)
+            Log.d(TAG, "Sent explicit NEW_PING broadcast for contactId=$contactId")
+
         } catch (e: Exception) {
             Log.e(TAG, "Error handling incoming Ping", e)
+        }
+    }
+
+    /**
+     * Handle incoming message blob
+     * Wire format: [Sender X25519 Public Key - 32 bytes][Encrypted Message]
+     */
+    private fun handleIncomingMessageBlob(encryptedMessageWire: ByteArray) {
+        try {
+            Log.i(TAG, "╔════════════════════════════════════════")
+            Log.i(TAG, "║ INCOMING MESSAGE BLOB (${encryptedMessageWire.size} bytes)")
+            Log.i(TAG, "╚════════════════════════════════════════")
+
+            // Wire format: [Sender X25519 Public Key - 32 bytes][Encrypted Message]
+            if (encryptedMessageWire.size < 32) {
+                Log.e(TAG, "Message blob too short - missing X25519 public key")
+                return
+            }
+
+            // Extract sender's X25519 public key (first 32 bytes)
+            val senderX25519PublicKey = encryptedMessageWire.copyOfRange(0, 32)
+            val encryptedMessage = encryptedMessageWire.copyOfRange(32, encryptedMessageWire.size)
+
+            Log.d(TAG, "Sender X25519 pubkey: ${android.util.Base64.encodeToString(senderX25519PublicKey, android.util.Base64.NO_WRAP).take(16)}...")
+            Log.d(TAG, "Encrypted message: ${encryptedMessage.size} bytes")
+
+            // Look up contact by X25519 public key
+            val keyManager = com.securelegion.crypto.KeyManager.getInstance(this)
+            val dbPassphrase = keyManager.getDatabasePassphrase()
+            val database = com.securelegion.database.SecureLegionDatabase.getInstance(this, dbPassphrase)
+
+            val senderX25519Base64 = android.util.Base64.encodeToString(senderX25519PublicKey, android.util.Base64.NO_WRAP)
+            val contact = database.contactDao().getContactByX25519PublicKey(senderX25519Base64)
+
+            if (contact == null) {
+                Log.e(TAG, "✗ Unknown sender - no contact found with X25519 pubkey ${senderX25519Base64.take(16)}...")
+                return
+            }
+
+            Log.i(TAG, "✓ Message from: ${contact.displayName}")
+
+            // Decrypt message using OUR OWN public key (message was encrypted with our public key)
+            // MVP encryption: sender encrypts with recipient's public key, recipient decrypts with their own public key
+            val ourEd25519PublicKey = keyManager.getSigningPublicKey()
+            val ourPrivateKey = keyManager.getSigningKeyBytes()
+
+            val plaintext = RustBridge.decryptMessage(encryptedMessage, ourEd25519PublicKey, ourPrivateKey)
+            if (plaintext == null) {
+                Log.e(TAG, "✗ Failed to decrypt message from ${contact.displayName}")
+                return
+            }
+
+            Log.i(TAG, "✓ Decrypted message: ${plaintext.take(50)}...")
+
+            // Save message directly to database (already decrypted)
+            kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+                try {
+                    // Generate message ID from content hash
+                    val messageId = generateMessageId(plaintext, System.currentTimeMillis())
+
+                    // Get database
+                    val dbPassphrase = keyManager.getDatabasePassphrase()
+                    val database = com.securelegion.database.SecureLegionDatabase.getInstance(this@TorService, dbPassphrase)
+
+                    // Check for duplicate
+                    if (database.messageDao().messageExists(messageId)) {
+                        Log.w(TAG, "Duplicate message ignored: $messageId")
+                        return@launch
+                    }
+
+                    // Create message entity (store plaintext in encryptedContent field for now)
+                    val message = com.securelegion.database.entities.Message(
+                        contactId = contact.id,
+                        messageId = messageId,
+                        encryptedContent = plaintext, // Store plaintext for now
+                        isSentByMe = false,
+                        timestamp = System.currentTimeMillis(),
+                        status = com.securelegion.database.entities.Message.STATUS_DELIVERED,
+                        signatureBase64 = "", // TODO: Verify signature
+                        nonceBase64 = "" // Not needed for already-decrypted messages
+                    )
+
+                    // Save to database
+                    val savedMessageId = database.messageDao().insertMessage(message)
+                    Log.i(TAG, "✓ Message saved to database: $savedMessageId")
+
+                    // Broadcast to ChatActivity so it can refresh (explicit broadcast)
+                    val intentChat = Intent("com.securelegion.MESSAGE_RECEIVED")
+                    intentChat.setPackage(packageName) // Make it explicit
+                    intentChat.putExtra("CONTACT_ID", contact.id)
+                    sendBroadcast(intentChat)
+                    Log.i(TAG, "✓ Broadcast explicit MESSAGE_RECEIVED for contact ${contact.id}")
+
+                    // Broadcast to MainActivity to refresh chat list preview (explicit broadcast)
+                    val intentMain = Intent("com.securelegion.NEW_PING")
+                    intentMain.setPackage(packageName) // Make it explicit
+                    intentMain.putExtra("CONTACT_ID", contact.id)
+                    sendBroadcast(intentMain)
+                    Log.i(TAG, "✓ Broadcast explicit NEW_PING to refresh MainActivity chat list")
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error saving message", e)
+                }
+            }
+
+        } catch (e: Exception) {
+            Log.e(TAG, "Error handling incoming message blob", e)
         }
     }
 
@@ -422,7 +799,7 @@ class TorService : Service() {
     /**
      * Store pending Ping for user to manually download later
      */
-    private fun storePendingPing(pingId: String, connectionId: Long, senderPublicKey: ByteArray?, senderName: String) {
+    private fun storePendingPing(pingId: String, connectionId: Long, senderPublicKey: ByteArray?, senderName: String, encryptedPingWire: ByteArray): Long? {
         try {
             val keyManager = com.securelegion.crypto.KeyManager.getInstance(this)
             val dbPassphrase = keyManager.getDatabasePassphrase()
@@ -434,15 +811,20 @@ class TorService : Service() {
                 val contact = database.contactDao().getContactByPublicKey(publicKeyBase64)
 
                 if (contact != null) {
-                    // Store pending Ping info in SharedPreferences (temporary storage)
+                    // Store pending Ping info in SharedPreferences (including encrypted bytes for restore)
                     val prefs = getSharedPreferences("pending_pings", Context.MODE_PRIVATE)
+                    val encryptedPingBase64 = android.util.Base64.encodeToString(encryptedPingWire, android.util.Base64.NO_WRAP)
                     prefs.edit().apply {
                         putString("ping_${contact.id}_id", pingId)
                         putLong("ping_${contact.id}_connection", connectionId)
                         putString("ping_${contact.id}_name", senderName)
+                        putLong("ping_${contact.id}_timestamp", System.currentTimeMillis())
+                        putString("ping_${contact.id}_data", encryptedPingBase64)  // Save encrypted Ping for restore
+                        putString("ping_${contact.id}_onion", contact.torOnionAddress)  // Save sender's .onion address for new connection
                         apply()
                     }
                     Log.i(TAG, "Stored pending Ping for contact ${contact.id}: $senderName")
+                    return contact.id  // Return contact ID for broadcast
                 } else {
                     Log.w(TAG, "Cannot store Ping - sender not in contacts: $senderName")
                 }
@@ -450,15 +832,75 @@ class TorService : Service() {
         } catch (e: Exception) {
             Log.e(TAG, "Failed to store pending Ping", e)
         }
+        return null  // Failed to find/store contact
+    }
+
+    /**
+     * PHASE 6: Send taps to all contacts when Tor connects
+     * This notifies contacts that we're online and they should retry any pending operations
+     */
+    private fun sendTapsToAllContacts() {
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                Log.i(TAG, "Sending taps to all contacts...")
+
+                val keyManager = com.securelegion.crypto.KeyManager.getInstance(this@TorService)
+                val dbPassphrase = keyManager.getDatabasePassphrase()
+                val database = com.securelegion.database.SecureLegionDatabase.getInstance(this@TorService, dbPassphrase)
+
+                // Get all contacts
+                val contacts = database.contactDao().getAllContacts()
+
+                if (contacts.isEmpty()) {
+                    Log.d(TAG, "No contacts to send taps to")
+                    return@launch
+                }
+
+                Log.i(TAG, "Sending taps to ${contacts.size} contact(s)")
+
+                var successCount = 0
+                var failureCount = 0
+
+                for (contact in contacts) {
+                    try {
+                        // Get contact keys
+                        val recipientEd25519PubKey = android.util.Base64.decode(contact.publicKeyBase64, android.util.Base64.NO_WRAP)
+                        val recipientX25519PubKey = android.util.Base64.decode(contact.x25519PublicKeyBase64, android.util.Base64.NO_WRAP)
+
+                        // Send tap
+                        val success = RustBridge.sendTap(
+                            recipientEd25519PubKey,
+                            recipientX25519PubKey,
+                            contact.torOnionAddress
+                        )
+
+                        if (success) {
+                            Log.d(TAG, "Sent tap to ${contact.displayName}")
+                            successCount++
+                        } else {
+                            Log.w(TAG, "Failed to send tap to ${contact.displayName}")
+                            failureCount++
+                        }
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Error sending tap to ${contact.displayName}", e)
+                        failureCount++
+                    }
+                }
+
+                Log.i(TAG, "Tap broadcast complete: $successCount success, $failureCount failed")
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to send taps to contacts", e)
+            }
+        }
     }
 
     /**
      * Show simple notification that a message is waiting
      */
     private fun showNewMessageNotification() {
-        // Create intent to open app
+        // Create intent to open app (just bring to foreground, don't clear stack)
         val openAppIntent = Intent(this, MainActivity::class.java).apply {
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            flags = Intent.FLAG_ACTIVITY_SINGLE_TOP
         }
         val openAppPendingIntent = PendingIntent.getActivity(
             this,
@@ -493,6 +935,106 @@ class TorService : Service() {
     /**
      * Receive encrypted message after sending Pong
      */
+    /**
+     * Process a received encrypted message (decrypt, save to database, notify)
+     */
+    private fun processReceivedMessage(encryptedMessage: ByteArray, pingId: String, senderName: String) {
+        try {
+            Log.i(TAG, "Processing received encrypted message: ${encryptedMessage.size} bytes")
+
+            // Get sender's public key from the Ping token
+            val senderPublicKey = RustBridge.getPingSenderPublicKey(pingId)
+            if (senderPublicKey == null) {
+                Log.e(TAG, "Failed to get sender public key from Ping")
+                android.os.Handler(android.os.Looper.getMainLooper()).post {
+                    Toast.makeText(this@TorService, "Failed to verify sender", Toast.LENGTH_SHORT).show()
+                }
+                return
+            }
+
+            // Look up sender in contacts database
+            val keyManager = com.securelegion.crypto.KeyManager.getInstance(this)
+            val dbPassphrase = keyManager.getDatabasePassphrase()
+            val database = com.securelegion.database.SecureLegionDatabase.getInstance(this, dbPassphrase)
+
+            // Convert public key to Base64
+            val publicKeyBase64 = android.util.Base64.encodeToString(senderPublicKey, android.util.Base64.NO_WRAP)
+
+            // Get contact by public key
+            val contact = database.contactDao().getContactByPublicKey(publicKeyBase64)
+
+            if (contact == null) {
+                Log.e(TAG, "Sender not in contacts - cannot decrypt message")
+                android.os.Handler(android.os.Looper.getMainLooper()).post {
+                    Toast.makeText(this@TorService, "Message from unknown contact", Toast.LENGTH_SHORT).show()
+                }
+                return
+            }
+
+            Log.i(TAG, "Message from contact: ${contact.displayName} (ID: ${contact.id})")
+
+            // Get our Ed25519 private key for decryption
+            val ourPrivateKey = keyManager.getSigningKeyBytes()
+
+            // Decrypt message using sender's Ed25519 public key and our private key
+            val senderEd25519PublicKey = android.util.Base64.decode(contact.publicKeyBase64, android.util.Base64.NO_WRAP)
+            val messageText = RustBridge.decryptMessage(encryptedMessage, senderEd25519PublicKey, ourPrivateKey)
+
+            if (messageText == null || messageText.isEmpty()) {
+                Log.e(TAG, "Failed to decrypt message")
+                android.os.Handler(android.os.Looper.getMainLooper()).post {
+                    Toast.makeText(this@TorService, "Failed to decrypt message", Toast.LENGTH_SHORT).show()
+                }
+                return
+            }
+
+            Log.i(TAG, "Message decrypted successfully: ${messageText.take(50)}...")
+
+            // Save message to database
+            kotlinx.coroutines.runBlocking {
+                val message = com.securelegion.database.entities.Message(
+                    contactId = contact.id,
+                    messageId = java.util.UUID.randomUUID().toString(),
+                    encryptedContent = messageText,
+                    isSentByMe = false,
+                    timestamp = System.currentTimeMillis(),
+                    status = com.securelegion.database.entities.Message.STATUS_DELIVERED,
+                    signatureBase64 = "",
+                    nonceBase64 = "",
+                    isRead = false,
+                    requiresReadReceipt = true,
+                    selfDestructAt = null
+                )
+
+                val insertedMessage = database.messageDao().insertMessage(message)
+                Log.i(TAG, "Message saved to database with ID: $insertedMessage")
+
+                // Broadcast to update ChatActivity if it's open for this contact
+                val messageReceivedIntent = Intent("com.securelegion.MESSAGE_RECEIVED").apply {
+                    putExtra("CONTACT_ID", contact.id)
+                }
+                sendBroadcast(messageReceivedIntent)
+                Log.d(TAG, "Broadcast sent: MESSAGE_RECEIVED for contact ${contact.id}")
+
+                // Update app badge count
+                updateAppBadgeCount(database)
+
+                // Show notification on main thread
+                android.os.Handler(android.os.Looper.getMainLooper()).post {
+                    showMessageNotification(contact.displayName, messageText, contact.id)
+                }
+
+                // Send read receipt if required
+                if (message.requiresReadReceipt) {
+                    sendReadReceipt(contact.id, insertedMessage)
+                }
+            }
+
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to process received message", e)
+        }
+    }
+
     private fun receiveIncomingMessage(connectionId: Long, pingId: String, senderName: String) {
         Thread {
             try {
@@ -503,88 +1045,8 @@ class TorService : Service() {
 
                 if (encryptedMessage != null && encryptedMessage.isNotEmpty()) {
                     Log.i(TAG, "Received encrypted message: ${encryptedMessage.size} bytes")
-
-                    // Get sender's public key from the Ping token
-                    val senderPublicKey = RustBridge.getPingSenderPublicKey(pingId)
-                    if (senderPublicKey == null) {
-                        Log.e(TAG, "Failed to get sender public key from Ping")
-                        android.os.Handler(android.os.Looper.getMainLooper()).post {
-                            Toast.makeText(this@TorService, "Failed to verify sender", Toast.LENGTH_SHORT).show()
-                        }
-                        return@Thread
-                    }
-
-                    // Look up sender in contacts database
-                    val keyManager = com.securelegion.crypto.KeyManager.getInstance(this)
-                    val dbPassphrase = keyManager.getDatabasePassphrase()
-                    val database = com.securelegion.database.SecureLegionDatabase.getInstance(this, dbPassphrase)
-
-                    // Convert public key to Base64
-                    val publicKeyBase64 = android.util.Base64.encodeToString(senderPublicKey, android.util.Base64.NO_WRAP)
-
-                    // Get contact by public key
-                    val contact = database.contactDao().getContactByPublicKey(publicKeyBase64)
-
-                    if (contact == null) {
-                        Log.e(TAG, "Sender not in contacts - cannot decrypt message")
-                        android.os.Handler(android.os.Looper.getMainLooper()).post {
-                            Toast.makeText(this@TorService, "Message from unknown contact", Toast.LENGTH_SHORT).show()
-                        }
-                        return@Thread
-                    }
-
-                    Log.i(TAG, "Message from contact: ${contact.displayName} (ID: ${contact.id})")
-
-                    // Get our Ed25519 private key for decryption
-                    val ourPrivateKey = keyManager.getSigningKeyBytes()
-
-                    // Decrypt message using sender's Ed25519 public key and our private key
-                    val senderEd25519PublicKey = android.util.Base64.decode(contact.publicKeyBase64, android.util.Base64.NO_WRAP)
-                    val messageText = RustBridge.decryptMessage(encryptedMessage, senderEd25519PublicKey, ourPrivateKey)
-
-                    if (messageText == null || messageText.isEmpty()) {
-                        Log.e(TAG, "Failed to decrypt message")
-                        android.os.Handler(android.os.Looper.getMainLooper()).post {
-                            Toast.makeText(this@TorService, "Failed to decrypt message", Toast.LENGTH_SHORT).show()
-                        }
-                        return@Thread
-                    }
-
-                    Log.i(TAG, "Message decrypted successfully: ${messageText.take(50)}...")
-
-                    // Save message to database
-                    kotlinx.coroutines.runBlocking {
-                        val message = com.securelegion.database.entities.Message(
-                            contactId = contact.id,
-                            messageId = java.util.UUID.randomUUID().toString(),
-                            encryptedContent = messageText,
-                            isSentByMe = false,
-                            timestamp = System.currentTimeMillis(),
-                            status = com.securelegion.database.entities.Message.STATUS_DELIVERED,
-                            signatureBase64 = "",
-                            nonceBase64 = "",
-                            isRead = false,
-                            requiresReadReceipt = true,
-                            selfDestructAt = null
-                        )
-
-                        val insertedMessage = database.messageDao().insertMessage(message)
-                        Log.i(TAG, "Message saved to database with ID: $insertedMessage")
-
-                        // Update app badge count
-                        updateAppBadgeCount(database)
-
-                        // Show notification on main thread
-                        android.os.Handler(android.os.Looper.getMainLooper()).post {
-                            showMessageNotification(contact.displayName, messageText, contact.id)
-                        }
-
-                        // Send read receipt if required
-                        if (message.requiresReadReceipt) {
-                            sendReadReceipt(contact.id, insertedMessage)
-                        }
-                    }
-
+                    // Reuse the processing logic
+                    processReceivedMessage(encryptedMessage, pingId, senderName)
                 } else {
                     Log.w(TAG, "No message received or empty message")
                 }
@@ -860,21 +1322,6 @@ class TorService : Service() {
 
     // ==================== HEALTH CHECK MONITORING ====================
 
-    private fun startHealthCheckMonitoring() {
-        Log.d(TAG, "Starting health check monitoring (${HEALTH_CHECK_INTERVAL/1000}s interval)")
-
-        val healthCheckRunnable = object : Runnable {
-            override fun run() {
-                checkTorHealth()
-                // Schedule next check
-                healthCheckHandler.postDelayed(this, HEALTH_CHECK_INTERVAL)
-            }
-        }
-
-        // Start first check after initial delay
-        healthCheckHandler.postDelayed(healthCheckRunnable, HEALTH_CHECK_INTERVAL)
-    }
-
     private fun checkTorHealth() {
         try {
             val isInitialized = torManager.isInitialized()
@@ -891,14 +1338,29 @@ class TorService : Service() {
                 }
                 attemptReconnect()
             } else if (isInitialized) {
-                if (!torConnected) {
+                if (!torConnected && !isReconnecting) {
                     Log.i(TAG, "Health check: Tor reconnected successfully")
                     torConnected = true
                     isReconnecting = false
                     reconnectAttempts = 0
 
+                    // Reset SOCKS failure count on successful reconnect
+                    socksFailureCount = 0
+
+                    // Ensure SOCKS proxy is running for outgoing connections
+                    ensureSocksProxyRunning()
+
+                    // Start listener when health check detects reconnection
+                    startIncomingListener()
+
+                    // Send taps to all contacts to notify them we're online
+                    sendTapsToAllContacts()
+
                     updateNotification("Connected to Tor")
                 }
+
+                // Test SOCKS connectivity even when connected
+                testSocksConnectivity()
             } else if (!hasNetworkConnection) {
                 Log.d(TAG, "Health check: No network connection available")
                 torConnected = false
@@ -906,6 +1368,174 @@ class TorService : Service() {
         } catch (e: Exception) {
             Log.e(TAG, "Error during health check", e)
         }
+    }
+
+    /**
+     * Test actual SOCKS connectivity (not just if proxy is running)
+     */
+    private fun testSocksConnectivity() {
+        Thread {
+            try {
+                if (!RustBridge.isSocksProxyRunning()) {
+                    Log.w(TAG, "SOCKS health test: Proxy not running")
+                    handleSocksFailure()
+                    return@Thread
+                }
+
+                // Test by attempting to connect to check.torproject.org
+                val testResult = RustBridge.testSocksConnectivity()
+                if (!testResult) {
+                    Log.w(TAG, "SOCKS health test: Connectivity test failed")
+                    handleSocksFailure()
+                } else {
+                    // Success - reset failure count
+                    if (socksFailureCount > 0) {
+                        Log.i(TAG, "SOCKS health test: Passed - resetting failure count")
+                    }
+                    socksFailureCount = 0
+                    lastSocksFailureTime = 0L
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "SOCKS health test failed with exception", e)
+                handleSocksFailure()
+            }
+        }.start()
+    }
+
+    /**
+     * Test SOCKS connectivity immediately after login - more aggressive than regular health check
+     * Forces immediate Tor restart if connection is broken
+     */
+    private fun testSocksConnectivityAtStartup() {
+        Thread {
+            try {
+                Log.i(TAG, "Testing SOCKS connectivity at startup...")
+
+                // Check if proxy is running
+                if (!RustBridge.isSocksProxyRunning()) {
+                    Log.e(TAG, "Startup SOCKS test: Proxy not running - forcing restart")
+                    updateNotification("Connection failed - Restarting...")
+                    forceTorRestart()
+                    return@Thread
+                }
+
+                // Test actual connectivity through the proxy
+                val testResult = RustBridge.testSocksConnectivity()
+                if (!testResult) {
+                    Log.e(TAG, "Startup SOCKS test: Connection test failed - forcing restart")
+                    updateNotification("Connection broken - Restarting...")
+                    forceTorRestart()
+                } else {
+                    Log.i(TAG, "✓ Startup SOCKS test: Connection verified successfully")
+                    socksFailureCount = 0
+                    lastSocksFailureTime = 0L
+                    updateNotification("Connected to Tor")
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Startup SOCKS test failed with exception - forcing restart", e)
+                updateNotification("Connection error - Restarting...")
+                forceTorRestart()
+            }
+        }.start()
+    }
+
+    /**
+     * Handle SOCKS failure - track failures and force Tor restart if threshold exceeded
+     */
+    private fun handleSocksFailure() {
+        val currentTime = System.currentTimeMillis()
+
+        // Reset counter if failures are outside the time window
+        if (currentTime - lastSocksFailureTime > SOCKS_FAILURE_WINDOW) {
+            socksFailureCount = 0
+        }
+
+        socksFailureCount++
+        lastSocksFailureTime = currentTime
+
+        Log.w(TAG, "SOCKS failure reported ($socksFailureCount/$SOCKS_FAILURE_THRESHOLD)")
+
+        if (socksFailureCount >= SOCKS_FAILURE_THRESHOLD) {
+            Log.e(TAG, "SOCKS failure threshold exceeded - forcing Tor restart")
+            updateNotification("Restarting Tor (connectivity issues)...")
+            forceTorRestart()
+        } else {
+            // Try restarting just the SOCKS proxy first
+            Log.i(TAG, "Attempting SOCKS proxy restart (failure $socksFailureCount/$SOCKS_FAILURE_THRESHOLD)")
+            Thread {
+                try {
+                    if (RustBridge.isSocksProxyRunning()) {
+                        RustBridge.stopSocksProxy()
+                        Thread.sleep(1000)
+                    }
+                    RustBridge.startSocksProxy()
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to restart SOCKS proxy", e)
+                }
+            }.start()
+        }
+    }
+
+    /**
+     * Force a complete Tor restart when SOCKS proxy is broken
+     */
+    private fun forceTorRestart() {
+        Log.i(TAG, "========== FORCING TOR RESTART ==========")
+
+        Thread {
+            try {
+                // Stop everything
+                isPingPollerRunning = false
+                isTapPollerRunning = false
+
+                // Stop SOCKS proxy
+                if (RustBridge.isSocksProxyRunning()) {
+                    Log.d(TAG, "Stopping SOCKS proxy...")
+                    RustBridge.stopSocksProxy()
+                }
+
+                // Stop hidden service listener
+                Log.d(TAG, "Stopping listeners...")
+                RustBridge.stopListeners()
+
+                // Mark as disconnected
+                torConnected = false
+
+                // Wait a moment for cleanup
+                Thread.sleep(2000)
+
+                // Reset failure counters
+                socksFailureCount = 0
+                reconnectAttempts = 0
+                isReconnecting = false
+
+                // Reinitialize Tor from scratch
+                Log.i(TAG, "Reinitializing Tor connection...")
+                updateNotification("Reconnecting to Tor...")
+
+                torManager.initializeAsync { success, onionAddress ->
+                    if (success && onionAddress != null) {
+                        Log.i(TAG, "✓ Tor restarted successfully: $onionAddress")
+                        torConnected = true
+
+                        // Restart everything
+                        ensureSocksProxyRunning()
+                        startIncomingListener()
+                        sendTapsToAllContacts()
+
+                        updateNotification("Connected to Tor")
+                    } else {
+                        Log.e(TAG, "✗ Tor restart failed - will retry via health check")
+                        updateNotification("Connection failed - Retrying...")
+                        scheduleReconnect()
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error during forced Tor restart", e)
+                updateNotification("Restart failed - Retrying...")
+                scheduleReconnect()
+            }
+        }.start()
     }
 
     // ==================== RECONNECTION LOGIC ====================
@@ -963,8 +1593,14 @@ class TorService : Service() {
                         reconnectAttempts = 0
                         torConnected = true
 
-                        // Restart listener
+                        // Ensure SOCKS proxy is running for outgoing connections
+                        ensureSocksProxyRunning()
+
+                        // Start listening for incoming Pings and Taps
                         startIncomingListener()
+
+                        // PHASE 6: Send taps to all contacts to notify them we're online
+                        sendTapsToAllContacts()
 
                         updateNotification("Connected to Tor")
                     } else {
@@ -991,6 +1627,67 @@ class TorService : Service() {
         return min(delay, MAX_RETRY_DELAY)
     }
 
+    // ==================== ALARMMANAGER RESTART ====================
+
+    /**
+     * Schedule recurring alarm to check if service is running
+     * Provides redundancy beyond START_STICKY for aggressive battery optimization
+     */
+    private fun scheduleServiceRestart() {
+        try {
+            alarmManager = getSystemService(Context.ALARM_SERVICE) as AlarmManager
+
+            val restartIntent = Intent(this, com.securelegion.receivers.TorServiceRestartReceiver::class.java)
+            val pendingIntent = PendingIntent.getBroadcast(
+                this,
+                RESTART_REQUEST_CODE,
+                restartIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+
+            val triggerTime = SystemClock.elapsedRealtime() + RESTART_CHECK_INTERVAL
+
+            // Use setExactAndAllowWhileIdle for Android 6+ to work in Doze mode
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                alarmManager?.setExactAndAllowWhileIdle(
+                    AlarmManager.ELAPSED_REALTIME_WAKEUP,
+                    triggerTime,
+                    pendingIntent
+                )
+            } else {
+                alarmManager?.setExact(
+                    AlarmManager.ELAPSED_REALTIME_WAKEUP,
+                    triggerTime,
+                    pendingIntent
+                )
+            }
+
+            Log.i(TAG, "Service restart alarm scheduled (${RESTART_CHECK_INTERVAL / 60000} minutes)")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to schedule service restart alarm", e)
+        }
+    }
+
+    /**
+     * Cancel the recurring restart alarm
+     */
+    private fun cancelServiceRestart() {
+        try {
+            alarmManager?.let {
+                val restartIntent = Intent(this, com.securelegion.receivers.TorServiceRestartReceiver::class.java)
+                val pendingIntent = PendingIntent.getBroadcast(
+                    this,
+                    RESTART_REQUEST_CODE,
+                    restartIntent,
+                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                )
+                it.cancel(pendingIntent)
+                Log.i(TAG, "Service restart alarm cancelled")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to cancel service restart alarm", e)
+        }
+    }
 
     // ==================== LIFECYCLE ====================
 
@@ -1002,9 +1699,11 @@ class TorService : Service() {
         torConnected = false
         isServiceRunning = false
 
+        // Cancel AlarmManager restart checks
+        cancelServiceRestart()
+
         // Clean up handlers
         reconnectHandler.removeCallbacksAndMessages(null)
-        healthCheckHandler.removeCallbacksAndMessages(null)
 
         // Unregister network callback
         try {
@@ -1019,6 +1718,41 @@ class TorService : Service() {
                 it.release()
             }
         }
+    }
+
+    /**
+     * Ensure SOCKS proxy is running for outgoing Tor connections
+     * Checks if proxy is running and starts it if not
+     * ALWAYS runs in background thread to avoid blocking the caller
+     */
+    private fun ensureSocksProxyRunning() {
+        Thread {
+            try {
+                if (!RustBridge.isSocksProxyRunning()) {
+                    Log.i(TAG, "SOCKS proxy not running, starting...")
+                    val started = RustBridge.startSocksProxy()
+                    if (started) {
+                        Log.i(TAG, "✓ SOCKS proxy started successfully on 127.0.0.1:9050")
+                    } else {
+                        Log.e(TAG, "✗ Failed to start SOCKS proxy")
+                    }
+                } else {
+                    Log.d(TAG, "SOCKS proxy already running")
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error checking/starting SOCKS proxy", e)
+            }
+        }.start()
+    }
+
+    /**
+     * Generate deterministic message ID from content hash
+     */
+    private fun generateMessageId(content: String, timestamp: Long): String {
+        val data = "$content$timestamp".toByteArray()
+        val digest = java.security.MessageDigest.getInstance("SHA-256")
+        val hash = digest.digest(data)
+        return android.util.Base64.encodeToString(hash, android.util.Base64.NO_WRAP).take(32)
     }
 
     override fun onTaskRemoved(rootIntent: Intent?) {

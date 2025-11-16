@@ -14,39 +14,48 @@
 
     <!-- Foreground Service for Tor (Ping-Pong Protocol) -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
     <!-- Notifications (Android 13+) -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
+    <!-- Exact Alarm for Service Restart (Android 13+, automatically granted) -->
+    <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
+
     <application
         android:allowBackup="true"
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:fullBackupContent="@xml/backup_rules"
+        android:extractNativeLibs="true"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
-        android:theme="@style/Theme.SecureLegion">
+        android:theme="@style/Theme.SecureLegion"
+        android:networkSecurityConfig="@xml/network_security_config">
 
         <activity
             android:name=".MainActivity"
             android:exported="false"
-            android:launchMode="singleTask" />
+            android:launchMode="singleTask"
+            android:windowSoftInputMode="adjustPan" />
 
         <activity
             android:name=".ChatActivity"
-            android:exported="false" />
+            android:exported="false"
+            android:windowSoftInputMode="adjustResize" />
 
         <activity
             android:name=".ComposeActivity"
-            android:exported="false" />
+            android:exported="false"
+            android:windowSoftInputMode="adjustPan" />
 
         <activity
             android:name=".AddFriendActivity"
-            android:exported="false" />
+            android:exported="false"
+            android:windowSoftInputMode="adjustPan" />
 
         <activity
             android:name=".RecentTransactionsActivity"
@@ -69,7 +78,8 @@
 
         <activity
             android:name=".LockActivity"
-            android:exported="false" />
+            android:exported="false"
+            android:windowSoftInputMode="adjustResize" />
 
         <activity
             android:name=".SettingsActivity"
@@ -81,7 +91,8 @@
 
         <activity
             android:name=".DuressPinActivity"
-            android:exported="false" />
+            android:exported="false"
+            android:windowSoftInputMode="adjustPan" />
 
         <activity
             android:name=".WalletIdentityActivity"
@@ -89,7 +100,8 @@
 
         <activity
             android:name=".DevicePasswordActivity"
-            android:exported="false" />
+            android:exported="false"
+            android:windowSoftInputMode="adjustPan" />
 
         <activity
             android:name=".NotificationsActivity"
@@ -101,11 +113,13 @@
 
         <activity
             android:name=".WipeAccountActivity"
-            android:exported="false" />
+            android:exported="false"
+            android:windowSoftInputMode="adjustPan" />
 
         <activity
             android:name=".CreateAccountActivity"
-            android:exported="false" />
+            android:exported="false"
+            android:windowSoftInputMode="adjustPan" />
 
         <activity
             android:name=".AccountCreatedActivity"
@@ -113,7 +127,8 @@
 
         <activity
             android:name=".RestoreAccountActivity"
-            android:exported="false" />
+            android:exported="false"
+            android:windowSoftInputMode="adjustPan" />
 
         <activity
             android:name=".ReceiveActivity"
@@ -121,7 +136,8 @@
 
         <activity
             android:name=".SendActivity"
-            android:exported="false" />
+            android:exported="false"
+            android:windowSoftInputMode="adjustPan" />
 
         <activity
             android:name=".ContactOptionsActivity"
@@ -143,13 +159,41 @@
             android:name=".WalletSettingsActivity"
             android:exported="false" />
 
-        <!-- Tor Service - Keeps hidden service running for Ping-Pong Protocol -->
+        <!-- Tor daemon - In-process Tor via JNI (from tor-android library) -->
+        <service
+            android:name="org.torproject.jni.TorService"
+            android:enabled="true"
+            android:exported="false"
+            android:stopWithTask="false" />
+
+        <!-- Tor foreground service - Shows notification and handles Ping-Pong protocol -->
         <service
             android:name=".services.TorService"
             android:enabled="true"
             android:exported="false"
-            android:foregroundServiceType="dataSync"
-            android:stopWithTask="false" />
+            android:foregroundServiceType="specialUse"
+            android:stopWithTask="false">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Maintains Tor hidden service for secure P2P messaging" />
+        </service>
+
+        <!-- Download message service - Handles background message downloads -->
+        <service
+            android:name=".services.DownloadMessageService"
+            android:enabled="true"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Downloads encrypted messages via Tor" />
+        </service>
+
+        <!-- Broadcast receiver for TorService restart via AlarmManager -->
+        <receiver
+            android:name=".receivers.TorServiceRestartReceiver"
+            android:enabled="true"
+            android:exported="false" />
 
     </application>
 

@@ -20,7 +20,6 @@ import androidx.core.content.ContextCompat
 import com.securelegion.crypto.KeyManager
 import com.securelegion.crypto.RustBridge
 import com.securelegion.crypto.TorManager
-import com.securelegion.services.TorService
 
 class SplashActivity : AppCompatActivity() {
 
@@ -39,47 +38,22 @@ class SplashActivity : AppCompatActivity() {
             }
         }
 
-        // Start Tor foreground service for persistent connection (if not already running)
-        Log.i("SplashActivity", "Starting Tor foreground service...")
-        TorService.start(this)
+        // TorManager will start TorService internally when initialized
+        Log.i("SplashActivity", "TorManager will handle Tor initialization...")
 
-        // Check if Tor is already connected
+        // Check if Tor is already initialized
         try {
             val torManager = TorManager.getInstance(this)
 
-            // Check if TorService is running and connected
-            val torConnected = TorService.isTorConnected()
-
-            if (torConnected && torManager.isInitialized()) {
+            // Check if Tor is already initialized
+            if (torManager.isInitialized()) {
                 // Tor already connected - skip splash screen entirely
-                Log.i("SplashActivity", "Tor already connected - skipping splash")
+                Log.i("SplashActivity", "Tor already initialized - skipping splash")
                 navigateToLock()
                 return
-            } else if (TorService.isRunning() && !torConnected) {
-                // TorService running but reconnecting - show splash with reconnection status
-                Log.i("SplashActivity", "Tor reconnecting - showing splash with status")
-                setContentView(R.layout.activity_splash)
-
-                // Animate logo
-                val logo = findViewById<View>(R.id.splashLogo)
-                logo.alpha = 0f
-                logo.scaleX = 0.5f
-                logo.scaleY = 0.5f
-                logo.animate()
-                    .alpha(1f)
-                    .scaleX(1f)
-                    .scaleY(1f)
-                    .setDuration(800)
-                    .setInterpolator(android.view.animation.OvershootInterpolator())
-                    .start()
-
-                updateStatus("Reconnecting to Tor network...")
-
-                // Poll for reconnection status
-                pollReconnectionStatus()
             } else {
-                // First time or phone was off - show splash while bootstrapping
-                Log.i("SplashActivity", "Tor not connected - showing splash while bootstrapping")
+                // First time or Tor not initialized yet - start Tor and show splash while bootstrapping
+                Log.i("SplashActivity", "Tor not initialized - starting Tor...")
                 setContentView(R.layout.activity_splash)
 
                 // Animate logo
@@ -97,10 +71,26 @@ class SplashActivity : AppCompatActivity() {
 
                 updateStatus("Connecting to Tor network...")
 
-                // Wait for Tor to bootstrap
-                Handler(Looper.getMainLooper()).postDelayed({
-                    checkTorStatus()
-                }, BOOTSTRAP_DELAY)
+                // Initialize Tor and wait for it to fully bootstrap
+                torManager.initializeAsync { success, onionAddress ->
+                    runOnUiThread {
+                        if (success) {
+                            Log.i("SplashActivity", "Tor fully bootstrapped: $onionAddress")
+                            updateStatus("Connected to Tor!")
+                            // Small delay to show success message
+                            Handler(Looper.getMainLooper()).postDelayed({
+                                navigateToLock()
+                            }, 500)
+                        } else {
+                            Log.e("SplashActivity", "Tor initialization failed")
+                            updateStatus("Connection failed")
+                            // Navigate anyway after a delay
+                            Handler(Looper.getMainLooper()).postDelayed({
+                                navigateToLock()
+                            }, 2000)
+                        }
+                    }
+                }
             }
         } catch (e: Exception) {
             Log.e("SplashActivity", "Error checking Tor status", e)
@@ -161,40 +151,4 @@ class SplashActivity : AppCompatActivity() {
         }
     }
 
-    private fun pollReconnectionStatus() {
-        // Poll every 500ms to check if Tor has reconnected
-        val pollHandler = Handler(Looper.getMainLooper())
-        var pollCount = 0
-        val maxPolls = 60 // Poll for up to 30 seconds (60 * 500ms)
-
-        val pollRunnable = object : Runnable {
-            override fun run() {
-                pollCount++
-
-                val torConnected = TorService.isTorConnected()
-
-                if (torConnected) {
-                    // Tor reconnected - navigate to lock screen
-                    Log.i("SplashActivity", "Tor reconnected successfully")
-                    updateStatus("Connected!")
-                    Handler(Looper.getMainLooper()).postDelayed({
-                        navigateToLock()
-                    }, 500)
-                } else if (pollCount >= maxPolls) {
-                    // Timed out - navigate anyway, TorService will continue trying
-                    Log.w("SplashActivity", "Tor reconnection timeout - continuing to app")
-                    updateStatus("Still reconnecting...")
-                    Handler(Looper.getMainLooper()).postDelayed({
-                        navigateToLock()
-                    }, 500)
-                } else {
-                    // Continue polling
-                    pollHandler.postDelayed(this, 500)
-                }
-            }
-        }
-
-        // Start polling
-        pollHandler.postDelayed(pollRunnable, 500)
-    }
 }

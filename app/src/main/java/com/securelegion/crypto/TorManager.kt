@@ -1,21 +1,24 @@
 package com.securelegion.crypto
 
 import android.content.Context
+import android.content.Intent
 import android.content.SharedPreferences
 import android.util.Log
 import okhttp3.OkHttpClient
+import org.torproject.jni.TorService
 import java.net.InetSocketAddress
 import java.net.Proxy
 import java.util.concurrent.TimeUnit
+import java.io.File
 
 /**
- * Manages Tor network initialization and hidden service setup
+ * Manages Tor network initialization and hidden service setup using TorService JNI
  *
  * Responsibilities:
- * - Initialize Tor client on app startup
+ * - Initialize Tor client on app startup (in-process via JNI)
  * - Create hidden service for receiving messages
  * - Store/retrieve .onion address
- * - Provide access to Tor functionality
+ * - Provide access to Tor SOCKS proxy
  */
 class TorManager(private val context: Context) {
 
@@ -29,14 +32,21 @@ class TorManager(private val context: Context) {
     @Volatile
     private var isInitialized = false
 
+    @Volatile
+    private var listenerStarted = false
+
     private val initCallbacks = mutableListOf<(Boolean, String?) -> Unit>()
+
+    private var torThread: Thread? = null
+    private var torDataDir: File? = null
 
     companion object {
         private const val TAG = "TorManager"
         private const val PREFS_NAME = "tor_prefs"
         private const val KEY_ONION_ADDRESS = "onion_address"
         private const val KEY_TOR_INITIALIZED = "tor_initialized"
-        private const val DEFAULT_SERVICE_PORT = 9150 // Ping-Pong protocol port
+        private const val DEFAULT_SERVICE_PORT = 9150 // Virtual port on .onion address
+        private const val DEFAULT_LOCAL_PORT = 8080 // Local port where app listens
 
         @Volatile
         private var instance: TorManager? = null
@@ -49,19 +59,12 @@ class TorManager(private val context: Context) {
     }
 
     /**
-     * Initialize Tor client and create hidden service if needed
+     * Initialize Tor client using Tor_Onion_Proxy_Library
      * Should be called once on app startup (from Application class)
      * Prevents concurrent initializations - queues callbacks if already initializing
      */
     fun initializeAsync(onComplete: (Boolean, String?) -> Unit) {
         synchronized(this) {
-            // If already initialized, immediately return cached result
-            if (isInitialized) {
-                Log.d(TAG, "Tor already initialized, returning cached result")
-                onComplete(true, getOnionAddress())
-                return
-            }
-
             // If currently initializing, queue the callback
             if (isInitializing) {
                 Log.d(TAG, "Tor initialization already in progress, queuing callback")
@@ -69,37 +72,129 @@ class TorManager(private val context: Context) {
                 return
             }
 
-            // Start initialization
+            // Start initialization (even if previously initialized, recheck bootstrap status)
             isInitializing = true
             initCallbacks.add(onComplete)
         }
 
         Thread {
             try {
-                // Initialize Tor client
-                Log.d(TAG, "Initializing Tor client...")
-                val status = RustBridge.initializeTor()
-                Log.d(TAG, "Tor initialized: $status")
-
-                // Create hidden service if we don't have one yet
-                val existingAddress = getOnionAddress()
-                val onionAddress = if (existingAddress == null) {
-                    // Check if user has created an account (required for hidden service key)
-                    val keyManager = KeyManager.getInstance(context)
-                    if (keyManager.isInitialized()) {
-                        Log.d(TAG, "Creating new hidden service...")
-                        val address = RustBridge.createHiddenService(DEFAULT_SERVICE_PORT)
-                        saveOnionAddress(address)
-                        Log.d(TAG, "Hidden service created: $address")
-                        address
-                    } else {
-                        Log.d(TAG, "Skipping hidden service creation - no account yet")
-                        null
-                    }
-                } else {
-                    Log.d(TAG, "Using existing .onion address: $existingAddress")
-                    existingAddress
+                // Check if Tor control port is already accessible
+                val alreadyRunning = try {
+                    val testSocket = java.net.Socket()
+                    testSocket.connect(java.net.InetSocketAddress("127.0.0.1", 9051), 500)
+                    testSocket.close()
+                    true
+                } catch (e: Exception) {
+                    false
                 }
+
+                if (!alreadyRunning) {
+                    Log.d(TAG, "Starting TorService...")
+
+                    // Create Tor data directory
+                    torDataDir = File(context.filesDir, "tor")
+                    torDataDir?.mkdirs()
+
+                    // Get the torrc file location that TorService expects
+                    val torrc = TorService.getTorrc(context)
+                    torrc.parentFile?.mkdirs()
+
+                    // Write our configuration to torrc
+                    torrc.writeText("""
+                        DataDirectory ${torDataDir!!.absolutePath}
+                        SocksPort 127.0.0.1:9050
+                        ControlPort 127.0.0.1:9051
+                        CookieAuthentication 1
+                        ClientOnly 1
+                        AvoidDiskWrites 1
+                    """.trimIndent())
+
+                    Log.d(TAG, "Torrc written to: ${torrc.absolutePath}")
+
+                    // Start TorService as an Android Service
+                    val intent = Intent(context, TorService::class.java)
+                    intent.action = "org.torproject.android.intent.action.START"
+                    context.startService(intent)
+
+                    Log.d(TAG, "TorService started, waiting for control port to be ready...")
+                } else {
+                    Log.d(TAG, "Tor control port already accessible, skipping TorService start")
+                }
+
+                // Wait for Tor control port to be ready (poll until we can connect)
+                var attempts = 0
+                val maxAttempts = 60 // 60 seconds max
+                var controlPortReady = false
+
+                while (attempts < maxAttempts && !controlPortReady) {
+                    try {
+                        // Try to connect to control port
+                        val testSocket = java.net.Socket()
+                        testSocket.connect(java.net.InetSocketAddress("127.0.0.1", 9051), 1000)
+                        testSocket.close()
+                        controlPortReady = true
+                        Log.d(TAG, "Tor control port ready after ${attempts + 1} attempts")
+                    } catch (e: Exception) {
+                        // Control port not ready yet
+                        Thread.sleep(1000)
+                        attempts++
+                    }
+                }
+
+                if (!controlPortReady) {
+                    throw Exception("Tor control port failed to become ready after $maxAttempts seconds")
+                }
+
+                Log.d(TAG, "Tor is ready and control port is accessible")
+
+                // CRITICAL: Also wait for SOCKS port to be ready
+                Log.d(TAG, "Waiting for Tor SOCKS proxy on port 9050...")
+                var socksAttempts = 0
+                val maxSocksAttempts = 30 // 30 seconds max
+                var socksPortReady = false
+
+                while (socksAttempts < maxSocksAttempts && !socksPortReady) {
+                    try {
+                        // Try to connect to SOCKS port
+                        val testSocket = java.net.Socket()
+                        testSocket.connect(java.net.InetSocketAddress("127.0.0.1", 9050), 1000)
+                        testSocket.close()
+                        socksPortReady = true
+                        Log.i(TAG, "✓ Tor SOCKS proxy ready on 127.0.0.1:9050 after ${socksAttempts + 1} attempts")
+                    } catch (e: Exception) {
+                        // SOCKS port not ready yet
+                        Thread.sleep(1000)
+                        socksAttempts++
+                    }
+                }
+
+                if (!socksPortReady) {
+                    throw Exception("Tor SOCKS proxy failed to become ready after $maxSocksAttempts seconds")
+                }
+
+                Log.d(TAG, "Tor SOCKS proxy available at 127.0.0.1:9050")
+
+                // Initialize Rust TorManager (connects to control port)
+                Log.d(TAG, "Initializing Rust TorManager...")
+                val rustStatus = RustBridge.initializeTor()
+                Log.d(TAG, "Rust TorManager initialized: $rustStatus")
+
+                // Re-register hidden service with Tor (must be done on every Tor start)
+                val keyManager = KeyManager.getInstance(context)
+                val onionAddress = if (keyManager.isInitialized()) {
+                    Log.d(TAG, "Re-registering hidden service with Tor...")
+                    val address = RustBridge.createHiddenService(DEFAULT_SERVICE_PORT, DEFAULT_LOCAL_PORT)
+                    saveOnionAddress(address)
+                    Log.d(TAG, "Hidden service re-registered: $address")
+                    address
+                } else {
+                    Log.d(TAG, "Skipping hidden service creation - no account yet")
+                    null
+                }
+
+                // Note: Listener startup is handled by TorService callback to avoid race condition
+                // TorService will call startIncomingListener() after this callback completes
 
                 // Mark as initialized
                 prefs.edit().putBoolean(KEY_TOR_INITIALIZED, true).apply()
@@ -144,6 +239,45 @@ class TorManager(private val context: Context) {
      */
     fun isInitialized(): Boolean {
         return prefs.getBoolean(KEY_TOR_INITIALIZED, false)
+    }
+
+    /**
+     * Create hidden service if account exists but service doesn't
+     * Called after account creation to set up the hidden service
+     */
+    fun createHiddenServiceIfNeeded() {
+        Thread {
+            try {
+                val existingAddress = getOnionAddress()
+                if (existingAddress == null) {
+                    val keyManager = KeyManager.getInstance(context)
+                    if (keyManager.isInitialized()) {
+                        Log.d(TAG, "Creating hidden service after account creation...")
+                        val address = RustBridge.createHiddenService(DEFAULT_SERVICE_PORT, DEFAULT_LOCAL_PORT)
+                        saveOnionAddress(address)
+                        Log.d(TAG, "Hidden service created: $address")
+
+                        // Start listener if not already started
+                        if (!listenerStarted) {
+                            Log.d(TAG, "Starting hidden service listener on port $DEFAULT_LOCAL_PORT...")
+                            val started = RustBridge.startHiddenServiceListener(DEFAULT_LOCAL_PORT)
+                            if (started) {
+                                listenerStarted = true
+                                Log.i(TAG, "Hidden service listener started successfully on port $DEFAULT_LOCAL_PORT")
+                            } else {
+                                Log.e(TAG, "Failed to start hidden service listener")
+                            }
+                        }
+                    } else {
+                        Log.w(TAG, "Account not initialized yet, cannot create hidden service")
+                    }
+                } else {
+                    Log.d(TAG, "Hidden service already exists: $existingAddress")
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to create hidden service", e)
+            }
+        }.start()
     }
 
     /**

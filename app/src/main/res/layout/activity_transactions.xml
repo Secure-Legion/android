@@ -13,7 +13,10 @@
         android:layout_height="wrap_content"
         android:orientation="horizontal"
         android:background="@drawable/header_bg"
-        android:padding="16dp"
+        android:fitsSystemWindows="true"
+        android:paddingStart="16dp"
+        android:paddingEnd="16dp"
+        android:paddingBottom="16dp"
         android:gravity="center"
         app:layout_constraintTop_toTopOf="parent">
 

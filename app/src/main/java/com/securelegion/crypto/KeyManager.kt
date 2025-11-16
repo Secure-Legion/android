@@ -11,6 +11,8 @@ import com.goterl.lazysodium.interfaces.Sign
 import org.web3j.crypto.MnemonicUtils
 import java.math.BigInteger
 import java.security.MessageDigest
+import org.bouncycastle.jce.provider.BouncyCastleProvider
+import java.security.Security
 
 /**
  * KeyManager - Unified key management for wallet and messaging
@@ -43,6 +45,11 @@ class KeyManager private constructor(context: Context) {
         private const val X25519_ENCRYPTION_KEY_ALIAS = "${KEYSTORE_ALIAS_PREFIX}encryption_key"
         private const val HIDDEN_SERVICE_KEY_ALIAS = "${KEYSTORE_ALIAS_PREFIX}hidden_service_key"
         private const val DEVICE_PASSWORD_HASH_ALIAS = "${KEYSTORE_ALIAS_PREFIX}device_password_hash"
+
+        init {
+            // Register BouncyCastle provider for SHA3-256 support
+            Security.addProvider(BouncyCastleProvider())
+        }
 
         @Volatile
         private var instance: KeyManager? = null
@@ -191,16 +198,15 @@ class KeyManager private constructor(context: Context) {
     }
 
     /**
-     * Get Tor onion address derived from hidden service key
+     * Get Tor onion address from TorManager
+     * Uses the actual address that Tor created, not a computed one
      */
     fun getTorOnionAddress(): String {
-        val publicKey = getStoredKey("${HIDDEN_SERVICE_KEY_ALIAS}_public")
-            ?: throw KeyManagerException("Hidden service key not found")
-
-        // Convert Ed25519 public key to onion address v3 format
-        // Format: base32(public_key + checksum + version).onion
-        val onionAddress = publicKeyToOnionAddress(publicKey)
-        return "$onionAddress:9050" // Default Tor port
+        // Get the actual address from TorManager instead of computing
+        // This ensures we always use the exact address that Tor generated
+        val torManager = TorManager.getInstance(appContext)
+        return torManager.getOnionAddress()
+            ?: throw KeyManagerException("Tor onion address not found. Initialize Tor first.")
     }
 
     /**
@@ -208,13 +214,13 @@ class KeyManager private constructor(context: Context) {
      */
     private fun publicKeyToOnionAddress(publicKey: ByteArray): String {
         // Tor v3 address = base32(public_key || checksum || version)
-        // This is a simplified version - full implementation requires Tor spec
+        // Checksum MUST use SHA3-256 (Keccak), not SHA-256!
         val version = byteArrayOf(0x03)
         val checksumInput = ".onion checksum".toByteArray() + publicKey + version
-        val checksum = sha256(checksumInput).take(2).toByteArray()
+        val checksum = sha3_256(checksumInput).take(2).toByteArray()
 
         val combined = publicKey + checksum + version
-        return base32Encode(combined).lowercase()
+        return base32Encode(combined).lowercase() + ".onion"
     }
 
     /**
@@ -247,6 +253,14 @@ class KeyManager private constructor(context: Context) {
      */
     private fun sha256(data: ByteArray): ByteArray {
         val digest = MessageDigest.getInstance("SHA-256")
+        return digest.digest(data)
+    }
+
+    /**
+     * SHA3-256 hash (Keccak) - required for Tor v3 onion address checksum
+     */
+    private fun sha3_256(data: ByteArray): ByteArray {
+        val digest = MessageDigest.getInstance("SHA3-256", org.bouncycastle.jce.provider.BouncyCastleProvider())
         return digest.digest(data)
     }
 

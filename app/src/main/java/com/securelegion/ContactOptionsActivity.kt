@@ -208,7 +208,7 @@ class ContactOptionsActivity : AppCompatActivity() {
     }
 
     private fun showDeleteConfirmationDialog(name: String) {
-        AlertDialog.Builder(this)
+        AlertDialog.Builder(this, R.style.CustomAlertDialog)
             .setTitle("Delete Contact")
             .setMessage("Are you sure you want to delete $name from your contacts? This action cannot be undone.")
             .setPositiveButton("Delete") { _, _ ->

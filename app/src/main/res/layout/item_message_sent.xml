@@ -2,43 +2,49 @@
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
-    android:orientation="horizontal"
-    android:gravity="end"
-    android:paddingTop="4dp"
-    android:paddingBottom="4dp">
+    android:orientation="vertical"
+    android:paddingTop="8dp"
+    android:paddingBottom="8dp">
 
-    <LinearLayout
+    <!-- Timestamp Header (Day/Date) -->
+    <TextView
+        android:id="@+id/timestampHeader"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:orientation="vertical"
-        android:maxWidth="280dp"
-        android:background="@drawable/message_sent_bg"
-        android:padding="12dp">
+        android:layout_gravity="center_horizontal"
+        android:text="Today"
+        android:textColor="@color/text_gray"
+        android:textSize="12sp"
+        android:paddingBottom="8dp"
+        android:visibility="gone" />
 
-        <TextView
-            android:id="@+id/messageText"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="Message content"
-            android:textColor="@color/text_white"
-            android:textSize="15sp"
-            android:lineSpacingMultiplier="1.2" />
+    <!-- Message Content Row -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="end">
 
+        <!-- Message Bubble -->
         <LinearLayout
+            android:id="@+id/messageBubble"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:orientation="horizontal"
-            android:gravity="end"
-            android:layout_marginTop="4dp">
+            android:orientation="vertical"
+            android:maxWidth="280dp"
+            android:background="@drawable/message_sent_bg"
+            android:padding="12dp">
 
             <TextView
-                android:id="@+id/messageTime"
+                android:id="@+id/messageText"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="12:34 PM"
-                android:textColor="@color/text_gray"
-                android:textSize="11sp" />
+                android:text="Message content"
+                android:textColor="@color/text_white"
+                android:textSize="15sp"
+                android:lineSpacingMultiplier="1.2" />
 
+            <!-- Status indicator (hidden until swipe) -->
             <TextView
                 android:id="@+id/messageStatus"
                 android:layout_width="wrap_content"
@@ -46,9 +52,23 @@
                 android:text="✓"
                 android:textColor="@color/text_gray"
                 android:textSize="11sp"
-                android:layout_marginStart="4dp" />
+                android:layout_gravity="end"
+                android:layout_marginTop="4dp"
+                android:visibility="gone" />
 
         </LinearLayout>
+
+        <!-- Swipe-revealed timestamp (right side) -->
+        <TextView
+            android:id="@+id/swipeRevealedTime"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="12:34 PM"
+            android:textColor="@color/text_gray"
+            android:textSize="11sp"
+            android:layout_gravity="center_vertical"
+            android:layout_marginStart="8dp"
+            android:visibility="gone" />
 
     </LinearLayout>
 

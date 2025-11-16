@@ -116,6 +116,20 @@ interface MessageDao {
     suspend fun getPendingMessages(): List<Message>
 
     /**
+     * Get messages waiting for Pong (STATUS_PING_SENT)
+     * Used by Pong polling worker to check for Pong arrivals
+     */
+    @Query("SELECT * FROM messages WHERE status = ${Message.STATUS_PING_SENT} ORDER BY timestamp ASC")
+    suspend fun getMessagesAwaitingPong(): List<Message>
+
+    /**
+     * Get message by Ping ID
+     * Used when a Pong arrives to find the corresponding message
+     */
+    @Query("SELECT * FROM messages WHERE pingId = :pingId LIMIT 1")
+    suspend fun getMessageByPingId(pingId: String): Message?
+
+    /**
      * Delete all messages for a contact
      */
     @Query("DELETE FROM messages WHERE contactId = :contactId")

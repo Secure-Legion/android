@@ -49,29 +49,15 @@ class ChatAdapter(
         // Set timestamp
         holder.chatTime.text = chat.time
 
-        // Check for pending Pings
-        val prefs = context.getSharedPreferences("pending_pings", Context.MODE_PRIVATE)
-        val hasPendingPing = prefs.contains("ping_${chat.id}_id")
+        // Never show download button in preview - only inside the chat
+        holder.downloadButton.visibility = View.GONE
 
-        // Show download button if there's a pending Ping, otherwise show unread badge
-        if (hasPendingPing) {
-            holder.downloadButton.visibility = View.VISIBLE
-            holder.unreadBadge.visibility = View.GONE
-
-            // Set download button click listener
-            holder.downloadButton.setOnClickListener {
-                onDownloadClick?.invoke(chat)
-            }
+        // Show/hide unread badge
+        if (chat.unreadCount > 0) {
+            holder.unreadBadge.visibility = View.VISIBLE
+            holder.unreadBadge.text = chat.unreadCount.toString()
         } else {
-            holder.downloadButton.visibility = View.GONE
-
-            // Show/hide unread badge
-            if (chat.unreadCount > 0) {
-                holder.unreadBadge.visibility = View.VISIBLE
-                holder.unreadBadge.text = chat.unreadCount.toString()
-            } else {
-                holder.unreadBadge.visibility = View.GONE
-            }
+            holder.unreadBadge.visibility = View.GONE
         }
 
         // Show/hide security badge

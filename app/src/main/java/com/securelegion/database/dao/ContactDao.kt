@@ -55,6 +55,13 @@ interface ContactDao {
     fun getContactByPublicKey(publicKeyBase64: String): Contact?
 
     /**
+     * Get contact by X25519 public key (Base64)
+     * Used for tap identification
+     */
+    @Query("SELECT * FROM contacts WHERE x25519PublicKeyBase64 = :x25519PublicKeyBase64")
+    fun getContactByX25519PublicKey(x25519PublicKeyBase64: String): Contact?
+
+    /**
      * Get all contacts ordered by most recent contact
      * Returns Flow for reactive updates
      */

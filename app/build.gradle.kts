@@ -35,6 +35,12 @@ android {
         buildConfig = true
     }
 
+    packaging {
+        jniLibs {
+            useLegacyPackaging = true
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
@@ -69,7 +75,10 @@ dependencies {
     implementation("com.goterl:lazysodium-android:5.1.0@aar")
     implementation("net.java.dev.jna:jna:5.13.0@aar")
 
-    // BIP39/BIP44
+    // BouncyCastle for SHA3-256 (Tor v3 onion address checksum) - must be first
+    implementation("org.bouncycastle:bcprov-jdk15to18:1.69")
+
+    // BIP39/BIP44 - exclude BouncyCastle to use our version above
     implementation("org.web3j:crypto:4.9.8") {
         exclude(group = "org.bouncycastle")
     }
@@ -99,6 +108,12 @@ dependencies {
 
     // WorkManager for background tasks
     implementation("androidx.work:work-runtime-ktx:2.9.0")
+
+    // Tor binaries for Android (provides libtor.so)
+    implementation("info.guardianproject:tor-android:0.4.8.18")
+
+    // Tor control library for managing Tor via control port
+    implementation("info.guardianproject:jtorctl:0.4.5.7")
 
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)

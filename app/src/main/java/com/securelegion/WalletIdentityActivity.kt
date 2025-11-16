@@ -45,7 +45,7 @@ class WalletIdentityActivity : AppCompatActivity() {
     }
 
     private fun showNewIdentityConfirmation() {
-        AlertDialog.Builder(this)
+        AlertDialog.Builder(this, R.style.CustomAlertDialog)
             .setTitle("Create New Identity?")
             .setMessage("This will generate:\n\n• New Wallet Address\n• New Contact Card (CID/PIN)\n• New Tor Onion Address\n\nYour current identity will be replaced. Make sure to backup your seed phrase first!")
             .setPositiveButton("Create New Identity") { _, _ ->

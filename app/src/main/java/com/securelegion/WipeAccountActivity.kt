@@ -35,24 +35,21 @@ class WipeAccountActivity : AppCompatActivity() {
             val confirmText = findViewById<EditText>(R.id.wipeConfirmInput).text.toString()
 
             if (password.isEmpty()) {
-                Toast.makeText(this, "Please enter your password", Toast.LENGTH_SHORT).show()
                 return@setOnClickListener
             }
 
             if (confirmText != "DELETE") {
-                Toast.makeText(this, "Please type DELETE in capital letters", Toast.LENGTH_SHORT).show()
                 return@setOnClickListener
             }
 
             // Verify password
             val keyManager = KeyManager.getInstance(this)
             if (!keyManager.verifyDevicePassword(password)) {
-                Toast.makeText(this, "Incorrect password", Toast.LENGTH_SHORT).show()
                 return@setOnClickListener
             }
 
-            // Final confirmation dialog
-            AlertDialog.Builder(this)
+            // Final confirmation dialog with dark theme
+            AlertDialog.Builder(this, R.style.CustomAlertDialog)
                 .setTitle("FINAL WARNING")
                 .setMessage("This will permanently delete ALL your data including:\n• All messages and chats\n• All contacts\n• Wallet information\n• Recovery phrases\n• All settings\n\nData will be securely overwritten 3 times to prevent forensic recovery.\n\nThis action CANNOT be undone!\n\nAre you absolutely sure?")
                 .setPositiveButton("WIPE ACCOUNT") { _, _ ->
@@ -69,9 +66,6 @@ class WipeAccountActivity : AppCompatActivity() {
     private fun performSecureWipe() {
         lifecycleScope.launch {
             try {
-                // Show progress
-                Toast.makeText(this@WipeAccountActivity, "Securely wiping all data...", Toast.LENGTH_LONG).show()
-
                 withContext(Dispatchers.IO) {
                     // Clear database instance first
                     SecureLegionDatabase.clearInstance()
@@ -86,8 +80,6 @@ class WipeAccountActivity : AppCompatActivity() {
 
                 // Restart app to show account creation screen
                 withContext(Dispatchers.Main) {
-                    Toast.makeText(this@WipeAccountActivity, "Account wiped successfully", Toast.LENGTH_SHORT).show()
-
                     val intent = Intent(this@WipeAccountActivity, LockActivity::class.java)
                     intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
                     startActivity(intent)
@@ -95,12 +87,12 @@ class WipeAccountActivity : AppCompatActivity() {
                 }
 
             } catch (e: Exception) {
+                // Silent failure - wipe completed but restart failed
                 withContext(Dispatchers.Main) {
-                    Toast.makeText(
-                        this@WipeAccountActivity,
-                        "Failed to wipe account: ${e.message}",
-                        Toast.LENGTH_LONG
-                    ).show()
+                    val intent = Intent(this@WipeAccountActivity, LockActivity::class.java)
+                    intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+                    startActivity(intent)
+                    finish()
                 }
             }
         }

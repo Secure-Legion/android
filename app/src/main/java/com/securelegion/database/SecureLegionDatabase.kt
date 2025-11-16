@@ -30,7 +30,7 @@ import net.sqlcipher.database.SupportFactory
  */
 @Database(
     entities = [Contact::class, Message::class, Wallet::class],
-    version = 5,
+    version = 6,
     exportSchema = false
 )
 abstract class SecureLegionDatabase : RoomDatabase() {
@@ -107,6 +107,24 @@ abstract class SecureLegionDatabase : RoomDatabase() {
         }
 
         /**
+         * Migration from version 5 to 6: Add persistent messaging fields for Ping-Pong protocol
+         */
+        private val MIGRATION_5_6 = object : Migration(5, 6) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                Log.i(TAG, "Migrating database from version 5 to 6")
+                // Add pingId column (nullable)
+                database.execSQL("ALTER TABLE messages ADD COLUMN pingId TEXT")
+                // Add encryptedPayload column (nullable)
+                database.execSQL("ALTER TABLE messages ADD COLUMN encryptedPayload TEXT")
+                // Add retryCount column with default value 0
+                database.execSQL("ALTER TABLE messages ADD COLUMN retryCount INTEGER NOT NULL DEFAULT 0")
+                // Add lastRetryTimestamp column (nullable)
+                database.execSQL("ALTER TABLE messages ADD COLUMN lastRetryTimestamp INTEGER")
+                Log.i(TAG, "Migration completed: Added pingId, encryptedPayload, retryCount, lastRetryTimestamp columns")
+            }
+        }
+
+        /**
          * Get database instance
          * @param context Application context
          * @param passphrase Encryption passphrase (should be derived from KeyManager)
@@ -161,7 +179,7 @@ abstract class SecureLegionDatabase : RoomDatabase() {
                     DATABASE_NAME
                 )
                     .openHelperFactory(factory)
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
                     .addCallback(object : RoomDatabase.Callback() {
                         override fun onCreate(db: SupportSQLiteDatabase) {
                             super.onCreate(db)
@@ -252,7 +270,7 @@ abstract class SecureLegionDatabase : RoomDatabase() {
                         DATABASE_NAME
                     )
                         .openHelperFactory(SupportFactory(passphrase))
-                        .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
+                        .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
                         .addCallback(object : RoomDatabase.Callback() {
                             override fun onCreate(db: SupportSQLiteDatabase) {
                                 super.onCreate(db)

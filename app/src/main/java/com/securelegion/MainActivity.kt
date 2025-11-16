@@ -1,10 +1,16 @@
 package com.securelegion
 
 import android.Manifest
+import android.content.BroadcastReceiver
+import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.PowerManager
+import android.provider.Settings
 import android.util.Log
 import android.view.View
 import android.widget.Toast
@@ -16,6 +22,7 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
+import androidx.recyclerview.widget.ItemTouchHelper
 import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
@@ -28,9 +35,9 @@ import com.securelegion.database.entities.Wallet
 import com.securelegion.models.Chat
 import com.securelegion.models.Contact
 import com.securelegion.services.SolanaService
-import com.securelegion.services.TorService
 import com.securelegion.utils.startActivityWithSlideAnimation
 import com.securelegion.workers.SelfDestructWorker
+import com.securelegion.workers.MessageRetryWorker
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -38,6 +45,24 @@ import java.util.concurrent.TimeUnit
 
 class MainActivity : AppCompatActivity() {
     private var currentTab = "messages" // Track current tab: "messages", "contacts", or "wallet"
+
+    // BroadcastReceiver to listen for incoming Pings and refresh UI
+    private val pingReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action == "com.securelegion.NEW_PING") {
+                Log.d("MainActivity", "Received NEW_PING broadcast - refreshing chat list")
+                // Update UI immediately on main thread
+                runOnUiThread {
+                    if (currentTab == "messages") {
+                        Log.d("MainActivity", "Refreshing chat list from broadcast")
+                        setupChatList()
+                    } else {
+                        Log.d("MainActivity", "Not on messages tab, skipping refresh")
+                    }
+                }
+            }
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -71,6 +96,12 @@ class MainActivity : AppCompatActivity() {
 
         setupClickListeners()
         scheduleSelfDestructWorker()
+        scheduleMessageRetryWorker()
+
+        // Request battery optimization exemption for wake lock
+        requestBatteryOptimizationExemption()
+
+        // Start Tor foreground service (shows notification and handles Ping-Pong protocol)
         startTorService()
 
         // Load data asynchronously to avoid blocking UI
@@ -84,6 +115,11 @@ class MainActivity : AppCompatActivity() {
         if (intent.getBooleanExtra("SHOW_WALLET", false)) {
             showWalletTab()
         }
+
+        // Register broadcast receiver for incoming Pings (stays registered even when paused)
+        val filter = IntentFilter("com.securelegion.NEW_PING")
+        registerReceiver(pingReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+        Log.d("MainActivity", "Registered NEW_PING broadcast receiver in onCreate")
     }
 
     private fun updateAppBadge() {
@@ -128,6 +164,32 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun requestBatteryOptimizationExemption() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
+            val packageName = packageName
+
+            if (!powerManager.isIgnoringBatteryOptimizations(packageName)) {
+                Log.i("MainActivity", "Requesting battery optimization exemption for wake lock")
+                try {
+                    val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+                        data = Uri.parse("package:$packageName")
+                    }
+                    startActivity(intent)
+                } catch (e: Exception) {
+                    Log.e("MainActivity", "Failed to request battery optimization exemption", e)
+                    Toast.makeText(
+                        this,
+                        "Please disable battery optimization for Secure Legion in Settings",
+                        Toast.LENGTH_LONG
+                    ).show()
+                }
+            } else {
+                Log.d("MainActivity", "App is already exempt from battery optimization")
+            }
+        }
+    }
+
     private fun scheduleSelfDestructWorker() {
         // Schedule periodic work to clean up expired self-destruct messages
         // Runs every 1 hour in background
@@ -149,10 +211,26 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    /**
+     * Schedule message retry worker with exponential backoff
+     * Retries pending Pings and polls for Pongs every 5 minutes
+     */
+    private fun scheduleMessageRetryWorker() {
+        MessageRetryWorker.schedule(this)
+        Log.d("MainActivity", "Message retry worker scheduled")
+    }
+
+    /**
+     * Start the Tor foreground service
+     * This shows the persistent notification and handles the Ping-Pong protocol
+     */
     private fun startTorService() {
-        // Start Tor foreground service for Ping-Pong protocol
-        Log.i("MainActivity", "Starting Tor foreground service")
-        TorService.start(this)
+        try {
+            Log.d("MainActivity", "Starting Tor foreground service...")
+            com.securelegion.services.TorService.start(this)
+        } catch (e: Exception) {
+            Log.e("MainActivity", "Failed to start Tor service", e)
+        }
     }
 
     private suspend fun cleanupExpiredMessages() {
@@ -185,12 +263,25 @@ class MainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         Log.d("MainActivity", "onResume called - current tab: $currentTab")
-        // Only reload chat list if we're on the messages tab
+
+        // Reload data when returning to MainActivity (receiver stays registered)
         if (currentTab == "messages") {
             setupChatList()
         } else if (currentTab == "wallet") {
             // Reload wallet spinner to show newly created wallets
             setupWalletSpinner()
+        }
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        // Unregister broadcast receiver when activity is destroyed
+        try {
+            unregisterReceiver(pingReceiver)
+            Log.d("MainActivity", "Unregistered NEW_PING broadcast receiver in onDestroy")
+        } catch (e: IllegalArgumentException) {
+            // Receiver wasn't registered, ignore
+            Log.w("MainActivity", "Receiver was not registered during onDestroy")
         }
     }
 
@@ -214,25 +305,30 @@ class MainActivity : AppCompatActivity() {
 
                     val chatsList = mutableListOf<Pair<Chat, Long>>()
 
+                    // Check for pending Pings
+                    val prefs = getSharedPreferences("pending_pings", MODE_PRIVATE)
+
                     // Process each contact
                     for (contact in allContacts) {
                         val lastMessage = database.messageDao().getLastMessage(contact.id)
+                        val hasPendingPing = prefs.contains("ping_${contact.id}_id")
 
-                        // Only include contacts with messages
-                        if (lastMessage != null) {
+                        // Include contacts with messages OR pending Pings
+                        if (lastMessage != null || hasPendingPing) {
                             val unreadCount = database.messageDao().getUnreadCount(contact.id)
 
                             val chat = Chat(
                                 id = contact.id.toString(),
                                 nickname = contact.displayName,
-                                lastMessage = lastMessage.encryptedContent,
-                                time = formatTimestamp(lastMessage.timestamp),
-                                unreadCount = unreadCount,
+                                lastMessage = if (lastMessage != null) lastMessage.encryptedContent else "New message",
+                                time = if (lastMessage != null) formatTimestamp(lastMessage.timestamp) else formatTimestamp(System.currentTimeMillis()),
+                                unreadCount = unreadCount + (if (hasPendingPing) 1 else 0),
                                 isOnline = false,
                                 avatar = contact.displayName.firstOrNull()?.toString()?.uppercase() ?: "?",
                                 securityBadge = "E2E"
                             )
-                            chatsList.add(Pair(chat, lastMessage.timestamp))
+                            val timestamp = if (lastMessage != null) lastMessage.timestamp else System.currentTimeMillis()
+                            chatsList.add(Pair(chat, timestamp))
                         }
                     }
 
@@ -280,6 +376,60 @@ class MainActivity : AppCompatActivity() {
                         }
                     )
                     Log.d("MainActivity", "RecyclerView adapter set successfully")
+
+                    // Add swipe-to-delete functionality
+                    val swipeCallback = object : ItemTouchHelper.SimpleCallback(
+                        0,
+                        ItemTouchHelper.LEFT
+                    ) {
+                        override fun onMove(
+                            recyclerView: RecyclerView,
+                            viewHolder: RecyclerView.ViewHolder,
+                            target: RecyclerView.ViewHolder
+                        ): Boolean = false
+
+                        override fun onSwiped(viewHolder: RecyclerView.ViewHolder, direction: Int) {
+                            val position = viewHolder.adapterPosition
+                            val chat = chats[position]
+
+                            Log.d("MainActivity", "Swiped to delete thread: ${chat.nickname}")
+
+                            // Delete all messages for this contact AND clear pending Pings
+                            lifecycleScope.launch {
+                                try {
+                                    withContext(Dispatchers.IO) {
+                                        database.messageDao().deleteMessagesForContact(chat.id.toLong())
+                                    }
+
+                                    // Clear pending Ping for this contact
+                                    val prefs = getSharedPreferences("pending_pings", MODE_PRIVATE)
+                                    prefs.edit()
+                                        .remove("ping_${chat.id}_id")
+                                        .remove("ping_${chat.id}_sender")
+                                        .remove("ping_${chat.id}_timestamp")
+                                        .remove("ping_${chat.id}_data")
+                                        .apply()
+
+                                    Log.i("MainActivity", "Deleted all messages and pending Pings for contact: ${chat.nickname}")
+
+                                    // Reload the chat list
+                                    setupChatList()
+                                } catch (e: Exception) {
+                                    Log.e("MainActivity", "Failed to delete thread", e)
+                                    Toast.makeText(
+                                        this@MainActivity,
+                                        "Failed to delete thread",
+                                        Toast.LENGTH_SHORT
+                                    ).show()
+                                    // Reload to restore UI
+                                    setupChatList()
+                                }
+                            }
+                        }
+                    }
+
+                    val itemTouchHelper = ItemTouchHelper(swipeCallback)
+                    itemTouchHelper.attachToRecyclerView(chatList)
                 } else {
                     Log.d("MainActivity", "No chats - showing empty state")
                     // Show empty state (but don't change tab visibility)
@@ -702,10 +852,11 @@ class MainActivity : AppCompatActivity() {
                 // Retrieve pending Ping info from SharedPreferences
                 val prefs = getSharedPreferences("pending_pings", MODE_PRIVATE)
                 val pingId = prefs.getString("ping_${contactId}_id", null)
-                val connectionId = prefs.getLong("ping_${contactId}_connection", -1L)
+                val senderOnionAddress = prefs.getString("ping_${contactId}_onion", null)
                 val senderName = prefs.getString("ping_${contactId}_name", chat.nickname)
+                val encryptedPingData = prefs.getString("ping_${contactId}_data", null)
 
-                if (pingId == null || connectionId == -1L) {
+                if (pingId == null || senderOnionAddress == null) {
                     Log.e("MainActivity", "No pending Ping found for contact $contactId")
                     withContext(Dispatchers.Main) {
                         Toast.makeText(this@MainActivity, "No pending message found", Toast.LENGTH_SHORT).show()
@@ -713,43 +864,13 @@ class MainActivity : AppCompatActivity() {
                     return@launch
                 }
 
-                Log.i("MainActivity", "Downloading message: pingId=$pingId, connectionId=$connectionId")
+                Log.i("MainActivity", "Downloading message: pingId=$pingId, sender=$senderOnionAddress")
 
                 withContext(Dispatchers.Main) {
                     Toast.makeText(this@MainActivity, "Downloading message from $senderName...", Toast.LENGTH_SHORT).show()
                 }
 
-                // Step 1: Generate Pong response (user authenticated = true)
-                val encryptedPongBytes = com.securelegion.crypto.RustBridge.respondToPing(pingId, authenticated = true)
-
-                if (encryptedPongBytes == null) {
-                    Log.e("MainActivity", "Failed to generate Pong response")
-                    withContext(Dispatchers.Main) {
-                        Toast.makeText(this@MainActivity, "Failed to respond to message", Toast.LENGTH_SHORT).show()
-                    }
-                    return@launch
-                }
-
-                Log.i("MainActivity", "Generated Pong response (${encryptedPongBytes.size} bytes)")
-
-                // Step 2: Send Pong back to sender
-                com.securelegion.crypto.RustBridge.sendPongBytes(connectionId, encryptedPongBytes)
-                Log.i("MainActivity", "Pong sent to sender")
-
-                // Step 3: Receive the encrypted message
-                val encryptedMessage = com.securelegion.crypto.RustBridge.receiveIncomingMessage(connectionId)
-
-                if (encryptedMessage == null) {
-                    Log.e("MainActivity", "Failed to receive message from sender")
-                    withContext(Dispatchers.Main) {
-                        Toast.makeText(this@MainActivity, "Failed to receive message", Toast.LENGTH_SHORT).show()
-                    }
-                    return@launch
-                }
-
-                Log.i("MainActivity", "Received encrypted message (${encryptedMessage.size} bytes)")
-
-                // Step 4: Get contact info from database
+                // Step 1: Get contact info from database
                 val keyManager = KeyManager.getInstance(this@MainActivity)
                 val dbPassphrase = keyManager.getDatabasePassphrase()
                 val database = SecureLegionDatabase.getInstance(this@MainActivity, dbPassphrase)
@@ -763,67 +884,139 @@ class MainActivity : AppCompatActivity() {
                     return@launch
                 }
 
-                // Step 5: Decrypt the message
-                val senderPublicKey = android.util.Base64.decode(contact.publicKeyBase64, android.util.Base64.NO_WRAP)
-                val ourPrivateKey = keyManager.getSigningKeyBytes()
-                val decryptedMessage = com.securelegion.crypto.RustBridge.decryptMessage(
-                    encryptedMessage,
-                    senderPublicKey,
-                    ourPrivateKey
-                )
+                // Step 2: Restore the Ping in Rust so respondToPing can find it
+                Log.d("MainActivity", "Stored Ping ID from SharedPreferences: $pingId")
 
-                if (decryptedMessage == null) {
-                    Log.e("MainActivity", "Failed to decrypt message from ${contact.displayName}")
+                val actualPingId: String
+                if (encryptedPingData != null) {
+                    val encryptedPingBytes = android.util.Base64.decode(encryptedPingData, android.util.Base64.NO_WRAP)
+                    Log.d("MainActivity", "Restoring Ping from ${encryptedPingBytes.size} bytes of encrypted data")
+                    val restoredPingId = com.securelegion.crypto.RustBridge.decryptIncomingPing(encryptedPingBytes)
+
+                    if (restoredPingId == null) {
+                        Log.e("MainActivity", "Failed to decrypt/restore Ping")
+                        withContext(Dispatchers.Main) {
+                            Toast.makeText(this@MainActivity, "Failed to restore message request", Toast.LENGTH_SHORT).show()
+                        }
+                        return@launch
+                    }
+
+                    Log.i("MainActivity", "Ping decrypted - stored ID: $pingId, restored ID: $restoredPingId")
+
+                    if (restoredPingId != pingId) {
+                        Log.w("MainActivity", "⚠️  Ping ID MISMATCH! Stored=$pingId, Restored=$restoredPingId")
+                        Log.w("MainActivity", "Using restored ID (based on actual nonce) for Pong response")
+                    }
+
+                    actualPingId = restoredPingId
+                    Log.i("MainActivity", "Ping restored successfully: $actualPingId")
+                } else {
+                    Log.e("MainActivity", "No encrypted Ping data stored - cannot restore")
                     withContext(Dispatchers.Main) {
-                        Toast.makeText(this@MainActivity, "Failed to decrypt message", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(this@MainActivity, "Message data not found", Toast.LENGTH_SHORT).show()
                     }
                     return@launch
                 }
 
-                Log.i("MainActivity", "Message decrypted successfully: \"$decryptedMessage\"")
+                // Step 3: Generate Pong response (user authenticated = true)
+                Log.d("MainActivity", "Creating Pong with Ping ID: $actualPingId")
+                val encryptedPongBytes = com.securelegion.crypto.RustBridge.respondToPing(actualPingId, authenticated = true)
 
-                // Step 6: Store message in database
-                val message = com.securelegion.database.entities.Message(
-                    contactId = contactId,
-                    messageId = java.util.UUID.randomUUID().toString(),
-                    encryptedContent = decryptedMessage,
-                    isSentByMe = false,
-                    timestamp = System.currentTimeMillis(),
-                    status = com.securelegion.database.entities.Message.STATUS_DELIVERED,
-                    signatureBase64 = "", // No signature verification for now
-                    nonceBase64 = "",
-                    isRead = false,
-                    selfDestructAt = null
-                )
-                database.messageDao().insertMessage(message)
+                if (encryptedPongBytes == null) {
+                    Log.e("MainActivity", "Failed to generate Pong response")
+                    withContext(Dispatchers.Main) {
+                        Toast.makeText(this@MainActivity, "Failed to respond to message", Toast.LENGTH_SHORT).show()
+                    }
+                    return@launch
+                }
 
-                Log.i("MainActivity", "Message saved to database")
+                Log.i("MainActivity", "Generated Pong response (${encryptedPongBytes.size} bytes)")
 
-                // Step 7: Remove pending Ping from SharedPreferences
+                // Step 4: Send Pong over NEW connection to sender (old connection is closed)
+                val pongSent = com.securelegion.crypto.RustBridge.sendPongToNewConnection(senderOnionAddress, encryptedPongBytes)
+
+                if (!pongSent) {
+                    Log.e("MainActivity", "Failed to send Pong to $senderOnionAddress")
+                    withContext(Dispatchers.Main) {
+                        Toast.makeText(this@MainActivity, "Failed to connect to sender", Toast.LENGTH_SHORT).show()
+                    }
+                    return@launch
+                }
+
+                Log.i("MainActivity", "Pong sent to sender via new connection")
+
+                // Step 5: Wait for the message blob to arrive via TorService listener
+                // The message will be received by handleIncomingMessageBlob in TorService
+                // and automatically saved to the database. We'll wait up to 30 seconds.
+                Log.i("MainActivity", "Waiting for message blob from sender...")
+
+                var messageReceived = false
+                var attempts = 0
+                val maxAttempts = 30  // 30 seconds total
+
+                while (!messageReceived && attempts < maxAttempts) {
+                    kotlinx.coroutines.delay(1000)  // Wait 1 second
+                    attempts++
+
+                    // Check if message has arrived by checking if Ping is still pending
+                    val stillPending = prefs.contains("ping_${contactId}_id")
+                    if (!stillPending) {
+                        // Ping was cleared, meaning message was received and processed
+                        messageReceived = true
+                        break
+                    }
+
+                    // Also check database for new message from this contact
+                    val lastMessage = database.messageDao().getLastMessage(contactId)
+                    if (lastMessage != null && !lastMessage.isSentByMe &&
+                        System.currentTimeMillis() - lastMessage.timestamp < 35000) {
+                        // New received message within last 35 seconds
+                        messageReceived = true
+                        break
+                    }
+                }
+
+                if (!messageReceived) {
+                    Log.e("MainActivity", "Timeout waiting for message blob from sender")
+                    withContext(Dispatchers.Main) {
+                        Toast.makeText(this@MainActivity, "Timeout: sender may be offline", Toast.LENGTH_LONG).show()
+                    }
+                    return@launch
+                }
+
+                Log.i("MainActivity", "Message blob received and processed by TorService")
+
+                // Step 6: Remove pending Ping from SharedPreferences (TorService already saved the message)
+                // Use commit() not apply() to ensure write completes immediately
                 prefs.edit().apply {
                     remove("ping_${contactId}_id")
                     remove("ping_${contactId}_connection")
                     remove("ping_${contactId}_name")
-                    apply()
+                    remove("ping_${contactId}_data")
+                    remove("ping_${contactId}_onion")
+                    remove("ping_${contactId}_timestamp")
+                    commit()  // Synchronous - guarantees persistence
                 }
 
-                Log.i("MainActivity", "Pending Ping cleared")
+                Log.i("MainActivity", "Pending Ping cleared from SharedPreferences")
 
-                // Step 8: Clear notification if no more pending Pings
+                // Step 7: Clear notification if no more pending Pings
                 val remainingPings = prefs.all.filter { it.key.endsWith("_id") }.size
                 if (remainingPings == 0) {
                     val notificationManager = getSystemService(android.app.NotificationManager::class.java)
                     notificationManager.cancel(999)
                 }
 
-                // Step 9: Update UI
+                // Step 8: Update UI
                 withContext(Dispatchers.Main) {
-                    Toast.makeText(this@MainActivity, "Message from $senderName downloaded", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(this@MainActivity, "Message from $senderName downloaded!", Toast.LENGTH_SHORT).show()
                     // Refresh chat list to hide download button and show the new message
                     setupChatList()
                     // Update app badge
                     updateAppBadge()
                 }
+
+                Log.i("MainActivity", "Message download complete for contact $contactId")
 
             } catch (e: Exception) {
                 Log.e("MainActivity", "Failed to download message", e)

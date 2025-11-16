@@ -13,7 +13,10 @@
         android:layout_height="wrap_content"
         android:orientation="horizontal"
         android:background="@color/dark_bg"
-        android:padding="24dp"
+        android:fitsSystemWindows="true"
+        android:paddingStart="24dp"
+        android:paddingEnd="24dp"
+        android:paddingBottom="24dp"
         android:gravity="center"
         app:layout_constraintTop_toTopOf="parent">
 

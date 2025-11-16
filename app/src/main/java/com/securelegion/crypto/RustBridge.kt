@@ -125,10 +125,18 @@ object RustBridge {
     /**
      * Start the hidden service listener on the specified port
      * This enables receiving incoming Ping tokens
-     * @param port The local port to listen on (default 9150)
+     * @param port The local port to listen on (default 8080, NOT 9150 which is SOCKS!)
      * @return True if listener started successfully
      */
-    external fun startHiddenServiceListener(port: Int = 9150): Boolean
+    external fun startHiddenServiceListener(port: Int = 8080): Boolean
+
+    /**
+     * Start the tap listener on the specified port
+     * This enables receiving incoming tap notifications
+     * @param port The local port to listen on (default 9151)
+     * @return True if listener started successfully
+     */
+    external fun startTapListener(port: Int = 9151): Boolean
 
     /**
      * Stop the hidden service listener
@@ -154,17 +162,39 @@ object RustBridge {
     external fun isSocksProxyRunning(): Boolean
 
     /**
+     * Test SOCKS5 proxy connectivity
+     * Attempts a test connection through the SOCKS proxy
+     * @return True if SOCKS proxy is functional
+     */
+    external fun testSocksConnectivity(): Boolean
+
+    /**
+     * Stop all listeners (hidden service listener, tap listener, ping listener)
+     */
+    external fun stopListeners()
+
+    /**
      * Poll for an incoming Ping token (non-blocking)
      * @return Encoded data: [connection_id (8 bytes)][encrypted_ping_bytes] or null if no ping available
      */
     external fun pollIncomingPing(): ByteArray?
 
     /**
-     * Send encrypted Pong response back to a pending connection
+     * Send encrypted Pong response back to a pending connection and receive the message
      * @param connectionId The connection ID extracted from pollIncomingPing
      * @param encryptedPongBytes The encrypted Pong token bytes (from respondToPing)
+     * @return The encrypted message bytes sent by the sender, or null on error/timeout
      */
-    external fun sendPongBytes(connectionId: Long, encryptedPongBytes: ByteArray)
+    external fun sendPongBytes(connectionId: Long, encryptedPongBytes: ByteArray): ByteArray?
+
+    /**
+     * Send encrypted Pong over a NEW connection to sender's .onion address
+     * Used when original connection has closed (e.g., downloading message hours later)
+     * @param senderOnionAddress The sender's .onion address
+     * @param encryptedPongBytes The encrypted Pong token bytes (from respondToPing)
+     * @return True if Pong sent successfully
+     */
+    external fun sendPongToNewConnection(senderOnionAddress: String, encryptedPongBytes: ByteArray): Boolean
 
     /**
      * Decrypt an incoming encrypted Ping token and store it
@@ -180,6 +210,14 @@ object RustBridge {
      * @return Sender's Ed25519 public key (32 bytes), or null if not found
      */
     external fun getPingSenderPublicKey(pingId: String): ByteArray?
+
+    /**
+     * Decrypt an incoming encrypted Pong token and store it
+     * Wire format: [Sender X25519 Public Key - 32 bytes][Encrypted Pong Token]
+     * @param encryptedPongWire The encrypted wire message
+     * @return Ping ID (String) that the Pong is responding to, or null on failure
+     */
+    external fun decryptIncomingPong(encryptedPongWire: ByteArray): String?
 
     // ==================== PING-PONG PROTOCOL ====================
 
@@ -201,12 +239,56 @@ object RustBridge {
     external fun waitForPong(pingId: String, timeoutSeconds: Int): Boolean
 
     /**
+     * Check if a Pong has been received (non-blocking)
+     * @param pingId The Ping ID to check
+     * @return True if Pong has been received and is waiting
+     */
+    external fun pollForPong(pingId: String): Boolean
+
+    /**
+     * Send encrypted message blob after Pong is received
+     * Used for persistent messaging - after Pong arrives, send the actual message
+     * @param recipientOnion The recipient's .onion address
+     * @param encryptedMessage The encrypted message bytes
+     * @return True if message sent successfully
+     */
+    external fun sendMessageBlob(recipientOnion: String, encryptedMessage: ByteArray): Boolean
+
+    /**
      * Respond to an incoming Ping with a Pong
      * @param pingId The Ping ID from decryptIncomingPing
      * @param authenticated Whether user successfully authenticated
      * @return Encrypted Pong wire message to send via sendPongBytes, or null if denied
      */
     external fun respondToPing(pingId: String, authenticated: Boolean): ByteArray?
+
+    /**
+     * Send a "tap" (presence notification) to a contact
+     * Tap tells the contact "I'm online now, retry any pending operations"
+     * @param recipientEd25519PublicKey Recipient's Ed25519 public key (32 bytes)
+     * @param recipientX25519PublicKey Recipient's X25519 public key (32 bytes)
+     * @param recipientOnion Recipient's .onion address
+     * @return True if tap sent successfully
+     */
+    external fun sendTap(
+        recipientEd25519PublicKey: ByteArray,
+        recipientX25519PublicKey: ByteArray,
+        recipientOnion: String
+    ): Boolean
+
+    /**
+     * Poll for an incoming tap (non-blocking)
+     * Wire format from sender: [Sender X25519 Public Key - 32 bytes][Encrypted Tap]
+     * @return Tap wire message bytes, or null if no tap available
+     */
+    external fun pollIncomingTap(): ByteArray?
+
+    /**
+     * Decrypt an incoming tap and get sender's Ed25519 public key
+     * @param tapWire The tap wire message from pollIncomingTap
+     * @return Sender's Ed25519 public key (32 bytes), or null if decryption fails
+     */
+    external fun decryptIncomingTap(tapWire: ByteArray): ByteArray?
 
     // ==================== HELPER FUNCTIONS ====================
 

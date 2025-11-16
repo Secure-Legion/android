@@ -11,6 +11,7 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import com.securelegion.crypto.KeyManager
+import com.securelegion.crypto.TorManager
 import com.securelegion.database.SecureLegionDatabase
 import com.securelegion.database.entities.Wallet
 import com.securelegion.models.ContactCard
@@ -177,6 +178,11 @@ class CreateAccountActivity : AppCompatActivity() {
             // Get the real Solana wallet address (Base58-encoded Ed25519 public key)
             generatedWalletAddress = keyManager.getSolanaAddress()
             Log.i("CreateAccount", "Solana address: $generatedWalletAddress")
+
+            // Create hidden service now that account exists
+            Log.i("CreateAccount", "Creating hidden service for account")
+            val torManager = TorManager.getInstance(this)
+            torManager.createHiddenServiceIfNeeded()
 
             // Navigate to backup seed phrase screen first
             // When user returns, they'll see wallet address and username section

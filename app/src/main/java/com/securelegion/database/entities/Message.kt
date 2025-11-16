@@ -98,7 +98,31 @@ data class Message(
     /**
      * Whether sender wants read receipts for this message
      */
-    val requiresReadReceipt: Boolean = true
+    val requiresReadReceipt: Boolean = true,
+
+    /**
+     * Ping ID for Ping-Pong protocol
+     * Used to match Pongs with Pings and track message delivery
+     */
+    val pingId: String? = null,
+
+    /**
+     * Encrypted payload for sender-side storage
+     * Contains the encrypted message blob to send after receiving Pong
+     */
+    val encryptedPayload: String? = null,
+
+    /**
+     * Number of retry attempts for message delivery
+     * Used for exponential backoff
+     */
+    val retryCount: Int = 0,
+
+    /**
+     * Last retry attempt timestamp (Unix milliseconds)
+     * Used to calculate next retry time with exponential backoff
+     */
+    val lastRetryTimestamp: Long? = null
 ) {
     companion object {
         // Message status constants
@@ -107,8 +131,15 @@ data class Message(
         const val STATUS_DELIVERED = 2
         const val STATUS_READ = 3
         const val STATUS_FAILED = 4
+        const val STATUS_PING_SENT = 5      // Ping sent, waiting for Pong
+        const val STATUS_PONG_SENT = 6      // Pong sent, waiting for message blob
 
         // Self-destruct duration (24 hours in milliseconds)
         const val SELF_DESTRUCT_DURATION = 24 * 60 * 60 * 1000L
+
+        // Retry backoff settings
+        const val INITIAL_RETRY_DELAY_MS = 5000L       // 5 seconds
+        const val MAX_RETRY_DELAY_MS = 300000L         // 5 minutes
+        const val RETRY_BACKOFF_MULTIPLIER = 2.0       // Double each time
     }
 }

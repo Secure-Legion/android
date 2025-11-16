@@ -43,18 +43,32 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:orientation="vertical"
-            android:maxWidth="280dp"
             android:background="@drawable/message_received_bg"
-            android:padding="12dp">
+            android:padding="8dp"
+            android:gravity="center">
 
+            <!-- Lock Icon Button -->
+            <ImageView
+                android:id="@+id/downloadButton"
+                android:layout_width="32dp"
+                android:layout_height="32dp"
+                android:src="@drawable/ic_lock"
+                android:tint="@color/text_white"
+                android:clickable="true"
+                android:focusable="true"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:padding="6dp" />
+
+            <!-- Downloading Text -->
             <TextView
-                android:id="@+id/messageText"
+                android:id="@+id/downloadingText"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="Message content"
-                android:textColor="@color/text_white"
-                android:textSize="15sp"
-                android:lineSpacingMultiplier="1.2" />
+                android:text="Downloading..."
+                android:textColor="@color/text_gray"
+                android:textSize="11sp"
+                android:layout_marginTop="4dp"
+                android:visibility="gone" />
 
         </LinearLayout>
 

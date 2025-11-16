@@ -15,8 +15,8 @@
         android:layout_height="wrap_content"
         android:orientation="vertical"
         android:background="@drawable/header_bg"
-        android:paddingTop="24dp"
         android:paddingBottom="0dp"
+        android:fitsSystemWindows="true"
         app:layout_constraintTop_toTopOf="parent">
 
         <!-- App Title Bar -->

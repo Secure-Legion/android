@@ -176,6 +176,7 @@ class ComposeActivity : AppCompatActivity() {
 
     private fun sendMessage() {
         val message = findViewById<EditText>(R.id.messageInput).text.toString()
+        val sendButton = findViewById<View>(R.id.sendButton)
 
         if (selectedContact == null) {
             Toast.makeText(this, "Please select a contact", Toast.LENGTH_SHORT).show()
@@ -187,38 +188,31 @@ class ComposeActivity : AppCompatActivity() {
             return
         }
 
-        // Send message directly and return to main screen
+        // Disable button to prevent multiple sends
+        sendButton.isEnabled = false
+        sendButton.alpha = 0.5f
+
+        // Send message in background and return to main screen immediately
         lifecycleScope.launch {
-            try {
-                val messageService = MessageService(this@ComposeActivity)
+            val messageService = MessageService(this@ComposeActivity)
 
-                // Send message with security options
-                messageService.sendMessage(
-                    contactId = selectedContact!!.id,
-                    plaintext = message,
-                    enableSelfDestruct = isSelfDestructEnabled,
-                    enableReadReceipt = isReadReceiptEnabled
-                )
-
-                // Navigate back to main screen (success or failure, no toast)
-                withContext(Dispatchers.Main) {
-                    val intent = Intent(this@ComposeActivity, MainActivity::class.java)
-                    intent.flags = Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
-                    startActivity(intent)
-                    finish()
+            // Send message with callback - navigate back as soon as it's saved to DB
+            messageService.sendMessage(
+                contactId = selectedContact!!.id,
+                plaintext = message,
+                enableSelfDestruct = isSelfDestructEnabled,
+                enableReadReceipt = isReadReceiptEnabled,
+                onMessageSaved = { savedMessage ->
+                    // Message saved to DB - navigate back immediately
+                    // Tor send continues in background
+                    lifecycleScope.launch(Dispatchers.Main) {
+                        val intent = Intent(this@ComposeActivity, MainActivity::class.java)
+                        intent.flags = Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
+                        startActivity(intent)
+                        finish()
+                    }
                 }
-            } catch (e: Exception) {
-                // Silent failure - message saved to database, will retry later
-                Log.e(TAG, "Message send failed (will retry later)", e)
-
-                // Still navigate back to main screen
-                withContext(Dispatchers.Main) {
-                    val intent = Intent(this@ComposeActivity, MainActivity::class.java)
-                    intent.flags = Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
-                    startActivity(intent)
-                    finish()
-                }
-            }
+            )
         }
     }
 

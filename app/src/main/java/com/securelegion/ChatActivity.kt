@@ -1,6 +1,9 @@
 package com.securelegion
 
+import android.content.BroadcastReceiver
+import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.os.Bundle
 import android.text.Editable
 import android.text.TextWatcher
@@ -17,6 +20,7 @@ import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.securelegion.adapters.MessageAdapter
 import com.securelegion.crypto.KeyManager
+import com.securelegion.crypto.TorManager
 import com.securelegion.database.SecureLegionDatabase
 import com.securelegion.services.MessageService
 import kotlinx.coroutines.Dispatchers
@@ -42,6 +46,61 @@ class ChatActivity : AppCompatActivity() {
     private var contactName: String = "@user"
     private var contactAddress: String = ""
     private var isShowingSendButton = false
+    private var isDownloadInProgress = false
+
+    // BroadcastReceiver for instant message display and new Pings
+    private val messageReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            when (intent?.action) {
+                "com.securelegion.MESSAGE_RECEIVED" -> {
+                    val receivedContactId = intent.getLongExtra("CONTACT_ID", -1L)
+                    Log.d(TAG, "MESSAGE_RECEIVED broadcast: received contactId=$receivedContactId, current contactId=$contactId")
+                    if (receivedContactId == contactId) {
+                        Log.i(TAG, "New message for current contact - reloading messages")
+                        // Verify pending ping is cleared before resetting flag
+                        val prefs = getSharedPreferences("pending_pings", MODE_PRIVATE)
+                        if (!prefs.contains("ping_${contactId}_id")) {
+                            isDownloadInProgress = false  // Download complete, ping cleared
+                        }
+                        runOnUiThread {
+                            lifecycleScope.launch {
+                                loadMessages()
+                            }
+                        }
+                    } else {
+                        Log.d(TAG, "Message for different contact, ignoring")
+                    }
+                }
+                "com.securelegion.NEW_PING" -> {
+                    val receivedContactId = intent.getLongExtra("CONTACT_ID", -1L)
+                    Log.d(TAG, "NEW_PING broadcast: received contactId=$receivedContactId, current contactId=$contactId")
+
+                    if (receivedContactId == contactId) {
+                        // NEW_PING for current contact
+                        if (!isDownloadInProgress) {
+                            // Not downloading - this is a legitimate new ping, show lock icon
+                            Log.i(TAG, "New Ping for current contact - reloading to show lock icon")
+                            runOnUiThread {
+                                lifecycleScope.launch {
+                                    loadMessages()
+                                }
+                            }
+                        } else {
+                            Log.d(TAG, "NEW_PING for current contact during download - ignoring to prevent ghost")
+                        }
+                    } else if (receivedContactId != -1L) {
+                        // NEW_PING for different contact - reload to update UI
+                        Log.i(TAG, "New Ping for different contact - reloading")
+                        runOnUiThread {
+                            lifecycleScope.launch {
+                                loadMessages()
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -65,11 +124,9 @@ class ChatActivity : AppCompatActivity() {
 
         // Setup UI
         findViewById<TextView>(R.id.chatName).text = contactName
-        findViewById<TextView>(R.id.chatStatus).text = "● Offline" // TODO: Add online status
 
         setupRecyclerView()
         setupClickListeners()
-        setupBottomNavigation()
 
         // Check for pre-filled message from ComposeActivity
         val preFilledMessage = intent.getStringExtra("PRE_FILL_MESSAGE")
@@ -82,13 +139,43 @@ class ChatActivity : AppCompatActivity() {
             sendMessage(enableSelfDestruct, enableReadReceipt)
         } else {
             // Only load messages if there's no pre-filled message (sendMessage will load them)
-            loadMessages()
+            lifecycleScope.launch {
+                loadMessages()
+            }
+        }
+
+        // Register broadcast receiver for instant message display and new Pings (stays registered even when paused)
+        val filter = IntentFilter().apply {
+            addAction("com.securelegion.MESSAGE_RECEIVED")
+            addAction("com.securelegion.NEW_PING")
+        }
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(messageReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            registerReceiver(messageReceiver, filter)
+        }
+        Log.d(TAG, "Message receiver registered in onCreate for MESSAGE_RECEIVED and NEW_PING")
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        // Unregister broadcast receiver when activity is destroyed
+        try {
+            unregisterReceiver(messageReceiver)
+            Log.d(TAG, "Message receiver unregistered in onDestroy")
+        } catch (e: IllegalArgumentException) {
+            // Receiver was not registered, ignore
+            Log.w(TAG, "Receiver was not registered during onDestroy")
         }
     }
 
     private fun setupRecyclerView() {
         messagesRecyclerView = findViewById(R.id.messagesRecyclerView)
-        messageAdapter = MessageAdapter()
+        messageAdapter = MessageAdapter(
+            onDownloadClick = {
+                handleDownloadClick()
+            }
+        )
 
         messagesRecyclerView.apply {
             layoutManager = LinearLayoutManager(this@ChatActivity)
@@ -151,28 +238,68 @@ class ChatActivity : AppCompatActivity() {
         Log.d(TAG, "Voice recording feature - to be implemented")
     }
 
-    private fun loadMessages() {
-        lifecycleScope.launch {
-            try {
-                Log.d(TAG, "Loading messages for contact: $contactId")
-                val messages = messageService.getMessagesForContact(contactId)
-                Log.d(TAG, "Loaded ${messages.size} messages")
+    private suspend fun loadMessages() {
+        try {
+            Log.d(TAG, "Loading messages for contact: $contactId")
+            val messages = withContext(Dispatchers.IO) {
+                messageService.getMessagesForContact(contactId)
+            }
+            Log.d(TAG, "Loaded ${messages.size} messages")
+            messages.forEach { msg ->
+                Log.d(TAG, "Message: ${msg.encryptedContent.take(20)}... status=${msg.status}")
+            }
 
-                withContext(Dispatchers.Main) {
-                    messageAdapter.updateMessages(messages)
-                    if (messages.isNotEmpty()) {
-                        messagesRecyclerView.scrollToPosition(messages.size - 1)
+            // Mark all received messages as read (updates unread count)
+            val markedCount = withContext(Dispatchers.IO) {
+                val keyManager = KeyManager.getInstance(this@ChatActivity)
+                val dbPassphrase = keyManager.getDatabasePassphrase()
+                val database = SecureLegionDatabase.getInstance(this@ChatActivity, dbPassphrase)
+
+                val unreadMessages = messages.filter { !it.isSentByMe && !it.isRead }
+                unreadMessages.forEach { message ->
+                    val updatedMessage = message.copy(isRead = true)
+                    database.messageDao().updateMessage(updatedMessage)
+                }
+                unreadMessages.size
+            }
+
+            if (markedCount > 0) {
+                Log.d(TAG, "Marked $markedCount messages as read")
+                // Notify MainActivity to refresh unread counts (explicit broadcast)
+                val intent = Intent("com.securelegion.NEW_PING")
+                intent.setPackage(packageName) // Make it explicit
+                sendBroadcast(intent)
+            }
+
+            // Check for pending Ping (but not if download is in progress to prevent ghost)
+            val prefs = getSharedPreferences("pending_pings", MODE_PRIVATE)
+            val hasPendingPing = prefs.contains("ping_${contactId}_id") && !isDownloadInProgress
+            val pendingSenderName = if (hasPendingPing) contactName else null
+            val pendingTimestamp = if (hasPendingPing) prefs.getLong("ping_${contactId}_timestamp", System.currentTimeMillis()) else null
+
+            withContext(Dispatchers.Main) {
+                Log.d(TAG, "Updating adapter with ${messages.size} messages" +
+                    if (hasPendingPing) " + 1 pending" else "")
+                messageAdapter.updateMessages(
+                    messages,
+                    pendingSenderName,
+                    pendingTimestamp
+                )
+                messagesRecyclerView.post {
+                    val totalItems = messages.size + (if (hasPendingPing) 1 else 0)
+                    if (totalItems > 0) {
+                        messagesRecyclerView.scrollToPosition(totalItems - 1)
                     }
                 }
-            } catch (e: Exception) {
-                Log.e(TAG, "Failed to load messages", e)
-                withContext(Dispatchers.Main) {
-                    Toast.makeText(
-                        this@ChatActivity,
-                        "Failed to load messages: ${e.message}",
-                        Toast.LENGTH_SHORT
-                    ).show()
-                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to load messages", e)
+            withContext(Dispatchers.Main) {
+                Toast.makeText(
+                    this@ChatActivity,
+                    "Failed to load messages: ${e.message}",
+                    Toast.LENGTH_SHORT
+                ).show()
             }
         }
     }
@@ -194,52 +321,58 @@ class ChatActivity : AppCompatActivity() {
                 }
 
                 // Send message with security options
-                val result = messageService.sendMessage(contactId, messageText, enableSelfDestruct, enableReadReceipt)
+                // Use callback to update UI immediately when message is saved (before Tor send)
+                val result = messageService.sendMessage(
+                    contactId = contactId,
+                    plaintext = messageText,
+                    enableSelfDestruct = enableSelfDestruct,
+                    enableReadReceipt = enableReadReceipt,
+                    onMessageSaved = { savedMessage ->
+                        // Message saved to DB - update UI immediately to show PENDING message
+                        Log.d(TAG, "Message saved to DB, updating UI immediately")
+                        lifecycleScope.launch {
+                            loadMessages()
+                        }
+                    }
+                )
 
-                if (result.isSuccess) {
-                    Log.i(TAG, "Message sent successfully")
+                // Reload again after Tor send completes to update status indicator
+                loadMessages()
 
-                    // Reload messages to show the new message
-                    loadMessages()
-                } else {
-                    throw result.exceptionOrNull() ?: Exception("Unknown error")
+                if (result.isFailure) {
+                    Log.e(TAG, "Failed to send message", result.exceptionOrNull())
                 }
             } catch (e: Exception) {
                 // Silent failure - message saved to database, will retry later
                 Log.e(TAG, "Failed to send message (will retry later)", e)
 
-                // Still reload messages to show the pending message
+                // Reload messages to show the pending message
                 loadMessages()
             }
         }
     }
 
-    private fun setupBottomNavigation() {
-        findViewById<View>(R.id.navMessages).setOnClickListener {
-            val intent = Intent(this, MainActivity::class.java)
-            intent.flags = Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
-            startActivity(intent)
-            finish()
+
+    private fun handleDownloadClick() {
+        Log.i(TAG, "Download button clicked for contact $contactId")
+
+        // Check if we have a pending Ping
+        val prefs = getSharedPreferences("pending_pings", MODE_PRIVATE)
+        val pingId = prefs.getString("ping_${contactId}_id", null)
+
+        if (pingId == null) {
+            Toast.makeText(this, "No pending message", Toast.LENGTH_SHORT).show()
+            return
         }
 
-        findViewById<View>(R.id.navWallet).setOnClickListener {
-            val intent = Intent(this, MainActivity::class.java)
-            intent.putExtra("SHOW_WALLET", true)
-            intent.flags = Intent.FLAG_ACTIVITY_CLEAR_TOP
-            startActivity(intent)
-            finish()
-        }
+        // Set flag to prevent showing pending message again during download
+        isDownloadInProgress = true
 
-        findViewById<View>(R.id.navAddFriend).setOnClickListener {
-            val intent = Intent(this, AddFriendActivity::class.java)
-            startActivity(intent)
-            finish()
-        }
+        // Start the download service
+        com.securelegion.services.DownloadMessageService.start(this, contactId, contactName)
 
-        findViewById<View>(R.id.navLock).setOnClickListener {
-            val intent = Intent(this, LockActivity::class.java)
-            startActivity(intent)
-            finish()
-        }
+        // DON'T reload messages here - let the "downloading" text stay visible
+        // The service will broadcast MESSAGE_RECEIVED when done, which will trigger a reload
     }
+
 }
