@@ -73,91 +73,18 @@
             android:orientation="vertical"
             android:gravity="center_horizontal">
 
-            <!-- App Logo -->
-            <ImageView
-                android:layout_width="120dp"
-                android:layout_height="120dp"
-                android:src="@drawable/secure_logo"
-                android:layout_marginTop="24dp"
-                android:layout_marginBottom="24dp"
-                android:contentDescription="Secure Legion Logo" />
-
-            <!-- App Name -->
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="Secure Legion"
-                android:textSize="24sp"
-                android:textStyle="bold"
-                android:textColor="@color/text_white"
-                android:layout_marginBottom="8dp" />
-
             <!-- Version -->
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:text="Version 0.1.4 Beta"
-                android:textSize="14sp"
-                android:textColor="@color/text_gray"
+                android:textSize="20sp"
+                android:textStyle="bold"
+                android:textColor="@color/text_white"
+                android:layout_marginTop="32dp"
                 android:layout_marginBottom="32dp" />
 
-            <!-- Description Card -->
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="vertical"
-                android:background="@drawable/settings_item_bg"
-                android:padding="20dp"
-                android:layout_marginBottom="24dp">
-
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="About Secure Legion"
-                    android:textSize="16sp"
-                    android:textStyle="bold"
-                    android:textColor="@color/text_white"
-                    android:layout_marginBottom="12dp" />
-
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="Secure Legion is a privacy-focused encrypted messenger and Solana wallet. All communications are end-to-end encrypted using XChaCha20-Poly1305 and routed through Tor for maximum anonymity.\n\nYour keys, your data, your privacy."
-                    android:textSize="14sp"
-                    android:textColor="@color/text_gray"
-                    android:lineSpacingMultiplier="1.3" />
-
-            </LinearLayout>
-
-            <!-- Features Card -->
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="vertical"
-                android:background="@drawable/settings_item_bg"
-                android:padding="20dp"
-                android:layout_marginBottom="24dp">
-
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="Key Features"
-                    android:textSize="16sp"
-                    android:textStyle="bold"
-                    android:textColor="@color/text_white"
-                    android:layout_marginBottom="12dp" />
-
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="• End-to-end encrypted messaging\n• Tor network routing for anonymity\n• Solana blockchain wallet\n• Distress PIN with emergency wipe\n• Self-destructing messages\n• No phone number required\n• Open source cryptography"
-                    android:textSize="14sp"
-                    android:textColor="@color/text_gray"
-                    android:lineSpacingMultiplier="1.5" />
-
-            </LinearLayout>
-
-            <!-- Terms of Service Placeholder -->
+            <!-- Terms of Service -->
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
@@ -170,31 +97,20 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="Terms of Service"
-                    android:textSize="16sp"
+                    android:textSize="18sp"
                     android:textStyle="bold"
                     android:textColor="@color/text_white"
-                    android:layout_marginBottom="12dp" />
+                    android:layout_marginBottom="16dp" />
 
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="Terms of Service will be added here in a future update.\n\nSecure Legion is provided as-is for testing purposes. Always maintain backups of your seed phrase."
-                    android:textSize="14sp"
+                    android:text="LICENSE AGREEMENT\n\nSecure Legion is licensed under the PolyForm Noncommercial License 1.0.0\n\n1. PURPOSE\n\nThis license allows you to use and share this software for noncommercial purposes only. Commercial use requires a separate commercial license.\n\n2. ACCEPTANCE\n\nBy using this software, you agree to all terms and conditions of this license.\n\n3. PERMITTED USE\n\nYou may use, modify, and distribute this software for any noncommercial purpose. Noncommercial purposes include personal use, education, academic research, and evaluation.\n\n4. RESTRICTIONS\n\nYou may NOT use this software:\n• To generate revenue or other commercial benefit\n• For any business operation or commercial advantage\n• As part of any commercial service or product\n• In any way that is primarily intended for commercial advantage\n\n5. DISCLAIMER OF WARRANTY\n\nThis software is provided AS-IS without warranty of any kind, either express or implied, including but not limited to:\n• Merchantability\n• Fitness for a particular purpose\n• Non-infringement\n• Security or absence of vulnerabilities\n\n6. LIMITATION OF LIABILITY\n\nThe developers shall not be liable for any damages arising from the use of this software, including but not limited to:\n• Loss of data or encrypted messages\n• Loss of cryptocurrency or digital assets\n• Privacy breaches or security incidents\n• Direct, indirect, or consequential damages\n\n7. CRYPTOGRAPHIC NOTICE\n\nThis software uses strong cryptography. You are responsible for:\n• Securely storing your seed phrase and private keys\n• Maintaining backups of your recovery information\n• Understanding that lost keys cannot be recovered\n• Complying with export and import regulations\n\n8. PRIVACY AND DATA\n\n• No data is collected or transmitted to developers\n• All communications are end-to-end encrypted\n• Messages are routed through Tor for anonymity\n• You are solely responsible for your data security\n\n9. BETA SOFTWARE NOTICE\n\nThis is BETA SOFTWARE. Expected issues:\n• Bugs and unexpected behavior\n• Potential data loss\n• Breaking changes in future updates\n• No guarantee of backwards compatibility\n\n10. NO SUPPORT\n\nThis software is provided without support, maintenance, or service commitments.\n\n11. TERMINATION\n\nThis license automatically terminates if you violate any terms. Upon termination, you must cease all use and destroy all copies.\n\n12. COMMERCIAL LICENSING\n\nFor commercial use, contact the developers for licensing terms.\n\nBy using Secure Legion, you acknowledge that you have read, understood, and agree to be bound by these terms.\n\nLast updated: January 2025"
+                    android:textSize="13sp"
                     android:textColor="@color/text_gray"
-                    android:lineSpacingMultiplier="1.3" />
+                    android:lineSpacingMultiplier="1.4" />
 
             </LinearLayout>
-
-            <!-- Copyright -->
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="© 2025 Secure Legion\nAll rights reserved"
-                android:textSize="12sp"
-                android:textColor="@color/text_gray"
-                android:gravity="center"
-                android:layout_marginTop="16dp"
-                android:layout_marginBottom="24dp" />
 
         </LinearLayout>
 

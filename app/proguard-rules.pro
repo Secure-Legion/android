@@ -169,18 +169,22 @@
     public *;
 }
 
-# ==================== LOG REMOVAL (FIXES CRIT-005!) ====================
+# ==================== LOG REMOVAL (Security Fix: HIGH-001) ====================
 
-# Remove ALL Log.d, Log.v, Log.i statements in release builds
-# This fixes CRIT-005: Sensitive Logging
+# Remove ALL logging in release builds to prevent sensitive data leakage
+# This includes error and warning logs that may expose:
+# - Onion addresses
+# - Wallet addresses
+# - Contact information
+# - Cryptographic operation details
 -assumenosideeffects class android.util.Log {
     public static int d(...);
     public static int v(...);
     public static int i(...);
+    public static int e(...);
+    public static int w(...);
+    public static int wtf(...);
 }
-
-# Keep only errors and warnings (for crash reports)
-# Log.e and Log.w are NOT removed
 
 # ==================== OPTIMIZATION ====================
 
