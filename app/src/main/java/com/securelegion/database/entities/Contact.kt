@@ -73,7 +73,13 @@ data class Contact(
     /**
      * Optional notes about the contact
      */
-    val notes: String? = null
+    val notes: String? = null,
+
+    /**
+     * Whether this contact is blocked
+     * Blocked contacts cannot send messages
+     */
+    val isBlocked: Boolean = false
 ) {
     companion object {
         // Trust levels

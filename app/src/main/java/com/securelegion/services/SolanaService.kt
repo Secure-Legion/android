@@ -11,6 +11,7 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
 import com.securelegion.crypto.KeyManager
+import com.securelegion.crypto.RustBridge
 import com.securelegion.crypto.TorManager
 import java.io.IOException
 import java.util.concurrent.TimeUnit
@@ -44,6 +45,9 @@ class SolanaService(context: Context) {
 
         // System program ID for SOL transfers
         private const val SYSTEM_PROGRAM_ID = "11111111111111111111111111111111"
+
+        // CoinGecko price API (free, no key required)
+        private const val COINGECKO_API = "https://api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies=usd"
     }
 
     // Direct HTTP connection (Tor for messaging only, not Solana RPC)
@@ -486,7 +490,8 @@ class SolanaService(context: Context) {
         fromPublicKey: String,
         toPublicKey: String,
         amountSOL: Double,
-        keyManager: KeyManager
+        keyManager: KeyManager,
+        walletId: String = "main"
     ): Result<String> = withContext(Dispatchers.IO) {
         try {
             Log.d(TAG, "Sending $amountSOL SOL from $fromPublicKey to $toPublicKey")
@@ -519,7 +524,16 @@ class SolanaService(context: Context) {
             )
 
             // Step 3: Sign using KeyManager (private key stays secure in Rust)
-            val signature = keyManager.signData(message)
+            // Get the private key for the specific wallet
+            val privateKey = if (walletId == "main") {
+                keyManager.getSigningKeyBytes()
+            } else {
+                keyManager.getWalletPrivateKey(walletId)
+                    ?: return@withContext Result.failure(Exception("Wallet private key not found for ID: $walletId"))
+            }
+
+            // Sign the transaction message using RustBridge
+            val signature = RustBridge.signData(message, privateKey)
 
             // Step 4: Build final transaction
             val transaction = buildTransaction(signature, message)
@@ -577,8 +591,15 @@ class SolanaService(context: Context) {
         buffer.put(1.toByte()) // account index 1 (recipient)
 
         // Instruction data (transfer instruction = type 2, + 8 bytes lamports)
-        buffer.put(12.toByte()) // data length
-        buffer.putInt(2) // instruction type: Transfer
+        buffer.put(12.toByte()) // data length (4 bytes u32 + 8 bytes u64 = 12 bytes)
+
+        // Instruction type: 2 (Transfer) as u32 little-endian
+        buffer.put(2.toByte())
+        buffer.put(0.toByte())
+        buffer.put(0.toByte())
+        buffer.put(0.toByte())
+
+        // Amount in lamports as u64 little-endian
         buffer.putLong(lamports)
 
         // Return only the used portion of the buffer
@@ -716,6 +737,42 @@ class SolanaService(context: Context) {
         } catch (e: Exception) {
             Log.e(TAG, "Failed to get recent blockhash", e)
             return Result.failure(e)
+        }
+    }
+
+    /**
+     * Get current SOL price in USD from CoinGecko
+     * Free API, no key required
+     * @return Price in USD (e.g., 245.67) or null if error
+     */
+    suspend fun getSolPrice(): Result<Double> = withContext(Dispatchers.IO) {
+        try {
+            Log.d(TAG, "Fetching SOL price from CoinGecko")
+
+            val request = Request.Builder()
+                .url(COINGECKO_API)
+                .get()
+                .build()
+
+            client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) {
+                    return@withContext Result.failure(IOException("HTTP ${response.code}"))
+                }
+
+                val responseBody = response.body?.string()
+                    ?: return@withContext Result.failure(IOException("Empty response"))
+
+                val json = JSONObject(responseBody)
+                val solana = json.getJSONObject("solana")
+                val priceUSD = solana.getDouble("usd")
+
+                Log.i(TAG, "SOL price: $$priceUSD")
+                return@withContext Result.success(priceUSD)
+            }
+
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to fetch SOL price", e)
+            return@withContext Result.failure(e)
         }
     }
 

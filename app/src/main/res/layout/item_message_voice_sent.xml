@@ -6,15 +6,57 @@
     android:orientation="vertical"
     android:padding="8dp">
 
+    <!-- Timestamp and status (moved to top) -->
     <LinearLayout
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:layout_gravity="end"
-        android:background="@drawable/message_sent_bg"
         android:orientation="horizontal"
-        android:padding="12dp"
-        android:gravity="center_vertical"
-        android:maxWidth="260dp">
+        android:layout_gravity="end"
+        android:layout_marginBottom="4dp"
+        android:gravity="center_vertical">
+
+        <TextView
+            android:id="@+id/timestampText"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="12:34 PM"
+            android:textColor="#999999"
+            android:textSize="11sp" />
+
+        <ImageView
+            android:id="@+id/statusIcon"
+            android:layout_width="14dp"
+            android:layout_height="14dp"
+            android:layout_marginStart="4dp"
+            android:src="@drawable/ic_check"
+            android:tint="#999999"
+            android:contentDescription="Message status" />
+    </LinearLayout>
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="end|center_vertical">
+
+        <!-- Selection Checkbox (hidden by default) -->
+        <CheckBox
+            android:id="@+id/messageCheckbox"
+            android:layout_width="24dp"
+            android:layout_height="24dp"
+            android:visibility="gone"
+            android:layout_marginEnd="8dp"
+            android:button="@drawable/circular_checkbox" />
+
+        <LinearLayout
+            android:id="@+id/voiceBubble"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:background="@drawable/message_sent_bg"
+            android:orientation="horizontal"
+            android:padding="12dp"
+            android:gravity="center_vertical"
+            android:maxWidth="260dp">
 
         <!-- Play/Pause button -->
         <ImageView
@@ -59,31 +101,6 @@
 
     </LinearLayout>
 
-    <!-- Timestamp and status -->
-    <LinearLayout
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:orientation="horizontal"
-        android:layout_gravity="end"
-        android:layout_marginTop="4dp"
-        android:gravity="center_vertical">
-
-        <TextView
-            android:id="@+id/timestampText"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="12:34 PM"
-            android:textColor="#999999"
-            android:textSize="11sp" />
-
-        <ImageView
-            android:id="@+id/statusIcon"
-            android:layout_width="14dp"
-            android:layout_height="14dp"
-            android:layout_marginStart="4dp"
-            android:src="@drawable/ic_check"
-            android:tint="#999999"
-            android:contentDescription="Message status" />
     </LinearLayout>
 
 </LinearLayout>

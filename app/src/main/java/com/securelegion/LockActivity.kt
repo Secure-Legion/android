@@ -75,9 +75,7 @@ class LockActivity : AppCompatActivity() {
             }
 
             // Check if entered password is the duress PIN
-            val duressPIN = DuressPinActivity.getDuressPin(this)
-            Log.d("LockActivity", "Checking duress PIN - Stored: '$duressPIN', Entered: '$password', Match: ${password == duressPIN}")
-            if (duressPIN != null && password == duressPIN) {
+            if (DuressPinActivity.verifyDuressPin(this, password)) {
                 Log.w("LockActivity", "Duress PIN detected - triggering distress protocol")
                 isProcessingDistress = true
                 handleDistressProtocol()
@@ -105,6 +103,7 @@ class LockActivity : AppCompatActivity() {
                 } else {
                     Log.i("LockActivity", "Account complete, unlocking app")
                     val intent = Intent(this, MainActivity::class.java)
+                    intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
                     startActivity(intent)
                     finish()
                 }
@@ -196,19 +195,11 @@ class LockActivity : AppCompatActivity() {
                     return@withContext
                 }
 
-                // Check if UnitedPush relay should be used
-                val useRelay = DuressPinActivity.shouldUseUnitedPushRelay(this@LockActivity)
-
-                // Send panic notification to each distress contact
+                // Send panic notification to each distress contact via direct connection
                 for (contact in distressContacts) {
                     try {
-                        if (useRelay) {
-                            Log.i("LockActivity", "Sending panic via UnitedPush relay to ${contact.displayName}")
-                            // TODO: Implement UnitedPush relay panic notification
-                        } else {
-                            Log.i("LockActivity", "Sending panic via direct connection to ${contact.displayName}")
-                            // TODO: Implement direct panic notification
-                        }
+                        Log.i("LockActivity", "Sending panic via direct connection to ${contact.displayName}")
+                        // TODO: Implement direct panic notification
                     } catch (e: Exception) {
                         Log.e("LockActivity", "Failed to send panic to ${contact.displayName}", e)
                     }

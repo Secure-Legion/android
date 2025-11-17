@@ -292,14 +292,18 @@ class TorManager(private val context: Context) {
      * @param contactEd25519PublicKey The contact's Ed25519 public key (for signature verification)
      * @param contactX25519PublicKey The contact's X25519 public key (for encryption)
      * @param contactOnionAddress The contact's .onion address
+     * @param encryptedMessage The encrypted message payload
+     * @param messageTypeByte The message type (0x03 = TEXT, 0x04 = VOICE)
      * @return Ping ID for tracking
      */
     fun sendPing(
         contactEd25519PublicKey: ByteArray,
         contactX25519PublicKey: ByteArray,
-        contactOnionAddress: String
+        contactOnionAddress: String,
+        encryptedMessage: ByteArray,
+        messageTypeByte: Byte
     ): String {
-        return RustBridge.sendPing(contactEd25519PublicKey, contactX25519PublicKey, contactOnionAddress)
+        return RustBridge.sendPing(contactEd25519PublicKey, contactX25519PublicKey, contactOnionAddress, encryptedMessage, messageTypeByte)
     }
 
     /**

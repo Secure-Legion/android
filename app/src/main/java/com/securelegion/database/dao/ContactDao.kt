@@ -105,6 +105,12 @@ interface ContactDao {
     suspend fun updateDistressContactStatus(contactId: Long, isDistressContact: Boolean)
 
     /**
+     * Update blocked status
+     */
+    @Query("UPDATE contacts SET isBlocked = :isBlocked WHERE id = :contactId")
+    suspend fun updateBlockedStatus(contactId: Long, isBlocked: Boolean)
+
+    /**
      * Get all distress contacts
      */
     @Query("SELECT * FROM contacts WHERE isDistressContact = 1 ORDER BY displayName ASC")

@@ -103,36 +103,19 @@
 
                 </LinearLayout>
 
-                <LinearLayout
-                    android:id="@+id/copyAddressContainer"
+                <TextView
+                    android:id="@+id/contactAddress"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:orientation="horizontal"
-                    android:gravity="top"
+                    android:text="7xKXtg2CW87d97TXJSDpbD5jBkhe..."
+                    android:textSize="11sp"
+                    android:textColor="@color/primary_blue"
+                    android:fontFamily="monospace"
+                    android:lineSpacingMultiplier="1.2"
                     android:clickable="true"
                     android:focusable="true"
                     android:background="?attr/selectableItemBackground"
-                    android:padding="8dp">
-
-                    <TextView
-                        android:id="@+id/contactAddress"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="7xKXtg2CW87d97TXJSDpbD5jBkhe..."
-                        android:textSize="11sp"
-                        android:textColor="@color/primary_blue"
-                        android:fontFamily="monospace"
-                        android:lineSpacingMultiplier="1.2" />
-
-                    <ImageView
-                        android:layout_width="18dp"
-                        android:layout_height="18dp"
-                        android:src="@drawable/ic_copy"
-                        android:layout_marginStart="8dp"
-                        android:layout_marginTop="2dp"
-                        android:contentDescription="Copy Address" />
-
-                </LinearLayout>
+                    android:padding="8dp" />
 
             </LinearLayout>
 
@@ -173,6 +156,22 @@
                 android:focusable="true"
                 android:elevation="6dp"
                 android:layout_marginBottom="32dp" />
+
+            <!-- Block Contact Button -->
+            <TextView
+                android:id="@+id/blockContactButton"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Block Contact"
+                android:textSize="15sp"
+                android:textStyle="bold"
+                android:textColor="@color/text_white"
+                android:background="@drawable/delete_button_bg"
+                android:gravity="center"
+                android:padding="14dp"
+                android:clickable="true"
+                android:focusable="true"
+                android:layout_marginBottom="12dp" />
 
             <!-- Delete Contact Button -->
             <TextView

@@ -84,18 +84,22 @@ class MessageAdapter(
     }
 
     class VoiceSentMessageViewHolder(view: View) : RecyclerView.ViewHolder(view) {
+        val voiceBubble: LinearLayout = view.findViewById(R.id.voiceBubble)
         val playButton: ImageView = view.findViewById(R.id.playButton)
         val progressBar: android.widget.ProgressBar = view.findViewById(R.id.progressBar)
         val durationText: TextView = view.findViewById(R.id.durationText)
         val timestampText: TextView = view.findViewById(R.id.timestampText)
         val statusIcon: ImageView = view.findViewById(R.id.statusIcon)
+        val messageCheckbox: CheckBox = view.findViewById(R.id.messageCheckbox)
     }
 
     class VoiceReceivedMessageViewHolder(view: View) : RecyclerView.ViewHolder(view) {
+        val voiceBubble: LinearLayout = view.findViewById(R.id.voiceBubble)
         val playButton: ImageView = view.findViewById(R.id.playButton)
         val progressBar: android.widget.ProgressBar = view.findViewById(R.id.progressBar)
         val durationText: TextView = view.findViewById(R.id.durationText)
         val timestampText: TextView = view.findViewById(R.id.timestampText)
+        val messageCheckbox: CheckBox = view.findViewById(R.id.messageCheckbox)
     }
 
     override fun getItemViewType(position: Int): Int {
@@ -319,9 +323,43 @@ class MessageAdapter(
             if (isPlaying) R.drawable.ic_pause else R.drawable.ic_play
         )
 
-        // Play/pause logic
-        holder.playButton.setOnClickListener {
-            onVoicePlayClick?.invoke(message)
+        // Handle selection mode
+        if (isSelectionMode) {
+            holder.messageCheckbox.visibility = View.VISIBLE
+            holder.messageCheckbox.isChecked = selectedMessages.contains(message.id)
+            holder.messageCheckbox.setOnCheckedChangeListener { _, isChecked ->
+                if (isChecked) {
+                    selectedMessages.add(message.id)
+                } else {
+                    selectedMessages.remove(message.id)
+                }
+            }
+
+            // Allow tapping voice bubble to toggle selection
+            holder.voiceBubble.setOnClickListener {
+                val isSelected = selectedMessages.contains(message.id)
+                if (isSelected) {
+                    selectedMessages.remove(message.id)
+                    holder.messageCheckbox.isChecked = false
+                } else {
+                    selectedMessages.add(message.id)
+                    holder.messageCheckbox.isChecked = true
+                }
+            }
+
+            // Disable play button in selection mode
+            holder.playButton.setOnClickListener(null)
+            holder.playButton.isEnabled = false
+        } else {
+            holder.messageCheckbox.visibility = View.GONE
+            holder.messageCheckbox.setOnCheckedChangeListener(null)
+            holder.voiceBubble.setOnClickListener(null)
+
+            // Enable play button in normal mode
+            holder.playButton.isEnabled = true
+            holder.playButton.setOnClickListener {
+                onVoicePlayClick?.invoke(message)
+            }
         }
 
         // Reset progress
@@ -339,9 +377,43 @@ class MessageAdapter(
             if (isPlaying) R.drawable.ic_pause else R.drawable.ic_play
         )
 
-        // Play/pause logic
-        holder.playButton.setOnClickListener {
-            onVoicePlayClick?.invoke(message)
+        // Handle selection mode
+        if (isSelectionMode) {
+            holder.messageCheckbox.visibility = View.VISIBLE
+            holder.messageCheckbox.isChecked = selectedMessages.contains(message.id)
+            holder.messageCheckbox.setOnCheckedChangeListener { _, isChecked ->
+                if (isChecked) {
+                    selectedMessages.add(message.id)
+                } else {
+                    selectedMessages.remove(message.id)
+                }
+            }
+
+            // Allow tapping voice bubble to toggle selection
+            holder.voiceBubble.setOnClickListener {
+                val isSelected = selectedMessages.contains(message.id)
+                if (isSelected) {
+                    selectedMessages.remove(message.id)
+                    holder.messageCheckbox.isChecked = false
+                } else {
+                    selectedMessages.add(message.id)
+                    holder.messageCheckbox.isChecked = true
+                }
+            }
+
+            // Disable play button in selection mode
+            holder.playButton.setOnClickListener(null)
+            holder.playButton.isEnabled = false
+        } else {
+            holder.messageCheckbox.visibility = View.GONE
+            holder.messageCheckbox.setOnCheckedChangeListener(null)
+            holder.voiceBubble.setOnClickListener(null)
+
+            // Enable play button in normal mode
+            holder.playButton.isEnabled = true
+            holder.playButton.setOnClickListener {
+                onVoicePlayClick?.invoke(message)
+            }
         }
 
         // Reset progress

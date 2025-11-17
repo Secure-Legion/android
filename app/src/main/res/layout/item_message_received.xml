@@ -61,12 +61,12 @@
         <!-- Selection Checkbox (shown in delete mode) -->
         <CheckBox
             android:id="@+id/messageCheckbox"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
+            android:layout_width="24dp"
+            android:layout_height="24dp"
             android:layout_gravity="center_vertical"
             android:layout_marginStart="8dp"
             android:visibility="gone"
-            android:buttonTint="@color/accent_blue" />
+            android:button="@drawable/circular_checkbox" />
 
     </LinearLayout>
 

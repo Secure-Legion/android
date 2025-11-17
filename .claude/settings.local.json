@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:github.com)",
+      "Bash(\"/c/Users/Eddie/AppData/Local/Android/Sdk/platform-tools/adb.exe\" -s 59041JEBF02616 logcat -d)",
+      "Bash(\"/c/Users/Eddie/AppData/Local/Android/Sdk/platform-tools/adb.exe\" -s 2A181JEGR05822 logcat -d)",
+      "Bash(\"/c/Users/Eddie/AppData/Local/Android/Sdk/platform-tools/adb.exe\" -s 2A181JEGR05822 logcat -d -s MessageService:*)",
+      "Bash(\"/c/Users/Eddie/AppData/Local/Android/Sdk/platform-tools/adb.exe\" -s 2A181JEGR05822 logcat -d -s MessageService:*,RustBridge:*,SecureLegion-Rust:*)",
+      "Bash(\"/c/Users/Eddie/AppData/Local/Android/Sdk/platform-tools/adb.exe\" -s 59041JEBF02616 logcat -d -s TorService:*,RustBridge:*,SecureLegion-Rust:*)",
+      "Bash(\"/c/Users/Eddie/AppData/Local/Android/Sdk/platform-tools/adb.exe\" -s 2A181JEGR05822 logcat -d -s TorService:*)",
+      "Bash(\"/c/Users/Eddie/AppData/Local/Android/Sdk/platform-tools/adb.exe\" -s 59041JEBF02616 logcat -d -s MessageService:*,RustBridge:*,SecureLegion-Rust:*)",
+      "Bash(\"/c/Users/Eddie/AppData/Local/Android/Sdk/platform-tools/adb.exe\" -s 2A181JEGR05822 logcat -d -s TorService:*,MessageService:*,RustBridge:*,SecureLegion-Rust:*)",
+      "Bash(\"/c/Users/Eddie/AppData/Local/Android/Sdk/platform-tools/adb.exe\" -s 59041JEBF02616 logcat -d -s TorService:*,SecureLegion-Rust:*)",
+      "Bash(\"/c/Users/Eddie/AppData/Local/Android/Sdk/platform-tools/adb.exe\" -s 59041JEBF02616 logcat -d -s TorService:I,TorService:E,SecureLegion-Rust:I,SecureLegion-Rust:E)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

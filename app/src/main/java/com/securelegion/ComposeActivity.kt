@@ -26,12 +26,6 @@ class ComposeActivity : AppCompatActivity() {
 
     companion object {
         private const val TAG = "ComposeActivity"
-
-        // Self-destruct duration constants (in milliseconds)
-        const val DURATION_1_MIN = 60 * 1000L
-        const val DURATION_5_MIN = 5 * 60 * 1000L
-        const val DURATION_1_HOUR = 60 * 60 * 1000L
-        const val DURATION_24_HOUR = 24 * 60 * 60 * 1000L
     }
 
     private lateinit var recipientInput: EditText
@@ -40,11 +34,6 @@ class ComposeActivity : AppCompatActivity() {
 
     private var allContacts: List<DbContact> = emptyList()
     private var selectedContact: DbContact? = null
-
-    // Security options state
-    private var isSelfDestructEnabled = false
-    private var selfDestructDuration = 24 * 60 * 60 * 1000L // Default 24 hours in milliseconds
-    private var isReadReceiptEnabled = true // Default enabled
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -56,7 +45,6 @@ class ComposeActivity : AppCompatActivity() {
         setupContactSearch()
         loadContacts()
         setupBottomNavigation()
-        setupSecurityOptions()
 
         // Back button
         findViewById<View>(R.id.backButton).setOnClickListener {
@@ -66,72 +54,6 @@ class ComposeActivity : AppCompatActivity() {
         // Send button
         findViewById<View>(R.id.sendButton).setOnClickListener {
             sendMessage()
-        }
-    }
-
-    private fun setupSecurityOptions() {
-        val selfDestructOption = findViewById<View>(R.id.selfDestructOption)
-        val readReceiptOption = findViewById<View>(R.id.readReceiptOption)
-
-        // Update initial states
-        updateSecurityOptionUI(selfDestructOption, isSelfDestructEnabled)
-        updateSecurityOptionUI(readReceiptOption, isReadReceiptEnabled)
-
-        // Self-destruct toggle - cycles through durations
-        selfDestructOption.setOnClickListener {
-            if (!isSelfDestructEnabled) {
-                // First tap: enable with 1 minute
-                isSelfDestructEnabled = true
-                selfDestructDuration = DURATION_1_MIN
-                updateSecurityOptionUI(selfDestructOption, true)
-                com.securelegion.utils.ToastUtils.showCustomToast(this, "Self-destruct: 1 minute")
-            } else {
-                // Cycle through durations
-                selfDestructDuration = when (selfDestructDuration) {
-                    DURATION_1_MIN -> {
-                        com.securelegion.utils.ToastUtils.showCustomToast(this, "Self-destruct: 5 minutes")
-                        DURATION_5_MIN
-                    }
-                    DURATION_5_MIN -> {
-                        com.securelegion.utils.ToastUtils.showCustomToast(this, "Self-destruct: 1 hour")
-                        DURATION_1_HOUR
-                    }
-                    DURATION_1_HOUR -> {
-                        com.securelegion.utils.ToastUtils.showCustomToast(this, "Self-destruct: 24 hours")
-                        DURATION_24_HOUR
-                    }
-                    else -> {
-                        // Last option: disable
-                        isSelfDestructEnabled = false
-                        updateSecurityOptionUI(selfDestructOption, false)
-                        com.securelegion.utils.ToastUtils.showCustomToast(this, "Self-destruct disabled")
-                        DURATION_24_HOUR
-                    }
-                }
-            }
-        }
-
-        // Read receipt toggle
-        readReceiptOption.setOnClickListener {
-            isReadReceiptEnabled = !isReadReceiptEnabled
-            updateSecurityOptionUI(readReceiptOption, isReadReceiptEnabled)
-
-            val message = if (isReadReceiptEnabled) {
-                "Read receipts enabled"
-            } else {
-                "Read receipts disabled"
-            }
-            com.securelegion.utils.ToastUtils.showCustomToast(this, message)
-        }
-    }
-
-    private fun updateSecurityOptionUI(view: View, isEnabled: Boolean) {
-        if (isEnabled) {
-            view.setBackgroundResource(R.drawable.metallic_button_bg)
-            view.alpha = 1.0f
-        } else {
-            view.setBackgroundResource(R.drawable.settings_item_bg)
-            view.alpha = 0.5f
         }
     }
 
@@ -228,8 +150,8 @@ class ComposeActivity : AppCompatActivity() {
             messageService.sendMessage(
                 contactId = selectedContact!!.id,
                 plaintext = message,
-                selfDestructDurationMs = if (isSelfDestructEnabled) selfDestructDuration else null,
-                enableReadReceipt = isReadReceiptEnabled,
+                selfDestructDurationMs = null,
+                enableReadReceipt = true,
                 onMessageSaved = { savedMessage ->
                     // Message saved to DB - navigate back immediately
                     // Tor send continues in background

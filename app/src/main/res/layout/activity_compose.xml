@@ -54,6 +54,7 @@
             android:paddingEnd="20dp"
             android:paddingTop="8dp"
             android:paddingBottom="8dp"
+            android:layout_marginEnd="8dp"
             android:gravity="center"
             android:clickable="true"
             android:focusable="true"
@@ -129,83 +130,6 @@
                 android:gravity="top"
                 android:inputType="textMultiLine"
                 android:layout_marginBottom="24dp" />
-
-            <!-- Security Options -->
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="Security Options"
-                android:textSize="13sp"
-                android:textColor="@color/text_gray"
-                android:layout_marginBottom="12dp" />
-
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="horizontal"
-                android:layout_marginBottom="32dp">
-
-                <!-- Self-Destruct Option -->
-                <LinearLayout
-                    android:id="@+id/selfDestructOption"
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:orientation="horizontal"
-                    android:background="@drawable/settings_item_bg"
-                    android:padding="16dp"
-                    android:layout_marginEnd="8dp"
-                    android:gravity="center"
-                    android:clickable="true"
-                    android:focusable="true">
-
-                    <ImageView
-                        android:layout_width="20dp"
-                        android:layout_height="20dp"
-                        android:src="@drawable/ic_timer"
-                        android:layout_marginEnd="8dp"
-                        android:contentDescription="Timer icon" />
-
-                    <TextView
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="Self-Destruct"
-                        android:textSize="14sp"
-                        android:textColor="@color/text_white" />
-
-                </LinearLayout>
-
-                <!-- Read Receipt Option -->
-                <LinearLayout
-                    android:id="@+id/readReceiptOption"
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:orientation="horizontal"
-                    android:background="@drawable/settings_item_bg"
-                    android:padding="16dp"
-                    android:layout_marginStart="8dp"
-                    android:gravity="center"
-                    android:clickable="true"
-                    android:focusable="true">
-
-                    <ImageView
-                        android:layout_width="20dp"
-                        android:layout_height="20dp"
-                        android:src="@drawable/ic_eye"
-                        android:layout_marginEnd="8dp"
-                        android:contentDescription="Eye icon" />
-
-                    <TextView
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="Read Receipt"
-                        android:textSize="14sp"
-                        android:textColor="@color/text_white" />
-
-                </LinearLayout>
-
-            </LinearLayout>
 
         </LinearLayout>
 

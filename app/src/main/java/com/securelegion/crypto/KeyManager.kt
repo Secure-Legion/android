@@ -45,6 +45,7 @@ class KeyManager private constructor(context: Context) {
         private const val X25519_ENCRYPTION_KEY_ALIAS = "${KEYSTORE_ALIAS_PREFIX}encryption_key"
         private const val HIDDEN_SERVICE_KEY_ALIAS = "${KEYSTORE_ALIAS_PREFIX}hidden_service_key"
         private const val DEVICE_PASSWORD_HASH_ALIAS = "${KEYSTORE_ALIAS_PREFIX}device_password_hash"
+        private const val DEVICE_PASSWORD_SALT_ALIAS = "${KEYSTORE_ALIAS_PREFIX}device_password_salt"
 
         init {
             // Register BouncyCastle provider for SHA3-256 support
@@ -508,7 +509,7 @@ class KeyManager private constructor(context: Context) {
     // ==================== DEVICE PASSWORD MANAGEMENT ====================
 
     /**
-     * Set device password (stores SHA-256 hash)
+     * Set device password (stores Argon2id hash with random salt)
      * Called during account creation
      */
     fun setDevicePassword(password: String) {
@@ -516,31 +517,46 @@ class KeyManager private constructor(context: Context) {
             throw IllegalArgumentException("Password cannot be blank")
         }
 
-        // Hash password with SHA-256
-        val passwordHash = sha256(password.toByteArray(Charsets.UTF_8))
+        // Generate random 32-byte salt
+        val salt = ByteArray(32)
+        java.security.SecureRandom().nextBytes(salt)
 
-        // Store hash in encrypted preferences
+        // Hash password with Argon2id (memory-hard, GPU-resistant)
+        val passwordHash = RustBridge.hashPassword(password, salt)
+
+        // Store both hash and salt in encrypted preferences
         encryptedPrefs.edit {
             putString(DEVICE_PASSWORD_HASH_ALIAS, bytesToHex(passwordHash))
+            putString(DEVICE_PASSWORD_SALT_ALIAS, bytesToHex(salt))
         }
 
-        Log.i(TAG, "Device password set successfully")
+        Log.i(TAG, "Device password set successfully (Argon2id)")
     }
 
     /**
-     * Verify device password
+     * Verify device password using Argon2id
      * Returns true if password matches stored hash
      */
     fun verifyDevicePassword(password: String): Boolean {
         val storedHashHex = encryptedPrefs.getString(DEVICE_PASSWORD_HASH_ALIAS, null)
             ?: return false
+        val storedSaltHex = encryptedPrefs.getString(DEVICE_PASSWORD_SALT_ALIAS, null)
+            ?: return false
 
-        // Hash provided password
-        val providedHash = sha256(password.toByteArray(Charsets.UTF_8))
+        try {
+            // Decode stored hash and salt
+            val storedHash = hexToBytes(storedHashHex)
+            val salt = hexToBytes(storedSaltHex)
 
-        // Compare hashes (constant-time comparison)
-        val storedHash = hexToBytes(storedHashHex)
-        return storedHash.contentEquals(providedHash)
+            // Hash provided password with same salt
+            val providedHash = RustBridge.hashPassword(password, salt)
+
+            // Constant-time comparison to prevent timing attacks
+            return java.security.MessageDigest.isEqual(storedHash, providedHash)
+        } catch (e: Exception) {
+            Log.e(TAG, "Error verifying device password", e)
+            return false
+        }
     }
 
     /**

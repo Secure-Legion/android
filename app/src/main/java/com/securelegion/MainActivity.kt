@@ -227,6 +227,12 @@ class MainActivity : AppCompatActivity() {
      * This shows the persistent notification and handles the Ping-Pong protocol
      */
     private fun startTorService() {
+        // Check if service is already running to avoid race condition
+        if (com.securelegion.services.TorService.isRunning()) {
+            Log.d("MainActivity", "Tor service already running, skipping start")
+            return
+        }
+
         try {
             Log.d("MainActivity", "Starting Tor foreground service...")
             com.securelegion.services.TorService.start(this)
@@ -621,6 +627,20 @@ class MainActivity : AppCompatActivity() {
 
         sendButton?.setOnClickListener {
             val intent = android.content.Intent(this, SendActivity::class.java)
+
+            // Pass currently selected wallet info
+            if (currentWallet != null) {
+                intent.putExtra("WALLET_ID", currentWallet!!.walletId)
+                intent.putExtra("WALLET_NAME", currentWallet!!.name)
+                intent.putExtra("WALLET_ADDRESS", currentWallet!!.solanaAddress)
+            } else {
+                // Fallback to main wallet if none selected
+                val keyManager = KeyManager.getInstance(this)
+                intent.putExtra("WALLET_ID", "main")
+                intent.putExtra("WALLET_NAME", "Wallet 1")
+                intent.putExtra("WALLET_ADDRESS", keyManager.getSolanaAddress())
+            }
+
             startActivity(intent)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
                 overrideActivityTransition(Activity.OVERRIDE_TRANSITION_OPEN, 0, 0)
@@ -651,8 +671,19 @@ class MainActivity : AppCompatActivity() {
 
         walletSettingsButton?.setOnClickListener {
             val intent = android.content.Intent(this, WalletSettingsActivity::class.java)
-            intent.putExtra("WALLET_ID", "main")  // Default to main wallet
-            intent.putExtra("IS_MAIN_WALLET", true)
+
+            // Pass currently selected wallet info
+            if (currentWallet != null) {
+                intent.putExtra("WALLET_ID", currentWallet!!.walletId)
+                intent.putExtra("WALLET_NAME", currentWallet!!.name)
+                intent.putExtra("IS_MAIN_WALLET", currentWallet!!.isMainWallet)
+            } else {
+                // Fallback to main wallet if none selected
+                intent.putExtra("WALLET_ID", "main")
+                intent.putExtra("WALLET_NAME", "Wallet 1")
+                intent.putExtra("IS_MAIN_WALLET", true)
+            }
+
             startActivity(intent)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
                 overrideActivityTransition(Activity.OVERRIDE_TRANSITION_OPEN, 0, 0)
@@ -841,7 +872,16 @@ class MainActivity : AppCompatActivity() {
                         }
 
                         balanceText?.text = formattedBalance
-                        balanceUSD?.text = "..." // TODO: Add price conversion in Phase 4
+
+                        // Fetch SOL price and calculate USD value
+                        val priceResult = solanaService.getSolPrice()
+                        if (priceResult.isSuccess) {
+                            val priceUSD = priceResult.getOrNull() ?: 0.0
+                            val balanceUSDValue = balanceSOL * priceUSD
+                            balanceUSD?.text = String.format("$%.2f", balanceUSDValue)
+                        } else {
+                            balanceUSD?.text = "..."
+                        }
 
                         Log.i("MainActivity", "Balance loaded: $formattedBalance")
                     } else {
@@ -869,12 +909,50 @@ class MainActivity : AppCompatActivity() {
         try {
             Log.d("MainActivity", "Loading SPL token balances")
 
-            // Fetch token accounts
-            val result = solanaService.getTokenAccounts(solanaAddress)
+            // Also update the SOL balance in the token list
+            val balanceResult = solanaService.getBalance(solanaAddress)
 
             withContext(Dispatchers.Main) {
                 val walletView = findViewById<View>(R.id.walletView)
+                val solBalanceText = walletView?.findViewById<android.widget.TextView>(R.id.solBalance)
+                val solBalanceUSD = walletView?.findViewById<android.widget.TextView>(R.id.solBalanceUSD)
 
+                if (balanceResult.isSuccess) {
+                    val balanceSOL = balanceResult.getOrNull() ?: 0.0
+
+                    // Update token list SOL balance
+                    val formattedBalance = when {
+                        balanceSOL >= 1.0 -> String.format("%.4f", balanceSOL)
+                        balanceSOL >= 0.0001 -> String.format("%.4f", balanceSOL)
+                        balanceSOL > 0 -> String.format("%.8f", balanceSOL)
+                        else -> "0.00"
+                    }
+
+                    solBalanceText?.text = formattedBalance
+                    Log.d("MainActivity", "Updated SOL token balance: $formattedBalance")
+
+                    // Fetch SOL price and calculate USD value
+                    lifecycleScope.launch {
+                        val priceResult = solanaService.getSolPrice()
+                        if (priceResult.isSuccess) {
+                            val priceUSD = priceResult.getOrNull() ?: 0.0
+                            val balanceUSDValue = balanceSOL * priceUSD
+                            withContext(Dispatchers.Main) {
+                                solBalanceUSD?.text = String.format("$%.2f", balanceUSDValue)
+                            }
+                        } else {
+                            withContext(Dispatchers.Main) {
+                                solBalanceUSD?.text = "..."
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Fetch SPL token accounts
+            val result = solanaService.getTokenAccounts(solanaAddress)
+
+            withContext(Dispatchers.Main) {
                 if (result.isSuccess) {
                     val tokenAccounts = result.getOrNull() ?: emptyList()
                     Log.i("MainActivity", "Token balances loaded: ${tokenAccounts.size} tokens")

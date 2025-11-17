@@ -181,6 +181,12 @@ object RustBridge {
     external fun testSocksConnectivity(): Boolean
 
     /**
+     * Get Tor bootstrap status (0-100%)
+     * @return Bootstrap percentage (0-100), or -1 on error
+     */
+    external fun getBootstrapStatus(): Int
+
+    /**
      * Stop all listeners (hidden service listener, tap listener, ping listener)
      */
     external fun stopListeners()
@@ -247,9 +253,11 @@ object RustBridge {
      * @param recipientEd25519PublicKey The recipient's Ed25519 public key (for signature verification)
      * @param recipientX25519PublicKey The recipient's X25519 public key (for encryption)
      * @param recipientOnion The recipient's .onion address
+     * @param encryptedMessage The encrypted message to send after Pong
+     * @param messageTypeByte The message type (0x03 = TEXT, 0x04 = VOICE)
      * @return Ping ID for tracking
      */
-    external fun sendPing(recipientEd25519PublicKey: ByteArray, recipientX25519PublicKey: ByteArray, recipientOnion: String): String
+    external fun sendPing(recipientEd25519PublicKey: ByteArray, recipientX25519PublicKey: ByteArray, recipientOnion: String, encryptedMessage: ByteArray, messageTypeByte: Byte): String
 
     /**
      * Wait for a Pong response
@@ -271,9 +279,10 @@ object RustBridge {
      * Used for persistent messaging - after Pong arrives, send the actual message
      * @param recipientOnion The recipient's .onion address
      * @param encryptedMessage The encrypted message bytes
+     * @param messageTypeByte The message type (0x03 = TEXT, 0x04 = VOICE)
      * @return True if message sent successfully
      */
-    external fun sendMessageBlob(recipientOnion: String, encryptedMessage: ByteArray): Boolean
+    external fun sendMessageBlob(recipientOnion: String, encryptedMessage: ByteArray, messageTypeByte: Byte): Boolean
 
     /**
      * Respond to an incoming Ping with a Pong

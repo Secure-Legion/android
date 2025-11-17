@@ -21,6 +21,7 @@ import kotlinx.coroutines.withContext
 class WalletSettingsActivity : AppCompatActivity() {
 
     private var currentWalletId: String = "main"  // Default to main wallet
+    private var currentWalletName: String = "Wallet 1"
     private var isMainWallet: Boolean = true
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -29,7 +30,10 @@ class WalletSettingsActivity : AppCompatActivity() {
 
         // Get current wallet info from intent
         currentWalletId = intent.getStringExtra("WALLET_ID") ?: "main"
+        currentWalletName = intent.getStringExtra("WALLET_NAME") ?: "Wallet 1"
         isMainWallet = intent.getBooleanExtra("IS_MAIN_WALLET", true)
+
+        Log.d("WalletSettings", "Opened for wallet: $currentWalletName (ID: $currentWalletId, isMain: $isMainWallet)")
 
         setupUI()
         setupClickListeners()
@@ -43,13 +47,13 @@ class WalletSettingsActivity : AppCompatActivity() {
         val exportKeyButton = findViewById<View>(R.id.exportKeyButton)
         val deleteWalletButton = findViewById<View>(R.id.deleteWalletButton)
 
-        // Set wallet name (for now just use "Wallet 1" as default)
-        currentWalletNameView.text = if (isMainWallet) "Wallet 1" else "Wallet 2"
+        // Set wallet name from the actual wallet data
+        currentWalletNameView.text = currentWalletName
 
         // Set wallet type
         currentWalletTypeView.text = if (isMainWallet) "Main Account Wallet" else "Additional Wallet"
 
-        // Disable export and delete for main wallet
+        // Disable export and delete for main wallet ONLY
         if (isMainWallet) {
             exportKeySubtext.text = "Cannot export main wallet key"
             exportKeyButton.alpha = 0.5f
@@ -60,9 +64,22 @@ class WalletSettingsActivity : AppCompatActivity() {
             deleteWalletButton.alpha = 0.5f
             deleteWalletButton.isEnabled = false
             deleteWalletButton.isClickable = false
+
+            Log.d("WalletSettings", "Main wallet - export and delete disabled")
         } else {
             exportKeySubtext.text = "View or export wallet private key"
             deleteWalletSubtext.text = "Permanently remove this wallet"
+
+            // Ensure buttons are enabled for additional wallets
+            exportKeyButton.alpha = 1.0f
+            exportKeyButton.isEnabled = true
+            exportKeyButton.isClickable = true
+
+            deleteWalletButton.alpha = 1.0f
+            deleteWalletButton.isEnabled = true
+            deleteWalletButton.isClickable = true
+
+            Log.d("WalletSettings", "Additional wallet - export and delete enabled")
         }
     }
 
@@ -78,15 +95,21 @@ class WalletSettingsActivity : AppCompatActivity() {
             startActivity(intent)
         }
 
-        // Export Private Key (only enabled for non-main wallets)
-        if (!isMainWallet) {
-            findViewById<View>(R.id.exportKeyButton).setOnClickListener {
+        // Export Private Key - always set up listener, but will only work when enabled
+        findViewById<View>(R.id.exportKeyButton).setOnClickListener {
+            if (!isMainWallet) {
                 showExportKeyDialog()
+            } else {
+                Toast.makeText(this, "Cannot export main wallet key", Toast.LENGTH_SHORT).show()
             }
+        }
 
-            // Delete Wallet (only enabled for non-main wallets)
-            findViewById<View>(R.id.deleteWalletButton).setOnClickListener {
+        // Delete Wallet - always set up listener, but will only work when enabled
+        findViewById<View>(R.id.deleteWalletButton).setOnClickListener {
+            if (!isMainWallet) {
                 showDeleteWalletDialog()
+            } else {
+                Toast.makeText(this, "Cannot delete main wallet", Toast.LENGTH_SHORT).show()
             }
         }
     }
@@ -128,6 +151,13 @@ class WalletSettingsActivity : AppCompatActivity() {
                 val seedPhrase = keyManager.getWalletSeedPhrase(currentWalletId)
 
                 if (seedPhrase == null) {
+                    withContext(Dispatchers.Main) {
+                        Toast.makeText(
+                            this@WalletSettingsActivity,
+                            "Failed to retrieve wallet seed phrase",
+                            Toast.LENGTH_LONG
+                        ).show()
+                    }
                     return@launch
                 }
 
@@ -137,6 +167,13 @@ class WalletSettingsActivity : AppCompatActivity() {
 
             } catch (e: Exception) {
                 Log.e("WalletSettings", "Failed to export key", e)
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(
+                        this@WalletSettingsActivity,
+                        "Error: ${e.message}",
+                        Toast.LENGTH_LONG
+                    ).show()
+                }
             }
         }
     }
@@ -149,6 +186,8 @@ class WalletSettingsActivity : AppCompatActivity() {
                 val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                 val clip = ClipData.newPlainText("Seed Phrase", seedPhrase)
                 clipboard.setPrimaryClip(clip)
+                Toast.makeText(this, "Seed phrase copied to clipboard", Toast.LENGTH_SHORT).show()
+                Log.i("WalletSettings", "Seed phrase copied to clipboard for wallet: $currentWalletId")
                 dialog.dismiss()
             }
             .setNegativeButton("Close") { dialog, _ ->
@@ -166,21 +205,49 @@ class WalletSettingsActivity : AppCompatActivity() {
                 val deleted = keyManager.deleteWallet(currentWalletId)
 
                 if (!deleted) {
+                    withContext(Dispatchers.Main) {
+                        Toast.makeText(
+                            this@WalletSettingsActivity,
+                            "Failed to delete wallet from secure storage",
+                            Toast.LENGTH_LONG
+                        ).show()
+                    }
                     return@launch
                 }
 
                 // Remove from database
                 val dbPassphrase = keyManager.getDatabasePassphrase()
                 val database = SecureLegionDatabase.getInstance(this@WalletSettingsActivity, dbPassphrase)
-                database.walletDao().deleteWalletById(currentWalletId)
+                val rowsDeleted = database.walletDao().deleteWalletById(currentWalletId)
 
                 withContext(Dispatchers.Main) {
-                    Log.i("WalletSettings", "Wallet deleted: $currentWalletId")
-                    finish()
+                    if (rowsDeleted > 0) {
+                        Log.i("WalletSettings", "Wallet deleted successfully: $currentWalletId")
+                        Toast.makeText(
+                            this@WalletSettingsActivity,
+                            "Wallet deleted successfully",
+                            Toast.LENGTH_SHORT
+                        ).show()
+                        finish()
+                    } else {
+                        Log.w("WalletSettings", "Wallet not found in database: $currentWalletId")
+                        Toast.makeText(
+                            this@WalletSettingsActivity,
+                            "Wallet not found in database",
+                            Toast.LENGTH_SHORT
+                        ).show()
+                    }
                 }
 
             } catch (e: Exception) {
                 Log.e("WalletSettings", "Failed to delete wallet", e)
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(
+                        this@WalletSettingsActivity,
+                        "Error deleting wallet: ${e.message}",
+                        Toast.LENGTH_LONG
+                    ).show()
+                }
             }
         }
     }

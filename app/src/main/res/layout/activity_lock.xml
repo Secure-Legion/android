@@ -24,7 +24,7 @@
             android:layout_width="250dp"
             android:layout_height="250dp"
             android:src="@drawable/secure_logo"
-            android:layout_marginBottom="16dp"
+            android:layout_marginBottom="24dp"
             android:contentDescription="Secure Legion Logo" />
 
         <!-- Password Section (shown when wallet exists) -->
@@ -35,14 +35,6 @@
             android:orientation="vertical"
             android:gravity="center"
             android:visibility="visible">
-
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="Enter your password to unlock"
-                android:textSize="18sp"
-                android:textColor="@color/text_gray"
-                android:layout_marginBottom="32dp" />
 
             <EditText
                 android:id="@+id/passwordInput"

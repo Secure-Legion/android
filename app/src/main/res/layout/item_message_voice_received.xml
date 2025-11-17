@@ -6,15 +6,41 @@
     android:orientation="vertical"
     android:padding="8dp">
 
-    <LinearLayout
+    <!-- Timestamp (moved to top) -->
+    <TextView
+        android:id="@+id/timestampText"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
+        android:text="12:34 PM"
+        android:textColor="#999999"
+        android:textSize="11sp"
         android:layout_gravity="start"
-        android:background="@drawable/message_received_bg"
+        android:layout_marginBottom="4dp" />
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
         android:orientation="horizontal"
-        android:padding="12dp"
-        android:gravity="center_vertical"
-        android:maxWidth="260dp">
+        android:gravity="start|center_vertical">
+
+        <!-- Selection Checkbox (hidden by default) -->
+        <CheckBox
+            android:id="@+id/messageCheckbox"
+            android:layout_width="24dp"
+            android:layout_height="24dp"
+            android:visibility="gone"
+            android:layout_marginEnd="8dp"
+            android:button="@drawable/circular_checkbox" />
+
+        <LinearLayout
+            android:id="@+id/voiceBubble"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:background="@drawable/message_received_bg"
+            android:orientation="horizontal"
+            android:padding="12dp"
+            android:gravity="center_vertical"
+            android:maxWidth="260dp">
 
         <!-- Play/Pause button -->
         <ImageView
@@ -59,15 +85,6 @@
 
     </LinearLayout>
 
-    <!-- Timestamp -->
-    <TextView
-        android:id="@+id/timestampText"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="12:34 PM"
-        android:textColor="#999999"
-        android:textSize="11sp"
-        android:layout_gravity="start"
-        android:layout_marginTop="4dp" />
+    </LinearLayout>
 
 </LinearLayout>

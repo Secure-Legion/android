@@ -14,21 +14,47 @@ import androidx.appcompat.widget.SwitchCompat
 class DuressPinActivity : AppCompatActivity() {
 
     private lateinit var wipePhoneSwitch: SwitchCompat
-    private lateinit var unitedPushSwitch: SwitchCompat
 
     companion object {
         private const val PREFS_NAME = "duress_settings"
         private const val KEY_DURESS_PIN = "duress_pin"
+        private const val KEY_DURESS_SALT = "duress_salt"
         private const val KEY_WIPE_PHONE = "wipe_phone_on_distress"
-        private const val KEY_USE_UNITEDPUSH = "use_unitedpush_relay"
         private const val TAG = "DuressPinActivity"
 
         /**
-         * Get stored duress PIN
+         * Verify if entered PIN matches stored duress PIN hash
+         * @param context Application context
+         * @param enteredPin PIN entered by user
+         * @return true if PIN matches, false otherwise
          */
-        fun getDuressPin(context: Context): String? {
+        fun verifyDuressPin(context: Context, enteredPin: String): Boolean {
             val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            return prefs.getString(KEY_DURESS_PIN, null)
+            val storedHashB64 = prefs.getString(KEY_DURESS_PIN, null) ?: return false
+            val storedSaltB64 = prefs.getString(KEY_DURESS_SALT, null) ?: return false
+
+            try {
+                // Decode stored hash and salt
+                val storedHash = android.util.Base64.decode(storedHashB64, android.util.Base64.NO_WRAP)
+                val salt = android.util.Base64.decode(storedSaltB64, android.util.Base64.NO_WRAP)
+
+                // Hash entered PIN with same salt
+                val enteredPinHash = com.securelegion.crypto.RustBridge.hashPassword(enteredPin, salt)
+
+                // Constant-time comparison to prevent timing attacks
+                return java.security.MessageDigest.isEqual(storedHash, enteredPinHash)
+            } catch (e: Exception) {
+                Log.e(TAG, "Error verifying duress PIN", e)
+                return false
+            }
+        }
+
+        /**
+         * Check if duress PIN is set
+         */
+        fun isDuressPinSet(context: Context): Boolean {
+            val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            return prefs.getString(KEY_DURESS_PIN, null) != null
         }
 
         /**
@@ -37,14 +63,6 @@ class DuressPinActivity : AppCompatActivity() {
         fun shouldWipePhoneOnDistress(context: Context): Boolean {
             val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             return prefs.getBoolean(KEY_WIPE_PHONE, true) // Default: true (wipe)
-        }
-
-        /**
-         * Check if UnitedPush relay should be used for panic
-         */
-        fun shouldUseUnitedPushRelay(context: Context): Boolean {
-            val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            return prefs.getBoolean(KEY_USE_UNITEDPUSH, false) // Default: false (direct)
         }
     }
 
@@ -55,7 +73,6 @@ class DuressPinActivity : AppCompatActivity() {
         setupBottomNavigation()
 
         wipePhoneSwitch = findViewById(R.id.wipePhoneSwitch)
-        unitedPushSwitch = findViewById(R.id.unitedPushSwitch)
 
         loadSettings()
         setupSwitchListeners()
@@ -87,7 +104,7 @@ class DuressPinActivity : AppCompatActivity() {
 
             saveDuressPin(pin)
             Toast.makeText(this, "Duress PIN saved successfully!", Toast.LENGTH_SHORT).show()
-            Log.i(TAG, "Duress PIN saved. Wipe on distress: ${wipePhoneSwitch.isChecked}, Use UnitedPush: ${unitedPushSwitch.isChecked}")
+            Log.i(TAG, "Duress PIN saved. Wipe on distress: ${wipePhoneSwitch.isChecked}")
             finish()
         }
     }
@@ -95,11 +112,10 @@ class DuressPinActivity : AppCompatActivity() {
     private fun loadSettings() {
         val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
-        // Load toggle states (defaults: wipe=true, unitedpush=false)
+        // Load toggle states
         wipePhoneSwitch.isChecked = prefs.getBoolean(KEY_WIPE_PHONE, true)
-        unitedPushSwitch.isChecked = prefs.getBoolean(KEY_USE_UNITEDPUSH, false)
 
-        Log.d(TAG, "Loaded settings: Wipe=${wipePhoneSwitch.isChecked}, UnitedPush=${unitedPushSwitch.isChecked}")
+        Log.d(TAG, "Loaded settings: Wipe=${wipePhoneSwitch.isChecked}")
     }
 
     private fun setupSwitchListeners() {
@@ -108,19 +124,26 @@ class DuressPinActivity : AppCompatActivity() {
             prefs.edit().putBoolean(KEY_WIPE_PHONE, isChecked).apply()
             Log.i(TAG, "Wipe phone on distress: $isChecked")
         }
-
-        unitedPushSwitch.setOnCheckedChangeListener { _, isChecked ->
-            val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            prefs.edit().putBoolean(KEY_USE_UNITEDPUSH, isChecked).apply()
-            Log.i(TAG, "Use UnitedPush relay: $isChecked")
-        }
     }
 
     private fun saveDuressPin(pin: String) {
         val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        // TODO: Encrypt PIN before storing
-        prefs.edit().putString(KEY_DURESS_PIN, pin).apply()
-        Log.i(TAG, "Duress PIN saved securely")
+
+        // Hash the duress PIN using Argon2id before storing
+        // Generate random 32-byte salt
+        val salt = ByteArray(32)
+        java.security.SecureRandom().nextBytes(salt)
+
+        // Hash PIN with Argon2id (memory-hard, GPU-resistant)
+        val pinHash = com.securelegion.crypto.RustBridge.hashPassword(pin, salt)
+
+        // Store both hash and salt (salt is not secret, hash is)
+        prefs.edit()
+            .putString(KEY_DURESS_PIN, android.util.Base64.encodeToString(pinHash, android.util.Base64.NO_WRAP))
+            .putString(KEY_DURESS_SALT, android.util.Base64.encodeToString(salt, android.util.Base64.NO_WRAP))
+            .apply()
+
+        Log.i(TAG, "Duress PIN hash saved securely (Argon2id)")
     }
 
     private fun setupBottomNavigation() {

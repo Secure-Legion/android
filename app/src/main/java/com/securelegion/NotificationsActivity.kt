@@ -27,13 +27,11 @@ class NotificationsActivity : AppCompatActivity() {
             notificationsEnabled = true
             saveSettings()
             updateToggleBackground(R.id.toggleNotifications, true)
-            Toast.makeText(this, "Notifications enabled", Toast.LENGTH_SHORT).show()
         } else {
             Log.w("Notifications", "POST_NOTIFICATIONS permission denied")
             notificationsEnabled = false
             saveSettings()
             updateToggleBackground(R.id.toggleNotifications, false)
-            Toast.makeText(this, "Notification permission denied", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -67,7 +65,6 @@ class NotificationsActivity : AppCompatActivity() {
                             notificationsEnabled = true
                             saveSettings()
                             updateToggleBackground(R.id.toggleNotifications, true)
-                            Toast.makeText(this, "Notifications enabled", Toast.LENGTH_SHORT).show()
                         }
                         else -> {
                             // Request permission
@@ -79,14 +76,12 @@ class NotificationsActivity : AppCompatActivity() {
                     notificationsEnabled = true
                     saveSettings()
                     updateToggleBackground(R.id.toggleNotifications, true)
-                    Toast.makeText(this, "Notifications enabled", Toast.LENGTH_SHORT).show()
                 }
             } else {
                 // Disabling notifications
                 notificationsEnabled = false
                 saveSettings()
                 updateToggleBackground(R.id.toggleNotifications, false)
-                Toast.makeText(this, "Notifications disabled", Toast.LENGTH_SHORT).show()
             }
         }
 
@@ -95,7 +90,6 @@ class NotificationsActivity : AppCompatActivity() {
             messageContentEnabled = !messageContentEnabled
             saveSettings()
             updateToggleBackground(R.id.toggleMessageContent, messageContentEnabled)
-            Toast.makeText(this, if (messageContentEnabled) "Message content will be shown" else "Message content hidden", Toast.LENGTH_SHORT).show()
         }
 
         // Toggle Sound
@@ -103,7 +97,6 @@ class NotificationsActivity : AppCompatActivity() {
             soundEnabled = !soundEnabled
             saveSettings()
             updateToggleBackground(R.id.toggleSound, soundEnabled)
-            Toast.makeText(this, if (soundEnabled) "Sound enabled" else "Sound disabled", Toast.LENGTH_SHORT).show()
         }
     }
 

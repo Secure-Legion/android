@@ -215,9 +215,9 @@ class MessageService(private val context: Context) {
             Log.d(TAG, "Encrypting message...")
             val encryptedBytes = RustBridge.encryptMessage(plaintext, recipientX25519PublicKey)
 
-            // Prepend message type byte: 0x00 for TEXT
-            val encryptedWithMetadata = byteArrayOf(0x00) + encryptedBytes
-            val encryptedBase64 = Base64.encodeToString(encryptedWithMetadata, Base64.NO_WRAP)
+            // NOTE: Type byte is added by android.rs sendPing(), not here
+            // encryptedBytes format: [Our X25519 Public Key - 32 bytes][Encrypted Message]
+            val encryptedBase64 = Base64.encodeToString(encryptedBytes, Base64.NO_WRAP)
 
             // Generate nonce (first 24 bytes of encrypted data)
             val nonce = encryptedBytes.take(24).toByteArray()
@@ -355,8 +355,9 @@ class MessageService(private val context: Context) {
                 val voiceRecorder = com.securelegion.utils.VoiceRecorder(context)
                 val voiceFilePath = voiceRecorder.saveVoiceMessage(audioBytes, voiceDuration ?: 0)
 
-                // Generate message ID from audio hash
-                val messageId = generateMessageId(voiceFilePath, System.currentTimeMillis())
+                // Generate message ID from voice file hash + sender (for deduplication)
+                // NOTE: Don't use nonce - each retry has a new nonce but same content
+                val messageId = generateMessageId(android.util.Base64.encodeToString(audioBytes, android.util.Base64.NO_WRAP), senderOnionAddress)
 
                 // Check for duplicate
                 if (database.messageDao().messageExists(messageId)) {
@@ -383,8 +384,9 @@ class MessageService(private val context: Context) {
                 // Text message
                 val plaintext = decryptedData
 
-                // Generate message ID from content hash
-                val messageId = generateMessageId(plaintext, System.currentTimeMillis())
+                // Generate message ID from content + sender (for deduplication)
+                // NOTE: Don't use nonce - each retry has a new nonce but same content
+                val messageId = generateMessageId(plaintext, senderOnionAddress)
 
                 // Check for duplicate
                 if (database.messageDao().messageExists(messageId)) {
@@ -491,10 +493,12 @@ class MessageService(private val context: Context) {
     }
 
     /**
-     * Generate deterministic message ID from content
+     * Generate deterministic message ID from content and sender
+     * This ensures the same message from the same sender is detected as duplicate
+     * NOTE: We don't use nonce because retries create new nonces but have same content
      */
-    private fun generateMessageId(content: String, timestamp: Long): String {
-        val data = "$content$timestamp".toByteArray()
+    private fun generateMessageId(content: String, senderAddress: String): String {
+        val data = "$content$senderAddress".toByteArray()
         val digest = MessageDigest.getInstance("SHA-256")
         val hash = digest.digest(data)
         return Base64.encodeToString(hash, Base64.NO_WRAP).take(32)
@@ -522,12 +526,28 @@ class MessageService(private val context: Context) {
             val recipientEd25519PubKey = Base64.decode(contact.publicKeyBase64, Base64.NO_WRAP)
             val recipientX25519PubKey = Base64.decode(contact.x25519PublicKeyBase64, Base64.NO_WRAP)
 
-            // Send Ping via Rust bridge
+            // Get encrypted message payload
+            if (message.encryptedPayload == null) {
+                return@withContext Result.failure(Exception("Message has no encrypted payload"))
+            }
+            val encryptedBytes = Base64.decode(message.encryptedPayload, Base64.NO_WRAP)
+            Log.d(TAG, "Encrypted message size: ${encryptedBytes.size} bytes (Base64 encoded size: ${message.encryptedPayload.length})")
+
+            // Convert message type to wire protocol type byte
+            val messageTypeByte: Byte = when (message.messageType) {
+                Message.MESSAGE_TYPE_VOICE -> 0x04.toByte()  // VOICE
+                else -> 0x03.toByte()                         // TEXT (default)
+            }
+            Log.d(TAG, "Message type: ${message.messageType} → wire byte: 0x${messageTypeByte.toString(16).padStart(2, '0')}")
+
+            // Send Ping via Rust bridge (with message for instant mode)
             Log.d(TAG, "Calling RustBridge.sendPing to ${contact.torOnionAddress}...")
             val sentPingId = RustBridge.sendPing(
                 recipientEd25519PubKey,
                 recipientX25519PubKey,
-                contact.torOnionAddress
+                contact.torOnionAddress,
+                encryptedBytes,
+                messageTypeByte
             )
 
             Log.i(TAG, "✓ RustBridge.sendPing returned Ping ID: $sentPingId")
@@ -556,13 +576,8 @@ class MessageService(private val context: Context) {
 
         } catch (e: Exception) {
             Log.e(TAG, "Failed to send Ping", e)
-
-            // Check if this is a SOCKS connection failure
-            if (e.message?.contains("SOCKS", ignoreCase = true) == true) {
-                Log.w(TAG, "SOCKS connection failure detected - reporting to TorService for health monitoring")
-                TorService.reportSocksFailure(context)
-            }
-
+            // Note: Peer connection failures (SOCKS error 5) are normal when peer is offline
+            // Don't report as Tor failure - only restart Tor when Tor daemon itself is broken
             Result.failure(e)
         }
     }
@@ -616,10 +631,17 @@ class MessageService(private val context: Context) {
                     // Decode Base64 payload
                     val encryptedBytes = Base64.decode(encryptedPayload, Base64.NO_WRAP)
 
+                    // Convert message type to wire protocol type byte
+                    val messageTypeByte: Byte = when (message.messageType) {
+                        Message.MESSAGE_TYPE_VOICE -> 0x04.toByte()  // VOICE
+                        else -> 0x03.toByte()                         // TEXT (default)
+                    }
+
                     // Send message blob
                     val success = RustBridge.sendMessageBlob(
                         contact.torOnionAddress,
-                        encryptedBytes
+                        encryptedBytes,
+                        messageTypeByte
                     )
 
                     if (success) {

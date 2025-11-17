@@ -29,8 +29,11 @@ class CrustService(
 
     companion object {
         private const val TAG = "CrustService"
-        private const val CRUST_GATEWAY = "https://gw.crustfiles.app"
-        private const val CRUST_IPFS_GATEWAY = "https://ipfs.io"
+        // W3Auth gateway for authenticated uploads
+        private const val CRUST_AUTH_GATEWAY = "https://gw.crustfiles.app"
+        // Public IPFS gateway for downloading (no auth required)
+        private const val PUBLIC_IPFS_GATEWAY = "https://ipfs.io"
+        private const val CRUST_PIN_SERVICE = "https://pin.crustcode.com/psa"
     }
 
     private val client = OkHttpClient.Builder()
@@ -103,7 +106,7 @@ class CrustService(
                 .build()
 
             val request = Request.Builder()
-                .url("$CRUST_GATEWAY/api/v0/add")
+                .url("$CRUST_AUTH_GATEWAY/api/v0/add")
                 .addHeader("Authorization", authHeader)
                 .post(requestBody)
                 .build()
@@ -121,10 +124,70 @@ class CrustService(
                 val cid = responseJson.getString("Hash")
 
                 Log.i(TAG, "Successfully uploaded to Crust: $cid")
+
+                // Pin the file to Crust network for permanent storage
+                val pinResult = pinToCrust(cid, publicKey)
+                if (pinResult.isFailure) {
+                    Log.w(TAG, "Pinning failed but file is uploaded: ${pinResult.exceptionOrNull()?.message}")
+                    // Continue anyway - file is temporarily accessible
+                }
+
                 Result.success(cid)
             }
         } catch (e: Exception) {
             Log.e(TAG, "Failed to upload to Crust", e)
+            Result.failure(e)
+        }
+    }
+
+    /**
+     * Pin file to Crust network for permanent storage
+     * @param cid IPFS CID to pin
+     * @param publicKey User's Solana public key (for authentication)
+     * @return Success or failure
+     */
+    private suspend fun pinToCrust(cid: String, publicKey: String): Result<Unit> = withContext(Dispatchers.IO) {
+        try {
+            Log.d(TAG, "Pinning $cid to Crust network for permanent storage")
+
+            // Get auth header (Bearer token for pinning service)
+            val authHeaderResult = createAuthHeader(publicKey)
+            if (authHeaderResult.isFailure) {
+                return@withContext Result.failure(
+                    authHeaderResult.exceptionOrNull() ?: Exception("Failed to create auth header")
+                )
+            }
+            val authHeader = authHeaderResult.getOrThrow()
+
+            // Create pinning request
+            val pinRequest = JSONObject().apply {
+                put("cid", cid)
+                put("name", "contact_card_$cid")
+            }
+
+            val requestBody = pinRequest.toString()
+                .toRequestBody("application/json".toMediaType())
+
+            val request = Request.Builder()
+                .url("$CRUST_PIN_SERVICE/pins")
+                .addHeader("Authorization", authHeader.replace("Basic", "Bearer"))
+                .post(requestBody)
+                .build()
+
+            client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) {
+                    val errorBody = response.body?.string() ?: "Unknown error"
+                    Log.e(TAG, "Crust pinning failed: ${response.code} - $errorBody")
+                    return@withContext Result.failure(
+                        IOException("Pinning failed: ${response.code} - $errorBody")
+                    )
+                }
+
+                Log.i(TAG, "Successfully pinned $cid to Crust network")
+                Result.success(Unit)
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to pin to Crust", e)
             Result.failure(e)
         }
     }
@@ -145,21 +208,26 @@ class CrustService(
                 )
             }
 
+            // Download from public IPFS gateway (no auth required)
+            Log.d(TAG, "Downloading from IPFS gateway: $PUBLIC_IPFS_GATEWAY/ipfs/$cid")
+
             val request = Request.Builder()
-                .url("$CRUST_IPFS_GATEWAY/ipfs/$cid")
+                .url("$PUBLIC_IPFS_GATEWAY/ipfs/$cid")
+                .addHeader("User-Agent", "Mozilla/5.0 (Android; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36")
                 .get()
                 .build()
 
             client.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) {
-                    Log.e(TAG, "Failed to download from IPFS: ${response.code}")
+                    val errorBody = response.body?.string() ?: "Unknown error"
+                    Log.e(TAG, "Download failed: ${response.code} - $errorBody")
                     return@withContext Result.failure(
-                        IOException("Download failed: ${response.code}")
+                        IOException("Download failed: ${response.code} - $errorBody")
                     )
                 }
 
                 val encryptedData = response.body!!.bytes()
-                Log.i(TAG, "Successfully downloaded from IPFS (${encryptedData.size} bytes)")
+                Log.i(TAG, "Successfully downloaded from Crust (${encryptedData.size} bytes)")
                 Result.success(encryptedData)
             }
         } catch (e: Exception) {

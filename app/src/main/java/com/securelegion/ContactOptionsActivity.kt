@@ -31,11 +31,13 @@ class ContactOptionsActivity : AppCompatActivity() {
     private lateinit var contactAddress: TextView
     private lateinit var displayNameInput: EditText
     private lateinit var saveDisplayNameButton: TextView
+    private lateinit var blockContactButton: TextView
     private lateinit var deleteContactButton: TextView
     private lateinit var distressStarIcon: ImageView
     private var fullAddress: String = ""
     private var contactId: Long = -1
     private var isDistressContact: Boolean = false
+    private var isBlocked: Boolean = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -49,7 +51,7 @@ class ContactOptionsActivity : AppCompatActivity() {
 
         initializeViews()
         setupContactInfo(name, address)
-        loadDistressStatus()
+        loadContactStatus()
         setupClickListeners(name)
         setupBottomNav()
     }
@@ -59,6 +61,7 @@ class ContactOptionsActivity : AppCompatActivity() {
         contactAddress = findViewById(R.id.contactAddress)
         displayNameInput = findViewById(R.id.displayNameInput)
         saveDisplayNameButton = findViewById(R.id.saveDisplayNameButton)
+        blockContactButton = findViewById(R.id.blockContactButton)
         deleteContactButton = findViewById(R.id.deleteContactButton)
         distressStarIcon = findViewById(R.id.distressStarIcon)
     }
@@ -69,7 +72,7 @@ class ContactOptionsActivity : AppCompatActivity() {
         displayNameInput.hint = "Enter new display name for $name"
     }
 
-    private fun loadDistressStatus() {
+    private fun loadContactStatus() {
         CoroutineScope(Dispatchers.Main).launch {
             try {
                 if (contactId == -1L) {
@@ -86,11 +89,21 @@ class ContactOptionsActivity : AppCompatActivity() {
 
                 if (contact != null) {
                     isDistressContact = contact.isDistressContact
+                    isBlocked = contact.isBlocked
                     updateStarIcon()
+                    updateBlockButton()
                 }
             } catch (e: Exception) {
-                Log.e(TAG, "Failed to load distress status", e)
+                Log.e(TAG, "Failed to load contact status", e)
             }
+        }
+    }
+
+    private fun updateBlockButton() {
+        if (isBlocked) {
+            blockContactButton.text = "Unblock Contact"
+        } else {
+            blockContactButton.text = "Block Contact"
         }
     }
 
@@ -125,16 +138,47 @@ class ContactOptionsActivity : AppCompatActivity() {
                 // Update UI
                 updateStarIcon()
 
-                val message = if (isDistressContact) {
-                    "Distress signal enabled"
-                } else {
-                    "Distress signal disabled"
-                }
-                ToastUtils.showCustomToast(this@ContactOptionsActivity, message)
-
                 Log.i(TAG, "Distress status updated: $isDistressContact")
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to toggle distress status", e)
+                ToastUtils.showCustomToast(this@ContactOptionsActivity, "Failed to update status")
+            }
+        }
+    }
+
+    private fun toggleBlockStatus() {
+        CoroutineScope(Dispatchers.Main).launch {
+            try {
+                if (contactId == -1L) {
+                    ToastUtils.showCustomToast(this@ContactOptionsActivity, "Error: Invalid contact")
+                    return@launch
+                }
+
+                // Toggle the status
+                isBlocked = !isBlocked
+
+                val keyManager = KeyManager.getInstance(this@ContactOptionsActivity)
+                val dbPassphrase = keyManager.getDatabasePassphrase()
+                val database = SecureLegionDatabase.getInstance(this@ContactOptionsActivity, dbPassphrase)
+
+                // Update in database
+                withContext(Dispatchers.IO) {
+                    database.contactDao().updateBlockedStatus(contactId, isBlocked)
+                }
+
+                // Update UI
+                updateBlockButton()
+
+                val message = if (isBlocked) {
+                    "Contact blocked"
+                } else {
+                    "Contact unblocked"
+                }
+                ToastUtils.showCustomToast(this@ContactOptionsActivity, message)
+
+                Log.i(TAG, "Blocked status updated: $isBlocked")
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to toggle blocked status", e)
                 ToastUtils.showCustomToast(this@ContactOptionsActivity, "Failed to update status")
             }
         }
@@ -152,7 +196,7 @@ class ContactOptionsActivity : AppCompatActivity() {
         }
 
         // Copy address on click
-        findViewById<View>(R.id.copyAddressContainer).setOnClickListener {
+        contactAddress.setOnClickListener {
             val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
             val clip = ClipData.newPlainText("Wallet Address", fullAddress)
             clipboard.setPrimaryClip(clip)
@@ -169,6 +213,11 @@ class ContactOptionsActivity : AppCompatActivity() {
             }
 
             saveDisplayName(newDisplayName, name)
+        }
+
+        // Block contact button
+        blockContactButton.setOnClickListener {
+            toggleBlockStatus()
         }
 
         // Delete contact button
@@ -221,15 +270,15 @@ class ContactOptionsActivity : AppCompatActivity() {
     private fun deleteContact() {
         CoroutineScope(Dispatchers.Main).launch {
             try {
-                Log.d(TAG, "Deleting contact with address: $fullAddress")
+                Log.d(TAG, "Deleting contact ID: $contactId")
 
                 val keyManager = KeyManager.getInstance(this@ContactOptionsActivity)
                 val dbPassphrase = keyManager.getDatabasePassphrase()
                 val database = SecureLegionDatabase.getInstance(this@ContactOptionsActivity, dbPassphrase)
 
-                // Find and delete the contact by Solana address
+                // Get contact by ID
                 val contact = withContext(Dispatchers.IO) {
-                    database.contactDao().getContactBySolanaAddress(fullAddress)
+                    database.contactDao().getContactById(contactId)
                 }
 
                 if (contact != null) {

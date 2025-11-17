@@ -103,9 +103,18 @@ class ChatActivity : AppCompatActivity() {
 
                     if (receivedContactId == contactId) {
                         // NEW_PING for current contact
-                        if (!isDownloadInProgress) {
-                            // Not downloading - this is a legitimate new ping, show lock icon
-                            Log.i(TAG, "New Ping for current contact - reloading to show lock icon")
+                        // Check if pending ping exists - if cleared during download, allow refresh
+                        val prefs = getSharedPreferences("pending_pings", MODE_PRIVATE)
+                        val hasPendingPing = prefs.contains("ping_${contactId}_id")
+
+                        if (!isDownloadInProgress || !hasPendingPing) {
+                            // Either not downloading, OR download completed (ping cleared) - refresh UI
+                            if (isDownloadInProgress && !hasPendingPing) {
+                                Log.i(TAG, "Download completed (ping cleared) - resetting flag and refreshing UI")
+                                isDownloadInProgress = false
+                            } else {
+                                Log.i(TAG, "New Ping for current contact - reloading to show lock icon")
+                            }
                             runOnUiThread {
                                 lifecycleScope.launch {
                                     loadMessages()
@@ -117,6 +126,21 @@ class ChatActivity : AppCompatActivity() {
                     } else if (receivedContactId != -1L) {
                         // NEW_PING for different contact - reload to update UI
                         Log.i(TAG, "New Ping for different contact - reloading")
+                        runOnUiThread {
+                            lifecycleScope.launch {
+                                loadMessages()
+                            }
+                        }
+                    }
+                }
+                "com.securelegion.DOWNLOAD_FAILED" -> {
+                    val receivedContactId = intent.getLongExtra("CONTACT_ID", -1L)
+                    Log.w(TAG, "DOWNLOAD_FAILED broadcast: received contactId=$receivedContactId, current contactId=$contactId")
+
+                    if (receivedContactId == contactId) {
+                        // Download failed for current contact - reset flag and refresh UI
+                        Log.w(TAG, "Download failed - resetting download flag and refreshing UI")
+                        isDownloadInProgress = false
                         runOnUiThread {
                             lifecycleScope.launch {
                                 loadMessages()
@@ -176,13 +200,14 @@ class ChatActivity : AppCompatActivity() {
         val filter = IntentFilter().apply {
             addAction("com.securelegion.MESSAGE_RECEIVED")
             addAction("com.securelegion.NEW_PING")
+            addAction("com.securelegion.DOWNLOAD_FAILED")
         }
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
             registerReceiver(messageReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
         } else {
             registerReceiver(messageReceiver, filter)
         }
-        Log.d(TAG, "Message receiver registered in onCreate for MESSAGE_RECEIVED and NEW_PING")
+        Log.d(TAG, "Message receiver registered in onCreate for MESSAGE_RECEIVED, NEW_PING, and DOWNLOAD_FAILED")
     }
 
     override fun onDestroy() {

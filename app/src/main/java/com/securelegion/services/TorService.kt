@@ -226,14 +226,21 @@ class TorService : Service() {
 
         Log.i(TAG, "Created encrypted Pong: ${encryptedPong.size} bytes")
 
-        // Send Pong back to sender
-        RustBridge.sendPongBytes(connectionId, encryptedPong)
-
-        Log.i(TAG, "Pong sent successfully! Waiting for incoming message...")
+        Log.i(TAG, "Sending Pong and waiting for incoming message...")
         Toast.makeText(this, "Accepting message from $senderName...", Toast.LENGTH_SHORT).show()
 
-        // After sending Pong, wait for the encrypted message
-        receiveIncomingMessage(connectionId, pingId, senderName)
+        // Send Pong back to sender and receive the message
+        // sendPongBytes() returns the encrypted message after sending the Pong
+        val encryptedMessage = RustBridge.sendPongBytes(connectionId, encryptedPong)
+
+        if (encryptedMessage != null && encryptedMessage.isNotEmpty()) {
+            Log.i(TAG, "Received encrypted message: ${encryptedMessage.size} bytes")
+            // Process the received message
+            processReceivedMessage(encryptedMessage, pingId, senderName)
+        } else {
+            Log.w(TAG, "No message received or empty message")
+            Toast.makeText(this, "No message received from $senderName", Toast.LENGTH_SHORT).show()
+        }
 
         // Cancel the auth notification
         val notificationManager = getSystemService(NotificationManager::class.java)
@@ -447,12 +454,19 @@ class TorService : Service() {
         // Poll for incoming Pings in background thread
         Thread {
             Log.d(TAG, "Ping poller thread started")
+            var pollCount = 0
             while (isServiceRunning) {
                 try {
                     val pingBytes = RustBridge.pollIncomingPing()
                     if (pingBytes != null) {
                         Log.i(TAG, "Received incoming Ping token: ${pingBytes.size} bytes")
                         handleIncomingPing(pingBytes)
+                    } else {
+                        // Log every 10 seconds to confirm poller is running
+                        pollCount++
+                        if (pollCount % 10 == 0) {
+                            Log.d(TAG, "Ping poller alive (poll #$pollCount, no ping)")
+                        }
                     }
 
                     // Poll every second
@@ -1021,6 +1035,12 @@ class TorService : Service() {
                         } else {
                             Log.w(TAG, "Failed to send tap to ${contact.displayName}")
                             failureCount++
+                        }
+
+                        // Small delay between attempts to avoid overwhelming Tor
+                        // (Don't delay after last contact)
+                        if (contact != contacts.last()) {
+                            kotlinx.coroutines.delay(150) // 150ms between taps
                         }
                     } catch (e: Exception) {
                         Log.e(TAG, "Error sending tap to ${contact.displayName}", e)
@@ -1711,9 +1731,17 @@ class TorService : Service() {
 
         // Prevent rapid retry attempts
         if (now - lastReconnectTime < MIN_RETRY_INTERVAL) {
-            Log.d(TAG, "Skipping reconnect attempt - too soon since last attempt (${(now - lastReconnectTime)/1000}s ago)")
-            isReconnecting = false
-            // Don't schedule another reconnect - one is already scheduled from previous attempt
+            val timeSinceLastAttempt = (now - lastReconnectTime) / 1000
+            Log.d(TAG, "Skipping reconnect attempt - too soon since last attempt (${timeSinceLastAttempt}s ago)")
+            // Schedule retry after the minimum interval instead of giving up
+            if (!isReconnecting) {
+                isReconnecting = true
+                val delayUntilNextAttempt = MIN_RETRY_INTERVAL - (now - lastReconnectTime)
+                Log.d(TAG, "Scheduling reconnect in ${delayUntilNextAttempt / 1000}s")
+                reconnectHandler.postDelayed({
+                    attemptReconnect()
+                }, delayUntilNextAttempt)
+            }
             return
         }
 

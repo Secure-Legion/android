@@ -8,6 +8,7 @@ import android.util.Log
 import android.view.View
 import android.widget.Button
 import android.widget.EditText
+import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
@@ -16,10 +17,33 @@ import com.securelegion.services.SolanaService
 import kotlinx.coroutines.launch
 
 class SendActivity : AppCompatActivity() {
+    private var currentWalletId: String = "main"
+    private var currentWalletName: String = "Wallet 1"
+    private var currentWalletAddress: String = ""
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_send)
 
+        // Get wallet info from intent
+        currentWalletId = intent.getStringExtra("WALLET_ID") ?: "main"
+        currentWalletName = intent.getStringExtra("WALLET_NAME") ?: "Wallet 1"
+        currentWalletAddress = intent.getStringExtra("WALLET_ADDRESS") ?: ""
+
+        // If wallet address not passed, get it from KeyManager
+        if (currentWalletAddress.isEmpty()) {
+            val keyManager = KeyManager.getInstance(this)
+            currentWalletAddress = keyManager.getSolanaAddress()
+        }
+
+        Log.d("SendActivity", "Sending from wallet: $currentWalletName ($currentWalletAddress)")
+
+        // Display wallet info
+        findViewById<TextView>(R.id.fromWalletName).text = currentWalletName
+        findViewById<TextView>(R.id.fromWalletAddress).text =
+            "${currentWalletAddress.take(4)}...${currentWalletAddress.takeLast(4)}"
+
+        loadWalletBalance()
         setupBottomNavigation()
 
         // Back button
@@ -54,16 +78,17 @@ class SendActivity : AppCompatActivity() {
 
             lifecycleScope.launch {
                 try {
-                    Log.i("SendActivity", "Initiating SOL transfer: $amount SOL to $recipientAddress")
+                    Log.i("SendActivity", "Initiating SOL transfer: $amount SOL from $currentWalletName to $recipientAddress")
 
                     val keyManager = KeyManager.getInstance(this@SendActivity)
                     val solanaService = SolanaService(this@SendActivity)
 
                     val result = solanaService.sendTransaction(
-                        fromPublicKey = keyManager.getSolanaAddress(),
+                        fromPublicKey = currentWalletAddress,
                         toPublicKey = recipientAddress,
                         amountSOL = amount.toDouble(),
-                        keyManager = keyManager
+                        keyManager = keyManager,
+                        walletId = currentWalletId
                     )
 
                     if (result.isSuccess) {
@@ -99,6 +124,47 @@ class SendActivity : AppCompatActivity() {
                     ).show()
                     sendButton.isEnabled = true
                 }
+            }
+        }
+    }
+
+    private fun loadWalletBalance() {
+        lifecycleScope.launch {
+            try {
+                val solanaService = SolanaService(this@SendActivity)
+
+                // Use the current wallet address
+                val walletAddress = currentWalletAddress
+
+                // Fetch balance
+                val balanceResult = solanaService.getBalance(walletAddress)
+
+                if (balanceResult.isSuccess) {
+                    val balanceSOL = balanceResult.getOrNull() ?: 0.0
+
+                    // Update SOL balance
+                    findViewById<TextView>(R.id.balanceSOL).text = String.format("%.4f SOL", balanceSOL)
+
+                    // Fetch live SOL price and calculate USD value
+                    val priceResult = solanaService.getSolPrice()
+                    if (priceResult.isSuccess) {
+                        val priceUSD = priceResult.getOrNull() ?: 0.0
+                        val balanceUSD = balanceSOL * priceUSD
+                        findViewById<TextView>(R.id.balanceUSD).text = String.format("≈ $%.2f USD", balanceUSD)
+                    } else {
+                        findViewById<TextView>(R.id.balanceUSD).text = "≈ $... USD"
+                    }
+
+                    Log.i("SendActivity", "Balance loaded: $balanceSOL SOL")
+                } else {
+                    Log.e("SendActivity", "Failed to load balance: ${balanceResult.exceptionOrNull()?.message}")
+                    findViewById<TextView>(R.id.balanceSOL).text = "Error loading balance"
+                    findViewById<TextView>(R.id.balanceUSD).text = ""
+                }
+            } catch (e: Exception) {
+                Log.e("SendActivity", "Error loading wallet balance", e)
+                findViewById<TextView>(R.id.balanceSOL).text = "Error"
+                findViewById<TextView>(R.id.balanceUSD).text = ""
             }
         }
     }

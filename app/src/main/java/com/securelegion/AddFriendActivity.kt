@@ -33,6 +33,12 @@ class AddFriendActivity : AppCompatActivity() {
         // Back button
         findViewById<View>(R.id.backButton).setOnClickListener {
             finish()
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                overrideActivityTransition(Activity.OVERRIDE_TRANSITION_CLOSE, 0, 0)
+            } else {
+                @Suppress("DEPRECATION")
+                overridePendingTransition(0, 0)
+            }
         }
 
         // Add Friend button
@@ -139,6 +145,12 @@ class AddFriendActivity : AppCompatActivity() {
                         Toast.LENGTH_SHORT
                     ).show()
                     finish()
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                        overrideActivityTransition(Activity.OVERRIDE_TRANSITION_CLOSE, 0, 0)
+                    } else {
+                        @Suppress("DEPRECATION")
+                        overridePendingTransition(0, 0)
+                    }
                     return@launch
                 }
 
@@ -176,6 +188,12 @@ class AddFriendActivity : AppCompatActivity() {
 
                 // Navigate back to main screen
                 finish()
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                    overrideActivityTransition(Activity.OVERRIDE_TRANSITION_CLOSE, 0, 0)
+                } else {
+                    @Suppress("DEPRECATION")
+                    overridePendingTransition(0, 0)
+                }
             } catch (e: Exception) {
                 Log.e(TAG, "DETAILED ERROR - Failed to save contact to database", e)
                 Log.e(TAG, "Error type: ${e.javaClass.simpleName}")
