@@ -14,6 +14,14 @@ use std::sync::Mutex as StdMutex;
 use std::collections::HashMap;
 use once_cell::sync::Lazy;
 
+/// Wire protocol message type constants
+pub const MSG_TYPE_PING: u8 = 0x01;
+pub const MSG_TYPE_PONG: u8 = 0x02;
+pub const MSG_TYPE_TEXT: u8 = 0x03;
+pub const MSG_TYPE_VOICE: u8 = 0x04;
+pub const MSG_TYPE_TAP: u8 = 0x05;
+pub const MSG_TYPE_DELIVERY_CONFIRMATION: u8 = 0x06;
+
 /// Structure representing a pending connection waiting for Pong response
 pub struct PendingConnection {
     pub socket: TcpStream,
@@ -106,7 +114,7 @@ impl TorManager {
     }
 
     /// Get current Tor bootstrap percentage
-    async fn get_bootstrap_status(&self) -> Result<u32, Box<dyn Error>> {
+    pub async fn get_bootstrap_status(&self) -> Result<u32, Box<dyn Error>> {
         let control_stream = self.control_stream.as_ref()
             .ok_or("Control port not connected")?;
 
@@ -210,11 +218,16 @@ impl TorManager {
         }
 
         // Now create the hidden service - descriptors will be uploaded and we'll receive events
+        // IMPORTANT: Expose THREE ports for Ping-Pong-Tap protocol:
+        //   - Port 9150 → local 8080 (Ping listener - main hidden service port)
+        //   - Port 9151 → local 9151 (Tap listener)
+        //   - Port 9152 → local 9152 (Pong listener)
         let actual_onion_address = {
             let mut stream = control.lock().await;
 
+            // Flags=Detach makes hidden service persistent across Tor restarts
             let command = format!(
-                "ADD_ONION ED25519-V3:{} Port={},127.0.0.1:{}\r\n",
+                "ADD_ONION ED25519-V3:{} Flags=Detach Port={},127.0.0.1:{} Port=9151,127.0.0.1:9151 Port=9152,127.0.0.1:9152\r\n",
                 key_base64, service_port, local_port
             );
 
@@ -227,6 +240,14 @@ impl TorManager {
             log::info!("ADD_ONION response: {}", response);
 
             if !response.contains("250 OK") {
+                // Check if error is due to service already existing (persistent service)
+                if response.contains("550") && (response.contains("collision") || response.contains("already")) {
+                    log::info!("Hidden service already exists (persistent) - using existing service");
+                    // Service already exists, just use the computed address
+                    self.hidden_service_address = Some(full_address.clone());
+                    log::info!("Using existing hidden service: {}", full_address);
+                    return Ok(full_address);
+                }
                 return Err(format!("Failed to create hidden service: {}", response).into());
             }
 
@@ -495,39 +516,91 @@ impl TorManager {
         conn_id: u64,
         tx: tokio::sync::mpsc::UnboundedSender<(u64, Vec<u8>)>,
     ) -> Result<(), Box<dyn Error>> {
-        // Read incoming data (can be Ping, Pong, or Message blob)
+        // Read length prefix
         let mut len_buf = [0u8; 4];
         socket.read_exact(&mut len_buf).await?;
-        let ping_len = u32::from_be_bytes(len_buf) as usize;
+        let total_len = u32::from_be_bytes(len_buf) as usize;
 
         // Increased limit to support voice messages (typical voice: ~50KB, allow up to 10MB)
-        if ping_len > 10_000_000 {
+        if total_len > 10_000_000 {
             return Err("Message too large (>10MB)".into());
         }
 
-        let mut ping_data = vec![0u8; ping_len];
-        socket.read_exact(&mut ping_data).await?;
+        // Read message type byte
+        let mut type_byte = [0u8; 1];
+        socket.read_exact(&mut type_byte).await?;
+        let msg_type = type_byte[0];
+
+        // Read the rest of the data (total_len includes type byte, so subtract 1)
+        let data_len = total_len.saturating_sub(1);
+        let mut data = vec![0u8; data_len];
+        socket.read_exact(&mut data).await?;
 
         log::info!("╔════════════════════════════════════════");
-        log::info!("║ INCOMING CONNECTION {} ({}  bytes)", conn_id, ping_len);
+        log::info!("║ INCOMING CONNECTION {} (type=0x{:02x}, {} bytes)", conn_id, msg_type, data_len);
         log::info!("╚════════════════════════════════════════");
 
-        // TODO: Need to distinguish between Ping and Pong
-        // For now, treat everything as Ping (this is the bug!)
-        log::warn!("⚠️  Treating as PING (may actually be PONG!)");
+        // Route based on message type
+        match msg_type {
+            MSG_TYPE_PING => {
+                log::info!("→ Routing to PING handler");
 
-        // Store connection for Pong response
-        {
-            let mut pending = PENDING_CONNECTIONS.lock().unwrap();
-            pending.insert(conn_id, PendingConnection {
-                socket,
-                encrypted_ping: ping_data.clone(),
-            });
+                // Store connection for instant Pong response
+                {
+                    let mut pending = PENDING_CONNECTIONS.lock().unwrap();
+                    pending.insert(conn_id, PendingConnection {
+                        socket,
+                        encrypted_ping: data.clone(),
+                    });
+                }
+
+                // Send to Ping receiver channel
+                tx.send((conn_id, data)).ok();
+            }
+            MSG_TYPE_PONG => {
+                log::info!("→ Routing to PONG handler");
+                // Pongs don't need connection stored (no reply needed)
+                // Send directly to whichever channel is listening
+                tx.send((conn_id, data)).ok();
+            }
+            MSG_TYPE_TEXT | MSG_TYPE_VOICE => {
+                log::info!("→ Routing to MESSAGE handler (type={})",
+                    if msg_type == MSG_TYPE_TEXT { "TEXT" } else { "VOICE" });
+
+                // Messages might need connection stored for delivery confirmation
+                {
+                    let mut pending = PENDING_CONNECTIONS.lock().unwrap();
+                    pending.insert(conn_id, PendingConnection {
+                        socket,
+                        encrypted_ping: data.clone(),
+                    });
+                }
+
+                tx.send((conn_id, data)).ok();
+            }
+            MSG_TYPE_TAP => {
+                log::info!("→ Routing to TAP handler");
+                tx.send((conn_id, data)).ok();
+            }
+            MSG_TYPE_DELIVERY_CONFIRMATION => {
+                log::info!("→ Routing to DELIVERY_CONFIRMATION handler");
+                tx.send((conn_id, data)).ok();
+            }
+            _ => {
+                log::warn!("⚠️  Unknown message type: 0x{:02x}, treating as PING", msg_type);
+
+                // Default to Ping behavior for unknown types
+                {
+                    let mut pending = PENDING_CONNECTIONS.lock().unwrap();
+                    pending.insert(conn_id, PendingConnection {
+                        socket,
+                        encrypted_ping: data.clone(),
+                    });
+                }
+
+                tx.send((conn_id, data)).ok();
+            }
         }
-
-        // Send to application layer (will be processed as Ping)
-        log::info!("→ Sending to Ping receiver channel");
-        tx.send((conn_id, ping_data)).ok();
 
         Ok(())
     }
@@ -663,12 +736,17 @@ impl TorManager {
                 .ok_or("Connection not found")?
         };
 
-        // Send length prefix
-        let len = pong_bytes.len() as u32;
+        // Build wire message with type byte
+        let mut wire_message = Vec::new();
+        wire_message.push(MSG_TYPE_PONG); // Add type byte
+        wire_message.extend_from_slice(pong_bytes);
+
+        // Send length prefix (includes type byte)
+        let len = wire_message.len() as u32;
         conn.socket.write_all(&len.to_be_bytes()).await?;
 
-        // Send Pong bytes
-        conn.socket.write_all(pong_bytes).await?;
+        // Send wire message (type + pong data)
+        conn.socket.write_all(&wire_message).await?;
         conn.socket.flush().await?;
 
         log::info!("Sent Pong response: {} bytes (connection {})", pong_bytes.len(), connection_id);

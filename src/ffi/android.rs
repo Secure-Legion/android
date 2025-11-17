@@ -1,5 +1,5 @@
 use jni::objects::{JByteArray, JClass, JObject, JString};
-use jni::sys::{jboolean, jbyteArray, jint, jlong, jstring, jobjectArray};
+use jni::sys::{jboolean, jbyte, jbyteArray, jint, jlong, jstring, jobjectArray};
 use jni::JNIEnv;
 use std::panic;
 use std::sync::{Arc, Mutex};
@@ -15,6 +15,7 @@ use crate::network::{TorManager, PENDING_CONNECTIONS};
 use crate::protocol::ContactCard;
 use crate::blockchain::{register_username, lookup_username};
 use tokio::sync::{mpsc, oneshot};
+use tokio::io::AsyncReadExt;
 
 // ==================== LIBRARY INITIALIZATION ====================
 
@@ -974,12 +975,17 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendPongToListener(
         let result = runtime.block_on(async {
             const PONG_LISTENER_PORT: u16 = 9152;
 
+            // Build wire message with type byte
+            let mut wire_message = Vec::new();
+            wire_message.push(crate::network::tor::MSG_TYPE_PONG); // Add type byte
+            wire_message.extend_from_slice(&pong_bytes);
+
             // Connect to sender's Pong listener
             let tor = tor_manager.lock().unwrap();
             let mut conn = tor.connect(&onion_address, PONG_LISTENER_PORT).await?;
 
-            // Send Pong bytes
-            tor.send(&mut conn, &pong_bytes).await?;
+            // Send wire message (type + pong data)
+            tor.send(&mut conn, &wire_message).await?;
 
             log::info!("Pong sent successfully to listener at {}:9152", onion_address);
             Ok::<(), Box<dyn std::error::Error>>(())
@@ -1002,6 +1008,8 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendPing(
     recipient_ed25519_pubkey: JByteArray,
     recipient_x25519_pubkey: JByteArray,
     recipient_onion: JString,
+    encrypted_message: JByteArray,
+    message_type_byte: jbyte,
 ) -> jstring {
     catch_panic!(env, {
         // Convert inputs
@@ -1023,6 +1031,14 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendPing(
 
         let recipient_onion_str = match jstring_to_string(&mut env, recipient_onion) {
             Ok(s) => s,
+            Err(e) => {
+                let _ = env.throw_new("java/lang/IllegalArgumentException", e);
+                return std::ptr::null_mut();
+            }
+        };
+
+        let message_bytes = match jbytearray_to_vec(&mut env, encrypted_message) {
+            Ok(v) => v,
             Err(e) => {
                 let _ = env.throw_new("java/lang/IllegalArgumentException", e);
                 return std::ptr::null_mut();
@@ -1154,29 +1170,91 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendPing(
             }
         };
 
-        // Wire format: [Our X25519 Public Key - 32 bytes][Encrypted Ping Token]
-        // (we already retrieved our_x25519_public earlier when creating PingToken)
+        // Wire format: [Type Byte 0x01][Our X25519 Public Key - 32 bytes][Encrypted Ping Token]
         let mut wire_message = Vec::new();
+        wire_message.push(crate::network::tor::MSG_TYPE_PING); // Add type byte
         wire_message.extend_from_slice(&sender_x25519_pubkey);
         wire_message.extend_from_slice(&encrypted_ping);
 
-        // Send encrypted Ping via Tor (ASYNC - don't wait for Pong!)
+        // Send encrypted Ping via Tor
+        // HYBRID MODE: Try instant Pong (30s timeout), fall back to delayed mode
         let tor_manager = get_tor_manager();
         let runtime = tokio::runtime::Runtime::new().expect("Failed to create Tokio runtime");
 
         const PING_PONG_PORT: u16 = 9150;
+        const INSTANT_PONG_TIMEOUT_SECS: u64 = 30;
 
-        let result = runtime.block_on(async {
+        let result: Result<(), Box<dyn std::error::Error>> = runtime.block_on(async {
             let manager = tor_manager.lock().unwrap();
             let mut conn = manager.connect(&recipient_onion_str, PING_PONG_PORT).await?;
             manager.send(&mut conn, &wire_message).await?;
 
-            // DO NOT WAIT FOR PONG! The Pong will arrive later via the listener
-            // when the recipient user clicks "download". This is the whole point
-            // of the Ping-Pong-Wake protocol - asynchronous messaging.
-            log::info!("Ping sent successfully ({}), not waiting for Pong", ping_id);
+            log::info!("Ping sent successfully ({}), waiting for instant Pong ({}s timeout)...", ping_id, INSTANT_PONG_TIMEOUT_SECS);
 
-            Ok::<(), Box<dyn std::error::Error>>(())
+            // Try to receive instant Pong response (recipient online and accepts immediately)
+            let pong_result = tokio::time::timeout(
+                std::time::Duration::from_secs(INSTANT_PONG_TIMEOUT_SECS),
+                async {
+                    // Read length prefix
+                    let mut len_buf = [0u8; 4];
+                    conn.stream.read_exact(&mut len_buf).await?;
+                    let total_len = u32::from_be_bytes(len_buf) as usize;
+
+                    if total_len > 10_000 {
+                        return Err("Pong response too large".into());
+                    }
+
+                    // Read type byte
+                    let mut type_byte = [0u8; 1];
+                    conn.stream.read_exact(&mut type_byte).await?;
+
+                    if type_byte[0] != crate::network::tor::MSG_TYPE_PONG {
+                        log::warn!("Expected PONG (0x02) but got type 0x{:02x}", type_byte[0]);
+                        return Err(format!("Wrong message type: expected PONG, got 0x{:02x}", type_byte[0]).into());
+                    }
+
+                    // Read the pong data
+                    let data_len = total_len.saturating_sub(1);
+                    let mut pong_data = vec![0u8; data_len];
+                    conn.stream.read_exact(&mut pong_data).await?;
+
+                    log::info!("✓ Received instant Pong response ({} bytes)", data_len);
+
+                    Ok::<Vec<u8>, Box<dyn std::error::Error>>(pong_data)
+                }
+            ).await;
+
+            match pong_result {
+                Ok(Ok(_pong_data)) => {
+                    log::info!("✓ INSTANT MODE: Pong received, sending message payload...");
+                    log::info!("Message size: {} bytes encrypted", message_bytes.len());
+
+                    // Build message wire format: [Type Byte][Encrypted Message]
+                    // NOTE: message_bytes from encryptMessage() already contains [X25519 32 bytes][Encrypted data]
+                    let mut message_wire = Vec::new();
+                    message_wire.push(message_type_byte as u8); // Type byte from parameter
+                    message_wire.extend_from_slice(&message_bytes);          // Encrypted message (already has X25519 key)
+
+                    log::info!("Sending message wire: {} bytes total (1 type + {} encrypted)",
+                        message_wire.len(), message_bytes.len());
+
+                    // Send message on same connection
+                    manager.send(&mut conn, &message_wire).await?;
+
+                    log::info!("✓ Message sent successfully ({} bytes) in INSTANT MODE", message_bytes.len());
+                    Ok(())
+                }
+                Ok(Err(e)) => {
+                    log::warn!("Failed to receive instant Pong: {}", e);
+                    log::info!("→ DELAYED MODE: Pong will arrive later via port 9152 listener");
+                    Ok(())
+                }
+                Err(_) => {
+                    log::info!("→ DELAYED MODE: Instant Pong timeout ({}s) - recipient may be offline or busy", INSTANT_PONG_TIMEOUT_SECS);
+                    log::info!("   Pong will arrive later via port 9152 listener when recipient comes online");
+                    Ok(())
+                }
+            }
         });
 
         match result {
@@ -1294,7 +1372,7 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendTap(
             }
         };
 
-        // Wire format: [Our X25519 Public Key - 32 bytes][Encrypted Tap]
+        // Wire format: [Type Byte 0x05][Our X25519 Public Key - 32 bytes][Encrypted Tap]
         let sender_x25519_pubkey: [u8; 32] = match our_x25519_public.as_slice().try_into() {
             Ok(arr) => arr,
             Err(_) => {
@@ -1304,6 +1382,7 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendTap(
         };
 
         let mut wire_message = Vec::new();
+        wire_message.push(crate::network::tor::MSG_TYPE_TAP); // Add type byte
         wire_message.extend_from_slice(&sender_x25519_pubkey);
         wire_message.extend_from_slice(&encrypted_tap);
 
@@ -1774,6 +1853,7 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendMessageBlob(
     _class: JClass,
     recipient_onion: JString,
     encrypted_message: JByteArray,
+    message_type_byte: jbyte,
 ) -> jboolean {
     catch_panic!(env, {
         // Convert parameters
@@ -1826,12 +1906,13 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendMessageBlob(
             }
         };
 
-        // Create wire message: [Sender X25519 Public Key - 32 bytes][Encrypted Message]
-        let mut wire_message = Vec::with_capacity(32 + message_bytes.len());
+        // Create wire message: [Type Byte][Sender X25519 Public Key - 32 bytes][Encrypted Message]
+        let mut wire_message = Vec::with_capacity(1 + 32 + message_bytes.len());
+        wire_message.push(message_type_byte as u8); // Type byte from parameter
         wire_message.extend_from_slice(&our_x25519_public);
         wire_message.extend_from_slice(&message_bytes);
 
-        log::info!("Wire message: {} bytes (32-byte X25519 pubkey + {} bytes encrypted)",
+        log::info!("Wire message: {} bytes (1-byte type + 32-byte X25519 pubkey + {} bytes encrypted)",
             wire_message.len(), message_bytes.len());
 
         // Get Tor manager
@@ -2346,6 +2427,7 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendDirectMessage(
     recipient_x25519_pubkey: JByteArray,
     recipient_onion: JString,
     encrypted_message: JByteArray,
+    message_type_byte: jbyte,
 ) -> jboolean {
     catch_panic!(env, {
         // Convert inputs
@@ -2512,14 +2594,18 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendDirectMessage(
             }
         };
 
-        // Wire format for Ping: [Our X25519 Public Key - 32 bytes][Encrypted Ping Token]
+        // Wire format for Ping: [Type Byte 0x01][Our X25519 Public Key - 32 bytes][Encrypted Ping Token]
         let mut ping_wire_message = Vec::new();
+        ping_wire_message.push(crate::network::tor::MSG_TYPE_PING); // Add type byte
         ping_wire_message.extend_from_slice(&our_x25519_public);
         ping_wire_message.extend_from_slice(&encrypted_ping);
 
         // Step 2: Send Ping via Tor and wait for Pong
         let tor_manager = get_tor_manager();
         let runtime = tokio::runtime::Runtime::new().expect("Failed to create Tokio runtime");
+
+        // Capture message type byte for async block
+        let msg_type = message_type_byte as u8;
 
         const MESSAGE_PORT: u16 = 9150;
 
@@ -2540,13 +2626,19 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendDirectMessage(
             ).await.map_err(|_| "Pong timeout")??;
 
             // Verify Pong (decrypt and check authentication)
-            if pong_response.len() < 32 {
+            if pong_response.len() < 2 {
                 return Err("Invalid Pong response".into());
             }
 
-            // Extract sender's X25519 pubkey and encrypted Pong
-            let _pong_sender_x25519 = &pong_response[0..32];
-            let encrypted_pong = &pong_response[32..];
+            // Extract type byte
+            let type_byte = pong_response[0];
+            if type_byte != crate::network::tor::MSG_TYPE_PONG {
+                log::warn!("Expected PONG (0x02) but got type 0x{:02x}", type_byte);
+                return Err(format!("Wrong message type: expected PONG, got 0x{:02x}", type_byte).into());
+            }
+
+            // Encrypted Pong starts after type byte
+            let encrypted_pong = &pong_response[1..];
 
             // Decrypt Pong
             let decrypted_pong = crate::crypto::encryption::decrypt_message(encrypted_pong, &shared_secret)?;
@@ -2565,10 +2657,12 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendDirectMessage(
             log::info!("Pong received and authenticated! Sending message...");
 
             // Step 3: Send encrypted message
-            // Wire format for message: [length:4 bytes][encrypted_message_bytes]
+            // Wire format for message: [Type Byte][Sender X25519 Public Key][Encrypted Message]
+            // (Length prefix is added automatically by manager.send())
             let mut message_wire = Vec::new();
-            message_wire.extend_from_slice(&(message_bytes.len() as u32).to_be_bytes());
-            message_wire.extend_from_slice(&message_bytes);
+            message_wire.push(msg_type); // Type byte from parameter
+            message_wire.extend_from_slice(&our_x25519_public);    // Sender X25519 pubkey
+            message_wire.extend_from_slice(&message_bytes);         // Encrypted message
 
             manager.send(&mut conn, &message_wire).await?;
 
@@ -2666,6 +2760,31 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_receiveIncomingMessage
             }
         }
     }, std::ptr::null_mut())
+}
+
+/// Get Tor bootstrap status (0-100%)
+/// Returns the current bootstrap percentage, or -1 on error
+#[no_mangle]
+pub extern "C" fn Java_com_securelegion_crypto_RustBridge_getBootstrapStatus(
+    mut env: JNIEnv,
+    _class: JClass,
+) -> jint {
+    catch_panic!(env, {
+        let tor_manager = get_tor_manager();
+        let manager = tor_manager.lock().unwrap();
+
+        // Use the global persistent Tokio runtime
+        match GLOBAL_RUNTIME.block_on(manager.get_bootstrap_status()) {
+            Ok(percentage) => {
+                log::debug!("Tor bootstrap status: {}%", percentage);
+                percentage as jint
+            }
+            Err(e) => {
+                log::error!("Failed to get bootstrap status: {}", e);
+                -1 as jint // Return -1 on error
+            }
+        }
+    }, -1 as jint)
 }
 
 // ==================== PING-PONG PROTOCOL (Socket.IO) ====================
