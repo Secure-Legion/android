@@ -51,6 +51,7 @@ class TorService : Service() {
     private var isPingPollerRunning = false
     private var isTapPollerRunning = false
     private var isPongPollerRunning = false
+    private var isListenerRunning = false
 
     // Network monitoring
     private var connectivityManager: ConnectivityManager? = null
@@ -382,19 +383,23 @@ class TorService : Service() {
 
     private fun startIncomingListener() {
         try {
-            // First, stop any existing listener to release the port
-            Log.d(TAG, "Stopping any existing listener...")
-            RustBridge.stopHiddenServiceListener()
-
-            // Wait for port to be fully released
-            Thread.sleep(500)
+            // Check if listener is already running - if so, just start pollers
+            if (isListenerRunning) {
+                Log.d(TAG, "Listener already running, skipping restart")
+                startPingPoller()
+                startTapPoller()
+                startPongPoller()
+                return
+            }
 
             Log.d(TAG, "Starting hidden service listener on port 8080...")
             val success = RustBridge.startHiddenServiceListener(8080)
             if (success) {
                 Log.i(TAG, "Hidden service listener started successfully")
+                isListenerRunning = true
             } else {
                 Log.w(TAG, "Listener already running (started by TorManager)")
+                isListenerRunning = true
             }
 
             // Start polling for incoming Pings (whether we started the listener or it's already running)
@@ -425,6 +430,8 @@ class TorService : Service() {
             startPongPoller()
         } catch (e: Exception) {
             Log.e(TAG, "Error starting listener", e)
+            // Mark as running anyway to prevent restart attempts
+            isListenerRunning = true
             // Try to start Ping poller anyway in case listener is already running
             startPingPoller()
             // Try to start tap poller
