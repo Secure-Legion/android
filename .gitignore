@@ -42,6 +42,12 @@ nul
 TODO.md
 OWASP_MASTG_Assessment.md
 
+# Signing keys (NEVER commit these!)
+*.jks
+*.keystore
+keystore.properties
+release-keystore.jks
+
 # Files to keep locally but not in git
 ANDROID_BUILD_SUCCESS.md
 QUICKSTART.md
