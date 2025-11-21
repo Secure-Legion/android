@@ -11,7 +11,7 @@
 
 > "No servers. No metadata. No compromises."
 
-[Download Beta APK](https://securelegion.com/download) | [Documentation](https://securelegion.com/architecture) | [Roadmap](https://securelegion.com/roadmap)
+[Download Beta APK](https://securelegion.org/download) | [Documentation](https://securelegion.org/architecture) | [Roadmap](https://securelegion.org/roadmap)
 
 </div>
 
@@ -244,16 +244,16 @@ See [Ping-Pong Protocol](https://securelegion.com/ping-pong-protocol) for techni
 ### Phase 8: Mobile Applications (In Progress)
 - [x] Android app structure
 - [x] Wallet integration
-- [ ] Complete messaging flow
-- [ ] Contact management
-- [ ] Background services
-- [ ] Beta testing
+- [x] Complete messaging flow
+- [x] Contact management
+- [x] Background services
+- [x] Beta testing
 
 ### Phase 9-11: Launch (Planned)
-- [ ] Security audit
+- [x] Security audit
 - [ ] F-Droid release
 - [ ] Google Play release
-- [ ] Public beta launch
+- [x] Public beta launch
 
 See full [Roadmap](https://securelegion.com/roadmap) on website.
 
@@ -294,11 +294,11 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for detailed guidelines.
 
 ## Documentation
 
-- [Website](https://securelegion.com) - Project overview and features
-- [Architecture](https://securelegion.com/architecture) - System design
-- [Security Model](https://securelegion.com/security-model) - Threat model and defenses
-- [Ping-Pong Protocol](https://securelegion.com/ping-pong-protocol) - P2P messaging protocol
-- [Feasibility Audit](https://securelegion.com/feasibility-audit) - Technical validation
+- [Website](https://securelegion.org) - Project overview and features
+- [Architecture](https://securelegion.org/architecture) - System design
+- [Security Model](https://securelegion.org/security-model) - Threat model and defenses
+- [Ping-Pong Protocol](https://securelegion.org/ping-pong-protocol) - P2P messaging protocol
+- [Feasibility Audit](https://securelegion.org/feasibility-audit) - Technical validation
 - [Quickstart Guide](QUICKSTART.md) - Build instructions
 - [TODO.md](TODO.md) - Development tasks
 
@@ -351,6 +351,6 @@ See [LICENSE](LICENSE) file for full terms or visit [polyformproject.org](https:
 
 **No servers. No metadata. No compromises.**
 
-[Download Beta](https://securelegion.com/download) • [Website](https://securelegion.com) • [GitHub](https://github.com/Secure-Legion)
+[Download Beta](https://securelegion.org/download) • [Website](https://securelegion.org) • [GitHub](https://github.com/Secure-Legion)
 
 </div>
