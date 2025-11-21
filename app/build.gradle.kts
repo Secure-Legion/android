@@ -118,6 +118,10 @@ dependencies {
     // WorkManager for background tasks
     implementation("androidx.work:work-runtime-ktx:2.9.0")
 
+    // Lifecycle for app background/foreground detection
+    implementation("androidx.lifecycle:lifecycle-process:2.8.7")
+    implementation("androidx.lifecycle:lifecycle-common:2.8.7")
+
     // Tor binaries for Android (provides libtor.so)
     implementation("info.guardianproject:tor-android:0.4.8.18")
 
