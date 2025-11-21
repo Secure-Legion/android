@@ -345,16 +345,17 @@ impl TorManager {
         }
 
         // Now create the hidden service - descriptors will be uploaded and we'll receive events
-        // IMPORTANT: Expose THREE ports for Ping-Pong-Tap protocol:
+        // IMPORTANT: Expose FOUR ports for Ping-Pong-Tap-ACK protocol:
         //   - Port 9150 → local 8080 (Ping listener - main hidden service port)
         //   - Port 9151 → local 9151 (Tap listener)
         //   - Port 9152 → local 9152 (Pong listener)
+        //   - Port 9153 → local 9153 (ACK/Delivery Confirmation listener)
         let actual_onion_address = {
             let mut stream = control.lock().await;
 
             // Flags=Detach makes hidden service persistent across Tor restarts
             let command = format!(
-                "ADD_ONION ED25519-V3:{} Flags=Detach Port={},127.0.0.1:{} Port=9151,127.0.0.1:9151 Port=9152,127.0.0.1:9152\r\n",
+                "ADD_ONION ED25519-V3:{} Flags=Detach Port={},127.0.0.1:{} Port=9151,127.0.0.1:9151 Port=9152,127.0.0.1:9152 Port=9153,127.0.0.1:9153\r\n",
                 key_base64, service_port, local_port
             );
 
