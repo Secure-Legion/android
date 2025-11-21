@@ -4,9 +4,11 @@ import android.content.Intent
 import android.os.Bundle
 import android.util.Log
 import android.view.View
+import android.view.WindowManager
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.Toast
+import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
 import com.securelegion.crypto.KeyManager
@@ -25,6 +27,24 @@ class LockActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        // Security: Prevent screenshots and screen recording on lock screen
+        window.setFlags(
+            WindowManager.LayoutParams.FLAG_SECURE,
+            WindowManager.LayoutParams.FLAG_SECURE
+        )
+
+        // Security: Show lock screen over keyguard
+        setShowWhenLocked(true)
+        setTurnScreenOn(true)
+
+        // Security: Disable back gesture navigation
+        onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() {
+                // Do nothing - prevent back navigation
+            }
+        })
+
         setContentView(R.layout.activity_lock)
 
         passwordSection = findViewById(R.id.passwordSection)
@@ -343,8 +363,24 @@ class LockActivity : AppCompatActivity() {
         return ((remainingMs / 1000) + 1).toInt().coerceAtLeast(0)
     }
 
-    @Deprecated("Deprecated in Java")
-    override fun onBackPressed() {
-        // Prevent going back without unlocking
+    override fun onPause() {
+        super.onPause()
+        // Security: If lock screen is paused (user tries to leave), immediately bring it back
+        if (hasWallet && !isFinishing) {
+            Log.w("LockActivity", "Lock screen paused - preventing bypass")
+        }
+    }
+
+    override fun onStop() {
+        super.onStop()
+        // Security: If user tries to minimize/leave lock screen, restart it on top
+        if (hasWallet && !isFinishing) {
+            Log.w("LockActivity", "Lock screen stopped - restarting on top")
+            val intent = Intent(this, LockActivity::class.java)
+            intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK or
+                          Intent.FLAG_ACTIVITY_CLEAR_TASK or
+                          Intent.FLAG_ACTIVITY_NO_HISTORY
+            startActivity(intent)
+        }
     }
 }
