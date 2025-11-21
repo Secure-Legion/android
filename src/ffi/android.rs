@@ -506,6 +506,11 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_initializeTor(
     _class: JClass,
 ) -> jstring {
     catch_panic!(env, {
+        // Start the bootstrap event listener (separate control port connection)
+        // This will continuously update BOOTSTRAP_STATUS in real-time
+        log::info!("Starting bootstrap event listener...");
+        crate::network::tor::start_bootstrap_event_listener();
+
         let tor_manager = get_tor_manager();
 
         // Run async initialization using global runtime
@@ -2763,27 +2768,18 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_receiveIncomingMessage
 }
 
 /// Get Tor bootstrap status (0-100%)
-/// Returns the current bootstrap percentage, or -1 on error
+/// Returns the current bootstrap percentage from the global atomic (updated by event listener)
+/// This is much faster than querying the control port and provides real-time updates
 #[no_mangle]
 pub extern "C" fn Java_com_securelegion_crypto_RustBridge_getBootstrapStatus(
     mut env: JNIEnv,
     _class: JClass,
 ) -> jint {
     catch_panic!(env, {
-        let tor_manager = get_tor_manager();
-        let manager = tor_manager.lock().unwrap();
-
-        // Use the global persistent Tokio runtime
-        match GLOBAL_RUNTIME.block_on(manager.get_bootstrap_status()) {
-            Ok(percentage) => {
-                log::debug!("Tor bootstrap status: {}%", percentage);
-                percentage as jint
-            }
-            Err(e) => {
-                log::error!("Failed to get bootstrap status: {}", e);
-                -1 as jint // Return -1 on error
-            }
-        }
+        // Read from the global atomic (updated in real-time by event listener)
+        let percentage = crate::network::tor::get_bootstrap_status_fast();
+        log::debug!("Tor bootstrap status: {}%", percentage);
+        percentage as jint
     }, -1 as jint)
 }
 

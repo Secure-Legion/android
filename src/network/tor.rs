@@ -5,6 +5,7 @@
 
 use std::error::Error;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
 use tokio::io::{AsyncWriteExt, AsyncReadExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::Mutex;
@@ -13,6 +14,132 @@ use sha3::{Digest, Sha3_256};
 use std::sync::Mutex as StdMutex;
 use std::collections::HashMap;
 use once_cell::sync::Lazy;
+
+/// Global bootstrap status (0-100%) - updated by event listener
+pub static BOOTSTRAP_STATUS: AtomicU32 = AtomicU32::new(0);
+
+/// Get bootstrap status from the global atomic (fast, no control port query)
+/// This is updated in real-time by the event listener
+pub fn get_bootstrap_status_fast() -> u32 {
+    BOOTSTRAP_STATUS.load(Ordering::SeqCst)
+}
+
+/// Start the bootstrap event listener on a separate control port connection
+/// This spawns a background task that listens for STATUS_CLIENT events
+/// and updates BOOTSTRAP_STATUS in real-time
+pub fn start_bootstrap_event_listener() {
+    std::thread::spawn(|| {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("Failed to create runtime for event listener");
+
+        rt.block_on(async {
+            if let Err(e) = bootstrap_event_listener_task().await {
+                log::error!("Bootstrap event listener failed: {}", e);
+            }
+        });
+    });
+}
+
+/// Background task that subscribes to STATUS_CLIENT events and updates bootstrap status
+async fn bootstrap_event_listener_task() -> Result<(), Box<dyn Error + Send + Sync>> {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpStream;
+
+    log::info!("Starting bootstrap event listener...");
+
+    // Connect to control port (separate connection from main TorManager)
+    let mut control = match TcpStream::connect("127.0.0.1:9051").await {
+        Ok(s) => s,
+        Err(e) => {
+            log::error!("Event listener: Failed to connect to control port: {}", e);
+            return Err(e.into());
+        }
+    };
+
+    // Authenticate
+    control.write_all(b"AUTHENTICATE\r\n").await?;
+    let mut buf = vec![0u8; 1024];
+    let n = control.read(&mut buf).await?;
+    let response = String::from_utf8_lossy(&buf[..n]);
+
+    if !response.contains("250 OK") {
+        log::error!("Event listener: Auth failed: {}", response);
+        return Err("Event listener auth failed".into());
+    }
+
+    log::info!("Event listener: Authenticated to control port");
+
+    // Subscribe to STATUS_CLIENT events for bootstrap progress
+    control.write_all(b"SETEVENTS STATUS_CLIENT\r\n").await?;
+    let n = control.read(&mut buf).await?;
+    let response = String::from_utf8_lossy(&buf[..n]);
+
+    if !response.contains("250 OK") {
+        log::error!("Event listener: Failed to subscribe to events: {}", response);
+        return Err("Failed to subscribe to STATUS_CLIENT events".into());
+    }
+
+    log::info!("Event listener: Subscribed to STATUS_CLIENT events");
+
+    // Also get initial bootstrap status
+    control.write_all(b"GETINFO status/bootstrap-phase\r\n").await?;
+    let n = control.read(&mut buf).await?;
+    let response = String::from_utf8_lossy(&buf[..n]);
+
+    // Parse initial status
+    if let Some(progress) = parse_bootstrap_progress(&response) {
+        BOOTSTRAP_STATUS.store(progress, Ordering::SeqCst);
+        log::info!("Event listener: Initial bootstrap status: {}%", progress);
+    }
+
+    // Now continuously read events
+    log::info!("Event listener: Listening for bootstrap events...");
+    let mut event_buf = vec![0u8; 4096];
+
+    loop {
+        match control.read(&mut event_buf).await {
+            Ok(0) => {
+                log::info!("Event listener: Control connection closed");
+                break;
+            }
+            Ok(n) => {
+                let event = String::from_utf8_lossy(&event_buf[..n]);
+
+                // Check for bootstrap progress event
+                // Format: 650 STATUS_CLIENT NOTICE BOOTSTRAP PROGRESS=XX TAG=... SUMMARY="..."
+                if event.contains("BOOTSTRAP") && event.contains("PROGRESS=") {
+                    if let Some(progress) = parse_bootstrap_progress(&event) {
+                        let old_value = BOOTSTRAP_STATUS.swap(progress, Ordering::SeqCst);
+                        if progress != old_value {
+                            log::info!("Bootstrap progress: {}%", progress);
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                log::error!("Event listener: Read error: {}", e);
+                break;
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Parse bootstrap progress percentage from Tor control response/event
+fn parse_bootstrap_progress(response: &str) -> Option<u32> {
+    // Look for PROGRESS=XX in the response
+    if let Some(progress_str) = response.split("PROGRESS=").nth(1) {
+        if let Some(percentage_str) = progress_str.split_whitespace().next() {
+            if let Ok(percentage) = percentage_str.parse::<u32>() {
+                return Some(percentage);
+            }
+        }
+    }
+    None
+}
 
 /// Wire protocol message type constants
 pub const MSG_TYPE_PING: u8 = 0x01;
