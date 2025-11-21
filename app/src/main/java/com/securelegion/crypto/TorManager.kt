@@ -259,6 +259,26 @@ class TorManager(private val context: Context) {
                 if (existingAddress == null) {
                     val keyManager = KeyManager.getInstance(context)
                     if (keyManager.isInitialized()) {
+                        // Wait for Tor to be fully bootstrapped before creating hidden service
+                        Log.d(TAG, "Waiting for Tor to be ready before creating hidden service...")
+                        val maxAttempts = 30 // 30 seconds max
+                        var attempts = 0
+                        while (attempts < maxAttempts) {
+                            val status = RustBridge.getBootstrapStatus()
+                            if (status >= 100) {
+                                Log.d(TAG, "Tor bootstrapped - creating hidden service...")
+                                break
+                            }
+                            Log.d(TAG, "Tor still bootstrapping ($status%)...")
+                            Thread.sleep(1000)
+                            attempts++
+                        }
+
+                        if (attempts >= maxAttempts) {
+                            Log.e(TAG, "Timeout waiting for Tor to bootstrap")
+                            return@Thread
+                        }
+
                         Log.d(TAG, "Creating hidden service after account creation...")
                         val address = RustBridge.createHiddenService(DEFAULT_SERVICE_PORT, DEFAULT_LOCAL_PORT)
                         saveOnionAddress(address)

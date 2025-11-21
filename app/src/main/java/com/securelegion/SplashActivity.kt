@@ -20,6 +20,7 @@ import androidx.core.content.ContextCompat
 import com.securelegion.crypto.KeyManager
 import com.securelegion.crypto.RustBridge
 import com.securelegion.crypto.TorManager
+import com.securelegion.services.TorService
 
 class SplashActivity : AppCompatActivity() {
 
@@ -103,13 +104,14 @@ class SplashActivity : AppCompatActivity() {
                         }
 
                         // Initialize Tor and wait for it to fully bootstrap
+                        // Start polling for bootstrap progress immediately
+                        waitForBootstrap()
+
                         torManager.initializeAsync { success, onionAddress ->
                             runOnUiThread {
                                 if (success) {
                                     Log.i("SplashActivity", "Tor initialized: $onionAddress")
-                                    updateStatus("Waiting for Tor bootstrap...")
-                                    // Now wait for bootstrap to reach 100%
-                                    waitForBootstrap()
+                                    // Bootstrap polling is already running
                                 } else {
                                     Log.e("SplashActivity", "Tor initialization failed")
                                     showBridgeConfigurationUI()
@@ -124,13 +126,14 @@ class SplashActivity : AppCompatActivity() {
                         updateStatus("Connecting to Tor network...")
                     }
 
+                    // Start polling for bootstrap progress immediately
+                    waitForBootstrap()
+
                     torManager.initializeAsync { success, onionAddress ->
                         runOnUiThread {
                             if (success) {
                                 Log.i("SplashActivity", "Tor initialized: $onionAddress")
-                                updateStatus("Waiting for Tor bootstrap...")
-                                // Now wait for bootstrap to reach 100%
-                                waitForBootstrap()
+                                // Bootstrap polling is already running
                             } else {
                                 Log.e("SplashActivity", "Tor initialization failed")
                                 showBridgeConfigurationUI()
@@ -186,26 +189,76 @@ class SplashActivity : AppCompatActivity() {
 
     private fun waitForBootstrap() {
         Thread {
-            val maxAttempts = 60 // 60 seconds max
+            val maxAttempts = 120 // 120 seconds max (allows time for descriptor uploads)
             var attempts = 0
+            var bootstrapComplete = false
+
+            // Check if this is first-time setup (no account/keys exist yet)
+            val keyManager = KeyManager.getInstance(this@SplashActivity)
+            val isFirstTimeSetup = !keyManager.isInitialized()
+
+            if (isFirstTimeSetup) {
+                Log.i("SplashActivity", "First-time setup detected - will skip listener check")
+            }
 
             while (attempts < maxAttempts) {
                 try {
                     val status = RustBridge.getBootstrapStatus()
 
-                    runOnUiThread {
-                        updateStatus("Connecting to Tor network... ($status%)")
+                    // Check if bootstrap is complete
+                    if (status >= 100 && !bootstrapComplete) {
+                        bootstrapComplete = true
+                        if (isFirstTimeSetup) {
+                            Log.i("SplashActivity", "✓ Tor bootstrap complete (100%) - proceeding to setup")
+                        } else {
+                            Log.i("SplashActivity", "✓ Tor bootstrap complete (100%) - waiting for listeners...")
+                        }
                     }
 
-                    if (status >= 100) {
-                        Log.i("SplashActivity", "✓ Tor bootstrap complete (100%)")
-                        runOnUiThread {
-                            updateStatus("Connected to Tor!")
-                            Handler(Looper.getMainLooper()).postDelayed({
-                                navigateToLock()
-                            }, 500)
+                    // Update status display
+                    runOnUiThread {
+                        if (status < 0) {
+                            updateStatus("Starting Tor...")
+                        } else {
+                            updateStatus("Connecting to Tor network... ($status%)")
                         }
-                        return@Thread
+                    }
+
+                    // After bootstrap, either proceed (first-time) or wait for listeners (existing account)
+                    if (bootstrapComplete) {
+                        if (isFirstTimeSetup) {
+                            // First-time setup: just proceed to lock/account screen
+                            // Hidden service will be created after account creation
+                            Log.i("SplashActivity", "✓ First-time setup - proceeding without listeners")
+                            runOnUiThread {
+                                updateStatus("Connected to Tor!")
+                                Handler(Looper.getMainLooper()).postDelayed({
+                                    navigateToLock()
+                                }, 500)
+                            }
+                            return@Thread
+                        } else {
+                            // Existing account: wait for messaging to be ready
+                            // Start TorService if not already running (ensures it's in this process)
+                            if (!TorService.isRunning()) {
+                                Log.i("SplashActivity", "Starting TorService...")
+                                TorService.start(this@SplashActivity)
+                            }
+
+                            if (TorService.isMessagingReady()) {
+                                Log.i("SplashActivity", "✓ Messaging fully ready - listeners active")
+                                runOnUiThread {
+                                    updateStatus("Connected to Tor!")
+                                    Handler(Looper.getMainLooper()).postDelayed({
+                                        navigateToLock()
+                                    }, 500)
+                                }
+                                return@Thread
+                            } else {
+                                // Still waiting for listeners
+                                Log.d("SplashActivity", "Waiting for listeners... (attempt $attempts)")
+                            }
+                        }
                     }
 
                     Thread.sleep(1000) // Check every second
