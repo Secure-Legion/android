@@ -7,7 +7,7 @@
 [![Platform](https://img.shields.io/badge/platform-Android-green)](https://www.android.com/)
 [![Language](https://img.shields.io/badge/language-Kotlin%20%7C%20Rust-orange)](https://kotlinlang.org/)
 [![License](https://img.shields.io/badge/license-PolyForm%20Noncommercial-blue)](LICENSE)
-[![Website](https://img.shields.io/badge/website-securelegion.com-blue)](https://securelegion.com)
+[![Website](https://img.shields.io/badge/website-securelegion.com-blue)](https://securelegion.org)
 
 > "No servers. No metadata. No compromises."
 
