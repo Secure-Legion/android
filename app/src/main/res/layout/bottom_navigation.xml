@@ -77,13 +77,34 @@
         android:gravity="center"
         android:background="@android:color/transparent">
 
-        <ImageView
-            android:layout_width="24dp"
-            android:layout_height="24dp"
-            android:src="@drawable/ic_add_friend"
+        <FrameLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
             android:layout_marginTop="2dp"
-            android:layout_marginBottom="4dp"
-            android:contentDescription="Add Friend" />
+            android:layout_marginBottom="4dp">
+
+            <ImageView
+                android:layout_width="24dp"
+                android:layout_height="24dp"
+                android:src="@drawable/ic_add_friend"
+                android:contentDescription="Add Friend" />
+
+            <!-- Badge for pending friend requests -->
+            <TextView
+                android:id="@+id/friendRequestBadge"
+                android:layout_width="16dp"
+                android:layout_height="16dp"
+                android:layout_gravity="top|end"
+                android:layout_marginTop="-4dp"
+                android:layout_marginEnd="-4dp"
+                android:background="@drawable/badge_bg"
+                android:gravity="center"
+                android:textSize="9sp"
+                android:textStyle="bold"
+                android:textColor="@color/text_white"
+                android:visibility="gone" />
+
+        </FrameLayout>
 
         <TextView
             android:layout_width="wrap_content"

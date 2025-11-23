@@ -4,8 +4,8 @@ import android.os.Bundle
 import android.util.Log
 import android.view.View
 import android.widget.TextView
-import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
+import com.securelegion.utils.ThemedToast
 
 class BackupSeedPhraseActivity : AppCompatActivity() {
 
@@ -50,7 +50,7 @@ class BackupSeedPhraseActivity : AppCompatActivity() {
         val words = seedPhrase.trim().split("\\s+".toRegex())
         if (words.size != 12) {
             Log.e(TAG, "Invalid seed phrase word count: ${words.size}")
-            Toast.makeText(this, "Invalid seed phrase format", Toast.LENGTH_LONG).show()
+            ThemedToast.showLong(this, "Invalid seed phrase format")
             finish()
             return
         }
@@ -74,11 +74,10 @@ class BackupSeedPhraseActivity : AppCompatActivity() {
     @Deprecated("Deprecated in Java")
     override fun onBackPressed() {
         // Prevent going back without acknowledging
-        Toast.makeText(
+        ThemedToast.show(
             this,
-            "Please write down your seed phrase before continuing",
-            Toast.LENGTH_SHORT
-        ).show()
+            "Please write down your seed phrase before continuing"
+        )
     }
 
     companion object {

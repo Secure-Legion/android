@@ -7,9 +7,9 @@ import android.util.Log
 import android.view.View
 import android.widget.Button
 import android.widget.EditText
-import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.widget.SwitchCompat
+import com.securelegion.utils.ThemedToast
 
 class DuressPinActivity : AppCompatActivity() {
 
@@ -88,22 +88,22 @@ class DuressPinActivity : AppCompatActivity() {
             val confirmPin = findViewById<EditText>(R.id.confirmDuressPinInput).text.toString()
 
             if (pin.isEmpty() || confirmPin.isEmpty()) {
-                Toast.makeText(this, "Please enter and confirm your duress PIN", Toast.LENGTH_SHORT).show()
+                ThemedToast.show(this, "Please enter and confirm your duress PIN")
                 return@setOnClickListener
             }
 
             if (pin != confirmPin) {
-                Toast.makeText(this, "PINs do not match", Toast.LENGTH_SHORT).show()
+                ThemedToast.show(this, "PINs do not match")
                 return@setOnClickListener
             }
 
             if (pin.length < 4) {
-                Toast.makeText(this, "PIN must be at least 4 digits", Toast.LENGTH_SHORT).show()
+                ThemedToast.show(this, "PIN must be at least 4 digits")
                 return@setOnClickListener
             }
 
             saveDuressPin(pin)
-            Toast.makeText(this, "Duress PIN saved successfully!", Toast.LENGTH_SHORT).show()
+            ThemedToast.show(this, "Duress PIN saved successfully!")
             Log.i(TAG, "Duress PIN saved. Wipe on distress: ${wipePhoneSwitch.isChecked}")
             finish()
         }

@@ -10,13 +10,13 @@ import android.view.View
 import android.widget.Button
 import android.widget.EditText
 import android.widget.TextView
-import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
 import com.securelegion.crypto.KeyManager
 import com.securelegion.models.ContactCard
 import com.securelegion.services.ContactCardManager
+import com.securelegion.utils.ThemedToast
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -62,7 +62,7 @@ class WalletIdentityActivity : AppCompatActivity() {
 
                 // Show loading
                 findViewById<View>(R.id.updateUsernameButton).isEnabled = false
-                Toast.makeText(this@WalletIdentityActivity, "Creating new identity...", Toast.LENGTH_LONG).show()
+                ThemedToast.showLong(this@WalletIdentityActivity, "Creating new identity...")
 
                 // Step 1: Generate new BIP39 mnemonic (12 words)
                 val entropy = ByteArray(16)
@@ -89,7 +89,7 @@ class WalletIdentityActivity : AppCompatActivity() {
                 }
 
                 // Step 4: Create and upload new contact card
-                Toast.makeText(this@WalletIdentityActivity, "Uploading contact card...", Toast.LENGTH_SHORT).show()
+                ThemedToast.show(this@WalletIdentityActivity, "Uploading contact card...")
 
                 val contactCard = ContactCard(
                     displayName = username,
@@ -125,7 +125,7 @@ class WalletIdentityActivity : AppCompatActivity() {
                     loadContactCardInfo()
 
                     // Show seed phrase backup screen
-                    Toast.makeText(this@WalletIdentityActivity, "New identity created! Backup your seed phrase!", Toast.LENGTH_LONG).show()
+                    ThemedToast.showLong(this@WalletIdentityActivity, "New identity created! Backup your seed phrase!")
 
                     val intent = Intent(this@WalletIdentityActivity, BackupSeedPhraseActivity::class.java)
                     intent.putExtra(BackupSeedPhraseActivity.EXTRA_SEED_PHRASE, mnemonic)
@@ -138,7 +138,7 @@ class WalletIdentityActivity : AppCompatActivity() {
 
             } catch (e: Exception) {
                 Log.e("WalletIdentity", "Failed to create new identity", e)
-                Toast.makeText(this@WalletIdentityActivity, "Failed to create new identity: ${e.message}", Toast.LENGTH_LONG).show()
+                ThemedToast.showLong(this@WalletIdentityActivity, "Failed to create new identity: ${e.message}")
                 findViewById<View>(R.id.updateUsernameButton).isEnabled = true
             }
         }
@@ -209,7 +209,7 @@ class WalletIdentityActivity : AppCompatActivity() {
         val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
         val clip = ClipData.newPlainText(label, text)
         clipboard.setPrimaryClip(clip)
-        Toast.makeText(this, "$label copied to clipboard", Toast.LENGTH_SHORT).show()
+        ThemedToast.show(this, "$label copied to clipboard")
         Log.i("WalletIdentity", "$label copied to clipboard")
     }
 

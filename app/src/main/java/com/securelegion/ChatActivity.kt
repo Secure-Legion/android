@@ -18,10 +18,12 @@ import android.widget.EditText
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
-import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowCompat
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
@@ -32,6 +34,7 @@ import com.securelegion.database.SecureLegionDatabase
 import com.securelegion.database.entities.Message
 import com.securelegion.services.MessageService
 import com.securelegion.utils.SecureWipe
+import com.securelegion.utils.ThemedToast
 import com.securelegion.utils.VoiceRecorder
 import com.securelegion.utils.VoicePlayer
 import kotlinx.coroutines.Dispatchers
@@ -39,7 +42,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 
-class ChatActivity : AppCompatActivity() {
+class ChatActivity : BaseActivity() {
 
     companion object {
         private const val TAG = "ChatActivity"
@@ -156,13 +159,61 @@ class ChatActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_chat)
 
+        // Enable edge-to-edge display (important for display cutouts)
+        WindowCompat.setDecorFitsSystemWindows(window, false)
+
+        // Handle window insets for header and message input container
+        val rootView = findViewById<View>(android.R.id.content)
+        val chatHeader = findViewById<View>(R.id.chatHeader)
+        val messageInputContainer = findViewById<View>(R.id.messageInputContainer)
+
+        ViewCompat.setOnApplyWindowInsetsListener(rootView) { view, windowInsets ->
+            val systemInsets = windowInsets.getInsets(
+                WindowInsetsCompat.Type.systemBars() or
+                WindowInsetsCompat.Type.displayCutout()
+            )
+
+            // Get IME (keyboard) insets
+            val imeInsets = windowInsets.getInsets(WindowInsetsCompat.Type.ime())
+            val imeVisible = windowInsets.isVisible(WindowInsetsCompat.Type.ime())
+
+            // Apply top inset to header (for status bar and display cutout)
+            chatHeader.setPadding(
+                systemInsets.left,
+                systemInsets.top,
+                systemInsets.right,
+                chatHeader.paddingBottom
+            )
+
+            // Apply bottom inset to message input container
+            // Use IME insets when keyboard is visible, otherwise use system insets
+            // Add extra spacing (48px ≈ 16dp) when keyboard is visible for breathing room
+            val extraKeyboardSpacing = if (imeVisible) 48 else 0
+            val bottomInset = if (imeVisible) {
+                imeInsets.bottom + extraKeyboardSpacing
+            } else {
+                systemInsets.bottom
+            }
+
+            messageInputContainer.setPadding(
+                messageInputContainer.paddingLeft,
+                messageInputContainer.paddingTop,
+                messageInputContainer.paddingRight,
+                bottomInset
+            )
+
+            Log.d("ChatActivity", "Insets - System bottom: ${systemInsets.bottom}, IME bottom: ${imeInsets.bottom}, IME visible: $imeVisible, Applied bottom: $bottomInset")
+
+            windowInsets
+        }
+
         // Get contact info from intent
         contactId = intent.getLongExtra(EXTRA_CONTACT_ID, -1)
         contactName = intent.getStringExtra(EXTRA_CONTACT_NAME) ?: "@user"
         contactAddress = intent.getStringExtra(EXTRA_CONTACT_ADDRESS) ?: ""
 
         if (contactId == -1L) {
-            Toast.makeText(this, "Error: Invalid contact", Toast.LENGTH_SHORT).show()
+            ThemedToast.show(this, "Error: Invalid contact")
             finish()
             return
         }
@@ -368,7 +419,7 @@ class ChatActivity : AppCompatActivity() {
 
         } catch (e: Exception) {
             Log.e(TAG, "Failed to start recording", e)
-            Toast.makeText(this, "Failed to start recording: ${e.message}", Toast.LENGTH_SHORT).show()
+            ThemedToast.show(this, "Failed to start recording: ${e.message}")
         }
     }
 
@@ -435,15 +486,15 @@ class ChatActivity : AppCompatActivity() {
                     } else {
                         Log.e(TAG, "Failed to send voice message: ${result.exceptionOrNull()?.message}")
                         withContext(Dispatchers.Main) {
-                            Toast.makeText(this@ChatActivity,
-                                "Failed to send voice message", Toast.LENGTH_SHORT).show()
+                            ThemedToast.show(this@ChatActivity,
+                                "Failed to send voice message")
                         }
                     }
                 } catch (e: Exception) {
                     Log.e(TAG, "Error sending voice message", e)
                     withContext(Dispatchers.Main) {
-                        Toast.makeText(this@ChatActivity,
-                            "Error: ${e.message}", Toast.LENGTH_SHORT).show()
+                        ThemedToast.show(this@ChatActivity,
+                            "Error: ${e.message}")
                     }
                 }
             }
@@ -453,7 +504,7 @@ class ChatActivity : AppCompatActivity() {
 
         } catch (e: Exception) {
             Log.e(TAG, "Failed to send voice message", e)
-            Toast.makeText(this, "Failed to send voice message: ${e.message}", Toast.LENGTH_SHORT).show()
+            ThemedToast.show(this, "Failed to send voice message: ${e.message}")
         }
     }
 
@@ -468,8 +519,7 @@ class ChatActivity : AppCompatActivity() {
                 // Permission granted, start recording
                 startVoiceRecording()
             } else {
-                Toast.makeText(this, "Microphone permission required for voice messages",
-                    Toast.LENGTH_SHORT).show()
+                ThemedToast.show(this, "Microphone permission required for voice messages")
             }
         }
     }
@@ -478,14 +528,14 @@ class ChatActivity : AppCompatActivity() {
         val filePath = message.voiceFilePath
         if (filePath == null) {
             Log.e(TAG, "Voice message has no file path")
-            Toast.makeText(this, "Voice file not found", Toast.LENGTH_SHORT).show()
+            ThemedToast.show(this, "Voice file not found")
             return
         }
 
         val file = File(filePath)
         if (!file.exists()) {
             Log.e(TAG, "Voice file does not exist: $filePath")
-            Toast.makeText(this, "Voice file not found", Toast.LENGTH_SHORT).show()
+            ThemedToast.show(this, "Voice file not found")
             return
         }
 
@@ -582,11 +632,10 @@ class ChatActivity : AppCompatActivity() {
         } catch (e: Exception) {
             Log.e(TAG, "Failed to load messages", e)
             withContext(Dispatchers.Main) {
-                Toast.makeText(
+                ThemedToast.show(
                     this@ChatActivity,
-                    "Failed to load messages: ${e.message}",
-                    Toast.LENGTH_SHORT
-                ).show()
+                    "Failed to load messages: ${e.message}"
+                )
             }
         }
     }
@@ -648,7 +697,7 @@ class ChatActivity : AppCompatActivity() {
         val pingId = prefs.getString("ping_${contactId}_id", null)
 
         if (pingId == null) {
-            Toast.makeText(this, "No pending message", Toast.LENGTH_SHORT).show()
+            ThemedToast.show(this, "No pending message")
             return
         }
 

@@ -19,6 +19,10 @@
         <item name="android:textColorSecondary">@color/text_gray</item>
         <!-- AlertDialog styling -->
         <item name="alertDialogTheme">@style/CustomAlertDialog</item>
+        <!-- Edge-to-edge and display cutout support -->
+        <item name="android:windowLayoutInDisplayCutoutMode">shortEdges</item>
+        <item name="android:enforceStatusBarContrast">false</item>
+        <item name="android:enforceNavigationBarContrast">false</item>
     </style>
 
     <style name="CustomAlertDialog" parent="ThemeOverlay.MaterialComponents.MaterialAlertDialog">

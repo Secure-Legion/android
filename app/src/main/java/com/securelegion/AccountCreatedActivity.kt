@@ -8,9 +8,9 @@ import android.os.Bundle
 import android.util.Log
 import android.view.View
 import android.widget.TextView
-import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import com.securelegion.crypto.KeyManager
+import com.securelegion.utils.ThemedToast
 
 /**
  * AccountCreatedActivity - Shows account info after successful creation
@@ -60,7 +60,7 @@ class AccountCreatedActivity : AppCompatActivity() {
 
         } catch (e: Exception) {
             Log.e("AccountCreated", "Failed to load account info", e)
-            Toast.makeText(this, "Error loading account info", Toast.LENGTH_LONG).show()
+            ThemedToast.showLong(this, "Error loading account info")
         }
     }
 
@@ -86,13 +86,13 @@ class AccountCreatedActivity : AppCompatActivity() {
         val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
         val clip = ClipData.newPlainText(label, text)
         clipboard.setPrimaryClip(clip)
-        Toast.makeText(this, "$label copied to clipboard", Toast.LENGTH_SHORT).show()
+        ThemedToast.show(this, "$label copied to clipboard")
         Log.i("AccountCreated", "$label copied to clipboard")
     }
 
     @Deprecated("Deprecated in Java")
     override fun onBackPressed() {
         // Disable back button - user must click Continue
-        Toast.makeText(this, "Please click 'Continue to App'", Toast.LENGTH_SHORT).show()
+        ThemedToast.show(this, "Please click 'Continue to App'")
     }
 }

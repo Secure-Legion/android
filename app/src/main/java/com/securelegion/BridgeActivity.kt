@@ -1,5 +1,6 @@
 package com.securelegion
 
+import android.content.Intent
 import android.os.Bundle
 import android.util.Log
 import android.view.View
@@ -7,6 +8,8 @@ import android.widget.EditText
 import android.widget.RadioButton
 import android.widget.RadioGroup
 import androidx.appcompat.app.AppCompatActivity
+import com.securelegion.services.TorService
+import com.securelegion.utils.ThemedToast
 
 class BridgeActivity : AppCompatActivity() {
 
@@ -96,8 +99,22 @@ class BridgeActivity : AppCompatActivity() {
 
         editor.apply()
 
-        // Note: Tor service will need to be restarted for changes to take effect
-        // This will be implemented when TorManager is updated
+        // Restart Tor service to apply new bridge configuration
+        Log.i("BridgeActivity", "Restarting Tor service to apply bridge settings...")
+        ThemedToast.show(this, "Restarting Tor with new bridge settings...")
+
+        // Stop current Tor service
+        val stopIntent = Intent(this, TorService::class.java)
+        stopIntent.action = TorService.ACTION_STOP_TOR
+        startService(stopIntent)
+
+        // Restart with new configuration after a brief delay
+        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+            val startIntent = Intent(this, TorService::class.java)
+            startIntent.action = TorService.ACTION_START_TOR
+            startService(startIntent)
+            Log.i("BridgeActivity", "Tor service restart initiated")
+        }, 3500) // 3.5 second delay to ensure clean shutdown and torrc update
 
         finish()
     }

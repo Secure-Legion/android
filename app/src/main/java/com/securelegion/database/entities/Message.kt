@@ -139,7 +139,21 @@ data class Message(
      * Last retry attempt timestamp (Unix milliseconds)
      * Used to calculate next retry time with exponential backoff
      */
-    val lastRetryTimestamp: Long? = null
+    val lastRetryTimestamp: Long? = null,
+
+    /**
+     * Tracks if Ping was successfully delivered to receiver
+     * true = receiver has the Ping (lock icon showing), stop retrying
+     * false = delivery failed (receiver offline), keep retrying
+     */
+    val pingDelivered: Boolean = false,
+
+    /**
+     * Tracks if message payload was successfully delivered to receiver
+     * true = receiver downloaded the message, stop retrying Pong/message
+     * false = message not yet delivered, keep retrying if needed
+     */
+    val messageDelivered: Boolean = false
 ) {
     companion object {
         // Message type constants

@@ -1,0 +1,508 @@
+--------- beginning of main
+11-17 10:11:56.676  1335  1874 I ConnectivityService: Update score for net 106 : +IS_UNMETERED
+11-17 10:11:56.680  1335  1874 D ConnectivityService: registerNetworkAgent NetworkAgentInfo{network{106}  handle{458672230413}  ni{WIFI CONNECTING extra: } created=2025-11-17T15:11:56.676Z Score(Policies : IS_UNMETERED ; KeepConnected : 0)   lp{{InterfaceName: wlan0 LinkAddresses: [ ] DnsAddresses: [ ] Domains: null MTU: 0 Routes: [ ]}}  nc{[ Transports: WIFI Capabilities: NOT_METERED&INTERNET&NOT_RESTRICTED&TRUSTED&NOT_VPN&NOT_ROAMING&NOT_CONGESTED&NOT_SUSPENDED&NOT_VCN_MANAGED&NOT_BANDWIDTH_CONSTRAINED LinkUpBandwidth>=1200000Kbps LinkDnBandwidth>=1200000Kbps Specifier: <WifiNetworkAgentSpecifier [WifiConfiguration=, SSID="Home", BSSID=1e:9e:cc:11:57:ee, band=2, mMatchLocalOnlySpecifiers=false]> TransportInfo: <SSID: "Home", BSSID: 1e:9e:cc:11:57:ee, MAC: 9e:f9:f2:1b:32:6d, IP: null, Security type: 2, Supplicant state: GROUP_HANDSHAKE, Wi-Fi standard: 11ax, RSSI: -127, Link speed: -1Mbps, Tx Link speed: -1Mbps, Max Supported Tx Link speed: 1200Mbps, Rx Link speed: -1Mbps, Max Supported Rx Link speed: 1200Mbps, Frequency: 5785MHz, Net ID: 0, Metered hint: false, score: 0, isUsable: true, CarrierMerged: false, SubscriptionId: -1, IsPrimary: 1, Trusted: true, Restricted: false, Ephemeral: false, OEM paid: false, OEM private: false, OSU AP: false, FQDN: <none>, Provider friendly name: <none>, Requesting package name: <none>"Home"wpa2-pskMLO Information: , Is TID-To-Link negotiation supported by the AP: false, AP MLD Address: <none>, AP MLO Link Id: <none>, AP MLO Affiliated links: <none>, Vendor Data: <none>> AllowedUids: <{1000}> OwnerUid: 1000 AdminUids: [1000] SSID: "Home" UnderlyingNetworks: Null]}  factorySerialNumber=7}
+11-17 10:11:56.687  1335  1881 D ConnectivityService: Message EVENT_NETWORK_SCORE_CHANGED enqueued for agent with netId 106
+11-17 10:11:56.694   947  3235 D WifiHAL : Getting APF capabilities, halHandle = 0xb400cfab9953c900
+11-17 10:11:56.694   947  3235 I WifiHAL : createRequest: APF get capabilities request
+11-17 10:11:56.695  1335  1881 D ConnectivityService: [106 WIFI] EVENT_NETWORK_INFO_CHANGED, going from CONNECTING to CONNECTING
+11-17 10:11:56.696   947  3235 E WifiHAL : In SetAPFCommand::handleResponse mReqType 0
+11-17 10:11:56.696   947  3235 I WifiHAL : Id = 0, subcmd = 0, len = 16
+11-17 10:11:56.696  1335  1881 D ConnectivityService: Adding iface wlan0 to network 106
+11-17 10:11:56.697  2096  9690 D NetworkMonitor/106: checkAndRenewResourceConfig: update captive portal https urls to [https://connectivitycheck.grapheneos.network/generate_204]
+11-17 10:11:56.697  2096  9690 D NetworkMonitor/106: checkAndRenewResourceConfig: update captive portal http urls to [http://connectivitycheck.grapheneos.network/generate_204]
+11-17 10:11:56.697  2096  9690 D NetworkMonitor/106: checkAndRenewResourceConfig: update captive portal fallback urls to[http://grapheneos.online/gen_204, http://grapheneos.online/generate_204]
+11-17 10:11:56.697  2096  9690 D NetworkMonitor: Starting on network 106 with capport HTTPS URL [https://connectivitycheck.grapheneos.network/generate_204] and HTTP URL [http://connectivitycheck.grapheneos.network/generate_204]
+11-17 10:11:56.699   947  3235 D WifiHAL : Response received for get packet filter capabilities command
+11-17 10:11:56.700   947  3235 I WifiHAL : APF version is 3
+11-17 10:11:56.700   947  3235 I WifiHAL : APF max len is 1948
+11-17 10:11:56.700   947  3235 D WifiHAL : Getting APF capability, version = 3, max_len = 1948
+11-17 10:11:56.704  1335  1881 D ConnectivityService: Setting DNS servers for network 106 to []
+11-17 10:11:56.704  1335  1881 D DnsManager: sendDnsConfigurationForNetwork(ResolverParamsParcel{netId: 106, sampleValiditySeconds: 1800, successThreshold: 25, minSamples: 8, maxSamples: 64, baseTimeoutMsec: 0, retryCount: 0, servers: [], domains: [], tlsName: , tlsServers: [], tlsFingerprints: [], caCertificate: , tlsConnectTimeoutMs: 0, resolverOptions: null, transportTypes: [1], meteredNetwork: false, dohParams: null, interfaceNames: [wlan0]})
+11-17 10:11:56.705  1335  1874 I WifiManager: OnWifiNetworkStateChangedProxy: onWifiNetworkStateChanged: 1, 5
+--------- beginning of system
+11-17 10:11:56.706  1335  1874 W ContextImpl: Calling a method in the system process without a qualified user: android.app.ContextImpl.sendStickyBroadcast:1766 com.android.server.wifi.ClientModeImpl.sendNetworkChangeBroadcast:3151 com.android.server.wifi.ClientModeImpl.lambda$sendNetworkChangeBroadcastWithCurrentState$14:3128 com.android.server.wifi.ClientModeImpl.$r8$lambda$mtuS9ulugUkTxNA_sDDnAioo66w:0 com.android.server.wifi.ClientModeImpl$$ExternalSyntheticLambda13.send:0 
+11-17 10:11:56.706  1335  1572 D WifiAutoOff: onWifiNetworkStateChanged: cmmRole 1, state OBTAINING_IPADDR
+11-17 10:11:56.713  1335  1881 I ConnectivityService: Update score for net 106 : +TRANSPORT_PRIMARY
+11-17 10:11:56.714  1335  1881 D ConnectivityService: NetReassign [no changes] [c 1] [a 0] [i 0]
+11-17 10:11:56.758   947  3235 I WifiHAL : Creating message to get link statistics; iface = 47
+11-17 10:11:56.791   947   947 I WifiHAL : Getting cached scan results, iface handle = 0xb400cfab9953c900
+11-17 10:11:56.791   947   947 E WifiHAL : Creating message to get cached scan results
+11-17 10:11:56.791   947   947 D WifiHAL : error code -95 mapped to -3
+11-17 10:11:56.791  1335  1874 E WifiStaIfaceAidlImpl: getCachedScanData failed with service-specific exception: android.os.ServiceSpecificException:  (code 4)
+11-17 10:11:56.798  1335  1874 I WifiClientModeImpl[10940:wlan0]: Update current security type to 2
+11-17 10:11:56.801   947   947 I WifiHAL : Creating message to get link statistics; iface = 47
+11-17 10:11:56.821  1041  1045 I WPKTRT  : process_address_event: fe80::9cf9:f2ff:fe1b:326d added to wlan0
+11-17 10:11:56.839   947  3235 I WifiHAL : Getting cached scan results, iface handle = 0xb400cfab9953c900
+11-17 10:11:56.839   947  3235 E WifiHAL : Creating message to get cached scan results
+11-17 10:11:56.839   947  3235 D WifiHAL : error code -95 mapped to -3
+11-17 10:11:56.839  1335  1874 E WifiStaIfaceAidlImpl: getCachedScanData failed with service-specific exception: android.os.ServiceSpecificException:  (code 4)
+11-17 10:11:56.848  2096  2619 D IpClient/wlan0: routeUpdated: fe80::/64 -> :: wlan0 mtu 0
+11-17 10:11:56.848  2096  2619 D IpClient/wlan0: addressUpdated: fe80::9cf9:f2ff:fe1b:326d/64 on ifindex 47 flags 0x000000C4 scope 253
+11-17 10:11:56.855  2096  2619 D IpClient.wlan0: set max DTIM multiplier to 1
+11-17 10:11:56.858  1335  1881 D ConnectivityService: NetReassign [no changes] [c 0] [a 0] [i 1]
+11-17 10:11:56.865   947  3235 E WifiHAL : Setting APF program, halHandle = 0xb400cfab9953c900
+11-17 10:11:56.865   947  3235 E WifiHAL : Set apf filter for iface = wlan0
+11-17 10:11:56.865   947  3235 I WifiHAL : createRequest: APF set program request
+11-17 10:11:56.865   947  3235 I WifiHAL : mProgramLen : 1948
+11-17 10:11:56.878   947  3235 E WifiHAL : Setting APF program, halHandle = 0xb400cfab9953c900
+11-17 10:11:56.878   947  3235 E WifiHAL : Set apf filter for iface = wlan0
+11-17 10:11:56.878   947  3235 I WifiHAL : createRequest: APF set program request
+11-17 10:11:56.878   947  3235 I WifiHAL : mProgramLen : 368
+11-17 10:11:56.889   947  3235 E WifiHAL : Setting APF program, halHandle = 0xb400cfab9953c900
+11-17 10:11:56.890   947  3235 E WifiHAL : Set apf filter for iface = wlan0
+11-17 10:11:56.890   947  3235 I WifiHAL : createRequest: APF set program request
+11-17 10:11:56.890   947  3235 I WifiHAL : mProgramLen : 368
+11-17 10:11:56.902   947   947 D WifiHAL : Setting DTIM config , halHandle = 0xb400cfab9953c900 Multiplier = 1
+11-17 10:11:56.902   947   947 I WifiHAL : Successfully configured dtim multiplier 1
+11-17 10:11:57.088   947   947 I WifiHAL : Creating message to get link statistics; iface = 47
+11-17 10:11:57.133   947   947 I WifiHAL : Getting cached scan results, iface handle = 0xb400cfab9953c900
+11-17 10:11:57.133   947   947 E WifiHAL : Creating message to get cached scan results
+11-17 10:11:57.133   947   947 D WifiHAL : error code -95 mapped to -3
+11-17 10:11:57.134  1335  1874 E WifiStaIfaceAidlImpl: getCachedScanData failed with service-specific exception: android.os.ServiceSpecificException:  (code 4)
+11-17 10:11:57.151  2096  2619 D DhcpClient: l2key: Wf7b30c2e73e18736 lease address: /10.0.0.33 lease expiry: 1763521918087 current time: 1763392317151
+11-17 10:11:57.164  2096  2619 D DhcpClient: Broadcasting DHCPDISCOVER
+11-17 10:11:57.235  2190  9689 W SHANNON_IMS: 1880 [SIM#] Invalid sub id : -1   with slot id : 0 (SubscriptionWrapper%getSubId:55)
+11-17 10:11:57.237  2190  9689 W SHANNON_IMS: 1884 [SIM#] Invalid sub id : -1   with slot id : 0 (SubscriptionWrapper%getSubId:55)
+11-17 10:11:57.584  1041  1045 I WPKTRT  : process_address_event: fe80::9cf9:f2ff:fe1b:326d added to wlan0
+11-17 10:11:57.588  2096  2619 D IpClient/wlan0: addressUpdated: fe80::9cf9:f2ff:fe1b:326d/64 on ifindex 47 flags 0x00000080 scope 253
+11-17 10:11:57.596   947   947 E WifiHAL : Setting APF program, halHandle = 0xb400cfab9953c900
+11-17 10:11:57.596   947   947 E WifiHAL : Set apf filter for iface = wlan0
+11-17 10:11:57.597   947   947 I WifiHAL : createRequest: APF set program request
+11-17 10:11:57.597   947   947 I WifiHAL : mProgramLen : 368
+11-17 10:11:57.637  1041  1045 I WPKTRT  : process_address_event: 2601:500:8985:4c10:9cf9:f2ff:fe1b:326d added to wlan0
+11-17 10:11:57.637  1041  1045 I WPKTRT  : process_address_event: 2601:500:8985:4c10:2910:5c53:4a9a:9fc4 added to wlan0
+11-17 10:11:57.641  2096  2619 D IpClient/wlan0: routeUpdated: ::/0 -> fe80::1e9e:ccff:fe09:57eb wlan0 mtu 0
+11-17 10:11:57.641  2096  2619 D IpClient/wlan0: routeUpdated: 2601:500:8985:4c10::/64 -> :: wlan0 mtu 0
+11-17 10:11:57.642  2096  2619 D IpClient/wlan0: interfaceDnsServerInfo: [2001:558:feed::1, 2001:558:feed::2]
+11-17 10:11:57.642  2096  2619 D IpClient/wlan0: addressUpdated: 2601:500:8985:4c10:9cf9:f2ff:fe1b:326d/64 on ifindex 47 flags 0x00000144 scope 0
+11-17 10:11:57.643  2096  2619 D IpClient/wlan0: addressUpdated: 2601:500:8985:4c10:2910:5c53:4a9a:9fc4/64 on ifindex 47 flags 0x00000045 scope 0
+11-17 10:11:57.644  2096  2619 D ApfFilter: (wlan0): Adding RA fe80::1e9e:ccff:fe09:57eb -> ff02::1 180s 2601:500:8985:4c10::/64 202620s/202620s DNS 180s 2001:558:feed::1 2001:558:feed::2 RIO 180s ::/0 
+11-17 10:11:57.648   947   947 E WifiHAL : Setting APF program, halHandle = 0xb400cfab9953c900
+11-17 10:11:57.648   947   947 E WifiHAL : Set apf filter for iface = wlan0
+11-17 10:11:57.648   947   947 I WifiHAL : createRequest: APF set program request
+11-17 10:11:57.648   947   947 I WifiHAL : mProgramLen : 653
+11-17 10:11:57.659  2096  2619 D IpClient.wlan0: set max DTIM multiplier to 2
+11-17 10:11:57.666   947   947 E WifiHAL : Setting APF program, halHandle = 0xb400cfab9953c900
+11-17 10:11:57.666   947   947 E WifiHAL : Set apf filter for iface = wlan0
+11-17 10:11:57.666   947   947 I WifiHAL : createRequest: APF set program request
+11-17 10:11:57.666   947   947 I WifiHAL : mProgramLen : 653
+11-17 10:11:57.688   841   841 E netd    : Error adding route ::/0 -> fe80::1e9e:ccff:fe09:57eb wlan0 to table 1047: File exists
+11-17 10:11:57.689  1335  1881 D ConnectivityService: Setting DNS servers for network 106 to [/2001:558:feed::2, /2001:558:feed::1]
+11-17 10:11:57.692  1335  1881 D DnsManager: sendDnsConfigurationForNetwork(ResolverParamsParcel{netId: 106, sampleValiditySeconds: 1800, successThreshold: 25, minSamples: 8, maxSamples: 64, baseTimeoutMsec: 0, retryCount: 0, servers: [2001:558:feed::2, 2001:558:feed::1], domains: [], tlsName: , tlsServers: [], tlsFingerprints: [], caCertificate: , tlsConnectTimeoutMs: 0, resolverOptions: null, transportTypes: [1], meteredNetwork: false, dohParams: null, interfaceNames: [wlan0]})
+11-17 10:11:57.708  1335  1874 D WifiScoreReport: startConnectedNetworkScorer(106, false)
+11-17 10:11:57.708  1335  1874 W WifiScoreReport: Cannot start external scoring netId=106 currentNetId=106 sessionId=1062
+11-17 10:11:57.718  1335  1881 D ConnectivityService: [106 WIFI] EVENT_NETWORK_INFO_CHANGED, going from CONNECTING to CONNECTED
+11-17 10:11:57.719  1335  1881 W DnsManager: updatePrivateDns(106, PrivateDnsConfig{opportunistic:/[], dohName=, dohIps=[], dohPath=, dohPort=-1})
+11-17 10:11:57.719  1335  1881 D ConnectivityService: Setting DNS servers for network 106 to [/2001:558:feed::2, /2001:558:feed::1]
+11-17 10:11:57.722  1335  1881 D DnsManager: sendDnsConfigurationForNetwork(ResolverParamsParcel{netId: 106, sampleValiditySeconds: 1800, successThreshold: 25, minSamples: 8, maxSamples: 64, baseTimeoutMsec: 0, retryCount: 0, servers: [2001:558:feed::2, 2001:558:feed::1], domains: [], tlsName: , tlsServers: [2001:558:feed::2, 2001:558:feed::1], tlsFingerprints: [], caCertificate: , tlsConnectTimeoutMs: 0, resolverOptions: null, transportTypes: [1], meteredNetwork: false, dohParams: null, interfaceNames: [wlan0]})
+11-17 10:11:57.723   841  9691 W resolv  : Validating DnsTlsServer {2001:558:feed::1/} with mark 0xf006a
+11-17 10:11:57.723  1335  1874 I WifiManager: OnWifiNetworkStateChangedProxy: onWifiNetworkStateChanged: 1, 6
+11-17 10:11:57.724  1335  1572 D WifiAutoOff: onWifiNetworkStateChanged: cmmRole 1, state CONNECTED
+11-17 10:11:57.724  1335  1874 W ContextImpl: Calling a method in the system process without a qualified user: android.app.ContextImpl.sendStickyBroadcast:1766 com.android.server.wifi.ClientModeImpl.sendNetworkChangeBroadcast:3151 com.android.server.wifi.ClientModeImpl.lambda$sendNetworkChangeBroadcastWithCurrentState$14:3128 com.android.server.wifi.ClientModeImpl.$r8$lambda$mtuS9ulugUkTxNA_sDDnAioo66w:0 com.android.server.wifi.ClientModeImpl$$ExternalSyntheticLambda13.send:0 
+11-17 10:11:57.727  1335 31400 D WifiMemoryStoreImpl: Set cluster G27d508fbb71f3c82 for Wf7b30c2e73e18736: SUCCESS
+11-17 10:11:57.727   841  9692 W resolv  : Validating DnsTlsServer {2001:558:feed::2/} with mark 0xf006a
+11-17 10:11:57.728   841  9693 W resolv  : (106, 7) Detecting NAT64 prefix from DNS...
+11-17 10:11:57.730   841   857 E NetlinkEvent: NetlinkEvent::FindParam(): Parameter 'INTERFACE' not found
+11-17 10:11:57.730   841   857 E NetlinkEvent: NetlinkEvent::FindParam(): Parameter 'STATE' not found
+11-17 10:11:57.730   841   857 E NetlinkEvent: NetlinkEvent::FindParam(): Parameter 'TIME_NS' not found
+11-17 10:11:57.730   841   857 E NetlinkEvent: NetlinkEvent::FindParam(): Parameter 'UID' not found
+11-17 10:11:57.732  2911  2930 W pixelstats-vendor: Thread Pool max thread count is 0. Cannot cache binder as linkToDeath cannot be implemented. serviceName: android.frameworks.stats.IStats/default
+11-17 10:11:57.734  1335  1881 D ConnectivityService: Switching to new default network for: uid/pid:1000/1335 activeRequest: 1 callbackRequest: 1 [NetworkRequest [ REQUEST id=1, [ Capabilities: INTERNET&NOT_RESTRICTED&TRUSTED&NOT_VPN&NOT_VCN_MANAGED&NOT_BANDWIDTH_CONSTRAINED RequestorUid: 1000 RequestorPkg: android UnderlyingNetworks: Null] ]] callback flags: 1 order: 2147483647 isUidTracked: false declaredMethods: NONE using NetworkAgentInfo{network{106}  handle{458672230413}  ni{WIFI CONNECTED extra: } created=2025-11-17T15:11:56.676Z Score(Policies : TRANSPORT_PRIMARY&IS_UNMETERED ; KeepConnected : 0)  created 245425120  lp{{InterfaceName: wlan0 LinkAddresses: [ fe80::9cf9:f2ff:fe1b:326d/64,2601:500:8985:4c10:9cf9:f2ff:fe1b:326d/64,2601:500:8985:4c10:2910:5c53:4a9a:9fc4/64 ] DnsAddresses: [ /2001:558:feed::2,/2001:558:feed::1 ] Domains: null MTU: 0 TcpBufferSizes: 524288,2097152,8388608,262144,524288,4194304 Routes: [ fe80::/64 -> :: wlan0 mtu 0,::/0 -> fe80::1e9e:ccff:fe09:57eb wlan0 mtu 0,2601:500:8985:4c10::/64 -> :: wlan0 mtu 0 ]}}  nc{[ Transports: WIFI Capabilities: NOT_METERED&INTERNET&NOT_RESTRICTED&TRUSTED&NOT_VPN&NOT_ROAMING&FOREGROUND&NOT_CONGESTED&NOT_SUSPENDED&NOT_VCN_MANAGED&NOT_BANDWIDTH_CONSTRAINED LinkUpBandwidth>=1200000Kbps LinkDnBandwidth>=1200000Kbps Specifier: <WifiNetworkAgentSpecifier [WifiConfiguration=, SSID="Home", BSSID=1e:9e:cc:11:57:ee, band=2, mMatchLocalOnlySpecifiers=false]> TransportInfo: <SSID: "Home", BSSID: 1e:9e:cc:11:57:ee, MAC: 9e:f9:f2:1b:32:6d, IP: null, Security type: 2, Supplicant state: COMPLETED, Wi-Fi standard: 11ax, RSSI: -127, Link speed: -1Mbps, Tx Link speed: -1Mbps, Max Supported Tx Link speed: 1200Mbps, Rx Link speed: -1Mbps, Max Supported Rx Link speed: 1200Mbps, Frequency: 5785MHz, Net ID: 0, Metered hint: false, score: 0, isUsable: true, CarrierMerged: false, SubscriptionId: -1, IsPrimary: 1, Trusted: true, Restricted: false, Ephemeral: false, OEM paid: false, OEM private: false, OSU AP: false, FQDN: <none>, Provider friendly name: <none>, Requesting package name: <none>"Home"wpa2-pskMLO Information: , Is TID-To-Link negotiation supported by the AP: false, AP MLD Address: <none>, AP MLO Link Id: <none>, AP MLO Affiliated links: <none>, Vendor Data: <none>> OwnerUid: 1000 AdminUids: [1000] SSID: "Home" UnderlyingNetworks: Null]}  factorySerialNumber=7}
+11-17 10:11:57.736  1335 31400 D WifiMemoryStoreImpl: Set cluster G27d508fbb71f3c82 for W27d508fbb71f3c82: SUCCESS
+11-17 10:11:57.738   947   947 I WifiHAL : Successfully set firmware roam state - 1
+11-17 10:11:57.738   947   947 D WifiHAL : Setting DTIM config , halHandle = 0xb400cfab9953c900 Multiplier = 2
+11-17 10:11:57.738   947   947 I WifiHAL : Successfully configured dtim multiplier 2
+11-17 10:11:57.739  1335  1874 E WifiStaIfaceAidlImpl: stopRssiMonitoring failed with service-specific exception: android.os.ServiceSpecificException:  (code 5)
+11-17 10:11:57.741  1335  9240 W ScanResultUtil: Empty or null ScanResult list
+11-17 10:11:57.741  1335  9240 W WifiService: Attempt to retrieve WifiConfiguration with invalid scanResult List
+11-17 10:11:57.742  1335  2331 W ScanResultUtil: Empty or null ScanResult list
+11-17 10:11:57.742  1335  2331 W WifiService: Attempt to retrieve WifiConfiguration with invalid scanResult List
+11-17 10:11:57.742  1335  2331 W ScanResultUtil: Empty or null ScanResult list
+11-17 10:11:57.742  1335  2331 E WifiService: Attempt to retrieve passpoint with invalid scanResult List
+11-17 10:11:57.742  1335  2331 W ScanResultUtil: Empty or null ScanResult list
+11-17 10:11:57.742  1335  2331 W WifiService: Attempt to retrieve OsuProviders with invalid scanResult List
+11-17 10:11:57.750  2459  2675 D IwlanNetworkService: onAvailable: 106
+11-17 10:11:57.750  2459  2675 D IwlanNetworkService: onCapabilitiesChanged: 106
+11-17 10:11:57.750  2459  2675 D IwlanNetworkService: onLinkPropertiesChanged: {InterfaceName: wlan0 LinkAddresses: [ fe80::9cf9:f2ff:fe1b:326d/64,2601:500:8985:4c10:9cf9:f2ff:fe1b:326d/64,2601:500:8985:4c10:2910:5c53:4a9a:9fc4/64 ] DnsAddresses: [ /2001:558:feed::2,/2001:558:feed::1 ] Domains: null MTU: 0 TcpBufferSizes: 524288,2097152,8388608,262144,524288,4194304 Routes: [ fe80::/64 -> :: wlan0 mtu 0,::/0 -> fe80::1e9e:ccff:fe09:57eb wlan0 mtu 0,2601:500:8985:4c10::/64 -> :: wlan0 mtu 0 ]}
+11-17 10:11:57.750  2459  2675 D IwlanNetworkService: onBlockedStatusChanged:  BLOCKED:false
+11-17 10:11:57.751  1335  1914 D NetworkTimeUpdateService: New default network 106; checking time.
+11-17 10:11:57.751  2459  2608 D IwlanDataService: onAvailable: 106
+11-17 10:11:57.751  2459  2608 D IwlanDataService: onCapabilitiesChanged: 106 [ Transports: WIFI Capabilities: NOT_METERED&INTERNET&NOT_RESTRICTED&TRUSTED&NOT_VPN&NOT_ROAMING&FOREGROUND&NOT_CONGESTED&NOT_SUSPENDED&NOT_VCN_MANAGED&NOT_BANDWIDTH_CONSTRAINED LinkUpBandwidth>=1200000Kbps LinkDnBandwidth>=1200000Kbps TransportInfo: <SSID: "Home", BSSID: 1e:9e:cc:11:57:ee, MAC: 9e:f9:f2:1b:32:6d, IP: null, Security type: 2, Supplicant state: COMPLETED, Wi-Fi standard: 11ax, RSSI: -127, Link speed: -1Mbps, Tx Link speed: -1Mbps, Max Supported Tx Link speed: 1200Mbps, Rx Link speed: -1Mbps, Max Supported Rx Link speed: 1200Mbps, Frequency: 5785MHz, Net ID: 0, Metered hint: false, score: 0, isUsable: true, CarrierMerged: false, SubscriptionId: -1, IsPrimary: 1, Trusted: true, Restricted: false, Ephemeral: false, OEM paid: false, OEM private: false, OSU AP: false, FQDN: <none>, Provider friendly name: <none>, Requesting package name: <none>"Home"wpa2-pskMLO Information: , Is TID-To-Link negotiation supported by the AP: false, AP MLD Address: <none>, AP MLO Link Id: <none>, AP MLO Affiliated links: <none>, Vendor Data: <none>> OwnerUid: 1000 AdminUids: [1000] SSID: "Home" UnderlyingNetworks: Null]
+11-17 10:11:57.752  2459  2608 D IwlanDataService: Network 106 connected using transport WIFI
+11-17 10:11:57.752  2459  2608 E IwlanDataService: System default network changed from: 105 TO: 106
+11-17 10:11:57.752  2459  2608 D IwlanDataService: Transport was changed from UNSPECIFIED_NETWORK to WIFI
+11-17 10:11:57.752  2459  2608 D IwlanDataService: Network connected state change from false to true
+11-17 10:11:57.753  2096  2436 D UpstreamNetworkMonitor: New default Internet network: 106
+11-17 10:11:57.754  1335  1881 D ConnectivityService: Sending CONNECTED broadcast for type 1 [106 WIFI] isDefaultNetwork=true
+11-17 10:11:57.755  1335  1881 W ContextImpl: Calling a method in the system process without a qualified user: android.app.ContextImpl.sendStickyBroadcast:1766 android.net.connectivity.com.android.server.ConnectivityService.sendStickyBroadcast:4081 android.net.connectivity.com.android.server.ConnectivityService.sendGeneralBroadcast:4051 android.net.connectivity.com.android.server.ConnectivityService.sendConnectedBroadcast:4024 android.net.connectivity.com.android.server.ConnectivityService.sendLegacyNetworkBroadcast:12439 
+11-17 10:11:57.756   841  9691 W resolv  : SSL_connect ssl error =5, mark 0xf006a: Connection refused
+11-17 10:11:57.756   841  9691 W resolv  : TLS Handshake failed
+11-17 10:11:57.756   841  9691 W resolv  : query failed
+11-17 10:11:57.756   841  9691 W resolv  : validateDnsTlsServer returned 0 for {2001:558:feed::1/}
+11-17 10:11:57.756   841  9691 W resolv  : Validation failed
+11-17 10:11:57.757  1335  1881 D ConnectivityService: NetReassign [39 : null → 106, 46 : null → 106, 56 : null → 106, 23 : null → 106, 44 : null → 106, 7 : null → 106, 62 : null → 106, 48 : null → 106, 35 : null → 106, 27 : null → 106, 58 : null → 106, 1 : null → 106, 32 : null → 106, 15 : null → 106, 165 : null → 106, 20 : null → 106, 41 : null → 106, 54 : null → 106, 19 : null → 106, 21 : null → 106, 30 : null → 106, 17 : null → 106, 342 : null → 106, 25 : null → 106] [c 0] [a 23] [i 0]
+11-17 10:11:57.762  2190  2805 I SHANNON_IMS: 1892 [PROX] onReceive: intent= [Intent { act=android.net.conn.CONNECTIVITY_CHANGE flg=0x4200010 xflg=0x4 (has extras) }] (ConnectivityBroadcastReceiver%onReceive:91)
+11-17 10:11:57.763  2190  2811 W SHANNON_IMS: 1893 [RULE] WiFi is supported, but IWLAN is not in allowed rat list. [WiFiConnectivity  STATE:trueSLID:0 ] (WiFiConnectivity%isServiceSupported:332)
+11-17 10:11:57.764  2190  2817 W SHANNON_IMS: 1894 [RULE] WiFi is supported, but IWLAN is not in allowed rat list. [WiFiConnectivity  STATE:trueSLID:1 ] (WiFiConnectivity%isServiceSupported:332)
+11-17 10:11:57.764  2190  2817 W SHANNON_IMS: 1896 [SIM#] Invalid slot id : 1 (SubscriptionWrapper%getSubId:46)
+11-17 10:11:57.764  2190  3603 I SHANNON_IMS: 1899 [RULE] [SLID:0] Acquired mac address is valid and bssid is valid (WifiConnectionStateCallback%lambda$updateWifiConnectionInfo$0:84)
+11-17 10:11:57.764  2190  3601 I SHANNON_IMS: 1895 [RULE] [SLID:1] Acquired mac address is valid and bssid is valid (WifiConnectionStateCallback%lambda$updateWifiConnectionInfo$0:84)
+11-17 10:11:57.768  2459  2675 D IwlanNetworkService$IwlanNetworkServiceHandler: msg.what = EVENT_NETWORK_REGISTRATION_INFO_REQUEST
+11-17 10:11:57.768   841  9693 W resolv  : (106, 7) plat_prefix/dns(ipv4only.arpa.) status = 7/No address associated with hostname
+11-17 10:11:57.769  2190  2811 W SHANNON_IMS: 1900 [SIM#] Invalid sub id : -1   with slot id : 0 (SubscriptionWrapper%getSubId:55)
+11-17 10:11:57.769  2213  2483 D SatelliteController: handleCmdUpdateNtnSignalStrengthReporting: ignore request, satellite is disabled
+11-17 10:11:57.772  2459  2675 D IwlanNetworkService$IwlanNetworkServiceHandler[0]: : reg state REGISTRATION_STATE_HOME
+11-17 10:11:57.772  2459  2687 D EpdgTunnelManager[0]: msg.what = EVENT_UPDATE_NETWORK
+11-17 10:11:57.772   841  9692 W resolv  : SSL_connect ssl error =5, mark 0xf006a: Connection refused
+11-17 10:11:57.772   841  9692 W resolv  : TLS Handshake failed
+11-17 10:11:57.772   841  9692 W resolv  : query failed
+11-17 10:11:57.772   841  9692 W resolv  : validateDnsTlsServer returned 0 for {2001:558:feed::2/}
+11-17 10:11:57.773   841  9692 W resolv  : Validation failed
+11-17 10:11:57.777  2459  2608 D IwlanDataService: onLinkPropertiesChanged: {InterfaceName: wlan0 LinkAddresses: [ fe80::9cf9:f2ff:fe1b:326d/64,2601:500:8985:4c10:9cf9:f2ff:fe1b:326d/64,2601:500:8985:4c10:2910:5c53:4a9a:9fc4/64 ] DnsAddresses: [ /2001:558:feed::2,/2001:558:feed::1 ] Domains: null MTU: 0 TcpBufferSizes: 524288,2097152,8388608,262144,524288,4194304 Routes: [ fe80::/64 -> :: wlan0 mtu 0,::/0 -> fe80::1e9e:ccff:fe09:57eb wlan0 mtu 0,2601:500:8985:4c10::/64 -> :: wlan0 mtu 0 ]}
+11-17 10:11:57.777  2459  2608 D IwlanDataService: onBlockedStatusChanged: 106 BLOCKED:false
+11-17 10:11:57.779  2096  9696 D NetworkMonitor/106: PROBE_DNS connectivitycheck.grapheneos.network 46ms OK 2604:2dc0:202:300::23a6,2605:6400:20:387:72d4:dab9:a369:f351
+11-17 10:11:57.782  2190  2811 W SHANNON_IMS: 1911 [SIM#] Invalid sub id : -1   with slot id : 0 (SubscriptionWrapper%getSubId:55)
+11-17 10:11:57.782  2190  2817 W SHANNON_IMS: 1913 [SIM#] Invalid slot id : 1 (SubscriptionWrapper%getSubId:46)
+11-17 10:11:57.782  2190  2811 W SHANNON_IMS: 1918 [SIM#] Invalid sub id : -1   with slot id : 0 (SubscriptionWrapper%getSubId:55)
+11-17 10:11:57.783  2190  2817 W SHANNON_IMS: 1921 [SIM#] Invalid slot id : 1 (SubscriptionWrapper%getSubId:46)
+11-17 10:11:57.785  2096  9697 D NetworkMonitor/106: PROBE_DNS connectivitycheck.grapheneos.network 52ms OK 2604:2dc0:202:300::23a6,2605:6400:20:387:72d4:dab9:a369:f351
+11-17 10:11:57.816  1081  1102 D RILClient: [OemClient]IND: (clientId = 0, msgId = 3005, dataLength = 24, channel = 0)
+11-17 10:11:57.817   967  3312 D RILClient: [OemClient]IND: (clientId = 9, msgId = 3005, dataLength = 24, channel = 0)
+11-17 10:11:57.818  2190  2190 I SHANNON_IMS: 1929 [NETW] #:PURP:# UNSOL {RILC_UNSOL_IMS_SUPPORT_SERVICE} : VoPS : 9  EMC : 1  SIM_IDX : 0  RAT : 14  REG_STATE : 13  CELL_ID : 123128292  LAC/TAC : 32779  PLMN :   (NetworkAdaptor$AdaptorChannel%onMessage:306)
+11-17 10:11:57.818  2190  2190 I SHANNON_IMS: 1930 [CONN] #:ORNG:# supportService [VoPS : 9/ EMC : 1/ RAT_INFO : 14/ REG_STATE : 13/ CELL_ID : 123128292/ LAC-TAC Info : 32779/ PLMN : ]  [SLID:0 ] (ImsConnectivityMgr$RegistrationListener%supportService:2895)
+11-17 10:11:57.821  2190  2190 W SHANNON_IMS: 1931 [SIM#] Invalid sub id : -1   with slot id : 0 (SubscriptionWrapper%getSubId:55)
+11-17 10:11:57.841  2096  2619 D ApfFilter: (wlan0): Ignoring RA RA fe80::1e9e:ccff:fe09:57eb -> ff02::1 180s 2601:500:8985:4c10::/64 202620s/202620s DNS 180s 2001:558:feed::1 2001:558:feed::2 RIO 180s ::/0  which matches RA fe80::1e9e:ccff:fe09:57eb -> ff02::1 180s 2601:500:8985:4c10::/64 202620s/202620s DNS 180s 2001:558:feed::1 2001:558:feed::2 RIO 180s ::/0 
+11-17 10:11:57.843  2213  2213 D SatelliteController: registerForSatelliteModemStateChanged: add Listeners for ModemState
+11-17 10:11:57.843  2213  2213 E SatelliteController: registerForSatelliteModemStateChanged: mSatelliteSessionController is not initialized yet
+11-17 10:11:57.856  2213  2213 D SatelliteController: registerForSatelliteModemStateChanged: add Listeners for ModemState
+11-17 10:11:57.856  2213  2213 E SatelliteController: registerForSatelliteModemStateChanged: mSatelliteSessionController is not initialized yet
+11-17 10:11:57.861  2096  9697 D NetworkMonitor/106: PROBE_HTTP http://connectivitycheck.grapheneos.network/generate_204 time=76ms ret=204 request={Connection=[close], User-Agent=[Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/60.0.3112.32 Safari/537.36]} headers={null=[HTTP/1.1 204 No Content], Connection=[close], Date=[Mon, 17 Nov 2025 15:11:57 GMT], Server=[nginx], X-Android-Received-Millis=[1763392317861], X-Android-Response-Source=[NETWORK 204], X-Android-Selected-Protocol=[http/1.1], X-Android-Sent-Millis=[1763392317825], X-Robots-Tag=[none]}
+11-17 10:11:57.865  2213  2483 D SatelliteController: isCarrierRoamingNtnEligible: satellite access is not allowed
+11-17 10:11:57.865  2213  2483 D SatelliteController: evaluateCarrierRoamingNtnEligibilityChange: isCarrierRoamingNtnEligible=false
+11-17 10:11:57.865  2213  2483 D SatelliteController: getSelectedSatelliteSubId: subId=-1
+11-17 10:11:57.865  2213  2483 D SatelliteController: notifyNtnEligibility: phoneId=0 currentNtnEligibility=false
+11-17 10:11:57.869  1335  4065 W ContextImpl: Calling a method in the system process without a qualified user: android.app.ContextImpl.sendBroadcastMultiplePermissions:1342 android.content.Context.sendBroadcastMultiplePermissions:2583 com.android.server.TelephonyRegistry.broadcastServiceStateChanged:4159 com.android.server.TelephonyRegistry.notifyServiceStateForPhoneId:1848 com.android.internal.telephony.ITelephonyRegistry$Stub.onTransact:613 
+11-17 10:11:57.873  1335  4065 W ContextImpl: Calling a method in the system process without a qualified user: android.app.ContextImpl.sendBroadcastMultiplePermissions:1381 com.android.server.TelephonyRegistry.broadcastServiceStateChanged:4164 com.android.server.TelephonyRegistry.notifyServiceStateForPhoneId:1848 com.android.internal.telephony.ITelephonyRegistry$Stub.onTransact:613 android.os.Binder.execTransactInternal:1465 
+11-17 10:11:57.877  1335  4065 W ContextImpl: Calling a method in the system process without a qualified user: android.app.ContextImpl.sendBroadcastMultiplePermissions:1381 com.android.server.TelephonyRegistry.broadcastServiceStateChanged:4173 com.android.server.TelephonyRegistry.notifyServiceStateForPhoneId:1848 com.android.internal.telephony.ITelephonyRegistry$Stub.onTransact:613 android.os.Binder.execTransactInternal:1465 
+11-17 10:11:57.878  2190  2805 I SHANNON_IMS: 1937 [PROX] onReceive: intent= [Intent { act=android.intent.action.SERVICE_STATE flg=0x1000010 xflg=0x4 (has extras) }] (ConnectivityBroadcastReceiver%onReceive:91)
+11-17 10:11:57.879  1335  4065 W ContextImpl: Calling a method in the system process without a qualified user: android.app.ContextImpl.sendBroadcastMultiplePermissions:1381 com.android.server.TelephonyRegistry.broadcastServiceStateChanged:4179 com.android.server.TelephonyRegistry.notifyServiceStateForPhoneId:1848 com.android.internal.telephony.ITelephonyRegistry$Stub.onTransact:613 android.os.Binder.execTransactInternal:1465 
+11-17 10:11:57.886  1964  1964 W SimLog  : invalid subId in handleServiceStateChange()
+11-17 10:11:57.886  2213  2213 D ServiceStateProvider: subId=-1
+11-17 10:11:57.887  2651  2651 D CellBroadcastReceiver: onReceive Intent { act=android.intent.action.SERVICE_STATE flg=0x1000010 xflg=0x4 cmp=com.android.cellbroadcastreceiver.module/com.android.cellbroadcastreceiver.CellBroadcastReceiver (has extras) }
+11-17 10:11:57.889  2651  2651 D CellBroadcastReceiver: onServiceStateChanged, ss: 1
+11-17 10:11:57.889  2651  2651 D CellBroadcastReceiver: networkOperator: 
+11-17 10:11:57.890  2651  2651 D CellBroadcastReceiver: networkOperator on emergency mode: 310 for the country code: us
+11-17 10:11:57.892  2651  2651 D CellBroadcastReceiver: roamingNetworks: [XXX]
+11-17 10:11:57.893  2213  2213 D SatelliteController: iisInCarrierRoamingNbIotNtn: satellite is disabled
+11-17 10:11:57.896  2651  2651 D CellBroadcastReceiver: update supported roaming operator as 310
+11-17 10:11:57.980  2096  9696 D NetworkMonitor/106: PROBE_HTTPS https://connectivitycheck.grapheneos.network/generate_204 time=200ms ret=204 request={Connection=[close], User-Agent=[Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/60.0.3112.32 Safari/537.36]} headers={null=[HTTP/1.1 204 No Content], Connection=[close], Date=[Mon, 17 Nov 2025 15:11:57 GMT], Server=[nginx], X-Android-Received-Millis=[1763392317978], X-Android-Response-Source=[NETWORK 204], X-Android-Selected-Protocol=[http/1.1], X-Android-Sent-Millis=[1763392317907], X-Robots-Tag=[none]}
+11-17 10:11:57.983  2096  9695 D NetworkMonitor/106: isCaptivePortal: isSuccessful()=true isPortal()=false RedirectUrl=null isPartialConnectivity()=false Time=252ms
+11-17 10:11:57.986  1335  1881 I ConnectivityService: Update score for net 106 : +EVER_EVALUATED
+11-17 10:11:57.986  1335  1881 D ConnectivityService: [106 WIFI] validation passed
+11-17 10:11:57.986  1335  1881 I ConnectivityService: Update capabilities for net 106 : +VALIDATED
+11-17 10:11:57.986  1335  1881 I ConnectivityService: Update score for net 106 : +EVER_VALIDATED+IS_VALIDATED
+11-17 10:11:57.991  2213  2453 D com.android.ons.ONSProfileActivator: Internet connection available
+11-17 10:11:57.995  1335  1881 D ConnectivityService: NetReassign [no changes] [c 0] [a 1] [i 7]
+11-17 10:11:57.996  1335  1558 I GnssNetworkConnectivityHandler: updateNetworkState, state=CLOSED, connected=true, network=106, capabilityFlags=3, availableNetworkCount: 1
+11-17 10:11:57.998  1089  1089 D gpsd    : WakeLock(Acquire,GPSD)
+11-17 10:11:57.999  1089  1089 D gpsd    : WakeLock(Release,GPSD)
+11-17 10:11:58.000  1089  1089 D gpsd    : WakeLock(Acquire,GPSD)
+11-17 10:11:58.004  1335  4065 D AGnssRilCbJni: requestSetIdCb. setIdflag: 1, 
+11-17 10:11:58.005  2459  2608 D IwlanDataService: onCapabilitiesChanged: 106 [ Transports: WIFI Capabilities: NOT_METERED&INTERNET&NOT_RESTRICTED&TRUSTED&NOT_VPN&VALIDATED&NOT_ROAMING&FOREGROUND&NOT_CONGESTED&NOT_SUSPENDED&NOT_VCN_MANAGED&NOT_BANDWIDTH_CONSTRAINED LinkUpBandwidth>=1200000Kbps LinkDnBandwidth>=1200000Kbps TransportInfo: <SSID: "Home", BSSID: 1e:9e:cc:11:57:ee, MAC: 9e:f9:f2:1b:32:6d, IP: null, Security type: 2, Supplicant state: COMPLETED, Wi-Fi standard: 11ax, RSSI: -127, Link speed: -1Mbps, Tx Link speed: -1Mbps, Max Supported Tx Link speed: 1200Mbps, Rx Link speed: -1Mbps, Max Supported Rx Link speed: 1200Mbps, Frequency: 5785MHz, Net ID: 0, Metered hint: false, score: 0, isUsable: true, CarrierMerged: false, SubscriptionId: -1, IsPrimary: 1, Trusted: true, Restricted: false, Ephemeral: false, OEM paid: false, OEM private: false, OSU AP: false, FQDN: <none>, Provider friendly name: <none>, Requesting package name: <none>"Home"wpa2-pskMLO Information: , Is TID-To-Link negotiation supported by the AP: false, AP MLD Address: <none>, AP MLO Link Id: <none>, AP MLO Affiliated links: <none>, Vendor Data: <none>> OwnerUid: 1000 AdminUids: [1000] SSID: "Home" UnderlyingNetworks: Null]
+11-17 10:11:58.005  2459  2608 D IwlanDataService: Network 106 connected using transport WIFI
+11-17 10:11:58.005  1335  1881 D ConnectivityService: Setting DNS servers for network 106 to [/2001:558:feed::2, /2001:558:feed::1]
+11-17 10:11:58.006  2459  2675 D IwlanNetworkService: onCapabilitiesChanged: 106
+11-17 10:11:58.006  1335  1881 D DnsManager: sendDnsConfigurationForNetwork(ResolverParamsParcel{netId: 106, sampleValiditySeconds: 1800, successThreshold: 25, minSamples: 8, maxSamples: 64, baseTimeoutMsec: 0, retryCount: 0, servers: [2001:558:feed::2, 2001:558:feed::1], domains: [], tlsName: , tlsServers: [2001:558:feed::2, 2001:558:feed::1], tlsFingerprints: [], caCertificate: , tlsConnectTimeoutMs: 0, resolverOptions: null, transportTypes: [1], meteredNetwork: false, dohParams: null, interfaceNames: [wlan0]})
+11-17 10:11:58.007   841  9705 W resolv  : Validating DnsTlsServer {2001:558:feed::2/} with mark 0xf006a
+11-17 10:11:58.007   841  9704 W resolv  : Validating DnsTlsServer {2001:558:feed::1/} with mark 0xf006a
+11-17 10:11:58.011  2213  2483 D SatelliteController: EVENT_WIFI_CONNECTIVITY_STATE_CHANGED: mIsWifiConnected=true
+11-17 10:11:58.011  2213  2483 D SatelliteController: isCarrierRoamingNtnEligible: satellite access is not allowed
+11-17 10:11:58.011  2213  2483 D SatelliteController: evaluateCarrierRoamingNtnEligibilityChange: isCarrierRoamingNtnEligible=false
+11-17 10:11:58.011  2213  2483 D SatelliteController: getSelectedSatelliteSubId: subId=-1
+11-17 10:11:58.011  2213  2483 D SatelliteController: notifyNtnEligibility: phoneId=0 currentNtnEligibility=false
+11-17 10:11:58.014  1335  1881 W ContextImpl: Calling a method in the system process without a qualified user: android.app.ContextImpl.sendStickyBroadcast:1766 android.net.connectivity.com.android.server.ConnectivityService.sendStickyBroadcast:4081 android.net.connectivity.com.android.server.ConnectivityService.sendGeneralBroadcast:4051 android.net.connectivity.com.android.server.ConnectivityService.sendInetConditionBroadcast:4028 android.net.connectivity.com.android.server.ConnectivityService.updateInetCondition:12091 
+11-17 10:11:58.018  1335  1874 I WifiClientModeImpl: default gateway ipv4 is null
+11-17 10:11:58.019  1335  1877 W LastMileLogger: Failed to stop event tracing: /sys/kernel/debug/tracing/instances/wifi/tracing_on: open failed: ENOENT (No such file or directory)
+11-17 10:11:58.023  1335  9240 D WifiMemoryStoreImpl: Set cluster G27d508fbb71f3c82 for Wf7b30c2e73e18736: SUCCESS
+11-17 10:11:58.025  2190  2190 W SHANNON_IMS: 1941 [SIM#] Invalid sub id : -1   with slot id : 0 (SubscriptionWrapper%getSubId:55)
+11-17 10:11:58.028   841  9704 W resolv  : SSL_connect ssl error =5, mark 0xf006a: Connection refused
+11-17 10:11:58.028   841  9704 W resolv  : TLS Handshake failed
+11-17 10:11:58.028   841  9704 W resolv  : query failed
+11-17 10:11:58.028   841  9704 W resolv  : validateDnsTlsServer returned 0 for {2001:558:feed::1/}
+11-17 10:11:58.028   841  9704 W resolv  : Validation failed
+11-17 10:11:58.030  2190  2190 W SHANNON_IMS: 1945 [SIM#] Invalid sub id : -1   with slot id : 0 (SubscriptionWrapper%getSubId:55)
+11-17 10:11:58.032  2190  2190 W SHANNON_IMS: 1949 [SIM#] Invalid sub id : -1   with slot id : 0 (SubscriptionWrapper%getSubId:55)
+11-17 10:11:58.032  2190  2190 W SHANNON_IMS: 1950 [SIM#] Invalid sub id : -1   with slot id : 0 (SubscriptionWrapper%getSubId:55)
+11-17 10:11:58.035  2190  2190 I SHANNON_IMS: 1953 [CALL] isEmcAvailable for true (ImsCallManager%isEmcAvailable:1571)
+11-17 10:11:58.042   841  9705 W resolv  : SSL_connect ssl error =5, mark 0xf006a: Connection refused
+11-17 10:11:58.042   841  9705 W resolv  : TLS Handshake failed
+11-17 10:11:58.042   841  9705 W resolv  : query failed
+11-17 10:11:58.042   841  9705 W resolv  : validateDnsTlsServer returned 0 for {2001:558:feed::2/}
+11-17 10:11:58.042   841  9705 W resolv  : Validation failed
+11-17 10:11:58.110  1089  1089 D gpsd    : WakeLock(Release,GPSD)
+11-17 10:11:58.123  2096  2619 D DhcpClient: Broadcasting DHCPDISCOVER
+11-17 10:11:58.141  1335  1931 D BackgroundInstallControlService: Package event received: 0
+11-17 10:11:58.142  1335  1931 D BackgroundInstallControlService: Package event received: 0
+11-17 10:11:58.142  1335  1931 D BackgroundInstallControlService: Package event received: 0
+11-17 10:11:58.142  1335  1931 D BackgroundInstallControlService: Package event received: 0
+11-17 10:11:58.142  1335  1931 D BackgroundInstallControlService: Package event received: 0
+11-17 10:11:58.142  1335  1931 D BackgroundInstallControlService: Package event received: 0
+11-17 10:11:58.414  2096  2619 D IpClient/wlan0: addressUpdated: 2601:500:8985:4c10:2910:5c53:4a9a:9fc4/64 on ifindex 47 flags 0x00000001 scope 0
+11-17 10:11:58.414  2096  2619 D IpClient/wlan0: addressUpdated: 2601:500:8985:4c10:9cf9:f2ff:fe1b:326d/64 on ifindex 47 flags 0x00000100 scope 0
+11-17 10:11:58.416  1041  1045 I WPKTRT  : process_address_event: 2601:500:8985:4c10:2910:5c53:4a9a:9fc4 added to wlan0
+11-17 10:11:58.416  1041  1045 I WPKTRT  : process_address_event: 2601:500:8985:4c10:9cf9:f2ff:fe1b:326d added to wlan0
+11-17 10:11:58.416   947   947 E WifiHAL : Setting APF program, halHandle = 0xb400cfab9953c900
+11-17 10:11:58.416   947   947 E WifiHAL : Set apf filter for iface = wlan0
+11-17 10:11:58.416   947   947 I WifiHAL : createRequest: APF set program request
+11-17 10:11:58.416   947   947 I WifiHAL : mProgramLen : 653
+11-17 10:11:58.769   841  9693 W resolv  : (106, 7) Detecting NAT64 prefix from DNS...
+11-17 10:11:58.776   841  9693 W resolv  : (106, 7) plat_prefix/dns(ipv4only.arpa.) status = 7/No address associated with hostname
+11-17 10:11:59.028  2190  9706 W SHANNON_IMS: 1955 [SIM#] Invalid sub id : -1   with slot id : 0 (SubscriptionWrapper%getSubId:55)
+11-17 10:11:59.033  2190  9706 W SHANNON_IMS: 1959 [SIM#] Invalid sub id : -1   with slot id : 0 (SubscriptionWrapper%getSubId:55)
+11-17 10:12:00.061  2096  2619 D DhcpClient: Broadcasting DHCPDISCOVER
+11-17 10:12:00.533  2096  2619 D DhcpClient: Received packet: 9e:f9:f2:1b:32:6d OFFER, ip /10.0.0.85, netmask /255.255.255.0, DNS servers: /75.75.75.75 /75.75.76.76 , gateways [/10.0.0.1], lease time 172800, domain null
+11-17 10:12:00.535  2096  2619 D DhcpClient: Got pending lease: com.android.networkstack.android.net.DhcpResults@f224db46 DHCP server /10.0.0.1 Vendor info null lease 172800 seconds Servername 
+11-17 10:12:00.540  2096  2619 D DhcpClient: Received packet: 9e:f9:f2:1b:32:6d OFFER, ip /10.0.0.85, netmask /255.255.255.0, DNS servers: /75.75.75.75 /75.75.76.76 , gateways [/10.0.0.1], lease time 172800, domain null
+11-17 10:12:00.540  2096  2619 D DhcpClient: Received packet: 9e:f9:f2:1b:32:6d OFFER, ip /10.0.0.85, netmask /255.255.255.0, DNS servers: /75.75.75.75 /75.75.76.76 , gateways [/10.0.0.1], lease time 172800, domain null
+11-17 10:12:00.542  2096  2619 D DhcpClient: Broadcasting DHCPREQUEST ciaddr=0.0.0.0 request=10.0.0.85 serverid=10.0.0.1
+11-17 10:12:00.568  2096  2619 D DhcpClient: Received packet: 9e:f9:f2:1b:32:6d ACK: your new IP /10.0.0.85, netmask /255.255.255.0, gateways [/10.0.0.1] DNS servers: /75.75.75.75 /75.75.76.76 , lease time 172800, domain null
+11-17 10:12:00.570  2096  2619 D DhcpClient: Confirmed lease: com.android.networkstack.android.net.DhcpResults@f224db46 DHCP server /10.0.0.1 Vendor info null lease 172800 seconds Servername 
+11-17 10:12:00.636  1041  1045 I WPKTRT  : process_address_event: 10.0.0.85 added to wlan0
+11-17 10:12:00.648  2096  2619 D IpClient/wlan0: addressUpdated: 10.0.0.85/24 on ifindex 47 flags 0x00000080 scope 0
+11-17 10:12:00.657  2096  2619 D DhcpClient: Scheduling renewal in 86399s
+11-17 10:12:00.657  2096  2619 D DhcpClient: Scheduling rebind in 151199s
+11-17 10:12:00.657  2096  2619 D DhcpClient: Scheduling expiry in 172799s
+11-17 10:12:00.691  1335  1874 I WifiClientModeImpl[10940:wlan0]: Update current security type to 2
+11-17 10:12:00.706  1335  1874 I WifiManager: OnWifiNetworkStateChangedProxy: onWifiNetworkStateChanged: 1, 6
+11-17 10:12:00.706  1335  1572 D WifiAutoOff: onWifiNetworkStateChanged: cmmRole 1, state CONNECTED
+11-17 10:12:00.707  1335  1874 W ContextImpl: Calling a method in the system process without a qualified user: android.app.ContextImpl.sendStickyBroadcast:1766 com.android.server.wifi.ClientModeImpl.sendNetworkChangeBroadcast:3151 com.android.server.wifi.ClientModeImpl.lambda$sendNetworkChangeBroadcastWithCurrentState$14:3128 com.android.server.wifi.ClientModeImpl.$r8$lambda$mtuS9ulugUkTxNA_sDDnAioo66w:0 com.android.server.wifi.ClientModeImpl$$ExternalSyntheticLambda13.send:0 
+11-17 10:12:00.724  2459  2608 D IwlanDataService: onCapabilitiesChanged: 106 [ Transports: WIFI Capabilities: NOT_METERED&INTERNET&NOT_RESTRICTED&TRUSTED&NOT_VPN&VALIDATED&NOT_ROAMING&FOREGROUND&NOT_CONGESTED&NOT_SUSPENDED&NOT_VCN_MANAGED&NOT_BANDWIDTH_CONSTRAINED LinkUpBandwidth>=12000Kbps LinkDnBandwidth>=277050Kbps TransportInfo: <SSID: "Home", BSSID: 1e:9e:cc:11:57:ee, MAC: 9e:f9:f2:1b:32:6d, IP: /10.0.0.85, Security type: 2, Supplicant state: COMPLETED, Wi-Fi standard: 11ax, RSSI: -43, Link speed: 1134Mbps, Tx Link speed: 1134Mbps, Max Supported Tx Link speed: 1200Mbps, Rx Link speed: 6Mbps, Max Supported Rx Link speed: 1200Mbps, Frequency: 5785MHz, Net ID: 0, Metered hint: false, score: 60, isUsable: true, CarrierMerged: false, SubscriptionId: -1, IsPrimary: 1, Trusted: true, Restricted: false, Ephemeral: false, OEM paid: false, OEM private: false, OSU AP: false, FQDN: <none>, Provider friendly name: <none>, Requesting package name: <none>"Home"wpa2-pskMLO Information: , Is TID-To-Link negotiation supported by the AP: false, AP MLD Address: <none>, AP MLO Link Id: <none>, AP MLO Affiliated links: <none>, Vendor Data: <none>> SignalStrength: -43 OwnerUid: 1000 AdminUids: [1000] SSID: "Home" UnderlyingNetworks: Null]
+11-17 10:12:00.724  2459  2608 D IwlanDataService: Network 106 connected using transport WIFI
+11-17 10:12:00.724  2459  2675 D IwlanNetworkService: onCapabilitiesChanged: 106
+11-17 10:12:00.728   947   947 E WifiHAL : Setting APF program, halHandle = 0xb400cfab9953c900
+11-17 10:12:00.728   947   947 E WifiHAL : Set apf filter for iface = wlan0
+11-17 10:12:00.728   947   947 I WifiHAL : createRequest: APF set program request
+11-17 10:12:00.728   947   947 I WifiHAL : mProgramLen : 682
+11-17 10:12:00.732  2459  2608 D IwlanDataService: onLinkPropertiesChanged: {InterfaceName: wlan0 LinkAddresses: [ fe80::9cf9:f2ff:fe1b:326d/64,2601:500:8985:4c10:9cf9:f2ff:fe1b:326d/64,2601:500:8985:4c10:2910:5c53:4a9a:9fc4/64 ] DnsAddresses: [ /2001:558:feed::2,/2001:558:feed::1 ] Domains: null MTU: 0 ServerAddress: /10.0.0.1 TcpBufferSizes: 524288,2097152,8388608,262144,524288,4194304 Routes: [ fe80::/64 -> :: wlan0 mtu 0,::/0 -> fe80::1e9e:ccff:fe09:57eb wlan0 mtu 0,2601:500:8985:4c10::/64 -> :: wlan0 mtu 0,10.0.0.0/24 -> 0.0.0.0 wlan0 mtu 0,0.0.0.0/0 -> 10.0.0.1 wlan0 mtu 0 ]}
+11-17 10:12:00.732  2459  2675 D IwlanNetworkService: onLinkPropertiesChanged: {InterfaceName: wlan0 LinkAddresses: [ fe80::9cf9:f2ff:fe1b:326d/64,2601:500:8985:4c10:9cf9:f2ff:fe1b:326d/64,2601:500:8985:4c10:2910:5c53:4a9a:9fc4/64 ] DnsAddresses: [ /2001:558:feed::2,/2001:558:feed::1 ] Domains: null MTU: 0 ServerAddress: /10.0.0.1 TcpBufferSizes: 524288,2097152,8388608,262144,524288,4194304 Routes: [ fe80::/64 -> :: wlan0 mtu 0,::/0 -> fe80::1e9e:ccff:fe09:57eb wlan0 mtu 0,2601:500:8985:4c10::/64 -> :: wlan0 mtu 0,10.0.0.0/24 -> 0.0.0.0 wlan0 mtu 0,0.0.0.0/0 -> 10.0.0.1 wlan0 mtu 0 ]}
+11-17 10:12:00.738  2459  2687 D EpdgTunnelManager[0]: msg.what = EVENT_UPDATE_NETWORK
+11-17 10:12:00.751  1335  1881 D ConnectivityService: Setting DNS servers for network 106 to [/2001:558:feed::2, /2001:558:feed::1, /75.75.75.75, /75.75.76.76]
+11-17 10:12:00.751  1335  1881 D DnsManager: sendDnsConfigurationForNetwork(ResolverParamsParcel{netId: 106, sampleValiditySeconds: 1800, successThreshold: 25, minSamples: 8, maxSamples: 64, baseTimeoutMsec: 0, retryCount: 0, servers: [2001:558:feed::2, 2001:558:feed::1, 75.75.75.75, 75.75.76.76], domains: [], tlsName: , tlsServers: [2001:558:feed::2, 2001:558:feed::1, 75.75.75.75, 75.75.76.76], tlsFingerprints: [], caCertificate: , tlsConnectTimeoutMs: 0, resolverOptions: null, transportTypes: [1], meteredNetwork: false, dohParams: null, interfaceNames: [wlan0]})
+11-17 10:12:00.754   841  9713 W resolv  : Validating DnsTlsServer {75.75.76.76/} with mark 0xf006a
+11-17 10:12:00.754   841  9712 W resolv  : Validating DnsTlsServer {75.75.75.75/} with mark 0xf006a
+11-17 10:12:00.754   841  9714 W resolv  : Validating DnsTlsServer {2001:558:feed::1/} with mark 0xf006a
+11-17 10:12:00.754   841  9715 W resolv  : Validating DnsTlsServer {2001:558:feed::2/} with mark 0xf006a
+11-17 10:12:00.759  2459  2675 D IwlanNetworkService: onLinkPropertiesChanged: {InterfaceName: wlan0 LinkAddresses: [ fe80::9cf9:f2ff:fe1b:326d/64,2601:500:8985:4c10:9cf9:f2ff:fe1b:326d/64,2601:500:8985:4c10:2910:5c53:4a9a:9fc4/64,10.0.0.85/24 ] DnsAddresses: [ /2001:558:feed::2,/2001:558:feed::1,/75.75.75.75,/75.75.76.76 ] Domains: null MTU: 0 ServerAddress: /10.0.0.1 TcpBufferSizes: 524288,2097152,8388608,262144,524288,4194304 Routes: [ fe80::/64 -> :: wlan0 mtu 0,::/0 -> fe80::1e9e:ccff:fe09:57eb wlan0 mtu 0,2601:500:8985:4c10::/64 -> :: wlan0 mtu 0,10.0.0.0/24 -> 0.0.0.0 wlan0 mtu 0,0.0.0.0/0 -> 10.0.0.1 wlan0 mtu 0 ]}
+11-17 10:12:00.760  2459  2608 D IwlanDataService: onLinkPropertiesChanged: {InterfaceName: wlan0 LinkAddresses: [ fe80::9cf9:f2ff:fe1b:326d/64,2601:500:8985:4c10:9cf9:f2ff:fe1b:326d/64,2601:500:8985:4c10:2910:5c53:4a9a:9fc4/64,10.0.0.85/24 ] DnsAddresses: [ /2001:558:feed::2,/2001:558:feed::1,/75.75.75.75,/75.75.76.76 ] Domains: null MTU: 0 ServerAddress: /10.0.0.1 TcpBufferSizes: 524288,2097152,8388608,262144,524288,4194304 Routes: [ fe80::/64 -> :: wlan0 mtu 0,::/0 -> fe80::1e9e:ccff:fe09:57eb wlan0 mtu 0,2601:500:8985:4c10::/64 -> :: wlan0 mtu 0,10.0.0.0/24 -> 0.0.0.0 wlan0 mtu 0,0.0.0.0/0 -> 10.0.0.1 wlan0 mtu 0 ]}
+11-17 10:12:00.762  2459  2687 D EpdgTunnelManager[0]: msg.what = EVENT_UPDATE_NETWORK
+11-17 10:12:00.770   841  9714 W resolv  : SSL_connect ssl error =5, mark 0xf006a: Connection refused
+11-17 10:12:00.771   841  9714 W resolv  : TLS Handshake failed
+11-17 10:12:00.771   841  9714 W resolv  : query failed
+11-17 10:12:00.771   841  9714 W resolv  : validateDnsTlsServer returned 0 for {2001:558:feed::1/}
+11-17 10:12:00.771   841  9714 W resolv  : Validation failed
+11-17 10:12:00.779   841  9712 W resolv  : SSL_connect ssl error =5, mark 0xf006a: Connection refused
+11-17 10:12:00.779   841  9712 W resolv  : TLS Handshake failed
+11-17 10:12:00.780   841  9712 W resolv  : query failed
+11-17 10:12:00.780   841  9712 W resolv  : validateDnsTlsServer returned 0 for {75.75.75.75/}
+11-17 10:12:00.780   841  9712 W resolv  : Validation failed
+11-17 10:12:00.797   841  9715 W resolv  : SSL_connect ssl error =5, mark 0xf006a: Connection refused
+11-17 10:12:00.797   841  9715 W resolv  : TLS Handshake failed
+11-17 10:12:00.797   841  9715 W resolv  : query failed
+11-17 10:12:00.797   841  9715 W resolv  : validateDnsTlsServer returned 0 for {2001:558:feed::2/}
+11-17 10:12:00.798   841  9715 W resolv  : Validation failed
+11-17 10:12:07.912  1335  1805 D ActivityManager: freezing 2651 com.android.cellbroadcastreceiver.module
+11-17 10:12:07.930  1335  1881 D InetDiagMessage: Destroyed 0 sockets, proto=IPPROTO_TCP, family=AF_INET, states=14
+11-17 10:12:07.935  1335  1881 D InetDiagMessage: Destroyed 0 sockets, proto=IPPROTO_TCP, family=AF_INET6, states=14
+11-17 10:12:07.936  1335  1881 D InetDiagMessage: Destroyed live tcp sockets for uids={10141} in 11ms
+11-17 10:12:13.455  1335  1874 D WifiConfigStore: Writing to stores completed in 15 ms.
+11-17 10:12:28.290   890   890 I android.hardware.health-service.gs101: Recording a sample at time 245456
+11-17 10:12:31.229  2911  2930 W pixelstats-vendor: Thread Pool max thread count is 0. Cannot cache binder as linkToDeath cannot be implemented. serviceName: android.frameworks.stats.IStats/default
+11-17 10:12:32.255  2911  2930 W pixelstats-vendor: Thread Pool max thread count is 0. Cannot cache binder as linkToDeath cannot be implemented. serviceName: android.frameworks.stats.IStats/default
+11-17 10:12:33.946  1041  1045 I WPKTRT  : process_address_event: 2601:500:8985:4c10:9cf9:f2ff:fe1b:326d added to wlan0
+11-17 10:12:33.947  1041  1045 I WPKTRT  : process_address_event: 2601:500:8985:4c10:2910:5c53:4a9a:9fc4 added to wlan0
+11-17 10:12:33.959  2096  2619 D ApfFilter: (wlan0): Adding RA fe80::1e9e:ccff:fe09:57eb -> ff02::1 180s 2601:500:8985:4c10::/64 202620s/202620s DNS 180s 2001:558:feed::1 2001:558:feed::2 RIO 180s ::/0 
+11-17 10:12:33.964   947   947 E WifiHAL : Setting APF program, halHandle = 0xb400cfab9953c900
+11-17 10:12:33.965   947   947 E WifiHAL : Set apf filter for iface = wlan0
+11-17 10:12:33.965   947   947 I WifiHAL : createRequest: APF set program request
+11-17 10:12:33.965   947   947 I WifiHAL : mProgramLen : 682
+11-17 10:12:37.534  1696  1699 I pixel-thermal: VIRTUAL-SKIN:30.3878 raw data: VIRTUAL-NEUTRAL:30387.8 VIRTUAL-NEUTRAL-SKIN2:30378.9 VIRTUAL-QUIET-NEUTRAL:30035.9 VIRTUAL-SKIN:30387.8 disp_therm:30147 gnss_tcxo_therm:30615 neutral_therm:30192 quiet_therm:29969 skin_therm1:30303 skin_therm2:30815 
+11-17 10:12:37.542  1696  1699 I pixel-thermal: VIRTUAL-SKIN-CPU-GPU:30.3878 raw data: VIRTUAL-SKIN:30387.8 VIRTUAL-SKIN-CPU-GPU:30387.8 
+11-17 10:12:37.543  1696  1699 I pixel-thermal: VIRTUAL-SKIN-HINT:30.3878 raw data: VIRTUAL-SKIN:30387.8 VIRTUAL-SKIN-HINT:30387.8 
+11-17 10:12:37.543  1696  1699 I pixel-thermal: VIRTUAL-SKIN-CHARGE:30.3878 raw data: VIRTUAL-SKIN:30387.8 VIRTUAL-SKIN-CHARGE:30387.8 
+11-17 10:12:39.382  1696  1699 I pixel-thermal: VIRTUAL-USB-UI:0 raw data: USB2-MINUS-CHG:-1113 VIRTUAL-USB-UI:0 charger_skin_therm:31193 usb_pwr_therm2:30080 
+11-17 10:12:39.388  1696  1699 I pixel-thermal: VIRTUAL-USB-THROTTLING:0 raw data: USB2-MINUS-CHG:-1113 VIRTUAL-USB-THROTTLING:0 usb_pwr_therm2:30080 
+11-17 10:12:39.389  1696  1699 I pixel-thermal: Power rails total power: 148.26 mW for 60019 ms
+11-17 10:12:39.389  1696  1699 I pixel-thermal: Power rails [S1M_VDD_MIF: 15.49 mW] [S5M_VDD_INT: 25.86 mW] [S4M_VDD_CPUCL0: 14.91 mW] [S3M_VDD_CPUCL1: 9.63 mW] [S2M_VDD_CPUCL2: 1.90 mW] [L15M_VDD_SLC_M: 8.55 mW] 
+11-17 10:12:39.389  1696  1699 I pixel-thermal: Power rails [VSYS_PWR_DISPLAY: 28.37 mW] [L2S_VDD_AOC_RET: 5.29 mW] [S10M_VDD_TPU: 0.01 mW] [L8S_UFS_VCCQ: 9.39 mW] [S9S_VDD_AOC: 5.38 mW] [S4S_VDD2H_MEM: 6.22 mW] 
+11-17 10:12:39.389  1696  1699 I pixel-thermal: Power rails [S2S_VDD_G3D: 2.44 mW] [S5S_VDDQ_MEM: 3.80 mW] [S10S_VDD2L: 10.41 mW] [L9S_GNSS_CORE: 0.61 mW] 
+11-17 10:12:44.119  1696  1699 I pixel-thermal: cellular-emergency:30.4065 raw data: VIRTUAL-NEUTRAL:30406.4 VIRTUAL-NEUTRAL-SKIN2:30394.3 VIRTUAL-QUIET-NEUTRAL:30167.1 VIRTUAL-SKIN:30406.4 cellular-emergency:30406.4 disp_therm:30169 gnss_tcxo_therm:30592 neutral_therm:30214 quiet_therm:30147 skin_therm1:30370 skin_therm2:30815 
+11-17 10:12:44.124  1696  1699 I pixel-thermal: VIRTUAL-SKIN-CPU:30.4065 raw data: VIRTUAL-SKIN:30406.4 VIRTUAL-SKIN-CPU:30406.4 
+11-17 10:12:49.152  2911  2930 W pixelstats-vendor: Thread Pool max thread count is 0. Cannot cache binder as linkToDeath cannot be implemented. serviceName: android.frameworks.stats.IStats/default
+11-17 10:12:50.346  1696  1699 I pixel-thermal: neutral_therm:30.214 raw data: neutral_therm:30214 
+11-17 10:12:56.062   947   947 I WifiHAL : Creating message to get link statistics; iface = 47
+11-17 10:12:56.197   947   947 E IPCThreadState: binder thread pool (1 threads) starved for 135 ms
+11-17 10:12:56.197   947  3235 I WifiHAL : Getting cached scan results, iface handle = 0xb400cfab9953c900
+11-17 10:12:56.197   947  3235 E WifiHAL : Creating message to get cached scan results
+11-17 10:12:56.198   947  3235 D WifiHAL : error code -95 mapped to -3
+11-17 10:12:56.202  1335  1874 E WifiStaIfaceAidlImpl: getCachedScanData failed with service-specific exception: android.os.ServiceSpecificException:  (code 4)
+11-17 10:12:56.253   904   904 E android.hardware.power.stats-service.pixel: Failed to read uid_time_in_state for attribution, return default EnergyConsumer
+11-17 10:12:56.286   876  1024 I bthal.flowcontrol: HciEventPreProcess: HCI Event 0xe Opcode 0xfd59 Length 22 unhandled by ControllerActivityWatcher
+11-17 10:13:04.512  2911  2930 W pixelstats-vendor: Thread Pool max thread count is 0. Cannot cache binder as linkToDeath cannot be implemented. serviceName: android.frameworks.stats.IStats/default
+11-17 10:13:07.025  1041  1045 I WPKTRT  : process_address_event: 2601:500:8985:4c10:9cf9:f2ff:fe1b:326d added to wlan0
+11-17 10:13:07.025  1041  1045 I WPKTRT  : process_address_event: 2601:500:8985:4c10:2910:5c53:4a9a:9fc4 added to wlan0
+11-17 10:13:07.041  2096  2619 D ApfFilter: (wlan0): Adding RA fe80::1e9e:ccff:fe09:57eb -> ff02::1 180s 2601:500:8985:4c10::/64 202620s/202620s DNS 180s 2001:558:feed::1 2001:558:feed::2 RIO 180s ::/0 
+11-17 10:13:07.050   947  3235 E WifiHAL : Setting APF program, halHandle = 0xb400cfab9953c900
+11-17 10:13:07.050   947  3235 E WifiHAL : Set apf filter for iface = wlan0
+11-17 10:13:07.050   947  3235 I WifiHAL : createRequest: APF set program request
+11-17 10:13:07.050   947  3235 I WifiHAL : mProgramLen : 682
+11-17 10:13:22.163  2911  2930 W pixelstats-vendor: Thread Pool max thread count is 0. Cannot cache binder as linkToDeath cannot be implemented. serviceName: android.frameworks.stats.IStats/default
+11-17 10:13:24.958  2911  2911 I pixelstats: MmMetrics: kernel: old PSI sysfs node.
+11-17 10:13:28.385   904   904 E android.hardware.power.stats-service.pixel: Failed to read uid_time_in_state for attribution, return default EnergyConsumer
+11-17 10:13:39.439  1696  1699 I pixel-thermal: VIRTUAL-USB-UI:0 raw data: USB2-MINUS-CHG:-1068 VIRTUAL-USB-UI:0 charger_skin_therm:31171 usb_pwr_therm2:30103 
+11-17 10:13:39.445  1696  1699 I pixel-thermal: VIRTUAL-USB-THROTTLING:0 raw data: USB2-MINUS-CHG:-1068 VIRTUAL-USB-THROTTLING:0 usb_pwr_therm2:30103 
+11-17 10:13:39.445  1696  1699 I pixel-thermal: Power rails total power: 127.25 mW for 60057 ms
+11-17 10:13:39.445  1696  1699 I pixel-thermal: Power rails [S1M_VDD_MIF: 13.24 mW] [S5M_VDD_INT: 24.96 mW] [S4M_VDD_CPUCL0: 9.34 mW] [S3M_VDD_CPUCL1: 6.10 mW] [S2M_VDD_CPUCL2: 0.54 mW] [L15M_VDD_SLC_M: 8.47 mW] 
+11-17 10:13:39.445  1696  1699 I pixel-thermal: Power rails [VSYS_PWR_DISPLAY: 28.18 mW] [L2S_VDD_AOC_RET: 5.29 mW] [S10M_VDD_TPU: 0.00 mW] [L8S_UFS_VCCQ: 3.95 mW] [S9S_VDD_AOC: 5.39 mW] [S4S_VDD2H_MEM: 4.85 mW] 
+11-17 10:13:39.445  1696  1699 I pixel-thermal: Power rails [S2S_VDD_G3D: 2.47 mW] [S5S_VDDQ_MEM: 3.53 mW] [S10S_VDD2L: 10.33 mW] [L9S_GNSS_CORE: 0.61 mW] 
+11-17 10:13:42.967  1041  1045 I WPKTRT  : process_address_event: 2601:500:8985:4c10:9cf9:f2ff:fe1b:326d added to wlan0
+11-17 10:13:42.968  1041  1045 I WPKTRT  : process_address_event: 2601:500:8985:4c10:2910:5c53:4a9a:9fc4 added to wlan0
+11-17 10:13:42.977  2911  2930 W pixelstats-vendor: Thread Pool max thread count is 0. Cannot cache binder as linkToDeath cannot be implemented. serviceName: android.frameworks.stats.IStats/default
+11-17 10:13:42.983  2096  2619 D ApfFilter: (wlan0): Adding RA fe80::1e9e:ccff:fe09:57eb -> ff02::1 180s 2601:500:8985:4c10::/64 202620s/202620s DNS 180s 2001:558:feed::1 2001:558:feed::2 RIO 180s ::/0 
+11-17 10:13:42.991   947  3235 E WifiHAL : Setting APF program, halHandle = 0xb400cfab9953c900
+11-17 10:13:42.991   947  3235 E WifiHAL : Set apf filter for iface = wlan0
+11-17 10:13:42.991   947  3235 I WifiHAL : createRequest: APF set program request
+11-17 10:13:42.991   947  3235 I WifiHAL : mProgramLen : 682
+11-17 10:13:50.368  1696  1699 I pixel-thermal: neutral_therm:30.303 raw data: neutral_therm:30303 
+11-17 10:14:07.857   841  9713 W resolv  : SSL_connect write error 0, mark 0xf006a: Try again
+11-17 10:14:07.858   841  9713 W resolv  : TLS Handshake failed
+11-17 10:14:07.858   841  9713 W resolv  : query failed
+11-17 10:14:07.858   841  9713 W resolv  : validateDnsTlsServer returned 0 for {75.75.76.76/}
+11-17 10:14:07.859   841  9713 W resolv  : Validation failed
+11-17 10:14:13.637  2911  2930 W pixelstats-vendor: Thread Pool max thread count is 0. Cannot cache binder as linkToDeath cannot be implemented. serviceName: android.frameworks.stats.IStats/default
+11-17 10:14:16.042  1041  1045 I WPKTRT  : process_address_event: 2601:500:8985:4c10:9cf9:f2ff:fe1b:326d added to wlan0
+11-17 10:14:16.042  1041  1045 I WPKTRT  : process_address_event: 2601:500:8985:4c10:2910:5c53:4a9a:9fc4 added to wlan0
+11-17 10:14:16.054  2911  2930 W pixelstats-vendor: Thread Pool max thread count is 0. Cannot cache binder as linkToDeath cannot be implemented. serviceName: android.frameworks.stats.IStats/default
+11-17 10:14:16.054  2096  2619 D ApfFilter: (wlan0): Adding RA fe80::1e9e:ccff:fe09:57eb -> ff02::1 180s 2601:500:8985:4c10::/64 202620s/202620s DNS 180s 2001:558:feed::1 2001:558:feed::2 RIO 180s ::/0 
+11-17 10:14:16.060   947  3235 E WifiHAL : Setting APF program, halHandle = 0xb400cfab9953c900
+11-17 10:14:16.060   947  3235 E WifiHAL : Set apf filter for iface = wlan0
+11-17 10:14:16.060   947  3235 I WifiHAL : createRequest: APF set program request
+11-17 10:14:16.060   947  3235 I WifiHAL : mProgramLen : 682
+11-17 10:14:22.264  1160  1160 D AOC     : A3:MSG: lsm6dsr_device.cc, 763: USF: Lsm6dsrDevice: Sensor 3: Enabled 0, odr_index 0.
+11-17 10:14:22.265  1160  1160 D AOC     : A3:MSG: lsm6dsr_device.cc, 249: USF: Lsm6dsrDevice: Config sampling too slow. Took 1602295ns.
+11-17 10:14:22.266  1160  1160 D AOC     : A3:MSG: usf_sensor.cc, 1581: USF: Received stop sampling request for LSM6DSR Motion Detect (active:-1).
+11-17 10:14:22.267  1160  1160 D AOC     : A3:MSG: usf_sensor.cc, 2037: USF: Sampling configuration 5971 not found.
+11-17 10:14:22.268  1160  1160 D AOC     : A3:MSG: usf_sensor.cc, 1581: USF: Received stop sampling request for LSM6DSR Motion Detect (active:-1).
+11-17 10:14:22.268  1160  1160 D AOC     : A3:MSG: usf_sensor_client.cc, 145: USF: Received kErrNotFound when disabling one shot sensor.
+11-17 10:14:22.269  1160  1160 D AOC     : A3:MSG: usf_sensor.cc, 2037: USF: Sampling configuration 5969 not found.
+11-17 10:14:22.269  1160  1160 D AOC     : A3:MSG: vsc_controller.cc, 550: VSC: [Step Counter] stopSensorEvents: sensor 0x20002
+11-17 10:14:22.270  1160  1160 D AOC     : A3:MSG: usf_sensor_client.cc, 161: USF: Received kErrNotFound when disabling one shot sensor.
+11-17 10:14:22.271  1160  1160 D AOC     : A3:MSG: vsc_controller.cc, 532: VSC: [Step Counter] requestSensorEvents: sensor 0x10001, period=20 latency=1000ms.
+11-17 10:14:22.275  1160  1160 D AOC     : A3:MSG: usf_sensor.cc, 1573: USF: Received start sampling request for LSM6DSR Stationary Detect (active:1).
+11-17 10:14:22.277  1160  1160 D AOC     : A3:MSG: lsm6dsr_device.cc, 763: USF: Lsm6dsrDevice: Sensor 4: Enabled 1, odr_index 1.
+11-17 10:14:22.281  1160  1160 D AOC     : A3:MSG: motion_state_sensor.cc, 327: USF: MoSt: StationaryDetect sampling started with sampling ID 5972.
+11-17 10:14:22.283  1160  1160 D AOC     : A3:MSG: usf_sensor.cc, 1573: USF: Received start sampling request for LSM6DSR Accelerometer (active:1).
+11-17 10:14:22.285  1160  1160 D AOC     : A3:MSG: lsm6dsr_device.cc, 763: USF: Lsm6dsrDevice: Sensor 2: Enabled 1, odr_index 1.
+11-17 10:14:22.286  1160  1160 D AOC     : A3:MSG: lsm6dsr_device.cc, 249: USF: Lsm6dsrDevice: Config sampling too slow. Took 793946ns.
+11-17 10:14:22.288  1160  1160 D AOC     : A3:MSG: lsm6dsr_device.cc, 763: USF: Lsm6dsrDevice: Sensor 0: Enabled 1, odr_index 3.
+11-17 10:14:22.289  1160  1160 D AOC     : A3:MSG: lsm6dsr_fifo.cc, 750: USF: Lsm6dsrFifo: ODR: XL/G/T/TS: 52/0/13/6 WM: 71 Intr: 1.
+11-17 10:14:22.296  1160  1160 D AOC     : A3:MSG: vsc_controller.cc, 532: VSC: [Device Pickup Sensor] requestSensorEvents: sensor 0x10001, period=20 latency=0ms.
+11-17 10:14:22.297  1160  1160 D AOC     : A3:MSG: usf_sensor.cc, 1573: USF: Received start sampling request for LSM6DSR Accelerometer (active:2).
+11-17 10:14:22.298  1160  1160 D AOC     : A3:MSG: lsm6dsr_device.cc, 763: USF: Lsm6dsrDevice: Sensor 0: Enabled 1, odr_index 3.
+11-17 10:14:22.298  1160  1160 D AOC     : A3:MSG: lsm6dsr_fifo.cc, 750: USF: Lsm6dsrFifo: ODR: XL/G/T/TS: 52/0/13/6 WM: 1 Intr: 52.
+11-17 10:14:22.299  1160  1160 D AOC     : A3:MSG: lsm6dsr_device.cc, 671: USF: Lsm6dsrDevice: Fifo was disabled for 715576ns.
+11-17 10:14:22.301  1160  1160 D AOC     : A3:MSG: vsc_controller.cc, 550: VSC: [Device Pickup Sensor] stopSensorEvents: sensor 0x20002
+11-17 10:14:22.304  1160  1160 D AOC     : A3:MSG: usf_sensor.cc, 1573: USF: Received start sampling request for LSM6DSR Accelerometer (active:2).
+11-17 10:14:22.304  1160  1160 D AOC     : A3:MSG: usf_sensor.cc, 1573: USF: Received start sampling request for LSM6DSR FreeFall Detect (active:1).
+11-17 10:14:22.305  1160  1160 D AOC     : A3:MSG: lsm6dsr_device.cc, 763: USF: Lsm6dsrDevice: Sensor 5: Enabled 1, odr_index 1.
+11-17 10:14:22.305  1160  1160 D AOC     : A3:MSG: lsm6dsr_fifo.cc, 750: USF: Lsm6dsrFifo: ODR: XL/G/T/TS: 52/0/13/6 WM: 1 Intr: 52.
+11-17 10:14:22.306  1160  1160 D AOC     : A3:MSG: lsm6dsr_device.cc, 671: USF: Lsm6dsrDevice: Fifo was disabled for 533448ns.
+11-17 10:14:22.307   884   896 I CHRE    : @ 245565.453: [AR] IDLE => ON
+11-17 10:14:22.308  1160  1160 D AOC     : A3:MSG: usf_sensor.cc, 1573: USF: Received start sampling request for LSM6DSR Stationary Detect (active:2).
+11-17 10:14:22.311  1160  1160 D AOC     : A3:MSG: usf_sensor.cc, 1581: USF: Received stop sampling request for LSM6DSR Motion Detect (active:-1).
+11-17 10:14:22.311  1160  1160 D AOC     : A3:MSG: usf_sensor.cc, 2037: USF: Sampling configuration 5970 not found.
+11-17 10:14:22.312  1160  1160 D AOC     : A3:MSG: usf_sensor_client.cc, 145: USF: Received kErrNotFound when disabling one shot sensor.
+11-17 10:14:22.312  1160  1160 D AOC     : A3:MSG: usf_sensor.cc, 1573: USF: Received start sampling request for LSM6DSR Temperature (active:2).
+11-17 10:14:25.046  1160  1160 D AOC     : A3:MSG: usf_sensor.cc, 1573: USF: Received start sampling request for LSM6DSR Gyroscope (active:1).
+11-17 10:14:25.047  1160  1160 D AOC     : A3:MSG: lsm6dsr_device.cc, 763: USF: Lsm6dsrDevice: Sensor 1: Enabled 1, odr_index 5.
+11-17 10:14:25.048  1160  1160 D AOC     : A3:MSG: lsm6dsr_fifo.cc, 750: USF: Lsm6dsrFifo: ODR: XL/G/T/TS: 52/208/13/26 WM: 5 Intr: 60.
+11-17 10:14:25.049  1160  1160 D AOC     : A3:MSG: lsm6dsr_device.cc, 671: USF: Lsm6dsrDevice: Fifo was disabled for 1037109ns.
+11-17 10:14:25.051  1160  1160 D AOC     : A3:MSG: usf_sensor.cc, 1573: USF: Received start sampling request for MMC56X3X Magnetometer (active:2).
+11-17 10:14:25.051  1160  1160 D AOC     : A3:MSG: mmc56x3x_device.cc, 409: USF: MMC56X3X0: mmc56x3x_enable_measure odr = 100.
+11-17 10:14:25.053  1160  1160 D AOC     : A3:MSG: usf_sensor.cc, 1573: USF: Received start sampling request for LSM6DSR Accelerometer (active:3).
+11-17 10:14:25.054  1160  1160 D AOC     : A3:MSG: usf_sensor.cc, 1573: USF: Received start sampling request for LSM6DSR Temperature (active:4).
+11-17 10:14:25.055  1160  1160 D AOC     : A3:MSG: lsm6dsr_device.cc, 763: USF: Lsm6dsrDevice: Sensor 2: Enabled 1, odr_index 1.
+11-17 10:14:25.055  1160  1160 D AOC     : A3:MSG: lsm6dsr_fifo.cc, 750: USF: Lsm6dsrFifo: ODR: XL/G/T/TS: 52/208/13/26 WM: 5 Intr: 60.
+11-17 10:14:25.055  1160  1160 D AOC     : A3:MSG: lsm6dsr_device.cc, 671: USF: Lsm6dsrDevice: Fifo was disabled for 278808ns.
+11-17 10:14:25.227   884   896 I CHRE    : @ 245568.374: [ImuCal] [GYRO_RPS] (s0, c0) Offset | Temp [C] | Quality: 0.000025, 0.000015, 0.000214 | 27.704685 | 4
+11-17 10:14:25.227   884   896 I CHRE    : @ 245568.374: [ImuCal] [GYRO_RPS] (s0) Temp Sensitivity: 0.000085, -.000099, -.000016
+11-17 10:14:25.227   884   896 I CHRE    : @ 245568.374: [ImuCal] [GYRO_RPS] (s0) Temp Intercept: -.002415, 0.002946, 0.000581
+11-17 10:14:25.314  1160  1160 D AOC     : A3:MSG: vsc_controller.cc, 532: VSC: [Device Pickup Sensor] requestSensorEvents: sensor 0x10001, period=20 latency=100m
+11-17 10:14:25.314  1160  1160 D AOC     : A3:MSG: usf_sensor.cc, 1573: USF: Received start sampling request for LSM6DSR Accelerometer (active:4).
+11-17 10:14:25.314  1160  1160 D AOC     : A3:MSG: lsm6dsr_device.cc, 763: USF: Lsm6dsrDevice: Sensor 0: Enabled 1, odr_index 3.
+11-17 10:14:25.314  1160  1160 D AOC     : A3:MSG: lsm6dsr_fifo.cc, 750: USF: Lsm6dsrFifo: ODR: XL/G/T/TS: 52/208/13/26 WM: 19 Intr: 16.
+11-17 10:14:25.315  1160  1160 D AOC     : A3:MSG: lsm6dsr_device.cc, 671: USF: Lsm6dsrDevice: Fifo was disabled for 348145ns.
+11-17 10:14:26.894  1160  1160 D AOC     : A3:MSG: lsm6dsr_device.cc, 763: USF: Lsm6dsrDevice: Sensor 4: Enabled 0, odr_index 0.
+11-17 10:14:26.895  1160  1160 D AOC     : A3:MSG: lsm6dsr_fifo.cc, 750: USF: Lsm6dsrFifo: ODR: XL/G/T/TS: 52/208/13/26 WM: 19 Intr: 16.
+11-17 10:14:26.895  1160  1160 D AOC     : A3:MSG: lsm6dsr_device.cc, 671: USF: Lsm6dsrDevice: Fifo was disabled for 436523ns.
+11-17 10:14:26.895  1160  1160 D AOC     : A3:MSG: usf_sensor.cc, 1581: USF: Received stop sampling request for LSM6DSR Stationary Detect (active:-1).
+11-17 10:14:26.896  1160  1160 D AOC     : A3:MSG: usf_sensor.cc, 2037: USF: Sampling configuration 5972 not found.
+11-17 10:14:26.896  1160  1160 D AOC     : A3:MSG: usf_sensor_client.cc, 161: USF: Received kErrNotFound when disabling one shot sensor.
+11-17 10:14:26.896  1160  1160 D AOC     : A3:MSG: usf_sensor.cc, 1573: USF: Received start sampling request for LSM6DSR Motion Detect (active:1).
+11-17 10:14:26.896  1160  1160 D AOC     : A3:MSG: lsm6dsr_device.cc, 763: USF: Lsm6dsrDevice: Sensor 3: Enabled 1, odr_index 1.
+11-17 10:14:26.898  1160  1160 D AOC     : A3:MSG: lsm6dsr_fifo.cc, 750: USF: Lsm6dsrFifo: ODR: XL/G/T/TS: 52/208/13/26 WM: 19 Intr: 16.
+11-17 10:14:26.899  1160  1160 D AOC     : A3:MSG: lsm6dsr_device.cc, 671: USF: Lsm6dsrDevice: Fifo was disabled for 373535ns.
+11-17 10:14:26.900  1160  1160 D AOC     : A3:MSG: motion_state_sensor.cc, 327: USF: MoSt: MotionDetect sampling started with sampling ID 5979.
+11-17 10:14:26.900  1160  1160 D AOC     : A3:MSG: usf_sensor.cc, 1573: USF: Received start sampling request for LSM6DSR Motion Detect (active:2).
+11-17 10:14:26.900  1160  1160 D AOC     : A3:MSG: usf_sensor.cc, 1581: USF: Received stop sampling request for LSM6DSR FreeFall Detect (active:0).
+11-17 10:14:26.900  1160  1160 D AOC     : A3:MSG: lsm6dsr_device.cc, 763: USF: Lsm6dsrDevice: Sensor 5: Enabled 0, odr_index 0.
+11-17 10:14:26.900  1160  1160 D AOC     : A3:MSG: lsm6dsr_fifo.cc, 750: USF: Lsm6dsrFifo: ODR: XL/G/T/TS: 52/208/13/26 WM: 19 Intr: 16.
+11-17 10:14:26.901  1160  1160 D AOC     : A3:MSG: lsm6dsr_device.cc, 671: USF: Lsm6dsrDevice: Fifo was disabled for 329590ns.
+11-17 10:14:26.901  1160  1160 D AOC     : A3:MSG: usf_sensor.cc, 1581: USF: Received stop sampling request for LSM6DSR Stationary Detect (active:-1).
+11-17 10:14:26.901  1160  1160 D AOC     : A3:MSG: usf_sensor.cc, 2037: USF: Sampling configuration 5977 not found.
+11-17 10:14:26.901  1160  1160 D AOC     : A3:MSG: usf_sensor_client.cc, 145: USF: Received kErrNotFound when disabling one shot sensor.
+11-17 10:14:27.092  1160  1160 D AOC     : A3:MSG: usf_sensor.cc, 1573: USF: Received start sampling request for LSM6DSR Gyroscope (active:2).
+11-17 10:14:27.093  1160  1160 D AOC     : A3:MSG: lsm6dsr_device.cc, 763: USF: Lsm6dsrDevice: Sensor 1: Enabled 0, odr_index 0.
+11-17 10:14:27.093  1160  1160 D AOC     : A3:MSG: lsm6dsr_fifo.cc, 750: USF: Lsm6dsrFifo: ODR: XL/G/T/TS: 52/0/13/6 WM: 3 Intr: 24.
+11-17 10:14:27.093  1160  1160 D AOC     : A3:MSG: lsm6dsr_device.cc, 671: USF: Lsm6dsrDevice: Fifo was disabled for 323731ns.
+11-17 10:14:27.094  1160  1160 D AOC     : A3:MSG: usf_sensor.cc, 1573: USF: Received start sampling request for MMC56X3X Magnetometer (active:2).
+11-17 10:14:27.094  1160  1160 D AOC     : A3:MSG: mmc56x3x_device.cc, 409: USF: MMC56X3X0: mmc56x3x_enable_measure odr = 10.
+11-17 10:14:27.096  1160  1160 D AOC     : A3:MSG: usf_sensor.cc, 1573: USF: Received start sampling request for LSM6DSR Accelerometer (active:4).
+11-17 10:14:27.096  1160  1160 D AOC     : A3:MSG: usf_sensor.cc, 1573: USF: Received start sampling request for LSM6DSR Gyroscope (active:1).
+11-17 10:14:27.096  1160  1160 D AOC     : A3:MSG: usf_sensor.cc, 1573: USF: Received start sampling request for LSM6DSR Temperature (active:3).
+11-17 10:14:27.097  1160  1160 D AOC     : A3:MSG: lsm6dsr_device.cc, 763: USF: Lsm6dsrDevice: Sensor 2: Enabled 1, odr_index 1.
+11-17 10:14:27.097  1160  1160 D AOC     : A3:MSG: lsm6dsr_fifo.cc, 750: USF: Lsm6dsrFifo: ODR: XL/G/T/TS: 52/0/13/6 WM: 6 Intr: 12.
+11-17 10:14:27.097  1160  1160 D AOC     : A3:MSG: lsm6dsr_device.cc, 671: USF: Lsm6dsrDevice: Fifo was disabled for 222412ns.
+11-17 10:14:27.098  1160  1160 D AOC     : A3:MSG: usf_sensor.cc, 1573: USF: Received start sampling request for MMC56X3X Magnetometer (active:2).
+11-17 10:14:27.098  1160  1160 D AOC     : A3:MSG: mmc56x3x_device.cc, 409: USF: MMC56X3X0: mmc56x3x_enable_measure odr = 10.
+11-17 10:14:30.828  1160  1160 D AOC     : A3:MSG: vsc_controller.cc, 532: VSC: [Step Counter] requestSensorEvents: sensor 0x20002, period=18446744073709 latency=
+11-17 10:14:30.829  1160  1160 D AOC     : A3:MSG: usf_sensor.cc, 1573: USF: Received start sampling request for LSM6DSR Motion Detect (active:3).
+11-17 10:14:30.830  1160  1160 D AOC     : A3:MSG: vsc_controller.cc, 550: VSC: [Step Counter] stopSensorEvents: sensor 0x10001
+11-17 10:14:30.830  1160  1160 D AOC     : A3:MSG: vsc_controller.cc, 550: VSC: [Device Pickup Sensor] stopSensorEvents: sensor 0x10001
+11-17 10:14:30.832  1160  1160 D AOC     : A3:MSG: usf_sensor.cc, 1581: USF: Received stop sampling request for LSM6DSR Accelerometer (active:1).
+11-17 10:14:30.832  1160  1160 D AOC     : A3:MSG: lsm6dsr_device.cc, 763: USF: Lsm6dsrDevice: Sensor 0: Enabled 1, odr_index 3.
+11-17 10:14:30.833  1160  1160 D AOC     : A3:MSG: lsm6dsr_fifo.cc, 750: USF: Lsm6dsrFifo: ODR: XL/G/T/TS: 52/0/13/6 WM: 71 Intr: 1.
+11-17 10:14:30.834  1160  1160 D AOC     : A3:MSG: lsm6dsr_device.cc, 671: USF: Lsm6dsrDevice: Fifo was disabled for 730225ns.
+11-17 10:14:30.835  1160  1160 D AOC     : A3:MSG: vsc_controller.cc, 532: VSC: [Device Pickup Sensor] requestSensorEvents: sensor 0x20002, period=18446744073709 
+11-17 10:14:31.290  2911  2930 W pixelstats-vendor: Thread Pool max thread count is 0. Cannot cache binder as linkToDeath cannot be implemented. serviceName: android.frameworks.stats.IStats/default
+11-17 10:14:39.496  1696  1699 I pixel-thermal: VIRTUAL-USB-UI:0 raw data: USB2-MINUS-CHG:-1113 VIRTUAL-USB-UI:0 charger_skin_therm:31394 usb_pwr_therm2:30281 
+11-17 10:14:39.503  1696  1699 I pixel-thermal: VIRTUAL-USB-THROTTLING:0 raw data: USB2-MINUS-CHG:-1113 VIRTUAL-USB-THROTTLING:0 usb_pwr_therm2:30281 
+11-17 10:14:39.503  1696  1699 I pixel-thermal: Power rails total power: 139.34 mW for 60059 ms
+11-17 10:14:39.503  1696  1699 I pixel-thermal: Power rails [S1M_VDD_MIF: 15.42 mW] [S5M_VDD_INT: 25.70 mW] [S4M_VDD_CPUCL0: 11.51 mW] [S3M_VDD_CPUCL1: 8.76 mW] [S2M_VDD_CPUCL2: 0.43 mW] [L15M_VDD_SLC_M: 8.58 mW] 
+11-17 10:14:39.503  1696  1699 I pixel-thermal: Power rails [VSYS_PWR_DISPLAY: 28.12 mW] [L2S_VDD_AOC_RET: 5.38 mW] [S10M_VDD_TPU: 0.00 mW] [L8S_UFS_VCCQ: 4.34 mW] [S9S_VDD_AOC: 7.66 mW] [S4S_VDD2H_MEM: 6.13 mW] 
+11-17 10:14:39.503  1696  1699 I pixel-thermal: Power rails [S2S_VDD_G3D: 2.46 mW] [S5S_VDDQ_MEM: 3.74 mW] [S10S_VDD2L: 10.49 mW] [L9S_GNSS_CORE: 0.61 mW] 
+11-17 10:14:50.389  1696  1699 I pixel-thermal: neutral_therm:30.481 raw data: neutral_therm:30481 
+11-17 10:14:54.464  1160  1160 D AOC     : A3:MSG: usf_sensor.cc, 1581: USF: Received stop sampling request for LSM6DSR Accelerometer (active:0).
+11-17 10:14:54.465  1160  1160 D AOC     : A3:MSG: lsm6dsr_device.cc, 763: USF: Lsm6dsrDevice: Sensor 0: Enabled 0, odr_index 0.
+11-17 10:14:54.465  1160  1160 D AOC     : A3:MSG: lsm6dsr_device.cc, 249: USF: Lsm6dsrDevice: Config sampling too slow. Took 545898ns.
+11-17 10:14:54.467  1160  1160 D AOC     : A3:MSG: usf_sensor.cc, 1573: USF: Received start sampling request for LSM6DSR Temperature (active:2).
+11-17 10:14:54.467  1160  1160 D AOC     : A3:MSG: lsm6dsr_device.cc, 763: USF: Lsm6dsrDevice: Sensor 2: Enabled 0, odr_index 0.
+11-17 10:14:54.471   884   896 I CHRE    : @ 245597.613: [AR] ON => IDLE
+11-17 10:14:55.058  1041  1045 I WPKTRT  : process_address_event: 2601:500:8985:4c10:9cf9:f2ff:fe1b:326d added to wlan0
+11-17 10:14:55.058  1041  1045 I WPKTRT  : process_address_event: 2601:500:8985:4c10:2910:5c53:4a9a:9fc4 added to wlan0
+11-17 10:14:55.059  2911  2930 W pixelstats-vendor: Thread Pool max thread count is 0. Cannot cache binder as linkToDeath cannot be implemented. serviceName: android.frameworks.stats.IStats/default
+11-17 10:14:55.076  2096  2619 D ApfFilter: (wlan0): Adding RA fe80::1e9e:ccff:fe09:57eb -> ff02::1 180s 2601:500:8985:4c10::/64 202620s/202620s DNS 180s 2001:558:feed::1 2001:558:feed::2 RIO 180s ::/0 
+11-17 10:14:55.088   947  3235 E WifiHAL : Setting APF program, halHandle = 0xb400cfab9953c900
+11-17 10:14:55.089   947  3235 E WifiHAL : Set apf filter for iface = wlan0
+11-17 10:14:55.089   947  3235 I WifiHAL : createRequest: APF set program request
+11-17 10:14:55.089   947  3235 I WifiHAL : mProgramLen : 682
+11-17 10:15:10.214  2911  2930 W pixelstats-vendor: Thread Pool max thread count is 0. Cannot cache binder as linkToDeath cannot be implemented. serviceName: android.frameworks.stats.IStats/default

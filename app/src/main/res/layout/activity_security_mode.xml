@@ -77,23 +77,28 @@
             android:orientation="vertical"
             android:padding="24dp">
 
-            <!-- Connection Method -->
+            <!-- App Security Section -->
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="Connection Method"
+                android:text="App Security"
                 android:textSize="13sp"
                 android:textColor="@color/text_gray"
+                android:layout_marginTop="8dp"
                 android:layout_marginBottom="8dp" />
 
+            <!-- Auto-Lock Timer -->
             <LinearLayout
+                android:id="@+id/autoLockItem"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:orientation="horizontal"
                 android:background="@drawable/settings_item_bg"
                 android:padding="16dp"
                 android:layout_marginBottom="16dp"
-                android:gravity="center_vertical">
+                android:gravity="center_vertical"
+                android:clickable="true"
+                android:focusable="true">
 
                 <LinearLayout
                     android:layout_width="0dp"
@@ -104,98 +109,27 @@
                     <TextView
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="Direct Ping-Pong"
+                        android:text="Auto-Lock Timer"
                         android:textSize="16sp"
                         android:textStyle="bold"
                         android:textColor="@color/text_white" />
 
                     <TextView
+                        android:id="@+id/autoLockStatus"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="Peer-to-peer encrypted messaging"
+                        android:text="5 minutes"
                         android:textSize="13sp"
                         android:textColor="@color/text_gray" />
 
                 </LinearLayout>
 
-                <!-- Toggle Switch -->
-                <View
-                    android:id="@+id/toggleSwitch"
-                    android:layout_width="50dp"
-                    android:layout_height="28dp"
-                    android:background="@drawable/toggle_switch_active" />
-
-            </LinearLayout>
-
-            <!-- Tor Connection -->
-            <LinearLayout
-                android:id="@+id/torConnectionItem"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="horizontal"
-                android:background="@drawable/settings_item_bg"
-                android:padding="16dp"
-                android:layout_marginBottom="16dp"
-                android:gravity="center_vertical">
-
-                <LinearLayout
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:orientation="vertical">
-
-                    <TextView
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="Tor Connection"
-                        android:textSize="16sp"
-                        android:textStyle="bold"
-                        android:textColor="@color/text_white" />
-
-                    <TextView
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="Route traffic through Tor network"
-                        android:textSize="13sp"
-                        android:textColor="@color/text_gray" />
-
-                </LinearLayout>
-
-                <!-- Toggle Switch -->
-                <androidx.appcompat.widget.SwitchCompat
-                    android:id="@+id/torToggle"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:checked="false"
-                    app:thumbTint="@color/text_white"
-                    app:trackTint="@color/text_gray" />
-
-            </LinearLayout>
-
-            <!-- Info Box -->
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="vertical"
-                android:background="@drawable/info_box_bg"
-                android:padding="16dp">
-
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="About Direct Ping-Pong"
-                    android:textSize="16sp"
-                    android:textStyle="bold"
-                    android:textColor="@color/text_white"
-                    android:layout_marginBottom="8dp" />
-
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="Messages are sent directly between devices without passing through any server. Maximum privacy with no metadata collection."
-                    android:textSize="14sp"
-                    android:textColor="@color/text_gray"
-                    android:lineSpacingMultiplier="1.4" />
+                    android:text="›"
+                    android:textSize="24sp"
+                    android:textColor="@color/text_gray" />
 
             </LinearLayout>
 

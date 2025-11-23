@@ -61,6 +61,7 @@
 
     <!-- Content -->
     <ScrollView
+        android:id="@+id/addFriendScrollView"
         android:layout_width="match_parent"
         android:layout_height="0dp"
         android:padding="24dp"
@@ -87,6 +88,7 @@
                 android:layout_height="wrap_content"
                 android:background="@drawable/message_input_bg"
                 android:hint="bafkrei..."
+                android:inputType="textPassword"
                 android:textColorHint="@color/text_gray"
                 android:textColor="@color/text_white"
                 android:fontFamily="monospace"
@@ -155,7 +157,34 @@
                 android:text="To add a friend you need their Contact CID and PIN."
                 android:textSize="14sp"
                 android:textColor="@color/text_gray"
-                android:lineSpacingMultiplier="1.2" />
+                android:lineSpacingMultiplier="1.2"
+                android:layout_marginBottom="24dp" />
+
+            <!-- Friend Requests Section -->
+            <LinearLayout
+                android:id="@+id/friendRequestsContainer"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:visibility="gone">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Pending Friend Requests"
+                    android:textSize="18sp"
+                    android:textStyle="bold"
+                    android:textColor="@color/text_white"
+                    android:layout_marginBottom="12dp" />
+
+                <!-- Friend requests will be added here dynamically -->
+                <LinearLayout
+                    android:id="@+id/friendRequestsList"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical" />
+
+            </LinearLayout>
 
         </LinearLayout>
 

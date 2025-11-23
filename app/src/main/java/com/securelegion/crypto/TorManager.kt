@@ -89,35 +89,36 @@ class TorManager(private val context: Context) {
                     false
                 }
 
+                // Create Tor data directory
+                torDataDir = File(context.filesDir, "tor")
+                torDataDir?.mkdirs()
+
+                // Get the torrc file location that TorService expects
+                val torrc = TorService.getTorrc(context)
+                torrc.parentFile?.mkdirs()
+
+                // Read bridge settings
+                val bridgeConfig = getBridgeConfiguration()
+
+                // ALWAYS write torrc configuration (even if Tor is running)
+                // This ensures bridge configuration changes are applied on restart
+                torrc.writeText("""
+                    DataDirectory ${torDataDir!!.absolutePath}
+                    SocksPort 127.0.0.1:9050
+                    ControlPort 127.0.0.1:9051
+                    CookieAuthentication 1
+                    ClientOnly 1
+                    AvoidDiskWrites 1
+                    $bridgeConfig
+                """.trimIndent())
+
+                Log.d(TAG, "Torrc written to: ${torrc.absolutePath}")
+                if (bridgeConfig.isNotEmpty()) {
+                    Log.i(TAG, "Bridge configuration applied: ${bridgeConfig.lines().first()}")
+                }
+
                 if (!alreadyRunning) {
                     Log.d(TAG, "Starting TorService...")
-
-                    // Create Tor data directory
-                    torDataDir = File(context.filesDir, "tor")
-                    torDataDir?.mkdirs()
-
-                    // Get the torrc file location that TorService expects
-                    val torrc = TorService.getTorrc(context)
-                    torrc.parentFile?.mkdirs()
-
-                    // Read bridge settings
-                    val bridgeConfig = getBridgeConfiguration()
-
-                    // Write our configuration to torrc with bridge support
-                    torrc.writeText("""
-                        DataDirectory ${torDataDir!!.absolutePath}
-                        SocksPort 127.0.0.1:9050
-                        ControlPort 127.0.0.1:9051
-                        CookieAuthentication 1
-                        ClientOnly 1
-                        AvoidDiskWrites 1
-                        $bridgeConfig
-                    """.trimIndent())
-
-                    Log.d(TAG, "Torrc written to: ${torrc.absolutePath}")
-                    if (bridgeConfig.isNotEmpty()) {
-                        Log.i(TAG, "Bridge configuration applied")
-                    }
 
                     // Start TorService as an Android Service
                     val intent = Intent(context, TorService::class.java)
@@ -126,7 +127,7 @@ class TorManager(private val context: Context) {
 
                     Log.d(TAG, "TorService started, waiting for control port to be ready...")
                 } else {
-                    Log.d(TAG, "Tor control port already accessible, skipping TorService start")
+                    Log.d(TAG, "Tor control port already accessible, torrc updated")
                 }
 
                 // Wait for Tor control port to be ready (poll until we can connect)

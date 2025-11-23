@@ -307,6 +307,19 @@ object RustBridge {
     ): Boolean
 
     /**
+     * Send a friend request notification to a contact (fire-and-forget)
+     * Friend requests contain minimal info (username + IPFS CID) for privacy
+     * Recipient must enter PIN to download full contact card from IPFS
+     * @param recipientOnion Recipient's .onion address
+     * @param encryptedFriendRequest Pre-encrypted friend request data (with wire type byte 0x07)
+     * @return True if friend request sent successfully
+     */
+    external fun sendFriendRequest(
+        recipientOnion: String,
+        encryptedFriendRequest: ByteArray
+    ): Boolean
+
+    /**
      * Poll for an incoming tap (non-blocking)
      * Wire format from sender: [Sender X25519 Public Key - 32 bytes][Encrypted Tap]
      * @return Tap wire message bytes, or null if no tap available
@@ -334,6 +347,47 @@ object RustBridge {
      * @return True if decryption and storage succeeded
      */
     external fun decryptAndStorePongFromListener(pongWire: ByteArray): Boolean
+
+    // ==================== DELIVERY ACK (CONFIRMATION) ====================
+
+    /**
+     * Send a delivery ACK (confirmation) to recipient
+     * @param itemId The ping_id or message_id being acknowledged
+     * @param ackType "PING_ACK" or "MESSAGE_ACK"
+     * @param recipientEd25519Pubkey Recipient's Ed25519 signing public key (32 bytes)
+     * @param recipientX25519Pubkey Recipient's X25519 encryption public key (32 bytes)
+     * @param recipientOnion Recipient's .onion address
+     * @return True if ACK was sent successfully
+     */
+    external fun sendDeliveryAck(
+        itemId: String,
+        ackType: String,
+        recipientEd25519Pubkey: ByteArray,
+        recipientX25519Pubkey: ByteArray,
+        recipientOnion: String
+    ): Boolean
+
+    /**
+     * Start ACK listener on port 9153
+     * @param port Port number
+     * @return True if listener started successfully
+     */
+    external fun startAckListener(port: Int): Boolean
+
+    /**
+     * Poll for an incoming ACK (non-blocking)
+     * Wire format from sender: [Sender X25519 Public Key - 32 bytes][Encrypted ACK]
+     * @return ACK wire message bytes, or null if no ACK available
+     */
+    external fun pollIncomingAck(): ByteArray?
+
+    /**
+     * Decrypt incoming ACK from listener and store in GLOBAL_ACK_SESSIONS
+     * Wire format: [Sender X25519 Public Key - 32 bytes][Encrypted ACK]
+     * @param ackWire The encrypted ACK wire message from pollIncomingAck
+     * @return The item_id (ping_id or message_id) that was acknowledged, or null if failed
+     */
+    external fun decryptAndStoreAckFromListener(ackWire: ByteArray): String?
 
     // ==================== HELPER FUNCTIONS ====================
 

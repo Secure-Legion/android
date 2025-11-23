@@ -9,14 +9,14 @@ import android.view.View
 import android.widget.Button
 import android.widget.EditText
 import android.widget.TextView
-import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
 import com.securelegion.crypto.KeyManager
 import com.securelegion.services.SolanaService
+import com.securelegion.utils.ThemedToast
 import kotlinx.coroutines.launch
 
-class SendActivity : AppCompatActivity() {
+class SendActivity : BaseActivity() {
     private var currentWalletId: String = "main"
     private var currentWalletName: String = "Wallet 1"
     private var currentWalletAddress: String = ""
@@ -63,12 +63,12 @@ class SendActivity : AppCompatActivity() {
             val amount = findViewById<EditText>(R.id.amountInput).text.toString()
 
             if (recipientAddress.isEmpty()) {
-                Toast.makeText(this, "Please enter recipient address", Toast.LENGTH_SHORT).show()
+                ThemedToast.show(this, "Please enter recipient address")
                 return@setOnClickListener
             }
 
             if (amount.isEmpty() || amount.toDoubleOrNull() == null || amount.toDouble() <= 0) {
-                Toast.makeText(this, "Please enter a valid amount", Toast.LENGTH_SHORT).show()
+                ThemedToast.show(this, "Please enter a valid amount")
                 return@setOnClickListener
             }
 
@@ -94,11 +94,10 @@ class SendActivity : AppCompatActivity() {
                     if (result.isSuccess) {
                         val txSignature = result.getOrNull()!!
                         Log.i("SendActivity", "Transaction successful: $txSignature")
-                        Toast.makeText(
+                        ThemedToast.showLong(
                             this@SendActivity,
-                            "Transaction sent!\nSignature: ${txSignature.take(8)}...",
-                            Toast.LENGTH_LONG
-                        ).show()
+                            "Transaction sent!\nSignature: ${txSignature.take(8)}..."
+                        )
 
                         // Clear inputs
                         findViewById<EditText>(R.id.recipientAddressInput).setText("")
@@ -107,21 +106,19 @@ class SendActivity : AppCompatActivity() {
                     } else {
                         val error = result.exceptionOrNull()
                         Log.e("SendActivity", "Transaction failed", error)
-                        Toast.makeText(
+                        ThemedToast.showLong(
                             this@SendActivity,
-                            "Transaction failed: ${error?.message}",
-                            Toast.LENGTH_LONG
-                        ).show()
+                            "Transaction failed: ${error?.message}"
+                        )
                         sendButton.isEnabled = true
                     }
 
                 } catch (e: Exception) {
                     Log.e("SendActivity", "Failed to send transaction", e)
-                    Toast.makeText(
+                    ThemedToast.showLong(
                         this@SendActivity,
-                        "Error: ${e.message}",
-                        Toast.LENGTH_LONG
-                    ).show()
+                        "Error: ${e.message}"
+                    )
                     sendButton.isEnabled = true
                 }
             }

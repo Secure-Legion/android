@@ -5,8 +5,8 @@ import android.os.Bundle
 import android.view.View
 import android.widget.EditText
 import android.widget.TextView
-import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
+import com.securelegion.utils.ThemedToast
 
 class RestoreAccountActivity : AppCompatActivity() {
 
@@ -43,28 +43,28 @@ class RestoreAccountActivity : AppCompatActivity() {
             val confirmPassword = confirmPasswordInput.text.toString()
 
             if (privateKey.isEmpty()) {
-                Toast.makeText(this, "Please enter your private key", Toast.LENGTH_SHORT).show()
+                ThemedToast.show(this, "Please enter your private key")
                 return@setOnClickListener
             }
 
             if (newPassword.isEmpty()) {
-                Toast.makeText(this, "Please enter a new password", Toast.LENGTH_SHORT).show()
+                ThemedToast.show(this, "Please enter a new password")
                 return@setOnClickListener
             }
 
             if (newPassword != confirmPassword) {
-                Toast.makeText(this, "Passwords do not match", Toast.LENGTH_SHORT).show()
+                ThemedToast.show(this, "Passwords do not match")
                 return@setOnClickListener
             }
 
             if (newPassword.length < 8) {
-                Toast.makeText(this, "Password must be at least 8 characters", Toast.LENGTH_SHORT).show()
+                ThemedToast.show(this, "Password must be at least 8 characters")
                 return@setOnClickListener
             }
 
             // Validate private key format (basic validation)
             if (privateKey.length < 32) {
-                Toast.makeText(this, "Invalid private key format", Toast.LENGTH_SHORT).show()
+                ThemedToast.show(this, "Invalid private key format")
                 return@setOnClickListener
             }
 
@@ -76,7 +76,7 @@ class RestoreAccountActivity : AppCompatActivity() {
         // TODO: Implement actual account restoration with Solana SDK
         // For now, simulate success
 
-        Toast.makeText(this, "Account restored successfully!", Toast.LENGTH_SHORT).show()
+        ThemedToast.show(this, "Account restored successfully!")
 
         // Clear inputs
         privateKeyInput.text.clear()

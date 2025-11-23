@@ -565,13 +565,11 @@ class MessageService(private val context: Context) {
                 withContext(kotlinx.coroutines.NonCancellable) {
                     val updatedMessage = message.copy(pingId = sentPingId)
                     database.messageDao().updateMessage(updatedMessage)
-                    Log.i(TAG, "✓ Database updated with Ping ID: $sentPingId")
+                    Log.i(TAG, "✓ Database updated with Ping ID: $sentPingId (waiting for PING_ACK)")
                 }
-            } else {
-                Log.d(TAG, "Ping IDs match, no update needed")
             }
 
-            Log.i(TAG, "✓ Ping sent successfully: $sentPingId")
+            Log.i(TAG, "✓ Ping sent successfully: $sentPingId (waiting for PING_ACK from receiver)")
             Result.success(sentPingId)
 
         } catch (e: Exception) {
@@ -605,6 +603,12 @@ class MessageService(private val context: Context) {
 
             for (message in pendingMessages) {
                 val pingId = message.pingId ?: continue
+
+                // Skip if message already delivered to receiver (ACK received)
+                if (message.messageDelivered) {
+                    Log.d(TAG, "Message ${message.messageId} already delivered - skipping (no ghost message)")
+                    continue
+                }
 
                 Log.d(TAG, "Checking for Pong with Ping ID: $pingId (message: ${message.messageId})")
 

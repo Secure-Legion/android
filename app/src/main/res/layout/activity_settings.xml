@@ -173,6 +173,51 @@
 
             </LinearLayout>
 
+            <!-- Security Mode Item -->
+            <LinearLayout
+                android:id="@+id/securityModeItem"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:background="@drawable/settings_item_bg"
+                android:padding="16dp"
+                android:layout_marginBottom="24dp"
+                android:gravity="center_vertical"
+                android:clickable="true"
+                android:focusable="true">
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:orientation="vertical">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Advanced Security"
+                        android:textSize="16sp"
+                        android:textStyle="bold"
+                        android:textColor="@color/text_white" />
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Auto-lock timer, connection settings"
+                        android:textSize="13sp"
+                        android:textColor="@color/text_gray" />
+
+                </LinearLayout>
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="›"
+                    android:textSize="24sp"
+                    android:textColor="@color/text_gray" />
+
+            </LinearLayout>
+
             <!-- Account Section -->
             <TextView
                 android:layout_width="wrap_content"
@@ -236,7 +281,7 @@
                 android:orientation="horizontal"
                 android:background="@drawable/settings_item_bg"
                 android:padding="16dp"
-                android:layout_marginBottom="24dp"
+                android:layout_marginBottom="8dp"
                 android:gravity="center_vertical"
                 android:clickable="true"
                 android:focusable="true">
@@ -270,6 +315,52 @@
                     android:text="›"
                     android:textSize="24sp"
                     android:textColor="@color/text_gray" />
+
+            </LinearLayout>
+
+            <!-- Biometric Unlock Toggle Item -->
+            <LinearLayout
+                android:id="@+id/biometricItem"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:background="@drawable/settings_item_bg"
+                android:padding="16dp"
+                android:layout_marginBottom="24dp"
+                android:gravity="center_vertical"
+                android:visibility="gone">
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:orientation="vertical">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Biometric Unlock"
+                        android:textSize="16sp"
+                        android:textStyle="bold"
+                        android:textColor="@color/text_white" />
+
+                    <TextView
+                        android:id="@+id/biometricSubtext"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Unlock with fingerprint/face"
+                        android:textSize="13sp"
+                        android:textColor="@color/text_gray" />
+
+                </LinearLayout>
+
+                <androidx.appcompat.widget.SwitchCompat
+                    android:id="@+id/biometricSwitch"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:checked="false"
+                    app:thumbTint="@color/text_white"
+                    app:trackTint="@color/text_gray" />
 
             </LinearLayout>
 

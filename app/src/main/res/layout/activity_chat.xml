@@ -4,8 +4,7 @@
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="#000000"
-    android:fitsSystemWindows="true">
+    android:background="#000000">
 
     <!-- Header -->
     <LinearLayout
@@ -14,7 +13,6 @@
         android:layout_height="wrap_content"
         android:orientation="horizontal"
         android:background="@drawable/header_bg"
-        android:fitsSystemWindows="true"
         android:paddingStart="16dp"
         android:paddingEnd="16dp"
         android:paddingBottom="12dp"

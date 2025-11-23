@@ -9,9 +9,11 @@ import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 import com.securelegion.database.dao.ContactDao
 import com.securelegion.database.dao.MessageDao
+import com.securelegion.database.dao.ReceivedIdDao
 import com.securelegion.database.dao.WalletDao
 import com.securelegion.database.entities.Contact
 import com.securelegion.database.entities.Message
+import com.securelegion.database.entities.ReceivedId
 import com.securelegion.database.entities.Wallet
 import net.sqlcipher.database.SQLiteDatabase
 import net.sqlcipher.database.SupportFactory
@@ -29,8 +31,8 @@ import net.sqlcipher.database.SupportFactory
  * Database file location: /data/data/com.securelegion/databases/secure_legion.db
  */
 @Database(
-    entities = [Contact::class, Message::class, Wallet::class],
-    version = 8,
+    entities = [Contact::class, Message::class, Wallet::class, ReceivedId::class],
+    version = 11,
     exportSchema = false
 )
 abstract class SecureLegionDatabase : RoomDatabase() {
@@ -38,6 +40,7 @@ abstract class SecureLegionDatabase : RoomDatabase() {
     abstract fun contactDao(): ContactDao
     abstract fun messageDao(): MessageDao
     abstract fun walletDao(): WalletDao
+    abstract fun receivedIdDao(): ReceivedIdDao
 
     companion object {
         private const val TAG = "SecureLegionDatabase"
@@ -153,6 +156,52 @@ abstract class SecureLegionDatabase : RoomDatabase() {
         }
 
         /**
+         * Migration from version 8 to 9: Add pingDelivered field for ACK tracking
+         */
+        private val MIGRATION_8_9 = object : Migration(8, 9) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                Log.i(TAG, "Migrating database from version 8 to 9")
+                // Add pingDelivered column with default value false
+                database.execSQL("ALTER TABLE messages ADD COLUMN pingDelivered INTEGER NOT NULL DEFAULT 0")
+                Log.i(TAG, "Migration completed: Added pingDelivered column for ACK tracking")
+            }
+        }
+
+        /**
+         * Migration from version 9 to 10: Add messageDelivered field for ACK tracking
+         */
+        private val MIGRATION_9_10 = object : Migration(9, 10) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                Log.i(TAG, "Migrating database from version 9 to 10")
+                // Add messageDelivered column with default value false
+                database.execSQL("ALTER TABLE messages ADD COLUMN messageDelivered INTEGER NOT NULL DEFAULT 0")
+                Log.i(TAG, "Migration completed: Added messageDelivered column for ACK tracking")
+            }
+        }
+
+        /**
+         * Migration from version 10 to 11: Add received_ids table for deduplication
+         */
+        private val MIGRATION_10_11 = object : Migration(10, 11) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                Log.i(TAG, "Migrating database from version 10 to 11")
+                // Create received_ids table for tracking all received ping/pong/message IDs
+                database.execSQL("""
+                    CREATE TABLE IF NOT EXISTS received_ids (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        receivedId TEXT NOT NULL,
+                        idType TEXT NOT NULL,
+                        receivedTimestamp INTEGER NOT NULL,
+                        processed INTEGER NOT NULL DEFAULT 0
+                    )
+                """.trimIndent())
+                // Create unique index to prevent duplicate IDs
+                database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_received_ids_receivedId ON received_ids(receivedId)")
+                Log.i(TAG, "Migration completed: Added received_ids table for deduplication")
+            }
+        }
+
+        /**
          * Get database instance
          * @param context Application context
          * @param passphrase Encryption passphrase (should be derived from KeyManager)
@@ -207,7 +256,7 @@ abstract class SecureLegionDatabase : RoomDatabase() {
                     DATABASE_NAME
                 )
                     .openHelperFactory(factory)
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11)
                     .addCallback(object : RoomDatabase.Callback() {
                         override fun onCreate(db: SupportSQLiteDatabase) {
                             super.onCreate(db)
@@ -298,7 +347,7 @@ abstract class SecureLegionDatabase : RoomDatabase() {
                         DATABASE_NAME
                     )
                         .openHelperFactory(SupportFactory(passphrase))
-                        .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8)
+                        .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11)
                         .addCallback(object : RoomDatabase.Callback() {
                             override fun onCreate(db: SupportSQLiteDatabase) {
                                 super.onCreate(db)

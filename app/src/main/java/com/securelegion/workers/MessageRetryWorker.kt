@@ -133,6 +133,12 @@ class MessageRetryWorker(
             var retriedCount = 0
 
             for (message in pendingMessages) {
+                // Skip if Ping already delivered to receiver (lock icon showing on their device)
+                if (message.pingDelivered) {
+                    Log.d(TAG, "Ping already delivered for ${message.messageId} - skipping retry (no ghost lock)")
+                    continue
+                }
+
                 // Calculate next retry time using exponential backoff
                 val nextRetryTime = calculateNextRetryTime(message)
 

@@ -3,8 +3,8 @@ package com.securelegion
 import android.content.Intent
 import android.os.Bundle
 import android.view.View
-import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
+import com.securelegion.utils.ThemedToast
 
 class ManageTokensActivity : AppCompatActivity() {
 
@@ -25,7 +25,7 @@ class ManageTokensActivity : AppCompatActivity() {
         // Add token button
         findViewById<View>(R.id.addTokenButton).setOnClickListener {
             // TODO: Implement add custom token functionality
-            Toast.makeText(this, "Add Custom Token - Coming Soon", Toast.LENGTH_SHORT).show()
+            ThemedToast.show(this, "Add Custom Token - Coming Soon")
         }
     }
 

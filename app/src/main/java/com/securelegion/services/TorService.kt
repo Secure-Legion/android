@@ -20,13 +20,14 @@ import android.os.Looper
 import android.os.PowerManager
 import android.os.SystemClock
 import android.util.Log
-import android.widget.Toast
 import androidx.core.app.NotificationCompat
 import com.securelegion.ChatActivity
+import com.securelegion.LockActivity
 import com.securelegion.MainActivity
 import com.securelegion.R
 import com.securelegion.crypto.TorManager
 import com.securelegion.crypto.RustBridge
+import com.securelegion.utils.ThemedToast
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -51,6 +52,7 @@ class TorService : Service() {
     private var isPingPollerRunning = false
     private var isTapPollerRunning = false
     private var isPongPollerRunning = false
+    private var isAckPollerRunning = false
     private var isListenerRunning = false
 
     // Network monitoring
@@ -92,6 +94,7 @@ class TorService : Service() {
 
         const val ACTION_START_TOR = "com.securelegion.action.START_TOR"
         const val ACTION_STOP_TOR = "com.securelegion.action.STOP_TOR"
+        const val ACTION_NOTIFICATION_DELETED = "com.securelegion.action.NOTIFICATION_DELETED"
         const val ACTION_ACCEPT_MESSAGE = "com.securelegion.action.ACCEPT_MESSAGE"
         const val ACTION_DECLINE_MESSAGE = "com.securelegion.action.DECLINE_MESSAGE"
         const val EXTRA_PING_ID = "ping_id"
@@ -105,9 +108,28 @@ class TorService : Service() {
         @Volatile
         private var torConnected = false
 
+        @Volatile
+        private var listenersReady = false
+
         fun isRunning(): Boolean = running
 
         fun isTorConnected(): Boolean = torConnected
+
+        /**
+         * Check if all listeners and pollers are ready for messaging
+         * This means:
+         * - Hidden service listener started (port 8080)
+         * - Tap listener started (port 9151)
+         * - Pong listener started (port 9152)
+         * - All pollers running
+         */
+        fun areListenersReady(): Boolean = listenersReady
+
+        /**
+         * Check if messaging is fully ready (Tor connected + listeners ready)
+         * Call this from SplashActivity to ensure 100% messaging functionality
+         */
+        fun isMessagingReady(): Boolean = torConnected && listenersReady
 
         /**
          * Start the Tor service
@@ -174,6 +196,7 @@ class TorService : Service() {
         when (intent?.action) {
             ACTION_START_TOR -> startTorService()
             ACTION_STOP_TOR -> stopTorService()
+            ACTION_NOTIFICATION_DELETED -> handleNotificationDeleted()
             ACTION_ACCEPT_MESSAGE -> handleAcceptMessage(intent)
             ACTION_DECLINE_MESSAGE -> handleDeclineMessage(intent)
             "com.securelegion.action.REPORT_SOCKS_FAILURE" -> handleSocksFailure()
@@ -221,14 +244,14 @@ class TorService : Service() {
         val encryptedPong = RustBridge.respondToPing(pingId, true)
         if (encryptedPong == null) {
             Log.e(TAG, "Failed to create Pong response")
-            Toast.makeText(this, "Failed to accept message", Toast.LENGTH_SHORT).show()
+            ThemedToast.show(this, "Failed to accept message")
             return
         }
 
         Log.i(TAG, "Created encrypted Pong: ${encryptedPong.size} bytes")
 
         Log.i(TAG, "Sending Pong and waiting for incoming message...")
-        Toast.makeText(this, "Accepting message from $senderName...", Toast.LENGTH_SHORT).show()
+        ThemedToast.show(this, "Accepting message from $senderName...")
 
         // Send Pong back to sender and receive the message
         // sendPongBytes() returns the encrypted message after sending the Pong
@@ -240,7 +263,7 @@ class TorService : Service() {
             processReceivedMessage(encryptedMessage, pingId, senderName)
         } else {
             Log.w(TAG, "No message received or empty message")
-            Toast.makeText(this, "No message received from $senderName", Toast.LENGTH_SHORT).show()
+            ThemedToast.show(this, "No message received from $senderName")
         }
 
         // Cancel the auth notification
@@ -267,7 +290,7 @@ class TorService : Service() {
             Log.i(TAG, "Sent decline Pong to $senderName")
         }
 
-        Toast.makeText(this, "Declined message from $senderName", Toast.LENGTH_SHORT).show()
+        ThemedToast.show(this, "Declined message from $senderName")
 
         // Cancel the auth notification
         val notificationManager = getSystemService(NotificationManager::class.java)
@@ -336,6 +359,10 @@ class TorService : Service() {
                             // Start listening for incoming Ping tokens
                             startIncomingListener()
 
+                            // Schedule background message retry worker
+                            com.securelegion.workers.MessageRetryWorker.schedule(this@TorService)
+                            Log.d(TAG, "Message retry worker scheduled")
+
                             // PHASE 6: Send taps to all contacts to notify them we're online
                             sendTapsToAllContacts()
 
@@ -353,13 +380,18 @@ class TorService : Service() {
                     val onionAddress = torManager.getOnionAddress()
                     Log.d(TAG, "Tor already initialized. Address: $onionAddress")
 
-                    // Check if Tor is actually connected before attempting reconnect
-                    if (!torConnected) {
-                        Log.d(TAG, "Tor credentials exist but not connected - triggering reconnection")
-                        updateNotification("Connecting to Tor...")
-                        attemptReconnect()
-                    } else {
-                        Log.i(TAG, "Tor already connected - skipping reconnect")
+                    // Check if Tor is actually still running (e.g., after app restart)
+                    val isTorActuallyRunning = try {
+                        RustBridge.getBootstrapStatus() >= 100
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Failed to check bootstrap status: ${e.message}")
+                        false
+                    }
+
+                    if (isTorActuallyRunning) {
+                        // Tor is still running, just restore state
+                        Log.i(TAG, "Tor already running - restoring service state")
+                        torConnected = true
                         updateNotification("Connected to Tor")
 
                         // Ensure SOCKS proxy is running for outgoing connections
@@ -368,8 +400,17 @@ class TorService : Service() {
                         // Ensure listener is started (in case service was restarted)
                         startIncomingListener()
 
+                        // Schedule background message retry worker
+                        com.securelegion.workers.MessageRetryWorker.schedule(this@TorService)
+                        Log.d(TAG, "Message retry worker scheduled")
+
                         // PHASE 6: Send taps to all contacts to notify them we're online
                         sendTapsToAllContacts()
+                    } else {
+                        // Tor not running - need to reconnect
+                        Log.d(TAG, "Tor not running - triggering reconnection")
+                        updateNotification("Connecting to Tor...")
+                        attemptReconnect()
                     }
                 }
             } catch (e: Exception) {
@@ -428,6 +469,31 @@ class TorService : Service() {
 
             // Start polling for incoming pongs
             startPongPoller()
+
+            // PHASE 9: Start ACK listener on port 9153
+            Log.d(TAG, "Starting ACK listener on port 9153...")
+            val ackSuccess = RustBridge.startAckListener(9153)
+            if (ackSuccess) {
+                Log.i(TAG, "ACK listener started successfully")
+            } else {
+                Log.w(TAG, "ACK listener already running")
+            }
+
+            // Start polling for incoming ACKs
+            startAckPoller()
+
+            // Ensure SOCKS proxy is running for outgoing connections
+            ensureSocksProxyRunning()
+
+            // Verify SOCKS proxy is actually running
+            if (RustBridge.isSocksProxyRunning()) {
+                // All listeners, pollers, and SOCKS proxy ready - mark as ready for messaging
+                listenersReady = true
+                Log.i(TAG, "✓ All listeners, pollers, and SOCKS proxy (9050) ready - messaging enabled")
+            } else {
+                Log.w(TAG, "SOCKS proxy not running - messaging may not work for outgoing messages")
+                listenersReady = true // Still mark as ready since incoming works
+            }
         } catch (e: Exception) {
             Log.e(TAG, "Error starting listener", e)
             // Mark as running anyway to prevent restart attempts
@@ -446,6 +512,15 @@ class TorService : Service() {
             } catch (e3: Exception) {
                 Log.e(TAG, "Error starting pong poller", e3)
             }
+            // Try to start ACK poller
+            try {
+                startAckPoller()
+            } catch (e4: Exception) {
+                Log.e(TAG, "Error starting ACK poller", e4)
+            }
+            // Mark as ready even if some pollers failed (best effort)
+            listenersReady = true
+            Log.w(TAG, "Listeners ready with some errors - messaging may be limited")
         }
     }
 
@@ -583,6 +658,12 @@ class TorService : Service() {
                         // Trigger retry for each pending message
                         val messageService = com.securelegion.services.MessageService(this@TorService)
                         for (message in pendingMessages) {
+                            // Skip if Ping already delivered (prevents ghost pings)
+                            if (message.pingDelivered) {
+                                Log.d(TAG, "Ping already delivered for ${message.messageId} - skipping tap retry (no ghost ping)")
+                                continue
+                            }
+
                             try {
                                 val result = messageService.sendPingForMessage(message)
                                 if (result.isSuccess) {
@@ -653,6 +734,96 @@ class TorService : Service() {
         }.start()
     }
 
+    /**
+     * PHASE 9: Start ACK poller for receiving delivery confirmations
+     */
+    private fun startAckPoller() {
+        if (isAckPollerRunning) {
+            Log.d(TAG, "ACK poller already running, skipping")
+            return
+        }
+
+        isAckPollerRunning = true
+
+        // Poll for incoming ACKs in background thread
+        Thread {
+            Log.d(TAG, "ACK poller thread started")
+            while (isServiceRunning) {
+                try {
+                    val ackBytes = RustBridge.pollIncomingAck()
+                    if (ackBytes != null) {
+                        Log.i(TAG, "Received incoming ACK via listener: ${ackBytes.size} bytes")
+
+                        // Decrypt and store ACK in GLOBAL_ACK_SESSIONS, get item_id (ping_id or message_id)
+                        val itemId = RustBridge.decryptAndStoreAckFromListener(ackBytes)
+                        if (itemId != null) {
+                            Log.i(TAG, "✓ ACK decrypted successfully for item: $itemId")
+                            // Handle the ACK to update delivery status
+                            handleIncomingAck(itemId)
+                        } else {
+                            Log.e(TAG, "✗ Failed to decrypt and store ACK")
+                        }
+                    }
+
+                    // Poll every 2 seconds (ACKs are relatively infrequent)
+                    Thread.sleep(2000)
+                } catch (e: InterruptedException) {
+                    Log.d(TAG, "ACK poller interrupted")
+                    break
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error polling for ACKs", e)
+                }
+            }
+            Log.d(TAG, "ACK poller thread stopped")
+        }.start()
+    }
+
+    /**
+     * Handle incoming ACK to update delivery status
+     * @param itemId The ping_id or message_id that was acknowledged
+     */
+    private fun handleIncomingAck(itemId: String) {
+        try {
+            CoroutineScope(Dispatchers.IO).launch {
+                try {
+                    val keyManager = com.securelegion.crypto.KeyManager.getInstance(this@TorService)
+                    val dbPassphrase = keyManager.getDatabasePassphrase()
+                    val database = com.securelegion.database.SecureLegionDatabase.getInstance(this@TorService, dbPassphrase)
+
+                    // Try to find message by pingId first (for PING_ACK)
+                    var message = database.messageDao().getMessageByPingId(itemId)
+
+                    if (message != null) {
+                        // This is a PING_ACK - mark pingDelivered = true
+                        Log.i(TAG, "Received PING_ACK for message ${message.messageId} (pingId: $itemId)")
+                        val updatedMessage = message.copy(pingDelivered = true)
+                        database.messageDao().updateMessage(updatedMessage)
+                        Log.i(TAG, "✓ Marked pingDelivered=true for message ${message.messageId}")
+                    } else {
+                        // Try to find message by messageId (for MESSAGE_ACK)
+                        message = database.messageDao().getMessageByMessageId(itemId)
+                        if (message != null) {
+                            // This is a MESSAGE_ACK - mark messageDelivered = true
+                            Log.i(TAG, "Received MESSAGE_ACK for message ${message.messageId}")
+                            val updatedMessage = message.copy(
+                                messageDelivered = true,
+                                status = com.securelegion.database.entities.Message.STATUS_DELIVERED
+                            )
+                            database.messageDao().updateMessage(updatedMessage)
+                            Log.i(TAG, "✓ Marked messageDelivered=true and status=DELIVERED for message ${message.messageId}")
+                        } else {
+                            Log.w(TAG, "Could not find message for ACK item_id: $itemId")
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error updating message delivery status", e)
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error handling incoming ACK", e)
+        }
+    }
+
     private fun handleIncomingPing(encodedData: ByteArray) {
         try {
             // Wire format: [connection_id (8 bytes LE)][encrypted_ping_wire]
@@ -671,6 +842,11 @@ class TorService : Service() {
 
             Log.i(TAG, "Received Ping on connection $connectionId: ${encryptedPingWire.size} bytes")
 
+            // Get database instance for tracking and deduplication
+            val keyManager = com.securelegion.crypto.KeyManager.getInstance(this)
+            val dbPassphrase = keyManager.getDatabasePassphrase()
+            val database = com.securelegion.database.SecureLegionDatabase.getInstance(this, dbPassphrase)
+
             // Try to decrypt as Ping first (may throw exception if it's actually a Pong)
             var pingId: String? = null
             try {
@@ -688,7 +864,42 @@ class TorService : Service() {
 
                     if (pongPingId != null) {
                         Log.i(TAG, "✓ Successfully decrypted as Pong for Ping ID: $pongPingId")
-                        Log.i(TAG, "Pong stored - immediately sending message payload...")
+
+                        // Track this pongId to prevent duplicate processing (PRIMARY deduplication)
+                        val pongTracking = com.securelegion.database.entities.ReceivedId(
+                            receivedId = "pong_$pongPingId",
+                            idType = com.securelegion.database.entities.ReceivedId.TYPE_PONG,
+                            receivedTimestamp = System.currentTimeMillis()
+                        )
+                        val rowId = kotlinx.coroutines.runBlocking {
+                            database.receivedIdDao().insertReceivedId(pongTracking)
+                        }
+
+                        if (rowId == -1L) {
+                            Log.w(TAG, "⚠️  DUPLICATE PONG BLOCKED! PongId=pong_$pongPingId already in tracking table")
+                            return
+                        }
+                        Log.i(TAG, "→ New Pong - tracked in database (rowId=$rowId)")
+
+                        // Check if we already sent the message for this Pong (secondary check)
+
+
+                        val message = kotlinx.coroutines.runBlocking {
+                            database.messageDao().getMessageByPingId(pongPingId)
+                        }
+
+                        if (message != null && message.messageDelivered) {
+                            Log.w(TAG, "⚠️  Duplicate Pong detected! Message for pingId=$pongPingId already delivered (messageId=${message.messageId})")
+                            Log.i(TAG, "→ Skipping duplicate message send")
+                            return
+                        }
+
+                        if (message == null) {
+                            Log.w(TAG, "⚠️  Received Pong for unknown pingId=$pongPingId - no message found in database")
+                            return
+                        }
+
+                        Log.i(TAG, "→ New Pong - sending message payload for messageId=${message.messageId}")
 
                         // IMMEDIATELY trigger sending the message payload (don't wait for retry worker!)
                         kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
@@ -721,6 +932,51 @@ class TorService : Service() {
             // Successfully decrypted as Ping
             Log.i(TAG, "✓ Decrypted as Ping. Ping ID: $pingId")
 
+            // Track this pingId to prevent duplicate processing (PRIMARY deduplication)
+            Log.d(TAG, "═══ DEDUPLICATION CHECK: Ping ID = $pingId ═══")
+            val pingTracking = com.securelegion.database.entities.ReceivedId(
+                receivedId = pingId,
+                idType = com.securelegion.database.entities.ReceivedId.TYPE_PING,
+                receivedTimestamp = System.currentTimeMillis()
+            )
+
+            val rowId = try {
+                kotlinx.coroutines.runBlocking {
+                    Log.d(TAG, "Attempting to insert Ping ID into received_ids table...")
+                    val result = database.receivedIdDao().insertReceivedId(pingTracking)
+                    Log.d(TAG, "Insert result: rowId=$result (${if (result == -1L) "DUPLICATE" else "NEW"})")
+                    result
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "❌ DATABASE INSERT FAILED! This ping will be processed (GHOST RISK!)", e)
+                Log.e(TAG, "Exception details: ${e.javaClass.simpleName}: ${e.message}")
+                0L // Treat as new if database fails (will cause ghosts but better than crash)
+            }
+
+            if (rowId == -1L) {
+                Log.w(TAG, "⚠️  DUPLICATE PING BLOCKED! PingId=$pingId already in tracking table")
+                Log.w(TAG, "→ This is the deduplication working correctly - no ghost ping created")
+                // Still send PING_ACK to allow sender to retry, but don't process/notify
+                return
+            }
+            Log.i(TAG, "✓ NEW PING ACCEPTED - Tracked in database (rowId=$rowId)")
+
+            // Check if this ping has already been processed in messages table (secondary check)
+
+
+            val existingMessage = kotlinx.coroutines.runBlocking {
+                database.messageDao().getMessageByPingId(pingId)
+            }
+
+            if (existingMessage != null) {
+                Log.w(TAG, "⚠️  Duplicate Ping detected! PingId=$pingId already processed (messageId=${existingMessage.messageId})")
+                Log.i(TAG, "→ Skipping notification for duplicate Ping, but will still respond to allow sender to retry")
+                // Don't show notification, don't store pending ping, but continue to send PING_ACK
+                // This allows the sender to retry getting their message if they didn't receive it
+            } else {
+                Log.i(TAG, "→ New Ping - processing normally")
+            }
+
             // Get sender information from the Ping token
             val senderPublicKey = RustBridge.getPingSenderPublicKey(pingId)
 
@@ -733,20 +989,67 @@ class TorService : Service() {
 
             Log.i(TAG, "Incoming message request from: $senderName")
 
-            // Store pending Ping for user to download later (including encrypted bytes for restore)
-            val contactId = storePendingPing(pingId, connectionId, senderPublicKey, senderName, encryptedPingWire)
+            // Only store pending ping and show notification if this is NOT a duplicate
+            var contactId: Long? = null
+            if (existingMessage == null) {
+                // Store pending Ping for user to download later (including encrypted bytes for restore)
+                contactId = storePendingPing(pingId, connectionId, senderPublicKey, senderName, encryptedPingWire)
 
-            // Show simple notification - no preview or accept/decline
-            showNewMessageNotification()
+                // Only show notification and broadcast if Ping was stored (sender is in contacts)
+                if (contactId != null) {
+                    // Show simple notification - no preview or accept/decline
+                    showNewMessageNotification()
 
-            // Broadcast to update MainActivity and ChatActivity if open (explicit broadcast)
-            val intent = Intent("com.securelegion.NEW_PING")
-            intent.setPackage(packageName) // Make it explicit
-            if (contactId != null) {
-                intent.putExtra("CONTACT_ID", contactId)
+                    // Broadcast to update MainActivity and ChatActivity if open (explicit broadcast)
+                    val intent = Intent("com.securelegion.NEW_PING")
+                    intent.setPackage(packageName) // Make it explicit
+                    intent.putExtra("CONTACT_ID", contactId)
+                    sendBroadcast(intent)
+                    Log.d(TAG, "Sent explicit NEW_PING broadcast for contactId=$contactId")
+                } else {
+                    Log.w(TAG, "Ping from unknown contact - no notification shown")
+                }
+            } else {
+                // For duplicate pings, still need contactId for PING_ACK
+                if (senderPublicKey != null) {
+                    val publicKeyBase64 = android.util.Base64.encodeToString(senderPublicKey, android.util.Base64.NO_WRAP)
+                    val contact = database.contactDao().getContactByPublicKey(publicKeyBase64)
+                    contactId = contact?.id
+                }
             }
-            sendBroadcast(intent)
-            Log.d(TAG, "Sent explicit NEW_PING broadcast for contactId=$contactId")
+
+            // Send PING_ACK back to sender to confirm we stored the Ping (or to allow retry for duplicates)
+            if (senderPublicKey != null && contactId != null) {
+                CoroutineScope(Dispatchers.IO).launch {
+                    try {
+                        val contact = database.contactDao().getContactById(contactId)
+                        if (contact != null) {
+                            Log.d(TAG, "Sending PING_ACK for pingId=$pingId to ${contact.displayName}")
+
+                            val senderEd25519Pubkey = android.util.Base64.decode(contact.publicKeyBase64, android.util.Base64.NO_WRAP)
+                            val senderX25519Pubkey = android.util.Base64.decode(contact.x25519PublicKeyBase64, android.util.Base64.NO_WRAP)
+
+                            val ackSuccess = RustBridge.sendDeliveryAck(
+                                pingId,
+                                "PING_ACK",
+                                senderEd25519Pubkey,
+                                senderX25519Pubkey,
+                                contact.torOnionAddress
+                            )
+
+                            if (ackSuccess) {
+                                Log.i(TAG, "✓ PING_ACK sent successfully for pingId=$pingId")
+                            } else {
+                                Log.e(TAG, "✗ Failed to send PING_ACK for pingId=$pingId")
+                            }
+                        } else {
+                            Log.w(TAG, "Could not find contact with ID $contactId to send PING_ACK")
+                        }
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Error sending PING_ACK", e)
+                    }
+                }
+            }
 
         } catch (e: Exception) {
             Log.e(TAG, "Error handling incoming Ping", e)
@@ -759,11 +1062,14 @@ class TorService : Service() {
      */
     private fun handleIncomingMessageBlob(encryptedMessageWire: ByteArray) {
         try {
+            // Friend requests arrive here after being routed by Rust (wire type 0x07 already stripped)
+            // Wire format from Rust: [Sender X25519 - 32 bytes][Encrypted Friend Request]
+            // Note: Regular messages (TEXT/VOICE) go through a different channel
+
             Log.i(TAG, "╔════════════════════════════════════════")
             Log.i(TAG, "║ INCOMING MESSAGE BLOB (${encryptedMessageWire.size} bytes)")
             Log.i(TAG, "╚════════════════════════════════════════")
 
-            // Wire format: [Sender X25519 Public Key - 32 bytes][Encrypted Message]
             if (encryptedMessageWire.size < 32) {
                 Log.e(TAG, "Message blob too short - missing X25519 public key")
                 return
@@ -771,12 +1077,12 @@ class TorService : Service() {
 
             // Extract sender's X25519 public key (first 32 bytes)
             val senderX25519PublicKey = encryptedMessageWire.copyOfRange(0, 32)
-            val encryptedMessage = encryptedMessageWire.copyOfRange(32, encryptedMessageWire.size)
+            val encryptedPayload = encryptedMessageWire.copyOfRange(32, encryptedMessageWire.size)
 
             Log.d(TAG, "Sender X25519 pubkey: ${android.util.Base64.encodeToString(senderX25519PublicKey, android.util.Base64.NO_WRAP).take(16)}...")
-            Log.d(TAG, "Encrypted message: ${encryptedMessage.size} bytes")
+            Log.d(TAG, "Encrypted payload: ${encryptedPayload.size} bytes")
 
-            // Look up contact by X25519 public key
+            // Look up contact by X25519 public key to see if sender is known
             val keyManager = com.securelegion.crypto.KeyManager.getInstance(this)
             val dbPassphrase = keyManager.getDatabasePassphrase()
             val database = com.securelegion.database.SecureLegionDatabase.getInstance(this, dbPassphrase)
@@ -785,11 +1091,25 @@ class TorService : Service() {
             val contact = database.contactDao().getContactByX25519PublicKey(senderX25519Base64)
 
             if (contact == null) {
-                Log.e(TAG, "✗ Unknown sender - no contact found with X25519 pubkey ${senderX25519Base64.take(16)}...")
+                // Unknown sender - this must be a friend request
+                // Friend requests are the ONLY messages from unknown contacts that are allowed
+                Log.i(TAG, "→ Unknown sender - treating as FRIEND REQUEST")
+                handleFriendRequest(senderX25519PublicKey, encryptedPayload)
                 return
             }
 
-            Log.i(TAG, "✓ Message from: ${contact.displayName}")
+            // Known contact - this is a regular message (but routed incorrectly!)
+            Log.w(TAG, "⚠️  Message from known contact ${contact.displayName} came through FRIEND_REQUEST channel!")
+            Log.w(TAG, "    This should only happen for friend requests from unknown contacts")
+            val encryptedMessage = encryptedPayload
+
+            // Generate message ID from encrypted payload hash (ensures uniqueness per encryption)
+            // Each encryption has random nonce, so same plaintext = different encrypted blob = different hash
+            // This allows user to send "yo" "yo" "yo" quickly, but blocks true network duplicates
+            val encryptedBlobHash = java.security.MessageDigest.getInstance("SHA-256").digest(encryptedPayload)
+            val blobMessageId = "blob_" + android.util.Base64.encodeToString(encryptedBlobHash, android.util.Base64.NO_WRAP).take(28)
+
+            Log.i(TAG, "✓ Message from: ${contact.displayName} (blobId: ${blobMessageId.take(16)}...)")
 
             // Decrypt message using OUR OWN public key (message was encrypted with our public key)
             // MVP encryption: sender encrypts with recipient's public key, recipient decrypts with their own public key
@@ -858,18 +1178,51 @@ class TorService : Service() {
             // Save message directly to database (already decrypted)
             kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
                 try {
-                    // Generate message ID from content hash
-                    val messageId = generateMessageId(plaintext, System.currentTimeMillis())
+                    // Use the message ID generated from encrypted payload hash
+                    // This was calculated earlier to prevent blocking legitimate rapid messages
+                    val messageId = blobMessageId
 
                     // Get database
                     val dbPassphrase = keyManager.getDatabasePassphrase()
                     val database = com.securelegion.database.SecureLegionDatabase.getInstance(this@TorService, dbPassphrase)
 
-                    // Check for duplicate
-                    if (database.messageDao().messageExists(messageId)) {
-                        Log.w(TAG, "Duplicate message ignored: $messageId")
+                    // Track this messageId to prevent duplicate processing (PRIMARY deduplication)
+                    val messageTracking = com.securelegion.database.entities.ReceivedId(
+                        receivedId = messageId,
+                        idType = com.securelegion.database.entities.ReceivedId.TYPE_MESSAGE,
+                        receivedTimestamp = System.currentTimeMillis()
+                    )
+                    val rowId = database.receivedIdDao().insertReceivedId(messageTracking)
+
+                    if (rowId == -1L) {
+                        Log.w(TAG, "⚠️  DUPLICATE MESSAGE BLOB BLOCKED! MessageId=$messageId already in tracking table")
+                        Log.i(TAG, "→ Skipping duplicate message blob processing")
+
+                        // Send MESSAGE_ACK to stop sender from retrying
+                        try {
+                            val senderEd25519Pubkey = android.util.Base64.decode(contact.publicKeyBase64, android.util.Base64.NO_WRAP)
+                            val senderX25519Pubkey = android.util.Base64.decode(contact.x25519PublicKeyBase64, android.util.Base64.NO_WRAP)
+
+                            val ackSuccess = RustBridge.sendDeliveryAck(
+                                messageId,
+                                "MESSAGE_ACK",
+                                senderEd25519Pubkey,
+                                senderX25519Pubkey,
+                                contact.torOnionAddress
+                            )
+
+                            if (ackSuccess) {
+                                Log.i(TAG, "✓ MESSAGE_ACK sent for duplicate message blob")
+                            }
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Error sending MESSAGE_ACK for duplicate blob", e)
+                        }
                         return@launch
                     }
+                    Log.i(TAG, "→ New Message Blob - tracked in database (rowId=$rowId)")
+
+                    // PRIMARY deduplication via ReceivedId table above is sufficient
+                    // No secondary check needed - this was blocking rapid identical messages
 
                     // If it's a voice message, save the audio file
                     if (messageType == com.securelegion.database.entities.Message.MESSAGE_TYPE_VOICE) {
@@ -902,6 +1255,28 @@ class TorService : Service() {
                     // Save to database
                     val savedMessageId = database.messageDao().insertMessage(message)
                     Log.i(TAG, "✓ Message saved to database: $savedMessageId")
+
+                    // Send MESSAGE_ACK to sender to confirm receipt
+                    try {
+                        val senderEd25519Pubkey = android.util.Base64.decode(contact.publicKeyBase64, android.util.Base64.NO_WRAP)
+                        val senderX25519Pubkey = android.util.Base64.decode(contact.x25519PublicKeyBase64, android.util.Base64.NO_WRAP)
+
+                        val ackSuccess = RustBridge.sendDeliveryAck(
+                            messageId,
+                            "MESSAGE_ACK",
+                            senderEd25519Pubkey,
+                            senderX25519Pubkey,
+                            contact.torOnionAddress
+                        )
+
+                        if (ackSuccess) {
+                            Log.i(TAG, "✓ MESSAGE_ACK sent successfully for messageId=$messageId")
+                        } else {
+                            Log.e(TAG, "✗ Failed to send MESSAGE_ACK for messageId=$messageId")
+                        }
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Error sending MESSAGE_ACK", e)
+                    }
 
                     // Clear pending Ping from SharedPreferences (message has been downloaded)
                     val prefs = getSharedPreferences("pending_pings", Context.MODE_PRIVATE)
@@ -939,6 +1314,108 @@ class TorService : Service() {
         }
     }
 
+    /**
+     * Handle incoming friend request from unknown contact
+     * Wire format: [0x07][Sender X25519 - 32 bytes][Encrypted FriendRequest JSON]
+     * Note: Wire type byte and X25519 key are already stripped by caller
+     */
+    private fun handleFriendRequest(senderX25519PublicKey: ByteArray, encryptedFriendRequest: ByteArray) {
+        try {
+            Log.i(TAG, "╔════════════════════════════════════════")
+            Log.i(TAG, "║ FRIEND REQUEST from unknown contact")
+            Log.i(TAG, "╚════════════════════════════════════════")
+
+            // Wire type byte (0x07) has already been stripped by caller
+            if (encryptedFriendRequest.size < 1) {
+                Log.e(TAG, "Friend request too short")
+                return
+            }
+
+            // Reconstruct wire format for decryption: [Sender X25519 - 32 bytes][Encrypted Data]
+            // The encryptMessage function creates this format, and decryptMessage expects it
+            val wireMessage = senderX25519PublicKey + encryptedFriendRequest
+
+            Log.d(TAG, "Reconstructed wire message: ${wireMessage.size} bytes (32 byte X25519 + ${encryptedFriendRequest.size} byte payload)")
+
+            // Decrypt friend request (decryptMessage will derive X25519 private key from Ed25519)
+            val keyManager = com.securelegion.crypto.KeyManager.getInstance(this)
+            val ourEd25519PublicKey = keyManager.getSigningPublicKey()
+            val ourPrivateKey = keyManager.getSigningKeyBytes()
+
+            val friendRequestJson = com.securelegion.crypto.RustBridge.decryptMessage(
+                wireMessage,
+                ourEd25519PublicKey,
+                ourPrivateKey
+            )
+
+            if (friendRequestJson == null) {
+                Log.e(TAG, "Failed to decrypt friend request")
+                return
+            }
+
+            Log.i(TAG, "Decrypted friend request JSON: $friendRequestJson")
+
+            // Parse friend request
+            val friendRequest = com.securelegion.models.FriendRequest.fromJson(friendRequestJson)
+            Log.i(TAG, "Friend request from: ${friendRequest.displayName}")
+            Log.i(TAG, "  IPFS CID: ${friendRequest.ipfsCid}")
+
+            // Store in SharedPreferences as pending friend request
+            val prefs = getSharedPreferences("friend_requests", MODE_PRIVATE)
+            val existingRequests = prefs.getStringSet("pending_requests", mutableSetOf()) ?: mutableSetOf()
+
+            // Add new request (use JSON as storage format)
+            val updatedRequests = existingRequests.toMutableSet()
+            updatedRequests.add(friendRequestJson)
+            prefs.edit().putStringSet("pending_requests", updatedRequests).apply()
+
+            Log.i(TAG, "Friend request stored - total pending: ${updatedRequests.size}")
+
+            // Show notification
+            showFriendRequestNotification(friendRequest.displayName)
+
+        } catch (e: Exception) {
+            Log.e(TAG, "Error handling friend request", e)
+        }
+    }
+
+    /**
+     * Show notification for new friend request
+     */
+    private fun showFriendRequestNotification(senderName: String) {
+        try {
+            // Launch via LockActivity to prevent showing app before authentication
+            val intent = android.content.Intent(this, com.securelegion.LockActivity::class.java).apply {
+                putExtra("TARGET_ACTIVITY", "MainActivity")
+                putExtra("SHOW_FRIEND_REQUESTS", true)
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            }
+            val pendingIntent = android.app.PendingIntent.getActivity(
+                this,
+                0,
+                intent,
+                android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
+            )
+
+            val notification = androidx.core.app.NotificationCompat.Builder(this, AUTH_CHANNEL_ID)
+                .setSmallIcon(R.drawable.ic_shield)
+                .setContentTitle("New Friend Request")
+                .setContentText("$senderName wants to add you as a friend")
+                .setPriority(androidx.core.app.NotificationCompat.PRIORITY_HIGH)
+                .setCategory(androidx.core.app.NotificationCompat.CATEGORY_SOCIAL)
+                .setAutoCancel(true)
+                .setContentIntent(pendingIntent)
+                .build()
+
+            val notificationManager = getSystemService(android.app.NotificationManager::class.java)
+            notificationManager.notify(1000, notification)
+
+            Log.i(TAG, "Friend request notification shown")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to show friend request notification", e)
+        }
+    }
+
     private fun lookupContactName(senderPublicKey: ByteArray): String {
         return try {
             val keyManager = com.securelegion.crypto.KeyManager.getInstance(this)
@@ -970,6 +1447,17 @@ class TorService : Service() {
             // Find contact by public key
             if (senderPublicKey != null) {
                 val publicKeyBase64 = android.util.Base64.encodeToString(senderPublicKey, android.util.Base64.NO_WRAP)
+                Log.d(TAG, "Looking up contact by public key (Base64, first 20 chars): ${publicKeyBase64.take(20)}...")
+
+                // Debug: List all contacts and their public keys
+                val allContacts = kotlinx.coroutines.runBlocking {
+                    database.contactDao().getAllContacts()
+                }
+                Log.d(TAG, "Total contacts in database: ${allContacts.size}")
+                for (c in allContacts) {
+                    Log.d(TAG, "  Contact: ${c.displayName}, PubKey (first 20 chars): ${c.publicKeyBase64.take(20)}...")
+                }
+
                 val contact = database.contactDao().getContactByPublicKey(publicKeyBase64)
 
                 if (contact != null) {
@@ -1066,9 +1554,10 @@ class TorService : Service() {
      * Show simple notification that a message is waiting
      */
     private fun showNewMessageNotification() {
-        // Create intent to open app (just bring to foreground, don't clear stack)
-        val openAppIntent = Intent(this, MainActivity::class.java).apply {
-            flags = Intent.FLAG_ACTIVITY_SINGLE_TOP
+        // Launch via LockActivity to prevent showing app before authentication
+        val openAppIntent = Intent(this, LockActivity::class.java).apply {
+            putExtra("TARGET_ACTIVITY", "MainActivity")
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
         }
         val openAppPendingIntent = PendingIntent.getActivity(
             this,
@@ -1081,23 +1570,31 @@ class TorService : Service() {
         val prefs = getSharedPreferences("pending_pings", Context.MODE_PRIVATE)
         val pendingCount = prefs.all.filter { it.key.endsWith("_id") }.size
 
-        // Build notification
-        val notification = NotificationCompat.Builder(this, AUTH_CHANNEL_ID)
-            .setSmallIcon(R.drawable.ic_shield)
-            .setContentTitle("New Message")
-            .setContentText("You have $pendingCount pending ${if (pendingCount == 1) "message" else "messages"}")
-            .setPriority(NotificationCompat.PRIORITY_HIGH)
-            .setCategory(NotificationCompat.CATEGORY_MESSAGE)
-            .setAutoCancel(true)
-            .setContentIntent(openAppPendingIntent)
-            .setNumber(pendingCount) // Shows badge on app icon
-            .build()
+        // Only show notification if there are pending messages
+        if (pendingCount > 0) {
+            // Build notification
+            val notification = NotificationCompat.Builder(this, AUTH_CHANNEL_ID)
+                .setSmallIcon(R.drawable.ic_shield)
+                .setContentTitle("New Message")
+                .setContentText("You have $pendingCount pending ${if (pendingCount == 1) "message" else "messages"}")
+                .setPriority(NotificationCompat.PRIORITY_HIGH)
+                .setCategory(NotificationCompat.CATEGORY_MESSAGE)
+                .setAutoCancel(true)
+                .setContentIntent(openAppPendingIntent)
+                .setNumber(pendingCount) // Shows badge on app icon
+                .build()
 
-        // Show notification
-        val notificationManager = getSystemService(NotificationManager::class.java)
-        notificationManager.notify(999, notification) // Use fixed ID so it updates instead of creating multiple
+            // Show notification
+            val notificationManager = getSystemService(NotificationManager::class.java)
+            notificationManager.notify(999, notification) // Use fixed ID so it updates instead of creating multiple
 
-        Log.i(TAG, "New message notification shown ($pendingCount pending)")
+            Log.i(TAG, "New message notification shown ($pendingCount pending)")
+        } else {
+            // Cancel notification if no pending messages
+            val notificationManager = getSystemService(NotificationManager::class.java)
+            notificationManager.cancel(999)
+            Log.d(TAG, "No pending messages - notification cancelled")
+        }
     }
 
     /**
@@ -1115,7 +1612,7 @@ class TorService : Service() {
             if (senderPublicKey == null) {
                 Log.e(TAG, "Failed to get sender public key from Ping")
                 android.os.Handler(android.os.Looper.getMainLooper()).post {
-                    Toast.makeText(this@TorService, "Failed to verify sender", Toast.LENGTH_SHORT).show()
+                    ThemedToast.show(this@TorService, "Failed to verify sender")
                 }
                 return
             }
@@ -1134,7 +1631,7 @@ class TorService : Service() {
             if (contact == null) {
                 Log.e(TAG, "Sender not in contacts - cannot decrypt message")
                 android.os.Handler(android.os.Looper.getMainLooper()).post {
-                    Toast.makeText(this@TorService, "Message from unknown contact", Toast.LENGTH_SHORT).show()
+                    ThemedToast.show(this@TorService, "Message from unknown contact")
                 }
                 return
             }
@@ -1151,18 +1648,60 @@ class TorService : Service() {
             if (messageText == null || messageText.isEmpty()) {
                 Log.e(TAG, "Failed to decrypt message")
                 android.os.Handler(android.os.Looper.getMainLooper()).post {
-                    Toast.makeText(this@TorService, "Failed to decrypt message", Toast.LENGTH_SHORT).show()
+                    ThemedToast.show(this@TorService, "Failed to decrypt message")
                 }
                 return
             }
 
             Log.i(TAG, "Message decrypted successfully: ${messageText.take(50)}...")
 
-            // Save message to database
+            // Save message to database with deduplication
             kotlinx.coroutines.runBlocking {
+                // Use pingId as messageId for deduplication (ping-based messages)
+                // For direct messages without ping, we'll need a different approach
+                val deterministicMessageId = "msg_$pingId"
+
+                // Track this messageId to prevent duplicate processing (PRIMARY deduplication)
+                val messageTracking = com.securelegion.database.entities.ReceivedId(
+                    receivedId = deterministicMessageId,
+                    idType = com.securelegion.database.entities.ReceivedId.TYPE_MESSAGE,
+                    receivedTimestamp = System.currentTimeMillis()
+                )
+                val rowId = database.receivedIdDao().insertReceivedId(messageTracking)
+
+                if (rowId == -1L) {
+                    Log.w(TAG, "⚠️  DUPLICATE MESSAGE BLOCKED! MessageId=$deterministicMessageId already in tracking table")
+                    Log.i(TAG, "→ Skipping duplicate message processing, but will send MESSAGE_ACK")
+
+                    // Send MESSAGE_ACK to stop sender from retrying
+                    try {
+                        val senderEd25519Pubkey = android.util.Base64.decode(contact.publicKeyBase64, android.util.Base64.NO_WRAP)
+                        val senderX25519Pubkey = android.util.Base64.decode(contact.x25519PublicKeyBase64, android.util.Base64.NO_WRAP)
+
+                        val ackSuccess = RustBridge.sendDeliveryAck(
+                            deterministicMessageId,
+                            "MESSAGE_ACK",
+                            senderEd25519Pubkey,
+                            senderX25519Pubkey,
+                            contact.torOnionAddress
+                        )
+
+                        if (ackSuccess) {
+                            Log.i(TAG, "✓ MESSAGE_ACK sent for duplicate message")
+                        }
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Error sending MESSAGE_ACK for duplicate", e)
+                    }
+                    return@runBlocking
+                }
+                Log.i(TAG, "→ New Message - tracked in database (rowId=$rowId)")
+
+                // PRIMARY deduplication via ReceivedId table above is sufficient
+                // No secondary check needed - this was blocking rapid identical messages
+
                 val message = com.securelegion.database.entities.Message(
                     contactId = contact.id,
-                    messageId = java.util.UUID.randomUUID().toString(),
+                    messageId = deterministicMessageId,
                     encryptedContent = messageText,
                     isSentByMe = false,
                     timestamp = System.currentTimeMillis(),
@@ -1171,11 +1710,35 @@ class TorService : Service() {
                     nonceBase64 = "",
                     isRead = false,
                     requiresReadReceipt = true,
-                    selfDestructAt = null
+                    selfDestructAt = null,
+                    pingId = pingId,  // Store pingId for reference
+                    messageDelivered = true  // Mark as delivered since we received it
                 )
 
                 val insertedMessage = database.messageDao().insertMessage(message)
-                Log.i(TAG, "Message saved to database with ID: $insertedMessage")
+                Log.i(TAG, "✓ Message saved to database with ID: $insertedMessage (messageId: $deterministicMessageId)")
+
+                // Send MESSAGE_ACK to sender to confirm receipt
+                try {
+                    val senderEd25519Pubkey = android.util.Base64.decode(contact.publicKeyBase64, android.util.Base64.NO_WRAP)
+                    val senderX25519Pubkey = android.util.Base64.decode(contact.x25519PublicKeyBase64, android.util.Base64.NO_WRAP)
+
+                    val ackSuccess = RustBridge.sendDeliveryAck(
+                        deterministicMessageId,
+                        "MESSAGE_ACK",
+                        senderEd25519Pubkey,
+                        senderX25519Pubkey,
+                        contact.torOnionAddress
+                    )
+
+                    if (ackSuccess) {
+                        Log.i(TAG, "✓ MESSAGE_ACK sent successfully for messageId=$deterministicMessageId")
+                    } else {
+                        Log.e(TAG, "✗ Failed to send MESSAGE_ACK for messageId=$deterministicMessageId")
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error sending MESSAGE_ACK", e)
+                }
 
                 // Broadcast to update ChatActivity if it's open for this contact
                 val messageReceivedIntent = Intent("com.securelegion.MESSAGE_RECEIVED").apply {
@@ -1221,7 +1784,7 @@ class TorService : Service() {
             } catch (e: Exception) {
                 Log.e(TAG, "Error receiving incoming message", e)
                 android.os.Handler(android.os.Looper.getMainLooper()).post {
-                    Toast.makeText(this@TorService, "Error receiving message: ${e.message}", Toast.LENGTH_SHORT).show()
+                    ThemedToast.show(this@TorService, "Error receiving message: ${e.message}")
                 }
             }
         }.start()
@@ -1232,7 +1795,9 @@ class TorService : Service() {
      */
     private fun showMessageNotification(senderName: String, messageText: String, contactId: Long) {
         // Create intent to open chat when notification is tapped
-        val openChatIntent = Intent(this, ChatActivity::class.java).apply {
+        // Launch via LockActivity to prevent showing chat before authentication
+        val openChatIntent = Intent(this, LockActivity::class.java).apply {
+            putExtra("TARGET_ACTIVITY", "ChatActivity")
             putExtra(ChatActivity.EXTRA_CONTACT_ID, contactId)
             putExtra(ChatActivity.EXTRA_CONTACT_NAME, senderName)
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
@@ -1244,8 +1809,9 @@ class TorService : Service() {
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
 
-        // Create reply action intent
-        val replyIntent = Intent(this, ChatActivity::class.java).apply {
+        // Create reply action intent (also via LockActivity)
+        val replyIntent = Intent(this, LockActivity::class.java).apply {
+            putExtra("TARGET_ACTIVITY", "ChatActivity")
             putExtra(ChatActivity.EXTRA_CONTACT_ID, contactId)
             putExtra(ChatActivity.EXTRA_CONTACT_NAME, senderName)
             putExtra("FOCUS_INPUT", true)
@@ -1350,11 +1916,36 @@ class TorService : Service() {
         }.start()
     }
 
+    /**
+     * Handle notification deletion - recreate it immediately
+     * This is called when user swipes away the notification
+     */
+    private fun handleNotificationDeleted() {
+        Log.w(TAG, "Notification deleted by user - recreating to keep service alive")
+
+        // Determine current status
+        val status = when {
+            !torConnected -> "Connecting to Tor network..."
+            !listenersReady -> "Starting listeners..."
+            else -> "Connected to Tor"
+        }
+
+        // Recreate the notification and reattach to foreground
+        val notification = createNotification(status)
+        try {
+            startForeground(NOTIFICATION_ID, notification)
+            Log.i(TAG, "Notification recreated - service remains active")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to recreate notification", e)
+        }
+    }
+
     private fun stopTorService() {
         Log.i(TAG, "Stopping Tor service")
 
         isServiceRunning = false
         running = false
+        listenersReady = false
 
         // Release wake lock
         wakeLock?.let {
@@ -1370,13 +1961,13 @@ class TorService : Service() {
 
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            // Tor service channel (default priority so it shows in status bar)
+            // Tor service channel (low priority - shows only shield icon in status bar)
             val serviceChannel = NotificationChannel(
                 CHANNEL_ID,
                 CHANNEL_NAME,
-                NotificationManager.IMPORTANCE_DEFAULT
+                NotificationManager.IMPORTANCE_LOW
             ).apply {
-                description = "Keeps Tor hidden service running for incoming messages"
+                description = "Shows shield icon when Tor is running. Only displays notification for connection issues."
                 setShowBadge(false)
                 // Disable sound and vibration for this persistent notification
                 setSound(null, null)
@@ -1413,23 +2004,52 @@ class TorService : Service() {
     }
 
     private fun createNotification(status: String): Notification {
-        // Intent to open app when notification is tapped
+        // Launch via LockActivity to prevent showing app before authentication
+        val intent = Intent(this, LockActivity::class.java).apply {
+            putExtra("TARGET_ACTIVITY", "MainActivity")
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        }
         val pendingIntent = PendingIntent.getActivity(
             this,
             0,
-            Intent(this, MainActivity::class.java),
+            intent,
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
 
-        return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("Secure Legion")
-            .setContentText(status)
+        // Determine if this is a problem state that needs user attention
+        val isProblemState = status.contains("Connecting", ignoreCase = true) ||
+                             status.contains("Reconnecting", ignoreCase = true) ||
+                             status.contains("Failed", ignoreCase = true) ||
+                             status.contains("Error", ignoreCase = true) ||
+                             status.contains("Retrying", ignoreCase = true)
+
+        val builder = NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_shield)
             .setOngoing(true)
             .setContentIntent(pendingIntent)
-            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
             .setCategory(NotificationCompat.CATEGORY_SERVICE)
-            .build()
+
+        // Only show notification text for problem states
+        // Normal "Connected" state shows only the shield icon in status bar
+        if (isProblemState) {
+            builder.setContentTitle("Secure Legion")
+                   .setContentText(status)
+                   .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+        } else {
+            // Connected state - completely silent notification (just icon)
+            builder.setContentTitle("")
+                   .setContentText("")
+                   .setPriority(NotificationCompat.PRIORITY_MIN)
+                   .setShowWhen(false)  // Don't show timestamp
+                   .setSilent(true)      // Silent notification
+        }
+
+        // Android 12+ (API 31+): Make notification truly non-dismissible
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            builder.setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
+        }
+
+        return builder.build()
     }
 
     private fun updateNotification(status: String) {
@@ -1666,8 +2286,9 @@ class TorService : Service() {
                 Log.d(TAG, "Stopping listeners...")
                 RustBridge.stopListeners()
 
-                // Mark as disconnected
+                // Mark as disconnected and not ready
                 torConnected = false
+                listenersReady = false
 
                 // Wait a moment for cleanup
                 Thread.sleep(2000)
@@ -1873,6 +2494,7 @@ class TorService : Service() {
 
         running = false
         torConnected = false
+        listenersReady = false
         isServiceRunning = false
 
         // Cancel AlarmManager restart checks
@@ -1922,13 +2544,14 @@ class TorService : Service() {
     }
 
     /**
-     * Generate deterministic message ID from content hash
+     * Generate deterministic message ID from sender + content hash + timestamp
+     * This enables deduplication of identical messages received within the same time window
      */
-    private fun generateMessageId(content: String, timestamp: Long): String {
-        val data = "$content$timestamp".toByteArray()
+    private fun generateMessageId(senderId: String, content: String, timestamp: Long): String {
+        val data = "$senderId:$content:$timestamp".toByteArray()
         val digest = java.security.MessageDigest.getInstance("SHA-256")
         val hash = digest.digest(data)
-        return android.util.Base64.encodeToString(hash, android.util.Base64.NO_WRAP).take(32)
+        return "blob_" + android.util.Base64.encodeToString(hash, android.util.Base64.NO_WRAP).take(28)
     }
 
     override fun onTaskRemoved(rootIntent: Intent?) {

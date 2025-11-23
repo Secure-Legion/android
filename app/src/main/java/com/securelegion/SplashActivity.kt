@@ -333,8 +333,20 @@ class SplashActivity : AppCompatActivity() {
 
         if (requestCode == BRIDGE_CONFIGURATION_REQUEST_CODE) {
             Log.i("SplashActivity", "Returned from bridge configuration")
-            // User configured bridges - they can now retry connection
-            updateStatus("Bridge configured - tap Retry to reconnect")
+            // BridgeActivity already restarted Tor with new config
+            // Automatically start monitoring the connection
+            updateStatus("Testing bridge connection...")
+
+            // Hide bridge config buttons and show progress
+            findViewById<TextView>(R.id.configureBridgesButton).visibility = View.GONE
+            findViewById<TextView>(R.id.retryConnectionButton).visibility = View.GONE
+            findViewById<ProgressBar>(R.id.torProgressBar).visibility = View.VISIBLE
+
+            // Give Tor a moment to restart (BridgeActivity already initiated restart)
+            // Then start monitoring bootstrap progress
+            Handler(Looper.getMainLooper()).postDelayed({
+                waitForBootstrap()
+            }, 2000)
         }
     }
 

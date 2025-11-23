@@ -15,13 +15,13 @@ import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import com.securelegion.crypto.KeyManager
 import com.securelegion.database.SecureLegionDatabase
-import com.securelegion.utils.ToastUtils
+import com.securelegion.utils.ThemedToast
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-class ContactOptionsActivity : AppCompatActivity() {
+class ContactOptionsActivity : BaseActivity() {
 
     companion object {
         private const val TAG = "ContactOptions"
@@ -119,7 +119,7 @@ class ContactOptionsActivity : AppCompatActivity() {
         CoroutineScope(Dispatchers.Main).launch {
             try {
                 if (contactId == -1L) {
-                    ToastUtils.showCustomToast(this@ContactOptionsActivity, "Error: Invalid contact")
+                    ThemedToast.show(this@ContactOptionsActivity, "Error: Invalid contact")
                     return@launch
                 }
 
@@ -141,7 +141,7 @@ class ContactOptionsActivity : AppCompatActivity() {
                 Log.i(TAG, "Distress status updated: $isDistressContact")
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to toggle distress status", e)
-                ToastUtils.showCustomToast(this@ContactOptionsActivity, "Failed to update status")
+                ThemedToast.show(this@ContactOptionsActivity, "Failed to update status")
             }
         }
     }
@@ -150,7 +150,7 @@ class ContactOptionsActivity : AppCompatActivity() {
         CoroutineScope(Dispatchers.Main).launch {
             try {
                 if (contactId == -1L) {
-                    ToastUtils.showCustomToast(this@ContactOptionsActivity, "Error: Invalid contact")
+                    ThemedToast.show(this@ContactOptionsActivity, "Error: Invalid contact")
                     return@launch
                 }
 
@@ -174,12 +174,12 @@ class ContactOptionsActivity : AppCompatActivity() {
                 } else {
                     "Contact unblocked"
                 }
-                ToastUtils.showCustomToast(this@ContactOptionsActivity, message)
+                ThemedToast.show(this@ContactOptionsActivity, message)
 
                 Log.i(TAG, "Blocked status updated: $isBlocked")
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to toggle blocked status", e)
-                ToastUtils.showCustomToast(this@ContactOptionsActivity, "Failed to update status")
+                ThemedToast.show(this@ContactOptionsActivity, "Failed to update status")
             }
         }
     }
@@ -200,7 +200,7 @@ class ContactOptionsActivity : AppCompatActivity() {
             val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
             val clip = ClipData.newPlainText("Wallet Address", fullAddress)
             clipboard.setPrimaryClip(clip)
-            ToastUtils.showCustomToast(this, "Address copied")
+            ThemedToast.show(this, "Address copied")
         }
 
         // Save display name button
@@ -208,7 +208,7 @@ class ContactOptionsActivity : AppCompatActivity() {
             val newDisplayName = displayNameInput.text.toString().trim()
 
             if (newDisplayName.isEmpty()) {
-                ToastUtils.showCustomToast(this, "Enter a display name")
+                ThemedToast.show(this, "Enter a display name")
                 return@setOnClickListener
             }
 
@@ -247,11 +247,11 @@ class ContactOptionsActivity : AppCompatActivity() {
                 displayNameInput.text.clear()
                 displayNameInput.hint = "Enter new display name for $newDisplayName"
 
-                ToastUtils.showCustomToast(this@ContactOptionsActivity, "Name updated")
+                ThemedToast.show(this@ContactOptionsActivity, "Name updated")
 
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to update display name", e)
-                ToastUtils.showCustomToast(this@ContactOptionsActivity, "Failed to update name")
+                ThemedToast.show(this@ContactOptionsActivity, "Failed to update name")
             }
         }
     }
@@ -329,7 +329,7 @@ class ContactOptionsActivity : AppCompatActivity() {
                         Log.i(TAG, "Pending Ping cleared for contact ${contact.id} (if any)")
                     }
 
-                    ToastUtils.showCustomToast(this@ContactOptionsActivity, "Contact deleted")
+                    ThemedToast.show(this@ContactOptionsActivity, "Contact deleted")
 
                     // Navigate back to MainActivity
                     val intent = Intent(this@ContactOptionsActivity, MainActivity::class.java)
@@ -337,11 +337,11 @@ class ContactOptionsActivity : AppCompatActivity() {
                     finish()
                 } else {
                     Log.w(TAG, "Contact not found in database")
-                    ToastUtils.showCustomToast(this@ContactOptionsActivity, "Contact not found")
+                    ThemedToast.show(this@ContactOptionsActivity, "Contact not found")
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to delete contact", e)
-                ToastUtils.showCustomToast(this@ContactOptionsActivity, "Failed to delete contact")
+                ThemedToast.show(this@ContactOptionsActivity, "Failed to delete contact")
             }
         }
     }

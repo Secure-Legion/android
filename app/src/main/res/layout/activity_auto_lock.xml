@@ -1,0 +1,121 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:background="@color/dark_bg"
+    android:padding="24dp">
+
+    <!-- Header -->
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Auto-Lock Timer"
+        android:textSize="28sp"
+        android:textColor="@color/white"
+        android:textStyle="bold"
+        android:layout_marginBottom="8dp" />
+
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Lock the app automatically after inactivity"
+        android:textSize="14sp"
+        android:textColor="@color/text_gray"
+        android:layout_marginBottom="32dp" />
+
+    <!-- Timer Options -->
+    <RadioGroup
+        android:id="@+id/autoLockTimerGroup"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical">
+
+        <RadioButton
+            android:id="@+id/timer30Seconds"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="30 seconds"
+            android:textSize="16sp"
+            android:textColor="@color/text_white"
+            android:buttonTint="@color/accent_blue"
+            android:padding="16dp"
+            android:background="@drawable/settings_item_bg"
+            android:layout_marginBottom="12dp" />
+
+        <RadioButton
+            android:id="@+id/timer1Minute"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="1 minute"
+            android:textSize="16sp"
+            android:textColor="@color/text_white"
+            android:buttonTint="@color/accent_blue"
+            android:padding="16dp"
+            android:background="@drawable/settings_item_bg"
+            android:layout_marginBottom="12dp" />
+
+        <RadioButton
+            android:id="@+id/timer5Minutes"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="5 minutes"
+            android:textSize="16sp"
+            android:textColor="@color/text_white"
+            android:buttonTint="@color/accent_blue"
+            android:padding="16dp"
+            android:background="@drawable/settings_item_bg"
+            android:layout_marginBottom="12dp" />
+
+        <RadioButton
+            android:id="@+id/timer15Minutes"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="15 minutes"
+            android:textSize="16sp"
+            android:textColor="@color/text_white"
+            android:buttonTint="@color/accent_blue"
+            android:padding="16dp"
+            android:background="@drawable/settings_item_bg"
+            android:layout_marginBottom="12dp" />
+
+        <RadioButton
+            android:id="@+id/timer30Minutes"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="30 minutes"
+            android:textSize="16sp"
+            android:textColor="@color/text_white"
+            android:buttonTint="@color/accent_blue"
+            android:padding="16dp"
+            android:background="@drawable/settings_item_bg"
+            android:layout_marginBottom="12dp" />
+
+        <RadioButton
+            android:id="@+id/timerNever"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Never (Not Recommended)"
+            android:textSize="16sp"
+            android:textColor="@color/warning_red"
+            android:buttonTint="@color/warning_red"
+            android:padding="16dp"
+            android:background="@drawable/settings_item_bg" />
+
+    </RadioGroup>
+
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1" />
+
+    <!-- Info Text -->
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="The app will lock after the selected period of inactivity. You'll need to enter your PIN or use biometric authentication to unlock."
+        android:textSize="12sp"
+        android:textColor="@color/text_gray"
+        android:layout_marginTop="16dp" />
+
+</LinearLayout>

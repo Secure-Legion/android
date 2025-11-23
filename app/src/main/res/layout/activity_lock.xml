@@ -62,8 +62,32 @@
                 android:padding="16dp"
                 android:clickable="true"
                 android:focusable="true"
-                android:layout_marginBottom="32dp"
+                android:layout_marginBottom="24dp"
                 android:elevation="6dp" />
+
+            <!-- Biometric Authentication Button -->
+            <ImageView
+                android:id="@+id/biometricButton"
+                android:layout_width="64dp"
+                android:layout_height="64dp"
+                android:src="@drawable/ic_fingerprint"
+                android:background="@drawable/circle_button_bg"
+                android:padding="16dp"
+                android:clickable="true"
+                android:focusable="true"
+                android:visibility="gone"
+                android:contentDescription="Unlock with biometric"
+                android:layout_marginBottom="16dp" />
+
+            <TextView
+                android:id="@+id/biometricText"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Use Fingerprint/Face"
+                android:textSize="12sp"
+                android:textColor="@color/text_gray"
+                android:visibility="gone"
+                android:layout_marginBottom="32dp" />
 
         </LinearLayout>
 

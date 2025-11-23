@@ -14,12 +14,14 @@ import android.os.PowerManager
 import android.provider.Settings
 import android.util.Log
 import android.view.View
-import android.widget.Toast
 import android.widget.Spinner
 import android.widget.AdapterView
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowCompat
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
@@ -37,6 +39,8 @@ import com.securelegion.models.Chat
 import com.securelegion.models.Contact
 import com.securelegion.services.SolanaService
 import com.securelegion.utils.startActivityWithSlideAnimation
+import com.securelegion.utils.BadgeUtils
+import com.securelegion.utils.ThemedToast
 import com.securelegion.workers.SelfDestructWorker
 import com.securelegion.workers.MessageRetryWorker
 import kotlinx.coroutines.Dispatchers
@@ -44,7 +48,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.concurrent.TimeUnit
 
-class MainActivity : AppCompatActivity() {
+class MainActivity : BaseActivity() {
     private var currentTab = "messages" // Track current tab: "messages", "contacts", or "wallet"
     private var currentWallet: Wallet? = null // Track currently selected wallet
 
@@ -73,7 +77,7 @@ class MainActivity : AppCompatActivity() {
         val keyManager = KeyManager.getInstance(this)
         if (!keyManager.isAccountSetupComplete()) {
             Log.w("MainActivity", "Account setup incomplete - redirecting to CreateAccount")
-            Toast.makeText(this, "Please complete account setup", Toast.LENGTH_LONG).show()
+            ThemedToast.showLong(this, "Please complete account setup")
             val intent = Intent(this, CreateAccountActivity::class.java)
             intent.putExtra("RESUME_SETUP", true)
             startActivity(intent)
@@ -82,6 +86,41 @@ class MainActivity : AppCompatActivity() {
         }
 
         setContentView(R.layout.activity_main)
+
+        // Enable edge-to-edge display (important for display cutouts)
+        WindowCompat.setDecorFitsSystemWindows(window, false)
+
+        // Handle window insets for header and bottom navigation
+        val rootView = findViewById<View>(android.R.id.content)
+        val header = findViewById<View>(R.id.header)
+        val bottomNav = findViewById<View>(R.id.bottomNav)
+
+        ViewCompat.setOnApplyWindowInsetsListener(rootView) { view, windowInsets ->
+            val insets = windowInsets.getInsets(
+                WindowInsetsCompat.Type.systemBars() or
+                WindowInsetsCompat.Type.displayCutout()
+            )
+
+            // Apply top inset to header (for status bar and display cutout)
+            header.setPadding(
+                insets.left,
+                insets.top,
+                insets.right,
+                header.paddingBottom
+            )
+
+            // Apply bottom inset to bottom navigation (for gesture bar)
+            bottomNav.setPadding(
+                bottomNav.paddingLeft,
+                bottomNav.paddingTop,
+                bottomNav.paddingRight,
+                insets.bottom
+            )
+
+            Log.d("MainActivity", "Applied window insets - top: ${insets.top}, bottom: ${insets.bottom}, left: ${insets.left}, right: ${insets.right}")
+
+            windowInsets
+        }
 
         Log.d("MainActivity", "onCreate - initializing views")
 
@@ -100,8 +139,6 @@ class MainActivity : AppCompatActivity() {
         scheduleSelfDestructWorker()
         scheduleMessageRetryWorker()
 
-        // Request battery optimization exemption for wake lock
-        requestBatteryOptimizationExemption()
 
         // Start Tor foreground service (shows notification and handles Ping-Pong protocol)
         startTorService()
@@ -166,31 +203,14 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun requestBatteryOptimizationExemption() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
-            val packageName = packageName
-
-            if (!powerManager.isIgnoringBatteryOptimizations(packageName)) {
-                Log.i("MainActivity", "Requesting battery optimization exemption for wake lock")
-                try {
-                    val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
-                        data = Uri.parse("package:$packageName")
-                    }
-                    startActivity(intent)
-                } catch (e: Exception) {
-                    Log.e("MainActivity", "Failed to request battery optimization exemption", e)
-                    Toast.makeText(
-                        this,
-                        "Please disable battery optimization for Secure Legion in Settings",
-                        Toast.LENGTH_LONG
-                    ).show()
-                }
-            } else {
-                Log.d("MainActivity", "App is already exempt from battery optimization")
-            }
-        }
+    /**
+     * Update the friend request badge count on the Add Friend navigation icon
+     */
+    private fun updateFriendRequestBadge() {
+        val rootView = findViewById<View>(android.R.id.content)
+        BadgeUtils.updateFriendRequestBadge(this, rootView)
     }
+
 
     private fun scheduleSelfDestructWorker() {
         // Schedule periodic work to clean up expired self-destruct messages
@@ -278,7 +298,13 @@ class MainActivity : AppCompatActivity() {
         } else if (currentTab == "wallet") {
             // Reload wallet spinner to show newly created wallets
             setupWalletSpinner()
+        } else if (currentTab == "contacts") {
+            // Reload contacts list to show updates (e.g., after deleting a contact)
+            setupContactsList()
         }
+
+        // Update friend request badge count
+        updateFriendRequestBadge()
     }
 
     override fun onDestroy() {
@@ -452,11 +478,10 @@ class MainActivity : AppCompatActivity() {
                                     setupChatList()
                                 } catch (e: Exception) {
                                     Log.e("MainActivity", "Failed to delete thread", e)
-                                    Toast.makeText(
+                                    ThemedToast.show(
                                         this@MainActivity,
-                                        "Failed to delete thread",
-                                        Toast.LENGTH_SHORT
-                                    ).show()
+                                        "Failed to delete thread"
+                                    )
                                     // Reload to restore UI
                                     setupChatList()
                                 }
@@ -1019,7 +1044,7 @@ class MainActivity : AppCompatActivity() {
                 if (pingId == null || senderOnionAddress == null) {
                     Log.e("MainActivity", "No pending Ping found for contact $contactId")
                     withContext(Dispatchers.Main) {
-                        Toast.makeText(this@MainActivity, "No pending message found", Toast.LENGTH_SHORT).show()
+                        ThemedToast.show(this@MainActivity, "No pending message found")
                     }
                     return@launch
                 }
@@ -1027,7 +1052,7 @@ class MainActivity : AppCompatActivity() {
                 Log.i("MainActivity", "Downloading message: pingId=$pingId, sender=$senderOnionAddress")
 
                 withContext(Dispatchers.Main) {
-                    Toast.makeText(this@MainActivity, "Downloading message from $senderName...", Toast.LENGTH_SHORT).show()
+                    ThemedToast.show(this@MainActivity, "Downloading message from $senderName...")
                 }
 
                 // Step 1: Get contact info from database
@@ -1039,7 +1064,7 @@ class MainActivity : AppCompatActivity() {
                 if (contact == null) {
                     Log.e("MainActivity", "Contact $contactId not found in database")
                     withContext(Dispatchers.Main) {
-                        Toast.makeText(this@MainActivity, "Contact not found", Toast.LENGTH_SHORT).show()
+                        ThemedToast.show(this@MainActivity, "Contact not found")
                     }
                     return@launch
                 }
@@ -1056,7 +1081,7 @@ class MainActivity : AppCompatActivity() {
                     if (restoredPingId == null) {
                         Log.e("MainActivity", "Failed to decrypt/restore Ping")
                         withContext(Dispatchers.Main) {
-                            Toast.makeText(this@MainActivity, "Failed to restore message request", Toast.LENGTH_SHORT).show()
+                            ThemedToast.show(this@MainActivity, "Failed to restore message request")
                         }
                         return@launch
                     }
@@ -1073,7 +1098,7 @@ class MainActivity : AppCompatActivity() {
                 } else {
                     Log.e("MainActivity", "No encrypted Ping data stored - cannot restore")
                     withContext(Dispatchers.Main) {
-                        Toast.makeText(this@MainActivity, "Message data not found", Toast.LENGTH_SHORT).show()
+                        ThemedToast.show(this@MainActivity, "Message data not found")
                     }
                     return@launch
                 }
@@ -1085,7 +1110,7 @@ class MainActivity : AppCompatActivity() {
                 if (encryptedPongBytes == null) {
                     Log.e("MainActivity", "Failed to generate Pong response")
                     withContext(Dispatchers.Main) {
-                        Toast.makeText(this@MainActivity, "Failed to respond to message", Toast.LENGTH_SHORT).show()
+                        ThemedToast.show(this@MainActivity, "Failed to respond to message")
                     }
                     return@launch
                 }
@@ -1098,7 +1123,7 @@ class MainActivity : AppCompatActivity() {
                 if (!pongSent) {
                     Log.e("MainActivity", "Failed to send Pong to $senderOnionAddress")
                     withContext(Dispatchers.Main) {
-                        Toast.makeText(this@MainActivity, "Failed to connect to sender", Toast.LENGTH_SHORT).show()
+                        ThemedToast.show(this@MainActivity, "Failed to connect to sender")
                     }
                     return@launch
                 }
@@ -1139,7 +1164,7 @@ class MainActivity : AppCompatActivity() {
                 if (!messageReceived) {
                     Log.e("MainActivity", "Timeout waiting for message blob from sender")
                     withContext(Dispatchers.Main) {
-                        Toast.makeText(this@MainActivity, "Timeout: sender may be offline", Toast.LENGTH_LONG).show()
+                        ThemedToast.showLong(this@MainActivity, "Timeout: sender may be offline")
                     }
                     return@launch
                 }
@@ -1169,7 +1194,7 @@ class MainActivity : AppCompatActivity() {
 
                 // Step 8: Update UI
                 withContext(Dispatchers.Main) {
-                    Toast.makeText(this@MainActivity, "Message from $senderName downloaded!", Toast.LENGTH_SHORT).show()
+                    ThemedToast.show(this@MainActivity, "Message from $senderName downloaded!")
                     // Refresh chat list to hide download button and show the new message
                     setupChatList()
                     // Update app badge
@@ -1181,7 +1206,7 @@ class MainActivity : AppCompatActivity() {
             } catch (e: Exception) {
                 Log.e("MainActivity", "Failed to download message", e)
                 withContext(Dispatchers.Main) {
-                    Toast.makeText(this@MainActivity, "Download failed: ${e.message}", Toast.LENGTH_SHORT).show()
+                    ThemedToast.show(this@MainActivity, "Download failed: ${e.message}")
                 }
             }
         }

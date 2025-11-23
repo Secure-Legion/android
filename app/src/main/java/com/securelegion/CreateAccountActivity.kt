@@ -8,7 +8,6 @@ import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.TextView
-import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import com.securelegion.crypto.KeyManager
 import com.securelegion.crypto.TorManager
@@ -17,6 +16,7 @@ import com.securelegion.database.entities.Wallet
 import com.securelegion.models.ContactCard
 import com.securelegion.services.ContactCardManager
 import com.securelegion.utils.PasswordValidator
+import com.securelegion.utils.ThemedToast
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -76,7 +76,7 @@ class CreateAccountActivity : AppCompatActivity() {
         usernameSection.visibility = View.VISIBLE
         createSection.visibility = View.VISIBLE
 
-        Toast.makeText(this, "Enter your username to complete setup", Toast.LENGTH_LONG).show()
+        ThemedToast.showLong(this, "Enter your username to complete setup")
     }
 
     override fun onResume() {
@@ -119,19 +119,19 @@ class CreateAccountActivity : AppCompatActivity() {
             val confirmPassword = confirmPasswordInput.text.toString()
 
             if (password.isEmpty()) {
-                Toast.makeText(this, "Please enter a password", Toast.LENGTH_SHORT).show()
+                ThemedToast.show(this, "Please enter a password")
                 return@setOnClickListener
             }
 
             if (password != confirmPassword) {
-                Toast.makeText(this, "Passwords do not match", Toast.LENGTH_SHORT).show()
+                ThemedToast.show(this, "Passwords do not match")
                 return@setOnClickListener
             }
 
             // Validate password complexity
             val validation = PasswordValidator.validate(password)
             if (!validation.isValid) {
-                Toast.makeText(this, validation.errorMessage, Toast.LENGTH_LONG).show()
+                ThemedToast.showLong(this, validation.errorMessage ?: "Invalid password")
                 return@setOnClickListener
             }
 
@@ -143,7 +143,7 @@ class CreateAccountActivity : AppCompatActivity() {
             val username = usernameInput.text.toString()
 
             if (username.isEmpty()) {
-                Toast.makeText(this, "Please enter a username", Toast.LENGTH_SHORT).show()
+                ThemedToast.show(this, "Please enter a username")
                 return@setOnClickListener
             }
 
@@ -196,7 +196,7 @@ class CreateAccountActivity : AppCompatActivity() {
 
         } catch (e: Exception) {
             Log.e("CreateAccount", "Failed to generate wallet", e)
-            Toast.makeText(this, "Failed to create wallet: ${e.message}", Toast.LENGTH_LONG).show()
+            ThemedToast.showLong(this, "Failed to create wallet: ${e.message}")
         }
     }
 
@@ -226,11 +226,10 @@ class CreateAccountActivity : AppCompatActivity() {
                 val publicKey = keyManager.getSolanaAddress() // Get Base58 public key
 
                 Log.d("CreateAccount", "Uploading contact card to IPFS...")
-                Toast.makeText(
+                ThemedToast.show(
                     this@CreateAccountActivity,
-                    "Uploading contact card...",
-                    Toast.LENGTH_SHORT
-                ).show()
+                    "Uploading contact card..."
+                )
 
                 // Upload to IPFS with PIN encryption (tries Lighthouse first, falls back to Pinata)
                 val result = withContext(Dispatchers.IO) {
@@ -275,11 +274,10 @@ class CreateAccountActivity : AppCompatActivity() {
                 }
             } catch (e: Exception) {
                 Log.e("CreateAccount", "Failed to generate contact card", e)
-                Toast.makeText(
+                ThemedToast.showLong(
                     this@CreateAccountActivity,
-                    "Failed to create contact card: ${e.message}",
-                    Toast.LENGTH_LONG
-                ).show()
+                    "Failed to create contact card. Please try again."
+                )
 
                 // Re-enable button so user can retry
                 createAccountButton.isEnabled = true

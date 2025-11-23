@@ -8,7 +8,7 @@ import android.os.Bundle
 import android.view.View
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
-import com.securelegion.utils.ToastUtils
+import com.securelegion.utils.ThemedToast
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -127,7 +127,7 @@ class TransactionDetailActivity : AppCompatActivity() {
         val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
         val clip = ClipData.newPlainText(label, text)
         clipboard.setPrimaryClip(clip)
-        ToastUtils.showCustomToast(this, "$label copied to clipboard")
+        ThemedToast.show(this, "$label copied to clipboard")
     }
 
     private fun setupBottomNav() {

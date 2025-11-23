@@ -14,13 +14,13 @@ import android.view.View
 import android.widget.Button
 import android.widget.ImageView
 import android.widget.TextView
-import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import com.google.zxing.BarcodeFormat
 import com.google.zxing.qrcode.QRCodeWriter
 import com.securelegion.crypto.KeyManager
+import com.securelegion.utils.ThemedToast
 
-class ReceiveActivity : AppCompatActivity() {
+class ReceiveActivity : BaseActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_receive)
@@ -47,7 +47,7 @@ class ReceiveActivity : AppCompatActivity() {
             val clip = ClipData.newPlainText("Wallet Address", address)
             clipboard.setPrimaryClip(clip)
 
-            Toast.makeText(this, "Address copied to clipboard", Toast.LENGTH_SHORT).show()
+            ThemedToast.show(this, "Address copied to clipboard")
         }
     }
 
@@ -66,7 +66,7 @@ class ReceiveActivity : AppCompatActivity() {
 
         } catch (e: Exception) {
             Log.e("ReceiveActivity", "Failed to load Solana address", e)
-            Toast.makeText(this, "Failed to load wallet address", Toast.LENGTH_SHORT).show()
+            ThemedToast.show(this, "Failed to load wallet address")
         }
     }
 
@@ -89,7 +89,7 @@ class ReceiveActivity : AppCompatActivity() {
 
         } catch (e: Exception) {
             Log.e("ReceiveActivity", "Failed to generate QR code", e)
-            Toast.makeText(this, "Failed to generate QR code", Toast.LENGTH_SHORT).show()
+            ThemedToast.show(this, "Failed to generate QR code")
         }
     }
 

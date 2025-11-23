@@ -6,11 +6,11 @@ import android.util.Log
 import android.view.View
 import android.widget.Button
 import android.widget.EditText
-import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
 import com.securelegion.crypto.KeyManager
 import com.securelegion.utils.PasswordValidator
+import com.securelegion.utils.ThemedToast
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -34,19 +34,19 @@ class DevicePasswordActivity : AppCompatActivity() {
             val confirmPassword = findViewById<EditText>(R.id.confirmPasswordInput).text.toString()
 
             if (currentPassword.isEmpty() || newPassword.isEmpty() || confirmPassword.isEmpty()) {
-                Toast.makeText(this, "Please fill in all fields", Toast.LENGTH_SHORT).show()
+                ThemedToast.show(this, "Please fill in all fields")
                 return@setOnClickListener
             }
 
             if (newPassword != confirmPassword) {
-                Toast.makeText(this, "New passwords do not match", Toast.LENGTH_SHORT).show()
+                ThemedToast.show(this, "New passwords do not match")
                 return@setOnClickListener
             }
 
             // Validate password complexity
             val validation = PasswordValidator.validate(newPassword)
             if (!validation.isValid) {
-                Toast.makeText(this, validation.errorMessage, Toast.LENGTH_LONG).show()
+                ThemedToast.showLong(this, validation.errorMessage ?: "Invalid password")
                 return@setOnClickListener
             }
 
@@ -66,7 +66,7 @@ class DevicePasswordActivity : AppCompatActivity() {
 
                     if (!isCurrentPasswordValid) {
                         withContext(Dispatchers.Main) {
-                            Toast.makeText(this@DevicePasswordActivity, "Current password is incorrect", Toast.LENGTH_SHORT).show()
+                            ThemedToast.show(this@DevicePasswordActivity, "Current password is incorrect")
                             findViewById<View>(R.id.changePasswordButton).isEnabled = true
                         }
                         return@launch
@@ -80,7 +80,7 @@ class DevicePasswordActivity : AppCompatActivity() {
                     Log.i("DevicePassword", "Password changed successfully")
 
                     withContext(Dispatchers.Main) {
-                        Toast.makeText(this@DevicePasswordActivity, "Password changed successfully!", Toast.LENGTH_SHORT).show()
+                        ThemedToast.show(this@DevicePasswordActivity, "Password changed successfully!")
 
                         // Clear input fields
                         findViewById<EditText>(R.id.currentPasswordInput).setText("")
@@ -94,7 +94,7 @@ class DevicePasswordActivity : AppCompatActivity() {
                 } catch (e: Exception) {
                     Log.e("DevicePassword", "Failed to change password", e)
                     withContext(Dispatchers.Main) {
-                        Toast.makeText(this@DevicePasswordActivity, "Failed to change password: ${e.message}", Toast.LENGTH_LONG).show()
+                        ThemedToast.showLong(this@DevicePasswordActivity, "Failed to change password: ${e.message}")
                         findViewById<View>(R.id.changePasswordButton).isEnabled = true
                     }
                 }

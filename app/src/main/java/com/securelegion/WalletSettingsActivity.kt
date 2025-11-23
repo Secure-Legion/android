@@ -7,13 +7,13 @@ import android.os.Bundle
 import android.util.Log
 import android.view.View
 import android.widget.TextView
-import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
 import com.securelegion.crypto.KeyManager
 import com.securelegion.database.SecureLegionDatabase
 import com.securelegion.database.entities.Wallet
+import com.securelegion.utils.ThemedToast
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -100,7 +100,7 @@ class WalletSettingsActivity : AppCompatActivity() {
             if (!isMainWallet) {
                 showExportKeyDialog()
             } else {
-                Toast.makeText(this, "Cannot export main wallet key", Toast.LENGTH_SHORT).show()
+                ThemedToast.show(this, "Cannot export main wallet key")
             }
         }
 
@@ -109,7 +109,7 @@ class WalletSettingsActivity : AppCompatActivity() {
             if (!isMainWallet) {
                 showDeleteWalletDialog()
             } else {
-                Toast.makeText(this, "Cannot delete main wallet", Toast.LENGTH_SHORT).show()
+                ThemedToast.show(this, "Cannot delete main wallet")
             }
         }
     }
@@ -152,11 +152,10 @@ class WalletSettingsActivity : AppCompatActivity() {
 
                 if (seedPhrase == null) {
                     withContext(Dispatchers.Main) {
-                        Toast.makeText(
+                        ThemedToast.showLong(
                             this@WalletSettingsActivity,
-                            "Failed to retrieve wallet seed phrase",
-                            Toast.LENGTH_LONG
-                        ).show()
+                            "Failed to retrieve wallet seed phrase"
+                        )
                     }
                     return@launch
                 }
@@ -168,11 +167,10 @@ class WalletSettingsActivity : AppCompatActivity() {
             } catch (e: Exception) {
                 Log.e("WalletSettings", "Failed to export key", e)
                 withContext(Dispatchers.Main) {
-                    Toast.makeText(
+                    ThemedToast.showLong(
                         this@WalletSettingsActivity,
-                        "Error: ${e.message}",
-                        Toast.LENGTH_LONG
-                    ).show()
+                        "Error: ${e.message}"
+                    )
                 }
             }
         }
@@ -186,7 +184,7 @@ class WalletSettingsActivity : AppCompatActivity() {
                 val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                 val clip = ClipData.newPlainText("Seed Phrase", seedPhrase)
                 clipboard.setPrimaryClip(clip)
-                Toast.makeText(this, "Seed phrase copied to clipboard", Toast.LENGTH_SHORT).show()
+                ThemedToast.show(this, "Seed phrase copied to clipboard")
                 Log.i("WalletSettings", "Seed phrase copied to clipboard for wallet: $currentWalletId")
                 dialog.dismiss()
             }
@@ -206,11 +204,10 @@ class WalletSettingsActivity : AppCompatActivity() {
 
                 if (!deleted) {
                     withContext(Dispatchers.Main) {
-                        Toast.makeText(
+                        ThemedToast.showLong(
                             this@WalletSettingsActivity,
-                            "Failed to delete wallet from secure storage",
-                            Toast.LENGTH_LONG
-                        ).show()
+                            "Failed to delete wallet from secure storage"
+                        )
                     }
                     return@launch
                 }
@@ -223,30 +220,27 @@ class WalletSettingsActivity : AppCompatActivity() {
                 withContext(Dispatchers.Main) {
                     if (rowsDeleted > 0) {
                         Log.i("WalletSettings", "Wallet deleted successfully: $currentWalletId")
-                        Toast.makeText(
+                        ThemedToast.show(
                             this@WalletSettingsActivity,
-                            "Wallet deleted successfully",
-                            Toast.LENGTH_SHORT
-                        ).show()
+                            "Wallet deleted successfully"
+                        )
                         finish()
                     } else {
                         Log.w("WalletSettings", "Wallet not found in database: $currentWalletId")
-                        Toast.makeText(
+                        ThemedToast.show(
                             this@WalletSettingsActivity,
-                            "Wallet not found in database",
-                            Toast.LENGTH_SHORT
-                        ).show()
+                            "Wallet not found in database"
+                        )
                     }
                 }
 
             } catch (e: Exception) {
                 Log.e("WalletSettings", "Failed to delete wallet", e)
                 withContext(Dispatchers.Main) {
-                    Toast.makeText(
+                    ThemedToast.showLong(
                         this@WalletSettingsActivity,
-                        "Error deleting wallet: ${e.message}",
-                        Toast.LENGTH_LONG
-                    ).show()
+                        "Error deleting wallet: ${e.message}"
+                    )
                 }
             }
         }

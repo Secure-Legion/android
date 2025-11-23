@@ -16,13 +16,15 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
-    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
     <!-- Notifications (Android 13+) -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <!-- Exact Alarm for Service Restart (Android 13+, automatically granted) -->
     <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
+
+    <!-- Boot Receiver - Start services after device reboot -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
     <application
         android:allowBackup="false"
@@ -116,6 +118,10 @@
             android:exported="false" />
 
         <activity
+            android:name=".AutoLockActivity"
+            android:exported="false" />
+
+        <activity
             android:name=".WipeAccountActivity"
             android:exported="false"
             android:windowSoftInputMode="adjustPan" />
@@ -203,6 +209,19 @@
             android:name=".receivers.TorServiceRestartReceiver"
             android:enabled="true"
             android:exported="false" />
+
+        <!-- Boot receiver - Start services after device reboot -->
+        <receiver
+            android:name=".receivers.BootReceiver"
+            android:enabled="true"
+            android:exported="true"
+            android:directBootAware="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.QUICKBOOT_POWERON" />
+                <action android:name="android.intent.action.LOCKED_BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
 
     </application>
 

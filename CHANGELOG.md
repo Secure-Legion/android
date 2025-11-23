@@ -7,6 +7,385 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+#### Ghost Ping/Message Issue - ACK Listener JNI Binding
+- **RustBridge.kt (line 375)**: Fixed startAckListener() JNI binding crash
+  - Removed default parameter from external function declaration
+  - Changed from `external fun startAckListener(port: Int = 9153)` to `external fun startAckListener(port: Int)`
+  - JNI does not support Kotlin default parameters, causing UnsatisfiedLinkError
+  - ACK listener now starts successfully on port 9153
+  - PING_ACK and MESSAGE_ACK delivery now functional
+  - Eliminates ghost pings caused by sender retries when ACKs fail to send
+  - Root cause: sender never received ACK, assumed message failed, sent new ping with different ID
+  - Each retry ping was legitimate (unique ID), so deduplication correctly allowed it
+
+#### Database-Based Message Deduplication
+- **database/entities/ReceivedId.kt**: Created entity for tracking all received ping/pong/message IDs
+  - UNIQUE constraint on receivedId field for atomic deduplication
+  - Tracks ID type (PING, PONG, MESSAGE) and timestamp
+  - Prevents race conditions where same ID arrives before database insert completes
+
+- **database/dao/ReceivedIdDao.kt**: Created DAO for deduplication operations
+  - insertReceivedId() with OnConflictStrategy.IGNORE returns -1 for duplicates
+  - Atomic INSERT operation using UNIQUE constraint prevents race conditions
+  - exists() method for checking if ID was previously received
+  - deleteOldIds() for cleanup of IDs older than 30 days
+
+- **SecureLegionDatabase.kt (lines 34-35, 185-202)**: Added migration 10 to 11
+  - Creates received_ids table with UNIQUE index on receivedId
+  - Migration creates table and index for deduplication tracking
+  - Database version bumped to 11
+
+- **TorService.kt (lines 869-882, 936-962, 1189-1222)**: Implemented PRIMARY deduplication layer
+  - Ping deduplication: Tracks each ping ID before processing
+  - Pong deduplication: Tracks with "pong_" prefix before message send
+  - Message blob deduplication: Uses encrypted payload hash as ID
+  - All checks happen BEFORE notifications or database saves
+  - Returns -1L from insertReceivedId() indicates duplicate, skips processing
+  - Sends ACK for duplicates to stop sender retries
+
+- **TorService.kt (lines 1214-1215, 1689-1690)**: Removed secondary duplicate checks
+  - Deleted messageExists() check for blob messages
+  - Deleted getMessageByMessageId() check for regular messages
+  - Secondary checks were blocking rapid identical messages like "yo" "yo" "yo"
+  - PRIMARY ReceivedId table deduplication is sufficient
+  - Allows users to send same text multiple times quickly
+
+- **TorService.kt (lines 1098-1101)**: Fixed blob message ID generation
+  - Changed from content+timestamp hash to encrypted payload hash
+  - Uses hash of encrypted bytes (includes random nonce)
+  - Allows rapid messages with same text (each encryption produces different hash)
+  - Blocks true network duplicates (same encrypted blob)
+
+#### Bridge Configuration Persistence
+- **TorManager.kt (lines 92-130)**: Fixed bridge configuration not applied on restart
+  - Torrc file now ALWAYS written before Tor starts (even if already running)
+  - Previously only wrote torrc if Tor wasn't running, causing race condition
+  - Bridge configuration changes now persist across Tor restarts
+  - Moved torrc write outside the "if not running" check
+
+- **BridgeActivity.kt (line 117)**: Increased restart delay for clean shutdown
+  - Changed delay from 2000ms to 3500ms
+  - Ensures Tor fully stops before new configuration applied
+  - Prevents race condition where new Tor starts before old one fully stopped
+
+#### Notification Behavior
+- **TorService.kt (lines 2050-2063)**: Minimized connected state notification
+  - Changed to PRIORITY_MIN for normal "Connected" state (just icon in status bar)
+  - Empty title and text when connected (completely silent)
+  - PRIORITY_DEFAULT only for problem states (Connecting, Failed, Retrying)
+  - Added setShowWhen(false) and setSilent(true) for connected state
+  - Prevents swipeable notification entirely when working correctly
+  - Users only see notification text when there's an issue requiring attention
+
+### Added
+
+#### Auto-Lock Timer Security Feature
+- **AutoLockActivity.kt**: Created activity for configuring auto-lock timeout
+  - Timer options: 30 seconds, 1 minute, 5 minutes, 15 minutes, 30 minutes, Never
+  - Saves selection to SharedPreferences "security" with key "auto_lock_timeout_ms"
+  - Companion object defines timeout constants
+  - Shows confirmation toast with selected timeout
+  - Automatically closes after selection with 500ms delay
+
+- **activity_auto_lock.xml**: Created layout for auto-lock timer selection
+  - RadioGroup with 6 options for different timeout intervals
+  - Dark themed with settings_item_bg background
+  - Warning color for "Never" option (not recommended)
+  - Info text explaining auto-lock behavior
+
+- **BaseActivity.kt**: Implemented auto-lock timer logic
+  - Tracks app lifecycle with onPause() and onResume()
+  - Records timestamp when app goes to background
+  - Checks elapsed time when app returns to foreground
+  - Locks app by navigating to LockActivity if timeout exceeded
+  - Skips auto-lock for LockActivity, CreateAccountActivity, SplashActivity
+  - Respects "Never" timeout setting (TIMEOUT_NEVER = -1L)
+  - Uses separate SharedPreferences for lifecycle tracking
+
+- **MainActivity.kt, ChatActivity.kt, AddFriendActivity.kt, SecurityModeActivity.kt**: Extended BaseActivity
+  - Auto-lock timer now functional on all main app screens
+  - Consistent security behavior across messaging, contacts, and settings
+
+- **SecurityModeActivity.kt (lines 29-45)**: Added auto-lock settings integration
+  - setupAutoLock() launches AutoLockActivity when item clicked
+  - updateAutoLockStatus() displays current timeout selection
+  - Updates status text in onResume() to reflect changes
+
+- **activity_security_mode.xml**: Added App Security section
+  - Auto-Lock Timer item shows current timeout
+  - Tappable item navigates to AutoLockActivity
+  - Arrow indicator for navigation
+
+- **activity_settings.xml (lines 176-219)**: Added Advanced Security menu item
+  - "Advanced Security" entry in Settings
+  - Description: "Auto-lock timer, connection settings"
+  - Navigates to SecurityModeActivity
+
+#### Enhanced Deduplication Diagnostics
+- **TorService.kt (lines 936-962)**: Added detailed logging for ping deduplication
+  - Logs "DEDUPLICATION CHECK: Ping ID = X" for every ping
+  - Logs "Attempting to insert Ping ID into received_ids table..."
+  - Logs insert result with rowId (NEW or DUPLICATE status)
+  - Try-catch block logs database exceptions with full details
+  - Logs "NEW PING ACCEPTED" or "DUPLICATE PING BLOCKED" based on result
+  - Helps diagnose deduplication failures and database issues
+
+### Changed
+
+#### Security UI Simplification
+- **activity_security_mode.xml**: Removed non-configurable security features
+  - Removed "Direct Ping-Pong" toggle (core feature, cannot be disabled)
+  - Removed "Tor Connection" toggle (core feature, cannot be disabled)
+  - Removed "About Direct Ping-Pong" info box
+  - Advanced Security page now shows only Auto-Lock Timer
+  - Cleaner interface focused on user-configurable security settings
+
+- **SecurityModeActivity.kt**: Removed tor toggle setup
+  - Removed setupTorToggle() method
+  - Removed SwitchCompat import
+  - Removed ThemedToast import
+  - Simplified onCreate() to only setup auto-lock and bottom navigation
+
+### Technical Details
+
+#### Auto-Lock Timer Operation
+- Records System.currentTimeMillis() in onPause() to SharedPreferences
+- Calculates elapsed time in onResume() by subtracting stored timestamp from current time
+- Compares elapsed time against configured timeout from "security" preferences
+- Timeout values range from 30,000ms (30s) to 1,800,000ms (30m), or -1L for Never
+- Navigates to LockActivity with FLAG_ACTIVITY_NEW_TASK and FLAG_ACTIVITY_CLEAR_TASK
+- Uses separate "app_lifecycle" preferences to avoid conflicts with security settings
+
+#### Database Migration 10 to 11
+- Creates received_ids table with columns: id (autoincrement), receivedId (text), idType (text), receivedTimestamp (integer), processed (boolean)
+- Creates UNIQUE INDEX on receivedId column for atomic duplicate detection
+- Migration SQL uses "CREATE TABLE IF NOT EXISTS" for safety
+- Index creation uses "CREATE UNIQUE INDEX IF NOT EXISTS"
+- Room handles migration automatically on first app launch after upgrade
+
+#### Deduplication Flow
+1. Receive ping/pong/message from network
+2. Create ReceivedId entity with unique ID and type
+3. Call database.receivedIdDao().insertReceivedId() in runBlocking coroutine
+4. If rowId == -1L, ID already exists (duplicate), return early
+5. If rowId > 0, ID is new, continue processing (show notification, save message, etc)
+6. Send ACK to sender to confirm receipt
+7. Duplicate arrives later, step 4 catches it, ACK sent but no processing
+
+#### ACK Listener Architecture
+- Listener runs on port 9153 (separate from message listener on 9150)
+- Accepts incoming ACK messages (PING_ACK, MESSAGE_ACK) from contacts
+- Rust TorManager binds TCP socket to localhost:9153 via Tor hidden service
+- ACKs encrypted with shared secret (ECDH using X25519 keys)
+- Wire format: [Type Byte 0x06][Sender X25519 Public Key][Encrypted ACK]
+- JNI function Java_com_securelegion_crypto_RustBridge_startAckListener must match exactly
+- Default parameters in Kotlin external fun break JNI name mangling
+
+### Files Modified
+
+**Kotlin Files:**
+- app/src/main/java/com/securelegion/BaseActivity.kt
+- app/src/main/java/com/securelegion/MainActivity.kt
+- app/src/main/java/com/securelegion/ChatActivity.kt
+- app/src/main/java/com/securelegion/AddFriendActivity.kt
+- app/src/main/java/com/securelegion/SecurityModeActivity.kt
+- app/src/main/java/com/securelegion/crypto/RustBridge.kt
+- app/src/main/java/com/securelegion/crypto/TorManager.kt
+- app/src/main/java/com/securelegion/BridgeActivity.kt
+- app/src/main/java/com/securelegion/services/TorService.kt
+- app/src/main/java/com/securelegion/database/SecureLegionDatabase.kt
+
+**New Kotlin Files:**
+- app/src/main/java/com/securelegion/AutoLockActivity.kt
+- app/src/main/java/com/securelegion/database/entities/ReceivedId.kt
+- app/src/main/java/com/securelegion/database/dao/ReceivedIdDao.kt
+
+**Layout Files:**
+- app/src/main/res/layout/activity_security_mode.xml
+- app/src/main/res/layout/activity_settings.xml
+
+**New Layout Files:**
+- app/src/main/res/layout/activity_auto_lock.xml
+
+**Database:**
+- Database version: 10 to 11
+- New table: received_ids
+
+---
+
+## [0.1.3] - 2025-11-11 (Previous Version)
+
+### Fixed
+
+#### Message Deduplication and Delivery Tracking
+- **TorService.kt (lines 1526-1616)**: Implemented deterministic message IDs to prevent duplicate messages
+  - Changed from random UUID generation to deterministic ID based on pingId: "msg_$pingId"
+  - Added duplicate detection check before message insertion
+  - Implemented automatic MESSAGE_ACK sending after successful message save
+  - Added MESSAGE_ACK response for duplicate messages to stop sender retries
+  - Prevents ghost messages and notification spam
+
+- **TorService.kt (lines 1098-1165)**: Fixed message blob deduplication
+  - Changed from random nonce-based IDs to deterministic hash: "blob_" + Base64(SHA256(senderId:content:timestamp))
+  - Timestamp rounded to nearest minute for deduplication window
+  - Added messageExists() check before insertion
+  - Implemented MESSAGE_ACK sending after saving blob messages
+  - Prevents duplicate reception of direct messages
+
+- **TorService.kt (lines 853-891)**: Added Pong deduplication to prevent duplicate sends
+  - Added check for messageDelivered flag before processing Pong
+  - Prevents sending message payload multiple times for duplicate Pongs
+  - Logs duplicate Pong detection and skips processing
+  - Eliminates ghost message sends on receiver side
+
+- **MessageService.kt (lines 607-611)**: Fixed sender-side infinite retry loops
+  - Added messageDelivered flag check before attempting message send
+  - Skips messages that have already been acknowledged
+  - Logs skipped messages to prevent silent failures
+  - Prevents wasted bandwidth and battery on already-delivered messages
+
+#### Service Stability
+- **TorService.kt (lines 1901-1905)**: Fixed dismissible notification killing service on Android 12+
+  - Added setForegroundServiceBehavior(FOREGROUND_SERVICE_IMMEDIATE) for Android 12+
+  - Prevents service termination when user swipes notification
+  - Ensures continuous operation for 24/7 message reception
+  - Notification now truly non-dismissible as required for foreground services
+
+#### Bridge Configuration
+- **BridgeActivity.kt (lines 102-119)**: Implemented automatic Tor restart on bridge save
+  - Added TorService stop/restart sequence when bridge configuration changes
+  - Stops existing Tor connection before applying new bridge
+  - Waits 2 seconds for clean shutdown before restart
+  - Displays toast notification to inform user of restart
+
+- **SplashActivity.kt (lines 335-350)**: Automated bridge connection testing flow
+  - Automatically tests bridge connection after returning from BridgeActivity
+  - Hides configuration buttons and shows progress bar
+  - Initiates bootstrap monitoring without manual retry
+  - Provides smooth user experience for censored network environments
+
+#### Notification Handling
+- **DownloadMessageService.kt (lines 96-97, 321-379)**: Fixed crash when clicking download notification
+  - Added currentContactId and currentContactName instance variables
+  - Properly passes contact information to ChatActivity via LockActivity
+  - Uses unique pending intent request codes per contact
+  - Eliminates "contact not found" crashes when tapping notification
+
+#### Biometric Authentication
+- **BiometricAuthHelper.kt (lines 219-277)**: Fixed biometric failure on non-Google devices
+  - Implemented StrongBox with TEE fallback mechanism
+  - Attempts StrongBox key creation first for highest security
+  - Gracefully falls back to regular hardware-backed keystore if StrongBox unavailable
+  - Added detailed logging for security level (StrongBox vs TEE)
+  - Ensures compatibility with Samsung, OnePlus, Xiaomi, and other manufacturers
+
+### Added
+
+#### Boot Receiver for Background Operation
+- **receivers/BootReceiver.kt**: Created boot receiver for automatic service startup
+  - Listens for BOOT_COMPLETED, QUICKBOOT_POWERON, and LOCKED_BOOT_COMPLETED intents
+  - Automatically starts TorService when device boots
+  - Schedules MessageRetryWorker for background message processing
+  - Only activates if user account is initialized (respects app state)
+  - Enables message reception without user opening app
+
+- **AndroidManifest.xml (line 27)**: Added RECEIVE_BOOT_COMPLETED permission
+  - Required for boot receiver functionality
+  - Standard Android permission, granted automatically
+
+- **AndroidManifest.xml (lines 210-220)**: Registered BootReceiver component
+  - Set as exported for system broadcasts
+  - Enabled directBootAware for early boot support
+  - Configured intent filters for multiple boot scenarios (standard, quick boot, locked boot)
+
+#### Enhanced Background Message Processing
+- **TorService.kt (lines 360-362, 401-403)**: Added MessageRetryWorker scheduling in TorService
+  - Schedules worker when Tor initializes successfully
+  - Schedules worker when Tor is already running (service restart case)
+  - Ensures retry worker always active when service runs
+  - Provides redundant scheduling for reliability
+
+### Changed
+
+#### Message ID Generation Strategy
+- Ping-based messages: Deterministic ID format "msg_$pingId"
+- Blob messages: Deterministic hash "blob_" + Base64(SHA256(senderId:content:timestamp))
+- Ensures same message generates same ID for deduplication
+- Maintains uniqueness across different messages
+
+#### Retry Backoff Schedule
+- Initial delay: 5 seconds
+- Backoff multiplier: 2.0x per retry
+- Maximum delay: 5 minutes (capped)
+- Full schedule: 5s, 10s, 20s, 40s, 80s, 160s, 300s (capped at 5min)
+
+#### MessageRetryWorker Scheduling Redundancy
+Now scheduled in three independent locations for maximum reliability:
+1. MainActivity - when app opens
+2. TorService - when Tor connects (both fresh init and already-running cases)
+3. BootReceiver - when device boots
+
+#### Delivery Tracking Flags
+- pingDelivered: Set to true when PING_ACK received from recipient
+- messageDelivered: Set to true when MESSAGE_ACK received from recipient
+- Both flags checked before retry attempts to prevent unnecessary retransmissions
+- Flags persist in database for reliability across app restarts
+
+### Technical Details
+
+#### Boot Process Flow
+1. Device boots and system broadcasts BOOT_COMPLETED
+2. BootReceiver verifies account is initialized
+3. BootReceiver starts TorService as foreground service
+4. BootReceiver schedules MessageRetryWorker
+5. TorService connects to Tor network
+6. TorService starts hidden service listener
+7. MessageRetryWorker begins polling every 5 minutes
+8. User can receive messages without opening app
+
+#### MessageRetryWorker Operation
+- Interval: Every 5 minutes
+- Network requirement: Connected network state
+- Operations per cycle:
+  1. Poll for received Pongs and send queued message payloads
+  2. Retry pending Pings using exponential backoff
+  3. Update retry counters and timestamps in database
+- Respects delivery flags to prevent duplicate sends
+- Logs all operations for debugging
+
+#### Security Considerations
+- StrongBox provides hardware isolation on supported devices (Pixel, some flagships)
+- TEE fallback still provides hardware-backed security on all devices
+- Both implementations use Android Keystore for key protection
+- Biometric key never leaves secure hardware
+- Password hash encrypted with biometric-protected key
+
+#### Performance Impact
+- Boot receiver: Negligible (<100ms execution time)
+- MessageRetryWorker: Low CPU usage, runs max 5 minutes per hour
+- Deterministic message IDs: No performance impact, same hash computation
+- Deduplication checks: Fast database queries using indexed messageId field
+
+### Files Modified
+
+**Kotlin Files:**
+- app/src/main/java/com/securelegion/services/TorService.kt
+- app/src/main/java/com/securelegion/services/MessageService.kt
+- app/src/main/java/com/securelegion/services/DownloadMessageService.kt
+- app/src/main/java/com/securelegion/BridgeActivity.kt
+- app/src/main/java/com/securelegion/SplashActivity.kt
+- app/src/main/java/com/securelegion/utils/BiometricAuthHelper.kt
+
+**New Files:**
+- app/src/main/java/com/securelegion/receivers/BootReceiver.kt
+
+**Configuration Files:**
+- app/src/main/AndroidManifest.xml
+
+---
+
 ## [0.1.3] - 2025-11-11
 
 ### Added

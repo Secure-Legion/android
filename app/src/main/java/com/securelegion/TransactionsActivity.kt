@@ -5,9 +5,9 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.view.View
-import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
+import com.securelegion.utils.ThemedToast
 // import com.securelegion.utils.finishWithSlideAnimation
 // import com.securelegion.utils.startActivityWithSlideAnimation
 
@@ -35,7 +35,7 @@ class TransactionsActivity : AppCompatActivity() {
             // Simulate refreshing transactions
             Handler(Looper.getMainLooper()).postDelayed({
                 swipeRefresh.isRefreshing = false
-                Toast.makeText(this, "Transactions updated", Toast.LENGTH_SHORT).show()
+                ThemedToast.show(this, "Transactions updated")
             }, 1500)
         }
     }

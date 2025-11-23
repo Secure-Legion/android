@@ -7,7 +7,6 @@ import android.text.TextWatcher
 import android.util.Log
 import android.view.View
 import android.widget.EditText
-import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
@@ -18,11 +17,12 @@ import com.securelegion.database.SecureLegionDatabase
 import com.securelegion.database.entities.Contact as DbContact
 import com.securelegion.models.Contact
 import com.securelegion.services.MessageService
+import com.securelegion.utils.ThemedToast
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-class ComposeActivity : AppCompatActivity() {
+class ComposeActivity : BaseActivity() {
 
     companion object {
         private const val TAG = "ComposeActivity"
@@ -129,12 +129,12 @@ class ComposeActivity : AppCompatActivity() {
         val sendButton = findViewById<View>(R.id.sendButton)
 
         if (selectedContact == null) {
-            Toast.makeText(this, "Please select a contact", Toast.LENGTH_SHORT).show()
+            ThemedToast.show(this, "Please select a contact")
             return
         }
 
         if (message.isBlank()) {
-            Toast.makeText(this, "Please enter a message", Toast.LENGTH_SHORT).show()
+            ThemedToast.show(this, "Please enter a message")
             return
         }
 

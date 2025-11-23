@@ -80,6 +80,9 @@ dependencies {
     // Security - Encrypted storage
     implementation("androidx.security:security-crypto:1.1.0-alpha06")
 
+    // Biometric authentication
+    implementation("androidx.biometric:biometric:1.2.0-alpha05")
+
     // Cryptography libraries
     implementation("com.goterl:lazysodium-android:5.1.0@aar")
     implementation("net.java.dev.jna:jna:5.13.0@aar")

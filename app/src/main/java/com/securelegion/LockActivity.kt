@@ -6,14 +6,17 @@ import android.util.Log
 import android.view.View
 import android.view.WindowManager
 import android.widget.EditText
+import android.widget.ImageView
 import android.widget.LinearLayout
-import android.widget.Toast
+import android.widget.TextView
 import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
 import com.securelegion.crypto.KeyManager
 import com.securelegion.database.SecureLegionDatabase
+import com.securelegion.utils.BiometricAuthHelper
 import com.securelegion.utils.SecureWipe
+import com.securelegion.utils.ThemedToast
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -22,6 +25,7 @@ class LockActivity : AppCompatActivity() {
 
     private lateinit var passwordSection: LinearLayout
     private lateinit var accountLinksSection: LinearLayout
+    private lateinit var biometricHelper: BiometricAuthHelper
     private var hasWallet = false
     private var isProcessingDistress = false
 
@@ -49,6 +53,7 @@ class LockActivity : AppCompatActivity() {
 
         passwordSection = findViewById(R.id.passwordSection)
         accountLinksSection = findViewById(R.id.accountLinksSection)
+        biometricHelper = BiometricAuthHelper(this)
 
         // Check if wallet exists
         val keyManager = KeyManager.getInstance(this)
@@ -59,6 +64,7 @@ class LockActivity : AppCompatActivity() {
             Log.d("LockActivity", "Wallet exists, showing password unlock")
             passwordSection.visibility = View.VISIBLE
             accountLinksSection.visibility = View.GONE
+            setupBiometricUI()
         } else {
             // No wallet - show account creation/restore options
             Log.d("LockActivity", "No wallet, showing account options")
@@ -69,23 +75,88 @@ class LockActivity : AppCompatActivity() {
         setupClickListeners()
     }
 
+    private fun setupBiometricUI() {
+        val biometricButton = findViewById<ImageView>(R.id.biometricButton)
+        val biometricText = findViewById<TextView>(R.id.biometricText)
+
+        // Check biometric availability
+        when (biometricHelper.isBiometricAvailable()) {
+            BiometricAuthHelper.BiometricStatus.AVAILABLE -> {
+                // Check if biometric is already enabled
+                if (biometricHelper.isBiometricEnabled()) {
+                    Log.d("LockActivity", "Biometric enabled - showing unlock button")
+                    biometricButton.visibility = View.VISIBLE
+                    biometricText.visibility = View.VISIBLE
+                } else {
+                    Log.d("LockActivity", "Biometric available but not enabled yet")
+                }
+            }
+            BiometricAuthHelper.BiometricStatus.NONE_ENROLLED -> {
+                Log.d("LockActivity", "No biometric enrolled on device")
+            }
+            BiometricAuthHelper.BiometricStatus.NO_HARDWARE -> {
+                Log.d("LockActivity", "No biometric hardware available")
+            }
+            BiometricAuthHelper.BiometricStatus.HARDWARE_UNAVAILABLE -> {
+                Log.d("LockActivity", "Biometric hardware unavailable")
+            }
+            BiometricAuthHelper.BiometricStatus.UNKNOWN_ERROR -> {
+                Log.d("LockActivity", "Unknown biometric error")
+            }
+        }
+
+        // Biometric button click listener
+        biometricButton.setOnClickListener {
+            authenticateWithBiometric()
+        }
+    }
+
+    private fun authenticateWithBiometric() {
+        biometricHelper.authenticateWithBiometric(
+            activity = this,
+            onSuccess = { passwordHash ->
+                Log.i("LockActivity", "Biometric authentication successful")
+
+                // Verify the decrypted password hash matches stored hash
+                val keyManager = KeyManager.getInstance(this)
+                if (keyManager.verifyPasswordHash(passwordHash)) {
+                    Log.i("LockActivity", "Password hash verified from biometric")
+
+                    // Reset failed attempts
+                    resetFailedAttempts()
+
+                    // Unlock app
+                    unlockApp()
+                } else {
+                    Log.e("LockActivity", "Biometric decrypted hash does not match stored hash")
+                    ThemedToast.show(this, "Biometric authentication failed")
+                }
+            },
+            onError = { errorMsg ->
+                Log.w("LockActivity", "Biometric authentication error: $errorMsg")
+                if (!errorMsg.contains("Cancel") && !errorMsg.contains("Use Password")) {
+                    ThemedToast.show(this, errorMsg)
+                }
+            }
+        )
+    }
+
     private fun setupClickListeners() {
         findViewById<View>(R.id.unlockButton).setOnClickListener {
             val password = findViewById<EditText>(R.id.passwordInput).text.toString()
 
             if (password.isBlank()) {
-                Toast.makeText(this, "Please enter password", Toast.LENGTH_SHORT).show()
+                ThemedToast.show(this, "Please enter password")
                 return@setOnClickListener
             }
 
             // Check if account is in cooldown
             if (isInCooldown()) {
                 val remainingSeconds = getRemainingCooldownSeconds()
-                Toast.makeText(
+                ThemedToast.showLong(
                     this,
-                    "Too many failed attempts. Try again in $remainingSeconds seconds",
-                    Toast.LENGTH_LONG
-                ).show()
+                    "Too many failed attempts. Try again in $remainingSeconds seconds"
+                )
                 return@setOnClickListener
             }
 
@@ -110,10 +181,13 @@ class LockActivity : AppCompatActivity() {
                 // Reset failed attempts counter on successful login
                 resetFailedAttempts()
 
+                // Enable biometric on first successful login (if available and not already enabled)
+                offerBiometricEnrollment(keyManager)
+
                 // Check if account setup is complete (has wallet, contact card, AND username)
                 if (!keyManager.isAccountSetupComplete()) {
                     Log.w("LockActivity", "Account incomplete - need to finish setup")
-                    Toast.makeText(this, "Please complete account setup", Toast.LENGTH_LONG).show()
+                    ThemedToast.showLong(this, "Please complete account setup")
 
                     // Redirect to CreateAccountActivity to finish setup
                     val intent = Intent(this, CreateAccountActivity::class.java)
@@ -122,16 +196,13 @@ class LockActivity : AppCompatActivity() {
                     finish()
                 } else {
                     Log.i("LockActivity", "Account complete, unlocking app")
-                    val intent = Intent(this, MainActivity::class.java)
-                    intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
-                    startActivity(intent)
-                    finish()
+                    unlockApp()
                 }
             } else {
                 // Password incorrect
                 Log.w("LockActivity", "Incorrect password entered")
                 handleFailedAttempt()
-                Toast.makeText(this, "Incorrect password", Toast.LENGTH_SHORT).show()
+                ThemedToast.show(this, "Incorrect password")
                 // Clear input
                 findViewById<EditText>(R.id.passwordInput).text.clear()
             }
@@ -150,6 +221,87 @@ class LockActivity : AppCompatActivity() {
             startActivity(intent)
             // Don't finish - allow back navigation
         }
+    }
+
+    /**
+     * Offer biometric enrollment on first successful password login
+     */
+    private fun offerBiometricEnrollment(keyManager: KeyManager) {
+        // Only offer if biometric is available but not enabled yet
+        if (biometricHelper.isBiometricAvailable() == BiometricAuthHelper.BiometricStatus.AVAILABLE &&
+            !biometricHelper.isBiometricEnabled()) {
+
+            // Check if we already asked the user (to avoid repeated prompts)
+            val prefs = getSharedPreferences("biometric_prefs", MODE_PRIVATE)
+            val alreadyAsked = prefs.getBoolean("biometric_enrollment_asked", false)
+
+            if (!alreadyAsked) {
+                Log.d("LockActivity", "Offering biometric enrollment to user")
+
+                // Get password hash for encryption
+                val passwordHash = keyManager.getPasswordHash()
+                if (passwordHash != null) {
+                    biometricHelper.enableBiometric(
+                        passwordHash = passwordHash,
+                        activity = this,
+                        onSuccess = {
+                            Log.i("LockActivity", "Biometric enrollment successful")
+                            ThemedToast.show(this, "Biometric unlock enabled")
+
+                            // Update UI to show biometric button
+                            findViewById<ImageView>(R.id.biometricButton).visibility = View.VISIBLE
+                            findViewById<TextView>(R.id.biometricText).visibility = View.VISIBLE
+                        },
+                        onError = { error ->
+                            Log.w("LockActivity", "Biometric enrollment failed: $error")
+                            // Don't show error toast - user may have cancelled
+                        }
+                    )
+                }
+
+                // Mark as asked to avoid repeated prompts
+                prefs.edit().putBoolean("biometric_enrollment_asked", true).apply()
+            }
+        }
+    }
+
+    /**
+     * Unlock the app and navigate to MainActivity
+     */
+    private fun unlockApp() {
+        // Check if we were launched from a notification with a target activity
+        val targetActivity = intent.getStringExtra("TARGET_ACTIVITY")
+
+        val nextIntent = when (targetActivity) {
+            "ChatActivity" -> {
+                // Forward to ChatActivity with original extras
+                Intent(this, ChatActivity::class.java).apply {
+                    putExtra(ChatActivity.EXTRA_CONTACT_ID, intent.getLongExtra(ChatActivity.EXTRA_CONTACT_ID, -1L))
+                    putExtra(ChatActivity.EXTRA_CONTACT_NAME, intent.getStringExtra(ChatActivity.EXTRA_CONTACT_NAME))
+                    putExtra("FOCUS_INPUT", intent.getBooleanExtra("FOCUS_INPUT", false))
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+                }
+            }
+            "MainActivity" -> {
+                // Forward to MainActivity with any extras
+                Intent(this, MainActivity::class.java).apply {
+                    // Forward friend request flag if present
+                    if (intent.getBooleanExtra("SHOW_FRIEND_REQUESTS", false)) {
+                        putExtra("SHOW_FRIEND_REQUESTS", true)
+                    }
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+                }
+            }
+            else -> {
+                // Default to MainActivity
+                Intent(this, MainActivity::class.java).apply {
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+                }
+            }
+        }
+
+        startActivity(nextIntent)
+        finish()
     }
 
     /**
@@ -178,7 +330,7 @@ class LockActivity : AppCompatActivity() {
                 // Show normal unlock screen to maintain cover
                 // (Don't show any error or indication that distress was triggered)
                 withContext(Dispatchers.Main) {
-                    Toast.makeText(this@LockActivity, "Incorrect password", Toast.LENGTH_SHORT).show()
+                    ThemedToast.show(this@LockActivity, "Incorrect password")
                     findViewById<EditText>(R.id.passwordInput).text.clear()
                     isProcessingDistress = false
                 }
@@ -186,7 +338,7 @@ class LockActivity : AppCompatActivity() {
             } catch (e: Exception) {
                 Log.e("LockActivity", "Failed to execute distress protocol", e)
                 withContext(Dispatchers.Main) {
-                    Toast.makeText(this@LockActivity, "Incorrect password", Toast.LENGTH_SHORT).show()
+                    ThemedToast.show(this@LockActivity, "Incorrect password")
                     findViewById<EditText>(R.id.passwordInput).text.clear()
                     isProcessingDistress = false
                 }
@@ -302,11 +454,10 @@ class LockActivity : AppCompatActivity() {
             Log.w("LockActivity", "5 failed attempts - 30 second cooldown activated")
 
             val remainingSeconds = 30
-            Toast.makeText(
+            ThemedToast.showLong(
                 this,
-                "Too many failed attempts. Wait $remainingSeconds seconds",
-                Toast.LENGTH_LONG
-            ).show()
+                "Too many failed attempts. Wait $remainingSeconds seconds"
+            )
         }
 
         // Auto-wipe after 10 attempts (if enabled)

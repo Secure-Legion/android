@@ -12,6 +12,7 @@ import android.os.IBinder
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import com.securelegion.ChatActivity
+import com.securelegion.LockActivity
 import com.securelegion.R
 import com.securelegion.crypto.KeyManager
 import com.securelegion.crypto.TorManager
@@ -92,7 +93,13 @@ class DownloadMessageService : Service() {
         serviceScope.cancel()
     }
 
+    private var currentContactId: Long = -1L
+    private var currentContactName: String = ""
+
     private suspend fun downloadMessage(contactId: Long, contactName: String) {
+        currentContactId = contactId
+        currentContactName = contactName
+
         Log.i(TAG, "========== DOWNLOAD INITIATED ==========")
         Log.i(TAG, "Contact: $contactName (ID: $contactId)")
 
@@ -262,6 +269,15 @@ class DownloadMessageService : Service() {
             Log.i(TAG, "✓ Message received successfully!")
         }
 
+        // Send MESSAGE_ACK to sender after successfully receiving the message
+        sendMessageAck(contactId, contactName)
+
+        // Dismiss the pending message notification
+        val notificationManager = getSystemService(android.app.NotificationManager::class.java)
+        val notificationId = contactId.toInt() + 20000
+        notificationManager?.cancel(notificationId)
+        Log.i(TAG, "Dismissed pending message notification (ID: $notificationId)")
+
         // Clear the pending Ping
         prefs.edit()
             .remove("ping_${contactId}_id")
@@ -303,9 +319,20 @@ class DownloadMessageService : Service() {
     }
 
     private fun createNotification(contactName: String, message: String): Notification {
-        val intent = Intent(this, ChatActivity::class.java)
+        // Launch via LockActivity to prevent showing chat before authentication
+        // Open ChatActivity if we have a valid contactId, otherwise MainActivity
+        val intent = Intent(this, LockActivity::class.java).apply {
+            if (currentContactId != -1L) {
+                putExtra("TARGET_ACTIVITY", "ChatActivity")
+                putExtra(ChatActivity.EXTRA_CONTACT_ID, currentContactId)
+                putExtra(ChatActivity.EXTRA_CONTACT_NAME, currentContactName)
+            } else {
+                putExtra("TARGET_ACTIVITY", "MainActivity")
+            }
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        }
         val pendingIntent = PendingIntent.getActivity(
-            this, 0, intent,
+            this, currentContactId.toInt(), intent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
@@ -323,9 +350,20 @@ class DownloadMessageService : Service() {
     }
 
     private fun showSuccessNotification(contactName: String) {
-        val intent = Intent(this, ChatActivity::class.java)
+        // Launch via LockActivity to prevent showing chat before authentication
+        // Open ChatActivity with the contactId
+        val intent = Intent(this, LockActivity::class.java).apply {
+            if (currentContactId != -1L) {
+                putExtra("TARGET_ACTIVITY", "ChatActivity")
+                putExtra(ChatActivity.EXTRA_CONTACT_ID, currentContactId)
+                putExtra(ChatActivity.EXTRA_CONTACT_NAME, currentContactName)
+            } else {
+                putExtra("TARGET_ACTIVITY", "MainActivity")
+            }
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        }
         val pendingIntent = PendingIntent.getActivity(
-            this, 0, intent,
+            this, currentContactId.toInt(), intent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
@@ -449,8 +487,22 @@ class DownloadMessageService : Service() {
 
                     if (result.isSuccess) {
                         Log.i(TAG, "✓ TEXT message saved to database")
+                        // Send MESSAGE_ACK to sender
+                        sendMessageAck(contactId, contactName)
+                        // Dismiss the pending message notification
+                        val notificationManager = getSystemService(android.app.NotificationManager::class.java)
+                        notificationManager?.cancel(contactId.toInt() + 20000)
                     } else {
-                        Log.e(TAG, "Failed to save TEXT message: ${result.exceptionOrNull()?.message}")
+                        val errorMessage = result.exceptionOrNull()?.message
+                        if (errorMessage?.contains("Duplicate message") == true) {
+                            Log.w(TAG, "Message already downloaded - treating as success")
+                            // Message was already downloaded, so clear the notification and send ACK
+                            sendMessageAck(contactId, contactName)
+                            val notificationManager = getSystemService(android.app.NotificationManager::class.java)
+                            notificationManager?.cancel(contactId.toInt() + 20000)
+                        } else {
+                            Log.e(TAG, "Failed to save TEXT message: $errorMessage")
+                        }
                     }
                 }
 
@@ -475,8 +527,22 @@ class DownloadMessageService : Service() {
 
                     if (result.isSuccess) {
                         Log.i(TAG, "✓ VOICE message saved to database")
+                        // Send MESSAGE_ACK to sender
+                        sendMessageAck(contactId, contactName)
+                        // Dismiss the pending message notification
+                        val notificationManager = getSystemService(android.app.NotificationManager::class.java)
+                        notificationManager?.cancel(contactId.toInt() + 20000)
                     } else {
-                        Log.e(TAG, "Failed to save VOICE message: ${result.exceptionOrNull()?.message}")
+                        val errorMessage = result.exceptionOrNull()?.message
+                        if (errorMessage?.contains("Duplicate message") == true) {
+                            Log.w(TAG, "Message already downloaded - treating as success")
+                            // Message was already downloaded, so clear the notification and send ACK
+                            sendMessageAck(contactId, contactName)
+                            val notificationManager = getSystemService(android.app.NotificationManager::class.java)
+                            notificationManager?.cancel(contactId.toInt() + 20000)
+                        } else {
+                            Log.e(TAG, "Failed to save VOICE message: $errorMessage")
+                        }
                     }
                 }
 
@@ -487,6 +553,68 @@ class DownloadMessageService : Service() {
 
         } catch (e: Exception) {
             Log.e(TAG, "Error processing instant message blob", e)
+        }
+    }
+
+    /**
+     * Send MESSAGE_ACK to sender after successfully downloading message
+     */
+    private suspend fun sendMessageAck(contactId: Long, contactName: String) {
+        try {
+            val keyManager = KeyManager.getInstance(this@DownloadMessageService)
+            val dbPassphrase = keyManager.getDatabasePassphrase()
+            val database = SecureLegionDatabase.getInstance(this@DownloadMessageService, dbPassphrase)
+
+            // Get contact info
+            val contact = database.contactDao().getContactById(contactId)
+            if (contact == null) {
+                Log.e(TAG, "Could not find contact with ID $contactId to send MESSAGE_ACK")
+                return
+            }
+
+            // Get the most recent message from this contact (just received)
+            val messages = database.messageDao().getMessagesForContact(contactId)
+            if (messages.isEmpty()) {
+                Log.w(TAG, "No messages found for contact $contactId - cannot send MESSAGE_ACK")
+                return
+            }
+
+            // Get the most recent message
+            val latestMessage = messages.maxByOrNull { it.timestamp }
+            if (latestMessage == null) {
+                Log.w(TAG, "Could not determine latest message for contact $contactId")
+                return
+            }
+
+            // Use pingId instead of messageId because pingId is the same on both sender and receiver
+            val pingId = latestMessage.pingId
+            if (pingId == null) {
+                Log.w(TAG, "Message ${latestMessage.messageId} has no pingId - cannot send MESSAGE_ACK")
+                return
+            }
+
+            Log.d(TAG, "Sending MESSAGE_ACK for pingId=$pingId (messageId=${latestMessage.messageId}) to $contactName")
+
+            val senderEd25519Pubkey = android.util.Base64.decode(contact.publicKeyBase64, android.util.Base64.NO_WRAP)
+            val senderX25519Pubkey = android.util.Base64.decode(contact.x25519PublicKeyBase64, android.util.Base64.NO_WRAP)
+
+            val ackSuccess = withContext(Dispatchers.IO) {
+                com.securelegion.crypto.RustBridge.sendDeliveryAck(
+                    pingId,  // Use pingId instead of messageId
+                    "MESSAGE_ACK",
+                    senderEd25519Pubkey,
+                    senderX25519Pubkey,
+                    contact.torOnionAddress
+                )
+            }
+
+            if (ackSuccess) {
+                Log.i(TAG, "✓ MESSAGE_ACK sent successfully for messageId=${latestMessage.messageId}")
+            } else {
+                Log.e(TAG, "✗ Failed to send MESSAGE_ACK for messageId=${latestMessage.messageId}")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error sending MESSAGE_ACK", e)
         }
     }
 }

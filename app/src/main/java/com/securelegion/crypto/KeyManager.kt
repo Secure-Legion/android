@@ -560,6 +560,40 @@ class KeyManager private constructor(context: Context) {
     }
 
     /**
+     * Get the stored password hash for biometric encryption
+     * Used to encrypt password hash with biometric-protected key
+     */
+    fun getPasswordHash(): ByteArray? {
+        val storedHashHex = encryptedPrefs.getString(DEVICE_PASSWORD_HASH_ALIAS, null)
+            ?: return null
+        return try {
+            hexToBytes(storedHashHex)
+        } catch (e: Exception) {
+            Log.e(TAG, "Error getting password hash", e)
+            null
+        }
+    }
+
+    /**
+     * Verify password hash directly (used after biometric decryption)
+     * @param providedHash The password hash to verify (from biometric decryption)
+     * @return true if hash matches stored hash
+     */
+    fun verifyPasswordHash(providedHash: ByteArray): Boolean {
+        val storedHashHex = encryptedPrefs.getString(DEVICE_PASSWORD_HASH_ALIAS, null)
+            ?: return false
+
+        try {
+            val storedHash = hexToBytes(storedHashHex)
+            // Constant-time comparison to prevent timing attacks
+            return java.security.MessageDigest.isEqual(storedHash, providedHash)
+        } catch (e: Exception) {
+            Log.e(TAG, "Error verifying password hash", e)
+            return false
+        }
+    }
+
+    /**
      * Check if device password is set
      */
     fun isDevicePasswordSet(): Boolean {
