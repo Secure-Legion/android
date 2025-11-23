@@ -54,6 +54,24 @@ pub struct PongToken {
     pub signature: [u8; 64],
 }
 
+/// Delivery Confirmation (ACK) Token - confirms local storage of Ping or Message
+/// Sent by receiver to confirm they've stored the data locally
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct DeliveryAck {
+    /// ID of the item being acknowledged (ping_id or message_id)
+    pub item_id: String,
+
+    /// Type of ACK: "PING_ACK" or "MESSAGE_ACK"
+    pub ack_type: String,
+
+    /// Unix timestamp when ACK was created
+    pub timestamp: i64,
+
+    /// Sender's Ed25519 signature (proves this ACK is from the expected party)
+    #[serde(with = "BigArray")]
+    pub signature: [u8; 64],
+}
+
 /// Ping-Pong Protocol Manager
 /// Handles the Secure Legion Ping-Pong Wake Protocol
 pub struct PingPongManager {
@@ -234,6 +252,89 @@ pub fn cleanup_expired_pongs() {
     });
 }
 
+// ====================  GLOBAL ACK SESSION STORAGE ====================
+
+/// Global storage for received ACK tokens
+/// Used by FFI methods to store and retrieve ACKs when confirming delivery
+static GLOBAL_ACK_SESSIONS: OnceLock<Arc<Mutex<HashMap<String, StoredAckSession>>>> = OnceLock::new();
+
+/// Stored ACK session for FFI access
+#[derive(Clone)]
+pub struct StoredAckSession {
+    pub ack_token: DeliveryAck,
+    pub received_at: i64,
+}
+
+/// Get or initialize the global ACK sessions storage
+fn get_ack_sessions() -> Arc<Mutex<HashMap<String, StoredAckSession>>> {
+    GLOBAL_ACK_SESSIONS
+        .get_or_init(|| Arc::new(Mutex::new(HashMap::new())))
+        .clone()
+}
+
+/// Store a received ACK token by item_id (ping_id or message_id)
+pub fn store_ack_session(item_id: &str, ack_token: DeliveryAck) {
+    log::info!("╔════════════════════════════════════════");
+    log::info!("║ 💾 STORING ACK SESSION");
+    log::info!("║ Item ID: {}", item_id);
+    log::info!("║ ACK Type: {}", ack_token.ack_type);
+    log::info!("╚════════════════════════════════════════");
+
+    let sessions = get_ack_sessions();
+    let mut sessions_lock = sessions.lock().unwrap();
+
+    let session = StoredAckSession {
+        ack_token,
+        received_at: SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64,
+    };
+
+    sessions_lock.insert(item_id.to_string(), session);
+    log::info!("✓ ACK stored successfully. Total ACKs in storage: {}", sessions_lock.len());
+}
+
+/// Retrieve a stored ACK token by item_id
+pub fn get_ack_session(item_id: &str) -> Option<StoredAckSession> {
+    let sessions = get_ack_sessions();
+    let sessions_lock = sessions.lock().unwrap();
+    let result = sessions_lock.get(item_id).cloned();
+
+    if result.is_some() {
+        log::info!("✓ Found ACK for Item ID: {}", item_id);
+    } else {
+        log::debug!("✗ No ACK found for Item ID: {} (have {} ACKs in storage)", item_id, sessions_lock.len());
+    }
+
+    result
+}
+
+/// Remove an ACK session after it's been processed
+pub fn remove_ack_session(item_id: &str) {
+    let sessions = get_ack_sessions();
+    let mut sessions_lock = sessions.lock().unwrap();
+    sessions_lock.remove(item_id);
+}
+
+/// Clean up expired ACK sessions (older than 5 minutes)
+pub fn cleanup_expired_acks() {
+    let sessions = get_ack_sessions();
+    let mut sessions_lock = sessions.lock().unwrap();
+
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
+
+    const MAX_AGE_SECONDS: i64 = 300; // 5 minutes
+
+    sessions_lock.retain(|_, session| {
+        let age = now - session.received_at;
+        age < MAX_AGE_SECONDS
+    });
+}
+
 impl PingToken {
     /// Create a new Ping token
     pub fn new(
@@ -362,6 +463,75 @@ impl PongToken {
         bytes.extend_from_slice(&self.pong_nonce);
         bytes.extend_from_slice(&self.timestamp.to_le_bytes());
         bytes.push(if self.authenticated { 1 } else { 0 });
+        bytes
+    }
+
+    /// Serialize to bytes for network transmission
+    pub fn to_bytes(&self) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+        Ok(bincode::serialize(self)?)
+    }
+
+    /// Deserialize from bytes
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, Box<dyn std::error::Error>> {
+        Ok(bincode::deserialize(bytes)?)
+    }
+}
+
+impl DeliveryAck {
+    /// ACK type constants
+    pub const ACK_TYPE_PING: &'static str = "PING_ACK";
+    pub const ACK_TYPE_MESSAGE: &'static str = "MESSAGE_ACK";
+
+    /// Create a new Delivery ACK token
+    /// item_id: ping_id or message_id being acknowledged
+    /// ack_type: "PING_ACK" or "MESSAGE_ACK"
+    /// keypair: Ed25519 signing key of the party sending the ACK
+    pub fn new(
+        item_id: &str,
+        ack_type: &str,
+        keypair: &SigningKey,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
+
+        // Get current timestamp
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)?
+            .as_secs() as i64;
+
+        // Create ACK token (without signature)
+        let mut ack = DeliveryAck {
+            item_id: item_id.to_string(),
+            ack_type: ack_type.to_string(),
+            timestamp,
+            signature: [0u8; 64],
+        };
+
+        // Sign the ACK
+        let signature = ack.sign(keypair)?;
+        ack.signature = signature.to_bytes();
+
+        Ok(ack)
+    }
+
+    /// Sign the ACK token
+    fn sign(&self, keypair: &SigningKey) -> Result<Signature, Box<dyn std::error::Error>> {
+        let message = self.serialize_for_signing();
+        Ok(keypair.sign(&message))
+    }
+
+    /// Verify the ACK signature
+    pub fn verify(&self, signer_pubkey: &VerifyingKey) -> Result<bool, Box<dyn std::error::Error>> {
+        let signature = Signature::from_bytes(&self.signature);
+        let message = self.serialize_for_signing();
+
+        Ok(signer_pubkey.verify(&message, &signature).is_ok())
+    }
+
+    /// Serialize ACK for signing
+    fn serialize_for_signing(&self) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(self.item_id.as_bytes());
+        bytes.extend_from_slice(self.ack_type.as_bytes());
+        bytes.extend_from_slice(&self.timestamp.to_le_bytes());
         bytes
     }
 

@@ -83,6 +83,7 @@ static GLOBAL_TOR_MANAGER: OnceCell<Arc<Mutex<TorManager>>> = OnceCell::new();
 static GLOBAL_PING_RECEIVER: OnceCell<Arc<Mutex<mpsc::UnboundedReceiver<(u64, Vec<u8>)>>>> = OnceCell::new();
 static GLOBAL_TAP_RECEIVER: OnceCell<Arc<Mutex<mpsc::UnboundedReceiver<Vec<u8>>>>> = OnceCell::new();
 static GLOBAL_PONG_RECEIVER: OnceCell<Arc<Mutex<mpsc::UnboundedReceiver<Vec<u8>>>>> = OnceCell::new();
+static GLOBAL_ACK_RECEIVER: OnceCell<Arc<Mutex<mpsc::UnboundedReceiver<(u64, Vec<u8>)>>>> = OnceCell::new();
 
 /// Global Tokio runtime for async operations
 /// This runtime persists for the lifetime of the process, allowing spawned tasks to continue running
@@ -915,12 +916,17 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendPongToNewConnectio
         let result = runtime.block_on(async {
             const PONG_PORT: u16 = 9150;
 
-            // Connect to sender's .onion address
-            let tor = tor_manager.lock().unwrap();
-            let mut conn = tor.connect(&onion_address, PONG_PORT).await?;
+            // Connect to sender's .onion address (lock only during connect)
+            let mut conn = {
+                let tor = tor_manager.lock().unwrap();
+                tor.connect(&onion_address, PONG_PORT).await?
+            }; // Lock released
 
-            // Send Pong bytes
-            tor.send(&mut conn, &pong_bytes).await?;
+            // Send Pong bytes (lock only during send)
+            {
+                let tor = tor_manager.lock().unwrap();
+                tor.send(&mut conn, &pong_bytes).await?;
+            } // Lock released
 
             log::info!("Pong sent successfully over new connection to {}", onion_address);
             Ok::<(), Box<dyn std::error::Error>>(())
@@ -985,12 +991,17 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendPongToListener(
             wire_message.push(crate::network::tor::MSG_TYPE_PONG); // Add type byte
             wire_message.extend_from_slice(&pong_bytes);
 
-            // Connect to sender's Pong listener
-            let tor = tor_manager.lock().unwrap();
-            let mut conn = tor.connect(&onion_address, PONG_LISTENER_PORT).await?;
+            // Connect to sender's Pong listener (lock only during connect)
+            let mut conn = {
+                let tor = tor_manager.lock().unwrap();
+                tor.connect(&onion_address, PONG_LISTENER_PORT).await?
+            }; // Lock released
 
-            // Send wire message (type + pong data)
-            tor.send(&mut conn, &wire_message).await?;
+            // Send wire message (lock only during send)
+            {
+                let tor = tor_manager.lock().unwrap();
+                tor.send(&mut conn, &wire_message).await?;
+            } // Lock released
 
             log::info!("Pong sent successfully to listener at {}:9152", onion_address);
             Ok::<(), Box<dyn std::error::Error>>(())
@@ -1190,13 +1201,21 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendPing(
         const INSTANT_PONG_TIMEOUT_SECS: u64 = 30;
 
         let result: Result<(), Box<dyn std::error::Error>> = runtime.block_on(async {
-            let manager = tor_manager.lock().unwrap();
-            let mut conn = manager.connect(&recipient_onion_str, PING_PONG_PORT).await?;
-            manager.send(&mut conn, &wire_message).await?;
+            // Connect and send Ping (lock only during operations)
+            let mut conn = {
+                let manager = tor_manager.lock().unwrap();
+                manager.connect(&recipient_onion_str, PING_PONG_PORT).await?
+            }; // Lock released
+
+            {
+                let manager = tor_manager.lock().unwrap();
+                manager.send(&mut conn, &wire_message).await?;
+            } // Lock released
 
             log::info!("Ping sent successfully ({}), waiting for instant Pong ({}s timeout)...", ping_id, INSTANT_PONG_TIMEOUT_SECS);
 
             // Try to receive instant Pong response (recipient online and accepts immediately)
+            // No lock needed - we own the connection
             let pong_result = tokio::time::timeout(
                 std::time::Duration::from_secs(INSTANT_PONG_TIMEOUT_SECS),
                 async {
@@ -1243,8 +1262,11 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendPing(
                     log::info!("Sending message wire: {} bytes total (1 type + {} encrypted)",
                         message_wire.len(), message_bytes.len());
 
-                    // Send message on same connection
-                    manager.send(&mut conn, &message_wire).await?;
+                    // Send message on same connection (lock only during send)
+                    {
+                        let manager = tor_manager.lock().unwrap();
+                        manager.send(&mut conn, &message_wire).await?;
+                    } // Lock released
 
                     log::info!("✓ Message sent successfully ({} bytes) in INSTANT MODE", message_bytes.len());
                     Ok(())
@@ -1419,6 +1441,77 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendTap(
             }
             Err(e) => {
                 log::error!("Failed to send tap to {}: {}", recipient_onion_str, e);
+                0 // failure
+            }
+        }
+    }, 0)
+}
+
+/// Send friend request (fire-and-forget notification)
+#[no_mangle]
+pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendFriendRequest(
+    mut env: JNIEnv,
+    _class: JClass,
+    recipient_onion: JString,
+    encrypted_friend_request: JByteArray,
+) -> jboolean {
+    catch_panic!(env, {
+        // Convert onion address
+        let recipient_onion_str = match jstring_to_string(&mut env, recipient_onion) {
+            Ok(s) => s,
+            Err(e) => {
+                log::error!("Failed to convert onion address: {}", e);
+                return 0;
+            }
+        };
+
+        // Convert encrypted friend request bytes
+        let friend_request_bytes = match jbytearray_to_vec(&mut env, encrypted_friend_request) {
+            Ok(v) => v,
+            Err(e) => {
+                log::error!("Failed to convert friend request bytes: {}", e);
+                return 0;
+            }
+        };
+
+        log::info!("Sending friend request to {} ({} bytes)", recipient_onion_str, friend_request_bytes.len());
+
+        // Build wire message with type byte 0x07 (FRIEND_REQUEST)
+        // Wire format: [0x07][Sender X25519 - 32 bytes][Encrypted Friend Request]
+        let mut wire_message = Vec::new();
+        wire_message.push(crate::network::tor::MSG_TYPE_FRIEND_REQUEST); // 0x07
+        wire_message.extend_from_slice(&friend_request_bytes);
+
+        log::info!("Wire message: {} bytes (type={:02X})", wire_message.len(), wire_message[0]);
+
+        // Send friend request via Tor (fire-and-forget, no response expected)
+        let tor_manager = get_tor_manager();
+        let runtime = match tokio::runtime::Runtime::new() {
+            Ok(rt) => rt,
+            Err(e) => {
+                log::error!("Failed to create runtime: {}", e);
+                return 0;
+            }
+        };
+
+        const FRIEND_REQUEST_PORT: u16 = 9150; // Use same port as hidden service
+
+        let result = runtime.block_on(async {
+            let manager = tor_manager.lock().unwrap();
+            let mut conn = manager.connect(&recipient_onion_str, FRIEND_REQUEST_PORT).await?;
+            manager.send(&mut conn, &wire_message).await?;
+
+            log::info!("Friend request sent successfully to {}", recipient_onion_str);
+            Ok::<(), Box<dyn std::error::Error>>(())
+        });
+
+        match result {
+            Ok(_) => {
+                log::info!("Friend request sent successfully to {}", recipient_onion_str);
+                1 // success
+            }
+            Err(e) => {
+                log::error!("Failed to send friend request to {}: {}", recipient_onion_str, e);
                 0 // failure
             }
         }
@@ -2615,19 +2708,24 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendDirectMessage(
         const MESSAGE_PORT: u16 = 9150;
 
         let result = runtime.block_on(async {
-            let manager = tor_manager.lock().unwrap();
+            // Connect to recipient's .onion address (lock only during connect)
+            let mut conn = {
+                let manager = tor_manager.lock().unwrap();
+                manager.connect(&recipient_onion_str, MESSAGE_PORT).await?
+            }; // Lock released here - allows concurrent operations
 
-            // Connect to recipient's .onion address
-            let mut conn = manager.connect(&recipient_onion_str, MESSAGE_PORT).await?;
-
-            // Send Ping
-            manager.send(&mut conn, &ping_wire_message).await?;
+            // Send Ping (lock only during send)
+            {
+                let manager = tor_manager.lock().unwrap();
+                manager.send(&mut conn, &ping_wire_message).await?;
+            } // Lock released here
             log::info!("Ping sent, waiting for Pong response...");
 
             // Wait for encrypted Pong response (with timeout)
+            // No lock needed - TorConnection owns the socket
             let pong_response = tokio::time::timeout(
                 std::time::Duration::from_secs(60),
-                manager.receive(&mut conn, 4096)
+                conn.receive()
             ).await.map_err(|_| "Pong timeout")??;
 
             // Verify Pong (decrypt and check authentication)
@@ -2661,7 +2759,7 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendDirectMessage(
 
             log::info!("Pong received and authenticated! Sending message...");
 
-            // Step 3: Send encrypted message
+            // Step 3: Send encrypted message (lock only during send)
             // Wire format for message: [Type Byte][Sender X25519 Public Key][Encrypted Message]
             // (Length prefix is added automatically by manager.send())
             let mut message_wire = Vec::new();
@@ -2669,7 +2767,10 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendDirectMessage(
             message_wire.extend_from_slice(&our_x25519_public);    // Sender X25519 pubkey
             message_wire.extend_from_slice(&message_bytes);         // Encrypted message
 
-            manager.send(&mut conn, &message_wire).await?;
+            {
+                let manager = tor_manager.lock().unwrap();
+                manager.send(&mut conn, &message_wire).await?;
+            } // Lock released here
 
             log::info!("Message sent successfully ({} bytes)", message_bytes.len());
 
@@ -3806,6 +3907,374 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_deriveSharedSecret(
                 let _ = env.throw_new("java/lang/RuntimeException", format!("{}", e));
                 std::ptr::null_mut()
             }
+        }
+    }, std::ptr::null_mut())
+}
+
+// ==================== DELIVERY ACK (CONFIRMATION) ====================
+
+/// Send a delivery ACK (confirmation) to recipient
+/// ack_type: "PING_ACK" or "MESSAGE_ACK"
+/// item_id: ping_id or message_id being acknowledged
+#[no_mangle]
+pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendDeliveryAck(
+    mut env: JNIEnv,
+    _class: JClass,
+    item_id: JString,
+    ack_type: JString,
+    recipient_ed25519_pubkey: JByteArray,
+    recipient_x25519_pubkey: JByteArray,
+    recipient_onion: JString,
+) -> jboolean {
+    catch_panic!(env, {
+        // Convert inputs
+        let item_id_str = match jstring_to_string(&mut env, item_id) {
+            Ok(s) => s,
+            Err(e) => {
+                log::error!("Failed to convert item_id: {}", e);
+                return 0;
+            }
+        };
+
+        let ack_type_str = match jstring_to_string(&mut env, ack_type) {
+            Ok(s) => s,
+            Err(e) => {
+                log::error!("Failed to convert ack_type: {}", e);
+                return 0;
+            }
+        };
+
+        let recipient_ed25519_bytes = match jbytearray_to_vec(&mut env, recipient_ed25519_pubkey) {
+            Ok(v) => v,
+            Err(e) => {
+                log::error!("Failed to convert recipient Ed25519 pubkey: {}", e);
+                return 0;
+            }
+        };
+
+        let recipient_x25519_bytes = match jbytearray_to_vec(&mut env, recipient_x25519_pubkey) {
+            Ok(v) => v,
+            Err(e) => {
+                log::error!("Failed to convert recipient X25519 pubkey: {}", e);
+                return 0;
+            }
+        };
+
+        let recipient_onion_str = match jstring_to_string(&mut env, recipient_onion) {
+            Ok(s) => s,
+            Err(e) => {
+                log::error!("Failed to convert recipient onion: {}", e);
+                return 0;
+            }
+        };
+
+        log::info!("╔════════════════════════════════════════");
+        log::info!("║ 📤 SENDING DELIVERY ACK");
+        log::info!("║ Item ID: {}", item_id_str);
+        log::info!("║ ACK Type: {}", ack_type_str);
+        log::info!("║ Recipient: {}", recipient_onion_str);
+        log::info!("╚════════════════════════════════════════");
+
+        // Get KeyManager for our keys
+        let context = match env.call_static_method(
+            "android/app/ActivityThread",
+            "currentApplication",
+            "()Landroid/app/Application;",
+            &[],
+        ) {
+            Ok(ctx) => ctx.l().unwrap(),
+            Err(e) => {
+                log::error!("Failed to get context: {}", e);
+                return 0;
+            }
+        };
+
+        let key_manager = match crate::ffi::keystore::get_key_manager(&mut env, &context) {
+            Ok(km) => km,
+            Err(e) => {
+                log::error!("Failed to get KeyManager: {}", e);
+                return 0;
+            }
+        };
+
+        // Get our signing private key (Ed25519)
+        let our_signing_private = match crate::ffi::keystore::get_signing_private_key(&mut env, &key_manager) {
+            Ok(k) => k,
+            Err(e) => {
+                log::error!("Failed to get signing key: {}", e);
+                return 0;
+            }
+        };
+
+        // Create Ed25519 signing keypair
+        let sender_keypair = ed25519_dalek::SigningKey::from_bytes(&our_signing_private.as_slice().try_into().unwrap());
+
+        // Create DeliveryAck token (signed)
+        let ack_token = match crate::network::pingpong::DeliveryAck::new(
+            &item_id_str,
+            &ack_type_str,
+            &sender_keypair,
+        ) {
+            Ok(token) => token,
+            Err(e) => {
+                log::error!("Failed to create ACK: {}", e);
+                return 0;
+            }
+        };
+
+        // Serialize ACK token
+        let ack_bytes = match ack_token.to_bytes() {
+            Ok(bytes) => bytes,
+            Err(e) => {
+                log::error!("Failed to serialize ACK: {}", e);
+                return 0;
+            }
+        };
+
+        // Get our X25519 encryption keys
+        let our_x25519_public = match crate::ffi::keystore::get_encryption_public_key(&mut env, &key_manager) {
+            Ok(k) => k,
+            Err(e) => {
+                log::error!("Failed to get our X25519 pubkey: {}", e);
+                return 0;
+            }
+        };
+
+        let our_x25519_private = match crate::ffi::keystore::get_encryption_private_key(&mut env, &key_manager) {
+            Ok(k) => k,
+            Err(e) => {
+                log::error!("Failed to get encryption key: {}", e);
+                return 0;
+            }
+        };
+
+        // Derive shared secret using X25519 ECDH
+        let shared_secret = match crate::crypto::key_exchange::derive_shared_secret(
+            &our_x25519_private,
+            &recipient_x25519_bytes,
+        ) {
+            Ok(secret) => secret,
+            Err(e) => {
+                log::error!("ECDH failed: {}", e);
+                return 0;
+            }
+        };
+
+        // Encrypt ACK with shared secret
+        let encrypted_ack = match crate::crypto::encryption::encrypt_message(&ack_bytes, &shared_secret) {
+            Ok(enc) => enc,
+            Err(e) => {
+                log::error!("Encryption failed: {}", e);
+                return 0;
+            }
+        };
+
+        // Wire format: [Type Byte 0x06][Our X25519 Public Key - 32 bytes][Encrypted ACK]
+        let mut wire_message = Vec::new();
+        wire_message.push(crate::network::tor::MSG_TYPE_DELIVERY_CONFIRMATION);
+
+        let sender_x25519_pubkey: [u8; 32] = match our_x25519_public.as_slice().try_into() {
+            Ok(arr) => arr,
+            Err(_) => {
+                log::error!("Invalid sender X25519 pubkey size");
+                return 0;
+            }
+        };
+        wire_message.extend_from_slice(&sender_x25519_pubkey);
+        wire_message.extend_from_slice(&encrypted_ack);
+
+        // Send encrypted ACK via Tor to recipient's port 9153 (ACK listener)
+        let tor_manager = get_tor_manager();
+        let runtime = tokio::runtime::Runtime::new().expect("Failed to create Tokio runtime");
+
+        const ACK_PORT: u16 = 9153;
+
+        let result: Result<(), Box<dyn std::error::Error>> = runtime.block_on(async {
+            let manager = tor_manager.lock().unwrap();
+            let mut conn = manager.connect(&recipient_onion_str, ACK_PORT).await?;
+            manager.send(&mut conn, &wire_message).await?;
+            Ok(())
+        });
+
+        match result {
+            Ok(_) => {
+                log::info!("✓ ACK sent successfully: {} for {}", ack_type_str, item_id_str);
+                1 // success
+            }
+            Err(e) => {
+                log::error!("Failed to send ACK: {}", e);
+                0 // failure
+            }
+        }
+    }, 0)
+}
+
+/// Start ACK listener on port 9153
+#[no_mangle]
+pub extern "C" fn Java_com_securelegion_crypto_RustBridge_startAckListener(
+    mut env: JNIEnv,
+    _class: JClass,
+    port: jint,
+) -> jboolean {
+    catch_panic!(env, {
+        log::info!("Starting ACK listener on port {}...", port);
+
+        let tor_manager = get_tor_manager();
+        let runtime = GLOBAL_RUNTIME.handle();
+
+        match runtime.block_on(async {
+            let mut manager = tor_manager.lock().unwrap();
+            manager.start_listener(Some(port as u16)).await
+        }) {
+            Ok(rx) => {
+                // Store receiver in global static
+                let _ = GLOBAL_ACK_RECEIVER.set(Arc::new(Mutex::new(rx)));
+                log::info!("ACK listener started successfully on port {}", port);
+                1 // success
+            }
+            Err(e) => {
+                log::error!("Failed to start ACK listener: {}", e);
+                0 // failure
+            }
+        }
+    }, 0)
+}
+
+/// Poll for an incoming ACK (non-blocking)
+#[no_mangle]
+pub extern "C" fn Java_com_securelegion_crypto_RustBridge_pollIncomingAck(
+    mut env: JNIEnv,
+    _class: JClass,
+) -> jbyteArray {
+    catch_panic!(env, {
+        if let Some(receiver) = GLOBAL_ACK_RECEIVER.get() {
+            let mut rx = receiver.lock().unwrap();
+
+            // Try to receive without blocking
+            match rx.try_recv() {
+                Ok((_conn_id, ack_bytes)) => {
+                    log::info!("Polled ACK: {} bytes", ack_bytes.len());
+                    match vec_to_jbytearray(&mut env, &ack_bytes) {
+                        Ok(array) => array.into_raw(),
+                        Err(_) => std::ptr::null_mut(),
+                    }
+                }
+                Err(_) => {
+                    // No ACK available
+                    std::ptr::null_mut()
+                }
+            }
+        } else {
+            // Listener not started
+            std::ptr::null_mut()
+        }
+    }, std::ptr::null_mut())
+}
+
+/// Decrypt incoming ACK from listener and store in GLOBAL_ACK_SESSIONS
+/// Wire format: [Sender X25519 Public Key - 32 bytes][Encrypted ACK]
+#[no_mangle]
+pub extern "C" fn Java_com_securelegion_crypto_RustBridge_decryptAndStoreAckFromListener(
+    mut env: JNIEnv,
+    _class: JClass,
+    ack_wire: JByteArray,
+) -> jstring {
+    catch_panic!(env, {
+        let wire_bytes = match jbytearray_to_vec(&mut env, ack_wire) {
+            Ok(v) => v,
+            Err(e) => {
+                log::error!("Failed to convert ACK wire bytes: {}", e);
+                return std::ptr::null_mut();
+            }
+        };
+
+        if wire_bytes.len() < 32 {
+            log::error!("ACK wire too short: {} bytes", wire_bytes.len());
+            return std::ptr::null_mut();
+        }
+
+        // Extract sender's X25519 public key (first 32 bytes)
+        let sender_x25519_pubkey: [u8; 32] = wire_bytes[0..32].try_into().unwrap();
+        let encrypted_ack = &wire_bytes[32..];
+
+        log::info!("Decrypting ACK from sender X25519: {}", hex::encode(&sender_x25519_pubkey));
+
+        // Get our X25519 private key from KeyManager
+        let context = match env.call_static_method(
+            "android/app/ActivityThread",
+            "currentApplication",
+            "()Landroid/app/Application;",
+            &[],
+        ) {
+            Ok(ctx) => ctx.l().unwrap(),
+            Err(e) => {
+                log::error!("Failed to get context: {}", e);
+                return std::ptr::null_mut();
+            }
+        };
+
+        let key_manager = match crate::ffi::keystore::get_key_manager(&mut env, &context) {
+            Ok(km) => km,
+            Err(e) => {
+                log::error!("Failed to get KeyManager: {}", e);
+                return std::ptr::null_mut();
+            }
+        };
+
+        let our_x25519_private = match crate::ffi::keystore::get_encryption_private_key(&mut env, &key_manager) {
+            Ok(k) => k,
+            Err(e) => {
+                log::error!("Failed to get encryption private key: {}", e);
+                return std::ptr::null_mut();
+            }
+        };
+
+        // Derive shared secret
+        let shared_secret = match crate::crypto::key_exchange::derive_shared_secret(
+            &our_x25519_private,
+            &sender_x25519_pubkey.to_vec(),
+        ) {
+            Ok(secret) => secret,
+            Err(e) => {
+                log::error!("ECDH failed: {}", e);
+                return std::ptr::null_mut();
+            }
+        };
+
+        // Decrypt ACK
+        let ack_bytes = match crate::crypto::encryption::decrypt_message(encrypted_ack, &shared_secret) {
+            Ok(decrypted) => decrypted,
+            Err(e) => {
+                log::error!("Decryption failed: {}", e);
+                return std::ptr::null_mut();
+            }
+        };
+
+        // Deserialize ACK
+        let ack_token = match crate::network::pingpong::DeliveryAck::from_bytes(&ack_bytes) {
+            Ok(token) => token,
+            Err(e) => {
+                log::error!("Failed to deserialize ACK: {}", e);
+                return std::ptr::null_mut();
+            }
+        };
+
+        log::info!("╔════════════════════════════════════════");
+        log::info!("║ 📥 RECEIVED DELIVERY ACK");
+        log::info!("║ Item ID: {}", ack_token.item_id);
+        log::info!("║ ACK Type: {}", ack_token.ack_type);
+        log::info!("╚════════════════════════════════════════");
+
+        let item_id = ack_token.item_id.clone();
+
+        // Store in GLOBAL_ACK_SESSIONS
+        crate::network::pingpong::store_ack_session(&item_id, ack_token);
+        log::info!("Stored ACK in GLOBAL_ACK_SESSIONS");
+
+        // Return item_id to caller
+        match string_to_jstring(&mut env, &item_id) {
+            Ok(s) => s.into_raw(),
+            Err(_) => std::ptr::null_mut(),
         }
     }, std::ptr::null_mut())
 }

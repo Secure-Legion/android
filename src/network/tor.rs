@@ -148,6 +148,7 @@ pub const MSG_TYPE_TEXT: u8 = 0x03;
 pub const MSG_TYPE_VOICE: u8 = 0x04;
 pub const MSG_TYPE_TAP: u8 = 0x05;
 pub const MSG_TYPE_DELIVERY_CONFIRMATION: u8 = 0x06;
+pub const MSG_TYPE_FRIEND_REQUEST: u8 = 0x07;
 
 /// Structure representing a pending connection waiting for Pong response
 pub struct PendingConnection {
@@ -714,6 +715,11 @@ impl TorManager {
                 log::info!("→ Routing to DELIVERY_CONFIRMATION handler");
                 tx.send((conn_id, data)).ok();
             }
+            MSG_TYPE_FRIEND_REQUEST => {
+                log::info!("→ Routing to FRIEND_REQUEST handler (PING channel)");
+                // Friend requests are handled as message blobs, don't store connection
+                tx.send((conn_id, data)).ok();
+            }
             _ => {
                 log::warn!("⚠️  Unknown message type: 0x{:02x}, treating as PING", msg_type);
 
@@ -895,8 +901,8 @@ impl TorManager {
                 let msg_len = u32::from_be_bytes(len_buf) as usize;
                 log::info!("Incoming message length: {} bytes", msg_len);
 
-                if msg_len > 1_000_000 {  // 1MB limit
-                    return Err("Message too large".into());
+                if msg_len > 10_000_000 {  // 10MB limit (consistent with voice message support)
+                    return Err("Message too large (>10MB)".into());
                 }
 
                 // Read message data
@@ -956,8 +962,8 @@ impl TorConnection {
         self.stream.read_exact(&mut len_buf).await?;
         let data_len = u32::from_be_bytes(len_buf) as usize;
 
-        if data_len > 1_000_000 {
-            return Err("Message too large".into());
+        if data_len > 10_000_000 {
+            return Err("Message too large (>10MB)".into());
         }
 
         // Read data
