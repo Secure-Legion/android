@@ -4,8 +4,7 @@
 /// This ensures private keys never leave the hardware-backed secure storage.
 
 use jni::JNIEnv;
-use jni::objects::{JClass, JObject, JString, JByteArray};
-use jni::sys::jbyteArray;
+use jni::objects::{JObject, JByteArray};
 
 /// KeyStore access errors
 #[derive(Debug)]
@@ -212,7 +211,7 @@ pub fn sign_with_keystore(
             "([B)[B",
             &[(&data_array).into()],
         )
-        .map_err(|e| KeyStoreError::SigningFailed)?;
+        .map_err(|_e| KeyStoreError::SigningFailed)?;
 
     let signature_array = result.l()
         .map_err(|e| KeyStoreError::JniError(format!("Failed to get signature: {}", e)))?;

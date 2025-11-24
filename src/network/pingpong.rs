@@ -1,12 +1,11 @@
 use serde::{Deserialize, Serialize};
 use ed25519_dalek::{SigningKey, VerifyingKey, Signature, Signer, Verifier};
-use rand::rngs::OsRng;
 use std::time::{SystemTime, UNIX_EPOCH};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::sync::OnceLock;
 use serde_big_array::BigArray;
-use super::tor::{TorManager, TorConnection};
+use super::tor::TorManager;
 
 /// Ping Token - sent from sender to recipient to initiate handshake
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -54,14 +53,14 @@ pub struct PongToken {
     pub signature: [u8; 64],
 }
 
-/// Delivery Confirmation (ACK) Token - confirms local storage of Ping or Message
-/// Sent by receiver to confirm they've stored the data locally
+/// Delivery Confirmation (ACK) Token - confirms receipt of protocol messages
+/// Sent by receiver to confirm they've received and processed the data
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct DeliveryAck {
-    /// ID of the item being acknowledged (ping_id or message_id)
+    /// ID of the item being acknowledged (ping_id, message_id, tap_nonce, or pong_nonce)
     pub item_id: String,
 
-    /// Type of ACK: "PING_ACK" or "MESSAGE_ACK"
+    /// Type of ACK: "PING_ACK", "MESSAGE_ACK", "TAP_ACK", or "PONG_ACK"
     pub ack_type: String,
 
     /// Unix timestamp when ACK was created
@@ -92,7 +91,7 @@ pub struct PingPongManager {
 #[derive(Clone)]
 struct PingSession {
     ping_token: PingToken,
-    recipient_onion: String,
+    _recipient_onion: String,
     created_at: i64,
 }
 
@@ -481,10 +480,12 @@ impl DeliveryAck {
     /// ACK type constants
     pub const ACK_TYPE_PING: &'static str = "PING_ACK";
     pub const ACK_TYPE_MESSAGE: &'static str = "MESSAGE_ACK";
+    pub const ACK_TYPE_TAP: &'static str = "TAP_ACK";
+    pub const ACK_TYPE_PONG: &'static str = "PONG_ACK";
 
     /// Create a new Delivery ACK token
-    /// item_id: ping_id or message_id being acknowledged
-    /// ack_type: "PING_ACK" or "MESSAGE_ACK"
+    /// item_id: ping_id, message_id, tap_nonce, or pong_nonce being acknowledged
+    /// ack_type: "PING_ACK", "MESSAGE_ACK", "TAP_ACK", or "PONG_ACK"
     /// keypair: Ed25519 signing key of the party sending the ACK
     pub fn new(
         item_id: &str,
@@ -574,7 +575,7 @@ impl PingPongManager {
         // Store Ping session
         let session = PingSession {
             ping_token: ping.clone(),
-            recipient_onion: recipient_onion.to_string(),
+            _recipient_onion: recipient_onion.to_string(),
             created_at: ping.timestamp,
         };
 

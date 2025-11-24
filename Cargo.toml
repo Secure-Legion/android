@@ -78,6 +78,7 @@ hex-literal = "0.4"
 default = ["std"]
 std = []
 network = ["reqwest"]
+debug-logs = []  # Enable verbose logging for development builds
 
 [profile.release]
 opt-level = 3

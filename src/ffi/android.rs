@@ -507,10 +507,6 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_initializeTor(
     _class: JClass,
 ) -> jstring {
     catch_panic!(env, {
-        // Start the bootstrap event listener (separate control port connection)
-        // This will continuously update BOOTSTRAP_STATUS in real-time
-        log::info!("Starting bootstrap event listener...");
-        crate::network::tor::start_bootstrap_event_listener();
 
         let tor_manager = get_tor_manager();
 
@@ -521,11 +517,17 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_initializeTor(
         });
 
         match result {
-            Ok(status) => match string_to_jstring(&mut env, &status) {
-                Ok(s) => s.into_raw(),
-                Err(_) => {
-                    let _ = env.throw_new("java/lang/RuntimeException", "Failed to create status string");
-                    std::ptr::null_mut()
+            Ok(status) => {
+                // Start bootstrap event listener AFTER initialization to prevent deadlock
+                log::info!("Tor initialized, starting bootstrap event listener...");
+                crate::network::tor::start_bootstrap_event_listener();
+
+                match string_to_jstring(&mut env, &status) {
+                    Ok(s) => s.into_raw(),
+                    Err(_) => {
+                        let _ = env.throw_new("java/lang/RuntimeException", "Failed to create status string");
+                        std::ptr::null_mut()
+                    }
                 }
             },
             Err(e) => {
@@ -816,6 +818,34 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_pollIncomingPing(
     }, std::ptr::null_mut())
 }
 
+/// Check if a connection is still alive and responsive
+///
+/// # Arguments
+/// * `connection_id` - The connection ID to check
+///
+/// # Returns
+/// True if connection exists in PENDING_CONNECTIONS (indicates it's still alive)
+#[no_mangle]
+pub extern "C" fn Java_com_securelegion_crypto_RustBridge_isConnectionAlive(
+    mut env: JNIEnv,
+    _class: JClass,
+    connection_id: jlong,
+) -> jboolean {
+    catch_panic!(env, {
+        // Check if connection exists in PENDING_CONNECTIONS
+        let pending = PENDING_CONNECTIONS.lock().unwrap();
+        let exists = pending.contains_key(&(connection_id as u64));
+
+        if exists {
+            log::debug!("Connection {} is alive (found in PENDING_CONNECTIONS)", connection_id);
+            1  // true
+        } else {
+            log::debug!("Connection {} is dead (not found in PENDING_CONNECTIONS)", connection_id);
+            0  // false
+        }
+    }, 0)
+}
+
 /// Send encrypted Pong response back to a pending connection and receive the message
 ///
 /// # Arguments
@@ -969,7 +999,7 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendPongToListener(
             }
         };
 
-        log::info!("Sending Pong to listener at {}:9152 ({} bytes)", onion_address, pong_bytes.len());
+        log::info!("Sending Pong to listener at {}:8080 ({} bytes)", onion_address, pong_bytes.len());
 
         // Get Tor manager
         let tor_manager = get_tor_manager();
@@ -984,7 +1014,7 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendPongToListener(
         };
 
         let result = runtime.block_on(async {
-            const PONG_LISTENER_PORT: u16 = 9152;
+            const PONG_LISTENER_PORT: u16 = 8080;  // Main listener port (handles all message types)
 
             // Build wire message with type byte
             let mut wire_message = Vec::new();
@@ -1003,7 +1033,7 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendPongToListener(
                 tor.send(&mut conn, &wire_message).await?;
             } // Lock released
 
-            log::info!("Pong sent successfully to listener at {}:9152", onion_address);
+            log::info!("Pong sent successfully to listener at {}:8080", onion_address);
             Ok::<(), Box<dyn std::error::Error>>(())
         });
 
@@ -1273,12 +1303,12 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendPing(
                 }
                 Ok(Err(e)) => {
                     log::warn!("Failed to receive instant Pong: {}", e);
-                    log::info!("→ DELAYED MODE: Pong will arrive later via port 9152 listener");
+                    log::info!("→ DELAYED MODE: Pong will arrive later via port 8080 main listener");
                     Ok(())
                 }
                 Err(_) => {
                     log::info!("→ DELAYED MODE: Instant Pong timeout ({}s) - recipient may be offline or busy", INSTANT_PONG_TIMEOUT_SECS);
-                    log::info!("   Pong will arrive later via port 9152 listener when recipient comes online");
+                    log::info!("   Pong will arrive later via port 8080 main listener when recipient comes online");
                     Ok(())
                 }
             }
@@ -1288,8 +1318,17 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendPing(
             Ok(_) => {
                 log::info!("✓ Ping sent to {}: {}", recipient_onion_str, ping_id);
 
-                // Return the ping_id immediately so the sender can poll for Pong later
-                match string_to_jstring(&mut env, &ping_id) {
+                // Encode wire_message as Base64 for storage and retry
+                let wire_bytes_base64 = base64::encode(&wire_message);
+
+                // Return JSON with ping_id and wire_bytes for tracking and retry
+                let json_response = format!(
+                    r#"{{"pingId":"{}","wireBytes":"{}"}}"#,
+                    ping_id,
+                    wire_bytes_base64
+                );
+
+                match string_to_jstring(&mut env, &json_response) {
                     Ok(s) => s.into_raw(),
                     Err(_) => std::ptr::null_mut(),
                 }
@@ -1512,6 +1551,163 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendFriendRequest(
             }
             Err(e) => {
                 log::error!("Failed to send friend request to {}: {}", recipient_onion_str, e);
+                0 // failure
+            }
+        }
+    }, 0)
+}
+
+/// Send friend request accepted message to a recipient
+/// Args:
+///   recipient_onion - Recipient's .onion address
+///   encrypted_acceptance - Encrypted friend request acceptance message
+/// Returns: true if sent successfully, false otherwise
+#[no_mangle]
+pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendFriendRequestAccepted(
+    mut env: JNIEnv,
+    _class: JClass,
+    recipient_onion: JString,
+    encrypted_acceptance: JByteArray,
+) -> jboolean {
+    catch_panic!(env, {
+        // Convert onion address
+        let recipient_onion_str = match jstring_to_string(&mut env, recipient_onion) {
+            Ok(s) => s,
+            Err(e) => {
+                log::error!("Failed to convert onion address: {}", e);
+                return 0;
+            }
+        };
+
+        // Convert encrypted acceptance bytes
+        let acceptance_bytes = match jbytearray_to_vec(&mut env, encrypted_acceptance) {
+            Ok(v) => v,
+            Err(e) => {
+                log::error!("Failed to convert acceptance bytes: {}", e);
+                return 0;
+            }
+        };
+
+        log::info!("Sending friend request accepted to {} ({} bytes)", recipient_onion_str, acceptance_bytes.len());
+
+        // Build wire message with type byte 0x08 (FRIEND_REQUEST_ACCEPTED)
+        // Wire format: [0x08][Encrypted Acceptance]
+        let mut wire_message = Vec::new();
+        wire_message.push(crate::network::tor::MSG_TYPE_FRIEND_REQUEST_ACCEPTED); // 0x08
+        wire_message.extend_from_slice(&acceptance_bytes);
+
+        log::info!("Wire message: {} bytes (type={:02X})", wire_message.len(), wire_message[0]);
+
+        // Send acceptance via Tor (fire-and-forget, no response expected)
+        let tor_manager = get_tor_manager();
+        let runtime = match tokio::runtime::Runtime::new() {
+            Ok(rt) => rt,
+            Err(e) => {
+                log::error!("Failed to create runtime: {}", e);
+                return 0;
+            }
+        };
+
+        const FRIEND_REQUEST_PORT: u16 = 9150; // Use same port as hidden service
+
+        let result = runtime.block_on(async {
+            let manager = tor_manager.lock().unwrap();
+            let mut conn = manager.connect(&recipient_onion_str, FRIEND_REQUEST_PORT).await?;
+            manager.send(&mut conn, &wire_message).await?;
+
+            log::info!("Friend request acceptance sent successfully to {}", recipient_onion_str);
+            Ok::<(), Box<dyn std::error::Error>>(())
+        });
+
+        match result {
+            Ok(_) => {
+                log::info!("Friend request acceptance sent successfully to {}", recipient_onion_str);
+                1 // success
+            }
+            Err(e) => {
+                log::error!("Failed to send friend request acceptance to {}: {}", recipient_onion_str, e);
+                0 // failure
+            }
+        }
+    }, 0)
+}
+
+/// Send ACK on an existing connection (fire-and-forget)
+/// Args:
+///   connection_id - Connection ID from pollIncomingPing
+///   item_id - Item ID (ping_id or message_id)
+///   ack_type - "PING_ACK" or "MESSAGE_ACK"
+///   encrypted_ack - Encrypted ACK bytes
+/// Returns: true if sent successfully, false otherwise
+#[no_mangle]
+pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendAckOnConnection(
+    mut env: JNIEnv,
+    _class: JClass,
+    connection_id: jlong,
+    item_id: JString,
+    ack_type: JString,
+    encrypted_ack: JByteArray,
+) -> jboolean {
+    catch_panic!(env, {
+        // Convert parameters
+        let item_id_str = match jstring_to_string(&mut env, item_id) {
+            Ok(s) => s,
+            Err(e) => {
+                log::error!("Failed to convert item_id: {}", e);
+                return 0;
+            }
+        };
+
+        let ack_type_str = match jstring_to_string(&mut env, ack_type) {
+            Ok(s) => s,
+            Err(e) => {
+                log::error!("Failed to convert ack_type: {}", e);
+                return 0;
+            }
+        };
+
+        let ack_bytes = match jbytearray_to_vec(&mut env, encrypted_ack) {
+            Ok(v) => v,
+            Err(e) => {
+                log::error!("Failed to convert ACK bytes: {}", e);
+                return 0;
+            }
+        };
+
+        log::info!("Sending {} on connection {}: {} bytes (item_id={})", ack_type_str, connection_id, ack_bytes.len(), item_id_str);
+
+        // Map ACK type string to message type byte
+        let msg_type = match ack_type_str.as_str() {
+            "PING_ACK" => crate::network::tor::MSG_TYPE_DELIVERY_CONFIRMATION,
+            "MESSAGE_ACK" => crate::network::tor::MSG_TYPE_DELIVERY_CONFIRMATION,
+            "PONG_ACK" => crate::network::tor::MSG_TYPE_DELIVERY_CONFIRMATION,
+            "TAP_ACK" => crate::network::tor::MSG_TYPE_DELIVERY_CONFIRMATION,
+            _ => {
+                log::error!("Unknown ACK type: {}", ack_type_str);
+                return 0;
+            }
+        };
+
+        // Send ACK on connection
+        let runtime = match tokio::runtime::Runtime::new() {
+            Ok(rt) => rt,
+            Err(e) => {
+                log::error!("Failed to create runtime: {}", e);
+                return 0;
+            }
+        };
+
+        let result = runtime.block_on(async {
+            crate::network::TorManager::send_ack_on_connection(connection_id as u64, msg_type, &ack_bytes).await
+        });
+
+        match result {
+            Ok(_) => {
+                log::info!("{} sent successfully on connection {} (item_id={})", ack_type_str, connection_id, item_id_str);
+                1 // success
+            }
+            Err(e) => {
+                log::error!("Failed to send {} on connection {}: {}", ack_type_str, connection_id, e);
                 0 // failure
             }
         }
@@ -1934,10 +2130,14 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_pollForPong(
             Err(_) => return 0,
         };
 
+        log::debug!("pollForPong checking for ping_id: {}", ping_id_str);
+
         // Check if Pong exists (non-blocking check)
         if crate::network::pingpong::get_pong_session(&ping_id_str).is_some() {
+            log::info!("✓ Found Pong for ping_id: {}", ping_id_str);
             1 // true - Pong is waiting
         } else {
+            log::debug!("✗ No Pong found for ping_id: {}", ping_id_str);
             0 // false - no Pong yet
         }
     }, 0)
@@ -4292,4 +4492,85 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_getVersion(
             Err(_) => std::ptr::null_mut(),
         }
     }, std::ptr::null_mut())
+}
+
+// ==================== SESSION CLEANUP ====================
+
+/// Remove Ping session after Pong is sent
+/// Call this immediately after successfully sending Pong to prevent memory leak
+#[no_mangle]
+pub extern "C" fn Java_com_securelegion_crypto_RustBridge_removePingSession(
+    mut env: JNIEnv,
+    _class: JClass,
+    ping_id: JString,
+) {
+    catch_panic!(env, {
+        let ping_id_str = match jstring_to_string(&mut env, ping_id) {
+            Ok(s) => s,
+            Err(e) => {
+                log::error!("Failed to convert ping_id: {}", e);
+                return;
+            }
+        };
+
+        log::debug!("Removing Ping session: {}", ping_id_str);
+        crate::network::remove_ping_session(&ping_id_str);
+    }, ())
+}
+
+/// Remove Pong session after message blob is sent
+/// Call this immediately after successfully sending message to prevent memory leak
+#[no_mangle]
+pub extern "C" fn Java_com_securelegion_crypto_RustBridge_removePongSession(
+    mut env: JNIEnv,
+    _class: JClass,
+    ping_id: JString,
+) {
+    catch_panic!(env, {
+        let ping_id_str = match jstring_to_string(&mut env, ping_id) {
+            Ok(s) => s,
+            Err(e) => {
+                log::error!("Failed to convert ping_id: {}", e);
+                return;
+            }
+        };
+
+        log::debug!("Removing Pong session: {}", ping_id_str);
+        crate::network::remove_pong_session(&ping_id_str);
+    }, ())
+}
+
+/// Remove ACK session after processing
+/// Call this immediately after processing ACK to prevent memory leak
+#[no_mangle]
+pub extern "C" fn Java_com_securelegion_crypto_RustBridge_removeAckSession(
+    mut env: JNIEnv,
+    _class: JClass,
+    item_id: JString,
+) {
+    catch_panic!(env, {
+        let item_id_str = match jstring_to_string(&mut env, item_id) {
+            Ok(s) => s,
+            Err(e) => {
+                log::error!("Failed to convert item_id: {}", e);
+                return;
+            }
+        };
+
+        log::debug!("Removing ACK session: {}", item_id_str);
+        crate::network::remove_ack_session(&item_id_str);
+    }, ())
+}
+
+/// Clean up expired Ping/Pong/ACK sessions (older than 5 minutes)
+/// Call this periodically as a safety net for orphaned entries from crashes
+#[no_mangle]
+pub extern "C" fn Java_com_securelegion_crypto_RustBridge_cleanupExpiredSessions(
+    _env: JNIEnv,
+    _class: JClass,
+) {
+    log::debug!("Cleaning up expired sessions...");
+    crate::network::cleanup_expired_pings();
+    crate::network::cleanup_expired_pongs();
+    crate::network::cleanup_expired_acks();
 }

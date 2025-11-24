@@ -2,11 +2,10 @@
 /// Handles username registration and PIN-protected contact discovery
 
 use crate::protocol::ContactCard;
-use crate::crypto::encryption::{encrypt_message, decrypt_message};
 use serde::{Deserialize, Serialize};
 use std::error::Error;
 use argon2::{
-    password_hash::{PasswordHasher, SaltString, PasswordHash, PasswordVerifier},
+    password_hash::{PasswordHasher, SaltString},
     Argon2, Algorithm, Version, Params,
 };
 use rand::rngs::OsRng;
@@ -184,7 +183,7 @@ fn decrypt_with_key(ciphertext: &[u8], key: &[u8], nonce: &[u8]) -> Result<Vec<u
 
     // Decrypt
     let plaintext = cipher.decrypt(nonce_array, ciphertext)
-        .map_err(|e| "Decryption failed: Invalid PIN or corrupted data")?;
+        .map_err(|_e| "Decryption failed: Invalid PIN or corrupted data")?;
 
     Ok(plaintext)
 }
@@ -204,7 +203,7 @@ pub fn register_username(
 
     // TODO: Actual Solana blockchain interaction
     // For now, return the encrypted JSON that would be stored on-chain
-    let json_data = encrypted.to_json()?;
+    let _json_data = encrypted.to_json()?;
 
     // Full SNS domain
     let full_domain = format!("{}.securelegion.sol", username);
@@ -217,8 +216,8 @@ pub fn register_username(
 
 /// Lookup username on Solana Name Service and decrypt with PIN
 pub fn lookup_username(
-    username: &str,
-    pin: &str,
+    _username: &str,
+    _pin: &str,
 ) -> Result<ContactCard, Box<dyn Error>> {
     // TODO: Actual Solana blockchain lookup
     // For now, this is a placeholder that would:

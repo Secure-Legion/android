@@ -146,6 +146,67 @@ impl DeliveryConfirmationToken {
     }
 }
 
+/// TAP_ACK: Confirms that TAP (check-in request) was received by sender
+/// Recipient sent TAP to ask "Do I have messages waiting?"
+/// Sender responds with TAP_ACK to confirm "I got your check-in"
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TapAckToken {
+    pub tap_nonce: [u8; 24],          // Nonce from the TAP being acknowledged
+    pub recipient_pubkey: [u8; 32],   // Recipient's signing public key
+    pub timestamp: i64,
+    #[serde(with = "BigArray")]
+    pub signature: [u8; 64],          // Signature over tap_nonce + timestamp
+}
+
+impl TapAckToken {
+    pub fn serialize(&self) -> Result<Vec<u8>, bincode::Error> {
+        bincode::serialize(self)
+    }
+
+    pub fn deserialize(data: &[u8]) -> Result<Self, bincode::Error> {
+        bincode::deserialize(data)
+    }
+
+    pub fn serialize_for_signing(&self) -> Vec<u8> {
+        let mut data = Vec::new();
+        data.extend_from_slice(&self.tap_nonce);
+        data.extend_from_slice(&self.recipient_pubkey);
+        data.extend_from_slice(&self.timestamp.to_le_bytes());
+        data
+    }
+}
+
+/// PONG_ACK: Confirms that PONG (encrypted message payload) landed on recipient device
+/// Gap: Phone could crash between PONG_ACK and MESSAGE_ACK
+/// - PONG_ACK = "Encrypted bytes arrived on my device"
+/// - MESSAGE_ACK = "Decrypted, verified, and saved to database"
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PongAckToken {
+    pub pong_nonce: [u8; 24],         // Nonce from the PONG being acknowledged
+    pub recipient_pubkey: [u8; 32],   // Recipient's signing public key
+    pub timestamp: i64,
+    #[serde(with = "BigArray")]
+    pub signature: [u8; 64],          // Signature over pong_nonce + timestamp
+}
+
+impl PongAckToken {
+    pub fn serialize(&self) -> Result<Vec<u8>, bincode::Error> {
+        bincode::serialize(self)
+    }
+
+    pub fn deserialize(data: &[u8]) -> Result<Self, bincode::Error> {
+        bincode::deserialize(data)
+    }
+
+    pub fn serialize_for_signing(&self) -> Vec<u8> {
+        let mut data = Vec::new();
+        data.extend_from_slice(&self.pong_nonce);
+        data.extend_from_slice(&self.recipient_pubkey);
+        data.extend_from_slice(&self.timestamp.to_le_bytes());
+        data
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -149,6 +149,7 @@ pub const MSG_TYPE_VOICE: u8 = 0x04;
 pub const MSG_TYPE_TAP: u8 = 0x05;
 pub const MSG_TYPE_DELIVERY_CONFIRMATION: u8 = 0x06;
 pub const MSG_TYPE_FRIEND_REQUEST: u8 = 0x07;
+pub const MSG_TYPE_FRIEND_REQUEST_ACCEPTED: u8 = 0x08;
 
 /// Structure representing a pending connection waiting for Pong response
 pub struct PendingConnection {
@@ -348,15 +349,15 @@ impl TorManager {
         // Now create the hidden service - descriptors will be uploaded and we'll receive events
         // IMPORTANT: Expose FOUR ports for Ping-Pong-Tap-ACK protocol:
         //   - Port 9150 → local 8080 (Ping listener - main hidden service port)
+        //   - Port 8080 → local 8080 (Pong listener - SAME as main listener for routing)
         //   - Port 9151 → local 9151 (Tap listener)
-        //   - Port 9152 → local 9152 (Pong listener)
         //   - Port 9153 → local 9153 (ACK/Delivery Confirmation listener)
         let actual_onion_address = {
             let mut stream = control.lock().await;
 
             // Flags=Detach makes hidden service persistent across Tor restarts
             let command = format!(
-                "ADD_ONION ED25519-V3:{} Flags=Detach Port={},127.0.0.1:{} Port=9151,127.0.0.1:9151 Port=9152,127.0.0.1:9152 Port=9153,127.0.0.1:9153\r\n",
+                "ADD_ONION ED25519-V3:{} Flags=Detach Port={},127.0.0.1:{} Port=8080,127.0.0.1:8080 Port=9151,127.0.0.1:9151 Port=9153,127.0.0.1:9153\r\n",
                 key_base64, service_port, local_port
             );
 
@@ -720,6 +721,11 @@ impl TorManager {
                 // Friend requests are handled as message blobs, don't store connection
                 tx.send((conn_id, data)).ok();
             }
+            MSG_TYPE_FRIEND_REQUEST_ACCEPTED => {
+                log::info!("→ Routing to FRIEND_REQUEST_ACCEPTED handler (PING channel)");
+                // Friend request accepted messages are handled as message blobs, don't store connection
+                tx.send((conn_id, data)).ok();
+            }
             _ => {
                 log::warn!("⚠️  Unknown message type: 0x{:02x}, treating as PING", msg_type);
 
@@ -923,6 +929,34 @@ impl TorManager {
                 Err("Timeout waiting for message after sending Pong".into())
             }
         }
+    }
+
+    /// Send ACK on an existing connection (fire-and-forget, connection closes after sending)
+    pub async fn send_ack_on_connection(connection_id: u64, ack_type: u8, ack_bytes: &[u8]) -> Result<(), Box<dyn Error>> {
+        // Take the connection out (it will be closed after sending ACK)
+        let mut conn = {
+            let mut pending = PENDING_CONNECTIONS.lock().unwrap();
+            pending.remove(&connection_id)
+                .ok_or("Connection not found")?
+        };
+
+        // Build wire message with type byte
+        let mut wire_message = Vec::new();
+        wire_message.push(ack_type); // Add ACK type byte
+        wire_message.extend_from_slice(ack_bytes);
+
+        // Send length prefix (includes type byte)
+        let len = wire_message.len() as u32;
+        conn.socket.write_all(&len.to_be_bytes()).await?;
+
+        // Send wire message (type + ACK data)
+        conn.socket.write_all(&wire_message).await?;
+        conn.socket.flush().await?;
+
+        log::info!("Sent ACK (type={:02x}) on connection {}: {} bytes", ack_type, connection_id, ack_bytes.len());
+
+        // Connection will close when dropped (fire-and-forget)
+        Ok(())
     }
 
     /// Send data over a Tor connection
