@@ -79,12 +79,23 @@ data class Contact(
      * Whether this contact is blocked
      * Blocked contacts cannot send messages
      */
-    val isBlocked: Boolean = false
+    val isBlocked: Boolean = false,
+
+    /**
+     * Friendship status - tracks bidirectional friend relationship
+     * PENDING_SENT: You added them, waiting for them to add you back
+     * CONFIRMED: Mutual friends - both have added each other, can message
+     */
+    val friendshipStatus: String = FRIENDSHIP_PENDING_SENT
 ) {
     companion object {
         // Trust levels
         const val TRUST_UNTRUSTED = 0
         const val TRUST_VERIFIED = 1
         const val TRUST_TRUSTED = 2
+
+        // Friendship status
+        const val FRIENDSHIP_PENDING_SENT = "PENDING_SENT"
+        const val FRIENDSHIP_CONFIRMED = "CONFIRMED"
     }
 }

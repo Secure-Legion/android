@@ -23,7 +23,29 @@ class BootReceiver : BroadcastReceiver() {
     }
 
     override fun onReceive(context: Context, intent: Intent) {
-        if (intent.action != Intent.ACTION_BOOT_COMPLETED) {
+        // SECURITY: Validate intent action to prevent malicious broadcasts
+        val action = intent.action
+        if (action == null) {
+            Log.w(TAG, "Ignoring broadcast with null action")
+            return
+        }
+
+        // Only accept legitimate boot broadcast actions
+        val validActions = setOf(
+            Intent.ACTION_BOOT_COMPLETED,
+            Intent.ACTION_LOCKED_BOOT_COMPLETED,
+            "android.intent.action.QUICKBOOT_POWERON"
+        )
+
+        if (action !in validActions) {
+            Log.w(TAG, "Ignoring invalid intent action: $action")
+            return
+        }
+
+        // SECURITY: Verify this is a system broadcast, not from a malicious app
+        // System broadcasts have no extras or only system-specific extras
+        if (intent.extras != null && !intent.extras!!.isEmpty) {
+            Log.w(TAG, "Ignoring broadcast with unexpected extras (potential spoofing)")
             return
         }
 

@@ -196,6 +196,8 @@
 -dontwarn javax.annotation.**
 -dontwarn javax.inject.**
 -dontwarn sun.misc.Unsafe
+-dontwarn java.awt.**
+-dontwarn org.slf4j.**
 
 # ==================== PARCELABLE ====================
 

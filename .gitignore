@@ -41,6 +41,7 @@ nul
 *.log
 TODO.md
 OWASP_MASTG_Assessment.md
+*ACK.md
 
 # Signing keys (NEVER commit these!)
 *.jks

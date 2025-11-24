@@ -43,12 +43,31 @@ class BiometricAuthHelper(private val context: Context) {
      */
     fun isBiometricAvailable(): BiometricStatus {
         val biometricManager = BiometricManager.from(context)
-        return when (biometricManager.canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_STRONG)) {
-            BiometricManager.BIOMETRIC_SUCCESS -> BiometricStatus.AVAILABLE
-            BiometricManager.BIOMETRIC_ERROR_NO_HARDWARE -> BiometricStatus.NO_HARDWARE
-            BiometricManager.BIOMETRIC_ERROR_HW_UNAVAILABLE -> BiometricStatus.HARDWARE_UNAVAILABLE
-            BiometricManager.BIOMETRIC_ERROR_NONE_ENROLLED -> BiometricStatus.NONE_ENROLLED
-            else -> BiometricStatus.UNKNOWN_ERROR
+        val result = biometricManager.canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_STRONG)
+
+        android.util.Log.d(TAG, "BiometricManager.canAuthenticate(BIOMETRIC_STRONG) returned: $result")
+
+        return when (result) {
+            BiometricManager.BIOMETRIC_SUCCESS -> {
+                android.util.Log.d(TAG, "Status: BIOMETRIC_SUCCESS")
+                BiometricStatus.AVAILABLE
+            }
+            BiometricManager.BIOMETRIC_ERROR_NO_HARDWARE -> {
+                android.util.Log.w(TAG, "Status: BIOMETRIC_ERROR_NO_HARDWARE")
+                BiometricStatus.NO_HARDWARE
+            }
+            BiometricManager.BIOMETRIC_ERROR_HW_UNAVAILABLE -> {
+                android.util.Log.w(TAG, "Status: BIOMETRIC_ERROR_HW_UNAVAILABLE")
+                BiometricStatus.HARDWARE_UNAVAILABLE
+            }
+            BiometricManager.BIOMETRIC_ERROR_NONE_ENROLLED -> {
+                android.util.Log.w(TAG, "Status: BIOMETRIC_ERROR_NONE_ENROLLED")
+                BiometricStatus.NONE_ENROLLED
+            }
+            else -> {
+                android.util.Log.e(TAG, "Status: UNKNOWN_ERROR (code: $result)")
+                BiometricStatus.UNKNOWN_ERROR
+            }
         }
     }
 

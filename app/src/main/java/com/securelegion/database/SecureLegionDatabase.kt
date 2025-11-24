@@ -32,7 +32,7 @@ import net.sqlcipher.database.SupportFactory
  */
 @Database(
     entities = [Contact::class, Message::class, Wallet::class, ReceivedId::class],
-    version = 11,
+    version = 14,
     exportSchema = false
 )
 abstract class SecureLegionDatabase : RoomDatabase() {
@@ -202,14 +202,56 @@ abstract class SecureLegionDatabase : RoomDatabase() {
         }
 
         /**
+         * Migration from version 11 to 12: Add friendshipStatus field
+         */
+        private val MIGRATION_11_12 = object : Migration(11, 12) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                Log.i(TAG, "Migrating database from version 11 to 12")
+                // Add friendshipStatus column with default value PENDING_SENT
+                database.execSQL("ALTER TABLE contacts ADD COLUMN friendshipStatus TEXT NOT NULL DEFAULT 'PENDING_SENT'")
+                Log.i(TAG, "Migration completed: Added friendshipStatus column")
+            }
+        }
+
+        /**
+         * Migration from version 12 to 13: Add pingWireBytes field to prevent ghost pings
+         */
+        private val MIGRATION_12_13 = object : Migration(12, 13) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                Log.i(TAG, "Migrating database from version 12 to 13")
+                // Add pingWireBytes column (nullable) to store encrypted Ping token for retry
+                database.execSQL("ALTER TABLE messages ADD COLUMN pingWireBytes TEXT")
+                Log.i(TAG, "Migration completed: Added pingWireBytes column to prevent ghost pings on retry")
+            }
+        }
+
+        /**
+         * Migration from version 13 to 14: Add tapDelivered and pongDelivered for complete ACK tracking
+         */
+        private val MIGRATION_13_14 = object : Migration(13, 14) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                Log.i(TAG, "Migrating database from version 13 to 14")
+                // Add tapDelivered column with default value false
+                database.execSQL("ALTER TABLE messages ADD COLUMN tapDelivered INTEGER NOT NULL DEFAULT 0")
+                // Add pongDelivered column with default value false
+                database.execSQL("ALTER TABLE messages ADD COLUMN pongDelivered INTEGER NOT NULL DEFAULT 0")
+                Log.i(TAG, "Migration completed: Added tapDelivered and pongDelivered columns for complete ACK tracking")
+            }
+        }
+
+        /**
          * Get database instance
          * @param context Application context
          * @param passphrase Encryption passphrase (should be derived from KeyManager)
+         *
+         * SECURITY: The passphrase will be zeroized after database initialization
          */
         fun getInstance(context: Context, passphrase: ByteArray): SecureLegionDatabase {
             // Double-checked locking to prevent race conditions
             val currentInstance = INSTANCE
             if (currentInstance != null) {
+                // SECURITY: Zeroize passphrase even if instance already exists
+                java.util.Arrays.fill(passphrase, 0.toByte())
                 return currentInstance
             }
 
@@ -217,11 +259,18 @@ abstract class SecureLegionDatabase : RoomDatabase() {
                 // Check again inside synchronized block
                 val newInstance = INSTANCE
                 if (newInstance != null) {
+                    // SECURITY: Zeroize passphrase if instance was created by another thread
+                    java.util.Arrays.fill(passphrase, 0.toByte())
                     newInstance
                 } else {
-                    val instance = buildDatabase(context, passphrase)
-                    INSTANCE = instance
-                    instance
+                    try {
+                        val instance = buildDatabase(context, passphrase)
+                        INSTANCE = instance
+                        instance
+                    } finally {
+                        // SECURITY: Always zeroize passphrase after use
+                        java.util.Arrays.fill(passphrase, 0.toByte())
+                    }
                 }
             }
         }
@@ -256,7 +305,7 @@ abstract class SecureLegionDatabase : RoomDatabase() {
                     DATABASE_NAME
                 )
                     .openHelperFactory(factory)
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14)
                     .addCallback(object : RoomDatabase.Callback() {
                         override fun onCreate(db: SupportSQLiteDatabase) {
                             super.onCreate(db)
@@ -347,7 +396,7 @@ abstract class SecureLegionDatabase : RoomDatabase() {
                         DATABASE_NAME
                     )
                         .openHelperFactory(SupportFactory(passphrase))
-                        .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11)
+                        .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14)
                         .addCallback(object : RoomDatabase.Callback() {
                             override fun onCreate(db: SupportSQLiteDatabase) {
                                 super.onCreate(db)

@@ -9,6 +9,8 @@ import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.ProcessLifecycleOwner
 import com.securelegion.crypto.TorManager
+import IPtProxy.Controller
+import java.io.File
 
 /**
  * Application class for Secure Legion
@@ -28,12 +30,27 @@ class SecureLegionApplication : Application() {
 
         // Track current foreground activity
         private var currentActivity: Activity? = null
+
+        // IPtProxy controller for pluggable transports (shared across app)
+        lateinit var iptProxyController: Controller
+            private set
     }
 
     override fun onCreate() {
         super.onCreate()
 
         Log.d(TAG, "Application starting...")
+
+        // Initialize IPtProxy controller for pluggable transports
+        // This MUST be done before any bridge configuration
+        try {
+            val ptStateDir = File(cacheDir, "pt_state")
+            ptStateDir.mkdirs()
+            iptProxyController = Controller(ptStateDir.absolutePath, true, false, "INFO", null)
+            Log.d(TAG, "IPtProxy Controller initialized at: ${ptStateDir.absolutePath}")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to initialize IPtProxy Controller", e)
+        }
 
         // Register lifecycle observer for auto-lock on background
         registerLifecycleObserver()

@@ -81,6 +81,7 @@ class MessageAdapter(
         val downloadButton: ImageView = view.findViewById(R.id.downloadButton)
         val downloadingText: TextView = view.findViewById(R.id.downloadingText)
         val swipeRevealedTime: TextView = view.findViewById(R.id.swipeRevealedTime)
+        val messageCheckbox: CheckBox = view.findViewById(R.id.messageCheckbox)
     }
 
     class VoiceSentMessageViewHolder(view: View) : RecyclerView.ViewHolder(view) {
@@ -292,15 +293,54 @@ class MessageAdapter(
         holder.swipeRevealedTime.text = formatTime(timestamp)
         holder.swipeRevealedTime.visibility = if (position == currentSwipeRevealedPosition) View.VISIBLE else View.GONE
 
-        // Setup download button
-        holder.downloadButton.setOnClickListener {
-            holder.downloadButton.visibility = View.GONE
-            holder.downloadingText.visibility = View.VISIBLE
-            onDownloadClick?.invoke()
+        // Handle selection mode for pending messages
+        if (isSelectionMode) {
+            holder.messageCheckbox.visibility = View.VISIBLE
+            // Use -1 as ID for pending message (not in database yet)
+            val isPendingSelected = selectedMessages.contains(-1L)
+            holder.messageCheckbox.isChecked = isPendingSelected
+
+            holder.messageCheckbox.setOnCheckedChangeListener { _, isChecked ->
+                if (isChecked) {
+                    selectedMessages.add(-1L)
+                } else {
+                    selectedMessages.remove(-1L)
+                }
+            }
+
+            // Allow tapping bubble to toggle selection
+            holder.messageBubble.setOnClickListener {
+                val isSelected = selectedMessages.contains(-1L)
+                if (isSelected) {
+                    selectedMessages.remove(-1L)
+                    holder.messageCheckbox.isChecked = false
+                } else {
+                    selectedMessages.add(-1L)
+                    holder.messageCheckbox.isChecked = true
+                }
+            }
+
+            // Disable download button in selection mode
+            holder.downloadButton.setOnClickListener(null)
+            holder.downloadButton.isEnabled = false
+        } else {
+            holder.messageCheckbox.visibility = View.GONE
+            holder.messageCheckbox.setOnCheckedChangeListener(null)
+            holder.messageBubble.setOnClickListener(null)
+
+            // Enable download button in normal mode
+            holder.downloadButton.isEnabled = true
+            holder.downloadButton.setOnClickListener {
+                holder.downloadButton.visibility = View.GONE
+                holder.downloadingText.visibility = View.VISIBLE
+                onDownloadClick?.invoke()
+            }
         }
 
-        // Setup swipe gesture
-        setupSwipeGesture(holder.messageBubble, holder.swipeRevealedTime, null, position, isSent = false)
+        // Setup swipe gesture (only in normal mode)
+        if (!isSelectionMode) {
+            setupSwipeGesture(holder.messageBubble, holder.swipeRevealedTime, null, position, isSent = false)
+        }
     }
 
     private fun bindVoiceSentMessage(holder: VoiceSentMessageViewHolder, message: Message, position: Int) {
@@ -470,7 +510,7 @@ class MessageAdapter(
 
         bubble.setOnTouchListener { _, event ->
             gestureDetector.onTouchEvent(event)
-            true
+            false  // Don't consume touch events - allow RecyclerView scrolling
         }
     }
 
@@ -567,6 +607,14 @@ class MessageAdapter(
     fun setCurrentlyPlayingMessageId(messageId: String?) {
         currentlyPlayingMessageId = messageId
         notifyDataSetChanged() // Update all voice message icons
+    }
+
+    fun resetSwipeState() {
+        if (currentSwipeRevealedPosition != -1) {
+            val oldPosition = currentSwipeRevealedPosition
+            currentSwipeRevealedPosition = -1
+            notifyItemChanged(oldPosition)
+        }
     }
 
     fun updateMessages(

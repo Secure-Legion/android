@@ -420,7 +420,28 @@ class AddFriendActivity : BaseActivity() {
                     return@launch
                 }
 
-                Log.d(TAG, "Step 5: Creating Contact entity...")
+                Log.d(TAG, "Step 5: Check if this is accepting a friend request...")
+                // Check if we have a pending friend request from this person
+                val prefs = getSharedPreferences("friend_requests", Context.MODE_PRIVATE)
+                val pendingRequests = prefs.getStringSet("pending_requests", mutableSetOf()) ?: mutableSetOf()
+                val isAcceptingFriendRequest = pendingRequests.any { requestJson ->
+                    try {
+                        val request = com.securelegion.models.FriendRequest.fromJson(requestJson)
+                        request.ipfsCid == cid
+                    } catch (e: Exception) {
+                        false
+                    }
+                }
+
+                val friendshipStatus = if (isAcceptingFriendRequest) {
+                    Log.i(TAG, "This is a friend request acceptance - setting status to CONFIRMED")
+                    Contact.FRIENDSHIP_CONFIRMED
+                } else {
+                    Log.i(TAG, "This is a manual add - setting status to PENDING_SENT")
+                    Contact.FRIENDSHIP_PENDING_SENT
+                }
+
+                Log.d(TAG, "Step 6: Creating Contact entity...")
                 val contact = Contact(
                     displayName = contactCard.displayName,
                     solanaAddress = contactCard.solanaAddress,
@@ -435,11 +456,12 @@ class AddFriendActivity : BaseActivity() {
                     torOnionAddress = contactCard.torOnionAddress,
                     addedTimestamp = System.currentTimeMillis(),
                     lastContactTimestamp = System.currentTimeMillis(),
-                    trustLevel = Contact.TRUST_UNTRUSTED
+                    trustLevel = Contact.TRUST_UNTRUSTED,
+                    friendshipStatus = friendshipStatus
                 )
-                Log.d(TAG, "Contact entity created: ${contact.displayName}")
+                Log.d(TAG, "Contact entity created: ${contact.displayName} (friendshipStatus=$friendshipStatus)")
 
-                Log.d(TAG, "Step 6: Inserting contact into database...")
+                Log.d(TAG, "Step 7: Inserting contact into database...")
                 val contactId = withContext(Dispatchers.IO) {
                     database.contactDao().insertContact(contact)
                 }
@@ -449,19 +471,28 @@ class AddFriendActivity : BaseActivity() {
                 // Remove the friend request from pending list (if it exists)
                 removeFriendRequestByCid(cid)
 
-                // Send friend request to the newly added contact
-                sendFriendRequest(contactCard)
+                // Send appropriate notification based on context
+                if (isAcceptingFriendRequest) {
+                    Log.i(TAG, "Sending FRIEND_REQUEST_ACCEPTED notification...")
+                    sendFriendRequestAccepted(contactCard)
+                } else {
+                    Log.i(TAG, "Sending initial FRIEND_REQUEST...")
+                    sendFriendRequest(contactCard)
+                }
 
                 ThemedToast.showLong(this@AddFriendActivity, "Contact added: ${contactCard.displayName}")
 
-                // Navigate back to main screen
-                finish()
+                // Navigate back to main screen (Messages view)
+                val intent = Intent(this@AddFriendActivity, MainActivity::class.java)
+                intent.flags = Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
+                startActivity(intent)
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
                     overrideActivityTransition(Activity.OVERRIDE_TRANSITION_CLOSE, 0, 0)
                 } else {
                     @Suppress("DEPRECATION")
                     overridePendingTransition(0, 0)
                 }
+                finish()
             } catch (e: Exception) {
                 Log.e(TAG, "DETAILED ERROR - Failed to save contact to database", e)
                 Log.e(TAG, "Error type: ${e.javaClass.simpleName}")
@@ -539,6 +570,62 @@ class AddFriendActivity : BaseActivity() {
                 Log.e(TAG, "Error sending friend request", e)
                 // Don't show error to user - friend request sending is best-effort
                 // The important part is that we added them to our contacts
+            }
+        }
+    }
+
+    /**
+     * Send friend request accepted notification
+     * Notifies the original requester that we've accepted their request
+     */
+    private fun sendFriendRequestAccepted(recipientContactCard: ContactCard) {
+        CoroutineScope(Dispatchers.Main).launch {
+            try {
+                Log.d(TAG, "Sending friend request accepted notification to ${recipientContactCard.displayName}")
+
+                // Get own account information (just username and CID)
+                val keyManager = KeyManager.getInstance(this@AddFriendActivity)
+                val ownDisplayName = keyManager.getUsername()
+                    ?: throw Exception("Username not set")
+                val ownCid = keyManager.getContactCardCid()
+                    ?: throw Exception("Contact card CID not found")
+
+                // Create acceptance notification (same format as friend request for simplicity)
+                val acceptance = com.securelegion.models.FriendRequest(
+                    displayName = ownDisplayName,
+                    ipfsCid = ownCid
+                )
+
+                // Serialize to JSON
+                val acceptanceJson = acceptance.toJson()
+                Log.d(TAG, "Acceptance notification JSON: $acceptanceJson")
+
+                // Encrypt the acceptance using recipient's X25519 public key
+                val encryptedAcceptance = withContext(Dispatchers.IO) {
+                    com.securelegion.crypto.RustBridge.encryptMessage(
+                        plaintext = acceptanceJson,
+                        recipientX25519PublicKey = recipientContactCard.x25519PublicKey
+                    )
+                }
+
+                // Send via Tor using fire-and-forget acceptance function
+                // Rust will add wire type 0x08 during transmission
+                val success = withContext(Dispatchers.IO) {
+                    com.securelegion.crypto.RustBridge.sendFriendRequestAccepted(
+                        recipientOnion = recipientContactCard.torOnionAddress,
+                        encryptedAcceptance = encryptedAcceptance
+                    )
+                }
+
+                if (success) {
+                    Log.i(TAG, "Friend request accepted notification sent successfully to ${recipientContactCard.displayName}")
+                } else {
+                    Log.w(TAG, "Failed to send acceptance notification to ${recipientContactCard.displayName} (recipient may be offline)")
+                }
+
+            } catch (e: Exception) {
+                Log.e(TAG, "Error sending friend request accepted notification", e)
+                // Don't show error to user - notification sending is best-effort
             }
         }
     }

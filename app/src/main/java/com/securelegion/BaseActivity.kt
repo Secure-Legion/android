@@ -1,7 +1,9 @@
 package com.securelegion
 
 import android.content.Intent
+import android.os.Bundle
 import android.view.View
+import android.view.WindowManager
 import androidx.appcompat.app.AppCompatActivity
 import com.securelegion.utils.BadgeUtils
 
@@ -15,6 +17,16 @@ abstract class BaseActivity : AppCompatActivity() {
     companion object {
         private const val PREF_LAST_PAUSE_TIME = "last_pause_timestamp"
         private const val PREFS_NAME = "app_lifecycle"
+    }
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+
+        // Security: Prevent screenshots and screen recording app-wide
+        window.setFlags(
+            WindowManager.LayoutParams.FLAG_SECURE,
+            WindowManager.LayoutParams.FLAG_SECURE
+        )
     }
 
     override fun onResume() {

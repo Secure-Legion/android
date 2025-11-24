@@ -28,6 +28,7 @@ class LockActivity : AppCompatActivity() {
     private lateinit var biometricHelper: BiometricAuthHelper
     private var hasWallet = false
     private var isProcessingDistress = false
+    private var hasAuthenticated = false  // Track if user successfully authenticated
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -80,28 +81,35 @@ class LockActivity : AppCompatActivity() {
         val biometricText = findViewById<TextView>(R.id.biometricText)
 
         // Check biometric availability
-        when (biometricHelper.isBiometricAvailable()) {
+        val biometricStatus = biometricHelper.isBiometricAvailable()
+        val isEnabled = biometricHelper.isBiometricEnabled()
+
+        Log.d("LockActivity", "Biometric Status: $biometricStatus")
+        Log.d("LockActivity", "Biometric Enabled in App: $isEnabled")
+
+        when (biometricStatus) {
             BiometricAuthHelper.BiometricStatus.AVAILABLE -> {
-                // Check if biometric is already enabled
-                if (biometricHelper.isBiometricEnabled()) {
-                    Log.d("LockActivity", "Biometric enabled - showing unlock button")
+                Log.d("LockActivity", "Biometric hardware available and enrolled")
+                // Check if biometric is already enabled in app
+                if (isEnabled) {
+                    Log.i("LockActivity", "Biometric unlock enabled - showing button and icon")
                     biometricButton.visibility = View.VISIBLE
                     biometricText.visibility = View.VISIBLE
                 } else {
-                    Log.d("LockActivity", "Biometric available but not enabled yet")
+                    Log.d("LockActivity", "Biometric available but not enabled in app yet")
                 }
             }
             BiometricAuthHelper.BiometricStatus.NONE_ENROLLED -> {
-                Log.d("LockActivity", "No biometric enrolled on device")
+                Log.w("LockActivity", "No biometric enrolled on device (check Android Settings > Security)")
             }
             BiometricAuthHelper.BiometricStatus.NO_HARDWARE -> {
-                Log.d("LockActivity", "No biometric hardware available")
+                Log.w("LockActivity", "No biometric hardware available on device")
             }
             BiometricAuthHelper.BiometricStatus.HARDWARE_UNAVAILABLE -> {
-                Log.d("LockActivity", "Biometric hardware unavailable")
+                Log.w("LockActivity", "Biometric hardware temporarily unavailable")
             }
             BiometricAuthHelper.BiometricStatus.UNKNOWN_ERROR -> {
-                Log.d("LockActivity", "Unknown biometric error")
+                Log.e("LockActivity", "Unknown biometric error from Android system")
             }
         }
 
@@ -124,6 +132,9 @@ class LockActivity : AppCompatActivity() {
 
                     // Reset failed attempts
                     resetFailedAttempts()
+
+                    // Mark as authenticated to prevent onStop from restarting lock screen
+                    hasAuthenticated = true
 
                     // Unlock app
                     unlockApp()
@@ -181,8 +192,8 @@ class LockActivity : AppCompatActivity() {
                 // Reset failed attempts counter on successful login
                 resetFailedAttempts()
 
-                // Enable biometric on first successful login (if available and not already enabled)
-                offerBiometricEnrollment(keyManager)
+                // Mark as authenticated to prevent onStop from restarting lock screen
+                hasAuthenticated = true
 
                 // Check if account setup is complete (has wallet, contact card, AND username)
                 if (!keyManager.isAccountSetupComplete()) {
@@ -196,7 +207,13 @@ class LockActivity : AppCompatActivity() {
                     finish()
                 } else {
                     Log.i("LockActivity", "Account complete, unlocking app")
-                    unlockApp()
+
+                    // Offer biometric enrollment first, then unlock app
+                    // If biometric dialog is shown, unlockApp() is called after user responds
+                    // If no dialog shown, unlockApp() is called immediately
+                    offerBiometricEnrollment(keyManager) {
+                        unlockApp()
+                    }
                 }
             } else {
                 // Password incorrect
@@ -225,8 +242,9 @@ class LockActivity : AppCompatActivity() {
 
     /**
      * Offer biometric enrollment on first successful password login
+     * @param onComplete Callback to execute after biometric dialog is handled (or immediately if not shown)
      */
-    private fun offerBiometricEnrollment(keyManager: KeyManager) {
+    private fun offerBiometricEnrollment(keyManager: KeyManager, onComplete: () -> Unit) {
         // Only offer if biometric is available but not enabled yet
         if (biometricHelper.isBiometricAvailable() == BiometricAuthHelper.BiometricStatus.AVAILABLE &&
             !biometricHelper.isBiometricEnabled()) {
@@ -238,30 +256,70 @@ class LockActivity : AppCompatActivity() {
             if (!alreadyAsked) {
                 Log.d("LockActivity", "Offering biometric enrollment to user")
 
-                // Get password hash for encryption
-                val passwordHash = keyManager.getPasswordHash()
-                if (passwordHash != null) {
-                    biometricHelper.enableBiometric(
-                        passwordHash = passwordHash,
-                        activity = this,
-                        onSuccess = {
-                            Log.i("LockActivity", "Biometric enrollment successful")
-                            ThemedToast.show(this, "Biometric unlock enabled")
+                // SECURITY FIX: Show dialog first, mark as asked when user responds
+                // This prevents repeated prompts even if user cancels biometric scan
+                android.app.AlertDialog.Builder(this)
+                    .setTitle("Enable Biometric Unlock?")
+                    .setMessage("Use fingerprint or face unlock instead of typing your password every time.")
+                    .setPositiveButton("Enable") { _, _ ->
+                        // Get password hash for encryption
+                        val passwordHash = keyManager.getPasswordHash()
+                        if (passwordHash != null) {
+                            biometricHelper.enableBiometric(
+                                passwordHash = passwordHash,
+                                activity = this,
+                                onSuccess = {
+                                    Log.i("LockActivity", "Biometric enrollment successful")
+                                    ThemedToast.show(this, "Biometric unlock enabled")
 
-                            // Update UI to show biometric button
-                            findViewById<ImageView>(R.id.biometricButton).visibility = View.VISIBLE
-                            findViewById<TextView>(R.id.biometricText).visibility = View.VISIBLE
-                        },
-                        onError = { error ->
-                            Log.w("LockActivity", "Biometric enrollment failed: $error")
-                            // Don't show error toast - user may have cancelled
+                                    // Mark as asked ONLY after successful enrollment
+                                    prefs.edit().putBoolean("biometric_enrollment_asked", true).apply()
+
+                                    // Update UI to show biometric button
+                                    findViewById<ImageView>(R.id.biometricButton).visibility = View.VISIBLE
+                                    findViewById<TextView>(R.id.biometricText).visibility = View.VISIBLE
+
+                                    // Call completion callback
+                                    onComplete()
+                                },
+                                onError = { error ->
+                                    Log.w("LockActivity", "Biometric enrollment failed: $error")
+                                    // Don't mark as asked - let user try again next login
+                                    ThemedToast.show(this, "Biometric setup cancelled - try again next login")
+
+                                    // Call completion callback even on error
+                                    onComplete()
+                                }
+                            )
+                        } else {
+                            // No password hash - proceed anyway
+                            onComplete()
                         }
-                    )
-                }
+                    }
+                    .setNegativeButton("Not Now") { _, _ ->
+                        // Mark as asked when user explicitly declines
+                        prefs.edit().putBoolean("biometric_enrollment_asked", true).apply()
+                        Log.d("LockActivity", "User declined biometric enrollment")
 
-                // Mark as asked to avoid repeated prompts
-                prefs.edit().putBoolean("biometric_enrollment_asked", true).apply()
+                        // Call completion callback
+                        onComplete()
+                    }
+                    .setCancelable(true)
+                    .setOnCancelListener {
+                        // Don't mark as asked if user dismisses - let them be prompted again
+                        Log.d("LockActivity", "User dismissed biometric enrollment dialog")
+
+                        // Call completion callback
+                        onComplete()
+                    }
+                    .show()
+            } else {
+                // Already asked before - proceed immediately
+                onComplete()
             }
+        } else {
+            // Biometric not available or already enabled - proceed immediately
+            onComplete()
         }
     }
 
@@ -299,6 +357,11 @@ class LockActivity : AppCompatActivity() {
                 }
             }
         }
+
+        // Clear auto-lock pause time to prevent immediate re-lock after unlock
+        val lifecyclePrefs = getSharedPreferences("app_lifecycle", MODE_PRIVATE)
+        lifecyclePrefs.edit().remove("last_pause_timestamp").apply()
+        Log.d("LockActivity", "Cleared auto-lock pause time")
 
         startActivity(nextIntent)
         finish()
@@ -367,17 +430,39 @@ class LockActivity : AppCompatActivity() {
                     return@withContext
                 }
 
-                // Send panic notification to each distress contact via direct connection
+                // Create MessageService instance for sending
+                val messageService = com.securelegion.services.MessageService(this@LockActivity)
+
+                // Silent panic message (no UI indication)
+                val panicMessage = "\uD83D\uDEA8 DISTRESS SIGNAL"
+
+                // Send panic notification to each distress contact
+                var sentCount = 0
                 for (contact in distressContacts) {
                     try {
-                        Log.i("LockActivity", "Sending panic via direct connection to ${contact.displayName}")
-                        // TODO: Implement direct panic notification
+                        Log.i("LockActivity", "Sending silent distress signal to ${contact.displayName}")
+
+                        // Send message silently (no UI callback, no read receipt)
+                        val result = messageService.sendMessage(
+                            contactId = contact.id,
+                            plaintext = panicMessage,
+                            selfDestructDurationMs = null, // No self-destruct for distress signals
+                            enableReadReceipt = false,      // No read receipt for stealth
+                            onMessageSaved = null            // No UI update (silent)
+                        )
+
+                        if (result.isSuccess) {
+                            sentCount++
+                            Log.i("LockActivity", "✓ Distress signal queued for ${contact.displayName}")
+                        } else {
+                            Log.e("LockActivity", "✗ Failed to queue distress signal for ${contact.displayName}: ${result.exceptionOrNull()?.message}")
+                        }
                     } catch (e: Exception) {
                         Log.e("LockActivity", "Failed to send panic to ${contact.displayName}", e)
                     }
                 }
 
-                Log.i("LockActivity", "Panic notifications sent to all distress contacts")
+                Log.w("LockActivity", "Distress protocol complete: $sentCount/${distressContacts.size} panic messages queued")
             } catch (e: Exception) {
                 Log.e("LockActivity", "Failed to send panic notifications", e)
             }
@@ -525,8 +610,9 @@ class LockActivity : AppCompatActivity() {
     override fun onStop() {
         super.onStop()
         // Security: If user tries to minimize/leave lock screen, restart it on top
-        if (hasWallet && !isFinishing) {
-            Log.w("LockActivity", "Lock screen stopped - restarting on top")
+        // BUT: Don't restart if user successfully authenticated (prevents double login)
+        if (hasWallet && !isFinishing && !hasAuthenticated) {
+            Log.w("LockActivity", "Lock screen stopped without authentication - restarting on top")
             val intent = Intent(this, LockActivity::class.java)
             intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK or
                           Intent.FLAG_ACTIVITY_CLEAR_TASK or

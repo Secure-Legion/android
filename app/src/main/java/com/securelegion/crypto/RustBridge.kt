@@ -198,6 +198,13 @@ object RustBridge {
     external fun pollIncomingPing(): ByteArray?
 
     /**
+     * Check if a connection is still alive and responsive
+     * @param connectionId The connection ID to check
+     * @return True if connection is alive and can send/receive data
+     */
+    external fun isConnectionAlive(connectionId: Long): Boolean
+
+    /**
      * Send encrypted Pong response back to a pending connection and receive the message
      * @param connectionId The connection ID extracted from pollIncomingPing
      * @param encryptedPongBytes The encrypted Pong token bytes (from respondToPing)
@@ -255,9 +262,18 @@ object RustBridge {
      * @param recipientOnion The recipient's .onion address
      * @param encryptedMessage The encrypted message to send after Pong
      * @param messageTypeByte The message type (0x03 = TEXT, 0x04 = VOICE)
-     * @return Ping ID for tracking
+     * @return JSON string: {"pingId":"...","wireBytes":"..."} for tracking and retry
      */
     external fun sendPing(recipientEd25519PublicKey: ByteArray, recipientX25519PublicKey: ByteArray, recipientOnion: String, encryptedMessage: ByteArray, messageTypeByte: Byte): String
+
+    /**
+     * Resend a Ping using stored wire bytes (for retry without regenerating nonce)
+     * This prevents ghost pings by ensuring retries use the SAME Ping ID
+     * @param wireBytesBase64 Base64-encoded encrypted Ping wire bytes from sendPing response
+     * @param recipientOnion The recipient's .onion address
+     * @return True if sent successfully
+     */
+    external fun resendPingWithWireBytes(wireBytesBase64: String, recipientOnion: String): Boolean
 
     /**
      * Wait for a Pong response
@@ -273,6 +289,33 @@ object RustBridge {
      * @return True if Pong has been received and is waiting
      */
     external fun pollForPong(pingId: String): Boolean
+
+    /**
+     * Remove Pong session after message blob is sent
+     * Call this immediately after successfully sending message to prevent memory leak
+     * @param pingId The Ping ID associated with the Pong
+     */
+    external fun removePongSession(pingId: String)
+
+    /**
+     * Remove Ping session after Pong is sent
+     * Call this immediately after successfully sending Pong to prevent memory leak
+     * @param pingId The Ping ID
+     */
+    external fun removePingSession(pingId: String)
+
+    /**
+     * Remove ACK session after processing
+     * Call this immediately after processing ACK to prevent memory leak
+     * @param itemId The Ping ID or Message ID that was acknowledged
+     */
+    external fun removeAckSession(itemId: String)
+
+    /**
+     * Clean up expired Ping/Pong/ACK sessions (older than 5 minutes)
+     * Call this periodically as a safety net for orphaned entries from crashes
+     */
+    external fun cleanupExpiredSessions()
 
     /**
      * Send encrypted message blob after Pong is received
@@ -320,6 +363,18 @@ object RustBridge {
     ): Boolean
 
     /**
+     * Send friend request accepted notification via Tor
+     * Notifies the original requester that you've accepted their friend request
+     * @param recipientOnion Recipient's .onion address
+     * @param encryptedAcceptance Pre-encrypted acceptance notification (with wire type byte 0x08)
+     * @return True if notification sent successfully
+     */
+    external fun sendFriendRequestAccepted(
+        recipientOnion: String,
+        encryptedAcceptance: ByteArray
+    ): Boolean
+
+    /**
      * Poll for an incoming tap (non-blocking)
      * Wire format from sender: [Sender X25519 Public Key - 32 bytes][Encrypted Tap]
      * @return Tap wire message bytes, or null if no tap available
@@ -348,12 +403,20 @@ object RustBridge {
      */
     external fun decryptAndStorePongFromListener(pongWire: ByteArray): Boolean
 
+    /**
+     * Decrypt incoming pong from listener and return ping_id for PONG_ACK sending
+     * Wire format: [Recipient X25519 Public Key - 32 bytes][Encrypted Pong]
+     * @param pongWire The encrypted pong wire message from pollIncomingPong
+     * @return ping_id as String, or null on failure
+     */
+    external fun decryptPongAndGetPingId(pongWire: ByteArray): String?
+
     // ==================== DELIVERY ACK (CONFIRMATION) ====================
 
     /**
      * Send a delivery ACK (confirmation) to recipient
-     * @param itemId The ping_id or message_id being acknowledged
-     * @param ackType "PING_ACK" or "MESSAGE_ACK"
+     * @param itemId The ping_id, message_id, tap_nonce, or pong_nonce being acknowledged
+     * @param ackType "PING_ACK", "MESSAGE_ACK", "TAP_ACK", or "PONG_ACK"
      * @param recipientEd25519Pubkey Recipient's Ed25519 signing public key (32 bytes)
      * @param recipientX25519Pubkey Recipient's X25519 encryption public key (32 bytes)
      * @param recipientOnion Recipient's .onion address
@@ -365,6 +428,22 @@ object RustBridge {
         recipientEd25519Pubkey: ByteArray,
         recipientX25519Pubkey: ByteArray,
         recipientOnion: String
+    ): Boolean
+
+    /**
+     * Send ACK on an existing connection (instant reply)
+     * Avoids SOCKS5 connection failures when sender's hidden service isn't reachable yet
+     * @param connectionId The connection ID to send ACK on
+     * @param itemId The item ID (ping ID or message ID)
+     * @param ackType The ACK type (PING_ACK, MESSAGE_ACK, etc.)
+     * @param recipientX25519Pubkey Recipient's X25519 encryption public key (32 bytes)
+     * @return True if ACK was sent successfully on the connection
+     */
+    external fun sendAckOnConnection(
+        connectionId: Long,
+        itemId: String,
+        ackType: String,
+        recipientX25519Pubkey: ByteArray
     ): Boolean
 
     /**
@@ -385,7 +464,7 @@ object RustBridge {
      * Decrypt incoming ACK from listener and store in GLOBAL_ACK_SESSIONS
      * Wire format: [Sender X25519 Public Key - 32 bytes][Encrypted ACK]
      * @param ackWire The encrypted ACK wire message from pollIncomingAck
-     * @return The item_id (ping_id or message_id) that was acknowledged, or null if failed
+     * @return JSON string with item_id and ack_type: {"item_id":"...","ack_type":"PING_ACK|MESSAGE_ACK|TAP_ACK|PONG_ACK"}, or null if failed
      */
     external fun decryptAndStoreAckFromListener(ackWire: ByteArray): String?
 

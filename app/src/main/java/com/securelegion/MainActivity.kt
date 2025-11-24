@@ -359,7 +359,7 @@ class MainActivity : BaseActivity() {
                                 unreadCount = unreadCount + (if (hasPendingPing) 1 else 0),
                                 isOnline = false,
                                 avatar = contact.displayName.firstOrNull()?.toString()?.uppercase() ?: "?",
-                                securityBadge = "E2E"
+                                securityBadge = ""
                             )
                             val timestamp = if (lastMessage != null) lastMessage.timestamp else System.currentTimeMillis()
                             chatsList.add(Pair(chat, timestamp))
@@ -407,90 +407,15 @@ class MainActivity : BaseActivity() {
                         },
                         onDownloadClick = { chat ->
                             handleMessageDownload(chat)
+                        },
+                        onDeleteClick = { chat ->
+                            deleteThread(chat)
                         }
                     )
                     Log.d("MainActivity", "RecyclerView adapter set successfully")
 
-                    // Add swipe-to-delete functionality
-                    val swipeCallback = object : ItemTouchHelper.SimpleCallback(
-                        0,
-                        ItemTouchHelper.LEFT
-                    ) {
-                        override fun onMove(
-                            recyclerView: RecyclerView,
-                            viewHolder: RecyclerView.ViewHolder,
-                            target: RecyclerView.ViewHolder
-                        ): Boolean = false
-
-                        override fun onSwiped(viewHolder: RecyclerView.ViewHolder, direction: Int) {
-                            val position = viewHolder.adapterPosition
-                            val chat = chats[position]
-
-                            Log.d("MainActivity", "Swiped to delete thread: ${chat.nickname}")
-
-                            // Securely delete all messages for this contact using DOD 3-pass AND clear pending Pings
-                            lifecycleScope.launch {
-                                try {
-                                    withContext(Dispatchers.IO) {
-                                        // Get all messages for this contact to check for voice files
-                                        val messages = database.messageDao().getMessagesForContact(chat.id.toLong())
-
-                                        // Securely wipe any voice message audio files
-                                        messages.forEach { message ->
-                                            if (message.messageType == com.securelegion.database.entities.Message.MESSAGE_TYPE_VOICE &&
-                                                message.voiceFilePath != null) {
-                                                try {
-                                                    val voiceFile = java.io.File(message.voiceFilePath)
-                                                    if (voiceFile.exists()) {
-                                                        com.securelegion.utils.SecureWipe.secureDeleteFile(voiceFile)
-                                                        Log.d("MainActivity", "✓ Securely wiped voice file: ${voiceFile.name}")
-                                                    }
-                                                } catch (e: Exception) {
-                                                    Log.e("MainActivity", "Failed to securely wipe voice file", e)
-                                                }
-                                            }
-                                        }
-
-                                        // Delete all messages from database
-                                        database.messageDao().deleteMessagesForContact(chat.id.toLong())
-
-                                        // VACUUM database to compact and remove deleted records
-                                        try {
-                                            database.openHelper.writableDatabase.execSQL("VACUUM")
-                                            Log.d("MainActivity", "✓ Database vacuumed after thread deletion")
-                                        } catch (e: Exception) {
-                                            Log.e("MainActivity", "Failed to vacuum database", e)
-                                        }
-                                    }
-
-                                    // Clear pending Ping for this contact
-                                    val prefs = getSharedPreferences("pending_pings", MODE_PRIVATE)
-                                    prefs.edit()
-                                        .remove("ping_${chat.id}_id")
-                                        .remove("ping_${chat.id}_sender")
-                                        .remove("ping_${chat.id}_timestamp")
-                                        .remove("ping_${chat.id}_data")
-                                        .apply()
-
-                                    Log.i("MainActivity", "Securely deleted all messages (DOD 3-pass) and pending Pings for contact: ${chat.nickname}")
-
-                                    // Reload the chat list
-                                    setupChatList()
-                                } catch (e: Exception) {
-                                    Log.e("MainActivity", "Failed to delete thread", e)
-                                    ThemedToast.show(
-                                        this@MainActivity,
-                                        "Failed to delete thread"
-                                    )
-                                    // Reload to restore UI
-                                    setupChatList()
-                                }
-                            }
-                        }
-                    }
-
-                    val itemTouchHelper = ItemTouchHelper(swipeCallback)
-                    itemTouchHelper.attachToRecyclerView(chatList)
+                    // Don't use ItemTouchHelper - it's designed for swipe-to-dismiss, not swipe-to-reveal
+                    // Touch handling is done in ChatAdapter with the adapter tracking open items
                 } else {
                     Log.d("MainActivity", "No chats - showing empty state")
                     // Show empty state (but don't change tab visibility)
@@ -504,6 +429,74 @@ class MainActivity : BaseActivity() {
                     emptyState.visibility = View.VISIBLE
                     chatList.visibility = View.GONE
                 }
+            }
+        }
+    }
+
+    private fun deleteThread(chat: Chat) {
+        Log.d("MainActivity", "Delete button clicked for thread: ${chat.nickname}")
+
+        lifecycleScope.launch {
+            try {
+                val keyManager = KeyManager.getInstance(this@MainActivity)
+                val dbPassphrase = keyManager.getDatabasePassphrase()
+                val database = SecureLegionDatabase.getInstance(this@MainActivity, dbPassphrase)
+
+                withContext(Dispatchers.IO) {
+                    // Get all messages for this contact to check for voice files
+                    val messages = database.messageDao().getMessagesForContact(chat.id.toLong())
+
+                    // Securely wipe any voice message audio files
+                    messages.forEach { message ->
+                        if (message.messageType == com.securelegion.database.entities.Message.MESSAGE_TYPE_VOICE &&
+                            message.voiceFilePath != null) {
+                            try {
+                                val voiceFile = java.io.File(message.voiceFilePath)
+                                if (voiceFile.exists()) {
+                                    com.securelegion.utils.SecureWipe.secureDeleteFile(voiceFile)
+                                    Log.d("MainActivity", "✓ Securely wiped voice file: ${voiceFile.name}")
+                                }
+                            } catch (e: Exception) {
+                                Log.e("MainActivity", "Failed to securely wipe voice file", e)
+                            }
+                        }
+                    }
+
+                    // Delete all messages from database
+                    database.messageDao().deleteMessagesForContact(chat.id.toLong())
+
+                    // VACUUM database to compact and remove deleted records
+                    try {
+                        database.openHelper.writableDatabase.execSQL("VACUUM")
+                        Log.d("MainActivity", "✓ Database vacuumed after thread deletion")
+                    } catch (e: Exception) {
+                        Log.e("MainActivity", "Failed to vacuum database", e)
+                    }
+                }
+
+                // Clear pending Ping for this contact
+                val prefs = getSharedPreferences("pending_pings", MODE_PRIVATE)
+                prefs.edit()
+                    .remove("ping_${chat.id}_id")
+                    .remove("ping_${chat.id}_sender")
+                    .remove("ping_${chat.id}_timestamp")
+                    .remove("ping_${chat.id}_data")
+                    .remove("ping_${chat.id}_onion")
+                    .remove("ping_${chat.id}_name")
+                    .apply()
+
+                Log.i("MainActivity", "Securely deleted all messages (DOD 3-pass) and pending Pings for contact: ${chat.nickname}")
+
+                // Reload the chat list
+                setupChatList()
+            } catch (e: Exception) {
+                Log.e("MainActivity", "Failed to delete thread", e)
+                ThemedToast.show(
+                    this@MainActivity,
+                    "Failed to delete thread"
+                )
+                // Reload to restore UI
+                setupChatList()
             }
         }
     }
@@ -545,7 +538,8 @@ class MainActivity : BaseActivity() {
                     Contact(
                         id = dbContact.id.toString(),
                         name = dbContact.displayName,
-                        address = dbContact.solanaAddress
+                        address = dbContact.solanaAddress,
+                        friendshipStatus = dbContact.friendshipStatus
                     )
                 }
 

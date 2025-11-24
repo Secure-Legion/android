@@ -41,8 +41,16 @@ interface ReceivedIdDao {
     suspend fun markProcessed(id: String)
 
     /**
+     * Delete a specific received ID by its ID string
+     * Used to clean up tracking after message is fully delivered (MESSAGE_ACK received)
+     */
+    @Query("DELETE FROM received_ids WHERE receivedId = :id")
+    suspend fun deleteById(id: String): Int
+
+    /**
      * Delete old received IDs to prevent table bloat
-     * Keeps last 30 days of IDs
+     * NOTE: Currently disabled - keeping entries indefinitely in case user is offline for extended periods
+     * Only clean up after MESSAGE_ACK confirms successful delivery
      */
     @Query("DELETE FROM received_ids WHERE receivedTimestamp < :cutoffTimestamp")
     suspend fun deleteOldIds(cutoffTimestamp: Long): Int

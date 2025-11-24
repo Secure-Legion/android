@@ -10,6 +10,9 @@ import java.net.InetSocketAddress
 import java.net.Proxy
 import java.util.concurrent.TimeUnit
 import java.io.File
+import IPtProxy.Controller
+import IPtProxy.IPtProxy
+import com.securelegion.SecureLegionApplication
 
 /**
  * Manages Tor network initialization and hidden service setup using TorService JNI
@@ -250,6 +253,19 @@ class TorManager(private val context: Context) {
     }
 
     /**
+     * Reset Tor initialization state to force re-initialization
+     * Used when bridge configuration changes
+     */
+    fun resetInitializationState() {
+        synchronized(this) {
+            isInitializing = false
+            isInitialized = false
+            prefs.edit().putBoolean(KEY_TOR_INITIALIZED, false).apply()
+            Log.i(TAG, "Tor initialization state reset - will re-initialize on next start")
+        }
+    }
+
+    /**
      * Create hidden service if account exists but service doesn't
      * Called after account creation to set up the hidden service
      */
@@ -363,43 +379,117 @@ class TorManager(private val context: Context) {
     }
 
     /**
+     * Start IPtProxy pluggable transports for the selected bridge type
+     */
+    private fun startIPtProxy(bridgeType: String) {
+        try {
+            val app = context.applicationContext as? SecureLegionApplication
+            val controller = app?.let { SecureLegionApplication.iptProxyController }
+
+            if (controller == null) {
+                Log.e(TAG, "IPtProxy Controller not initialized - cannot start transport")
+                return
+            }
+
+            when (bridgeType) {
+                "obfs4" -> {
+                    Log.d(TAG, "Starting obfs4 transport...")
+                    controller.start(IPtProxy.Obfs4, null)
+                    val port = controller.port(IPtProxy.Obfs4)
+                    Log.i(TAG, "Started obfs4 transport on port $port")
+                }
+                "snowflake" -> {
+                    Log.d(TAG, "Configuring snowflake transport...")
+                    // Configure snowflake with default settings
+                    controller.snowflakeBrokerUrl = "https://snowflake-broker.torproject.net.global.prod.fastly.net/"
+                    controller.snowflakeFrontDomains = "cdn.sstatic.net,github.githubassets.com"
+                    controller.snowflakeIceServers = "stun:stun.l.google.com:19302,stun:stun.altar.com.pl:3478,stun:stun.antisip.com:3478"
+                    Log.d(TAG, "Starting snowflake transport...")
+                    controller.start(IPtProxy.Snowflake, null)
+                    val port = controller.port(IPtProxy.Snowflake)
+                    Log.i(TAG, "Started snowflake transport on port $port")
+                }
+                "meek" -> {
+                    Log.d(TAG, "Starting meek_lite transport...")
+                    controller.start(IPtProxy.MeekLite, null)
+                    val port = controller.port(IPtProxy.MeekLite)
+                    Log.i(TAG, "Started meek_lite transport on port $port")
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to start IPtProxy transport for $bridgeType: ${e.message}", e)
+            // Don't re-throw - allow Tor to start without bridges as fallback
+        }
+    }
+
+    /**
      * Get bridge configuration for torrc based on user settings
-     * Uses IPtProxy library for obfs4proxy and snowflake pluggable transports
+     * Uses IPtProxy for obfs4 and snowflake pluggable transports
      */
     private fun getBridgeConfiguration(): String {
         val torSettings = context.getSharedPreferences("tor_settings", Context.MODE_PRIVATE)
         val bridgeType = torSettings.getString("bridge_type", "none") ?: "none"
 
-        // Get path to native libraries (where IPtProxy binaries are located)
-        val nativeLibDir = context.applicationInfo.nativeLibraryDir
+        // Start IPtProxy if needed
+        if (bridgeType in listOf("obfs4", "snowflake", "meek")) {
+            startIPtProxy(bridgeType)
+        }
 
         return when (bridgeType) {
             "snowflake" -> {
-                // Snowflake bridge configuration using IPtProxy
-                // IPtProxy provides libIPtProxy.so which includes snowflake
-                """
-                UseBridges 1
-                ClientTransportPlugin snowflake exec $nativeLibDir/libIPtProxy.so -client
-                Bridge snowflake 192.0.2.3:1 2B280B23E1107BB62ABFC40DDCC8824814F80A72 fingerprint=2B280B23E1107BB62ABFC40DDCC8824814F80A72 url=https://snowflake-broker.torproject.net.global.prod.fastly.net/ front=cdn.sstatic.net ice=stun:stun.l.google.com:19302,stun:stun.voip.blackberry.com:3478,stun:stun.altar.com.pl:3478,stun:stun.antisip.com:3478,stun:stun.bluesip.net:3478,stun:stun.dus.net:3478,stun:stun.epygi.com:3478,stun:stun.sonetel.com:3478,stun:stun.sonetel.net:3478,stun:stun.stunprotocol.org:3478,stun:stun.uls.co.za:3478,stun:stun.voipgate.com:3478,stun:stun.voys.nl:3478 utls-imitate=hellorandomizedalpn
-                """.trimIndent()
+                // Snowflake - uses IPtProxy pluggable transport
+                // Connects through volunteer WebRTC proxies via broker
+                val app = context.applicationContext as? SecureLegionApplication
+                val controller = app?.let { SecureLegionApplication.iptProxyController }
+                val port = controller?.port(IPtProxy.Snowflake) ?: 0
+                if (port == 0L) {
+                    Log.e(TAG, "Snowflake transport failed to start - no SOCKS port available")
+                    ""
+                } else {
+                    """
+                    UseBridges 1
+                    ClientTransportPlugin snowflake socks5 127.0.0.1:$port
+                    Bridge snowflake 192.0.2.3:80 2B280B23E1107BB62ABFC40DDCC8824814F80A72 fingerprint=2B280B23E1107BB62ABFC40DDCC8824814F80A72 url=https://snowflake-broker.torproject.net.global.prod.fastly.net/ front=cdn.sstatic.net ice=stun:stun.l.google.com:19302,stun:stun.altar.com.pl:3478,stun:stun.antisip.com:3478,stun:stun.bluesip.net:3478,stun:stun.dus.net:3478,stun:stun.epygi.com:3478,stun:stun.sonetel.net:3478,stun:stun.stunprotocol.org:3478,stun:stun.voipgate.com:3478,stun:stun.voys.nl:3478 utls-imitate=hellorandomizedalpn
+                    """.trimIndent()
+                }
             }
             "obfs4" -> {
-                // obfs4 bridge configuration using IPtProxy (Lyrebird/obfs4proxy)
-                """
-                UseBridges 1
-                ClientTransportPlugin obfs4 exec $nativeLibDir/libIPtProxy.so
-                Bridge obfs4 192.95.36.142:443 CDF2E852BF539B82BD10E27E9115A31734E378C2 cert=qUVQ0srL1JI/vO6V6m/24anYXiJD3QP2HgzUKQtQ7GRqqUvs7P+tG43RtAqdhLOALP7DJQ iat-mode=1
-                """.trimIndent()
+                // obfs4 bridges from https://github.com/scriptzteam/Tor-Bridges-Collector
+                // and https://bridges.torproject.org - uses IPtProxy pluggable transport
+                val app = context.applicationContext as? SecureLegionApplication
+                val controller = app?.let { SecureLegionApplication.iptProxyController }
+                val port = controller?.port(IPtProxy.Obfs4) ?: 0
+                if (port == 0L) {
+                    Log.e(TAG, "obfs4 transport failed to start - no SOCKS port available")
+                    ""
+                } else {
+                    """
+                    UseBridges 1
+                    ClientTransportPlugin obfs4 socks5 127.0.0.1:$port
+                    Bridge obfs4 1.2.217.144:5987 DCE57AC308CB82958C56B1B5C9C3D08D225EC942 cert=Uemn6kep2gxo9J0P81geJV3gTWQtkrNHvEh1DL3wzhvLaUaIrn0/e0a1mvyB3T4c0jmHKg iat-mode=0
+                    Bridge obfs4 2.35.113.108:9906 5A3E33D354B7B7BAE5D3873EF8A68E79B4194A2A cert=IJXo/z1hPSJ0Yr2bShs3UVnBS35rweyktBxY+azSyQwSwD2qAdrVpo8VSWhVxly6wIWkDg iat-mode=0
+                    Bridge obfs4 2.37.211.221:9875 3A16586D003E32EE9798055C75D38498863FEC7A cert=afdvowWWudLtKXb3m5L9mQ/Ko9tm1Lu3rZDsb+rgEkHFEVKvuJihbfAyJlCUZbk42QwGZA iat-mode=0
+                    Bridge obfs4 82.65.66.15:16380 4E08190BD91F309DD41CF5D6BE2AFFFF298C8A9F cert=+rOOVaQl8pO8zLKl4NNCEm+r1s2NAV55q/+INNaX4pHHvJg7wXfk8KFvTSK0NzgXfn7nFw iat-mode=0
+                    Bridge obfs4 185.177.207.156:8443 85039DCAC3BBFB86A09BB0C58878FECD79AE33DA cert=9+nXWUOkB/vGawa21fYwAv8v66QvflMgsx3KExXhHInwU6GzBF/MdWtoAvIZ2YKThUCpdA iat-mode=0
+                    """.trimIndent()
+                }
             }
             "meek" -> {
-                // Note: IPtProxy doesn't include meek - meek support removed from Tor Browser
-                // Fall back to using obfs4 or document that meek is not supported
-                Log.w(TAG, "Meek bridge requested but not supported by IPtProxy - using obfs4 instead")
-                """
-                UseBridges 1
-                ClientTransportPlugin obfs4 exec $nativeLibDir/libIPtProxy.so
-                Bridge obfs4 192.95.36.142:443 CDF2E852BF539B82BD10E27E9115A31734E378C2 cert=qUVQ0srL1JI/vO6V6m/24anYXiJD3QP2HgzUKQtQ7GRqqUvs7P+tG43RtAqdhLOALP7DJQ iat-mode=1
-                """.trimIndent()
+                // Meek-azure bridge - uses IPtProxy pluggable transport
+                // Uses Microsoft Azure CDN for domain fronting
+                val app = context.applicationContext as? SecureLegionApplication
+                val controller = app?.let { SecureLegionApplication.iptProxyController }
+                val port = controller?.port(IPtProxy.MeekLite) ?: 0
+                if (port == 0L) {
+                    Log.e(TAG, "meek_lite transport failed to start - no SOCKS port available")
+                    ""
+                } else {
+                    """
+                    UseBridges 1
+                    ClientTransportPlugin meek_lite socks5 127.0.0.1:$port
+                    Bridge meek_lite 192.0.2.2:2 97700DFE9F483596DDA6264C4D7DF7641E1E39CE url=https://meek.azureedge.net/ front=ajax.aspnetcdn.com
+                    """.trimIndent()
+                }
             }
             "custom" -> {
                 // Custom bridge provided by user

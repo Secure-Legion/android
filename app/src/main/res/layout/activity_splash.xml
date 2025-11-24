@@ -66,9 +66,13 @@
         <!-- Progress Bar -->
         <ProgressBar
             android:id="@+id/torProgressBar"
-            android:layout_width="48dp"
-            android:layout_height="48dp"
-            android:indeterminateTint="@color/primary_blue"
+            style="?android:attr/progressBarStyleHorizontal"
+            android:layout_width="200dp"
+            android:layout_height="8dp"
+            android:max="100"
+            android:progress="0"
+            android:progressTint="@color/primary_blue"
+            android:progressBackgroundTint="#333333"
             android:layout_marginBottom="16dp" />
 
         <!-- Status Text -->

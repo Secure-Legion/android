@@ -14,6 +14,8 @@ import com.securelegion.crypto.KeyManager
 import com.securelegion.crypto.RustBridge
 import com.securelegion.crypto.TorManager
 import java.io.IOException
+import java.net.InetSocketAddress
+import java.net.Proxy
 import java.util.concurrent.TimeUnit
 import android.util.Base64
 import org.bitcoinj.core.Base58
@@ -26,7 +28,7 @@ import java.nio.ByteOrder
  *
  * Free tier: 5 TPS per IP, API key hidden in URL
  *
- * Direct HTTP connection for testing (Tor integration will be added later)
+ * All traffic routed through Tor SOCKS proxy for privacy
  * Transaction signing happens locally in secure Rust enclave - private keys never exposed
  */
 class SolanaService(context: Context) {
@@ -50,11 +52,12 @@ class SolanaService(context: Context) {
         private const val COINGECKO_API = "https://api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies=usd"
     }
 
-    // Direct HTTP connection (Tor for messaging only, not Solana RPC)
+    // Configure OkHttpClient to use Tor SOCKS5 proxy for privacy
     private val client = OkHttpClient.Builder()
-        .connectTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
-        .readTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
-        .writeTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
+        .connectTimeout(30, TimeUnit.SECONDS)
+        .readTimeout(30, TimeUnit.SECONDS)
+        .writeTimeout(30, TimeUnit.SECONDS)
+        .proxy(Proxy(Proxy.Type.SOCKS, InetSocketAddress("127.0.0.1", 9050)))
         .build()
 
     /**

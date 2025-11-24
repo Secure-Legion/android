@@ -16,14 +16,21 @@ object BadgeUtils {
             val pendingRequestsSet = prefs.getStringSet("pending_requests", mutableSetOf()) ?: mutableSetOf()
             val count = pendingRequestsSet.size
 
+            android.util.Log.d("BadgeUtils", "Updating friend request badge - count: $count")
+
             val badge = rootView.findViewById<android.widget.TextView>(R.id.friendRequestBadge)
             if (badge != null) {
+                android.util.Log.d("BadgeUtils", "Badge view found")
                 if (count > 0) {
                     badge.text = count.toString()
                     badge.visibility = View.VISIBLE
+                    android.util.Log.d("BadgeUtils", "Badge set to VISIBLE with count: $count")
                 } else {
                     badge.visibility = View.GONE
+                    android.util.Log.d("BadgeUtils", "Badge set to GONE (no pending requests)")
                 }
+            } else {
+                android.util.Log.w("BadgeUtils", "Badge view not found in layout!")
             }
 
         } catch (e: Exception) {

@@ -64,12 +64,18 @@ class DownloadMessageService : Service() {
         // Start foreground with initial notification
         startForeground(NOTIFICATION_ID, createNotification(contactName, "Preparing download..."))
 
+        // Set download-in-progress flag to prevent notification spam
+        val downloadStatusPrefs = getSharedPreferences("download_status", MODE_PRIVATE)
+        downloadStatusPrefs.edit().putBoolean("downloading_$contactId", true).apply()
+        Log.d(TAG, "Set download-in-progress flag for contact $contactId")
+
         // Launch download in background
         serviceScope.launch {
             try {
                 downloadMessage(contactId, contactName)
             } catch (e: Exception) {
                 Log.e(TAG, "Download failed", e)
+
                 showFailureNotification(contactName, e.message ?: "Unknown error")
 
                 // Broadcast download failure to ChatActivity
@@ -79,6 +85,9 @@ class DownloadMessageService : Service() {
                 sendBroadcast(failureIntent)
                 Log.d(TAG, "Sent DOWNLOAD_FAILED broadcast")
             } finally {
+                // Clear download-in-progress flag
+                downloadStatusPrefs.edit().putBoolean("downloading_$contactId", false).apply()
+                Log.d(TAG, "Cleared download-in-progress flag for contact $contactId")
                 stopSelf()
             }
         }
@@ -103,13 +112,115 @@ class DownloadMessageService : Service() {
         Log.i(TAG, "========== DOWNLOAD INITIATED ==========")
         Log.i(TAG, "Contact: $contactName (ID: $contactId)")
 
+        // START DOWNLOAD WATCHDOG - monitor for timeout
+        val downloadStartTime = System.currentTimeMillis()
+        val DOWNLOAD_TIMEOUT_MS = 45000L  // 45 seconds max
+        var downloadCompleted = false
+
+        val watchdogJob = serviceScope.launch {
+            delay(DOWNLOAD_TIMEOUT_MS)
+            if (!downloadCompleted) {
+                val elapsed = System.currentTimeMillis() - downloadStartTime
+                Log.e(TAG, "⚠️  DOWNLOAD TIMEOUT after ${elapsed}ms")
+                Log.e(TAG, "Diagnostic info:")
+                Log.e(TAG, "  Contact: $contactName (ID: $contactId)")
+
+                try {
+                    val torStatus = checkTorStatus()
+                    Log.e(TAG, "  Tor Status: $torStatus")
+                } catch (e: Exception) {
+                    Log.e(TAG, "  Tor Status: Error - ${e.message}")
+                }
+
+                showFailureNotification(contactName, "Download timed out (45s). Check connection.")
+
+                // Don't cancel service here - let the main download timeout handle it
+            }
+        }
+
         val prefs = getSharedPreferences("pending_pings", MODE_PRIVATE)
         val pingId = prefs.getString("ping_${contactId}_id", null)
 
         if (pingId == null) {
+            downloadCompleted = true
+            watchdogJob.cancel()
             showFailureNotification(contactName, "No pending message")
             return
         }
+
+        // No download lock needed - ACK-based system prevents duplicates via DB checks
+
+        try {
+
+        // PRE-FLIGHT HEALTH CHECKS
+        Log.i(TAG, "========== PRE-FLIGHT HEALTH CHECKS ==========")
+        updateNotification(contactName, "Checking connection...")
+
+        // Check 1: Tor bootstrap status
+        val bootstrapStatus = withContext(Dispatchers.IO) {
+            try {
+                com.securelegion.crypto.RustBridge.getBootstrapStatus()
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to check bootstrap status", e)
+                -1
+            }
+        }
+
+        if (bootstrapStatus < 100) {
+            val errorMsg = if (bootstrapStatus >= 0) {
+                "Tor not ready ($bootstrapStatus%). Please wait."
+            } else {
+                "Cannot check Tor status"
+            }
+            Log.e(TAG, "Pre-flight check failed: $errorMsg")
+            downloadCompleted = true
+            watchdogJob.cancel()
+            showFailureNotification(contactName, errorMsg)
+            return
+        }
+        Log.i(TAG, "  ✓ Tor bootstrap: 100%")
+
+        // Check 2: SOCKS proxy running
+        val socksRunning = withContext(Dispatchers.IO) {
+            try {
+                com.securelegion.crypto.RustBridge.isSocksProxyRunning()
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to check SOCKS status", e)
+                false
+            }
+        }
+
+        if (!socksRunning) {
+            val errorMsg = "SOCKS proxy not running"
+            Log.e(TAG, "Pre-flight check failed: $errorMsg")
+            downloadCompleted = true
+            watchdogJob.cancel()
+            showFailureNotification(contactName, errorMsg)
+            return
+        }
+        Log.i(TAG, "  ✓ SOCKS proxy: running")
+
+        // Check 3: Test SOCKS connectivity (non-critical, just warn)
+        val socksWorking = withContext(Dispatchers.IO) {
+            try {
+                com.securelegion.crypto.RustBridge.testSocksConnectivity()
+            } catch (e: Exception) {
+                Log.w(TAG, "SOCKS connectivity test failed", e)
+                false
+            }
+        }
+
+        if (!socksWorking) {
+            Log.w(TAG, "  ⚠ SOCKS connectivity: test failed (non-critical)")
+        } else {
+            Log.i(TAG, "  ✓ SOCKS connectivity: working")
+        }
+
+        Log.i(TAG, "✓ All critical pre-flight checks passed")
+
+        // STAGE 1: Preparing download
+        updateNotification(contactName, "[1/4] Preparing download...")
+        Log.i(TAG, "========== STAGE 1/4: PREPARING ==========")
 
         // Restore Ping from SharedPreferences
         val encryptedPingBase64 = prefs.getString("ping_${contactId}_data", null)
@@ -147,8 +258,9 @@ class DownloadMessageService : Service() {
         Log.i(TAG, "Sender: $senderOnion")
         Log.i(TAG, "Connection ID: ${if (connectionId != -1L) connectionId else "not available"}")
 
-        // Update notification
-        updateNotification(contactName, "Creating response...")
+        // STAGE 2: Creating response
+        updateNotification(contactName, "[2/4] Creating response...")
+        Log.i(TAG, "========== STAGE 2/4: CREATING PONG ==========")
 
         // Create Pong response
         val pongBytes = withContext(Dispatchers.IO) {
@@ -164,23 +276,45 @@ class DownloadMessageService : Service() {
 
         Log.i(TAG, "✓ Pong created: ${pongBytes.size} bytes")
 
-        // Update notification
-        updateNotification(contactName, "Sending response...")
+        // STAGE 3: Sending response and waiting for message
+        Log.i(TAG, "========== STAGE 3/4: DOWNLOADING MESSAGE ==========")
 
         // DUAL-PATH APPROACH: Try instant reply first, then fall back to listener
         var pongSent = false
         var instantMessageReceived = false
 
         // PATH 1: Try sending Pong on original connection (instant messaging)
+        // But only if connection is fresh (< 30 seconds old) AND still alive - stale/broken connections will timeout
         if (connectionId != -1L) {
-            Log.d(TAG, "Attempting instant Pong reply on connection $connectionId...")
-            pongSent = withContext(Dispatchers.IO) {
+            val pingTimestamp = prefs.getLong("ping_${contactId}_timestamp", 0L)
+            val connectionAge = System.currentTimeMillis() - pingTimestamp
+
+            // Check 1: Connection age (< 30s)
+            val isFresh = connectionAge < 30000
+
+            // Check 2: Connection still alive (validate with Rust)
+            var isAlive = false
+            if (isFresh) {
+                isAlive = withContext(Dispatchers.IO) {
+                    try {
+                        com.securelegion.crypto.RustBridge.isConnectionAlive(connectionId)
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Failed to check connection status (assuming dead): ${e.message}")
+                        false
+                    }
+                }
+            }
+
+            if (isFresh && isAlive) {
+                Log.d(TAG, "Connection is valid (age=${connectionAge}ms, alive=true), attempting instant Pong on connection $connectionId...")
+                updateNotification(contactName, "[3/4] Downloading... (fast path)")
+                pongSent = withContext(Dispatchers.IO) {
                 try {
                     val messageBytes = com.securelegion.crypto.RustBridge.sendPongBytes(connectionId, pongBytes)
                     if (messageBytes != null) {
                         Log.i(TAG, "✓ Pong sent on original connection! Received message blob: ${messageBytes.size} bytes")
                         // Message blob arrived immediately! Process it now
-                        handleInstantMessageBlob(messageBytes, contactId, contactName)
+                        handleInstantMessageBlob(messageBytes, contactId, contactName, pingId, connectionId)
                         instantMessageReceived = true
                         true
                     } else {
@@ -192,11 +326,21 @@ class DownloadMessageService : Service() {
                     false
                 }
             }
+            } else {
+                // Connection validation failed - log reason
+                if (!isFresh) {
+                    Log.d(TAG, "Connection is stale (${connectionAge}ms old), skipping instant path - will use listener")
+                } else if (!isAlive) {
+                    Log.d(TAG, "Connection is dead (not responding), skipping instant path - will use listener")
+                }
+                updateNotification(contactName, "[3/4] Downloading... (slower path)")
+            }
         }
 
         // PATH 2: If instant path failed, fall back to listener (delayed messaging)
         if (!pongSent) {
             Log.d(TAG, "Falling back to listener-based Pong delivery (delayed download)...")
+            updateNotification(contactName, "[3/4] Downloading... (may take 30s)")
             pongSent = withContext(Dispatchers.IO) {
                 try {
                     com.securelegion.crypto.RustBridge.sendPongToListener(senderOnion, pongBytes)
@@ -213,6 +357,14 @@ class DownloadMessageService : Service() {
             Log.e(TAG, "✗ Pong send failed")
             showFailureNotification(contactName, "Failed to send response")
             return
+        }
+
+        // Clean up Rust Ping session immediately after successful Pong send to prevent memory leak
+        try {
+            com.securelegion.crypto.RustBridge.removePingSession(pingId)
+            Log.d(TAG, "✓ Cleaned up Rust Ping session for pingId: $pingId")
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to clean up Ping session (non-critical)", e)
         }
 
         // If instant message was received, skip polling entirely
@@ -236,13 +388,13 @@ class DownloadMessageService : Service() {
             Log.d(TAG, "Current message count before polling: $initialMessageCount")
 
             // Poll for incoming message
-            val maxAttempts = 30 // 60 seconds total
+            val maxAttempts = 60 // 60 seconds total (more attempts, shorter delay)
 
             for (attempt in 1..maxAttempts) {
                 Log.d(TAG, "Polling attempt $attempt/$maxAttempts...")
                 updateNotification(contactName, "Downloading... ($attempt/$maxAttempts)")
 
-                delay(2000)
+                delay(1000)  // Reduced from 2000ms to 1000ms for faster response
 
                 val currentMessageCount = withContext(Dispatchers.IO) {
                     val keyManager = KeyManager.getInstance(this@DownloadMessageService)
@@ -270,7 +422,8 @@ class DownloadMessageService : Service() {
         }
 
         // Send MESSAGE_ACK to sender after successfully receiving the message
-        sendMessageAck(contactId, contactName)
+        // connectionId not available here (polling path), so pass -1L
+        sendMessageAck(contactId, contactName, -1L)
 
         // Dismiss the pending message notification
         val notificationManager = getSystemService(android.app.NotificationManager::class.java)
@@ -278,7 +431,7 @@ class DownloadMessageService : Service() {
         notificationManager?.cancel(notificationId)
         Log.i(TAG, "Dismissed pending message notification (ID: $notificationId)")
 
-        // Clear the pending Ping
+        // Clear the pending Ping data
         prefs.edit()
             .remove("ping_${contactId}_id")
             .remove("ping_${contactId}_sender")
@@ -287,10 +440,10 @@ class DownloadMessageService : Service() {
             .remove("ping_${contactId}_onion")
             .remove("ping_${contactId}_connection")
             .remove("ping_${contactId}_name")
-            .commit()
+            .apply()  // Use apply() instead of commit() for async/non-blocking
 
-        // Small delay to ensure database write completes
-        delay(300)
+        // Small delay to ensure SharedPreferences write completes
+        delay(100)  // Reduced from 300ms since apply() is faster
 
         // Broadcast to ChatActivity to refresh (ChatActivity will notify MainActivity if needed)
         val intent = Intent("com.securelegion.MESSAGE_RECEIVED")
@@ -302,6 +455,28 @@ class DownloadMessageService : Service() {
 
         // Show success notification
         showSuccessNotification(contactName)
+
+        // Cancel watchdog - download completed successfully
+        downloadCompleted = true
+        watchdogJob.cancel()
+        Log.d(TAG, "✓ Download completed in ${System.currentTimeMillis() - downloadStartTime}ms")
+
+        } catch (e: Exception) {
+            // Cancel watchdog on error
+            downloadCompleted = true
+            watchdogJob.cancel()
+            throw e  // Re-throw to be caught by outer try-catch
+        }
+    }
+
+    private fun checkTorStatus(): String {
+        return try {
+            val bootstrap = com.securelegion.crypto.RustBridge.getBootstrapStatus()
+            val socks = com.securelegion.crypto.RustBridge.isSocksProxyRunning()
+            "Bootstrap=$bootstrap%, SOCKS=$socks"
+        } catch (e: Exception) {
+            "Error: ${e.message}"
+        }
     }
 
     private fun createNotificationChannel() {
@@ -392,8 +567,11 @@ class DownloadMessageService : Service() {
     /**
      * Handle message blob that arrived immediately via instant path (sendPongBytes)
      */
-    private suspend fun handleInstantMessageBlob(messageBytes: ByteArray, contactId: Long, contactName: String) {
+    private suspend fun handleInstantMessageBlob(messageBytes: ByteArray, contactId: Long, contactName: String, pingId: String, connectionId: Long) {
         try {
+            // STAGE 4: Processing message
+            updateNotification(contactName, "[4/4] Processing message...")
+            Log.i(TAG, "========== STAGE 4/4: PROCESSING MESSAGE ==========")
             Log.i(TAG, "Processing instant message blob: ${messageBytes.size} bytes")
 
             // Message blob format differs by type:
@@ -482,22 +660,31 @@ class DownloadMessageService : Service() {
                     val result = messageService.receiveMessage(
                         encryptedData = encryptedBase64,
                         senderPublicKey = senderPublicKey,
-                        senderOnionAddress = contact.torOnionAddress
+                        senderOnionAddress = contact.torOnionAddress,
+                        pingId = pingId
                     )
 
                     if (result.isSuccess) {
                         Log.i(TAG, "✓ TEXT message saved to database")
-                        // Send MESSAGE_ACK to sender
-                        sendMessageAck(contactId, contactName)
-                        // Dismiss the pending message notification
-                        val notificationManager = getSystemService(android.app.NotificationManager::class.java)
-                        notificationManager?.cancel(contactId.toInt() + 20000)
+
+                        // Dismiss notification immediately - message is already saved
+
+                        // Send MESSAGE_ACK in background (fire-and-forget, don't block UI)
+
+                        CoroutineScope(Dispatchers.IO).launch {
+                            try {
+                                sendMessageAck(contactId, contactName, connectionId)
+                            } catch (e: Exception) {
+                                Log.w(TAG, "MESSAGE_ACK failed (non-critical): ${e.message}")
+                            }
+                        }
+
                     } else {
                         val errorMessage = result.exceptionOrNull()?.message
                         if (errorMessage?.contains("Duplicate message") == true) {
                             Log.w(TAG, "Message already downloaded - treating as success")
                             // Message was already downloaded, so clear the notification and send ACK
-                            sendMessageAck(contactId, contactName)
+                            sendMessageAck(contactId, contactName, connectionId)
                             val notificationManager = getSystemService(android.app.NotificationManager::class.java)
                             notificationManager?.cancel(contactId.toInt() + 20000)
                         } else {
@@ -522,13 +709,14 @@ class DownloadMessageService : Service() {
                         senderPublicKey = senderPublicKey,
                         senderOnionAddress = contact.torOnionAddress,
                         messageType = com.securelegion.database.entities.Message.MESSAGE_TYPE_VOICE,
-                        voiceDuration = voiceDuration!!  // Already extracted above
+                        voiceDuration = voiceDuration!!,  // Already extracted above
+                        pingId = pingId
                     )
 
                     if (result.isSuccess) {
                         Log.i(TAG, "✓ VOICE message saved to database")
                         // Send MESSAGE_ACK to sender
-                        sendMessageAck(contactId, contactName)
+                        sendMessageAck(contactId, contactName, connectionId)
                         // Dismiss the pending message notification
                         val notificationManager = getSystemService(android.app.NotificationManager::class.java)
                         notificationManager?.cancel(contactId.toInt() + 20000)
@@ -537,7 +725,7 @@ class DownloadMessageService : Service() {
                         if (errorMessage?.contains("Duplicate message") == true) {
                             Log.w(TAG, "Message already downloaded - treating as success")
                             // Message was already downloaded, so clear the notification and send ACK
-                            sendMessageAck(contactId, contactName)
+                            sendMessageAck(contactId, contactName, connectionId)
                             val notificationManager = getSystemService(android.app.NotificationManager::class.java)
                             notificationManager?.cancel(contactId.toInt() + 20000)
                         } else {
@@ -558,8 +746,9 @@ class DownloadMessageService : Service() {
 
     /**
      * Send MESSAGE_ACK to sender after successfully downloading message
+     * @param connectionId Connection ID for instant ACK (or -1L if not available)
      */
-    private suspend fun sendMessageAck(contactId: Long, contactName: String) {
+    private suspend fun sendMessageAck(contactId: Long, contactName: String, connectionId: Long) {
         try {
             val keyManager = KeyManager.getInstance(this@DownloadMessageService)
             val dbPassphrase = keyManager.getDatabasePassphrase()
@@ -593,25 +782,74 @@ class DownloadMessageService : Service() {
                 return
             }
 
-            Log.d(TAG, "Sending MESSAGE_ACK for pingId=$pingId (messageId=${latestMessage.messageId}) to $contactName")
+            Log.d(TAG, "Sending MESSAGE_ACK with retry for pingId=$pingId (messageId=${latestMessage.messageId}) to $contactName")
 
-            val senderEd25519Pubkey = android.util.Base64.decode(contact.publicKeyBase64, android.util.Base64.NO_WRAP)
             val senderX25519Pubkey = android.util.Base64.decode(contact.x25519PublicKeyBase64, android.util.Base64.NO_WRAP)
+            val senderEd25519Pubkey = android.util.Base64.decode(contact.publicKeyBase64, android.util.Base64.NO_WRAP)
 
-            val ackSuccess = withContext(Dispatchers.IO) {
-                com.securelegion.crypto.RustBridge.sendDeliveryAck(
-                    pingId,  // Use pingId instead of messageId
-                    "MESSAGE_ACK",
-                    senderEd25519Pubkey,
-                    senderX25519Pubkey,
-                    contact.torOnionAddress
-                )
-            }
+            // Retry logic with exponential backoff (3 attempts: 1s, 2s delays)
+            val maxRetries = 3
+            var delayMs = 1000L
+            var attempt = 0
 
-            if (ackSuccess) {
-                Log.i(TAG, "✓ MESSAGE_ACK sent successfully for messageId=${latestMessage.messageId}")
-            } else {
-                Log.e(TAG, "✗ Failed to send MESSAGE_ACK for messageId=${latestMessage.messageId}")
+            while (attempt < maxRetries) {
+                try {
+                    var ackSuccess = false
+
+                    // PATH 1: Try sending ACK on existing connection (instant, avoids SOCKS5 issues)
+                    if (connectionId >= 0) {
+                        ackSuccess = withContext(Dispatchers.IO) {
+                            com.securelegion.crypto.RustBridge.sendAckOnConnection(
+                                connectionId,
+                                pingId,
+                                "MESSAGE_ACK",
+                                senderX25519Pubkey
+                            )
+                        }
+
+                        if (ackSuccess) {
+                            Log.i(TAG, "✓ MESSAGE_ACK sent successfully on existing connection for messageId=${latestMessage.messageId} (attempt ${attempt + 1})")
+                            return // Success!
+                        }
+
+                        Log.d(TAG, "Connection closed, falling back to new connection for MESSAGE_ACK (attempt ${attempt + 1})")
+                    }
+
+                    // PATH 2: Connection closed or not available, fall back to opening new connection
+                    ackSuccess = withContext(Dispatchers.IO) {
+                        com.securelegion.crypto.RustBridge.sendDeliveryAck(
+                            pingId,
+                            "MESSAGE_ACK",
+                            senderEd25519Pubkey,
+                            senderX25519Pubkey,
+                            contact.torOnionAddress
+                        )
+                    }
+
+                    if (ackSuccess) {
+                        Log.i(TAG, "✓ MESSAGE_ACK sent successfully via new connection for messageId=${latestMessage.messageId} (attempt ${attempt + 1})")
+                        return // Success!
+                    }
+
+                    // Both paths failed
+                    attempt++
+                    if (attempt < maxRetries) {
+                        Log.w(TAG, "⚠️ MESSAGE_ACK send failed (attempt $attempt/$maxRetries), retrying in ${delayMs}ms...")
+                        kotlinx.coroutines.delay(delayMs)
+                        delayMs *= 2 // Exponential backoff: 1s, 2s, 4s
+                    } else {
+                        Log.e(TAG, "✗ MESSAGE_ACK send FAILED after $maxRetries attempts for messageId=${latestMessage.messageId}")
+                        Log.e(TAG, "→ Sender will retry MESSAGE, which is acceptable")
+                    }
+
+                } catch (e: Exception) {
+                    Log.e(TAG, "Exception during MESSAGE_ACK send (attempt ${attempt + 1}/$maxRetries)", e)
+                    attempt++
+                    if (attempt < maxRetries) {
+                        kotlinx.coroutines.delay(delayMs)
+                        delayMs *= 2
+                    }
+                }
             }
         } catch (e: Exception) {
             Log.e(TAG, "Error sending MESSAGE_ACK", e)

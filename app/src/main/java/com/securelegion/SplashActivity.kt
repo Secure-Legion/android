@@ -9,6 +9,7 @@ import android.os.Handler
 import android.os.Looper
 import android.util.Log
 import android.view.View
+import android.view.WindowManager
 import android.view.animation.Animation
 import android.view.animation.AnimationUtils
 import android.widget.ProgressBar
@@ -30,6 +31,12 @@ class SplashActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        // Security: Prevent screenshots and screen recording
+        window.setFlags(
+            WindowManager.LayoutParams.FLAG_SECURE,
+            WindowManager.LayoutParams.FLAG_SECURE
+        )
 
         // Request notification permission on Android 13+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -80,12 +87,14 @@ class SplashActivity : AppCompatActivity() {
                         val bootstrapStatus = RustBridge.getBootstrapStatus()
 
                         if (bootstrapStatus >= 100) {
-                            // Tor is fully bootstrapped - proceed immediately
-                            Log.i("SplashActivity", "✓ Tor fully bootstrapped (100%) - proceeding")
+                            // Tor is fully bootstrapped - run health checks
+                            Log.i("SplashActivity", "✓ Tor fully bootstrapped (100%) - running health checks...")
                             runOnUiThread {
-                                updateStatus("Connected to Tor!")
+                                val progressBar = findViewById<ProgressBar>(R.id.torProgressBar)
+                                progressBar?.progress = 75  // Bootstrap complete = 75%
+                                updateStatus("Verifying services...")
                                 Handler(Looper.getMainLooper()).postDelayed({
-                                    navigateToLock()
+                                    checkTorStatus()
                                 }, 500)
                             }
                         } else {
@@ -152,26 +161,38 @@ class SplashActivity : AppCompatActivity() {
     }
 
     private fun checkTorStatus() {
-        Log.d("SplashActivity", "Checking Tor status after bootstrap delay...")
+        Log.d("SplashActivity", "Checking Tor status after bootstrap...")
 
         try {
             val torManager = TorManager.getInstance(this)
+            val progressBar = findViewById<ProgressBar>(R.id.torProgressBar)
 
-            if (torManager.isInitialized()) {
-                val onionAddress = torManager.getOnionAddress()
-                Log.i("SplashActivity", "Tor bootstrapped: $onionAddress")
-                updateStatus("Connected to Tor network!")
-            } else {
-                Log.d("SplashActivity", "Tor still bootstrapping in background...")
-                updateStatus("Still connecting...")
+            // Simple check: Tor initialized and has onion address
+            if (!torManager.isInitialized()) {
+                Log.d("SplashActivity", "Tor still initializing...")
+                updateStatus("Initializing...")
+                return
             }
+
+            val onionAddress = torManager.getOnionAddress()
+            if (onionAddress == null) {
+                Log.d("SplashActivity", "Hidden service not ready yet...")
+                updateStatus("Starting service...")
+                return
+            }
+
+            // Tor is ready! Proceed to lock screen
+            Log.i("SplashActivity", "✓ Tor ready: $onionAddress")
+            progressBar?.progress = 100
+            updateStatus("Connected!")
+
+            Handler(Looper.getMainLooper()).postDelayed({
+                navigateToLock()
+            }, 500)
         } catch (e: Exception) {
             Log.e("SplashActivity", "Error checking Tor status", e)
-            updateStatus("Connection error")
+            updateStatus("Connection error...")
         }
-
-        // Navigate to lock screen (TorService will continue in background if needed)
-        navigateToLock()
     }
 
     private fun updateStatus(status: String) {
@@ -215,12 +236,17 @@ class SplashActivity : AppCompatActivity() {
                         }
                     }
 
-                    // Update status display
+                    // Update status display (scale 0-100% to 0-75% for combined progress)
                     runOnUiThread {
+                        val progressBar = findViewById<ProgressBar>(R.id.torProgressBar)
                         if (status < 0) {
                             updateStatus("Starting Tor...")
+                            progressBar?.progress = 0
                         } else {
-                            updateStatus("Connecting to Tor network... ($status%)")
+                            // Scale bootstrap 0-100% to 0-75% (reserve 75-100% for service checks)
+                            val scaledProgress = (status * 0.75).toInt()
+                            updateStatus("Connecting to Tor network... ($scaledProgress%)")
+                            progressBar?.progress = scaledProgress
                         }
                     }
 
@@ -248,10 +274,8 @@ class SplashActivity : AppCompatActivity() {
                             if (TorService.isMessagingReady()) {
                                 Log.i("SplashActivity", "✓ Messaging fully ready - listeners active")
                                 runOnUiThread {
-                                    updateStatus("Connected to Tor!")
-                                    Handler(Looper.getMainLooper()).postDelayed({
-                                        navigateToLock()
-                                    }, 500)
+                                    // Run health checks with progress updates (75-100%)
+                                    checkTorStatus()
                                 }
                                 return@Thread
                             } else {

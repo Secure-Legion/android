@@ -51,7 +51,8 @@ android {
 
     buildTypes {
         release {
-            isMinifyEnabled = false
+            isMinifyEnabled = true  // Enable ProGuard to strip logs and optimize code
+            isShrinkResources = true  // Remove unused resources
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
@@ -131,7 +132,8 @@ dependencies {
     // Tor control library for managing Tor via control port
     implementation("info.guardianproject:jtorctl:0.4.5.7")
 
-    // Pluggable Transports (Obfs4proxy & Snowflake) for Tor bridges
+    // Pluggable Transports for bridges (obfs4, snowflake, meek)
+    // IPtProxy includes obfs4proxy, snowflake, and meek_lite pluggable transports
     implementation("com.netzarchitekten:IPtProxy:4.2.2")
 
     testImplementation(libs.junit)

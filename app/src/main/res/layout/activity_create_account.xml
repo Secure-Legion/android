@@ -117,6 +117,15 @@
                     android:textColor="@color/text_white"
                     android:textSize="16sp"
                     android:padding="16dp"
+                    android:layout_marginBottom="8dp" />
+
+                <!-- Password Requirements Helper -->
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Password must be at least 9 characters and contain:\n• Uppercase letter\n• Lowercase letter\n• Number\n• Special character (!@#$%^&amp;*)"
+                    android:textSize="12sp"
+                    android:textColor="@color/text_gray"
                     android:layout_marginBottom="24dp" />
 
             </LinearLayout>

@@ -27,10 +27,12 @@
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
     <application
+        android:name=".SecureLegionApplication"
         android:allowBackup="false"
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:fullBackupContent="@xml/backup_rules"
         android:extractNativeLibs="true"
+        tools:replace="android:allowBackup"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
         android:roundIcon="@mipmap/ic_launcher_round"
@@ -203,6 +205,11 @@
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="Downloads encrypted messages via Tor" />
         </service>
+
+        <!-- Remove unused VPN service from apt-meek-obfs4-legacy library -->
+        <service
+            android:name="info.pluggabletransports.dispatch.service.DispatchVPN"
+            tools:node="remove" />
 
         <!-- Broadcast receiver for TorService restart via AlarmManager -->
         <receiver

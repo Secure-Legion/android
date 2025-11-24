@@ -7,6 +7,7 @@ import com.securelegion.crypto.KeyManager
 import com.securelegion.crypto.RustBridge
 import com.securelegion.database.SecureLegionDatabase
 import com.securelegion.database.entities.Message
+import com.securelegion.workers.ImmediateRetryWorker
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.security.MessageDigest
@@ -164,6 +165,10 @@ class MessageService(private val context: Context) {
                 Log.w(TAG, "Immediate Ping send failed, retry worker will retry: ${e.message}")
             }
 
+            // Schedule fast retry worker for this message (5s intervals)
+            ImmediateRetryWorker.scheduleForMessage(context, messageId)
+            Log.d(TAG, "Scheduled immediate retry worker for message $messageId")
+
             Result.success(savedMessage)
 
         } catch (e: Exception) {
@@ -295,6 +300,10 @@ class MessageService(private val context: Context) {
                 Log.w(TAG, "Immediate Ping send failed, retry worker will retry: ${e.message}")
             }
 
+            // Schedule fast retry worker for this message (5s intervals)
+            ImmediateRetryWorker.scheduleForMessage(context, messageId)
+            Log.d(TAG, "Scheduled immediate retry worker for message $messageId")
+
             Result.success(savedMessage)
 
         } catch (e: Exception) {
@@ -321,7 +330,8 @@ class MessageService(private val context: Context) {
         messageType: String = Message.MESSAGE_TYPE_TEXT,
         voiceDuration: Int? = null,
         selfDestructAt: Long? = null,
-        requiresReadReceipt: Boolean = true
+        requiresReadReceipt: Boolean = true,
+        pingId: String? = null
     ): Result<Message> = withContext(Dispatchers.IO) {
         try {
             Log.d(TAG, "Receiving $messageType message from: $senderOnionAddress")
@@ -378,7 +388,8 @@ class MessageService(private val context: Context) {
                     signatureBase64 = "",
                     nonceBase64 = nonceBase64,
                     selfDestructAt = selfDestructAt,
-                    requiresReadReceipt = requiresReadReceipt
+                    requiresReadReceipt = requiresReadReceipt,
+                    pingId = pingId
                 )
             } else {
                 // Text message
@@ -405,7 +416,8 @@ class MessageService(private val context: Context) {
                     signatureBase64 = "",
                     nonceBase64 = nonceBase64,
                     selfDestructAt = selfDestructAt,
-                    requiresReadReceipt = requiresReadReceipt
+                    requiresReadReceipt = requiresReadReceipt,
+                    pingId = pingId
                 )
             }
 
@@ -542,7 +554,7 @@ class MessageService(private val context: Context) {
 
             // Send Ping via Rust bridge (with message for instant mode)
             Log.d(TAG, "Calling RustBridge.sendPing to ${contact.torOnionAddress}...")
-            val sentPingId = RustBridge.sendPing(
+            val pingResponse = RustBridge.sendPing(
                 recipientEd25519PubKey,
                 recipientX25519PubKey,
                 contact.torOnionAddress,
@@ -550,27 +562,63 @@ class MessageService(private val context: Context) {
                 messageTypeByte
             )
 
-            Log.i(TAG, "✓ RustBridge.sendPing returned Ping ID: $sentPingId")
-            Log.d(TAG, "Original message Ping ID (UUID): ${message.pingId}")
-            Log.d(TAG, "Rust-returned Ping ID (hex nonce): $sentPingId")
+            // Parse JSON response: {"pingId":"...","wireBytes":"..."}
+            val pingId: String
+            val wireBytes: String
+            try {
+                val json = org.json.JSONObject(pingResponse)
+                pingId = json.getString("pingId")
+                wireBytes = json.getString("wireBytes")
+                Log.i(TAG, "✓ RustBridge.sendPing returned Ping ID: $pingId (wire bytes stored for retry)")
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to parse sendPing response JSON", e)
+                return@withContext Result.failure(e)
+            }
 
-            // Update message with the ACTUAL Ping ID from Rust (not the UUID we generated)
+            Log.d(TAG, "Original message Ping ID (UUID): ${message.pingId}")
+            Log.d(TAG, "Rust-returned Ping ID (hex nonce): $pingId")
+
+            // Update message with the ACTUAL Ping ID and wire bytes from Rust
             // CRITICAL: Use NonCancellable to ensure database update completes even if job is cancelled
-            if (sentPingId != message.pingId) {
-                Log.w(TAG, "⚠️  PING ID MISMATCH DETECTED!")
-                Log.w(TAG, "   Database has: ${message.pingId}")
-                Log.w(TAG, "   Rust returned: $sentPingId")
-                Log.i(TAG, "Updating database with correct Ping ID from Rust...")
+            if (pingId != message.pingId || message.pingWireBytes == null) {
+                if (pingId != message.pingId) {
+                    Log.w(TAG, "⚠️  PING ID MISMATCH DETECTED!")
+                    Log.w(TAG, "   Database has: ${message.pingId}")
+                    Log.w(TAG, "   Rust returned: $pingId")
+                }
+                Log.i(TAG, "Updating database with Ping ID and wire bytes from Rust...")
 
                 withContext(kotlinx.coroutines.NonCancellable) {
-                    val updatedMessage = message.copy(pingId = sentPingId)
+                    val updatedMessage = message.copy(pingId = pingId, pingWireBytes = wireBytes)
                     database.messageDao().updateMessage(updatedMessage)
-                    Log.i(TAG, "✓ Database updated with Ping ID: $sentPingId (waiting for PING_ACK)")
+                    Log.i(TAG, "✓ Database updated with Ping ID: $pingId and wire bytes (waiting for PING_ACK)")
                 }
             }
 
-            Log.i(TAG, "✓ Ping sent successfully: $sentPingId (waiting for PING_ACK from receiver)")
-            Result.success(sentPingId)
+            // CRITICAL FIX: Save outgoing Ping to SharedPreferences so Pong can be matched!
+            // Without this, incoming Pongs fail with "No contact_id found" error
+            // KEY FORMAT: ping_<PING_ID>_contact_id (indexed by Ping ID for Pong lookup)
+            withContext(kotlinx.coroutines.NonCancellable) {
+                val prefs = context.getSharedPreferences("pending_pings", Context.MODE_PRIVATE)
+                prefs.edit().apply {
+                    // PONG LOOKUP FORMAT: Indexed by ping_id (not contact_id!)
+                    putString("ping_${pingId}_contact_id", contact.id.toString())
+                    putString("ping_${pingId}_name", contact.displayName)
+                    putLong("ping_${pingId}_timestamp", System.currentTimeMillis())
+                    putString("ping_${pingId}_onion", contact.torOnionAddress)
+
+                    // ALSO save in contact-indexed format for OUTGOING tracking (use different prefix to avoid UI confusion)
+                    putString("outgoing_ping_${contact.id}_id", pingId)
+                    putString("outgoing_ping_${contact.id}_name", contact.displayName)
+                    putLong("outgoing_ping_${contact.id}_timestamp", System.currentTimeMillis())
+                    putString("outgoing_ping_${contact.id}_onion", contact.torOnionAddress)
+                    apply()
+                }
+                Log.i(TAG, "✓ Saved outgoing Ping to SharedPreferences (both formats): contact_id=${contact.id}, ping_id=$pingId")
+            }
+
+            Log.i(TAG, "✓ Ping sent successfully: $pingId (waiting for PING_ACK from receiver)")
+            Result.success(pingId)
 
         } catch (e: Exception) {
             Log.e(TAG, "Failed to send Ping", e)
@@ -610,10 +658,11 @@ class MessageService(private val context: Context) {
                     continue
                 }
 
-                Log.d(TAG, "Checking for Pong with Ping ID: $pingId (message: ${message.messageId})")
+                Log.d(TAG, "Checking for Pong with Ping ID: $pingId (message: ${message.messageId}, contact: ${message.contactId})")
 
                 // Check if Pong has arrived (non-blocking)
                 val pongReceived = RustBridge.pollForPong(pingId)
+                Log.d(TAG, "pollForPong($pingId) returned: $pongReceived")
 
                 if (pongReceived) {
                     Log.i(TAG, "✓ Pong received for Ping ID $pingId! Sending message blob...")
@@ -652,6 +701,19 @@ class MessageService(private val context: Context) {
                         // Update message status to SENT
                         database.messageDao().updateMessageStatus(message.id, Message.STATUS_SENT)
                         Log.i(TAG, "Message blob sent successfully: ${message.messageId}")
+
+                        // Clean up Rust Pong session immediately to prevent memory leak
+                        try {
+                            RustBridge.removePongSession(pingId)
+                            Log.d(TAG, "✓ Cleaned up Rust Pong session for pingId: $pingId")
+                        } catch (e: Exception) {
+                            Log.w(TAG, "Failed to clean up Pong session (non-critical)", e)
+                        }
+
+                        // Cancel immediate retry worker (message sent successfully)
+                        ImmediateRetryWorker.cancelForMessage(context, message.messageId)
+                        Log.d(TAG, "Cancelled immediate retry worker for ${message.messageId}")
+
                         sentCount++
                     } else {
                         Log.e(TAG, "Failed to send message blob for ${message.messageId}")

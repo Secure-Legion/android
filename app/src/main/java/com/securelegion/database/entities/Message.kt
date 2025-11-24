@@ -153,7 +153,28 @@ data class Message(
      * true = receiver downloaded the message, stop retrying Pong/message
      * false = message not yet delivered, keep retrying if needed
      */
-    val messageDelivered: Boolean = false
+    val messageDelivered: Boolean = false,
+
+    /**
+     * Tracks if TAP was successfully delivered to receiver
+     * true = receiver acknowledged our TAP check-in (TAP_ACK received)
+     * false = TAP not yet acknowledged
+     */
+    val tapDelivered: Boolean = false,
+
+    /**
+     * Tracks if PONG was successfully delivered to receiver
+     * true = receiver acknowledged PONG arrival (PONG_ACK received)
+     * false = PONG not yet acknowledged
+     */
+    val pongDelivered: Boolean = false,
+
+    /**
+     * Encrypted Ping wire bytes (Base64-encoded)
+     * Stores the complete encrypted Ping token for retry without regenerating nonce
+     * This prevents ghost pings by ensuring retries use the SAME Ping ID
+     */
+    val pingWireBytes: String? = null
 ) {
     companion object {
         // Message type constants

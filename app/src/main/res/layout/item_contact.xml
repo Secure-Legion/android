@@ -16,16 +16,49 @@
         android:paddingTop="20dp"
         android:paddingBottom="20dp">
 
-        <!-- Contact Name -->
-        <TextView
-            android:id="@+id/contactName"
+        <!-- Contact Name Row -->
+        <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="Contact Name"
-            android:textSize="20sp"
-            android:textStyle="bold"
-            android:textColor="@color/primary_blue"
-            android:layout_marginBottom="8dp" />
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:layout_marginBottom="8dp">
+
+            <!-- Contact Name -->
+            <TextView
+                android:id="@+id/contactName"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="Contact Name"
+                android:textSize="20sp"
+                android:textStyle="bold"
+                android:textColor="@color/primary_blue" />
+
+            <!-- Friends Icon (for CONFIRMED friends) -->
+            <ImageView
+                android:id="@+id/friendsIcon"
+                android:layout_width="20dp"
+                android:layout_height="20dp"
+                android:src="@drawable/ic_friends"
+                android:layout_marginStart="8dp"
+                android:visibility="gone"
+                android:contentDescription="Mutual friends" />
+
+            <!-- PENDING Badge -->
+            <TextView
+                android:id="@+id/pendingBadge"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="PENDING"
+                android:textSize="11sp"
+                android:textStyle="bold"
+                android:textColor="#FFFFFF"
+                android:background="@drawable/pending_badge_bg"
+                android:layout_marginStart="8dp"
+                android:visibility="gone" />
+
+        </LinearLayout>
 
         <!-- Contact Address -->
         <TextView

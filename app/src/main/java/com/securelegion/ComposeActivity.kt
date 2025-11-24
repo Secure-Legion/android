@@ -88,10 +88,12 @@ class ComposeActivity : BaseActivity() {
                 val database = SecureLegionDatabase.getInstance(this@ComposeActivity, dbPassphrase)
 
                 allContacts = withContext(Dispatchers.IO) {
+                    // Only load CONFIRMED friends (not PENDING)
                     database.contactDao().getAllContacts()
+                        .filter { it.friendshipStatus == DbContact.FRIENDSHIP_CONFIRMED }
                 }
 
-                Log.d(TAG, "Loaded ${allContacts.size} contacts for search")
+                Log.d(TAG, "Loaded ${allContacts.size} CONFIRMED friends for messaging")
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to load contacts", e)
             }
@@ -116,7 +118,8 @@ class ComposeActivity : BaseActivity() {
                 Contact(
                     id = dbContact.id.toString(),
                     name = dbContact.displayName,
-                    address = dbContact.solanaAddress
+                    address = dbContact.solanaAddress,
+                    friendshipStatus = dbContact.friendshipStatus
                 )
             }
             contactAdapter.updateContacts(uiContacts)
@@ -130,6 +133,13 @@ class ComposeActivity : BaseActivity() {
 
         if (selectedContact == null) {
             ThemedToast.show(this, "Please select a contact")
+            return
+        }
+
+        // Verify friendship status - only allow messaging CONFIRMED friends
+        if (selectedContact!!.friendshipStatus != DbContact.FRIENDSHIP_CONFIRMED) {
+            ThemedToast.show(this, "Can only message confirmed friends")
+            Log.w(TAG, "Blocked message to ${selectedContact!!.displayName} - friendship status: ${selectedContact!!.friendshipStatus}")
             return
         }
 

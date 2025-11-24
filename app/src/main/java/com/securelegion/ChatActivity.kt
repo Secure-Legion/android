@@ -291,6 +291,16 @@ class ChatActivity : BaseActivity() {
         messagesRecyclerView.apply {
             layoutManager = LinearLayoutManager(this@ChatActivity)
             adapter = messageAdapter
+
+            // Add scroll listener to hide revealed timestamps when scrolling
+            addOnScrollListener(object : RecyclerView.OnScrollListener() {
+                override fun onScrollStateChanged(recyclerView: RecyclerView, newState: Int) {
+                    if (newState == RecyclerView.SCROLL_STATE_DRAGGING) {
+                        // User started scrolling - hide any revealed timestamps
+                        messageAdapter.resetSwipeState()
+                    }
+                }
+            })
         }
     }
 
@@ -735,13 +745,47 @@ class ChatActivity : BaseActivity() {
 
         lifecycleScope.launch {
             try {
+                // Track if we deleted the pending message (needs to be accessible in Main context)
+                var deletedPendingMessage = false
+
                 withContext(Dispatchers.IO) {
                     val keyManager = KeyManager.getInstance(this@ChatActivity)
                     val dbPassphrase = keyManager.getDatabasePassphrase()
                     val database = SecureLegionDatabase.getInstance(this@ChatActivity, dbPassphrase)
 
-                    // Securely delete each selected message
-                    selectedIds.forEach { messageId ->
+                    // Check if pending message is selected (ID = -1)
+                    val hasPendingMessage = selectedIds.contains(-1L)
+                    if (hasPendingMessage) {
+                        // Delete pending message from SharedPreferences
+                        val prefs = getSharedPreferences("pending_pings", MODE_PRIVATE)
+                        val pingId = prefs.getString("ping_${contactId}_id", null)
+
+                        if (pingId != null) {
+                            // Clear ALL pending ping data for this contact
+                            prefs.edit().apply {
+                                remove("ping_${contactId}_id")
+                                remove("ping_${contactId}_connection")
+                                remove("ping_${contactId}_name")
+                                remove("ping_${contactId}_timestamp")
+                                remove("ping_${contactId}_data")
+                                remove("ping_${contactId}_onion")
+
+                                // Also remove ping-indexed entries
+                                remove("ping_${pingId}_contact_id")
+                                remove("ping_${pingId}_name")
+                                remove("ping_${pingId}_timestamp")
+                                remove("ping_${pingId}_onion")
+
+                                apply()
+                            }
+                            Log.d(TAG, "✓ Deleted pending message from SharedPreferences")
+                            deletedPendingMessage = true
+                        }
+                    }
+
+                    // Delete regular messages from database
+                    val regularMessageIds = selectedIds.filter { it != -1L }
+                    regularMessageIds.forEach { messageId ->
                         // Get the message to check if it's a voice message
                         val message = database.messageDao().getMessageById(messageId)
 
@@ -763,19 +807,25 @@ class ChatActivity : BaseActivity() {
                     }
 
                     // VACUUM database to compact and remove deleted records
-                    try {
-                        database.openHelper.writableDatabase.execSQL("VACUUM")
-                        Log.d(TAG, "✓ Database vacuumed after message deletion")
-                    } catch (e: Exception) {
-                        Log.e(TAG, "Failed to vacuum database", e)
+                    if (regularMessageIds.isNotEmpty()) {
+                        try {
+                            database.openHelper.writableDatabase.execSQL("VACUUM")
+                            Log.d(TAG, "✓ Database vacuumed after message deletion")
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Failed to vacuum database", e)
+                        }
                     }
                 }
 
                 Log.d(TAG, "Securely deleted ${selectedIds.size} messages using DOD 3-pass wiping")
 
-                // Exit selection mode and reload messages
-                toggleSelectionMode()
-                loadMessages()
+                // Update UI on main thread
+                withContext(Dispatchers.Main) {
+                    // Exit selection mode and reload messages
+                    // (loadMessages will reload from SharedPreferences, so deleted pending message won't show)
+                    toggleSelectionMode()
+                    loadMessages()
+                }
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to delete messages", e)
             }

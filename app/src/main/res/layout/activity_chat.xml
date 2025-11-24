@@ -38,9 +38,9 @@
             android:layout_weight="1"
             android:layout_marginStart="12dp"
             android:text="@nighthawk"
-            android:textSize="18sp"
+            android:textSize="22sp"
             android:textStyle="bold"
-            android:textColor="@color/text_white"
+            android:textColor="#4A9EFF"
             android:gravity="center" />
 
         <ImageView

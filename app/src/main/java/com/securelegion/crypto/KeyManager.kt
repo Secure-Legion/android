@@ -614,24 +614,54 @@ class KeyManager private constructor(context: Context) {
     /**
      * Derive database encryption passphrase from BIP39 seed
      * Uses SHA-256(seed + "database_key" salt) for deterministic key
-     * @return 32-byte passphrase for SQLCipher
+     *
+     * SECURITY: Caller MUST zeroize the returned ByteArray after use!
+     * Use the extension function: passphrase.zeroize() or passphrase.useAndZeroize { }
+     *
+     * @return 32-byte passphrase for SQLCipher (must be zeroized after use)
      */
     fun getDatabasePassphrase(): ByteArray {
         if (!isInitialized()) {
             throw IllegalStateException("KeyManager not initialized")
         }
 
-        val seed = getSeedBytes()
+        var seed: ByteArray? = null
+        try {
+            seed = getSeedBytes()
 
-        // Derive database key using SHA-256 with application-specific salt
-        // This ensures database key is deterministic and unique per wallet
-        val digest = MessageDigest.getInstance("SHA-256")
-        digest.update(seed)
-        digest.update("secure_legion_database_v1".toByteArray(Charsets.UTF_8))
-        val databaseKey = digest.digest()
+            // Derive database key using SHA-256 with application-specific salt
+            // This ensures database key is deterministic and unique per wallet
+            val digest = MessageDigest.getInstance("SHA-256")
+            digest.update(seed)
+            digest.update("secure_legion_database_v1".toByteArray(Charsets.UTF_8))
+            val databaseKey = digest.digest()
 
-        Log.i(TAG, "Derived database encryption key")
-        return databaseKey
+            Log.i(TAG, "Derived database encryption key")
+            return databaseKey
+        } finally {
+            // SECURITY: Zeroize seed from memory to prevent extraction
+            seed?.let { java.util.Arrays.fill(it, 0.toByte()) }
+        }
+    }
+
+    /**
+     * Extension function to zeroize ByteArray (fill with zeros)
+     * Call this on sensitive data like passphrases after use
+     */
+    fun ByteArray.zeroize() {
+        java.util.Arrays.fill(this, 0.toByte())
+    }
+
+    /**
+     * Extension function to safely use and automatically zeroize a ByteArray
+     * Usage: passphrase.useAndZeroize { pass -> database.init(pass) }
+     */
+    inline fun <T> ByteArray.useAndZeroize(block: (ByteArray) -> T): T {
+        return try {
+            block(this)
+        } finally {
+            this.zeroize()
+        }
     }
 
     // ==================== HELPER FUNCTIONS ====================

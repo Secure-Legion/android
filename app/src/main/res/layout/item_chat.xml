@@ -1,11 +1,45 @@
 <?xml version="1.0" encoding="utf-8"?>
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
-    android:layout_height="wrap_content"
-    android:orientation="vertical"
-    android:clickable="true"
-    android:focusable="true"
-    android:background="@drawable/chat_item_ripple">
+    android:layout_height="wrap_content">
+
+    <!-- Delete Button Background (revealed on swipe) -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:orientation="horizontal"
+        android:gravity="end">
+
+        <LinearLayout
+            android:id="@+id/deleteButtonContainer"
+            android:layout_width="80dp"
+            android:layout_height="match_parent"
+            android:background="#DC3545"
+            android:gravity="center"
+            android:orientation="vertical">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="✕"
+                android:textSize="24sp"
+                android:textStyle="bold"
+                android:textColor="@android:color/white" />
+
+        </LinearLayout>
+
+    </LinearLayout>
+
+    <!-- Foreground Content (swipeable) -->
+    <LinearLayout
+        android:id="@+id/chatItemForeground"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:clickable="true"
+        android:focusable="true"
+        android:background="@color/dark_bg"
+        android:foreground="@drawable/chat_item_ripple">
 
     <!-- Top Border -->
     <View
@@ -97,7 +131,7 @@
                 android:paddingEnd="8dp"
                 android:paddingTop="4dp"
                 android:paddingBottom="4dp"
-                android:text="E2E"
+                android:text=""
                 android:textSize="10sp"
                 android:textStyle="bold"
                 android:textColor="@color/primary_blue"
@@ -145,4 +179,6 @@
         android:layout_height="1dp"
         android:background="@color/border_color" />
 
-</LinearLayout>
+    </LinearLayout>
+
+</FrameLayout>

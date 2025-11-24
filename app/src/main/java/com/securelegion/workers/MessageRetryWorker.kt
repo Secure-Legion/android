@@ -22,7 +22,8 @@ import kotlin.math.pow
  * 3. Retries sending Pings for messages that are due
  * 4. Polls for Pongs and sends message blobs when Pongs arrive
  *
- * Runs every 5 minutes in the background
+ * Runs every 15 minutes in the background (Android minimum for PeriodicWorkRequest)
+ * For fast retries immediately after sending, use ImmediateRetryWorker
  */
 class MessageRetryWorker(
     context: Context,
@@ -33,11 +34,14 @@ class MessageRetryWorker(
         private const val TAG = "MessageRetryWorker"
         private const val WORK_NAME = "message_retry_work"
 
-        // Worker runs every 5 minutes
-        private const val REPEAT_INTERVAL_MINUTES = 5L
+        // Worker runs every 15 minutes (Android minimum for PeriodicWorkRequest)
+        // For fast retries, use ImmediateRetryWorker instead
+        private const val REPEAT_INTERVAL_MINUTES = 15L
 
         /**
          * Schedule the periodic retry worker
+         * This handles background polling and long-term retries.
+         * For immediate retries after sending, use ImmediateRetryWorker.
          */
         fun schedule(context: Context) {
             val constraints = Constraints.Builder()
@@ -133,22 +137,65 @@ class MessageRetryWorker(
             var retriedCount = 0
 
             for (message in pendingMessages) {
-                // Skip if Ping already delivered to receiver (lock icon showing on their device)
-                if (message.pingDelivered) {
-                    Log.d(TAG, "Ping already delivered for ${message.messageId} - skipping retry (no ghost lock)")
+                // ============ ACK-BASED FLOW CONTROL ============
+                // Check ACKs in reverse order to determine what action to take
+
+                // PHASE 4: MESSAGE_ACK received → Fully delivered, skip
+                if (message.messageDelivered) {
+                    Log.d(TAG, "✓ MESSAGE_ACK received - message ${message.messageId} fully delivered, skip")
                     continue
                 }
 
-                // Calculate next retry time using exponential backoff
+                // PHASE 3: PONG_ACK received → Receiver is downloading, wait for MESSAGE_ACK
+                if (message.pongDelivered) {
+                    Log.d(TAG, "✓ PONG_ACK received - receiver downloading ${message.messageId}, skip")
+                    continue
+                }
+
+                // PHASE 2: PING_ACK received → Check for Pong, don't retry Ping
+                if (message.pingDelivered) {
+                    Log.d(TAG, "✓ PING_ACK received - checking for Pong for ${message.messageId}")
+                    // Poll for Pong (receiver may have TAP'd and sent Pong)
+                    val pongResult = messageService.pollForPongsAndSendMessages()
+                    if (pongResult.isSuccess) {
+                        val sentCount = pongResult.getOrNull() ?: 0
+                        if (sentCount > 0) {
+                            Log.i(TAG, "✓ Pong received and message blob sent!")
+                            retriedCount++
+                        }
+                    }
+                    // Don't retry Ping - it was already delivered
+                    continue
+                }
+
+                // PHASE 1: No PING_ACK → Retry Ping using exponential backoff
                 val nextRetryTime = calculateNextRetryTime(message)
 
                 if (currentTime >= nextRetryTime) {
                     // Time to retry!
                     Log.d(TAG, "Retrying Ping for message ${message.messageId} (attempt ${message.retryCount + 1})")
 
-                    val result = messageService.sendPingForMessage(message)
+                    // Use stored wire bytes to prevent generating new Ping ID (ghost ping fix)
+                    val contact = database.contactDao().getContactById(message.contactId)
+                    val retrySuccess = if (message.pingWireBytes != null && contact != null) {
+                        Log.i(TAG, "Resending Ping with stored wire bytes (same Ping ID: ${message.pingId})")
+                        try {
+                            com.securelegion.crypto.RustBridge.resendPingWithWireBytes(
+                                message.pingWireBytes!!,
+                                contact.torOnionAddress
+                            )
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Failed to resend Ping with wire bytes", e)
+                            false
+                        }
+                    } else {
+                        // Fallback: No wire bytes stored (old message), regenerate Ping
+                        Log.w(TAG, "No wire bytes stored, falling back to sendPingForMessage (may create ghost ping)")
+                        val result = messageService.sendPingForMessage(message)
+                        result.isSuccess
+                    }
 
-                    if (result.isSuccess) {
+                    if (retrySuccess) {
                         // Update retry counter and timestamp
                         val updatedMessage = message.copy(
                             retryCount = message.retryCount + 1,
@@ -156,9 +203,9 @@ class MessageRetryWorker(
                         )
                         database.messageDao().updateMessage(updatedMessage)
                         retriedCount++
-                        Log.d(TAG, "Ping retry successful for message ${message.messageId}")
+                        Log.d(TAG, "✓ Ping retry successful for message ${message.messageId} (same Ping ID, no ghost ping)")
                     } else {
-                        Log.w(TAG, "Ping retry failed for message ${message.messageId}: ${result.exceptionOrNull()?.message}")
+                        Log.w(TAG, "Ping retry failed for message ${message.messageId}")
                         // Update retry counter even on failure
                         val updatedMessage = message.copy(
                             retryCount = message.retryCount + 1,

@@ -70,6 +70,7 @@ class BridgeActivity : AppCompatActivity() {
                 customBridgeInput.setText(customBridge)
                 customBridgeInput.visibility = View.VISIBLE
             }
+            // WebTunnel removed - not fully supported yet
         }
     }
 
@@ -97,25 +98,23 @@ class BridgeActivity : AppCompatActivity() {
             Log.i("BridgeActivity", "Saved bridge type: $selectedBridgeType")
         }
 
+        // Set flag to force Tor re-initialization on next start
+        editor.putBoolean("bridge_config_changed", true)
         editor.apply()
 
-        // Restart Tor service to apply new bridge configuration
-        Log.i("BridgeActivity", "Restarting Tor service to apply bridge settings...")
+        // Redirect to SplashActivity to restart Tor with new bridge settings
+        Log.i("BridgeActivity", "Redirecting to SplashActivity to restart Tor...")
         ThemedToast.show(this, "Restarting Tor with new bridge settings...")
 
-        // Stop current Tor service
+        // Stop current Tor service first
         val stopIntent = Intent(this, TorService::class.java)
         stopIntent.action = TorService.ACTION_STOP_TOR
         startService(stopIntent)
 
-        // Restart with new configuration after a brief delay
-        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
-            val startIntent = Intent(this, TorService::class.java)
-            startIntent.action = TorService.ACTION_START_TOR
-            startService(startIntent)
-            Log.i("BridgeActivity", "Tor service restart initiated")
-        }, 3500) // 3.5 second delay to ensure clean shutdown and torrc update
-
+        // Redirect to SplashActivity which will handle Tor restart
+        val intent = Intent(this, SplashActivity::class.java)
+        intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+        startActivity(intent)
         finish()
     }
 }
