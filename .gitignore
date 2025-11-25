@@ -21,10 +21,11 @@ captures/
 *.dex
 
 # Native libraries (built by Rust)
-app/src/main/jniLibs/
-*.so
-*.dylib
-*.dll
+# Note: .so files are included in git for easy building without Rust toolchain
+# app/src/main/jniLibs/  # Commented out - we want these in git
+# *.so                   # Commented out - Android native libraries included
+*.dylib                  # macOS libs not needed
+*.dll                    # Windows libs not needed
 
 # Rust
 secure-legion-core/target/

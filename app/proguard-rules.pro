@@ -32,9 +32,11 @@
 }
 
 # Keep RustBridge completely intact (do NOT rename!)
--keep class com.securelegion.crypto.RustBridge {
-    public *;
-    native <methods>;
+-keep,includedescriptorclasses class com.securelegion.crypto.RustBridge {
+    *;
+}
+-keepclassmembers class com.securelegion.crypto.RustBridge {
+    *;
 }
 
 # Keep all JNI-related classes
