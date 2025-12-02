@@ -46,17 +46,34 @@ pub fn start_bootstrap_event_listener() {
 async fn bootstrap_event_listener_task() -> Result<(), Box<dyn Error + Send + Sync>> {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpStream;
+    use tokio::time::{sleep, Duration};
 
     log::info!("Starting bootstrap event listener...");
 
     // Connect to control port (separate connection from main TorManager)
-    let mut control = match TcpStream::connect("127.0.0.1:9051").await {
-        Ok(s) => s,
-        Err(e) => {
-            log::error!("Event listener: Failed to connect to control port: {}", e);
-            return Err(e.into());
+    // Retry up to 60 times (60 seconds) if control port not ready yet
+    let mut control = None;
+    for attempt in 1..=60 {
+        match TcpStream::connect("127.0.0.1:9051").await {
+            Ok(s) => {
+                log::info!("Event listener: Connected to control port on attempt {}", attempt);
+                control = Some(s);
+                break;
+            }
+            Err(e) => {
+                if attempt == 1 {
+                    log::info!("Event listener: Waiting for control port to become ready...");
+                }
+                if attempt == 60 {
+                    log::error!("Event listener: Failed to connect to control port after {} attempts: {}", attempt, e);
+                    return Err(e.into());
+                }
+                sleep(Duration::from_secs(1)).await;
+            }
         }
-    };
+    }
+
+    let mut control = control.unwrap();
 
     // Authenticate
     control.write_all(b"AUTHENTICATE\r\n").await?;

@@ -510,6 +510,7 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_initializeTor(
 
         let tor_manager = get_tor_manager();
 
+        // Event listener should already be started via startBootstrapListener()
         // Run async initialization using global runtime
         let result = GLOBAL_RUNTIME.block_on(async {
             let mut manager = tor_manager.lock().unwrap();
@@ -518,9 +519,7 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_initializeTor(
 
         match result {
             Ok(status) => {
-                // Start bootstrap event listener AFTER initialization to prevent deadlock
-                log::info!("Tor initialized, starting bootstrap event listener...");
-                crate::network::tor::start_bootstrap_event_listener();
+                log::info!("Tor initialized successfully");
 
                 match string_to_jstring(&mut env, &status) {
                     Ok(s) => s.into_raw(),
@@ -3066,6 +3065,19 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_receiveIncomingMessage
             }
         }
     }, std::ptr::null_mut())
+}
+
+/// Start the Tor bootstrap event listener
+/// This should be called early, before Tor initialization, so it can capture progress from the start
+#[no_mangle]
+pub extern "C" fn Java_com_securelegion_crypto_RustBridge_startBootstrapListener(
+    mut env: JNIEnv,
+    _class: JClass,
+) {
+    catch_panic!(env, {
+        log::info!("Starting bootstrap event listener from explicit call...");
+        crate::network::tor::start_bootstrap_event_listener();
+    }, ())
 }
 
 /// Get Tor bootstrap status (0-100%)
