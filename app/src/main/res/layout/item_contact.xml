@@ -2,80 +2,84 @@
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
-    android:orientation="vertical"
+    android:orientation="horizontal"
     android:clickable="true"
     android:focusable="true"
-    android:background="@color/header_bg">
+    android:background="@android:color/transparent"
+    android:paddingStart="0dp"
+    android:paddingEnd="0dp"
+    android:paddingTop="8dp"
+    android:paddingBottom="8dp"
+    android:layout_marginBottom="8dp"
+    android:gravity="center_vertical">
 
-    <LinearLayout
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:orientation="vertical"
-        android:paddingStart="24dp"
-        android:paddingEnd="24dp"
-        android:paddingTop="20dp"
-        android:paddingBottom="20dp">
+    <!-- Profile Circle with Initial -->
+    <FrameLayout
+        android:layout_width="56dp"
+        android:layout_height="56dp"
+        android:background="@drawable/profile_circle_bg">
 
-        <!-- Contact Name Row -->
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="horizontal"
-            android:gravity="center_vertical"
-            android:layout_marginBottom="8dp">
-
-            <!-- Contact Name -->
-            <TextView
-                android:id="@+id/contactName"
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:text="Contact Name"
-                android:textSize="20sp"
-                android:textStyle="bold"
-                android:textColor="@color/primary_blue" />
-
-            <!-- Friends Icon (for CONFIRMED friends) -->
-            <ImageView
-                android:id="@+id/friendsIcon"
-                android:layout_width="20dp"
-                android:layout_height="20dp"
-                android:src="@drawable/ic_friends"
-                android:layout_marginStart="8dp"
-                android:visibility="gone"
-                android:contentDescription="Mutual friends" />
-
-            <!-- PENDING Badge -->
-            <TextView
-                android:id="@+id/pendingBadge"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="PENDING"
-                android:textSize="11sp"
-                android:textStyle="bold"
-                android:textColor="#FFFFFF"
-                android:background="@drawable/pending_badge_bg"
-                android:layout_marginStart="8dp"
-                android:visibility="gone" />
-
-        </LinearLayout>
-
-        <!-- Contact Address -->
         <TextView
-            android:id="@+id/contactAddress"
-            android:layout_width="match_parent"
+            android:id="@+id/contactInitial"
+            android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="Solana Address..."
-            android:textSize="13sp"
-            android:textColor="@color/text_gray"
-            android:fontFamily="monospace" />
+            android:layout_gravity="center"
+            android:text="W"
+            android:textSize="22sp"
+            android:textColor="#FFFFFF"
+            android:fontFamily="@font/space_grotesk_bold"
+            android:textStyle="bold" />
 
-    </LinearLayout>
+    </FrameLayout>
 
-    <!-- Bottom Border -->
-    <View
-        android:layout_width="match_parent"
-        android:layout_height="1dp"
-        android:background="@color/border_color" />
+    <!-- Contact Name -->
+    <TextView
+        android:id="@+id/contactName"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="1"
+        android:layout_marginStart="16dp"
+        android:text="@wizard"
+        android:textSize="16sp"
+        android:textColor="#FFFFFF"
+        android:fontFamily="@font/poppins_medium" />
+
+    <!-- Star Icon (hidden) -->
+    <ImageView
+        android:id="@+id/starIcon"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:visibility="gone" />
+
+    <!-- Hidden fields for backward compatibility -->
+    <TextView
+        android:id="@+id/messageTimestamp"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:visibility="gone" />
+
+    <TextView
+        android:id="@+id/lastMessage"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:visibility="gone" />
+
+    <TextView
+        android:id="@+id/contactAddress"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:visibility="gone" />
+
+    <ImageView
+        android:id="@+id/friendsIcon"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:visibility="gone" />
+
+    <TextView
+        android:id="@+id/pendingBadge"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:visibility="gone" />
 
 </LinearLayout>

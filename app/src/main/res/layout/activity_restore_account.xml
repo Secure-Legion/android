@@ -1,168 +1,248 @@
 <?xml version="1.0" encoding="utf-8"?>
-<androidx.constraintlayout.widget.ConstraintLayout
+<ScrollView
     xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="@color/header_bg">
+    android:background="#000000"
+    android:fillViewport="true">
 
-    <!-- Header -->
-    <LinearLayout
-        android:id="@+id/restoreAccountHeader"
+    <androidx.constraintlayout.widget.ConstraintLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:orientation="horizontal"
-        android:background="@drawable/header_bg"
-        android:fitsSystemWindows="true"
-        android:paddingStart="16dp"
-        android:paddingEnd="16dp"
-        android:paddingBottom="16dp"
-        android:gravity="center_vertical"
-        app:layout_constraintTop_toTopOf="parent">
+        android:paddingTop="50dp"
+        android:paddingBottom="32dp">
 
-        <TextView
+        <!-- Back Button -->
+        <View
             android:id="@+id/backButton"
-            android:layout_width="40dp"
-            android:layout_height="40dp"
-            android:text="‹"
-            android:textSize="32sp"
-            android:textColor="@color/text_white"
-            android:gravity="center"
+            android:layout_width="35dp"
+            android:layout_height="35dp"
+            android:layout_marginStart="20dp"
+            android:background="@drawable/back_button_bg"
             android:clickable="true"
             android:focusable="true"
-            android:background="?attr/selectableItemBackgroundBorderless" />
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintTop_toTopOf="parent"
+            app:layout_constraintBottom_toBottomOf="@id/titleText" />
 
-        <ImageView
-            android:layout_width="60dp"
-            android:layout_height="60dp"
-            android:src="@drawable/icon_header"
-            android:layout_marginStart="24dp"
-            android:contentDescription="Secure Legion Logo" />
-
+        <!-- Title -->
         <TextView
+            android:id="@+id/titleText"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Import Account"
+            android:fontFamily="@font/space_grotesk_bold"
+            android:textSize="20sp"
+            android:textColor="#999999"
+            app:layout_constraintTop_toTopOf="parent"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintEnd_toEndOf="parent" />
+
+        <!-- Account Recovery Seed Heading -->
+        <TextView
+            android:id="@+id/seedHeading"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="32dp"
+            android:layout_marginTop="32dp"
+            android:text="Account Recovery Seed"
+            android:fontFamily="@font/space_grotesk_bold"
+            android:textSize="16sp"
+            android:textColor="#999999"
+            app:layout_constraintTop_toBottomOf="@id/titleText"
+            app:layout_constraintStart_toStartOf="parent" />
+
+        <!-- Seed Phrase Grid (12 words in 4 rows x 3 columns) -->
+        <GridLayout
+            android:id="@+id/seedPhraseGrid"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:text="RESTORE ACCOUNT"
-            android:textSize="18sp"
-            android:textStyle="bold"
-            android:textColor="@color/text_white"
-            android:gravity="center"
-            android:layout_marginEnd="64dp" />
+            android:layout_marginStart="32dp"
+            android:layout_marginEnd="32dp"
+            android:layout_marginTop="16dp"
+            android:columnCount="3"
+            android:rowCount="4"
+            app:layout_constraintTop_toBottomOf="@id/seedHeading"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintEnd_toEndOf="parent">
 
-    </LinearLayout>
+            <!-- Row 1 -->
+            <EditText android:id="@+id/word1" style="@style/SeedWordInput" android:hint="1" />
+            <EditText android:id="@+id/word2" style="@style/SeedWordInput" android:hint="2" />
+            <EditText android:id="@+id/word3" style="@style/SeedWordInput" android:hint="3" />
 
-    <!-- Content -->
-    <LinearLayout
-        android:layout_width="match_parent"
-        android:layout_height="0dp"
-        android:orientation="vertical"
-        android:padding="24dp"
-        app:layout_constraintTop_toBottomOf="@id/restoreAccountHeader"
-        app:layout_constraintBottom_toBottomOf="parent">
+            <!-- Row 2 -->
+            <EditText android:id="@+id/word4" style="@style/SeedWordInput" android:hint="4" />
+            <EditText android:id="@+id/word5" style="@style/SeedWordInput" android:hint="5" />
+            <EditText android:id="@+id/word6" style="@style/SeedWordInput" android:hint="6" />
 
-        <ScrollView
-            android:layout_width="match_parent"
-            android:layout_height="0dp"
-            android:layout_weight="1"
-            android:fillViewport="true">
+            <!-- Row 3 -->
+            <EditText android:id="@+id/word7" style="@style/SeedWordInput" android:hint="7" />
+            <EditText android:id="@+id/word8" style="@style/SeedWordInput" android:hint="8" />
+            <EditText android:id="@+id/word9" style="@style/SeedWordInput" android:hint="9" />
 
-            <LinearLayout
-                android:layout_width="match_parent"
+            <!-- Row 4 -->
+            <EditText android:id="@+id/word10" style="@style/SeedWordInput" android:hint="10" />
+            <EditText android:id="@+id/word11" style="@style/SeedWordInput" android:hint="11" />
+            <EditText android:id="@+id/word12" style="@style/SeedWordInput" android:hint="12" />
+
+        </GridLayout>
+
+        <!-- Seed Phrase Description -->
+        <TextView
+            android:id="@+id/seedDescriptionText"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="32dp"
+            android:layout_marginEnd="32dp"
+            android:layout_marginTop="16dp"
+            android:text="Enter your 12-word seed phrase to import your account. This will import your contacts and CID only."
+            android:fontFamily="@font/poppins_regular"
+            android:textSize="13sp"
+            android:textColor="#5C5C5C"
+            app:layout_constraintTop_toBottomOf="@id/seedPhraseGrid"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintEnd_toEndOf="parent" />
+
+        <!-- New Device Password Heading -->
+        <TextView
+            android:id="@+id/passwordHeading"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="32dp"
+            android:layout_marginTop="24dp"
+            android:text="New Device Password"
+            android:fontFamily="@font/space_grotesk_bold"
+            android:textSize="16sp"
+            android:textColor="#999999"
+            app:layout_constraintTop_toBottomOf="@id/seedDescriptionText"
+            app:layout_constraintStart_toStartOf="parent" />
+
+        <!-- Password Input -->
+        <androidx.constraintlayout.widget.ConstraintLayout
+            android:id="@+id/passwordContainer"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="32dp"
+            android:layout_marginEnd="32dp"
+            android:layout_marginTop="12dp"
+            android:background="@drawable/lock_password_input_bg"
+            android:padding="16dp"
+            app:layout_constraintTop_toBottomOf="@id/passwordHeading"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintEnd_toEndOf="parent">
+
+            <EditText
+                android:id="@+id/newPasswordInput"
+                android:layout_width="0dp"
                 android:layout_height="wrap_content"
-                android:orientation="vertical">
+                android:hint="Password"
+                android:inputType="textPassword"
+                android:textColorHint="#666666"
+                android:textColor="#FFFFFF"
+                android:fontFamily="@font/poppins_medium"
+                android:textSize="16sp"
+                android:background="@android:color/transparent"
+                app:layout_constraintTop_toTopOf="parent"
+                app:layout_constraintBottom_toBottomOf="parent"
+                app:layout_constraintStart_toStartOf="parent"
+                app:layout_constraintEnd_toStartOf="@id/togglePassword" />
 
-                <!-- Private Key Field -->
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="Private Key"
-                    android:textSize="14sp"
-                    android:textStyle="bold"
-                    android:textColor="@color/text_white"
-                    android:layout_marginBottom="8dp" />
+            <ImageView
+                android:id="@+id/togglePassword"
+                android:layout_width="24dp"
+                android:layout_height="24dp"
+                android:src="@android:drawable/ic_menu_view"
+                android:tint="#999999"
+                android:clickable="true"
+                android:focusable="true"
+                app:layout_constraintTop_toTopOf="parent"
+                app:layout_constraintBottom_toBottomOf="parent"
+                app:layout_constraintEnd_toEndOf="parent" />
 
-                <EditText
-                    android:id="@+id/privateKeyInput"
-                    android:layout_width="match_parent"
-                    android:layout_height="120dp"
-                    android:background="@drawable/input_field_bg"
-                    android:hint="Enter your private key"
-                    android:textColorHint="@color/text_gray"
-                    android:textColor="@color/text_white"
-                    android:textSize="14sp"
-                    android:fontFamily="monospace"
-                    android:padding="16dp"
-                    android:gravity="top"
-                    android:inputType="textMultiLine"
-                    android:layout_marginBottom="16dp" />
+        </androidx.constraintlayout.widget.ConstraintLayout>
 
-                <!-- New Password Field -->
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="New Password"
-                    android:textSize="14sp"
-                    android:textStyle="bold"
-                    android:textColor="@color/text_white"
-                    android:layout_marginBottom="8dp" />
+        <!-- Confirm Password Input -->
+        <androidx.constraintlayout.widget.ConstraintLayout
+            android:id="@+id/confirmPasswordContainer"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="32dp"
+            android:layout_marginEnd="32dp"
+            android:layout_marginTop="12dp"
+            android:background="@drawable/lock_password_input_bg"
+            android:padding="16dp"
+            app:layout_constraintTop_toBottomOf="@id/passwordContainer"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintEnd_toEndOf="parent">
 
-                <EditText
-                    android:id="@+id/newPasswordInput"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:background="@drawable/input_field_bg"
-                    android:hint="Enter new password"
-                    android:inputType="textPassword"
-                    android:textColorHint="@color/text_gray"
-                    android:textColor="@color/text_white"
-                    android:textSize="16sp"
-                    android:padding="16dp"
-                    android:layout_marginBottom="16dp" />
+            <EditText
+                android:id="@+id/confirmPasswordInput"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:hint="Confirm Password"
+                android:inputType="textPassword"
+                android:textColorHint="#666666"
+                android:textColor="#FFFFFF"
+                android:fontFamily="@font/poppins_medium"
+                android:textSize="16sp"
+                android:background="@android:color/transparent"
+                app:layout_constraintTop_toTopOf="parent"
+                app:layout_constraintBottom_toBottomOf="parent"
+                app:layout_constraintStart_toStartOf="parent"
+                app:layout_constraintEnd_toStartOf="@id/toggleConfirmPassword" />
 
-                <!-- Confirm Password Field -->
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="Confirm Password"
-                    android:textSize="14sp"
-                    android:textStyle="bold"
-                    android:textColor="@color/text_white"
-                    android:layout_marginBottom="8dp" />
+            <ImageView
+                android:id="@+id/toggleConfirmPassword"
+                android:layout_width="24dp"
+                android:layout_height="24dp"
+                android:src="@android:drawable/ic_menu_view"
+                android:tint="#999999"
+                android:clickable="true"
+                android:focusable="true"
+                app:layout_constraintTop_toTopOf="parent"
+                app:layout_constraintBottom_toBottomOf="parent"
+                app:layout_constraintEnd_toEndOf="parent" />
 
-                <EditText
-                    android:id="@+id/confirmPasswordInput"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:background="@drawable/input_field_bg"
-                    android:hint="Confirm password"
-                    android:inputType="textPassword"
-                    android:textColorHint="@color/text_gray"
-                    android:textColor="@color/text_white"
-                    android:textSize="16sp"
-                    android:padding="16dp" />
+        </androidx.constraintlayout.widget.ConstraintLayout>
 
-            </LinearLayout>
+        <!-- Password Helper Text -->
+        <TextView
+            android:id="@+id/passwordHelperText"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="32dp"
+            android:layout_marginEnd="32dp"
+            android:layout_marginTop="16dp"
+            android:text="Password must be at least 9 characters and contain: Uppercase letter, lowercase letter, number, special character (!@#$%^&amp;*)"
+            android:fontFamily="@font/poppins_regular"
+            android:textSize="13sp"
+            android:textColor="#5C5C5C"
+            app:layout_constraintTop_toBottomOf="@id/confirmPasswordContainer"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintEnd_toEndOf="parent" />
 
-        </ScrollView>
-
-        <!-- Import Button at Bottom -->
+        <!-- Import Button -->
         <TextView
             android:id="@+id/importButton"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
+            android:layout_width="0dp"
+            android:layout_height="60dp"
+            android:layout_marginStart="32dp"
+            android:layout_marginEnd="32dp"
+            android:layout_marginTop="24dp"
             android:text="Import"
             android:textSize="16sp"
-            android:textStyle="bold"
-            android:textColor="@color/text_white"
-            android:background="@drawable/metallic_button_bg"
+            android:textColor="#FFFFFF"
+            android:fontFamily="@font/space_grotesk_bold"
+            android:background="@drawable/lock_button_bg"
             android:gravity="center"
-            android:padding="16dp"
             android:clickable="true"
             android:focusable="true"
-            android:elevation="6dp"
-            android:layout_marginTop="24dp" />
+            app:layout_constraintTop_toBottomOf="@id/passwordHelperText"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintEnd_toEndOf="parent" />
 
-    </LinearLayout>
+    </androidx.constraintlayout.widget.ConstraintLayout>
 
-</androidx.constraintlayout.widget.ConstraintLayout>
+</ScrollView>

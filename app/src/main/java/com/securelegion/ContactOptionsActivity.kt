@@ -28,15 +28,14 @@ class ContactOptionsActivity : BaseActivity() {
     }
 
     private lateinit var contactName: TextView
-    private lateinit var contactAddress: TextView
-    private lateinit var displayNameInput: EditText
-    private lateinit var saveDisplayNameButton: TextView
-    private lateinit var blockContactButton: TextView
-    private lateinit var deleteContactButton: TextView
-    private lateinit var distressStarIcon: ImageView
+    private lateinit var profilePicture: ImageView
+    private lateinit var changeUsernameButton: View
+    private lateinit var blockContactSwitch: androidx.appcompat.widget.SwitchCompat
+    private lateinit var favoriteSwitch: androidx.appcompat.widget.SwitchCompat
+    private lateinit var favoriteIcon: ImageView
     private var fullAddress: String = ""
     private var contactId: Long = -1
-    private var isDistressContact: Boolean = false
+    private var isFavorite: Boolean = false
     private var isBlocked: Boolean = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -58,18 +57,15 @@ class ContactOptionsActivity : BaseActivity() {
 
     private fun initializeViews() {
         contactName = findViewById(R.id.contactName)
-        contactAddress = findViewById(R.id.contactAddress)
-        displayNameInput = findViewById(R.id.displayNameInput)
-        saveDisplayNameButton = findViewById(R.id.saveDisplayNameButton)
-        blockContactButton = findViewById(R.id.blockContactButton)
-        deleteContactButton = findViewById(R.id.deleteContactButton)
-        distressStarIcon = findViewById(R.id.distressStarIcon)
+        profilePicture = findViewById(R.id.profilePicture)
+        changeUsernameButton = findViewById(R.id.changeUsernameButton)
+        blockContactSwitch = findViewById(R.id.blockContactSwitch)
+        favoriteSwitch = findViewById(R.id.favoriteSwitch)
+        favoriteIcon = findViewById(R.id.favoriteIcon)
     }
 
     private fun setupContactInfo(name: String, address: String) {
         contactName.text = name
-        contactAddress.text = address
-        displayNameInput.hint = "Enter new display name for $name"
     }
 
     private fun loadContactStatus() {
@@ -88,10 +84,10 @@ class ContactOptionsActivity : BaseActivity() {
                 }
 
                 if (contact != null) {
-                    isDistressContact = contact.isDistressContact
+                    isFavorite = contact.isDistressContact
                     isBlocked = contact.isBlocked
-                    updateStarIcon()
-                    updateBlockButton()
+                    updateFavoriteUI()
+                    updateBlockUI()
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to load contact status", e)
@@ -99,23 +95,20 @@ class ContactOptionsActivity : BaseActivity() {
         }
     }
 
-    private fun updateBlockButton() {
-        if (isBlocked) {
-            blockContactButton.text = "Unblock Contact"
+    private fun updateBlockUI() {
+        blockContactSwitch.isChecked = isBlocked
+    }
+
+    private fun updateFavoriteUI() {
+        favoriteSwitch.isChecked = isFavorite
+        if (isFavorite) {
+            favoriteIcon.setImageResource(R.drawable.ic_star_filled)
         } else {
-            blockContactButton.text = "Block Contact"
+            favoriteIcon.setImageResource(R.drawable.ic_star_outline)
         }
     }
 
-    private fun updateStarIcon() {
-        if (isDistressContact) {
-            distressStarIcon.setImageResource(R.drawable.ic_star_filled)
-        } else {
-            distressStarIcon.setImageResource(R.drawable.ic_star_outline)
-        }
-    }
-
-    private fun toggleDistressStatus() {
+    private fun toggleFavoriteStatus() {
         CoroutineScope(Dispatchers.Main).launch {
             try {
                 if (contactId == -1L) {
@@ -124,7 +117,7 @@ class ContactOptionsActivity : BaseActivity() {
                 }
 
                 // Toggle the status
-                isDistressContact = !isDistressContact
+                isFavorite = !isFavorite
 
                 val keyManager = KeyManager.getInstance(this@ContactOptionsActivity)
                 val dbPassphrase = keyManager.getDatabasePassphrase()
@@ -132,15 +125,15 @@ class ContactOptionsActivity : BaseActivity() {
 
                 // Update in database
                 withContext(Dispatchers.IO) {
-                    database.contactDao().updateDistressContactStatus(contactId, isDistressContact)
+                    database.contactDao().updateDistressContactStatus(contactId, isFavorite)
                 }
 
                 // Update UI
-                updateStarIcon()
+                updateFavoriteUI()
 
-                Log.i(TAG, "Distress status updated: $isDistressContact")
+                Log.i(TAG, "Favorite status updated: $isFavorite")
             } catch (e: Exception) {
-                Log.e(TAG, "Failed to toggle distress status", e)
+                Log.e(TAG, "Failed to toggle favorite status", e)
                 ThemedToast.show(this@ContactOptionsActivity, "Failed to update status")
             }
         }
@@ -167,7 +160,7 @@ class ContactOptionsActivity : BaseActivity() {
                 }
 
                 // Update UI
-                updateBlockButton()
+                updateBlockUI()
 
                 val message = if (isBlocked) {
                     "Contact blocked"
@@ -190,43 +183,56 @@ class ContactOptionsActivity : BaseActivity() {
             finish()
         }
 
-        // Distress star icon
-        distressStarIcon.setOnClickListener {
-            toggleDistressStatus()
+        // Compose button (edit) - currently just a placeholder
+        findViewById<View>(R.id.composeButton)?.setOnClickListener {
+            // Could open a menu or perform an action
+            ThemedToast.show(this, "Edit contact")
         }
 
-        // Copy address on click
-        contactAddress.setOnClickListener {
-            val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-            val clip = ClipData.newPlainText("Wallet Address", fullAddress)
-            clipboard.setPrimaryClip(clip)
-            ThemedToast.show(this, "Address copied")
+        // Change Username button
+        changeUsernameButton.setOnClickListener {
+            showChangeUsernameDialog(name)
         }
 
-        // Save display name button
-        saveDisplayNameButton.setOnClickListener {
-            val newDisplayName = displayNameInput.text.toString().trim()
-
-            if (newDisplayName.isEmpty()) {
-                ThemedToast.show(this, "Enter a display name")
-                return@setOnClickListener
+        // Block contact switch
+        blockContactSwitch.setOnCheckedChangeListener { _, isChecked ->
+            if (isChecked != isBlocked) {
+                toggleBlockStatus()
             }
-
-            saveDisplayName(newDisplayName, name)
         }
 
-        // Block contact button
-        blockContactButton.setOnClickListener {
-            toggleBlockStatus()
-        }
-
-        // Delete contact button
-        deleteContactButton.setOnClickListener {
-            showDeleteConfirmationDialog(name)
+        // Favorite switch
+        favoriteSwitch.setOnCheckedChangeListener { _, isChecked ->
+            if (isChecked != isFavorite) {
+                toggleFavoriteStatus()
+            }
         }
     }
 
-    private fun saveDisplayName(newDisplayName: String, oldName: String) {
+    private fun showChangeUsernameDialog(currentName: String) {
+        val input = EditText(this)
+        input.hint = "Enter new display name"
+        input.setText(currentName)
+        input.setTextColor(getColor(R.color.text_white))
+        input.setHintTextColor(getColor(R.color.text_gray))
+        input.setPadding(50, 30, 50, 30)
+
+        AlertDialog.Builder(this, R.style.CustomAlertDialog)
+            .setTitle("Change Display Name")
+            .setView(input)
+            .setPositiveButton("Save") { _, _ ->
+                val newDisplayName = input.text.toString().trim()
+                if (newDisplayName.isNotEmpty() && newDisplayName != currentName) {
+                    saveDisplayName(newDisplayName)
+                } else if (newDisplayName.isEmpty()) {
+                    ThemedToast.show(this, "Name cannot be empty")
+                }
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun saveDisplayName(newDisplayName: String) {
         CoroutineScope(Dispatchers.Main).launch {
             try {
                 Log.d(TAG, "Updating display name for contact ID: $contactId to: $newDisplayName")
@@ -244,8 +250,6 @@ class ContactOptionsActivity : BaseActivity() {
 
                 // Update the UI
                 contactName.text = newDisplayName
-                displayNameInput.text.clear()
-                displayNameInput.hint = "Enter new display name for $newDisplayName"
 
                 ThemedToast.show(this@ContactOptionsActivity, "Name updated")
 
@@ -316,17 +320,12 @@ class ContactOptionsActivity : BaseActivity() {
                             Log.e(TAG, "Failed to vacuum database", e)
                         }
 
-                        // Clear any pending Pings for this contact (breaks Ping-Pong as per user requirement)
+                        // Clear any pending Pings for this contact (using new queue format)
                         val prefs = getSharedPreferences("pending_pings", MODE_PRIVATE)
-                        prefs.edit().apply {
-                            remove("ping_${contact.id}_id")
-                            remove("ping_${contact.id}_connection")
-                            remove("ping_${contact.id}_name")
-                            apply()
-                        }
+                        com.securelegion.models.PendingPing.clearQueueForContact(prefs, contact.id)
 
                         Log.i(TAG, "Contact and all messages securely deleted (DOD 3-pass): ${contact.displayName}")
-                        Log.i(TAG, "Pending Ping cleared for contact ${contact.id} (if any)")
+                        Log.i(TAG, "Pending Pings cleared for contact ${contact.id} (if any)")
                     }
 
                     ThemedToast.show(this@ContactOptionsActivity, "Contact deleted")
@@ -349,6 +348,7 @@ class ContactOptionsActivity : BaseActivity() {
     private fun setupBottomNav() {
         findViewById<View>(R.id.navMessages).setOnClickListener {
             val intent = Intent(this, MainActivity::class.java)
+            intent.flags = Intent.FLAG_ACTIVITY_CLEAR_TOP
             startActivity(intent)
             finish()
         }
@@ -356,6 +356,7 @@ class ContactOptionsActivity : BaseActivity() {
         findViewById<View>(R.id.navWallet).setOnClickListener {
             val intent = Intent(this, MainActivity::class.java)
             intent.putExtra("SHOW_WALLET", true)
+            intent.flags = Intent.FLAG_ACTIVITY_CLEAR_TOP
             startActivity(intent)
             finish()
         }

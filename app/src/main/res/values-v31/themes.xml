@@ -1,26 +1,45 @@
 <resources xmlns:tools="http://schemas.android.com/tools">
-    <!-- Android 12+ Splash Screen Theme -->
+
+    <!-- Main app theme -->
     <style name="Theme.SecureLegion" parent="Theme.MaterialComponents.DayNight.NoActionBar">
         <!-- Primary brand color. -->
         <item name="colorPrimary">@color/primary_blue</item>
         <item name="colorPrimaryVariant">@color/accent_blue</item>
         <item name="colorOnPrimary">@color/text_white</item>
+
         <!-- Secondary brand color. -->
         <item name="colorSecondary">@color/accent_blue</item>
         <item name="colorSecondaryVariant">@color/primary_blue</item>
         <item name="colorOnSecondary">@color/text_white</item>
+
         <!-- Status bar color. -->
         <item name="android:statusBarColor">@color/darker_bg</item>
+
         <!-- Background colors -->
         <item name="android:windowBackground">@color/dark_bg</item>
         <item name="android:colorBackground">@color/dark_bg</item>
+
         <!-- Text colors -->
         <item name="android:textColorPrimary">@color/text_white</item>
         <item name="android:textColorSecondary">@color/text_gray</item>
-
-        <!-- Android 12+ Splash Screen -->
-        <item name="android:windowSplashScreenBackground">@color/dark_bg</item>
-        <item name="android:windowSplashScreenAnimatedIcon">@drawable/secure_logo</item>
-        <item name="android:windowSplashScreenIconBackgroundColor">@color/dark_bg</item>
     </style>
+
+    <!-- Android 12+ system splash theme -->
+    <style name="Theme.SecureLegion.Splash" parent="Theme.SplashScreen">
+        <!-- Pure black background -->
+        <item name="windowSplashScreenBackground">#000000</item>
+
+        <!-- Transparent icon -->
+        <item name="windowSplashScreenAnimatedIcon">@drawable/splash_icon_transparent</item>
+
+        <!-- No icon background circle -->
+        <item name="windowSplashScreenIconBackgroundColor">@android:color/transparent</item>
+
+        <!-- Ultra-short animation -->
+        <item name="windowSplashScreenAnimationDuration">1</item>
+
+        <!-- After splash, switch to normal app theme -->
+        <item name="postSplashScreenTheme">@style/Theme.SecureLegion</item>
+    </style>
+
 </resources>

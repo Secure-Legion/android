@@ -21,8 +21,8 @@
 # Keep Kotlin metadata for reflection
 -keep class kotlin.Metadata { *; }
 
-# Keep Kotlin intrinsics
--keep class kotlin.jvm.internal.** { *; }
+# Keep only essential Kotlin intrinsics (not all internals)
+-dontwarn kotlin.jvm.internal.**
 
 # ==================== RUST JNI (CRITICAL!) ====================
 
@@ -32,10 +32,7 @@
 }
 
 # Keep RustBridge completely intact (do NOT rename!)
--keep,includedescriptorclasses class com.securelegion.crypto.RustBridge {
-    *;
-}
--keepclassmembers class com.securelegion.crypto.RustBridge {
+-keep class com.securelegion.crypto.RustBridge {
     *;
 }
 
@@ -102,20 +99,21 @@
 -dontwarn org.bouncycastle.**
 -dontwarn org.openjsse.**
 
-# Keep OkHttp classes
--keep class okhttp3.** { *; }
--keep interface okhttp3.** { *; }
+# Keep OkHttp essentials (handles most automatically)
+-dontwarn okhttp3.**
 
 # ==================== TOR LIBRARIES ====================
 
-# Keep Tor control library
--keep class net.freehaven.tor.** { *; }
+# Keep Tor control library essentials
+-keep class net.freehaven.tor.control.TorControlConnection { *; }
+-keep class net.freehaven.tor.control.EventHandler { *; }
+-dontwarn net.freehaven.tor.control.**
 
-# Keep IPtProxy (Pluggable Transports)
--keep class IPtProxy.** { *; }
+# Keep IPtProxy (Pluggable Transports) - Go library via JNI
+-dontwarn IPtProxy.**
 
-# Keep Tor binaries
--keep class org.torproject.** { *; }
+# Tor project libraries
+-dontwarn org.torproject.**
 
 # ==================== JSON / DATA CLASSES ====================
 
@@ -132,39 +130,55 @@
 
 # ==================== CRYPTOGRAPHY LIBRARIES ====================
 
-# BouncyCastle
--keep class org.bouncycastle.** { *; }
+# BouncyCastle - keep only what we use (SHA3-256 for Tor v3 onion checksums)
+-keep class org.bouncycastle.jce.provider.BouncyCastleProvider { *; }
+-keep class org.bouncycastle.jcajce.provider.digest.SHA3** { *; }
+-keep class org.bouncycastle.crypto.digests.SHA3Digest { *; }
 -dontwarn org.bouncycastle.**
 
-# Lazysodium
--keep class com.goterl.lazysodium.** { *; }
+# Lazysodium - keep only what we use
+-keep class com.goterl.lazysodium.LazySodiumAndroid { *; }
+-keep class com.goterl.lazysodium.SodiumAndroid { *; }
+-dontwarn com.goterl.lazysodium.**
 
-# JNA (Java Native Access)
--keep class com.sun.jna.** { *; }
--keep class * implements com.sun.jna.** { *; }
+# JNA (Java Native Access) - used by Lazysodium
+-dontwarn com.sun.jna.**
 
-# Web3j (BIP39/BIP44)
--keep class org.web3j.** { *; }
+# Web3j (BIP39/BIP44) - keep only what we use
+-keep class org.web3j.crypto.MnemonicUtils { *; }
 -dontwarn org.web3j.**
 
-# BitcoinJ (Base58)
--keep class org.bitcoinj.** { *; }
+# BitcoinJ (Base58) - keep only encoding for Solana addresses
+-keep class org.bitcoinj.core.Base58 { *; }
 -dontwarn org.bitcoinj.**
 
 # ==================== QR CODE (ZXing) ====================
 
--keep class com.google.zxing.** { *; }
--keep class com.journeyapps.barcodescanner.** { *; }
+# Keep ZXing decoder and encoder
+-keep class com.google.zxing.BarcodeFormat { *; }
+-keep class com.google.zxing.EncodeHintType { *; }
+-keep class com.google.zxing.DecodeHintType { *; }
+-keep class com.google.zxing.qrcode.** { *; }
+-keep class com.google.zxing.common.BitMatrix { *; }
+
+# Keep barcode scanner view
+-keep class com.journeyapps.barcodescanner.BarcodeView { *; }
+-keep class com.journeyapps.barcodescanner.DecoratedBarcodeView { *; }
+-keep class com.journeyapps.barcodescanner.BarcodeCallback { *; }
+-keep class com.journeyapps.barcodescanner.BarcodeResult { *; }
 
 # ==================== SQLCIPHER ====================
 
--keep class net.sqlcipher.** { *; }
--keep class net.sqlcipher.database.** { *; }
+# Keep SQLCipher classes we use (Room handles encryption via SupportFactory)
+-keep class net.sqlcipher.database.SQLiteDatabase { *; }
+-keep class net.sqlcipher.database.SupportFactory { *; }
+-dontwarn net.sqlcipher.**
 
 # ==================== SECURITY ====================
 
-# Keep EncryptedSharedPreferences
--keep class androidx.security.crypto.** { *; }
+# Keep EncryptedSharedPreferences (used by KeyManager)
+-keep class androidx.security.crypto.EncryptedSharedPreferences { *; }
+-keep class androidx.security.crypto.MasterKey { *; }
 
 # Keep KeyManager
 -keep class com.securelegion.crypto.KeyManager {
@@ -179,14 +193,15 @@
 # - Wallet addresses
 # - Contact information
 # - Cryptographic operation details
--assumenosideeffects class android.util.Log {
-    public static int d(...);
-    public static int v(...);
-    public static int i(...);
-    public static int e(...);
-    public static int w(...);
-    public static int wtf(...);
-}
+# TEMPORARILY DISABLED FOR DEBUGGING
+#-assumenosideeffects class android.util.Log {
+#    public static int d(...);
+#    public static int v(...);
+#    public static int i(...);
+#    public static int e(...);
+#    public static int w(...);
+#    public static int wtf(...);
+#}
 
 # ==================== OPTIMIZATION ====================
 
@@ -236,5 +251,4 @@
 
 # ==================== R8 FULL MODE ====================
 
-# Enable R8 full mode optimizations
--android
+# R8 full mode is enabled by default in gradle.properties

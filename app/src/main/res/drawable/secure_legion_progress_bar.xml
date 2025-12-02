@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+    Secure Legion Custom Progress Bar
+    Sleek thin design with glowing metallic fill
+-->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- Background track - visible inset against #000000 -->
+    <item android:id="@android:id/background">
+        <shape>
+            <padding
+                android:top="3dp"
+                android:bottom="3dp"
+                android:left="3dp"
+                android:right="3dp" />
+            <corners
+                android:radius="6dp" />
+            <solid
+                android:color="#303030" />
+        </shape>
+    </item>
+
+    <!-- Secondary progress (optional buffer) -->
+    <item android:id="@android:id/secondaryProgress">
+        <clip>
+            <shape>
+                <corners
+                    android:radius="6dp" />
+                <solid
+                    android:color="#2A2A2A" />
+            </shape>
+        </clip>
+    </item>
+
+    <!-- Primary progress - pure white -->
+    <item android:id="@android:id/progress">
+        <clip>
+            <shape>
+                <corners
+                    android:radius="6dp" />
+                <solid
+                    android:color="#FFFFFF" />
+            </shape>
+        </clip>
+    </item>
+
+</layer-list>

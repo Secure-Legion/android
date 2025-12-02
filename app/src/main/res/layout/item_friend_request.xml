@@ -1,0 +1,76 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="horizontal"
+    android:background="@drawable/wallet_token_bg"
+    android:paddingStart="20dp"
+    android:paddingEnd="20dp"
+    android:paddingTop="16dp"
+    android:paddingBottom="16dp"
+    android:layout_marginBottom="12dp"
+    android:gravity="center_vertical"
+    android:clickable="true"
+    android:focusable="true">
+
+    <!-- Profile Circle with + Icon -->
+    <FrameLayout
+        android:layout_width="56dp"
+        android:layout_height="56dp"
+        android:background="@drawable/profile_circle_bg">
+
+        <TextView
+            android:id="@+id/requestIcon"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:text="+"
+            android:textSize="28sp"
+            android:textColor="#FFFFFF"
+            android:fontFamily="@font/space_grotesk_bold"
+            android:textStyle="bold" />
+
+    </FrameLayout>
+
+    <!-- Contact Name -->
+    <TextView
+        android:id="@+id/requestName"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="1"
+        android:layout_marginStart="16dp"
+        android:text="@Wizard"
+        android:textSize="16sp"
+        android:textColor="#FFFFFF"
+        android:fontFamily="@font/poppins_medium" />
+
+    <!-- Status Badge (Pending/Accept/Retry) -->
+    <TextView
+        android:id="@+id/requestStatus"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginEnd="12dp"
+        android:text="Pending"
+        android:textSize="13sp"
+        android:textColor="#888888"
+        android:fontFamily="@font/poppins_regular"
+        android:paddingStart="12dp"
+        android:paddingEnd="12dp"
+        android:paddingTop="6dp"
+        android:paddingBottom="6dp"
+        android:background="@drawable/lock_password_input_bg" />
+
+    <!-- 3-dot Menu -->
+    <ImageView
+        android:id="@+id/requestMenu"
+        android:layout_width="24dp"
+        android:layout_height="24dp"
+        android:src="@android:drawable/ic_menu_more"
+        android:tint="#888888"
+        android:rotation="90"
+        android:clickable="true"
+        android:focusable="true"
+        android:background="?attr/selectableItemBackgroundBorderless"
+        android:contentDescription="Options" />
+
+</LinearLayout>

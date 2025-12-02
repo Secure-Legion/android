@@ -16,6 +16,7 @@ import android.util.Log
 import android.view.View
 import android.widget.Spinner
 import android.widget.AdapterView
+import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
@@ -38,6 +39,7 @@ import com.securelegion.database.entities.Wallet
 import com.securelegion.models.Chat
 import com.securelegion.models.Contact
 import com.securelegion.services.SolanaService
+import com.securelegion.services.ZcashService
 import com.securelegion.utils.startActivityWithSlideAnimation
 import com.securelegion.utils.BadgeUtils
 import com.securelegion.utils.ThemedToast
@@ -70,6 +72,18 @@ class MainActivity : BaseActivity() {
         }
     }
 
+    // BroadcastReceiver to listen for friend requests and update badge
+    private val friendRequestReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action == "com.securelegion.FRIEND_REQUEST_RECEIVED") {
+                Log.d("MainActivity", "Received FRIEND_REQUEST_RECEIVED broadcast - updating badge")
+                runOnUiThread {
+                    updateFriendRequestBadge()
+                }
+            }
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
@@ -90,9 +104,9 @@ class MainActivity : BaseActivity() {
         // Enable edge-to-edge display (important for display cutouts)
         WindowCompat.setDecorFitsSystemWindows(window, false)
 
-        // Handle window insets for header and bottom navigation
+        // Handle window insets for top bar and bottom navigation
         val rootView = findViewById<View>(android.R.id.content)
-        val header = findViewById<View>(R.id.header)
+        val topBar = findViewById<View>(R.id.topBar)
         val bottomNav = findViewById<View>(R.id.bottomNav)
 
         ViewCompat.setOnApplyWindowInsetsListener(rootView) { view, windowInsets ->
@@ -101,12 +115,12 @@ class MainActivity : BaseActivity() {
                 WindowInsetsCompat.Type.displayCutout()
             )
 
-            // Apply top inset to header (for status bar and display cutout)
-            header.setPadding(
+            // Apply top inset to top bar (for status bar and display cutout)
+            topBar.setPadding(
                 insets.left,
-                insets.top,
+                insets.top + topBar.paddingTop,
                 insets.right,
-                header.paddingBottom
+                topBar.paddingBottom
             )
 
             // Apply bottom inset to bottom navigation (for gesture bar)
@@ -127,13 +141,10 @@ class MainActivity : BaseActivity() {
         // Ensure messages tab is shown by default
         findViewById<View>(R.id.chatListContainer).visibility = View.VISIBLE
         findViewById<View>(R.id.contactsView).visibility = View.GONE
-        findViewById<View>(R.id.walletView).visibility = View.GONE
 
-        // Show empty state initially while loading
+        // Show chat list (no empty state)
         val chatList = findViewById<RecyclerView>(R.id.chatList)
-        val emptyState = findViewById<View>(R.id.emptyState)
-        chatList.visibility = View.GONE
-        emptyState.visibility = View.VISIBLE
+        chatList.visibility = View.VISIBLE
 
         setupClickListeners()
         scheduleSelfDestructWorker()
@@ -150,15 +161,21 @@ class MainActivity : BaseActivity() {
         // Update app icon badge with unread count
         updateAppBadge()
 
-        // Check if we should show wallet tab
+        // Check if we should show wallet tab - now opens separate WalletActivity
         if (intent.getBooleanExtra("SHOW_WALLET", false)) {
-            showWalletTab()
+            val walletIntent = Intent(this, WalletActivity::class.java)
+            startActivity(walletIntent)
         }
 
         // Register broadcast receiver for incoming Pings (stays registered even when paused)
         val filter = IntentFilter("com.securelegion.NEW_PING")
         registerReceiver(pingReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
         Log.d("MainActivity", "Registered NEW_PING broadcast receiver in onCreate")
+
+        // Register broadcast receiver for friend requests
+        val friendRequestFilter = IntentFilter("com.securelegion.FRIEND_REQUEST_RECEIVED")
+        registerReceiver(friendRequestReceiver, friendRequestFilter, Context.RECEIVER_NOT_EXPORTED)
+        Log.d("MainActivity", "Registered FRIEND_REQUEST_RECEIVED broadcast receiver in onCreate")
     }
 
     private fun updateAppBadge() {
@@ -281,10 +298,11 @@ class MainActivity : BaseActivity() {
         super.onNewIntent(intent)
         setIntent(intent) // Update the activity's intent
 
-        // Check if we should show wallet tab
+        // Check if we should show wallet tab - now opens separate WalletActivity
         if (intent.getBooleanExtra("SHOW_WALLET", false)) {
-            Log.d("MainActivity", "onNewIntent - showing wallet tab")
-            showWalletTab()
+            Log.d("MainActivity", "onNewIntent - opening wallet activity")
+            val walletIntent = Intent(this, WalletActivity::class.java)
+            startActivity(walletIntent)
         }
     }
 
@@ -309,19 +327,24 @@ class MainActivity : BaseActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
-        // Unregister broadcast receiver when activity is destroyed
+        // Unregister broadcast receivers when activity is destroyed
         try {
             unregisterReceiver(pingReceiver)
             Log.d("MainActivity", "Unregistered NEW_PING broadcast receiver in onDestroy")
         } catch (e: IllegalArgumentException) {
-            // Receiver wasn't registered, ignore
-            Log.w("MainActivity", "Receiver was not registered during onDestroy")
+            Log.w("MainActivity", "Ping receiver was not registered during onDestroy")
+        }
+
+        try {
+            unregisterReceiver(friendRequestReceiver)
+            Log.d("MainActivity", "Unregistered FRIEND_REQUEST_RECEIVED broadcast receiver in onDestroy")
+        } catch (e: IllegalArgumentException) {
+            Log.w("MainActivity", "Friend request receiver was not registered during onDestroy")
         }
     }
 
     private fun setupChatList() {
         val chatList = findViewById<RecyclerView>(R.id.chatList)
-        val emptyState = findViewById<View>(R.id.emptyState)
 
         Log.d("MainActivity", "Loading message threads...")
 
@@ -345,7 +368,9 @@ class MainActivity : BaseActivity() {
                     // Process each contact
                     for (contact in allContacts) {
                         val lastMessage = database.messageDao().getLastMessage(contact.id)
-                        val hasPendingPing = prefs.contains("ping_${contact.id}_id")
+                        // Check for pending pings using new queue format
+                        val pendingPings = com.securelegion.models.PendingPing.loadQueueForContact(prefs, contact.id)
+                        val hasPendingPing = pendingPings.isNotEmpty()
 
                         // Include contacts with messages OR pending Pings
                         if (lastMessage != null || hasPendingPing) {
@@ -356,7 +381,7 @@ class MainActivity : BaseActivity() {
                                 nickname = contact.displayName,
                                 lastMessage = if (lastMessage != null) lastMessage.encryptedContent else "New message",
                                 time = if (lastMessage != null) formatTimestamp(lastMessage.timestamp) else formatTimestamp(System.currentTimeMillis()),
-                                unreadCount = unreadCount + (if (hasPendingPing) 1 else 0),
+                                unreadCount = unreadCount + pendingPings.size,  // Add count of ALL pending pings
                                 isOnline = false,
                                 avatar = contact.displayName.firstOrNull()?.toString()?.uppercase() ?: "?",
                                 securityBadge = ""
@@ -380,54 +405,44 @@ class MainActivity : BaseActivity() {
                 }
 
                 // Update UI on main thread
-                if (chats.isNotEmpty()) {
-                    Log.d("MainActivity", "Showing chat list UI")
-                    // Show chat list, hide empty state (but don't change tab visibility)
-                    emptyState.visibility = View.GONE
-                    chatList.visibility = View.VISIBLE
+                Log.d("MainActivity", "Showing chat list UI")
+                chatList.visibility = View.VISIBLE
 
-                    Log.d("MainActivity", "Setting up RecyclerView adapter with ${chats.size} items")
-                    // Set adapter
-                    chatList.layoutManager = LinearLayoutManager(this@MainActivity)
-                    chatList.adapter = ChatAdapter(
-                        chats = chats,
-                        onChatClick = { chat ->
-                            lifecycleScope.launch {
-                                val contact = withContext(Dispatchers.IO) {
-                                    database.contactDao().getContactById(chat.id.toLong())
-                                }
-                                if (contact != null) {
-                                    val intent = android.content.Intent(this@MainActivity, ChatActivity::class.java)
-                                    intent.putExtra(ChatActivity.EXTRA_CONTACT_ID, contact.id)
-                                    intent.putExtra(ChatActivity.EXTRA_CONTACT_NAME, contact.displayName)
-                                    intent.putExtra(ChatActivity.EXTRA_CONTACT_ADDRESS, contact.solanaAddress)
-                                    startActivityWithSlideAnimation(intent)
-                                }
+                Log.d("MainActivity", "Setting up RecyclerView adapter with ${chats.size} items")
+                // Set adapter
+                chatList.layoutManager = LinearLayoutManager(this@MainActivity)
+                chatList.adapter = ChatAdapter(
+                    chats = chats,
+                    onChatClick = { chat ->
+                        lifecycleScope.launch {
+                            val contact = withContext(Dispatchers.IO) {
+                                database.contactDao().getContactById(chat.id.toLong())
                             }
-                        },
-                        onDownloadClick = { chat ->
-                            handleMessageDownload(chat)
-                        },
-                        onDeleteClick = { chat ->
-                            deleteThread(chat)
+                            if (contact != null) {
+                                val intent = android.content.Intent(this@MainActivity, ChatActivity::class.java)
+                                intent.putExtra(ChatActivity.EXTRA_CONTACT_ID, contact.id)
+                                intent.putExtra(ChatActivity.EXTRA_CONTACT_NAME, contact.displayName)
+                                intent.putExtra(ChatActivity.EXTRA_CONTACT_ADDRESS, contact.solanaAddress)
+                                startActivityWithSlideAnimation(intent)
+                            }
                         }
-                    )
-                    Log.d("MainActivity", "RecyclerView adapter set successfully")
+                    },
+                    onDownloadClick = { chat ->
+                        handleMessageDownload(chat)
+                    },
+                    onDeleteClick = { chat ->
+                        deleteThread(chat)
+                    }
+                )
+                Log.d("MainActivity", "RecyclerView adapter set successfully")
 
-                    // Don't use ItemTouchHelper - it's designed for swipe-to-dismiss, not swipe-to-reveal
-                    // Touch handling is done in ChatAdapter with the adapter tracking open items
-                } else {
-                    Log.d("MainActivity", "No chats - showing empty state")
-                    // Show empty state (but don't change tab visibility)
-                    emptyState.visibility = View.VISIBLE
-                    chatList.visibility = View.GONE
-                }
+                // Don't use ItemTouchHelper - it's designed for swipe-to-dismiss, not swipe-to-reveal
+                // Touch handling is done in ChatAdapter with the adapter tracking open items
             } catch (e: Exception) {
                 Log.e("MainActivity", "Failed to load message threads", e)
                 withContext(Dispatchers.Main) {
-                    // Show empty state (but don't change tab visibility)
-                    emptyState.visibility = View.VISIBLE
-                    chatList.visibility = View.GONE
+                    // Keep chat list visible even on error
+                    chatList.visibility = View.VISIBLE
                 }
             }
         }
@@ -474,16 +489,9 @@ class MainActivity : BaseActivity() {
                     }
                 }
 
-                // Clear pending Ping for this contact
+                // Clear pending Pings for this contact (using new queue format)
                 val prefs = getSharedPreferences("pending_pings", MODE_PRIVATE)
-                prefs.edit()
-                    .remove("ping_${chat.id}_id")
-                    .remove("ping_${chat.id}_sender")
-                    .remove("ping_${chat.id}_timestamp")
-                    .remove("ping_${chat.id}_data")
-                    .remove("ping_${chat.id}_onion")
-                    .remove("ping_${chat.id}_name")
-                    .apply()
+                com.securelegion.models.PendingPing.clearQueueForContact(prefs, chat.id.toLong())
 
                 Log.i("MainActivity", "Securely deleted all messages (DOD 3-pass) and pending Pings for contact: ${chat.nickname}")
 
@@ -517,7 +525,6 @@ class MainActivity : BaseActivity() {
     private fun setupContactsList() {
         val contactsView = findViewById<View>(R.id.contactsView)
         val contactsList = contactsView.findViewById<RecyclerView>(R.id.contactsList)
-        val emptyContactsState = contactsView.findViewById<View>(R.id.emptyContactsState)
 
         // Load contacts from encrypted database
         lifecycleScope.launch {
@@ -545,37 +552,62 @@ class MainActivity : BaseActivity() {
 
                 // Update UI on main thread
                 withContext(Dispatchers.Main) {
-                    if (contacts.isNotEmpty()) {
-                        Log.i("MainActivity", "Displaying ${contacts.size} contacts in UI")
-                        contacts.forEach { contact ->
-                            Log.i("MainActivity", "  - ${contact.name} (${contact.address})")
-                        }
-                        emptyContactsState.visibility = View.GONE
-                        contactsList.visibility = View.VISIBLE
-                        contactsList.layoutManager = LinearLayoutManager(this@MainActivity)
-                        contactsList.adapter = ContactAdapter(contacts) { contact ->
-                            // Open contact options screen
-                            val intent = android.content.Intent(this@MainActivity, ContactOptionsActivity::class.java)
-                            intent.putExtra("CONTACT_ID", contact.id.toLong())
-                            intent.putExtra("CONTACT_NAME", contact.name)
-                            intent.putExtra("CONTACT_ADDRESS", contact.address)
-                            startActivityWithSlideAnimation(intent)
-                        }
-                        Log.i("MainActivity", "RecyclerView adapter set with ${contacts.size} items")
-                    } else {
-                        Log.w("MainActivity", "No contacts to display, showing empty state")
-                        emptyContactsState.visibility = View.VISIBLE
-                        contactsList.visibility = View.GONE
+                    Log.i("MainActivity", "Displaying ${contacts.size} contacts in UI")
+                    contacts.forEach { contact ->
+                        Log.i("MainActivity", "  - ${contact.name} (${contact.address})")
                     }
+                    contactsList.visibility = View.VISIBLE
+                    contactsList.layoutManager = LinearLayoutManager(this@MainActivity)
+                    contactsList.adapter = ContactAdapter(contacts) { contact ->
+                        // Open contact options screen
+                        val intent = android.content.Intent(this@MainActivity, ContactOptionsActivity::class.java)
+                        intent.putExtra("CONTACT_ID", contact.id.toLong())
+                        intent.putExtra("CONTACT_NAME", contact.name)
+                        intent.putExtra("CONTACT_ADDRESS", contact.address)
+                        startActivityWithSlideAnimation(intent)
+                    }
+                    Log.i("MainActivity", "RecyclerView adapter set with ${contacts.size} items")
+
+                    // Setup alphabet index click handlers
+                    setupAlphabetIndex(contactsView, contactsList, contacts)
                 }
             } catch (e: Exception) {
                 Log.e("MainActivity", "Failed to load contacts from database", e)
-                // Show empty state on error
+                // Keep contacts list visible even on error
                 withContext(Dispatchers.Main) {
-                    emptyContactsState.visibility = View.VISIBLE
-                    contactsList.visibility = View.GONE
+                    contactsList.visibility = View.VISIBLE
                 }
             }
+        }
+    }
+
+    private fun setupAlphabetIndex(contactsView: View, contactsList: RecyclerView, contacts: List<Contact>) {
+        val alphabetIndex = contactsView.findViewById<android.widget.LinearLayout>(R.id.alphabetIndex)
+
+        // Get all letter TextViews from the alphabet index
+        val letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+
+        for (i in 0 until alphabetIndex.childCount) {
+            val letterView = alphabetIndex.getChildAt(i) as? android.widget.TextView
+            letterView?.setOnClickListener {
+                val letter = letterView.text.toString()
+                scrollToLetter(contactsList, contacts, letter)
+            }
+        }
+    }
+
+    private fun scrollToLetter(contactsList: RecyclerView, contacts: List<Contact>, letter: String) {
+        // Find the first contact that starts with this letter
+        val position = contacts.indexOfFirst { contact ->
+            contact.name.removePrefix("@").uppercase().startsWith(letter)
+        }
+
+        if (position != -1) {
+            // Scroll to the position smoothly
+            contactsList.smoothScrollToPosition(position)
+            Log.i("MainActivity", "Scrolling to letter $letter at position $position")
+        } else {
+            Log.i("MainActivity", "No contacts found starting with letter $letter")
         }
     }
 
@@ -587,15 +619,19 @@ class MainActivity : BaseActivity() {
         }
 
         // Bottom Navigation
-        findViewById<View>(R.id.navMessages).setOnClickListener {
+        findViewById<View>(R.id.navMessages)?.setOnClickListener {
+            Log.d("MainActivity", "Messages nav clicked")
             showAllChatsTab()
         }
 
-        findViewById<View>(R.id.navWallet).setOnClickListener {
-            showWalletTab()
+        findViewById<View>(R.id.navWallet)?.setOnClickListener {
+            Log.d("MainActivity", "Wallet nav clicked")
+            val intent = Intent(this, WalletActivity::class.java)
+            startActivity(intent)
         }
 
-        findViewById<View>(R.id.navAddFriend).setOnClickListener {
+        findViewById<View>(R.id.navAddFriend)?.setOnClickListener {
+            Log.d("MainActivity", "Add Friend nav clicked")
             val intent = android.content.Intent(this, AddFriendActivity::class.java)
             startActivity(intent)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
@@ -606,112 +642,35 @@ class MainActivity : BaseActivity() {
             }
         }
 
-        findViewById<View>(R.id.navLock).setOnClickListener {
+        findViewById<View>(R.id.navLock)?.setOnClickListener {
+            Log.d("MainActivity", "Lock nav clicked")
             val intent = android.content.Intent(this, LockActivity::class.java)
             startActivity(intent)
             finish()
         }
 
-        // Tabs
-        findViewById<View>(R.id.tabContacts).setOnClickListener {
-            showContactsTab()
+        // Profile Icon (navigate to user profile)
+        findViewById<View>(R.id.profileIcon).setOnClickListener {
+            val intent = android.content.Intent(this, WalletIdentityActivity::class.java)
+            startActivityWithSlideAnimation(intent)
         }
 
-        findViewById<View>(R.id.tabSettings).setOnClickListener {
+        // Settings Icon
+        findViewById<View>(R.id.settingsIcon).setOnClickListener {
             val intent = android.content.Intent(this, SettingsActivity::class.java)
             startActivityWithSlideAnimation(intent)
         }
-    }
 
-    private fun setupWalletButtons() {
-        // These buttons are in the included wallet_balance_card layout within walletView
-        val walletView = findViewById<View>(R.id.walletView)
-
-        val receiveButton = walletView?.findViewById<View>(R.id.receiveButton)
-        val sendButton = walletView?.findViewById<View>(R.id.sendButton)
-        val recentBtn = walletView?.findViewById<View>(R.id.recentBtn)
-        val refreshButton = walletView?.findViewById<View>(R.id.refreshBalanceButton)
-        val walletSettingsButton = walletView?.findViewById<View>(R.id.walletSettingsButton)
-
-        receiveButton?.setOnClickListener {
-            val intent = android.content.Intent(this, ReceiveActivity::class.java)
-            startActivity(intent)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                overrideActivityTransition(Activity.OVERRIDE_TRANSITION_OPEN, 0, 0)
-            } else {
-                @Suppress("DEPRECATION")
-                overridePendingTransition(0, 0)
-            }
+        // Tabs
+        findViewById<View>(R.id.tabMessages).setOnClickListener {
+            showAllChatsTab()
         }
 
-        sendButton?.setOnClickListener {
-            val intent = android.content.Intent(this, SendActivity::class.java)
-
-            // Pass currently selected wallet info
-            if (currentWallet != null) {
-                intent.putExtra("WALLET_ID", currentWallet!!.walletId)
-                intent.putExtra("WALLET_NAME", currentWallet!!.name)
-                intent.putExtra("WALLET_ADDRESS", currentWallet!!.solanaAddress)
-            } else {
-                // Fallback to main wallet if none selected
-                val keyManager = KeyManager.getInstance(this)
-                intent.putExtra("WALLET_ID", "main")
-                intent.putExtra("WALLET_NAME", "Wallet 1")
-                intent.putExtra("WALLET_ADDRESS", keyManager.getSolanaAddress())
-            }
-
-            startActivity(intent)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                overrideActivityTransition(Activity.OVERRIDE_TRANSITION_OPEN, 0, 0)
-            } else {
-                @Suppress("DEPRECATION")
-                overridePendingTransition(0, 0)
-            }
-        }
-
-        recentBtn?.setOnClickListener {
-            val intent = android.content.Intent(this, RecentTransactionsActivity::class.java)
-            startActivity(intent)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                overrideActivityTransition(Activity.OVERRIDE_TRANSITION_OPEN, 0, 0)
-            } else {
-                @Suppress("DEPRECATION")
-                overridePendingTransition(0, 0)
-            }
-        }
-
-        refreshButton?.setOnClickListener {
-            Log.d("MainActivity", "Refresh button clicked - reloading wallet balance")
-            loadWalletBalance()
-        }
-
-        // Setup wallet spinner
-        setupWalletSpinner()
-
-        walletSettingsButton?.setOnClickListener {
-            val intent = android.content.Intent(this, WalletSettingsActivity::class.java)
-
-            // Pass currently selected wallet info
-            if (currentWallet != null) {
-                intent.putExtra("WALLET_ID", currentWallet!!.walletId)
-                intent.putExtra("WALLET_NAME", currentWallet!!.name)
-                intent.putExtra("IS_MAIN_WALLET", currentWallet!!.isMainWallet)
-            } else {
-                // Fallback to main wallet if none selected
-                intent.putExtra("WALLET_ID", "main")
-                intent.putExtra("WALLET_NAME", "Wallet 1")
-                intent.putExtra("IS_MAIN_WALLET", true)
-            }
-
-            startActivity(intent)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                overrideActivityTransition(Activity.OVERRIDE_TRANSITION_OPEN, 0, 0)
-            } else {
-                @Suppress("DEPRECATION")
-                overridePendingTransition(0, 0)
-            }
+        findViewById<View>(R.id.tabContacts).setOnClickListener {
+            showContactsTab()
         }
     }
+
 
     private fun setupWalletSpinner() {
         lifecycleScope.launch(Dispatchers.IO) {
@@ -722,29 +681,12 @@ class MainActivity : BaseActivity() {
                 val wallets = database.walletDao().getAllWallets()
 
                 withContext(Dispatchers.Main) {
-                    val walletView = findViewById<View>(R.id.walletView)
-                    val spinner = walletView?.findViewById<Spinner>(R.id.walletSpinner)
-
-                    if (spinner != null && wallets.isNotEmpty()) {
-                        val adapter = WalletAdapter(this@MainActivity, wallets)
-                        spinner.adapter = adapter
-
+                    if (wallets.isNotEmpty()) {
                         // Set initial wallet (most recently used)
                         val initialWallet = wallets.firstOrNull()
                         if (initialWallet != null && currentWallet == null) {
                             currentWallet = initialWallet
-                            updateWalletIdentity(initialWallet)
-                        }
-
-                        spinner.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
-                            override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
-                                val selectedWallet = wallets[position]
-                                switchToWallet(selectedWallet)
-                            }
-
-                            override fun onNothingSelected(parent: AdapterView<*>?) {
-                                // Do nothing
-                            }
+                            Log.d("MainActivity", "Initial wallet set: ${initialWallet.name}")
                         }
                     }
                 }
@@ -772,9 +714,7 @@ class MainActivity : BaseActivity() {
                 // Update UI on main thread
                 withContext(Dispatchers.Main) {
                     Log.i("MainActivity", "Switched to wallet: ${wallet.walletId}")
-
-                    // Reload wallet balance and identity
-                    loadWalletBalance()
+                    // Wallet balance is now loaded in WalletActivity
                     updateWalletIdentity(wallet)
                 }
 
@@ -785,13 +725,7 @@ class MainActivity : BaseActivity() {
     }
 
     private fun updateWalletIdentity(wallet: Wallet) {
-        // Update wallet address and private key display
-        val walletView = findViewById<View>(R.id.walletView)
-        val addressText = walletView?.findViewById<android.widget.TextView>(R.id.walletAddress)
-
-        // Update the displayed address
-        addressText?.text = wallet.solanaAddress.take(12) + "..." + wallet.solanaAddress.takeLast(12)
-
+        // Wallet is now in separate activity - no UI updates needed here
         Log.i("MainActivity", "Wallet identity updated for: ${wallet.walletId}")
     }
 
@@ -800,223 +734,51 @@ class MainActivity : BaseActivity() {
         currentTab = "messages"
         findViewById<View>(R.id.chatListContainer).visibility = View.VISIBLE
         findViewById<View>(R.id.contactsView).visibility = View.GONE
-        findViewById<View>(R.id.walletView).visibility = View.GONE
 
-        // Show tabs (Contacts/Settings)
+        // Show tabs
         findViewById<View>(R.id.tabsContainer).visibility = View.VISIBLE
+
+        // Update search bar hint
+        findViewById<android.widget.EditText>(R.id.searchBar).hint = "Search conversations..."
 
         // Reload message threads when switching back to messages tab
         setupChatList()
 
-        // Update tab styling
-        findViewById<android.widget.TextView>(R.id.tabContacts).apply {
-            setTextColor(ContextCompat.getColor(context, R.color.text_gray))
-            setTypeface(null, android.graphics.Typeface.NORMAL)
+        // Update tab styling - Messages active, Contacts inactive
+        findViewById<android.widget.TextView>(R.id.tabMessages).apply {
+            setTextColor(ContextCompat.getColor(context, R.color.text_white))
+            typeface = android.graphics.Typeface.create("@font/space_grotesk_bold", android.graphics.Typeface.BOLD)
         }
 
-        // Update tab indicators
-        findViewById<View>(R.id.indicatorContacts).setBackgroundColor(android.graphics.Color.TRANSPARENT)
-
-        // Update bottom nav - highlight Messages
-        findViewById<View>(R.id.navMessages)?.setBackgroundResource(R.drawable.nav_item_active_bg)
-        findViewById<android.widget.TextView>(R.id.navMessagesLabel)?.setTextColor(ContextCompat.getColor(this, R.color.primary_blue))
-        findViewById<View>(R.id.navWallet)?.setBackgroundResource(R.drawable.nav_item_ripple)
-        findViewById<android.widget.TextView>(R.id.navWalletLabel)?.setTextColor(ContextCompat.getColor(this, R.color.text_gray))
+        findViewById<android.widget.ImageView>(R.id.tabContacts).apply {
+            setColorFilter(ContextCompat.getColor(context, R.color.text_gray))
+        }
     }
 
     private fun showContactsTab() {
         Log.d("MainActivity", "Switching to contacts tab")
         currentTab = "contacts"
         findViewById<View>(R.id.chatListContainer).visibility = View.GONE
-        findViewById<View>(R.id.emptyState)?.visibility = View.GONE
         findViewById<View>(R.id.contactsView).visibility = View.VISIBLE
-        findViewById<View>(R.id.walletView).visibility = View.GONE
 
-        // Show tabs (Contacts/Settings)
+        // Show tabs
         findViewById<View>(R.id.tabsContainer).visibility = View.VISIBLE
+
+        // Update search bar hint
+        findViewById<android.widget.EditText>(R.id.searchBar).hint = "Search contacts..."
 
         // Reload contacts list
         setupContactsList()
 
-        // Update tab styling
-        findViewById<android.widget.TextView>(R.id.tabContacts).apply {
-            setTextColor(ContextCompat.getColor(context, R.color.primary_blue))
-            setTypeface(null, android.graphics.Typeface.BOLD)
-        }
-
-        // Update tab indicators
-        findViewById<View>(R.id.indicatorContacts).setBackgroundColor(ContextCompat.getColor(this, R.color.primary_blue))
-    }
-
-    private fun loadWalletBalance() {
-        lifecycleScope.launch {
-            try {
-                Log.d("MainActivity", "Loading wallet balance from Solana blockchain")
-
-                val walletView = findViewById<View>(R.id.walletView)
-                val balanceText = walletView?.findViewById<android.widget.TextView>(R.id.balanceAmount)
-                val balanceUSD = walletView?.findViewById<android.widget.TextView>(R.id.balanceUSD)
-
-                // Show loading state
-                withContext(Dispatchers.Main) {
-                    balanceText?.text = "Loading..."
-                    balanceUSD?.text = "..."
-                }
-
-                // Get wallet public key from currently selected wallet
-                val solanaAddress = if (currentWallet != null) {
-                    currentWallet!!.solanaAddress
-                } else {
-                    // Fallback to first wallet if none selected
-                    val keyManager = KeyManager.getInstance(this@MainActivity)
-                    keyManager.getSolanaAddress()
-                }
-
-                Log.d("MainActivity", "Fetching balance for address: $solanaAddress")
-
-                // Fetch balance from blockchain (routes through Tor)
-                val solanaService = SolanaService(this@MainActivity)
-                val result = solanaService.getBalance(solanaAddress)
-
-                withContext(Dispatchers.Main) {
-                    if (result.isSuccess) {
-                        val balanceSOL = result.getOrNull() ?: 0.0
-
-                        // Format balance nicely
-                        val formattedBalance = when {
-                            balanceSOL >= 1.0 -> String.format("%.4f SOL", balanceSOL)
-                            balanceSOL >= 0.0001 -> String.format("%.4f SOL", balanceSOL)
-                            balanceSOL > 0 -> String.format("%.8f SOL", balanceSOL)
-                            else -> "0 SOL"
-                        }
-
-                        balanceText?.text = formattedBalance
-
-                        // Fetch SOL price and calculate USD value
-                        val priceResult = solanaService.getSolPrice()
-                        if (priceResult.isSuccess) {
-                            val priceUSD = priceResult.getOrNull() ?: 0.0
-                            val balanceUSDValue = balanceSOL * priceUSD
-                            balanceUSD?.text = String.format("$%.2f", balanceUSDValue)
-                        } else {
-                            balanceUSD?.text = "..."
-                        }
-
-                        Log.i("MainActivity", "Balance loaded: $formattedBalance")
-                    } else {
-                        balanceText?.text = "Error"
-                        balanceUSD?.text = "Failed to load balance"
-                        Log.e("MainActivity", "Failed to load balance: ${result.exceptionOrNull()?.message}")
-                    }
-                }
-
-                // Also load SPL token balances
-                loadTokenBalances(solanaService, solanaAddress)
-
-            } catch (e: Exception) {
-                Log.e("MainActivity", "Failed to load wallet balance", e)
-                withContext(Dispatchers.Main) {
-                    val walletView = findViewById<View>(R.id.walletView)
-                    val balanceText = walletView?.findViewById<android.widget.TextView>(R.id.balanceAmount)
-                    balanceText?.text = "Error"
-                }
-            }
-        }
-    }
-
-    private suspend fun loadTokenBalances(solanaService: SolanaService, solanaAddress: String) {
-        try {
-            Log.d("MainActivity", "Loading SPL token balances")
-
-            // Also update the SOL balance in the token list
-            val balanceResult = solanaService.getBalance(solanaAddress)
-
-            withContext(Dispatchers.Main) {
-                val walletView = findViewById<View>(R.id.walletView)
-                val solBalanceText = walletView?.findViewById<android.widget.TextView>(R.id.solBalance)
-                val solBalanceUSD = walletView?.findViewById<android.widget.TextView>(R.id.solBalanceUSD)
-
-                if (balanceResult.isSuccess) {
-                    val balanceSOL = balanceResult.getOrNull() ?: 0.0
-
-                    // Update token list SOL balance
-                    val formattedBalance = when {
-                        balanceSOL >= 1.0 -> String.format("%.4f", balanceSOL)
-                        balanceSOL >= 0.0001 -> String.format("%.4f", balanceSOL)
-                        balanceSOL > 0 -> String.format("%.8f", balanceSOL)
-                        else -> "0.00"
-                    }
-
-                    solBalanceText?.text = formattedBalance
-                    Log.d("MainActivity", "Updated SOL token balance: $formattedBalance")
-
-                    // Fetch SOL price and calculate USD value
-                    lifecycleScope.launch {
-                        val priceResult = solanaService.getSolPrice()
-                        if (priceResult.isSuccess) {
-                            val priceUSD = priceResult.getOrNull() ?: 0.0
-                            val balanceUSDValue = balanceSOL * priceUSD
-                            withContext(Dispatchers.Main) {
-                                solBalanceUSD?.text = String.format("$%.2f", balanceUSDValue)
-                            }
-                        } else {
-                            withContext(Dispatchers.Main) {
-                                solBalanceUSD?.text = "..."
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Fetch SPL token accounts
-            val result = solanaService.getTokenAccounts(solanaAddress)
-
-            withContext(Dispatchers.Main) {
-                if (result.isSuccess) {
-                    val tokenAccounts = result.getOrNull() ?: emptyList()
-                    Log.i("MainActivity", "Token balances loaded: ${tokenAccounts.size} tokens")
-
-                    Log.i("MainActivity", "Loaded ${tokenAccounts.size} token accounts")
-                } else {
-                    Log.e("MainActivity", "Failed to load token balances: ${result.exceptionOrNull()?.message}")
-                }
-            }
-
-        } catch (e: Exception) {
-            Log.e("MainActivity", "Failed to load token balances", e)
-        }
-    }
-
-    private fun showWalletTab() {
-        Log.d("MainActivity", "Switching to wallet tab")
-        currentTab = "wallet"
-        findViewById<View>(R.id.chatListContainer).visibility = View.GONE
-        findViewById<View>(R.id.contactsView).visibility = View.GONE
-        findViewById<View>(R.id.walletView).visibility = View.VISIBLE
-
-        // Hide tabs (Contacts/Settings) - only for main page
-        findViewById<View>(R.id.tabsContainer).visibility = View.GONE
-
-        // Setup wallet buttons now that the view is visible
-        setupWalletButtons()
-
-        // Load wallet balance from blockchain
-        loadWalletBalance()
-
-        // Update tab styling - reset all top tabs to inactive
-        findViewById<android.widget.TextView>(R.id.tabContacts).apply {
+        // Update tab styling - Contacts active, Messages inactive
+        findViewById<android.widget.TextView>(R.id.tabMessages).apply {
             setTextColor(ContextCompat.getColor(context, R.color.text_gray))
-            setTypeface(null, android.graphics.Typeface.NORMAL)
+            typeface = android.graphics.Typeface.create("@font/poppins_medium", android.graphics.Typeface.NORMAL)
         }
 
-        // Update tab indicators - clear all
-        findViewById<View>(R.id.indicatorContacts).setBackgroundColor(android.graphics.Color.TRANSPARENT)
-
-        // Update bottom nav - highlight Wallet
-        findViewById<View>(R.id.navMessages)?.setBackgroundResource(R.drawable.nav_item_ripple)
-        findViewById<android.widget.TextView>(R.id.navMessagesLabel)?.setTextColor(ContextCompat.getColor(this, R.color.text_gray))
-        findViewById<View>(R.id.navWallet)?.setBackgroundResource(R.drawable.nav_item_active_bg)
-        findViewById<android.widget.TextView>(R.id.navWalletLabel)?.setTextColor(ContextCompat.getColor(this, R.color.primary_blue))
+        findViewById<android.widget.ImageView>(R.id.tabContacts).apply {
+            setColorFilter(ContextCompat.getColor(context, R.color.text_white))
+        }
     }
 
     /**
@@ -1028,20 +790,24 @@ class MainActivity : BaseActivity() {
                 val contactId = chat.id.toLong()
                 Log.i("MainActivity", "User clicked download for contact $contactId (${chat.nickname})")
 
-                // Retrieve pending Ping info from SharedPreferences
+                // Retrieve pending Ping info from SharedPreferences (using new queue format)
                 val prefs = getSharedPreferences("pending_pings", MODE_PRIVATE)
-                val pingId = prefs.getString("ping_${contactId}_id", null)
-                val senderOnionAddress = prefs.getString("ping_${contactId}_onion", null)
-                val senderName = prefs.getString("ping_${contactId}_name", chat.nickname)
-                val encryptedPingData = prefs.getString("ping_${contactId}_data", null)
+                val pendingPings = com.securelegion.models.PendingPing.loadQueueForContact(prefs, contactId)
 
-                if (pingId == null || senderOnionAddress == null) {
+                if (pendingPings.isEmpty()) {
                     Log.e("MainActivity", "No pending Ping found for contact $contactId")
                     withContext(Dispatchers.Main) {
                         ThemedToast.show(this@MainActivity, "No pending message found")
                     }
                     return@launch
                 }
+
+                // Get the first pending ping from the queue
+                val pendingPing = pendingPings.first()
+                val pingId = pendingPing.pingId
+                val senderOnionAddress = pendingPing.senderOnionAddress
+                val senderName = pendingPing.senderName
+                val encryptedPingData = pendingPing.encryptedPingData
 
                 Log.i("MainActivity", "Downloading message: pingId=$pingId, sender=$senderOnionAddress")
 
@@ -1066,36 +832,27 @@ class MainActivity : BaseActivity() {
                 // Step 2: Restore the Ping in Rust so respondToPing can find it
                 Log.d("MainActivity", "Stored Ping ID from SharedPreferences: $pingId")
 
-                val actualPingId: String
-                if (encryptedPingData != null) {
-                    val encryptedPingBytes = android.util.Base64.decode(encryptedPingData, android.util.Base64.NO_WRAP)
-                    Log.d("MainActivity", "Restoring Ping from ${encryptedPingBytes.size} bytes of encrypted data")
-                    val restoredPingId = com.securelegion.crypto.RustBridge.decryptIncomingPing(encryptedPingBytes)
+                val encryptedPingBytes = android.util.Base64.decode(encryptedPingData, android.util.Base64.NO_WRAP)
+                Log.d("MainActivity", "Restoring Ping from ${encryptedPingBytes.size} bytes of encrypted data")
+                val restoredPingId = com.securelegion.crypto.RustBridge.decryptIncomingPing(encryptedPingBytes)
 
-                    if (restoredPingId == null) {
-                        Log.e("MainActivity", "Failed to decrypt/restore Ping")
-                        withContext(Dispatchers.Main) {
-                            ThemedToast.show(this@MainActivity, "Failed to restore message request")
-                        }
-                        return@launch
-                    }
-
-                    Log.i("MainActivity", "Ping decrypted - stored ID: $pingId, restored ID: $restoredPingId")
-
-                    if (restoredPingId != pingId) {
-                        Log.w("MainActivity", "⚠️  Ping ID MISMATCH! Stored=$pingId, Restored=$restoredPingId")
-                        Log.w("MainActivity", "Using restored ID (based on actual nonce) for Pong response")
-                    }
-
-                    actualPingId = restoredPingId
-                    Log.i("MainActivity", "Ping restored successfully: $actualPingId")
-                } else {
-                    Log.e("MainActivity", "No encrypted Ping data stored - cannot restore")
+                if (restoredPingId == null) {
+                    Log.e("MainActivity", "Failed to decrypt/restore Ping")
                     withContext(Dispatchers.Main) {
-                        ThemedToast.show(this@MainActivity, "Message data not found")
+                        ThemedToast.show(this@MainActivity, "Failed to restore message request")
                     }
                     return@launch
                 }
+
+                Log.i("MainActivity", "Ping decrypted - stored ID: $pingId, restored ID: $restoredPingId")
+
+                if (restoredPingId != pingId) {
+                    Log.w("MainActivity", "⚠️  Ping ID MISMATCH! Stored=$pingId, Restored=$restoredPingId")
+                    Log.w("MainActivity", "Using restored ID (based on actual nonce) for Pong response")
+                }
+
+                val actualPingId = restoredPingId
+                Log.i("MainActivity", "Ping restored successfully: $actualPingId")
 
                 // Step 3: Generate Pong response (user authenticated = true)
                 Log.d("MainActivity", "Creating Pong with Ping ID: $actualPingId")
@@ -1137,8 +894,9 @@ class MainActivity : BaseActivity() {
                     kotlinx.coroutines.delay(1000)  // Wait 1 second
                     attempts++
 
-                    // Check if message has arrived by checking if Ping is still pending
-                    val stillPending = prefs.contains("ping_${contactId}_id")
+                    // Check if message has arrived by checking if Ping is still pending (using new queue format)
+                    val currentPings = com.securelegion.models.PendingPing.loadQueueForContact(prefs, contactId)
+                    val stillPending = currentPings.any { it.pingId == pingId }
                     if (!stillPending) {
                         // Ping was cleared, meaning message was received and processed
                         messageReceived = true
@@ -1165,25 +923,54 @@ class MainActivity : BaseActivity() {
 
                 Log.i("MainActivity", "Message blob received and processed by TorService")
 
-                // Step 6: Remove pending Ping from SharedPreferences (TorService already saved the message)
-                // Use commit() not apply() to ensure write completes immediately
-                prefs.edit().apply {
-                    remove("ping_${contactId}_id")
-                    remove("ping_${contactId}_connection")
-                    remove("ping_${contactId}_name")
-                    remove("ping_${contactId}_data")
-                    remove("ping_${contactId}_onion")
-                    remove("ping_${contactId}_timestamp")
-                    commit()  // Synchronous - guarantees persistence
-                }
+                // Step 6: Remove pending Ping from queue (TorService already saved the message)
+                com.securelegion.models.PendingPing.removeFromQueue(prefs, contactId, pingId)
 
                 Log.i("MainActivity", "Pending Ping cleared from SharedPreferences")
 
-                // Step 7: Clear notification if no more pending Pings
-                val remainingPings = prefs.all.filter { it.key.endsWith("_id") }.size
-                if (remainingPings == 0) {
-                    val notificationManager = getSystemService(android.app.NotificationManager::class.java)
+                // Step 7: Clear notification if no more pending Pings (using new queue format)
+                var totalRemainingPings = 0
+                prefs.all.forEach { (key, value) ->
+                    if (key.startsWith("ping_queue_") && value is String) {
+                        try {
+                            val jsonArray = org.json.JSONArray(value)
+                            totalRemainingPings += jsonArray.length()
+                        } catch (e: Exception) {
+                            Log.w("MainActivity", "Failed to parse ping queue for key $key", e)
+                        }
+                    }
+                }
+
+                val notificationManager = getSystemService(android.app.NotificationManager::class.java)
+                if (totalRemainingPings == 0) {
                     notificationManager.cancel(999)
+                    Log.i("MainActivity", "All pings cleared - notification cancelled")
+                } else {
+                    // Update notification to show correct count
+                    val openAppIntent = Intent(this@MainActivity, com.securelegion.LockActivity::class.java).apply {
+                        putExtra("TARGET_ACTIVITY", "MainActivity")
+                        flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+                    }
+                    val openAppPendingIntent = android.app.PendingIntent.getActivity(
+                        this@MainActivity,
+                        0,
+                        openAppIntent,
+                        android.app.PendingIntent.FLAG_IMMUTABLE or android.app.PendingIntent.FLAG_UPDATE_CURRENT
+                    )
+
+                    val notification = androidx.core.app.NotificationCompat.Builder(this@MainActivity, "auth_channel")
+                        .setSmallIcon(R.drawable.ic_shield)
+                        .setContentTitle("New Message")
+                        .setContentText("You have $totalRemainingPings pending ${if (totalRemainingPings == 1) "message" else "messages"}")
+                        .setPriority(androidx.core.app.NotificationCompat.PRIORITY_HIGH)
+                        .setCategory(androidx.core.app.NotificationCompat.CATEGORY_MESSAGE)
+                        .setAutoCancel(true)
+                        .setContentIntent(openAppPendingIntent)
+                        .setNumber(totalRemainingPings)
+                        .build()
+
+                    notificationManager.notify(999, notification)
+                    Log.i("MainActivity", "Updated notification - $totalRemainingPings pending pings remaining")
                 }
 
                 // Step 8: Update UI

@@ -21,11 +21,12 @@ import java.util.Locale
 
 class MessageAdapter(
     private var messages: List<Message> = emptyList(),
-    private var pendingSenderName: String? = null,
-    private var pendingTimestamp: Long? = null,
-    private val onDownloadClick: (() -> Unit)? = null,
+    private var pendingPings: List<com.securelegion.models.PendingPing> = emptyList(),
+    private var downloadingPingIds: Set<String> = emptySet(),  // Track which pings are being downloaded
+    private val onDownloadClick: ((String) -> Unit)? = null,  // Now passes ping ID
     private val onVoicePlayClick: ((Message) -> Unit)? = null,
-    private var currentlyPlayingMessageId: String? = null
+    private var currentlyPlayingMessageId: String? = null,
+    private val onMessageLongClick: (() -> Unit)? = null
 ) : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
 
     companion object {
@@ -41,7 +42,7 @@ class MessageAdapter(
 
     // Selection mode for deletion
     private var isSelectionMode = false
-    private val selectedMessages = mutableSetOf<Long>()
+    private val selectedMessages = mutableSetOf<String>()  // Use String to support both message IDs and ping IDs
 
     fun setSelectionMode(enabled: Boolean) {
         isSelectionMode = enabled
@@ -51,7 +52,7 @@ class MessageAdapter(
         notifyDataSetChanged()
     }
 
-    fun getSelectedMessageIds(): Set<Long> = selectedMessages.toSet()
+    fun getSelectedMessageIds(): Set<String> = selectedMessages.toSet()
 
     fun clearSelection() {
         selectedMessages.clear()
@@ -104,8 +105,8 @@ class MessageAdapter(
     }
 
     override fun getItemViewType(position: Int): Int {
-        // Check if this is the pending message (last item when pending exists)
-        if (pendingSenderName != null && position == messages.size) {
+        // Check if this is in the pending messages range (after regular messages)
+        if (position >= messages.size) {
             return VIEW_TYPE_PENDING
         }
 
@@ -192,23 +193,24 @@ class MessageAdapter(
         // Handle selection mode
         if (isSelectionMode) {
             holder.messageCheckbox.visibility = View.VISIBLE
-            holder.messageCheckbox.isChecked = selectedMessages.contains(message.id)
+            val messageIdStr = message.id.toString()
+            holder.messageCheckbox.isChecked = selectedMessages.contains(messageIdStr)
             holder.messageCheckbox.setOnCheckedChangeListener { _, isChecked ->
                 if (isChecked) {
-                    selectedMessages.add(message.id)
+                    selectedMessages.add(messageIdStr)
                 } else {
-                    selectedMessages.remove(message.id)
+                    selectedMessages.remove(messageIdStr)
                 }
             }
 
             // Allow tapping message bubble to toggle selection
             holder.messageBubble.setOnClickListener {
-                val isSelected = selectedMessages.contains(message.id)
+                val isSelected = selectedMessages.contains(messageIdStr)
                 if (isSelected) {
-                    selectedMessages.remove(message.id)
+                    selectedMessages.remove(messageIdStr)
                     holder.messageCheckbox.isChecked = false
                 } else {
-                    selectedMessages.add(message.id)
+                    selectedMessages.add(messageIdStr)
                     holder.messageCheckbox.isChecked = true
                 }
             }
@@ -216,6 +218,12 @@ class MessageAdapter(
             holder.messageCheckbox.visibility = View.GONE
             holder.messageCheckbox.setOnCheckedChangeListener(null)
             holder.messageBubble.setOnClickListener(null)
+
+            // Add long-press listener to enter selection mode
+            holder.messageBubble.setOnLongClickListener {
+                onMessageLongClick?.invoke()
+                true
+            }
         }
 
         // Setup swipe gesture (disabled in selection mode)
@@ -242,23 +250,24 @@ class MessageAdapter(
         // Handle selection mode
         if (isSelectionMode) {
             holder.messageCheckbox.visibility = View.VISIBLE
-            holder.messageCheckbox.isChecked = selectedMessages.contains(message.id)
+            val messageIdStr = message.id.toString()
+            holder.messageCheckbox.isChecked = selectedMessages.contains(messageIdStr)
             holder.messageCheckbox.setOnCheckedChangeListener { _, isChecked ->
                 if (isChecked) {
-                    selectedMessages.add(message.id)
+                    selectedMessages.add(messageIdStr)
                 } else {
-                    selectedMessages.remove(message.id)
+                    selectedMessages.remove(messageIdStr)
                 }
             }
 
             // Allow tapping message bubble to toggle selection
             holder.messageBubble.setOnClickListener {
-                val isSelected = selectedMessages.contains(message.id)
+                val isSelected = selectedMessages.contains(messageIdStr)
                 if (isSelected) {
-                    selectedMessages.remove(message.id)
+                    selectedMessages.remove(messageIdStr)
                     holder.messageCheckbox.isChecked = false
                 } else {
-                    selectedMessages.add(message.id)
+                    selectedMessages.add(messageIdStr)
                     holder.messageCheckbox.isChecked = true
                 }
             }
@@ -266,6 +275,12 @@ class MessageAdapter(
             holder.messageCheckbox.visibility = View.GONE
             holder.messageCheckbox.setOnCheckedChangeListener(null)
             holder.messageBubble.setOnClickListener(null)
+
+            // Add long-press listener to enter selection mode
+            holder.messageBubble.setOnLongClickListener {
+                onMessageLongClick?.invoke()
+                true
+            }
         }
 
         // Setup swipe gesture (disabled in selection mode)
@@ -275,11 +290,21 @@ class MessageAdapter(
     }
 
     private fun bindPendingMessage(holder: PendingMessageViewHolder, position: Int) {
-        val timestamp = pendingTimestamp ?: System.currentTimeMillis()
+        // Get the specific pending ping for this position
+        val pendingIndex = position - messages.size
+        val pendingPing = pendingPings[pendingIndex]
+        val timestamp = pendingPing.timestamp
 
         // Reset visibility states for recycled views
-        holder.downloadButton.visibility = View.VISIBLE
-        holder.downloadingText.visibility = View.GONE
+        // Check if this ping is currently being downloaded
+        val isDownloading = pendingPing.pingId in downloadingPingIds
+        if (isDownloading) {
+            holder.downloadButton.visibility = View.GONE
+            holder.downloadingText.visibility = View.VISIBLE
+        } else {
+            holder.downloadButton.visibility = View.VISIBLE
+            holder.downloadingText.visibility = View.GONE
+        }
 
         // Show timestamp header if this is the first message or date changed
         if (shouldShowTimestampHeader(position)) {
@@ -296,26 +321,27 @@ class MessageAdapter(
         // Handle selection mode for pending messages
         if (isSelectionMode) {
             holder.messageCheckbox.visibility = View.VISIBLE
-            // Use -1 as ID for pending message (not in database yet)
-            val isPendingSelected = selectedMessages.contains(-1L)
+            // Use pingId directly as identifier (much simpler and more reliable!)
+            val pingIdStr = "ping:" + pendingPing.pingId  // Prefix to distinguish from message IDs
+            val isPendingSelected = selectedMessages.contains(pingIdStr)
             holder.messageCheckbox.isChecked = isPendingSelected
 
             holder.messageCheckbox.setOnCheckedChangeListener { _, isChecked ->
                 if (isChecked) {
-                    selectedMessages.add(-1L)
+                    selectedMessages.add(pingIdStr)
                 } else {
-                    selectedMessages.remove(-1L)
+                    selectedMessages.remove(pingIdStr)
                 }
             }
 
             // Allow tapping bubble to toggle selection
             holder.messageBubble.setOnClickListener {
-                val isSelected = selectedMessages.contains(-1L)
+                val isSelected = selectedMessages.contains(pingIdStr)
                 if (isSelected) {
-                    selectedMessages.remove(-1L)
+                    selectedMessages.remove(pingIdStr)
                     holder.messageCheckbox.isChecked = false
                 } else {
-                    selectedMessages.add(-1L)
+                    selectedMessages.add(pingIdStr)
                     holder.messageCheckbox.isChecked = true
                 }
             }
@@ -328,12 +354,18 @@ class MessageAdapter(
             holder.messageCheckbox.setOnCheckedChangeListener(null)
             holder.messageBubble.setOnClickListener(null)
 
+            // Add long-press listener to enter selection mode
+            holder.messageBubble.setOnLongClickListener {
+                onMessageLongClick?.invoke()
+                true
+            }
+
             // Enable download button in normal mode
             holder.downloadButton.isEnabled = true
             holder.downloadButton.setOnClickListener {
                 holder.downloadButton.visibility = View.GONE
                 holder.downloadingText.visibility = View.VISIBLE
-                onDownloadClick?.invoke()
+                onDownloadClick?.invoke(pendingPing.pingId)  // Pass specific ping ID
             }
         }
 
@@ -366,23 +398,25 @@ class MessageAdapter(
         // Handle selection mode
         if (isSelectionMode) {
             holder.messageCheckbox.visibility = View.VISIBLE
-            holder.messageCheckbox.isChecked = selectedMessages.contains(message.id)
+            val messageIdStr = message.id.toString()
+            holder.messageCheckbox.isChecked = selectedMessages.contains(messageIdStr)
             holder.messageCheckbox.setOnCheckedChangeListener { _, isChecked ->
                 if (isChecked) {
-                    selectedMessages.add(message.id)
+                    selectedMessages.add(messageIdStr)
                 } else {
-                    selectedMessages.remove(message.id)
+                    selectedMessages.remove(messageIdStr)
                 }
             }
 
             // Allow tapping voice bubble to toggle selection
             holder.voiceBubble.setOnClickListener {
-                val isSelected = selectedMessages.contains(message.id)
+                val messageIdStr = message.id.toString()
+                val isSelected = selectedMessages.contains(messageIdStr)
                 if (isSelected) {
-                    selectedMessages.remove(message.id)
+                    selectedMessages.remove(messageIdStr)
                     holder.messageCheckbox.isChecked = false
                 } else {
-                    selectedMessages.add(message.id)
+                    selectedMessages.add(messageIdStr)
                     holder.messageCheckbox.isChecked = true
                 }
             }
@@ -394,6 +428,12 @@ class MessageAdapter(
             holder.messageCheckbox.visibility = View.GONE
             holder.messageCheckbox.setOnCheckedChangeListener(null)
             holder.voiceBubble.setOnClickListener(null)
+
+            // Add long-press listener to enter selection mode
+            holder.voiceBubble.setOnLongClickListener {
+                onMessageLongClick?.invoke()
+                true
+            }
 
             // Enable play button in normal mode
             holder.playButton.isEnabled = true
@@ -420,23 +460,25 @@ class MessageAdapter(
         // Handle selection mode
         if (isSelectionMode) {
             holder.messageCheckbox.visibility = View.VISIBLE
-            holder.messageCheckbox.isChecked = selectedMessages.contains(message.id)
+            val messageIdStr = message.id.toString()
+            holder.messageCheckbox.isChecked = selectedMessages.contains(messageIdStr)
             holder.messageCheckbox.setOnCheckedChangeListener { _, isChecked ->
                 if (isChecked) {
-                    selectedMessages.add(message.id)
+                    selectedMessages.add(messageIdStr)
                 } else {
-                    selectedMessages.remove(message.id)
+                    selectedMessages.remove(messageIdStr)
                 }
             }
 
             // Allow tapping voice bubble to toggle selection
             holder.voiceBubble.setOnClickListener {
-                val isSelected = selectedMessages.contains(message.id)
+                val messageIdStr = message.id.toString()
+                val isSelected = selectedMessages.contains(messageIdStr)
                 if (isSelected) {
-                    selectedMessages.remove(message.id)
+                    selectedMessages.remove(messageIdStr)
                     holder.messageCheckbox.isChecked = false
                 } else {
-                    selectedMessages.add(message.id)
+                    selectedMessages.add(messageIdStr)
                     holder.messageCheckbox.isChecked = true
                 }
             }
@@ -448,6 +490,12 @@ class MessageAdapter(
             holder.messageCheckbox.visibility = View.GONE
             holder.messageCheckbox.setOnCheckedChangeListener(null)
             holder.voiceBubble.setOnClickListener(null)
+
+            // Add long-press listener to enter selection mode
+            holder.voiceBubble.setOnLongClickListener {
+                onMessageLongClick?.invoke()
+                true
+            }
 
             // Enable play button in normal mode
             holder.playButton.isEnabled = true
@@ -535,13 +583,21 @@ class MessageAdapter(
     private fun shouldShowTimestampHeader(position: Int): Boolean {
         if (position == 0) return true
 
-        val currentTimestamp = if (pendingSenderName != null && position == messages.size) {
-            pendingTimestamp ?: System.currentTimeMillis()
+        val currentTimestamp = if (position >= messages.size) {
+            // This is a pending ping
+            val pendingIndex = position - messages.size
+            pendingPings[pendingIndex].timestamp
         } else {
             messages[position].timestamp
         }
 
-        val previousTimestamp = messages[position - 1].timestamp
+        val previousTimestamp = if (position - 1 >= messages.size) {
+            // Previous was also a pending ping
+            val pendingIndex = position - 1 - messages.size
+            pendingPings[pendingIndex].timestamp
+        } else {
+            messages[position - 1].timestamp
+        }
 
         // Show header if date changed
         return !isSameDay(currentTimestamp, previousTimestamp)
@@ -601,7 +657,7 @@ class MessageAdapter(
     }
 
     override fun getItemCount(): Int {
-        return messages.size + (if (pendingSenderName != null) 1 else 0)
+        return messages.size + pendingPings.size
     }
 
     fun setCurrentlyPlayingMessageId(messageId: String?) {
@@ -619,46 +675,59 @@ class MessageAdapter(
 
     fun updateMessages(
         newMessages: List<Message>,
-        newPendingSenderName: String? = null,
-        newPendingTimestamp: Long? = null
+        newPendingPings: List<com.securelegion.models.PendingPing> = emptyList(),
+        newDownloadingPingIds: Set<String> = emptySet()
     ) {
         // Track old state
         val oldMessageCount = messages.size
-        val oldHadPending = pendingSenderName != null
-        val oldTotalCount = oldMessageCount + (if (oldHadPending) 1 else 0)
+        val oldPendingCount = pendingPings.size
+        val oldTotalCount = oldMessageCount + oldPendingCount
 
         // Update state
         messages = newMessages
-        pendingSenderName = newPendingSenderName
-        pendingTimestamp = newPendingTimestamp
+        pendingPings = newPendingPings
+        downloadingPingIds = newDownloadingPingIds
 
         // Track new state
         val newMessageCount = newMessages.size
-        val newHasPending = newPendingSenderName != null
-        val newTotalCount = newMessageCount + (if (newHasPending) 1 else 0)
+        val newPendingCount = newPendingPings.size
+        val newTotalCount = newMessageCount + newPendingCount
 
         // Reset swipe state
         currentSwipeRevealedPosition = -1
 
         // Notify RecyclerView about specific changes to avoid crashes
         when {
-            // Pending message removed (most common after download)
-            oldHadPending && !newHasPending -> {
+            // Pending pings removed (after downloads or deletions)
+            oldPendingCount > 0 && newPendingCount == 0 -> {
                 // Notify about message changes if any
                 if (newMessageCount != oldMessageCount) {
                     notifyItemRangeChanged(0, newMessageCount)
                 }
-                // Remove the pending item at the end
-                notifyItemRemoved(oldTotalCount - 1)
+                // Remove all pending items
+                notifyItemRangeRemoved(oldMessageCount, oldPendingCount)
             }
-            // Pending message added
-            !oldHadPending && newHasPending -> {
+            // Pending pings added
+            oldPendingCount == 0 && newPendingCount > 0 -> {
                 // Notify about message changes if any
                 if (newMessageCount != oldMessageCount) {
                     notifyItemRangeChanged(0, oldMessageCount)
                 }
-                // Insert pending item at the end
-                notifyItemInserted(newTotalCount - 1)
+                // Insert new pending items at the end
+                notifyItemRangeInserted(newMessageCount, newPendingCount)
+            }
+            // Pending count changed
+            newPendingCount != oldPendingCount -> {
+                // Update messages if count changed
+                if (newMessageCount != oldMessageCount) {
+                    notifyItemRangeChanged(0, kotlin.math.min(newMessageCount, oldMessageCount))
+                }
+                // Handle pending changes
+                if (newPendingCount > oldPendingCount) {
+                    notifyItemRangeInserted(oldMessageCount + oldPendingCount, newPendingCount - oldPendingCount)
+                } else {
+                    notifyItemRangeRemoved(oldMessageCount + newPendingCount, oldPendingCount - newPendingCount)
+                }
             }
             // Just messages changed
             newMessageCount > oldMessageCount -> {
@@ -668,7 +737,7 @@ class MessageAdapter(
                 notifyItemRangeRemoved(newMessageCount, oldMessageCount - newMessageCount)
             }
             else -> {
-                // Same count, just update
+                // Same count, just update all
                 notifyItemRangeChanged(0, newTotalCount)
             }
         }

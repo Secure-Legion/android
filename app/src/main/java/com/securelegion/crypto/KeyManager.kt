@@ -46,6 +46,7 @@ class KeyManager private constructor(context: Context) {
         private const val HIDDEN_SERVICE_KEY_ALIAS = "${KEYSTORE_ALIAS_PREFIX}hidden_service_key"
         private const val DEVICE_PASSWORD_HASH_ALIAS = "${KEYSTORE_ALIAS_PREFIX}device_password_hash"
         private const val DEVICE_PASSWORD_SALT_ALIAS = "${KEYSTORE_ALIAS_PREFIX}device_password_salt"
+        private const val ZCASH_ADDRESS_ALIAS = "${KEYSTORE_ALIAS_PREFIX}zcash_address"
 
         init {
             // Register BouncyCastle provider for SHA3-256 support
@@ -196,6 +197,36 @@ class KeyManager private constructor(context: Context) {
      */
     fun getSolanaPublicKey(): ByteArray {
         return getSigningPublicKey()
+    }
+
+    /**
+     * Get wallet seed for Zcash SDK initialization
+     * Returns the same BIP39 seed used for Solana (64 bytes)
+     * Zcash SDK will use BIP44 path m/44'/133'/0'/0' for key derivation
+     */
+    fun getWalletSeed(): ByteArray {
+        val seedHex = encryptedPrefs.getString(WALLET_SEED_ALIAS, null)
+            ?: throw KeyManagerException("Wallet seed not found. Initialize wallet first.")
+        return hexToBytes(seedHex)
+    }
+
+    /**
+     * Get Zcash unified address (stored after Zcash SDK initialization)
+     * Returns the shielded address for receiving ZEC
+     */
+    fun getZcashAddress(): String? {
+        return encryptedPrefs.getString(ZCASH_ADDRESS_ALIAS, null)
+    }
+
+    /**
+     * Store Zcash unified address
+     * Called after Zcash SDK generates the address
+     */
+    fun setZcashAddress(address: String) {
+        encryptedPrefs.edit {
+            putString(ZCASH_ADDRESS_ALIAS, address)
+        }
+        Log.d(TAG, "Zcash address stored: $address")
     }
 
     /**
@@ -506,6 +537,34 @@ class KeyManager private constructor(context: Context) {
         return encryptedPrefs.getString("username", null)
     }
 
+    /**
+     * Store seed phrase (encrypted) for display on account created screen
+     * WARNING: This is stored temporarily and should be cleared after user confirms backup
+     */
+    fun storeSeedPhrase(seedPhrase: String) {
+        encryptedPrefs.edit {
+            putString("seed_phrase_backup", seedPhrase)
+        }
+        Log.i(TAG, "Stored seed phrase for backup display")
+    }
+
+    /**
+     * Get stored seed phrase for display
+     */
+    fun getSeedPhrase(): String? {
+        return encryptedPrefs.getString("seed_phrase_backup", null)
+    }
+
+    /**
+     * Clear stored seed phrase after user confirms backup
+     */
+    fun clearSeedPhraseBackup() {
+        encryptedPrefs.edit {
+            remove("seed_phrase_backup")
+        }
+        Log.i(TAG, "Cleared seed phrase backup")
+    }
+
     // ==================== DEVICE PASSWORD MANAGEMENT ====================
 
     /**
@@ -641,6 +700,117 @@ class KeyManager private constructor(context: Context) {
         } finally {
             // SECURITY: Zeroize seed from memory to prevent extraction
             seed?.let { java.util.Arrays.fill(it, 0.toByte()) }
+        }
+    }
+
+    /**
+     * Derive voice file encryption key from BIP39 seed
+     * Uses SHA-256(seed + "voice_files_key" salt) for deterministic key
+     *
+     * SECURITY: Caller MUST zeroize the returned ByteArray after use!
+     * Use the extension function: key.zeroize() or key.useAndZeroize { }
+     *
+     * @return 32-byte key for voice file encryption (must be zeroized after use)
+     */
+    fun getVoiceFileEncryptionKey(): ByteArray {
+        if (!isInitialized()) {
+            throw IllegalStateException("KeyManager not initialized")
+        }
+
+        var seed: ByteArray? = null
+        try {
+            seed = getSeedBytes()
+
+            // Derive voice file key using SHA-256 with application-specific salt
+            // This ensures key is deterministic and unique per wallet
+            val digest = MessageDigest.getInstance("SHA-256")
+            digest.update(seed)
+            digest.update("secure_legion_voice_files_v1".toByteArray(Charsets.UTF_8))
+            val voiceKey = digest.digest()
+
+            Log.i(TAG, "Derived voice file encryption key")
+            return voiceKey
+        } finally {
+            // SECURITY: Zeroize seed from memory to prevent extraction
+            seed?.let { java.util.Arrays.fill(it, 0.toByte()) }
+        }
+    }
+
+    /**
+     * Encrypt voice file data using AES-256-GCM
+     * @param audioBytes Raw audio data to encrypt
+     * @return Encrypted data with format: [12-byte nonce][encrypted audio][16-byte auth tag]
+     */
+    fun encryptVoiceFile(audioBytes: ByteArray): ByteArray {
+        var key: ByteArray? = null
+        try {
+            key = getVoiceFileEncryptionKey()
+
+            // Generate random 12-byte nonce for AES-GCM
+            val nonce = ByteArray(12)
+            java.security.SecureRandom().nextBytes(nonce)
+
+            // Create AES-GCM cipher
+            val cipher = javax.crypto.Cipher.getInstance("AES/GCM/NoPadding")
+            val secretKey = javax.crypto.spec.SecretKeySpec(key, "AES")
+            val gcmSpec = javax.crypto.spec.GCMParameterSpec(128, nonce) // 128-bit auth tag
+            cipher.init(javax.crypto.Cipher.ENCRYPT_MODE, secretKey, gcmSpec)
+
+            // Encrypt (includes 16-byte authentication tag)
+            val encrypted = cipher.doFinal(audioBytes)
+
+            // Return [nonce][encrypted+tag]
+            val result = ByteArray(nonce.size + encrypted.size)
+            System.arraycopy(nonce, 0, result, 0, nonce.size)
+            System.arraycopy(encrypted, 0, result, nonce.size, encrypted.size)
+
+            Log.i(TAG, "Encrypted voice file: ${audioBytes.size} bytes → ${result.size} bytes")
+            return result
+        } finally {
+            // SECURITY: Zeroize key from memory
+            key?.let { java.util.Arrays.fill(it, 0.toByte()) }
+        }
+    }
+
+    /**
+     * Decrypt voice file data using AES-256-GCM
+     * @param encryptedData Encrypted data with format: [12-byte nonce][encrypted audio][16-byte auth tag]
+     * @return Decrypted audio data
+     */
+    fun decryptVoiceFile(encryptedData: ByteArray): ByteArray {
+        var key: ByteArray? = null
+        try {
+            if (encryptedData.size < 12 + 16) {
+                throw IllegalArgumentException("Encrypted data too short (minimum 28 bytes)")
+            }
+
+            key = getVoiceFileEncryptionKey()
+
+            // Extract nonce (first 12 bytes)
+            val nonce = ByteArray(12)
+            System.arraycopy(encryptedData, 0, nonce, 0, 12)
+
+            // Extract encrypted data + tag (remaining bytes)
+            val encrypted = ByteArray(encryptedData.size - 12)
+            System.arraycopy(encryptedData, 12, encrypted, 0, encrypted.size)
+
+            // Create AES-GCM cipher
+            val cipher = javax.crypto.Cipher.getInstance("AES/GCM/NoPadding")
+            val secretKey = javax.crypto.spec.SecretKeySpec(key, "AES")
+            val gcmSpec = javax.crypto.spec.GCMParameterSpec(128, nonce) // 128-bit auth tag
+            cipher.init(javax.crypto.Cipher.DECRYPT_MODE, secretKey, gcmSpec)
+
+            // Decrypt (verifies authentication tag)
+            val decrypted = cipher.doFinal(encrypted)
+
+            Log.i(TAG, "Decrypted voice file: ${encryptedData.size} bytes → ${decrypted.size} bytes")
+            return decrypted
+        } catch (e: javax.crypto.AEADBadTagException) {
+            Log.e(TAG, "Voice file authentication failed - data corrupted or tampered")
+            throw SecurityException("Voice file authentication failed", e)
+        } finally {
+            // SECURITY: Zeroize key from memory
+            key?.let { java.util.Arrays.fill(it, 0.toByte()) }
         }
     }
 

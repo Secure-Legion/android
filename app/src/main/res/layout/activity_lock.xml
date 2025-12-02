@@ -6,130 +6,137 @@
     android:layout_height="match_parent"
     android:background="#000000">
 
+    <!-- Logo at top -->
+    <ImageView
+        android:id="@+id/logoImage"
+        android:layout_width="140dp"
+        android:layout_height="141dp"
+        android:src="@drawable/secure_logo_new"
+        android:layout_marginTop="80dp"
+        android:contentDescription="Secure Legion Logo"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent" />
+
+    <!-- Password Section (shown when wallet exists) -->
     <LinearLayout
+        android:id="@+id/passwordSection"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="vertical"
-        android:gravity="center_horizontal"
-        android:paddingStart="32dp"
-        android:paddingEnd="32dp"
-        android:paddingBottom="32dp"
-        android:layout_marginTop="80dp"
+        android:paddingStart="20dp"
+        android:paddingEnd="20dp"
+        android:layout_marginTop="260dp"
+        android:visibility="visible"
         app:layout_constraintTop_toTopOf="parent"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent">
 
-        <!-- Logo -->
-        <ImageView
-            android:layout_width="250dp"
-            android:layout_height="250dp"
-            android:src="@drawable/secure_logo"
-            android:layout_marginBottom="24dp"
-            android:contentDescription="Secure Legion Logo" />
-
-        <!-- Password Section (shown when wallet exists) -->
-        <LinearLayout
-            android:id="@+id/passwordSection"
+        <!-- Sign in Title -->
+        <TextView
+            android:id="@+id/signInTitle"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:orientation="vertical"
-            android:gravity="center"
-            android:visibility="visible">
+            android:text="Sign in"
+            android:textColor="@color/lock_title_gray"
+            android:textSize="34sp"
+            android:fontFamily="@font/space_grotesk_bold"
+            android:layout_marginBottom="13dp" />
+
+        <!-- Subtitle Text -->
+        <TextView
+            android:id="@+id/subtitleText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Encrypted communication free from\nsurveillance or censorship."
+            android:textColor="@color/lock_subtitle_gray"
+            android:textSize="14sp"
+            android:lineSpacingMultiplier="1.5"
+            android:fontFamily="@font/poppins_regular"
+            android:layout_marginBottom="15dp" />
+
+        <!-- Password Input Container -->
+        <RelativeLayout
+            android:layout_width="match_parent"
+            android:layout_height="60dp"
+            android:layout_marginEnd="20dp"
+            android:background="@drawable/lock_password_input_bg"
+            android:layout_marginBottom="16dp">
 
             <EditText
                 android:id="@+id/passwordInput"
-                android:layout_width="280dp"
-                android:layout_height="wrap_content"
-                android:background="@drawable/message_input_bg"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
                 android:hint="Password"
                 android:inputType="textPassword"
-                android:textColorHint="@color/text_gray"
+                android:textColorHint="@color/lock_password_hint"
                 android:textColor="@color/text_white"
-                android:padding="14dp"
-                android:gravity="center"
-                android:layout_marginBottom="16dp" />
+                android:textSize="14sp"
+                android:paddingStart="19dp"
+                android:paddingEnd="50dp"
+                android:background="@android:color/transparent"
+                android:fontFamily="@font/poppins_regular" />
 
-            <TextView
-                android:id="@+id/unlockButton"
-                android:layout_width="280dp"
-                android:layout_height="wrap_content"
-                android:text="Unlock"
-                android:textSize="16sp"
-                android:textStyle="bold"
-                android:textColor="@color/text_white"
-                android:background="@drawable/metallic_button_bg"
-                android:gravity="center"
-                android:padding="16dp"
-                android:clickable="true"
-                android:focusable="true"
-                android:layout_marginBottom="24dp"
-                android:elevation="6dp" />
-
-            <!-- Biometric Authentication Button -->
+            <!-- Password visibility toggle icon -->
             <ImageView
-                android:id="@+id/biometricButton"
-                android:layout_width="64dp"
-                android:layout_height="64dp"
-                android:src="@drawable/ic_fingerprint"
-                android:background="@drawable/circle_button_bg"
-                android:padding="16dp"
+                android:id="@+id/passwordToggle"
+                android:layout_width="24dp"
+                android:layout_height="24dp"
+                android:layout_alignParentEnd="true"
+                android:layout_centerVertical="true"
+                android:layout_marginEnd="16dp"
+                android:src="@android:drawable/ic_menu_view"
+                android:tint="@color/lock_icon_gray"
                 android:clickable="true"
                 android:focusable="true"
-                android:visibility="gone"
-                android:contentDescription="Unlock with biometric"
-                android:layout_marginBottom="16dp" />
+                android:contentDescription="Toggle password visibility" />
 
-            <TextView
-                android:id="@+id/biometricText"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="Use Fingerprint/Face"
-                android:textSize="12sp"
-                android:textColor="@color/text_gray"
-                android:visibility="gone"
-                android:layout_marginBottom="32dp" />
+        </RelativeLayout>
 
-        </LinearLayout>
-
-        <!-- Account Links Section (shown when no wallet) -->
-        <LinearLayout
-            android:id="@+id/accountLinksSection"
-            android:layout_width="280dp"
-            android:layout_height="wrap_content"
-            android:orientation="vertical"
+        <!-- Sign In Button -->
+        <TextView
+            android:id="@+id/unlockButton"
+            android:layout_width="match_parent"
+            android:layout_height="60dp"
+            android:layout_marginEnd="20dp"
+            android:text="Sign In"
+            android:textSize="16sp"
+            android:textColor="#FFFFFF"
+            android:background="@drawable/lock_button_bg"
             android:gravity="center"
-            android:visibility="gone">
+            android:fontFamily="@font/space_grotesk_bold"
+            android:clickable="true"
+            android:focusable="true"
+            android:layout_marginBottom="24dp" />
 
-            <TextView
-                android:id="@+id/newAccountLink"
-                android:layout_width="280dp"
-                android:layout_height="wrap_content"
-                android:text="Create New Account"
-                android:textSize="16sp"
-                android:textStyle="bold"
-                android:textColor="@color/text_white"
-                android:background="@drawable/metallic_button_bg"
-                android:gravity="center"
-                android:padding="16dp"
-                android:clickable="true"
-                android:focusable="true"
-                android:layout_marginBottom="16dp"
-                android:elevation="6dp" />
-
-            <TextView
-                android:id="@+id/restoreAccountLink"
-                android:layout_width="280dp"
-                android:layout_height="wrap_content"
-                android:text="Import Account"
-                android:textSize="16sp"
-                android:textColor="@color/primary_blue"
-                android:gravity="center"
-                android:padding="16dp"
-                android:clickable="true"
-                android:focusable="true" />
-
-        </LinearLayout>
+        <!-- Biometric Authentication Button -->
+        <ImageView
+            android:id="@+id/biometricButton"
+            android:layout_width="80dp"
+            android:layout_height="80dp"
+            android:layout_gravity="center_horizontal"
+            android:src="@drawable/ic_fingerprint"
+            android:scaleType="fitCenter"
+            android:alpha="0.3"
+            android:clickable="true"
+            android:focusable="true"
+            android:visibility="gone"
+            android:contentDescription="Unlock with biometric"
+            android:layout_marginTop="8dp" />
 
     </LinearLayout>
+
+    <!-- Forgot Password / Import Recovery -->
+    <TextView
+        android:id="@+id/forgotPasswordText"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Forgot Password? Import Recovery"
+        android:textSize="14sp"
+        android:fontFamily="@font/poppins_medium"
+        android:layout_marginBottom="32dp"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent" />
 
 </androidx.constraintlayout.widget.ConstraintLayout>

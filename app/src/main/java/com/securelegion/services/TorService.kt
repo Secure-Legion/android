@@ -1253,23 +1253,15 @@ class TorService : Service() {
 
                 // Only show notification and broadcast if Ping was stored (sender is in contacts)
                 if (contactId != null) {
-                    // Check if download is already in progress for this contact
-                    val downloadStatusPrefs = getSharedPreferences("download_status", MODE_PRIVATE)
-                    val downloadInProgress = downloadStatusPrefs.getBoolean("downloading_$contactId", false)
+                    // Show notification for each new ping (deduplication handled by database)
+                    showNewMessageNotification()
 
-                    if (!downloadInProgress) {
-                        // Show simple notification - no preview or accept/decline
-                        showNewMessageNotification()
-
-                        // Broadcast to update MainActivity and ChatActivity if open (explicit broadcast)
-                        val intent = Intent("com.securelegion.NEW_PING")
-                        intent.setPackage(packageName) // Make it explicit
-                        intent.putExtra("CONTACT_ID", contactId)
-                        sendBroadcast(intent)
-                        Log.d(TAG, "Sent explicit NEW_PING broadcast for contactId=$contactId")
-                    } else {
-                        Log.d(TAG, "Download in progress for contact $contactId - suppressing duplicate PING notification")
-                    }
+                    // Broadcast to update MainActivity and ChatActivity if open (explicit broadcast)
+                    val intent = Intent("com.securelegion.NEW_PING")
+                    intent.setPackage(packageName) // Make it explicit
+                    intent.putExtra("CONTACT_ID", contactId)
+                    sendBroadcast(intent)
+                    Log.d(TAG, "Sent explicit NEW_PING broadcast for contactId=$contactId")
                 } else {
                     Log.w(TAG, "Ping from unknown contact - no notification shown")
                 }
@@ -1463,10 +1455,29 @@ class TorService : Service() {
             val contact = database.contactDao().getContactByX25519PublicKey(senderX25519Base64)
 
             if (contact == null) {
-                // Unknown sender - this must be a friend request
-                // Friend requests are the ONLY messages from unknown contacts that are allowed
-                Log.i(TAG, "→ Unknown sender - treating as FRIEND REQUEST")
-                handleFriendRequest(senderX25519PublicKey, encryptedPayload)
+                // Unknown sender - check if we have a pending outgoing request
+                // If yes, this is a FRIEND_REQUEST_ACCEPTED notification
+                // If no, this is a new incoming FRIEND_REQUEST
+                val prefs = getSharedPreferences("friend_requests", MODE_PRIVATE)
+                val pendingRequestsV2 = prefs.getStringSet("pending_requests_v2", mutableSetOf()) ?: mutableSetOf()
+                val hasPendingOutgoingRequest = pendingRequestsV2.any { requestJson ->
+                    try {
+                        val request = com.securelegion.models.PendingFriendRequest.fromJson(requestJson)
+                        request.direction == com.securelegion.models.PendingFriendRequest.DIRECTION_OUTGOING
+                        // Note: We can't match by X25519 key here since we don't have their card yet
+                        // We'll handle this inside handleFriendRequestAcceptedFromPending
+                    } catch (e: Exception) {
+                        false
+                    }
+                }
+
+                if (hasPendingOutgoingRequest) {
+                    Log.i(TAG, "→ Unknown sender with pending outgoing request - treating as FRIEND_REQUEST_ACCEPTED")
+                    handleFriendRequestAcceptedFromPending(senderX25519PublicKey, encryptedPayload)
+                } else {
+                    Log.i(TAG, "→ Unknown sender - treating as FRIEND_REQUEST")
+                    handleFriendRequest(senderX25519PublicKey, encryptedPayload)
+                }
                 return
             }
 
@@ -1715,22 +1726,148 @@ class TorService : Service() {
             Log.i(TAG, "Friend request from: ${friendRequest.displayName}")
             Log.i(TAG, "  IPFS CID: ${friendRequest.ipfsCid}")
 
-            // Store in SharedPreferences as pending friend request
+            // Store in SharedPreferences as pending friend request (v2 format with direction)
             val prefs = getSharedPreferences("friend_requests", MODE_PRIVATE)
-            val existingRequests = prefs.getStringSet("pending_requests", mutableSetOf()) ?: mutableSetOf()
+            val existingRequests = prefs.getStringSet("pending_requests_v2", mutableSetOf()) ?: mutableSetOf()
 
-            // Add new request (use JSON as storage format)
+            // Create PendingFriendRequest with direction=INCOMING
+            val pendingRequest = com.securelegion.models.PendingFriendRequest(
+                displayName = friendRequest.displayName,
+                ipfsCid = friendRequest.ipfsCid,
+                direction = com.securelegion.models.PendingFriendRequest.DIRECTION_INCOMING,
+                status = com.securelegion.models.PendingFriendRequest.STATUS_PENDING,
+                timestamp = System.currentTimeMillis(),
+                contactCardJson = null  // Will be downloaded when user accepts
+            )
+
+            // Add new request (use v2 JSON format)
             val updatedRequests = existingRequests.toMutableSet()
-            updatedRequests.add(friendRequestJson)
-            prefs.edit().putStringSet("pending_requests", updatedRequests).apply()
+            updatedRequests.add(pendingRequest.toJson())
+            prefs.edit().putStringSet("pending_requests_v2", updatedRequests).apply()
 
-            Log.i(TAG, "Friend request stored - total pending: ${updatedRequests.size}")
+            Log.i(TAG, "Friend request stored (v2 format) - total pending: ${updatedRequests.size}")
 
             // Show notification
             showFriendRequestNotification(friendRequest.displayName)
 
+            // Broadcast to update MainActivity badge count (explicit broadcast)
+            val intent = Intent("com.securelegion.FRIEND_REQUEST_RECEIVED")
+            intent.setPackage(packageName)
+            sendBroadcast(intent)
+            Log.d(TAG, "Broadcast FRIEND_REQUEST_RECEIVED to update badge")
+
         } catch (e: Exception) {
             Log.e(TAG, "Error handling friend request", e)
+        }
+    }
+
+    /**
+     * Handle incoming friend request accepted notification from pending outgoing request
+     * This means someone accepted our friend request - add them to Contacts
+     */
+    private fun handleFriendRequestAcceptedFromPending(senderX25519PublicKey: ByteArray, encryptedAcceptance: ByteArray) {
+        try {
+            Log.i(TAG, "╔════════════════════════════════════════")
+            Log.i(TAG, "║  FRIEND REQUEST ACCEPTED (FROM PENDING)")
+            Log.i(TAG, "╚════════════════════════════════════════")
+
+            // Decrypt acceptance notification to get their CID
+            val wireMessage = senderX25519PublicKey + encryptedAcceptance
+            val keyManager = com.securelegion.crypto.KeyManager.getInstance(this)
+            val ourEd25519PublicKey = keyManager.getSigningPublicKey()
+            val ourPrivateKey = keyManager.getSigningKeyBytes()
+
+            val decryptedJson = RustBridge.decryptMessage(
+                wireMessage,
+                ourEd25519PublicKey,
+                ourPrivateKey
+            )
+
+            if (decryptedJson.isNullOrEmpty()) {
+                Log.e(TAG, "Failed to decrypt acceptance notification")
+                return
+            }
+
+            // Parse the acceptance (contains their CID)
+            val acceptance = com.securelegion.models.FriendRequest.fromJson(decryptedJson)
+            Log.i(TAG, "Acceptance from: ${acceptance.displayName}, CID: ${acceptance.ipfsCid}")
+
+            // Find matching pending outgoing request
+            val prefs = getSharedPreferences("friend_requests", MODE_PRIVATE)
+            val pendingRequestsV2 = prefs.getStringSet("pending_requests_v2", mutableSetOf()) ?: mutableSetOf()
+            val matchingRequest = pendingRequestsV2.mapNotNull { requestJson ->
+                try {
+                    com.securelegion.models.PendingFriendRequest.fromJson(requestJson)
+                } catch (e: Exception) {
+                    null
+                }
+            }.find {
+                it.ipfsCid == acceptance.ipfsCid &&
+                it.direction == com.securelegion.models.PendingFriendRequest.DIRECTION_OUTGOING
+            }
+
+            if (matchingRequest == null) {
+                Log.w(TAG, "No matching pending outgoing request found for CID: ${acceptance.ipfsCid}")
+                return
+            }
+
+            Log.i(TAG, "Found matching pending request for: ${matchingRequest.displayName}")
+
+            // Parse the saved contact card and add to Contacts
+            if (matchingRequest.contactCardJson == null) {
+                Log.w(TAG, "No contact card data saved with pending request - cannot add to Contacts")
+                return
+            }
+
+            try {
+                val contactCard = com.securelegion.models.ContactCard.fromJson(matchingRequest.contactCardJson)
+                Log.d(TAG, "Parsed contact card for: ${contactCard.displayName}")
+
+                // Add to Contacts database
+                val dbPassphrase = keyManager.getDatabasePassphrase()
+                val database = com.securelegion.database.SecureLegionDatabase.getInstance(this, dbPassphrase)
+
+                val contact = com.securelegion.database.entities.Contact(
+                    displayName = contactCard.displayName,
+                    solanaAddress = contactCard.solanaAddress,
+                    publicKeyBase64 = android.util.Base64.encodeToString(
+                        contactCard.solanaPublicKey,
+                        android.util.Base64.NO_WRAP
+                    ),
+                    x25519PublicKeyBase64 = android.util.Base64.encodeToString(
+                        contactCard.x25519PublicKey,
+                        android.util.Base64.NO_WRAP
+                    ),
+                    torOnionAddress = contactCard.torOnionAddress,
+                    addedTimestamp = System.currentTimeMillis(),
+                    lastContactTimestamp = System.currentTimeMillis(),
+                    trustLevel = com.securelegion.database.entities.Contact.TRUST_UNTRUSTED,
+                    friendshipStatus = com.securelegion.database.entities.Contact.FRIENDSHIP_CONFIRMED
+                )
+
+                kotlinx.coroutines.runBlocking {
+                    database.contactDao().insertContact(contact)
+                }
+
+                Log.i(TAG, "✓ Added ${contactCard.displayName} to Contacts with CONFIRMED status")
+
+                // Remove from pending
+                val newPendingSet = pendingRequestsV2.toMutableSet()
+                newPendingSet.remove(matchingRequest.toJson())
+                prefs.edit().putStringSet("pending_requests_v2", newPendingSet).apply()
+
+                Log.i(TAG, "✓ Friend request accepted! ${acceptance.displayName} is now your friend")
+                Log.i(TAG, "   Removed from pending requests, added to Contacts")
+
+                // Show notification
+                showFriendRequestAcceptedNotification(acceptance.displayName)
+
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to add contact to database", e)
+            }
+
+        } catch (e: Exception) {
+            Log.e(TAG, "Error handling friend request accepted from pending", e)
         }
     }
 
@@ -1817,6 +1954,10 @@ class TorService : Service() {
      */
     private fun showFriendRequestNotification(senderName: String) {
         try {
+            // Generate consistent notification ID per contact name
+            // Use hashCode to create stable ID for each unique sender
+            val friendRequestNotificationId = 5000 + Math.abs(senderName.hashCode() % 10000)
+
             // Launch via LockActivity to prevent showing app before authentication
             val intent = android.content.Intent(this, com.securelegion.LockActivity::class.java).apply {
                 putExtra("TARGET_ACTIVITY", "MainActivity")
@@ -1838,12 +1979,13 @@ class TorService : Service() {
                 .setCategory(androidx.core.app.NotificationCompat.CATEGORY_SOCIAL)
                 .setAutoCancel(true)
                 .setContentIntent(pendingIntent)
+                .setGroup("FRIEND_REQUESTS")
                 .build()
 
             val notificationManager = getSystemService(android.app.NotificationManager::class.java)
-            notificationManager.notify(1000, notification)
+            notificationManager.notify(friendRequestNotificationId, notification)
 
-            Log.i(TAG, "Friend request notification shown")
+            Log.i(TAG, "Friend request notification shown for $senderName (ID: $friendRequestNotificationId)")
         } catch (e: Exception) {
             Log.e(TAG, "Failed to show friend request notification", e)
         }
@@ -1854,6 +1996,10 @@ class TorService : Service() {
      */
     private fun showFriendRequestAcceptedNotification(contactName: String) {
         try {
+            // Generate consistent notification ID per contact name
+            // Use hashCode to create stable ID for each unique contact (different range from friend requests)
+            val acceptedNotificationId = 6000 + Math.abs(contactName.hashCode() % 10000)
+
             // Launch via LockActivity to prevent showing app before authentication
             val intent = android.content.Intent(this, com.securelegion.LockActivity::class.java).apply {
                 putExtra("TARGET_ACTIVITY", "MainActivity")
@@ -1874,12 +2020,13 @@ class TorService : Service() {
                 .setCategory(androidx.core.app.NotificationCompat.CATEGORY_SOCIAL)
                 .setAutoCancel(true)
                 .setContentIntent(pendingIntent)
+                .setGroup("FRIEND_REQUESTS")
                 .build()
 
             val notificationManager = getSystemService(android.app.NotificationManager::class.java)
-            notificationManager.notify(1001, notification)
+            notificationManager.notify(acceptedNotificationId, notification)
 
-            Log.i(TAG, "Friend request accepted notification shown")
+            Log.i(TAG, "Friend request accepted notification shown for $contactName (ID: $acceptedNotificationId)")
         } catch (e: Exception) {
             Log.e(TAG, "Failed to show friend request accepted notification", e)
         }
@@ -1930,19 +2077,21 @@ class TorService : Service() {
                 val contact = database.contactDao().getContactByPublicKey(publicKeyBase64)
 
                 if (contact != null) {
-                    // Store pending Ping info in SharedPreferences (including encrypted bytes for restore)
+                    // Store pending Ping in queue (NEW: supports multiple pings per contact)
                     val prefs = getSharedPreferences("pending_pings", Context.MODE_PRIVATE)
                     val encryptedPingBase64 = android.util.Base64.encodeToString(encryptedPingWire, android.util.Base64.NO_WRAP)
-                    prefs.edit().apply {
-                        putString("ping_${contact.id}_id", pingId)
-                        putLong("ping_${contact.id}_connection", connectionId)
-                        putString("ping_${contact.id}_name", senderName)
-                        putLong("ping_${contact.id}_timestamp", System.currentTimeMillis())
-                        putString("ping_${contact.id}_data", encryptedPingBase64)  // Save encrypted Ping for restore
-                        putString("ping_${contact.id}_onion", contact.torOnionAddress)  // Save sender's .onion address for new connection
-                        apply()
-                    }
-                    Log.i(TAG, "Stored pending Ping for contact ${contact.id}: $senderName")
+
+                    val pendingPing = com.securelegion.models.PendingPing(
+                        pingId = pingId,
+                        connectionId = connectionId,
+                        senderName = senderName,
+                        timestamp = System.currentTimeMillis(),
+                        encryptedPingData = encryptedPingBase64,
+                        senderOnionAddress = contact.torOnionAddress
+                    )
+
+                    com.securelegion.models.PendingPing.addToQueue(prefs, contact.id, pendingPing)
+                    Log.i(TAG, "Added Ping $pingId to queue for contact ${contact.id}: $senderName")
                     return contact.id  // Return contact ID for broadcast
                 } else {
                     Log.w(TAG, "Cannot store Ping - sender not in contacts: $senderName")
@@ -2035,9 +2184,21 @@ class TorService : Service() {
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
 
-        // Get pending message count
+        // Get pending message count (new format: ping_queue_<contactId>)
         val prefs = getSharedPreferences("pending_pings", Context.MODE_PRIVATE)
-        val pendingCount = prefs.all.filter { it.key.endsWith("_id") }.size
+
+        // Count total pings across all contacts
+        var pendingCount = 0
+        prefs.all.forEach { (key, value) ->
+            if (key.startsWith("ping_queue_") && value is String) {
+                try {
+                    val jsonArray = org.json.JSONArray(value)
+                    pendingCount += jsonArray.length()
+                } catch (e: Exception) {
+                    Log.w(TAG, "Failed to parse ping queue for key $key", e)
+                }
+            }
+        }
 
         // Only show notification if there are pending messages
         if (pendingCount > 0) {
@@ -2225,6 +2386,7 @@ class TorService : Service() {
 
                 // Broadcast to update ChatActivity if it's open for this contact
                 val messageReceivedIntent = Intent("com.securelegion.MESSAGE_RECEIVED").apply {
+                    setPackage(packageName)
                     putExtra("CONTACT_ID", contact.id)
                 }
                 sendBroadcast(messageReceivedIntent)
@@ -2314,6 +2476,11 @@ class TorService : Service() {
             messageText
         }
 
+        // Use unique notification ID per MESSAGE (not per contact)
+        // Each message gets its own notification that can be dismissed independently
+        // Use current time millis to ensure uniqueness
+        val messageNotificationId = (System.currentTimeMillis() % 100000).toInt() + 10000
+
         // Build notification
         val notification = NotificationCompat.Builder(this, AUTH_CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_shield)
@@ -2325,13 +2492,14 @@ class TorService : Service() {
             .setAutoCancel(true)
             .setContentIntent(openChatPendingIntent)
             .addAction(R.drawable.ic_send, "Reply", replyPendingIntent)
+            .setGroup("MESSAGES_${contactId}") // Group messages by contact
             .build()
 
-        // Show notification
+        // Show notification - each message gets unique ID
         val notificationManager = getSystemService(NotificationManager::class.java)
-        notificationManager.notify(contactId.toInt() + 20000, notification)
+        notificationManager.notify(messageNotificationId, notification)
 
-        Log.i(TAG, "Message notification shown for $senderName")
+        Log.i(TAG, "Message notification shown for $senderName (unique ID: $messageNotificationId)")
     }
 
     /**

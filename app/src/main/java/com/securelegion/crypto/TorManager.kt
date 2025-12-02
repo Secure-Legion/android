@@ -80,6 +80,15 @@ class TorManager(private val context: Context) {
             initCallbacks.add(onComplete)
         }
 
+        // Start bootstrap event listener EARLY, before Tor even starts
+        // This ensures it can capture progress from 0% onwards
+        try {
+            Log.i(TAG, "Starting bootstrap event listener early...")
+            RustBridge.startBootstrapListener()
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to start bootstrap listener (may start later)", e)
+        }
+
         Thread {
             try {
                 // Check if Tor control port is already accessible
@@ -241,7 +250,7 @@ class TorManager(private val context: Context) {
     /**
      * Save the .onion address
      */
-    private fun saveOnionAddress(address: String) {
+    fun saveOnionAddress(address: String) {
         prefs.edit().putString(KEY_ONION_ADDRESS, address).apply()
     }
 

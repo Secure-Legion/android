@@ -29,7 +29,7 @@ class SettingsActivity : BaseActivity() {
     }
 
     private fun setupClickListeners() {
-        // Back button
+        // Back Button
         findViewById<View>(R.id.backButton).setOnClickListener {
             finish()
         }
@@ -37,11 +37,6 @@ class SettingsActivity : BaseActivity() {
         // Duress PIN
         findViewById<View>(R.id.duressPinItem).setOnClickListener {
             startActivity(Intent(this, DuressPinActivity::class.java))
-        }
-
-        // Wallet Identity
-        findViewById<View>(R.id.walletIdentityItem).setOnClickListener {
-            startActivity(Intent(this, WalletIdentityActivity::class.java))
         }
 
         // Device Password
@@ -96,7 +91,6 @@ class SettingsActivity : BaseActivity() {
     private fun setupBiometricToggle() {
         val biometricItem = findViewById<LinearLayout>(R.id.biometricItem)
         val biometricSwitch = findViewById<SwitchCompat>(R.id.biometricSwitch)
-        val biometricSubtext = findViewById<TextView>(R.id.biometricSubtext)
 
         // Check if biometric hardware is available
         when (biometricHelper.isBiometricAvailable()) {
@@ -123,10 +117,9 @@ class SettingsActivity : BaseActivity() {
                 }
             }
             BiometricAuthHelper.BiometricStatus.NONE_ENROLLED -> {
-                // Show item but disabled with message
+                // Show item but disabled
                 biometricItem.visibility = View.VISIBLE
                 biometricSwitch.isEnabled = false
-                biometricSubtext.text = "No fingerprint/face enrolled on device"
                 Log.d("SettingsActivity", "Biometric not enrolled - showing disabled toggle")
             }
             else -> {

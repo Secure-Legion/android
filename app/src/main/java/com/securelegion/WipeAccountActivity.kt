@@ -24,7 +24,7 @@ class WipeAccountActivity : AppCompatActivity() {
         // Setup bottom navigation
         BottomNavigationHelper.setupBottomNavigation(this)
 
-        // Back button
+        // Setup back button
         findViewById<View>(R.id.backButton).setOnClickListener {
             finish()
         }

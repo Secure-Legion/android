@@ -28,11 +28,13 @@ class DownloadMessageService : Service() {
 
         const val EXTRA_CONTACT_ID = "EXTRA_CONTACT_ID"
         const val EXTRA_CONTACT_NAME = "EXTRA_CONTACT_NAME"
+        const val EXTRA_PING_ID = "EXTRA_PING_ID"
 
-        fun start(context: Context, contactId: Long, contactName: String) {
+        fun start(context: Context, contactId: Long, contactName: String, pingId: String) {
             val intent = Intent(context, DownloadMessageService::class.java).apply {
                 putExtra(EXTRA_CONTACT_ID, contactId)
                 putExtra(EXTRA_CONTACT_NAME, contactName)
+                putExtra(EXTRA_PING_ID, pingId)
             }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 context.startForegroundService(intent)
@@ -54,9 +56,10 @@ class DownloadMessageService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val contactId = intent?.getLongExtra(EXTRA_CONTACT_ID, -1L) ?: -1L
         val contactName = intent?.getStringExtra(EXTRA_CONTACT_NAME) ?: "Unknown"
+        val pingId = intent?.getStringExtra(EXTRA_PING_ID) ?: ""
 
-        if (contactId == -1L) {
-            Log.e(TAG, "Invalid contact ID, stopping service")
+        if (contactId == -1L || pingId.isEmpty()) {
+            Log.e(TAG, "Invalid contact ID or ping ID, stopping service")
             stopSelf()
             return START_NOT_STICKY
         }
@@ -67,12 +70,12 @@ class DownloadMessageService : Service() {
         // Set download-in-progress flag to prevent notification spam
         val downloadStatusPrefs = getSharedPreferences("download_status", MODE_PRIVATE)
         downloadStatusPrefs.edit().putBoolean("downloading_$contactId", true).apply()
-        Log.d(TAG, "Set download-in-progress flag for contact $contactId")
+        Log.d(TAG, "Set download-in-progress flag for contact $contactId, ping $pingId")
 
         // Launch download in background
         serviceScope.launch {
             try {
-                downloadMessage(contactId, contactName)
+                downloadMessage(contactId, contactName, pingId)
             } catch (e: Exception) {
                 Log.e(TAG, "Download failed", e)
 
@@ -105,12 +108,13 @@ class DownloadMessageService : Service() {
     private var currentContactId: Long = -1L
     private var currentContactName: String = ""
 
-    private suspend fun downloadMessage(contactId: Long, contactName: String) {
+    private suspend fun downloadMessage(contactId: Long, contactName: String, pingId: String) {
         currentContactId = contactId
         currentContactName = contactName
 
         Log.i(TAG, "========== DOWNLOAD INITIATED ==========")
         Log.i(TAG, "Contact: $contactName (ID: $contactId)")
+        Log.i(TAG, "Ping ID: $pingId")
 
         // START DOWNLOAD WATCHDOG - monitor for timeout
         val downloadStartTime = System.currentTimeMillis()
@@ -124,6 +128,7 @@ class DownloadMessageService : Service() {
                 Log.e(TAG, "⚠️  DOWNLOAD TIMEOUT after ${elapsed}ms")
                 Log.e(TAG, "Diagnostic info:")
                 Log.e(TAG, "  Contact: $contactName (ID: $contactId)")
+                Log.e(TAG, "  Ping ID: $pingId")
 
                 try {
                     val torStatus = checkTorStatus()
@@ -138,15 +143,20 @@ class DownloadMessageService : Service() {
             }
         }
 
+        // Load specific pending ping from queue
         val prefs = getSharedPreferences("pending_pings", MODE_PRIVATE)
-        val pingId = prefs.getString("ping_${contactId}_id", null)
+        val queue = com.securelegion.models.PendingPing.loadQueueForContact(prefs, contactId)
+        val pendingPing = queue.find { it.pingId == pingId }
 
-        if (pingId == null) {
+        if (pendingPing == null) {
             downloadCompleted = true
             watchdogJob.cancel()
-            showFailureNotification(contactName, "No pending message")
+            Log.e(TAG, "Ping $pingId not found in queue for contact $contactId")
+            showFailureNotification(contactName, "Message not found in queue")
             return
         }
+
+        Log.i(TAG, "Found pending ping in queue: ${pendingPing.senderName}")
 
         // No download lock needed - ACK-based system prevents duplicates via DB checks
 
@@ -222,37 +232,29 @@ class DownloadMessageService : Service() {
         updateNotification(contactName, "[1/4] Preparing download...")
         Log.i(TAG, "========== STAGE 1/4: PREPARING ==========")
 
-        // Restore Ping from SharedPreferences
-        val encryptedPingBase64 = prefs.getString("ping_${contactId}_data", null)
-        if (encryptedPingBase64 != null) {
-            try {
-                Log.d(TAG, "Restoring Ping from SharedPreferences")
-                val encryptedPingWire = android.util.Base64.decode(encryptedPingBase64, android.util.Base64.NO_WRAP)
+        // Restore Ping from PendingPing object
+        try {
+            Log.d(TAG, "Restoring Ping from queue")
+            val encryptedPingWire = android.util.Base64.decode(pendingPing.encryptedPingData, android.util.Base64.NO_WRAP)
 
-                val restoredPingId = withContext(Dispatchers.IO) {
-                    com.securelegion.crypto.RustBridge.decryptIncomingPing(encryptedPingWire)
-                }
-
-                if (restoredPingId != null && restoredPingId == pingId) {
-                    Log.i(TAG, "Successfully restored Ping: $pingId")
-                } else {
-                    Log.w(TAG, "Restored Ping ID mismatch or failed: expected=$pingId, got=$restoredPingId")
-                }
-            } catch (e: Exception) {
-                Log.e(TAG, "Failed to restore Ping from SharedPreferences", e)
+            val restoredPingId = withContext(Dispatchers.IO) {
+                com.securelegion.crypto.RustBridge.decryptIncomingPing(encryptedPingWire)
             }
+
+            if (restoredPingId != null && restoredPingId == pingId) {
+                Log.i(TAG, "Successfully restored Ping: $pingId")
+            } else {
+                Log.w(TAG, "Restored Ping ID mismatch or failed: expected=$pingId, got=$restoredPingId")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to restore Ping from queue", e)
         }
 
-        // Get sender's .onion address
-        val senderOnion = prefs.getString("ping_${contactId}_onion", null)
-        if (senderOnion == null) {
-            Log.e(TAG, "No sender .onion address found")
-            showFailureNotification(contactName, "Missing sender address")
-            return
-        }
+        // Get sender's .onion address from PendingPing
+        val senderOnion = pendingPing.senderOnionAddress
 
-        // Get connection ID (may not exist for very old pings)
-        val connectionId = prefs.getLong("ping_${contactId}_connection", -1L)
+        // Get connection ID from PendingPing
+        val connectionId = pendingPing.connectionId
 
         Log.i(TAG, "Ping ID: $pingId")
         Log.i(TAG, "Sender: $senderOnion")
@@ -286,7 +288,7 @@ class DownloadMessageService : Service() {
         // PATH 1: Try sending Pong on original connection (instant messaging)
         // But only if connection is fresh (< 30 seconds old) AND still alive - stale/broken connections will timeout
         if (connectionId != -1L) {
-            val pingTimestamp = prefs.getLong("ping_${contactId}_timestamp", 0L)
+            val pingTimestamp = pendingPing.timestamp
             val connectionAge = System.currentTimeMillis() - pingTimestamp
 
             // Check 1: Connection age (< 30s)
@@ -431,19 +433,9 @@ class DownloadMessageService : Service() {
         notificationManager?.cancel(notificationId)
         Log.i(TAG, "Dismissed pending message notification (ID: $notificationId)")
 
-        // Clear the pending Ping data
-        prefs.edit()
-            .remove("ping_${contactId}_id")
-            .remove("ping_${contactId}_sender")
-            .remove("ping_${contactId}_timestamp")
-            .remove("ping_${contactId}_data")
-            .remove("ping_${contactId}_onion")
-            .remove("ping_${contactId}_connection")
-            .remove("ping_${contactId}_name")
-            .apply()  // Use apply() instead of commit() for async/non-blocking
-
-        // Small delay to ensure SharedPreferences write completes
-        delay(100)  // Reduced from 300ms since apply() is faster
+        // Remove this specific ping from the queue (synchronous for immediate consistency)
+        com.securelegion.models.PendingPing.removeFromQueue(prefs, contactId, pingId, synchronous = true)
+        Log.i(TAG, "Removed ping $pingId from queue (synchronous write)")
 
         // Broadcast to ChatActivity to refresh (ChatActivity will notify MainActivity if needed)
         val intent = Intent("com.securelegion.MESSAGE_RECEIVED")

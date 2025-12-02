@@ -56,7 +56,9 @@ class ChatActivity : BaseActivity() {
     private lateinit var messageAdapter: MessageAdapter
     private lateinit var messageService: MessageService
     private lateinit var messageInput: EditText
-    private lateinit var sendButton: ImageView
+    private lateinit var sendButton: View
+    private lateinit var sendButtonIcon: ImageView
+    private lateinit var plusButton: View
     private lateinit var textInputLayout: LinearLayout
     private lateinit var voiceRecordingLayout: LinearLayout
     private lateinit var recordingTimer: TextView
@@ -69,6 +71,9 @@ class ChatActivity : BaseActivity() {
     private var isShowingSendButton = false
     private var isDownloadInProgress = false
     private var isSelectionMode = false
+
+    // Track which specific pings are currently being downloaded
+    private val downloadingPingIds = mutableSetOf<String>()
 
     // Voice recording
     private lateinit var voiceRecorder: VoiceRecorder
@@ -86,15 +91,29 @@ class ChatActivity : BaseActivity() {
                     Log.d(TAG, "MESSAGE_RECEIVED broadcast: received contactId=$receivedContactId, current contactId=$contactId")
                     if (receivedContactId == contactId) {
                         Log.i(TAG, "New message for current contact - reloading messages")
-                        // Verify pending ping is cleared before resetting flag
-                        val prefs = getSharedPreferences("pending_pings", MODE_PRIVATE)
-                        if (!prefs.contains("ping_${contactId}_id")) {
-                            isDownloadInProgress = false  // Download complete, ping cleared
-                        }
-                        runOnUiThread {
-                            lifecycleScope.launch {
-                                loadMessages()
+
+                        // Launch coroutine immediately to avoid blocking broadcast receiver
+                        lifecycleScope.launch(Dispatchers.Main) {
+                            // Clean up downloading set - check queue in background
+                            val prefs = getSharedPreferences("pending_pings", MODE_PRIVATE)
+                            val pendingPings = withContext(Dispatchers.IO) {
+                                com.securelegion.models.PendingPing.loadQueueForContact(prefs, contactId)
                             }
+
+                            // Remove completed downloads from tracking set
+                            val stillPendingIds = pendingPings.map { it.pingId }.toSet()
+                            val completedDownloads = downloadingPingIds.filter { it !in stillPendingIds }
+                            completedDownloads.forEach { downloadingPingIds.remove(it) }
+                            if (completedDownloads.isNotEmpty()) {
+                                Log.d(TAG, "✓ Cleared ${completedDownloads.size} completed downloads from UI tracking")
+                            }
+
+                            if (pendingPings.isEmpty()) {
+                                isDownloadInProgress = false  // Download complete, pings cleared
+                            }
+
+                            // Now reload messages (which will reflect the cleared downloadingPingIds)
+                            loadMessages()
                         }
                     } else {
                         Log.d(TAG, "Message for different contact, ignoring")
@@ -106,14 +125,15 @@ class ChatActivity : BaseActivity() {
 
                     if (receivedContactId == contactId) {
                         // NEW_PING for current contact
-                        // Check if pending ping exists - if cleared during download, allow refresh
+                        // Check if pending pings exist - if cleared during download, allow refresh (using new queue format)
                         val prefs = getSharedPreferences("pending_pings", MODE_PRIVATE)
-                        val hasPendingPing = prefs.contains("ping_${contactId}_id")
+                        val pendingPings = com.securelegion.models.PendingPing.loadQueueForContact(prefs, contactId)
+                        val hasPendingPing = pendingPings.isNotEmpty()
 
                         if (!isDownloadInProgress || !hasPendingPing) {
-                            // Either not downloading, OR download completed (ping cleared) - refresh UI
+                            // Either not downloading, OR download completed (pings cleared) - refresh UI
                             if (isDownloadInProgress && !hasPendingPing) {
-                                Log.i(TAG, "Download completed (ping cleared) - resetting flag and refreshing UI")
+                                Log.i(TAG, "Download completed (pings cleared) - resetting flag and refreshing UI")
                                 isDownloadInProgress = false
                             } else {
                                 Log.i(TAG, "New Ping for current contact - reloading to show lock icon")
@@ -220,6 +240,9 @@ class ChatActivity : BaseActivity() {
 
         Log.d(TAG, "Opening chat with: $contactName (ID: $contactId)")
 
+        // Migrate old pending ping format to queue format (one-time)
+        com.securelegion.utils.PendingPingMigration.migrateIfNeeded(this)
+
         // Initialize services
         messageService = MessageService(this)
         voiceRecorder = VoiceRecorder(this)
@@ -253,6 +276,7 @@ class ChatActivity : BaseActivity() {
             addAction("com.securelegion.NEW_PING")
             addAction("com.securelegion.DOWNLOAD_FAILED")
         }
+        @Suppress("UnspecifiedRegisterReceiverFlag")
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
             registerReceiver(messageReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
         } else {
@@ -280,11 +304,17 @@ class ChatActivity : BaseActivity() {
     private fun setupRecyclerView() {
         messagesRecyclerView = findViewById(R.id.messagesRecyclerView)
         messageAdapter = MessageAdapter(
-            onDownloadClick = {
-                handleDownloadClick()
+            onDownloadClick = { pingId ->
+                handleDownloadClick(pingId)
             },
             onVoicePlayClick = { message ->
                 playVoiceMessage(message)
+            },
+            onMessageLongClick = {
+                // Enter selection mode on long-press
+                if (!isSelectionMode) {
+                    toggleSelectionMode()
+                }
             }
         )
 
@@ -308,6 +338,8 @@ class ChatActivity : BaseActivity() {
         // Initialize views
         messageInput = findViewById(R.id.messageInput)
         sendButton = findViewById(R.id.sendButton)
+        sendButtonIcon = findViewById(R.id.sendButtonIcon)
+        plusButton = findViewById(R.id.plusButton)
         textInputLayout = findViewById(R.id.textInputLayout)
         voiceRecordingLayout = findViewById(R.id.voiceRecordingLayout)
         recordingTimer = findViewById(R.id.recordingTimer)
@@ -324,21 +356,20 @@ class ChatActivity : BaseActivity() {
             }
         }
 
-        // Delete button
-        findViewById<View>(R.id.deleteButton).setOnClickListener {
+        // Trash button (enter selection mode or delete selected)
+        findViewById<View>(R.id.settingsButton).setOnClickListener {
             if (isSelectionMode) {
-                // If messages are selected, delete them
-                // If no messages selected, exit selection mode
-                val selectedIds = messageAdapter.getSelectedMessageIds()
-                if (selectedIds.isEmpty()) {
-                    toggleSelectionMode()
-                } else {
-                    deleteSelectedMessages()
-                }
+                // In selection mode: delete selected messages
+                deleteSelectedMessages()
             } else {
-                // Enter selection mode
+                // Normal mode: enter selection mode
                 toggleSelectionMode()
             }
+        }
+
+        // Plus button (shows chat actions bottom sheet)
+        plusButton.setOnClickListener {
+            showChatActionsBottomSheet()
         }
 
         // Send/Mic button - dynamically switches based on text
@@ -394,17 +425,76 @@ class ChatActivity : BaseActivity() {
 
                 if (hasText && !isShowingSendButton) {
                     // Switch to send button
-                    sendButton.setImageResource(R.drawable.ic_send)
+                    sendButtonIcon.setImageResource(R.drawable.ic_send)
                     isShowingSendButton = true
                 } else if (!hasText && isShowingSendButton) {
                     // Switch to mic button
-                    sendButton.setImageResource(R.drawable.ic_mic)
+                    sendButtonIcon.setImageResource(R.drawable.ic_mic)
                     isShowingSendButton = false
                 }
             }
 
             override fun afterTextChanged(s: Editable?) {}
         })
+    }
+
+    private fun showChatActionsBottomSheet() {
+        val bottomSheet = com.google.android.material.bottomsheet.BottomSheetDialog(this)
+        val view = layoutInflater.inflate(R.layout.bottom_sheet_chat_actions, null)
+
+        bottomSheet.setContentView(view)
+
+        // Configure bottom sheet behavior
+        bottomSheet.behavior.isDraggable = true
+        bottomSheet.behavior.isFitToContents = true
+        bottomSheet.behavior.skipCollapsed = true
+
+        // Make all backgrounds transparent
+        bottomSheet.window?.setBackgroundDrawableResource(android.R.color.transparent)
+        bottomSheet.window?.findViewById<View>(com.google.android.material.R.id.design_bottom_sheet)?.setBackgroundResource(android.R.color.transparent)
+
+        // Remove the white background box
+        view.post {
+            val parentView = view.parent as? View
+            parentView?.setBackgroundResource(android.R.color.transparent)
+        }
+
+        // Send Money option
+        view.findViewById<View>(R.id.sendMoneyOption).setOnClickListener {
+            bottomSheet.dismiss()
+            ThemedToast.show(this, "Send Money - Coming soon")
+            // TODO: Implement send money functionality
+        }
+
+        // Request Money option
+        view.findViewById<View>(R.id.requestMoneyOption).setOnClickListener {
+            bottomSheet.dismiss()
+            ThemedToast.show(this, "Request Money - Coming soon")
+            // TODO: Implement request money functionality
+        }
+
+        // Send File option
+        view.findViewById<View>(R.id.sendFileOption).setOnClickListener {
+            bottomSheet.dismiss()
+            ThemedToast.show(this, "Send File - Coming soon")
+            // TODO: Implement send file functionality
+        }
+
+        // Send Image option
+        view.findViewById<View>(R.id.sendImageOption).setOnClickListener {
+            bottomSheet.dismiss()
+            ThemedToast.show(this, "Send Image - Coming soon")
+            // TODO: Implement send image functionality
+        }
+
+        // Send Video option
+        view.findViewById<View>(R.id.sendVideoOption).setOnClickListener {
+            bottomSheet.dismiss()
+            ThemedToast.show(this, "Send Video - Coming soon")
+            // TODO: Implement send video functionality
+        }
+
+        bottomSheet.show()
     }
 
     private fun startVoiceRecording() {
@@ -535,16 +625,16 @@ class ChatActivity : BaseActivity() {
     }
 
     private fun playVoiceMessage(message: com.securelegion.database.entities.Message) {
-        val filePath = message.voiceFilePath
-        if (filePath == null) {
+        val encryptedFilePath = message.voiceFilePath
+        if (encryptedFilePath == null) {
             Log.e(TAG, "Voice message has no file path")
             ThemedToast.show(this, "Voice file not found")
             return
         }
 
-        val file = File(filePath)
-        if (!file.exists()) {
-            Log.e(TAG, "Voice file does not exist: $filePath")
+        val encryptedFile = File(encryptedFilePath)
+        if (!encryptedFile.exists()) {
+            Log.e(TAG, "Encrypted voice file does not exist: $encryptedFilePath")
             ThemedToast.show(this, "Voice file not found")
             return
         }
@@ -564,24 +654,48 @@ class ChatActivity : BaseActivity() {
                 voicePlayer.stop()
             }
 
-            // Start playing
-            voicePlayer.play(
-                filePath = filePath,
-                onCompletion = {
-                    Log.d(TAG, "Voice message playback completed")
-                    currentlyPlayingMessageId = null
-                    runOnUiThread {
-                        messageAdapter.setCurrentlyPlayingMessageId(null)
+            try {
+                // Read and decrypt the encrypted voice file
+                val encryptedBytes = encryptedFile.readBytes()
+                val keyManager = com.securelegion.crypto.KeyManager.getInstance(this)
+                val decryptedAudio = keyManager.decryptVoiceFile(encryptedBytes)
+
+                // Create temporary playable file from decrypted audio
+                val tempPlayablePath = voicePlayer.loadFromBytes(decryptedAudio, message.messageId)
+
+                // Start playing the decrypted temp file
+                voicePlayer.play(
+                    filePath = tempPlayablePath,
+                    onCompletion = {
+                        Log.d(TAG, "Voice message playback completed")
+                        currentlyPlayingMessageId = null
+                        runOnUiThread {
+                            messageAdapter.setCurrentlyPlayingMessageId(null)
+                        }
+                        // Securely delete temporary playable file
+                        try {
+                            com.securelegion.utils.SecureWipe.secureDeleteFile(File(tempPlayablePath))
+                            Log.d(TAG, "Securely deleted temp voice file")
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Failed to delete temp voice file", e)
+                        }
+                    },
+                    onProgress = { currentPos, duration ->
+                        // Optionally update progress bar in real-time
+                        // Would need to pass ViewHolder reference to update progress
                     }
-                },
-                onProgress = { currentPos, duration ->
-                    // Optionally update progress bar in real-time
-                    // Would need to pass ViewHolder reference to update progress
-                }
-            )
-            currentlyPlayingMessageId = message.messageId
-            messageAdapter.setCurrentlyPlayingMessageId(message.messageId)
-            Log.d(TAG, "Started playing voice message")
+                )
+                currentlyPlayingMessageId = message.messageId
+                messageAdapter.setCurrentlyPlayingMessageId(message.messageId)
+                Log.d(TAG, "Started playing decrypted voice message")
+
+            } catch (e: SecurityException) {
+                Log.e(TAG, "Voice file decryption failed - authentication error", e)
+                ThemedToast.show(this, "Voice file corrupted or tampered")
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to play voice message", e)
+                ThemedToast.show(this, "Failed to play voice message")
+            }
         }
     }
 
@@ -618,22 +732,45 @@ class ChatActivity : BaseActivity() {
                 sendBroadcast(intent)
             }
 
-            // Check for pending Ping (but not if download is in progress to prevent ghost)
+            // Load all pending pings from queue (don't filter - let adapter handle downloading state)
             val prefs = getSharedPreferences("pending_pings", MODE_PRIVATE)
-            val hasPendingPing = prefs.contains("ping_${contactId}_id") && !isDownloadInProgress
-            val pendingSenderName = if (hasPendingPing) contactName else null
-            val pendingTimestamp = if (hasPendingPing) prefs.getLong("ping_${contactId}_timestamp", System.currentTimeMillis()) else null
+            val allPendingPings = com.securelegion.models.PendingPing.loadQueueForContact(prefs, contactId.toLong())
+
+            // Clean up pings that match existing messages (ghost pings from completed downloads)
+            val keyManager = KeyManager.getInstance(this@ChatActivity)
+            val dbPassphrase = keyManager.getDatabasePassphrase()
+            val database = SecureLegionDatabase.getInstance(this@ChatActivity, dbPassphrase)
+
+            val ghostPings = mutableListOf<String>()
+            allPendingPings.forEach { ping ->
+                // Check if this ping was already processed into a message
+                val existingMessage = database.messageDao().getMessageByPingId(ping.pingId)
+                if (existingMessage != null) {
+                    Log.w(TAG, "Found ghost ping ${ping.pingId} that matches existing message - removing")
+                    ghostPings.add(ping.pingId)
+                }
+            }
+
+            // Remove ghost pings from queue
+            ghostPings.forEach { pingId ->
+                com.securelegion.models.PendingPing.removeFromQueue(prefs, contactId.toLong(), pingId)
+            }
+
+            val pendingPings = allPendingPings.filter { it.pingId !in ghostPings }
+
+            if (ghostPings.isNotEmpty()) {
+                Log.i(TAG, "Cleaned up ${ghostPings.size} ghost pings")
+            }
 
             withContext(Dispatchers.Main) {
-                Log.d(TAG, "Updating adapter with ${messages.size} messages" +
-                    if (hasPendingPing) " + 1 pending" else "")
+                Log.d(TAG, "Updating adapter with ${messages.size} messages + ${pendingPings.size} pending (${downloadingPingIds.size} downloading)")
                 messageAdapter.updateMessages(
                     messages,
-                    pendingSenderName,
-                    pendingTimestamp
+                    pendingPings,
+                    downloadingPingIds  // Pass downloading state to adapter
                 )
                 messagesRecyclerView.post {
-                    val totalItems = messages.size + (if (hasPendingPing) 1 else 0)
+                    val totalItems = messages.size + pendingPings.size
                     if (totalItems > 0) {
                         messagesRecyclerView.scrollToPosition(totalItems - 1)
                     }
@@ -699,39 +836,26 @@ class ChatActivity : BaseActivity() {
     }
 
 
-    private fun handleDownloadClick() {
-        Log.i(TAG, "Download button clicked for contact $contactId")
-
-        // Check if we have a pending Ping
-        val prefs = getSharedPreferences("pending_pings", MODE_PRIVATE)
-        val pingId = prefs.getString("ping_${contactId}_id", null)
-
-        if (pingId == null) {
-            ThemedToast.show(this, "No pending message")
-            return
-        }
+    private fun handleDownloadClick(pingId: String) {
+        Log.i(TAG, "Download button clicked for contact $contactId, ping $pingId")
 
         // Set flag to prevent showing pending message again during download
         isDownloadInProgress = true
 
-        // Start the download service
-        com.securelegion.services.DownloadMessageService.start(this, contactId, contactName)
+        // Track this specific ping as being downloaded
+        downloadingPingIds.add(pingId)
+        Log.d(TAG, "Added $pingId to downloading set (now tracking ${downloadingPingIds.size} downloads)")
 
-        // DON'T reload messages here - let the "downloading" text stay visible
+        // Start the download service with specific ping ID
+        com.securelegion.services.DownloadMessageService.start(this, contactId, contactName, pingId)
+
+        // DON'T reload here - the MessageAdapter already shows "downloading..." text
         // The service will broadcast MESSAGE_RECEIVED when done, which will trigger a reload
     }
 
     private fun toggleSelectionMode() {
         isSelectionMode = !isSelectionMode
         messageAdapter.setSelectionMode(isSelectionMode)
-
-        // Update delete button appearance based on mode
-        val deleteButton = findViewById<ImageView>(R.id.deleteButton)
-        if (isSelectionMode) {
-            deleteButton.setColorFilter(ContextCompat.getColor(this, R.color.accent_blue))
-        } else {
-            deleteButton.clearColorFilter()
-        }
 
         Log.d(TAG, "Selection mode: $isSelectionMode")
     }
@@ -753,38 +877,34 @@ class ChatActivity : BaseActivity() {
                     val dbPassphrase = keyManager.getDatabasePassphrase()
                     val database = SecureLegionDatabase.getInstance(this@ChatActivity, dbPassphrase)
 
-                    // Check if pending message is selected (ID = -1)
-                    val hasPendingMessage = selectedIds.contains(-1L)
-                    if (hasPendingMessage) {
-                        // Delete pending message from SharedPreferences
+                    // Separate selected IDs into ping IDs and message IDs
+                    val pingIds = selectedIds.filter { it.startsWith("ping:") }.map { it.removePrefix("ping:") }
+                    val messageIds = selectedIds.filter { !it.startsWith("ping:") }.mapNotNull { it.toLongOrNull() }
+
+                    // Delete pending pings by pingId (no formula needed!)
+                    if (pingIds.isNotEmpty()) {
                         val prefs = getSharedPreferences("pending_pings", MODE_PRIVATE)
-                        val pingId = prefs.getString("ping_${contactId}_id", null)
 
-                        if (pingId != null) {
-                            // Clear ALL pending ping data for this contact
-                            prefs.edit().apply {
-                                remove("ping_${contactId}_id")
-                                remove("ping_${contactId}_connection")
-                                remove("ping_${contactId}_name")
-                                remove("ping_${contactId}_timestamp")
-                                remove("ping_${contactId}_data")
-                                remove("ping_${contactId}_onion")
-
-                                // Also remove ping-indexed entries
-                                remove("ping_${pingId}_contact_id")
-                                remove("ping_${pingId}_name")
-                                remove("ping_${pingId}_timestamp")
-                                remove("ping_${pingId}_onion")
-
-                                apply()
-                            }
-                            Log.d(TAG, "✓ Deleted pending message from SharedPreferences")
+                        pingIds.forEach { pingId ->
+                            // Direct removal by pingId - simple and reliable!
+                            com.securelegion.models.PendingPing.removeFromQueue(prefs, contactId.toLong(), pingId)
+                            Log.d(TAG, "✓ Deleted pending ping $pingId from queue")
                             deletedPendingMessage = true
                         }
+
+                        // Also clean up outgoing ping keys (fix for ghost messages)
+                        prefs.edit().apply {
+                            remove("outgoing_ping_${contactId}_id")
+                            remove("outgoing_ping_${contactId}_name")
+                            remove("outgoing_ping_${contactId}_timestamp")
+                            remove("outgoing_ping_${contactId}_onion")
+                            apply()
+                        }
+                        Log.d(TAG, "✓ Cleaned up outgoing ping keys to prevent ghost messages")
                     }
 
                     // Delete regular messages from database
-                    val regularMessageIds = selectedIds.filter { it != -1L }
+                    val regularMessageIds = messageIds
                     regularMessageIds.forEach { messageId ->
                         // Get the message to check if it's a voice message
                         val message = database.messageDao().getMessageById(messageId)
@@ -830,6 +950,85 @@ class ChatActivity : BaseActivity() {
                 Log.e(TAG, "Failed to delete messages", e)
             }
         }
+    }
+
+    /**
+     * Delete entire chat thread and return to main activity
+     */
+    private fun deleteThread() {
+        androidx.appcompat.app.AlertDialog.Builder(this, R.style.CustomAlertDialog)
+            .setTitle("Delete Chat")
+            .setMessage("Delete this entire conversation? This cannot be undone.")
+            .setPositiveButton("Delete") { _, _ ->
+                lifecycleScope.launch {
+                    try {
+                        val keyManager = KeyManager.getInstance(this@ChatActivity)
+                        val dbPassphrase = keyManager.getDatabasePassphrase()
+                        val database = SecureLegionDatabase.getInstance(this@ChatActivity, dbPassphrase)
+
+                        withContext(Dispatchers.IO) {
+                            // Get all messages for this contact to check for voice files
+                            val messages = database.messageDao().getMessagesForContact(contactId.toLong())
+
+                            // Securely wipe any voice message audio files
+                            messages.forEach { message ->
+                                if (message.messageType == Message.MESSAGE_TYPE_VOICE &&
+                                    message.voiceFilePath != null) {
+                                    try {
+                                        val voiceFile = File(message.voiceFilePath)
+                                        if (voiceFile.exists()) {
+                                            SecureWipe.secureDeleteFile(voiceFile)
+                                            Log.d(TAG, "✓ Securely wiped voice file: ${voiceFile.name}")
+                                        }
+                                    } catch (e: Exception) {
+                                        Log.e(TAG, "Failed to securely wipe voice file", e)
+                                    }
+                                }
+                            }
+
+                            // Delete all messages for this contact
+                            database.messageDao().deleteMessagesForContact(contactId.toLong())
+
+                            // Delete any pending messages from SharedPreferences
+                            val prefs = getSharedPreferences("pending_messages", Context.MODE_PRIVATE)
+                            val allPending = prefs.all
+                            val keysToRemove = mutableListOf<String>()
+
+                            allPending.forEach { (key, _) ->
+                                if (key.startsWith("ping_") && key.endsWith("_onion")) {
+                                    val savedContactAddress = prefs.getString(key, null)
+                                    if (savedContactAddress == contactAddress) {
+                                        keysToRemove.add(key)
+                                    }
+                                }
+                            }
+
+                            if (keysToRemove.isNotEmpty()) {
+                                prefs.edit().apply {
+                                    keysToRemove.forEach { remove(it) }
+                                    apply()
+                                }
+                            }
+
+                            // VACUUM database to compact and remove deleted records
+                            database.openHelper.writableDatabase.execSQL("VACUUM")
+                            Log.d(TAG, "✓ Thread deleted and database vacuumed")
+                        }
+
+                        withContext(Dispatchers.Main) {
+                            ThemedToast.show(this@ChatActivity, "Chat deleted")
+                            finish()
+                        }
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Failed to delete thread", e)
+                        withContext(Dispatchers.Main) {
+                            ThemedToast.show(this@ChatActivity, "Failed to delete chat")
+                        }
+                    }
+                }
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
     }
 
 }

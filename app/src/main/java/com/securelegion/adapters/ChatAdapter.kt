@@ -20,10 +20,8 @@ class ChatAdapter(
     private val onDeleteClick: ((Chat) -> Unit)? = null
 ) : RecyclerView.Adapter<ChatAdapter.ChatViewHolder>() {
 
-    // Track which item is currently open
-    private var openItemPosition: Int = RecyclerView.NO_POSITION
-
     class ChatViewHolder(view: View) : RecyclerView.ViewHolder(view) {
+        val chatAvatar: TextView = view.findViewById(R.id.chatAvatar)
         val chatName: TextView = view.findViewById(R.id.chatName)
         val chatMessage: TextView = view.findViewById(R.id.chatMessage)
         val chatTime: TextView = view.findViewById(R.id.chatTime)
@@ -32,7 +30,6 @@ class ChatAdapter(
         val onlineIndicator: TextView = view.findViewById(R.id.onlineIndicator)
         val downloadButton: Button = view.findViewById(R.id.downloadButton)
         val foreground: View = view.findViewById(R.id.chatItemForeground)
-        val deleteButtonContainer: View = view.findViewById(R.id.deleteButtonContainer)
     }
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): ChatViewHolder {
@@ -45,12 +42,11 @@ class ChatAdapter(
         val chat = chats[position]
         val context = holder.itemView.context
 
-        // Set chat name (add @ if not present)
-        holder.chatName.text = if (chat.nickname.startsWith("@")) {
-            chat.nickname
-        } else {
-            "@${chat.nickname}"
-        }
+        // Set avatar (first letter of nickname)
+        holder.chatAvatar.text = chat.avatar.uppercase()
+
+        // Set chat name (remove @ symbol)
+        holder.chatName.text = chat.nickname.removePrefix("@")
 
         // Set message preview
         holder.chatMessage.text = chat.lastMessage
@@ -80,63 +76,64 @@ class ChatAdapter(
         // Show/hide online indicator
         holder.onlineIndicator.visibility = if (chat.isOnline) View.VISIBLE else View.GONE
 
-        // Reset foreground position only if this is not the currently open item
-        val deleteButtonWidth = 80 * context.resources.displayMetrics.density
-        if (position != openItemPosition) {
-            holder.foreground.translationX = 0f
-        } else {
-            // Restore open position for currently open item
-            holder.foreground.translationX = -deleteButtonWidth
-        }
+        // Reset foreground position for all items
+        holder.foreground.translationX = 0f
 
-        // Swipe-to-reveal gesture handling
+        // Swipe-to-delete gesture handling with smooth resistance
         var startX = 0f
         var startTranslationX = 0f
+        var isSwiping = false
 
         holder.foreground.setOnTouchListener { v, event ->
             when (event.action) {
                 MotionEvent.ACTION_DOWN -> {
                     startX = event.rawX
                     startTranslationX = holder.foreground.translationX
+                    isSwiping = false
                     true
                 }
                 MotionEvent.ACTION_MOVE -> {
                     val deltaX = event.rawX - startX
-                    val newTranslation = startTranslationX + deltaX
-                    // Clamp between -deleteButtonWidth (fully open) and 0 (fully closed)
-                    holder.foreground.translationX = newTranslation.coerceIn(-deleteButtonWidth, 0f)
+
+                    // Mark as swiping if moved more than threshold
+                    if (kotlin.math.abs(deltaX) > 10) {
+                        isSwiping = true
+                    }
+
+                    // Apply resistance to make swiping feel smoother and less sensitive
+                    val resistance = 0.8f // Lower = more resistance (harder to swipe)
+                    val newTranslation = startTranslationX + (deltaX * resistance)
+
+                    // Allow swiping left only (negative translation)
+                    holder.foreground.translationX = newTranslation.coerceAtMost(0f)
                     true
                 }
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                     val currentTranslation = holder.foreground.translationX
-
-                    // Snap logic: if past 1/4 threshold, snap open; otherwise snap closed
-                    if (currentTranslation < -deleteButtonWidth / 4) {
-                        // Close any previously open item
-                        if (openItemPosition != RecyclerView.NO_POSITION && openItemPosition != holder.adapterPosition) {
-                            notifyItemChanged(openItemPosition)
-                        }
-                        // Snap to open
-                        holder.foreground.animate().translationX(-deleteButtonWidth).setDuration(150).start()
-                        openItemPosition = holder.adapterPosition
-                    } else {
-                        // Snap to closed
-                        holder.foreground.animate().translationX(0f).setDuration(150).start()
-                        if (openItemPosition == holder.adapterPosition) {
-                            openItemPosition = RecyclerView.NO_POSITION
-                        }
-                    }
+                    val itemWidth = holder.foreground.width.toFloat()
+                    val deleteThreshold = itemWidth * 0.3f // 30% of item width (easier to trigger delete)
 
                     // Handle click if it was a tap (not a swipe)
-                    val deltaX = event.rawX - startX
-                    if (kotlin.math.abs(deltaX) < 10) { // Tap threshold
-                        if (holder.foreground.translationX < -10f) {
-                            // Item is open - close it
-                            holder.foreground.animate().translationX(0f).setDuration(200).start()
-                            openItemPosition = RecyclerView.NO_POSITION
+                    if (!isSwiping) {
+                        // Open chat on tap
+                        onChatClick(chat)
+                    } else {
+                        // Check if swiped past threshold
+                        if (kotlin.math.abs(currentTranslation) > deleteThreshold) {
+                            // Animate off screen then delete
+                            holder.foreground.animate()
+                                .translationX(-itemWidth)
+                                .setDuration(200)
+                                .withEndAction {
+                                    onDeleteClick?.invoke(chat)
+                                }
+                                .start()
                         } else {
-                            // Item is closed - open chat
-                            onChatClick(chat)
+                            // Snap back to original position with bounce
+                            holder.foreground.animate()
+                                .translationX(0f)
+                                .setDuration(250)
+                                .start()
                         }
                     }
 
@@ -146,20 +143,7 @@ class ChatAdapter(
                 else -> false
             }
         }
-
-        holder.deleteButtonContainer.setOnClickListener {
-            // Close the item before deleting
-            holder.foreground.animate().translationX(0f).setDuration(200).start()
-            openItemPosition = RecyclerView.NO_POSITION
-            onDeleteClick?.invoke(chat)
-        }
     }
 
     override fun getItemCount() = chats.size
-
-    fun getOpenItemPosition(): Int = openItemPosition
-
-    fun setOpenItemPosition(position: Int) {
-        openItemPosition = position
-    }
 }

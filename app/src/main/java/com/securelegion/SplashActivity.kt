@@ -18,6 +18,7 @@ import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import com.securelegion.crypto.KeyManager
 import com.securelegion.crypto.RustBridge
 import com.securelegion.crypto.TorManager
@@ -30,6 +31,9 @@ class SplashActivity : AppCompatActivity() {
     private val BRIDGE_CONFIGURATION_REQUEST_CODE = 1002
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        // Install Android 12+ splash screen before super.onCreate()
+        installSplashScreen()
+
         super.onCreate(savedInstanceState)
 
         // Security: Prevent screenshots and screen recording
@@ -37,6 +41,14 @@ class SplashActivity : AppCompatActivity() {
             WindowManager.LayoutParams.FLAG_SECURE,
             WindowManager.LayoutParams.FLAG_SECURE
         )
+
+        // Make status bar white with dark icons
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            @Suppress("DEPRECATION")
+            window.statusBarColor = android.graphics.Color.WHITE
+            @Suppress("DEPRECATION")
+            window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR
+        }
 
         // Request notification permission on Android 13+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -53,7 +65,7 @@ class SplashActivity : AppCompatActivity() {
         // Always show splash screen and test actual Tor connectivity
         setContentView(R.layout.activity_splash)
 
-        // Animate logo
+        // Animate logo with subtle pulse
         val logo = findViewById<View>(R.id.splashLogo)
         logo.alpha = 0f
         logo.scaleX = 0.5f
@@ -64,6 +76,34 @@ class SplashActivity : AppCompatActivity() {
             .scaleY(1f)
             .setDuration(800)
             .setInterpolator(android.view.animation.OvershootInterpolator())
+            .withEndAction {
+                // Start subtle pulse animation while connecting
+                logo.animate()
+                    .alpha(0.7f)
+                    .setDuration(1000)
+                    .withEndAction {
+                        logo.animate()
+                            .alpha(1f)
+                            .setDuration(1000)
+                            .withEndAction {
+                                // Repeat pulse
+                                logo.postDelayed({
+                                    logo.animate()
+                                        .alpha(0.7f)
+                                        .setDuration(1000)
+                                        .withEndAction {
+                                            logo.animate()
+                                                .alpha(1f)
+                                                .setDuration(1000)
+                                                .start()
+                                        }
+                                        .start()
+                                }, 0)
+                            }
+                            .start()
+                    }
+                    .start()
+            }
             .start()
 
         updateStatus("Checking Tor connection...")
@@ -74,6 +114,29 @@ class SplashActivity : AppCompatActivity() {
             // Test actual SOCKS connectivity instead of checking persistent flag
             Thread {
                 try {
+                    // First, verify Tor control port is actually responding
+                    // This catches stale state from previous app termination
+                    val controlPortAlive = try {
+                        val testSocket = java.net.Socket()
+                        testSocket.soTimeout = 2000
+                        testSocket.connect(java.net.InetSocketAddress("127.0.0.1", 9051), 2000)
+                        testSocket.close()
+                        true
+                    } catch (e: Exception) {
+                        Log.d("SplashActivity", "Control port not responding: ${e.message}")
+                        false
+                    }
+
+                    if (!controlPortAlive) {
+                        // Tor process is not running - need fresh initialization
+                        Log.i("SplashActivity", "Tor control port not responding - starting fresh initialization")
+                        runOnUiThread {
+                            updateStatus("Starting Tor...")
+                        }
+                        startFreshTorInitialization(torManager)
+                        return@Thread
+                    }
+
                     val socksRunning = RustBridge.isSocksProxyRunning()
                     val socksConnected = if (socksRunning) {
                         RustBridge.testSocksConnectivity()
@@ -87,68 +150,72 @@ class SplashActivity : AppCompatActivity() {
                         val bootstrapStatus = RustBridge.getBootstrapStatus()
 
                         if (bootstrapStatus >= 100) {
-                            // Tor is fully bootstrapped - run health checks
-                            Log.i("SplashActivity", "✓ Tor fully bootstrapped (100%) - running health checks...")
-                            runOnUiThread {
-                                val progressBar = findViewById<ProgressBar>(R.id.torProgressBar)
-                                progressBar?.progress = 75  // Bootstrap complete = 75%
-                                updateStatus("Verifying services...")
-                                Handler(Looper.getMainLooper()).postDelayed({
-                                    checkTorStatus()
-                                }, 500)
+                            // Tor is fully bootstrapped - check if services are ready
+                            Log.i("SplashActivity", "✓ Tor fully bootstrapped (100%) - checking services...")
+
+                            // Check if TorService is already running and ready
+                            if (TorService.isRunning() && TorService.isMessagingReady()) {
+                                // Everything is ready - skip checks and go straight to app
+                                Log.i("SplashActivity", "✓ TorService already running and ready - proceeding immediately")
+                                runOnUiThread {
+                                    val progressBar = findViewById<ProgressBar>(R.id.torProgressBar)
+                                    progressBar?.progress = 100
+                                    updateStatus("Connected!")
+                                    Handler(Looper.getMainLooper()).postDelayed({
+                                        navigateToLock()
+                                    }, 300)
+                                }
+                            } else {
+                                // Services not ready, run health checks
+                                Log.i("SplashActivity", "Services not ready, running health checks...")
+                                runOnUiThread {
+                                    val progressBar = findViewById<ProgressBar>(R.id.torProgressBar)
+                                    progressBar?.progress = 75
+                                    updateStatus("Starting services...")
+                                    Handler(Looper.getMainLooper()).postDelayed({
+                                        checkTorStatus()
+                                    }, 500)
+                                }
+                            }
+                        } else if (bootstrapStatus > 0) {
+                            // Tor is bootstrapping - but this could be stale from previous session
+                            // Give it a brief chance to make progress, then restart if stuck
+                            Log.i("SplashActivity", "Tor bootstrapping at $bootstrapStatus% - verifying progress...")
+
+                            val initialStatus = bootstrapStatus
+                            Thread.sleep(5000)  // Wait 5 seconds to see if it makes progress
+
+                            val newStatus = RustBridge.getBootstrapStatus()
+                            if (newStatus == initialStatus && newStatus < 100) {
+                                // No progress in 5 seconds - likely stuck from previous session
+                                Log.w("SplashActivity", "Bootstrap stuck at $newStatus% (no progress) - restarting Tor")
+                                runOnUiThread {
+                                    updateStatus("Restarting Tor...")
+                                }
+                                Thread.sleep(1000)
+                                startFreshTorInitialization(torManager)
+                            } else {
+                                // Making progress, continue waiting
+                                Log.i("SplashActivity", "Bootstrap progressing: $initialStatus% → $newStatus%")
+                                runOnUiThread {
+                                    updateStatus("Connecting to Tor network... ($newStatus%)")
+                                }
+                                waitForBootstrap()
                             }
                         } else {
-                            // Tor is bootstrapping - wait for 100%
-                            Log.i("SplashActivity", "Tor bootstrapping at $bootstrapStatus% - waiting...")
-                            runOnUiThread {
-                                updateStatus("Connecting to Tor network... ($bootstrapStatus%)")
-                            }
-                            waitForBootstrap()
+                            // Bootstrap status is 0 or negative - likely stale state
+                            Log.w("SplashActivity", "Bootstrap status is $bootstrapStatus - reinitializing")
+                            startFreshTorInitialization(torManager)
                         }
                     } else {
                         // Tor not functional - need to initialize
                         Log.i("SplashActivity", "Tor not connected - initializing...")
-                        runOnUiThread {
-                            updateStatus("Connecting to Tor network...")
-                        }
-
-                        // Initialize Tor and wait for it to fully bootstrap
-                        // Start polling for bootstrap progress immediately
-                        waitForBootstrap()
-
-                        torManager.initializeAsync { success, onionAddress ->
-                            runOnUiThread {
-                                if (success) {
-                                    Log.i("SplashActivity", "Tor initialized: $onionAddress")
-                                    // Bootstrap polling is already running
-                                } else {
-                                    Log.e("SplashActivity", "Tor initialization failed")
-                                    showBridgeConfigurationUI()
-                                }
-                            }
-                        }
+                        startFreshTorInitialization(torManager)
                     }
                 } catch (e: Exception) {
                     Log.e("SplashActivity", "Error testing Tor connectivity", e)
                     // On error, try initializing Tor
-                    runOnUiThread {
-                        updateStatus("Connecting to Tor network...")
-                    }
-
-                    // Start polling for bootstrap progress immediately
-                    waitForBootstrap()
-
-                    torManager.initializeAsync { success, onionAddress ->
-                        runOnUiThread {
-                            if (success) {
-                                Log.i("SplashActivity", "Tor initialized: $onionAddress")
-                                // Bootstrap polling is already running
-                            } else {
-                                Log.e("SplashActivity", "Tor initialization failed")
-                                showBridgeConfigurationUI()
-                            }
-                        }
-                    }
+                    startFreshTorInitialization(torManager)
                 }
             }.start()
         } catch (e: Exception) {
@@ -160,39 +227,88 @@ class SplashActivity : AppCompatActivity() {
         }
     }
 
+    private fun startFreshTorInitialization(torManager: TorManager) {
+        runOnUiThread {
+            updateStatus("Connecting to Tor network...")
+        }
+
+        // Start polling for bootstrap progress immediately
+        waitForBootstrap()
+
+        torManager.initializeAsync { success, onionAddress ->
+            runOnUiThread {
+                if (success) {
+                    Log.i("SplashActivity", "Tor initialized: $onionAddress")
+                    // Bootstrap polling is already running
+                } else {
+                    Log.e("SplashActivity", "Tor initialization failed")
+                    showBridgeConfigurationUI()
+                }
+            }
+        }
+    }
+
     private fun checkTorStatus() {
         Log.d("SplashActivity", "Checking Tor status after bootstrap...")
 
-        try {
-            val torManager = TorManager.getInstance(this)
-            val progressBar = findViewById<ProgressBar>(R.id.torProgressBar)
+        Thread {
+            try {
+                val torManager = TorManager.getInstance(this)
+                var retries = 0
+                val maxRetries = 10  // Max 10 retries (5 seconds total)
 
-            // Simple check: Tor initialized and has onion address
-            if (!torManager.isInitialized()) {
-                Log.d("SplashActivity", "Tor still initializing...")
-                updateStatus("Initializing...")
-                return
+                while (retries < maxRetries) {
+                    runOnUiThread {
+                        val progressBar = findViewById<ProgressBar>(R.id.torProgressBar)
+                        progressBar?.progress = 90 + retries  // 90-100%
+                        updateStatus("Verifying services... (${90 + retries}%)")
+                    }
+
+                    // Check if everything is ready
+                    if (torManager.isInitialized()) {
+                        val onionAddress = torManager.getOnionAddress()
+                        if (onionAddress != null) {
+                            // All ready!
+                            Log.i("SplashActivity", "✓ Tor ready: $onionAddress")
+                            runOnUiThread {
+                                val progressBar = findViewById<ProgressBar>(R.id.torProgressBar)
+                                progressBar?.progress = 100
+                                updateStatus("Connected! (100%)")
+                                Handler(Looper.getMainLooper()).postDelayed({
+                                    navigateToLock()
+                                }, 300)
+                            }
+                            return@Thread
+                        }
+                    }
+
+                    // Not ready yet, wait and retry
+                    Log.d("SplashActivity", "Services not ready, retry $retries/$maxRetries")
+                    Thread.sleep(500)
+                    retries++
+                }
+
+                // Timeout - proceed anyway or restart
+                Log.w("SplashActivity", "Service check timeout after 5 seconds - proceeding to app")
+                runOnUiThread {
+                    val progressBar = findViewById<ProgressBar>(R.id.torProgressBar)
+                    progressBar?.progress = 100
+                    updateStatus("Connected!")
+                    Handler(Looper.getMainLooper()).postDelayed({
+                        navigateToLock()
+                    }, 300)
+                }
+
+            } catch (e: Exception) {
+                Log.e("SplashActivity", "Error checking Tor status", e)
+                runOnUiThread {
+                    updateStatus("Connection error, proceeding...")
+                    Handler(Looper.getMainLooper()).postDelayed({
+                        navigateToLock()
+                    }, 1000)
+                }
             }
-
-            val onionAddress = torManager.getOnionAddress()
-            if (onionAddress == null) {
-                Log.d("SplashActivity", "Hidden service not ready yet...")
-                updateStatus("Starting service...")
-                return
-            }
-
-            // Tor is ready! Proceed to lock screen
-            Log.i("SplashActivity", "✓ Tor ready: $onionAddress")
-            progressBar?.progress = 100
-            updateStatus("Connected!")
-
-            Handler(Looper.getMainLooper()).postDelayed({
-                navigateToLock()
-            }, 500)
-        } catch (e: Exception) {
-            Log.e("SplashActivity", "Error checking Tor status", e)
-            updateStatus("Connection error...")
-        }
+        }.start()
     }
 
     private fun updateStatus(status: String) {
@@ -202,17 +318,66 @@ class SplashActivity : AppCompatActivity() {
     }
 
     private fun navigateToLock() {
-        Log.d("SplashActivity", "Navigating to LockActivity")
-        val intent = Intent(this, LockActivity::class.java)
-        startActivity(intent)
-        finish()
+        // Check if account exists before deciding where to go
+        try {
+            val keyManager = KeyManager.getInstance(this@SplashActivity)
+            val hasAccount = keyManager.isInitialized()
+
+            Log.i("SplashActivity", "Account check: hasAccount = $hasAccount")
+
+            if (!hasAccount) {
+                // No account - go directly to WelcomeActivity
+                Log.i("SplashActivity", "✓ No account found, navigating to WelcomeActivity")
+                val intent = Intent(this, WelcomeActivity::class.java)
+                intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+                startActivity(intent)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                    overrideActivityTransition(OVERRIDE_TRANSITION_OPEN, android.R.anim.fade_in, android.R.anim.fade_out)
+                } else {
+                    @Suppress("DEPRECATION")
+                    overridePendingTransition(android.R.anim.fade_in, android.R.anim.fade_out)
+                }
+                finish()
+            } else {
+                // Account exists - go to LockActivity
+                Log.i("SplashActivity", "✓ Account found, navigating to LockActivity")
+                val intent = Intent(this, LockActivity::class.java)
+                startActivity(intent)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                    overrideActivityTransition(OVERRIDE_TRANSITION_OPEN, android.R.anim.fade_in, android.R.anim.fade_out)
+                } else {
+                    @Suppress("DEPRECATION")
+                    overridePendingTransition(android.R.anim.fade_in, android.R.anim.fade_out)
+                }
+                finish()
+            }
+        } catch (e: Exception) {
+            // If check fails, assume no account and go to Welcome
+            // This prevents lock screen flash when there's an error
+            Log.e("SplashActivity", "Error checking account status - assuming no account, going to WelcomeActivity", e)
+            val intent = Intent(this, WelcomeActivity::class.java)
+            intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+            startActivity(intent)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                overrideActivityTransition(OVERRIDE_TRANSITION_OPEN, android.R.anim.fade_in, android.R.anim.fade_out)
+            } else {
+                @Suppress("DEPRECATION")
+                overridePendingTransition(android.R.anim.fade_in, android.R.anim.fade_out)
+            }
+            finish()
+        }
     }
 
     private fun waitForBootstrap() {
         Thread {
-            val maxAttempts = 120 // 120 seconds max (allows time for descriptor uploads)
+            val maxAttempts = 480 // 120 seconds max at 4 polls/sec (allows time for descriptor uploads)
             var attempts = 0
             var bootstrapComplete = false
+
+            // Track progress to detect truly stuck state
+            var lastProgressStatus = -999
+            var stuckCounter = 0
+            val maxStuckAttempts = 80 // 20 seconds stuck at same status = reset
 
             // Check if this is first-time setup (no account/keys exist yet)
             val keyManager = KeyManager.getInstance(this@SplashActivity)
@@ -225,6 +390,42 @@ class SplashActivity : AppCompatActivity() {
             while (attempts < maxAttempts) {
                 try {
                     val status = RustBridge.getBootstrapStatus()
+
+                    // Track if we're making progress
+                    if (status == lastProgressStatus && status > 0 && status < 100) {
+                        stuckCounter++
+                        if (stuckCounter >= maxStuckAttempts) {
+                            Log.w("SplashActivity", "Bootstrap stuck at $status% for 20 seconds - restarting Tor")
+                            runOnUiThread {
+                                updateStatus("Connection stuck, restarting...")
+                            }
+
+                            // Stop current Tor instance and restart fresh
+                            try {
+                                // Give a brief moment for cleanup
+                                Thread.sleep(1000)
+
+                                // Restart Tor from scratch
+                                Log.i("SplashActivity", "Restarting Tor after stuck detection")
+                                val torManager = TorManager.getInstance(this@SplashActivity)
+                                startFreshTorInitialization(torManager)
+                            } catch (e: Exception) {
+                                Log.e("SplashActivity", "Error restarting stuck Tor", e)
+                                runOnUiThread {
+                                    updateStatus("Restart failed, retrying...")
+                                }
+                            }
+                            return@Thread  // Exit this bootstrap loop
+                        }
+                    } else {
+                        stuckCounter = 0
+                        lastProgressStatus = status
+                    }
+
+                    // Log every 10th status value for debugging (reduce log spam)
+                    if (attempts % 10 == 0) {
+                        Log.d("SplashActivity", "Bootstrap status poll #$attempts: $status%")
+                    }
 
                     // Check if bootstrap is complete
                     if (status >= 100 && !bootstrapComplete) {
@@ -240,11 +441,13 @@ class SplashActivity : AppCompatActivity() {
                     runOnUiThread {
                         val progressBar = findViewById<ProgressBar>(R.id.torProgressBar)
                         if (status < 0) {
+                            Log.d("SplashActivity", "UI: Starting Tor... (status=$status)")
                             updateStatus("Starting Tor...")
                             progressBar?.progress = 0
                         } else {
                             // Scale bootstrap 0-100% to 0-75% (reserve 75-100% for service checks)
                             val scaledProgress = (status * 0.75).toInt()
+                            Log.d("SplashActivity", "UI: Updating progress to $scaledProgress% (raw=$status%)")
                             updateStatus("Connecting to Tor network... ($scaledProgress%)")
                             progressBar?.progress = scaledProgress
                         }
@@ -257,6 +460,8 @@ class SplashActivity : AppCompatActivity() {
                             // Hidden service will be created after account creation
                             Log.i("SplashActivity", "✓ First-time setup - proceeding without listeners")
                             runOnUiThread {
+                                val progressBar = findViewById<ProgressBar>(R.id.torProgressBar)
+                                progressBar?.progress = 100
                                 updateStatus("Connected to Tor!")
                                 Handler(Looper.getMainLooper()).postDelayed({
                                     navigateToLock()
@@ -268,24 +473,42 @@ class SplashActivity : AppCompatActivity() {
                             // Start TorService if not already running (ensures it's in this process)
                             if (!TorService.isRunning()) {
                                 Log.i("SplashActivity", "Starting TorService...")
+                                runOnUiThread {
+                                    val progressBar = findViewById<ProgressBar>(R.id.torProgressBar)
+                                    progressBar?.progress = 80 // 75% → 80% when starting service
+                                    updateStatus("Starting services... (80%)")
+                                }
                                 TorService.start(this@SplashActivity)
                             }
 
                             if (TorService.isMessagingReady()) {
                                 Log.i("SplashActivity", "✓ Messaging fully ready - listeners active")
                                 runOnUiThread {
-                                    // Run health checks with progress updates (75-100%)
-                                    checkTorStatus()
+                                    val progressBar = findViewById<ProgressBar>(R.id.torProgressBar)
+                                    progressBar?.progress = 90 // 90% when messaging ready
+                                    updateStatus("Verifying services... (90%)")
+                                    // Run health checks with progress updates (90-100%)
+                                    Handler(Looper.getMainLooper()).postDelayed({
+                                        checkTorStatus()
+                                    }, 200)
                                 }
                                 return@Thread
                             } else {
-                                // Still waiting for listeners
-                                Log.d("SplashActivity", "Waiting for listeners... (attempt $attempts)")
+                                // Still waiting for listeners - increment from 80% to 90% over time
+                                val waitProgress = 80 + ((attempts % 40) / 4) // Slowly increment from 80 to 90
+                                runOnUiThread {
+                                    val progressBar = findViewById<ProgressBar>(R.id.torProgressBar)
+                                    if (waitProgress < 90) {
+                                        progressBar?.progress = waitProgress
+                                        updateStatus("Starting services... ($waitProgress%)")
+                                    }
+                                }
+                                Log.d("SplashActivity", "Waiting for listeners... (attempt $attempts, progress $waitProgress%)")
                             }
                         }
                     }
 
-                    Thread.sleep(1000) // Check every second
+                    Thread.sleep(250) // Check every 250ms for smoother UI updates
                     attempts++
                 } catch (e: Exception) {
                     Log.e("SplashActivity", "Error checking bootstrap status", e)

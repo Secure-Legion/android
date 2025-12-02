@@ -1,23 +1,24 @@
 package com.securelegion
 
 import android.content.Intent
+import android.os.Build
 import android.os.Bundle
 import android.text.Editable
 import android.text.TextWatcher
 import android.util.Log
+import android.view.LayoutInflater
 import android.view.View
+import android.view.ViewGroup
 import android.widget.EditText
+import android.widget.ImageView
+import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
-import com.securelegion.adapters.ContactAdapter
 import com.securelegion.crypto.KeyManager
 import com.securelegion.database.SecureLegionDatabase
 import com.securelegion.database.entities.Contact as DbContact
-import com.securelegion.models.Contact
-import com.securelegion.services.MessageService
-import com.securelegion.utils.ThemedToast
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -28,48 +29,37 @@ class ComposeActivity : BaseActivity() {
         private const val TAG = "ComposeActivity"
     }
 
-    private lateinit var recipientInput: EditText
-    private lateinit var contactSearchResults: RecyclerView
-    private lateinit var contactAdapter: ContactAdapter
+    private lateinit var searchInput: EditText
+    private lateinit var contactsList: RecyclerView
+    private lateinit var emptyState: View
+    private lateinit var contactsAdapter: ComposeContactsAdapter
 
     private var allContacts: List<DbContact> = emptyList()
-    private var selectedContact: DbContact? = null
+    private var filteredContacts: List<DbContact> = emptyList()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_compose)
 
-        recipientInput = findViewById(R.id.recipientInput)
-        contactSearchResults = findViewById(R.id.contactSearchResults)
+        searchInput = findViewById(R.id.searchInput)
+        contactsList = findViewById(R.id.contactsList)
+        emptyState = findViewById(R.id.emptyState)
 
-        setupContactSearch()
+        setupContactsList()
+        setupClickListeners()
         loadContacts()
-        setupBottomNavigation()
-
-        // Back button
-        findViewById<View>(R.id.backButton).setOnClickListener {
-            finish()
-        }
-
-        // Send button
-        findViewById<View>(R.id.sendButton).setOnClickListener {
-            sendMessage()
-        }
     }
 
-    private fun setupContactSearch() {
-        contactSearchResults.layoutManager = LinearLayoutManager(this)
-        contactAdapter = ContactAdapter(emptyList()) { contact ->
-            // Contact selected from search
-            selectedContact = allContacts.find { it.id.toString() == contact.id }
-            recipientInput.setText(contact.name)
-            recipientInput.setSelection(contact.name.length)
-            contactSearchResults.visibility = View.GONE
+    private fun setupContactsList() {
+        contactsAdapter = ComposeContactsAdapter { contact ->
+            // Contact clicked - open chat
+            openChat(contact)
         }
-        contactSearchResults.adapter = contactAdapter
+        contactsList.layoutManager = LinearLayoutManager(this)
+        contactsList.adapter = contactsAdapter
 
-        // Add text watcher for live search
-        recipientInput.addTextChangedListener(object : TextWatcher {
+        // Setup search
+        searchInput.addTextChangedListener(object : TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
             override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
 
@@ -80,103 +70,31 @@ class ComposeActivity : BaseActivity() {
         })
     }
 
-    private fun loadContacts() {
-        lifecycleScope.launch {
-            try {
-                val keyManager = KeyManager.getInstance(this@ComposeActivity)
-                val dbPassphrase = keyManager.getDatabasePassphrase()
-                val database = SecureLegionDatabase.getInstance(this@ComposeActivity, dbPassphrase)
-
-                allContacts = withContext(Dispatchers.IO) {
-                    // Only load CONFIRMED friends (not PENDING)
-                    database.contactDao().getAllContacts()
-                        .filter { it.friendshipStatus == DbContact.FRIENDSHIP_CONFIRMED }
-                }
-
-                Log.d(TAG, "Loaded ${allContacts.size} CONFIRMED friends for messaging")
-            } catch (e: Exception) {
-                Log.e(TAG, "Failed to load contacts", e)
+    private fun setupClickListeners() {
+        // Back button
+        findViewById<View>(R.id.backButton).setOnClickListener {
+            finish()
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                overrideActivityTransition(android.app.Activity.OVERRIDE_TRANSITION_CLOSE, 0, 0)
+            } else {
+                @Suppress("DEPRECATION")
+                overridePendingTransition(0, 0)
             }
         }
-    }
 
-    private fun filterContacts(query: String) {
-        if (query.isBlank()) {
-            contactSearchResults.visibility = View.GONE
-            return
-        }
-
-        val filtered = allContacts.filter {
-            it.displayName.contains(query, ignoreCase = true) ||
-            it.solanaAddress.contains(query, ignoreCase = true)
-        }
-
-        if (filtered.isEmpty()) {
-            contactSearchResults.visibility = View.GONE
-        } else {
-            val uiContacts = filtered.map { dbContact ->
-                Contact(
-                    id = dbContact.id.toString(),
-                    name = dbContact.displayName,
-                    address = dbContact.solanaAddress,
-                    friendshipStatus = dbContact.friendshipStatus
-                )
+        // Settings button
+        findViewById<View>(R.id.settingsButton).setOnClickListener {
+            val intent = Intent(this, SettingsActivity::class.java)
+            startActivity(intent)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                overrideActivityTransition(android.app.Activity.OVERRIDE_TRANSITION_OPEN, 0, 0)
+            } else {
+                @Suppress("DEPRECATION")
+                overridePendingTransition(0, 0)
             }
-            contactAdapter.updateContacts(uiContacts)
-            contactSearchResults.visibility = View.VISIBLE
-        }
-    }
-
-    private fun sendMessage() {
-        val message = findViewById<EditText>(R.id.messageInput).text.toString()
-        val sendButton = findViewById<View>(R.id.sendButton)
-
-        if (selectedContact == null) {
-            ThemedToast.show(this, "Please select a contact")
-            return
         }
 
-        // Verify friendship status - only allow messaging CONFIRMED friends
-        if (selectedContact!!.friendshipStatus != DbContact.FRIENDSHIP_CONFIRMED) {
-            ThemedToast.show(this, "Can only message confirmed friends")
-            Log.w(TAG, "Blocked message to ${selectedContact!!.displayName} - friendship status: ${selectedContact!!.friendshipStatus}")
-            return
-        }
-
-        if (message.isBlank()) {
-            ThemedToast.show(this, "Please enter a message")
-            return
-        }
-
-        // Disable button to prevent multiple sends
-        sendButton.isEnabled = false
-        sendButton.alpha = 0.5f
-
-        // Send message in background and return to main screen immediately
-        lifecycleScope.launch {
-            val messageService = MessageService(this@ComposeActivity)
-
-            // Send message with callback - navigate back as soon as it's saved to DB
-            messageService.sendMessage(
-                contactId = selectedContact!!.id,
-                plaintext = message,
-                selfDestructDurationMs = null,
-                enableReadReceipt = true,
-                onMessageSaved = { savedMessage ->
-                    // Message saved to DB - navigate back immediately
-                    // Tor send continues in background
-                    lifecycleScope.launch(Dispatchers.Main) {
-                        val intent = Intent(this@ComposeActivity, MainActivity::class.java)
-                        intent.flags = Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
-                        startActivity(intent)
-                        finish()
-                    }
-                }
-            )
-        }
-    }
-
-    private fun setupBottomNavigation() {
+        // Bottom navigation
         findViewById<View>(R.id.navMessages).setOnClickListener {
             val intent = Intent(this, MainActivity::class.java)
             intent.flags = Intent.FLAG_ACTIVITY_CLEAR_TOP
@@ -201,6 +119,111 @@ class ComposeActivity : BaseActivity() {
             val intent = Intent(this, LockActivity::class.java)
             startActivity(intent)
             finish()
+        }
+    }
+
+    private fun loadContacts() {
+        lifecycleScope.launch {
+            try {
+                val keyManager = KeyManager.getInstance(this@ComposeActivity)
+                val dbPassphrase = keyManager.getDatabasePassphrase()
+                val database = SecureLegionDatabase.getInstance(this@ComposeActivity, dbPassphrase)
+
+                allContacts = withContext(Dispatchers.IO) {
+                    // Only load CONFIRMED friends (not PENDING)
+                    database.contactDao().getAllContacts()
+                        .filter { it.friendshipStatus == DbContact.FRIENDSHIP_CONFIRMED }
+                        .sortedBy { it.displayName.lowercase() }
+                }
+
+                filteredContacts = allContacts
+                updateUI()
+
+                Log.d(TAG, "Loaded ${allContacts.size} contacts")
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to load contacts", e)
+            }
+        }
+    }
+
+    private fun filterContacts(query: String) {
+        filteredContacts = if (query.isBlank()) {
+            allContacts
+        } else {
+            allContacts.filter {
+                it.displayName.contains(query, ignoreCase = true)
+            }
+        }
+        updateUI()
+    }
+
+    private fun updateUI() {
+        if (filteredContacts.isEmpty()) {
+            contactsList.visibility = View.GONE
+            emptyState.visibility = View.VISIBLE
+        } else {
+            contactsList.visibility = View.VISIBLE
+            emptyState.visibility = View.GONE
+            contactsAdapter.submitList(filteredContacts)
+        }
+    }
+
+    private fun openChat(contact: DbContact) {
+        val intent = Intent(this, ChatActivity::class.java)
+        intent.putExtra(ChatActivity.EXTRA_CONTACT_ID, contact.id)
+        intent.putExtra(ChatActivity.EXTRA_CONTACT_NAME, contact.displayName)
+        intent.putExtra(ChatActivity.EXTRA_CONTACT_ADDRESS, contact.solanaAddress)
+        startActivity(intent)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            overrideActivityTransition(android.app.Activity.OVERRIDE_TRANSITION_OPEN, 0, 0)
+        } else {
+            @Suppress("DEPRECATION")
+            overridePendingTransition(0, 0)
+        }
+    }
+
+    // RecyclerView Adapter
+    private class ComposeContactsAdapter(
+        private val onContactClick: (DbContact) -> Unit
+    ) : RecyclerView.Adapter<ComposeContactsAdapter.ContactViewHolder>() {
+
+        private var contacts = listOf<DbContact>()
+
+        fun submitList(newContacts: List<DbContact>) {
+            contacts = newContacts
+            notifyDataSetChanged()
+        }
+
+        override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): ContactViewHolder {
+            val view = LayoutInflater.from(parent.context)
+                .inflate(R.layout.item_compose_contact, parent, false)
+            return ContactViewHolder(view, onContactClick)
+        }
+
+        override fun onBindViewHolder(holder: ContactViewHolder, position: Int) {
+            holder.bind(contacts[position])
+        }
+
+        override fun getItemCount() = contacts.size
+
+        class ContactViewHolder(
+            itemView: View,
+            private val onContactClick: (DbContact) -> Unit
+        ) : RecyclerView.ViewHolder(itemView) {
+
+            private val contactName: TextView = itemView.findViewById(R.id.contactName)
+            private val onlineIndicator: View = itemView.findViewById(R.id.onlineIndicator)
+
+            fun bind(contact: DbContact) {
+                contactName.text = contact.displayName
+
+                // Show online indicator (placeholder - can be implemented later)
+                onlineIndicator.visibility = View.GONE
+
+                itemView.setOnClickListener {
+                    onContactClick(contact)
+                }
+            }
         }
     }
 }

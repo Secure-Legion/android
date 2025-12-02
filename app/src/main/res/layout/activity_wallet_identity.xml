@@ -4,248 +4,457 @@
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="@color/header_bg">
+    android:background="#000000">
 
-<ScrollView
-    android:layout_width="match_parent"
-    android:layout_height="0dp"
-    android:fillViewport="true"
-    app:layout_constraintTop_toTopOf="parent"
-    app:layout_constraintBottom_toTopOf="@id/bottomNav">
-
+    <!-- Header -->
     <LinearLayout
+        android:id="@+id/header"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:orientation="vertical">
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:paddingStart="20dp"
+        android:paddingEnd="20dp"
+        android:paddingTop="16dp"
+        android:paddingBottom="16dp"
+        android:fitsSystemWindows="true"
+        app:layout_constraintTop_toTopOf="parent">
 
-        <!-- Header -->
-        <LinearLayout
-            android:layout_width="match_parent"
+        <!-- Back Button -->
+        <FrameLayout
+            android:id="@+id/backButton"
+            android:layout_width="42dp"
+            android:layout_height="42dp"
+            android:layout_marginStart="8dp"
+            android:background="@drawable/top_icon_bg"
+            android:clickable="true"
+            android:focusable="true">
+
+            <ImageView
+                android:layout_width="20dp"
+                android:layout_height="20dp"
+                android:layout_gravity="center"
+                android:src="@drawable/ic_back_arrow"
+                android:contentDescription="Back" />
+
+        </FrameLayout>
+
+        <!-- Title -->
+        <TextView
+            android:layout_width="0dp"
             android:layout_height="wrap_content"
-            android:orientation="horizontal"
-            android:background="@color/dark_bg"
-            android:fitsSystemWindows="true"
-            android:paddingStart="24dp"
-            android:paddingEnd="24dp"
-            android:paddingBottom="24dp"
-            android:gravity="center_vertical">
+            android:layout_weight="1"
+            android:text="Profile"
+            android:textSize="24sp"
+            android:textColor="@color/text_white"
+            android:fontFamily="@font/space_grotesk_bold"
+            android:gravity="center" />
 
-            <TextView
-                android:id="@+id/backButton"
-                android:layout_width="40dp"
-                android:layout_height="40dp"
-                android:text="‹"
-                android:textSize="32sp"
-                android:textColor="@color/text_white"
-                android:gravity="center"
-                android:clickable="true"
-                android:focusable="true"
-                android:background="?attr/selectableItemBackgroundBorderless" />
+        <!-- Spacer for alignment -->
+        <View
+            android:layout_width="42dp"
+            android:layout_height="42dp" />
 
-            <LinearLayout
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:orientation="horizontal"
-                android:gravity="center"
-                android:layout_marginEnd="40dp">
+    </LinearLayout>
 
-                <ImageView
-                    android:layout_width="60dp"
-                    android:layout_height="60dp"
-                    android:src="@drawable/secure_logo"
-                    android:layout_marginEnd="12dp"
-                    android:contentDescription="Secure Legion Logo" />
+    <!-- Content -->
+    <ScrollView
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:fillViewport="true"
+        app:layout_constraintTop_toBottomOf="@id/header"
+        app:layout_constraintBottom_toTopOf="@id/bottomNav">
 
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="IDENTITY"
-                    android:textSize="28sp"
-                    android:textStyle="bold"
-                    android:fontFamily="sans-serif-black"
-                    android:textColor="@color/text_white" />
-
-            </LinearLayout>
-
-        </LinearLayout>
-
-        <!-- Content -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="vertical"
-            android:padding="24dp">
+            android:paddingStart="24dp"
+            android:paddingEnd="24dp"
+            android:paddingTop="16dp"
+            android:paddingBottom="24dp"
+            android:gravity="center_horizontal">
 
-            <!-- Wallet Address -->
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="Wallet Address"
-                android:textSize="13sp"
-                android:textStyle="bold"
-                android:textColor="@color/text_gray"
-                android:layout_marginBottom="8dp" />
+            <!-- Profile Icon -->
+            <FrameLayout
+                android:layout_width="120dp"
+                android:layout_height="120dp"
+                android:layout_marginTop="16dp"
+                android:layout_marginBottom="24dp"
+                android:background="@drawable/settings_icon_bg">
 
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="vertical"
-                android:background="@drawable/settings_item_bg"
-                android:padding="16dp"
-                android:layout_marginBottom="16dp">
+                <ImageView
+                    android:layout_width="48dp"
+                    android:layout_height="48dp"
+                    android:layout_gravity="center"
+                    android:src="@drawable/ic_person"
+                    android:tint="#888888" />
 
-                <TextView
-                    android:id="@+id/walletAddressText"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU"
-                    android:textSize="14sp"
-                    android:textStyle="bold"
-                    android:textColor="@color/text_white"
-                    android:fontFamily="monospace"
-                    android:lineSpacingMultiplier="1.4"
-                    android:layout_marginBottom="4dp" />
-
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="Your Solana blockchain identity"
-                    android:textSize="13sp"
-                    android:textColor="@color/text_gray" />
-
-            </LinearLayout>
+            </FrameLayout>
 
             <!-- Username -->
             <TextView
+                android:id="@+id/usernameText"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="Username"
-                android:textSize="13sp"
-                android:textStyle="bold"
-                android:textColor="@color/text_gray"
-                android:layout_marginBottom="8dp" />
+                android:text="@WIZARD"
+                android:textSize="18sp"
+                android:textColor="#FFFFFF"
+                android:fontFamily="@font/space_grotesk_bold"
+                android:layout_marginBottom="32dp" />
 
-            <EditText
-                android:id="@+id/usernameInput"
+            <!-- CID Section -->
+            <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:background="@drawable/input_field_bg"
-                android:hint="@secure.legion.user"
-                android:text="@secure.legion.user"
-                android:textColorHint="@color/text_gray"
-                android:textColor="@color/text_white"
-                android:textSize="16sp"
-                android:padding="14dp"
-                android:layout_marginBottom="24dp" />
-
-            <!-- Contact Card Info -->
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="Contact Card (Share with Friends)"
-                android:textSize="13sp"
-                android:textStyle="bold"
-                android:textColor="@color/text_gray"
+                android:text="CID (IPFS Contact ID)"
+                android:textSize="14sp"
+                android:fontFamily="@font/poppins_medium"
+                android:textColor="#8C8C8C"
                 android:layout_marginBottom="8dp" />
 
             <LinearLayout
-                android:id="@+id/contactCardSection"
                 android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="vertical"
-                android:background="@drawable/settings_item_bg"
-                android:padding="16dp"
-                android:layout_marginBottom="16dp"
-                android:visibility="gone">
-
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="CID (Public - Tap to Copy)"
-                    android:textSize="12sp"
-                    android:textStyle="bold"
-                    android:textColor="@color/text_gray"
-                    android:layout_marginBottom="4dp" />
+                android:layout_height="60dp"
+                android:orientation="horizontal"
+                android:background="@drawable/lock_password_input_bg"
+                android:gravity="center_vertical"
+                android:paddingStart="16dp"
+                android:paddingEnd="8dp"
+                android:layout_marginBottom="24dp">
 
                 <TextView
                     android:id="@+id/contactCardCid"
-                    android:layout_width="wrap_content"
+                    android:layout_width="0dp"
                     android:layout_height="wrap_content"
-                    android:text="Loading..."
+                    android:layout_weight="1"
+                    android:text=""
                     android:textSize="14sp"
-                    android:textColor="@color/accent_blue"
-                    android:fontFamily="monospace"
+                    android:textColor="#8C8C8C"
+                    android:fontFamily="@font/poppins_regular"
+                    android:gravity="center"
+                    android:ellipsize="end"
+                    android:maxLines="1" />
+
+                <FrameLayout
+                    android:id="@+id/copyCidButton"
+                    android:layout_width="40dp"
+                    android:layout_height="40dp"
+                    android:background="@drawable/settings_icon_bg"
                     android:clickable="true"
-                    android:focusable="true"
-                    android:background="?attr/selectableItemBackground"
-                    android:padding="8dp"
-                    android:layout_marginStart="-8dp"
-                    android:layout_marginBottom="12dp" />
+                    android:focusable="true">
+
+                    <ImageView
+                        android:layout_width="20dp"
+                        android:layout_height="20dp"
+                        android:layout_gravity="center"
+                        android:src="@android:drawable/ic_menu_share"
+                        android:tint="#888888" />
+
+                </FrameLayout>
+
+            </LinearLayout>
+
+            <!-- Contact PIN Section -->
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Contact PIN"
+                android:textSize="14sp"
+                android:fontFamily="@font/poppins_medium"
+                android:textColor="#8C8C8C"
+                android:layout_marginBottom="8dp" />
+
+            <!-- PIN Input Boxes -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center"
+                android:layout_marginBottom="8dp">
 
                 <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="PIN (Private - Share Separately)"
-                    android:textSize="12sp"
-                    android:textStyle="bold"
-                    android:textColor="@color/text_gray"
-                    android:layout_marginBottom="4dp" />
-
-                <TextView
-                    android:id="@+id/contactCardPin"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="------"
+                    android:id="@+id/pinDigit1"
+                    android:layout_width="0dp"
+                    android:layout_height="50dp"
+                    android:layout_weight="1"
+                    android:layout_marginEnd="8dp"
+                    android:background="@drawable/pin_box_bg"
+                    android:gravity="center"
+                    android:textColor="#8C8C8C"
                     android:textSize="20sp"
-                    android:textStyle="bold"
-                    android:textColor="@color/text_white"
-                    android:fontFamily="monospace"
-                    android:letterSpacing="0.2"
-                    android:layout_marginBottom="8dp" />
+                    android:fontFamily="@font/poppins_medium" />
 
                 <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="Share CID publicly, but keep PIN private for security"
-                    android:textSize="12sp"
-                    android:textColor="@color/text_gray"
-                    android:lineSpacingMultiplier="1.3" />
+                    android:id="@+id/pinDigit2"
+                    android:layout_width="0dp"
+                    android:layout_height="50dp"
+                    android:layout_weight="1"
+                    android:layout_marginEnd="8dp"
+                    android:background="@drawable/pin_box_bg"
+                    android:gravity="center"
+                    android:textColor="#8C8C8C"
+                    android:textSize="20sp"
+                    android:fontFamily="@font/poppins_medium" />
+
+                <TextView
+                    android:id="@+id/pinDigit3"
+                    android:layout_width="0dp"
+                    android:layout_height="50dp"
+                    android:layout_weight="1"
+                    android:layout_marginEnd="8dp"
+                    android:background="@drawable/pin_box_bg"
+                    android:gravity="center"
+                    android:textColor="#8C8C8C"
+                    android:textSize="20sp"
+                    android:fontFamily="@font/poppins_medium" />
+
+                <TextView
+                    android:id="@+id/pinDigit4"
+                    android:layout_width="0dp"
+                    android:layout_height="50dp"
+                    android:layout_weight="1"
+                    android:layout_marginEnd="8dp"
+                    android:background="@drawable/pin_box_bg"
+                    android:gravity="center"
+                    android:textColor="#8C8C8C"
+                    android:textSize="20sp"
+                    android:fontFamily="@font/poppins_medium" />
+
+                <TextView
+                    android:id="@+id/pinDigit5"
+                    android:layout_width="0dp"
+                    android:layout_height="50dp"
+                    android:layout_weight="1"
+                    android:layout_marginEnd="8dp"
+                    android:background="@drawable/pin_box_bg"
+                    android:gravity="center"
+                    android:textColor="#8C8C8C"
+                    android:textSize="20sp"
+                    android:fontFamily="@font/poppins_medium" />
+
+                <TextView
+                    android:id="@+id/pinDigit6"
+                    android:layout_width="0dp"
+                    android:layout_height="50dp"
+                    android:layout_weight="1"
+                    android:background="@drawable/pin_box_bg"
+                    android:gravity="center"
+                    android:textColor="#8C8C8C"
+                    android:textSize="20sp"
+                    android:fontFamily="@font/poppins_medium" />
+
+                <FrameLayout
+                    android:id="@+id/copyPinButton"
+                    android:layout_width="40dp"
+                    android:layout_height="40dp"
+                    android:layout_marginStart="8dp"
+                    android:background="@drawable/settings_icon_bg"
+                    android:clickable="true"
+                    android:focusable="true">
+
+                    <ImageView
+                        android:layout_width="20dp"
+                        android:layout_height="20dp"
+                        android:layout_gravity="center"
+                        android:src="@android:drawable/ic_menu_share"
+                        android:tint="#888888" />
+
+                </FrameLayout>
 
             </LinearLayout>
 
             <!-- New Identity Button -->
-            <TextView
+            <LinearLayout
                 android:id="@+id/updateUsernameButton"
                 android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="New Identity"
-                android:textSize="16sp"
-                android:textStyle="bold"
-                android:textColor="@color/text_white"
-                android:background="@drawable/metallic_button_bg"
-                android:gravity="center"
-                android:padding="16dp"
+                android:layout_height="80dp"
+                android:orientation="horizontal"
+                android:background="@drawable/settings_box_bg"
+                android:paddingStart="16dp"
+                android:paddingEnd="16dp"
+                android:gravity="center_vertical"
                 android:clickable="true"
                 android:focusable="true"
-                android:elevation="6dp"
-                android:layout_marginTop="8dp"
-                android:layout_marginBottom="24dp" />
+                android:layout_marginTop="24dp">
+
+                <FrameLayout
+                    android:layout_width="50dp"
+                    android:layout_height="50dp"
+                    android:background="@drawable/settings_icon_bg"
+                    android:layout_marginStart="8dp"
+                    android:layout_marginEnd="16dp">
+
+                    <ImageView
+                        android:layout_width="24dp"
+                        android:layout_height="24dp"
+                        android:layout_gravity="center"
+                        android:src="@drawable/ic_person"
+                        android:tint="#888888" />
+
+                </FrameLayout>
+
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="New Identity"
+                    android:textSize="16sp"
+                    android:textColor="#8C8C8C"
+                    android:fontFamily="@font/poppins_medium" />
+
+                <FrameLayout
+                    android:layout_width="36dp"
+                    android:layout_height="36dp"
+                    android:layout_marginEnd="8dp"
+                    android:background="@drawable/arrow_bg">
+
+                    <ImageView
+                        android:layout_width="18dp"
+                        android:layout_height="18dp"
+                        android:layout_gravity="center"
+                        android:src="@drawable/ic_arrow_forward" />
+
+                </FrameLayout>
+
+            </LinearLayout>
+
+        </LinearLayout>
+
+    </ScrollView>
+
+    <!-- Bottom Navigation -->
+    <LinearLayout
+        android:id="@+id/bottomNav"
+        android:layout_width="match_parent"
+        android:layout_height="110dp"
+        android:orientation="horizontal"
+        android:background="#0A0A0A"
+        android:gravity="center"
+        android:paddingTop="12dp"
+        android:paddingBottom="12dp"
+        app:layout_constraintBottom_toBottomOf="parent">
+
+        <!-- Messages Nav Item -->
+        <LinearLayout
+            android:id="@+id/navMessages"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:orientation="vertical"
+            android:gravity="center"
+            android:background="@drawable/nav_item_ripple"
+            android:clickable="true"
+            android:focusable="true">
+
+            <ImageView
+                android:layout_width="24dp"
+                android:layout_height="24dp"
+                android:src="@android:drawable/sym_action_chat"
+                android:tint="@color/text_gray"
+                android:layout_marginBottom="4dp"
+                android:contentDescription="Messages" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Messages"
+                android:textSize="11sp"
+                android:textColor="@color/text_gray"
+                android:fontFamily="@font/poppins_medium" />
+
+        </LinearLayout>
+
+        <!-- Wallet Nav Item -->
+        <LinearLayout
+            android:id="@+id/navWallet"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:orientation="vertical"
+            android:gravity="center"
+            android:background="@drawable/nav_item_ripple"
+            android:clickable="true"
+            android:focusable="true">
+
+            <ImageView
+                android:layout_width="24dp"
+                android:layout_height="24dp"
+                android:src="@drawable/ic_wallet"
+                android:layout_marginBottom="4dp"
+                android:tint="@color/text_gray"
+                android:contentDescription="Wallet" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Wallet"
+                android:textSize="11sp"
+                android:textColor="@color/text_gray"
+                android:fontFamily="@font/poppins_medium" />
+
+        </LinearLayout>
+
+        <!-- Add Friend Nav Item -->
+        <LinearLayout
+            android:id="@+id/navAddFriend"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:orientation="vertical"
+            android:gravity="center"
+            android:background="@drawable/nav_item_ripple"
+            android:clickable="true"
+            android:focusable="true">
+
+            <ImageView
+                android:layout_width="24dp"
+                android:layout_height="24dp"
+                android:src="@drawable/ic_add_friend"
+                android:tint="@color/text_gray"
+                android:layout_marginBottom="4dp"
+                android:contentDescription="Add Friend" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Add Friend"
+                android:textSize="11sp"
+                android:textColor="@color/text_gray"
+                android:fontFamily="@font/poppins_medium" />
+
+        </LinearLayout>
+
+        <!-- Lock Nav Item -->
+        <LinearLayout
+            android:id="@+id/navLock"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:orientation="vertical"
+            android:gravity="center"
+            android:background="@drawable/nav_item_ripple"
+            android:clickable="true"
+            android:focusable="true">
+
+            <ImageView
+                android:layout_width="24dp"
+                android:layout_height="24dp"
+                android:src="@drawable/ic_lock"
+                android:layout_marginBottom="4dp"
+                android:tint="@color/text_gray"
+                android:contentDescription="Lock" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Lock"
+                android:textSize="11sp"
+                android:textColor="@color/text_gray"
+                android:fontFamily="@font/poppins_medium" />
 
         </LinearLayout>
 
     </LinearLayout>
-
-</ScrollView>
-
-<!-- Bottom Navigation -->
-<include
-    android:id="@+id/bottomNav"
-    layout="@layout/bottom_navigation"
-    android:layout_width="match_parent"
-    android:layout_height="90dp"
-    app:layout_constraintBottom_toBottomOf="parent"
-    app:layout_constraintStart_toStartOf="parent"
-    app:layout_constraintEnd_toEndOf="parent" />
 
 </androidx.constraintlayout.widget.ConstraintLayout>

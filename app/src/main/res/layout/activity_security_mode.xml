@@ -4,7 +4,7 @@
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="@color/header_bg">
+    android:background="#000000">
 
 <ScrollView
     android:layout_width="match_parent"
@@ -15,67 +15,11 @@
 
     <LinearLayout
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:orientation="vertical">
-
-        <!-- Header -->
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="horizontal"
-            android:background="@color/dark_bg"
-            android:fitsSystemWindows="true"
-            android:paddingStart="24dp"
-            android:paddingEnd="24dp"
-            android:paddingBottom="24dp"
-            android:gravity="center_vertical">
-
-            <TextView
-                android:id="@+id/backButton"
-                android:layout_width="40dp"
-                android:layout_height="40dp"
-                android:text="‹"
-                android:textSize="32sp"
-                android:textColor="@color/text_white"
-                android:gravity="center"
-                android:clickable="true"
-                android:focusable="true"
-                android:background="?attr/selectableItemBackgroundBorderless" />
-
-            <LinearLayout
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:orientation="horizontal"
-                android:gravity="center"
-                android:layout_marginEnd="40dp">
-
-                <ImageView
-                    android:layout_width="60dp"
-                    android:layout_height="60dp"
-                    android:src="@drawable/secure_logo"
-                    android:layout_marginEnd="12dp"
-                    android:contentDescription="Secure Legion Logo" />
-
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="SECURITY"
-                    android:textSize="28sp"
-                    android:textStyle="bold"
-                    android:textColor="@color/text_white"
-                    android:fontFamily="sans-serif-black" />
-
-            </LinearLayout>
-
-        </LinearLayout>
-
-        <!-- Content -->
-        <LinearLayout
-            android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="vertical"
-            android:padding="24dp">
+            android:paddingStart="24dp"
+            android:paddingEnd="24dp"
+            android:paddingBottom="24dp">
 
             <!-- App Security Section -->
             <TextView
@@ -83,7 +27,8 @@
                 android:layout_height="wrap_content"
                 android:text="App Security"
                 android:textSize="13sp"
-                android:textColor="@color/text_gray"
+                android:fontFamily="@font/poppins_medium"
+                android:textColor="#666666"
                 android:layout_marginTop="8dp"
                 android:layout_marginBottom="8dp" />
 
@@ -93,7 +38,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:orientation="horizontal"
-                android:background="@drawable/settings_item_bg"
+                android:background="@drawable/settings_box_bg"
                 android:padding="16dp"
                 android:layout_marginBottom="16dp"
                 android:gravity="center_vertical"
@@ -111,8 +56,8 @@
                         android:layout_height="wrap_content"
                         android:text="Auto-Lock Timer"
                         android:textSize="16sp"
-                        android:textStyle="bold"
-                        android:textColor="@color/text_white" />
+                        android:fontFamily="@font/poppins_medium"
+                        android:textColor="#5C5C5C" />
 
                     <TextView
                         android:id="@+id/autoLockStatus"
@@ -120,7 +65,8 @@
                         android:layout_height="wrap_content"
                         android:text="5 minutes"
                         android:textSize="13sp"
-                        android:textColor="@color/text_gray" />
+                        android:textColor="#666666"
+                        android:fontFamily="@font/poppins_regular" />
 
                 </LinearLayout>
 
@@ -132,8 +78,6 @@
                     android:textColor="@color/text_gray" />
 
             </LinearLayout>
-
-        </LinearLayout>
 
     </LinearLayout>
 

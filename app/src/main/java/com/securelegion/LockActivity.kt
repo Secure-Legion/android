@@ -2,6 +2,9 @@ package com.securelegion
 
 import android.content.Intent
 import android.os.Bundle
+import android.text.SpannableString
+import android.text.Spanned
+import android.text.style.ForegroundColorSpan
 import android.util.Log
 import android.view.View
 import android.view.WindowManager
@@ -11,6 +14,7 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import com.securelegion.crypto.KeyManager
 import com.securelegion.database.SecureLegionDatabase
@@ -24,13 +28,35 @@ import kotlinx.coroutines.withContext
 class LockActivity : AppCompatActivity() {
 
     private lateinit var passwordSection: LinearLayout
-    private lateinit var accountLinksSection: LinearLayout
     private lateinit var biometricHelper: BiometricAuthHelper
     private var hasWallet = false
     private var isProcessingDistress = false
     private var hasAuthenticated = false  // Track if user successfully authenticated
+    private var isPasswordVisible = false  // Track password visibility state
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        // Check if wallet exists BEFORE calling super.onCreate() to prevent any UI flash
+        val keyManager = KeyManager.getInstance(this)
+        hasWallet = keyManager.isInitialized()
+
+        if (!hasWallet) {
+            // No wallet - this shouldn't happen as SplashActivity should redirect
+            // Finish immediately without showing any UI
+            super.onCreate(savedInstanceState)
+            Log.w("LockActivity", "No wallet found - redirecting to WelcomeActivity without showing UI")
+            val intent = Intent(this, WelcomeActivity::class.java)
+            intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+            finish()  // Finish FIRST
+            startActivity(intent)
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                overrideActivityTransition(OVERRIDE_TRANSITION_OPEN, 0, 0)
+            } else {
+                @Suppress("DEPRECATION")
+                overridePendingTransition(0, 0)
+            }
+            return
+        }
+
         super.onCreate(savedInstanceState)
 
         // Security: Prevent screenshots and screen recording on lock screen
@@ -38,6 +64,9 @@ class LockActivity : AppCompatActivity() {
             WindowManager.LayoutParams.FLAG_SECURE,
             WindowManager.LayoutParams.FLAG_SECURE
         )
+
+        // Wallet exists - show lock screen UI
+        Log.d("LockActivity", "Wallet exists, showing password unlock")
 
         // Security: Show lock screen over keyguard
         setShowWhenLocked(true)
@@ -53,32 +82,16 @@ class LockActivity : AppCompatActivity() {
         setContentView(R.layout.activity_lock)
 
         passwordSection = findViewById(R.id.passwordSection)
-        accountLinksSection = findViewById(R.id.accountLinksSection)
         biometricHelper = BiometricAuthHelper(this)
 
-        // Check if wallet exists
-        val keyManager = KeyManager.getInstance(this)
-        hasWallet = keyManager.isInitialized()
-
-        if (hasWallet) {
-            // Wallet exists - show password unlock
-            Log.d("LockActivity", "Wallet exists, showing password unlock")
-            passwordSection.visibility = View.VISIBLE
-            accountLinksSection.visibility = View.GONE
-            setupBiometricUI()
-        } else {
-            // No wallet - show account creation/restore options
-            Log.d("LockActivity", "No wallet, showing account options")
-            passwordSection.visibility = View.GONE
-            accountLinksSection.visibility = View.VISIBLE
-        }
-
+        passwordSection.visibility = View.VISIBLE
+        setupBiometricUI()
         setupClickListeners()
+        setupForgotPasswordText()
     }
 
     private fun setupBiometricUI() {
         val biometricButton = findViewById<ImageView>(R.id.biometricButton)
-        val biometricText = findViewById<TextView>(R.id.biometricText)
 
         // Check biometric availability
         val biometricStatus = biometricHelper.isBiometricAvailable()
@@ -92,9 +105,8 @@ class LockActivity : AppCompatActivity() {
                 Log.d("LockActivity", "Biometric hardware available and enrolled")
                 // Check if biometric is already enabled in app
                 if (isEnabled) {
-                    Log.i("LockActivity", "Biometric unlock enabled - showing button and icon")
+                    Log.i("LockActivity", "Biometric unlock enabled - showing button")
                     biometricButton.visibility = View.VISIBLE
-                    biometricText.visibility = View.VISIBLE
                 } else {
                     Log.d("LockActivity", "Biometric available but not enabled in app yet")
                 }
@@ -153,6 +165,24 @@ class LockActivity : AppCompatActivity() {
     }
 
     private fun setupClickListeners() {
+        // Password visibility toggle
+        findViewById<ImageView>(R.id.passwordToggle).setOnClickListener {
+            isPasswordVisible = !isPasswordVisible
+            val passwordInput = findViewById<EditText>(R.id.passwordInput)
+
+            if (isPasswordVisible) {
+                // Show password
+                passwordInput.inputType = android.text.InputType.TYPE_CLASS_TEXT or
+                                          android.text.InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD
+            } else {
+                // Hide password
+                passwordInput.inputType = android.text.InputType.TYPE_CLASS_TEXT or
+                                          android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
+            }
+            // Move cursor to end
+            passwordInput.setSelection(passwordInput.text.length)
+        }
+
         findViewById<View>(R.id.unlockButton).setOnClickListener {
             val password = findViewById<EditText>(R.id.passwordInput).text.toString()
 
@@ -225,19 +255,30 @@ class LockActivity : AppCompatActivity() {
             }
         }
 
-        findViewById<View>(R.id.newAccountLink).setOnClickListener {
-            Log.d("LockActivity", "User selected 'Create New Account'")
-            val intent = Intent(this, CreateAccountActivity::class.java)
-            startActivity(intent)
-            // Don't finish - allow back navigation
-        }
+    }
 
-        findViewById<View>(R.id.restoreAccountLink).setOnClickListener {
-            Log.d("LockActivity", "User selected 'Import Account'")
-            val intent = Intent(this, RestoreAccountActivity::class.java)
-            startActivity(intent)
-            // Don't finish - allow back navigation
-        }
+    private fun setupForgotPasswordText() {
+        val forgotPasswordTextView = findViewById<TextView>(R.id.forgotPasswordText)
+        val fullText = "Forgot Password? Import Recovery"
+        val spannableString = SpannableString(fullText)
+
+        // "Forgot Password? " (with space) in gray (#888888)
+        spannableString.setSpan(
+            ForegroundColorSpan(0xFF888888.toInt()),
+            0,
+            17, // "Forgot Password?" length (without space)
+            Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+        )
+
+        // "Import Recovery" in white (#FFFFFF)
+        spannableString.setSpan(
+            ForegroundColorSpan(0xFFFFFFFF.toInt()),
+            17, // Start at space before "Import Recovery"
+            fullText.length,
+            Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+        )
+
+        forgotPasswordTextView.text = spannableString
     }
 
     /**
@@ -277,7 +318,6 @@ class LockActivity : AppCompatActivity() {
 
                                     // Update UI to show biometric button
                                     findViewById<ImageView>(R.id.biometricButton).visibility = View.VISIBLE
-                                    findViewById<TextView>(R.id.biometricText).visibility = View.VISIBLE
 
                                     // Call completion callback
                                     onComplete()

@@ -35,6 +35,11 @@ class WalletSettingsActivity : AppCompatActivity() {
 
         Log.d("WalletSettings", "Opened for wallet: $currentWalletName (ID: $currentWalletId, isMain: $isMainWallet)")
 
+        // Back button
+        findViewById<View>(R.id.backButton).setOnClickListener {
+            finish()
+        }
+
         setupUI()
         setupClickListeners()
     }
@@ -84,11 +89,6 @@ class WalletSettingsActivity : AppCompatActivity() {
     }
 
     private fun setupClickListeners() {
-        // Back button
-        findViewById<View>(R.id.backButton).setOnClickListener {
-            finish()
-        }
-
         // Create New Wallet
         findViewById<View>(R.id.createWalletButton).setOnClickListener {
             val intent = android.content.Intent(this, CreateWalletActivity::class.java)

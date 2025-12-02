@@ -5,42 +5,56 @@
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="@color/header_bg">
+    android:background="#000000">
 
     <!-- Header -->
     <LinearLayout
         android:id="@+id/header"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:background="@drawable/header_bg"
         android:orientation="horizontal"
-        android:fitsSystemWindows="true"
-        android:paddingStart="16dp"
-        android:paddingEnd="16dp"
-        android:paddingBottom="16dp"
         android:gravity="center_vertical"
+        android:paddingStart="20dp"
+        android:paddingEnd="20dp"
+        android:paddingTop="16dp"
+        android:paddingBottom="16dp"
+        android:fitsSystemWindows="true"
         app:layout_constraintTop_toTopOf="parent">
 
-        <ImageView
+        <!-- Back Button -->
+        <FrameLayout
             android:id="@+id/backButton"
-            android:layout_width="32dp"
-            android:layout_height="32dp"
-            android:src="@drawable/ic_arrow_back"
-            app:tint="@color/text_white"
+            android:layout_width="42dp"
+            android:layout_height="42dp"
+            android:layout_marginStart="8dp"
+            android:background="@drawable/top_icon_bg"
             android:clickable="true"
-            android:focusable="true"
-            android:background="?attr/selectableItemBackgroundBorderless"
-            android:contentDescription="Back" />
+            android:focusable="true">
 
+            <ImageView
+                android:layout_width="20dp"
+                android:layout_height="20dp"
+                android:layout_gravity="center"
+                android:src="@drawable/ic_back_arrow"
+                android:contentDescription="Back" />
+
+        </FrameLayout>
+
+        <!-- Title -->
         <TextView
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
-            android:layout_marginStart="12dp"
             android:text="Wallet Settings"
-            android:textSize="20sp"
-            android:textStyle="bold"
-            android:textColor="@color/text_white" />
+            android:textSize="24sp"
+            android:textColor="#999999"
+            android:fontFamily="@font/space_grotesk_bold"
+            android:gravity="center" />
+
+        <!-- Spacer for alignment -->
+        <View
+            android:layout_width="42dp"
+            android:layout_height="42dp" />
 
     </LinearLayout>
 
@@ -72,11 +86,10 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginBottom="24dp"
-                app:cardBackgroundColor="@color/card_bg"
+                app:cardBackgroundColor="#141414"
                 app:cardCornerRadius="12dp"
                 app:cardElevation="0dp"
-                app:strokeWidth="1dp"
-                app:strokeColor="@color/border_color">
+                app:strokeWidth="0dp">
 
                 <LinearLayout
                     android:layout_width="match_parent"

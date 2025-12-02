@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Background -->
+    <item>
+        <shape android:shape="rectangle">
+            <solid android:color="#222222" />
+            <corners android:radius="6dp" />
+        </shape>
+    </item>
+
+    <!-- Chevron arrow -->
+    <item
+        android:width="16dp"
+        android:height="16dp"
+        android:gravity="center">
+        <vector
+            android:width="16dp"
+            android:height="16dp"
+            android:viewportWidth="16"
+            android:viewportHeight="16">
+            <path
+                android:strokeColor="#888888"
+                android:strokeWidth="1.5"
+                android:strokeLineCap="round"
+                android:strokeLineJoin="round"
+                android:pathData="M10,14 L4,8 L10,2" />
+        </vector>
+    </item>
+</layer-list>

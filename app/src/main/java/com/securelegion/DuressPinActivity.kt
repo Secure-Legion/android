@@ -71,16 +71,12 @@ class DuressPinActivity : AppCompatActivity() {
         setContentView(R.layout.activity_duress_pin)
 
         setupBottomNavigation()
+        setupBackButton()
 
         wipePhoneSwitch = findViewById(R.id.wipePhoneSwitch)
 
         loadSettings()
         setupSwitchListeners()
-
-        // Back button
-        findViewById<View>(R.id.backButton).setOnClickListener {
-            finish()
-        }
 
         // Save Duress PIN button
         findViewById<View>(R.id.saveDuressPinButton).setOnClickListener {
@@ -144,6 +140,12 @@ class DuressPinActivity : AppCompatActivity() {
             .apply()
 
         Log.i(TAG, "Duress PIN hash saved securely (Argon2id)")
+    }
+
+    private fun setupBackButton() {
+        findViewById<View>(R.id.backButton).setOnClickListener {
+            finish()
+        }
     }
 
     private fun setupBottomNavigation() {

@@ -28,20 +28,45 @@ class WalletIdentityActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_wallet_identity)
 
-        loadWalletAddress()
-        loadUsername()
-        loadContactCardInfo()
-        setupBottomNavigation()
-
         // Back button
         findViewById<View>(R.id.backButton).setOnClickListener {
             finish()
         }
 
+        loadUsername()
+        loadContactCardInfo()
+        setupBottomNavigation()
+
         // New Identity button - Creates new wallet, CID, username, and onion address
         findViewById<View>(R.id.updateUsernameButton).setOnClickListener {
             showNewIdentityConfirmation()
         }
+
+        // Copy CID button
+        findViewById<View>(R.id.copyCidButton).setOnClickListener {
+            val cid = findViewById<TextView>(R.id.contactCardCid).text.toString()
+            if (cid.isNotEmpty()) {
+                copyToClipboard(cid, "CID")
+            }
+        }
+
+        // Copy PIN button
+        findViewById<View>(R.id.copyPinButton).setOnClickListener {
+            val pin = getPinFromDigits()
+            if (pin.isNotEmpty()) {
+                copyToClipboard(pin, "PIN")
+            }
+        }
+    }
+
+    private fun getPinFromDigits(): String {
+        val digit1 = findViewById<TextView>(R.id.pinDigit1).text.toString()
+        val digit2 = findViewById<TextView>(R.id.pinDigit2).text.toString()
+        val digit3 = findViewById<TextView>(R.id.pinDigit3).text.toString()
+        val digit4 = findViewById<TextView>(R.id.pinDigit4).text.toString()
+        val digit5 = findViewById<TextView>(R.id.pinDigit5).text.toString()
+        val digit6 = findViewById<TextView>(R.id.pinDigit6).text.toString()
+        return "$digit1$digit2$digit3$digit4$digit5$digit6"
     }
 
     private fun showNewIdentityConfirmation() {
@@ -83,8 +108,9 @@ class WalletIdentityActivity : AppCompatActivity() {
                 Log.i("WalletIdentity", "New wallet: $newWalletAddress")
                 Log.i("WalletIdentity", "New onion: $newOnionAddress")
 
-                // Step 3: Generate username
-                val username = findViewById<EditText>(R.id.usernameInput).text.toString().ifEmpty {
+                // Step 3: Generate username from current username text
+                val usernameText = findViewById<TextView>(R.id.usernameText).text.toString().removePrefix("@")
+                val username = usernameText.ifEmpty {
                     "User${System.currentTimeMillis().toString().takeLast(6)}"
                 }
 
@@ -120,7 +146,6 @@ class WalletIdentityActivity : AppCompatActivity() {
                     Log.i("WalletIdentity", "PIN: $newPin")
 
                     // Refresh UI
-                    loadWalletAddress()
                     loadUsername()
                     loadContactCardInfo()
 
@@ -144,35 +169,45 @@ class WalletIdentityActivity : AppCompatActivity() {
         }
     }
 
-    private fun loadWalletAddress() {
-        try {
-            val keyManager = KeyManager.getInstance(this)
-            if (keyManager.isInitialized()) {
-                val walletAddress = keyManager.getSolanaAddress()
-                findViewById<TextView>(R.id.walletAddressText).text = walletAddress
-                Log.i("WalletIdentity", "Loaded wallet address: $walletAddress")
-            } else {
-                findViewById<TextView>(R.id.walletAddressText).text = "No wallet initialized"
-                Log.w("WalletIdentity", "Wallet not initialized")
-            }
-        } catch (e: Exception) {
-            Log.e("WalletIdentity", "Failed to load wallet address", e)
-            findViewById<TextView>(R.id.walletAddressText).text = "Error loading address"
-        }
-    }
-
     private fun loadUsername() {
         try {
             val keyManager = KeyManager.getInstance(this)
             val username = keyManager.getUsername()
+            val usernameTextView = findViewById<TextView>(R.id.usernameText)
+
             if (username != null) {
-                findViewById<EditText>(R.id.usernameInput).setText(username)
+                usernameTextView.text = "@$username"
                 Log.i("WalletIdentity", "Loaded username: $username")
             } else {
+                usernameTextView.text = "@USER"
                 Log.d("WalletIdentity", "No username stored yet")
+            }
+
+            // Apply gradient text effect
+            usernameTextView.post {
+                applyGradientToText(usernameTextView)
             }
         } catch (e: Exception) {
             Log.e("WalletIdentity", "Failed to load username", e)
+            findViewById<TextView>(R.id.usernameText).text = "@USER"
+        }
+    }
+
+    private fun applyGradientToText(textView: TextView) {
+        val width = textView.paint.measureText(textView.text.toString())
+        if (width > 0) {
+            val shader = android.graphics.LinearGradient(
+                0f, 0f, width, 0f,
+                intArrayOf(
+                    0x4DFFFFFF.toInt(), // 30% white at start
+                    0xE6FFFFFF.toInt(), // 90% white at center
+                    0x4DFFFFFF.toInt()  // 30% white at end
+                ),
+                floatArrayOf(0f, 0.49f, 1f),
+                android.graphics.Shader.TileMode.CLAMP
+            )
+            textView.paint.shader = shader
+            textView.invalidate()
         }
     }
 
@@ -184,17 +219,19 @@ class WalletIdentityActivity : AppCompatActivity() {
                 val pin = keyManager.getContactCardPin()
 
                 if (cid != null && pin != null) {
-                    findViewById<View>(R.id.contactCardSection).visibility = View.VISIBLE
+                    // Set CID
+                    findViewById<TextView>(R.id.contactCardCid).text = cid
 
-                    val cidTextView = findViewById<TextView>(R.id.contactCardCid)
-                    cidTextView.text = cid
-
-                    // Make CID clickable to copy
-                    cidTextView.setOnClickListener {
-                        copyToClipboard(cid, "CID")
+                    // Set PIN digits
+                    if (pin.length == 6) {
+                        findViewById<TextView>(R.id.pinDigit1).text = pin[0].toString()
+                        findViewById<TextView>(R.id.pinDigit2).text = pin[1].toString()
+                        findViewById<TextView>(R.id.pinDigit3).text = pin[2].toString()
+                        findViewById<TextView>(R.id.pinDigit4).text = pin[3].toString()
+                        findViewById<TextView>(R.id.pinDigit5).text = pin[4].toString()
+                        findViewById<TextView>(R.id.pinDigit6).text = pin[5].toString()
                     }
 
-                    findViewById<TextView>(R.id.contactCardPin).text = pin
                     Log.i("WalletIdentity", "Loaded contact card info")
                 }
             } else {

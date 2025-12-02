@@ -4,58 +4,59 @@
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="@color/header_bg">
+    android:background="#000000">
 
     <!-- Header -->
     <LinearLayout
-        android:id="@+id/bridgeHeader"
+        android:id="@+id/header"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="horizontal"
-        android:background="@drawable/header_bg"
+        android:gravity="center_vertical"
+        android:paddingStart="20dp"
+        android:paddingEnd="20dp"
+        android:paddingTop="16dp"
+        android:paddingBottom="16dp"
         android:fitsSystemWindows="true"
-        android:paddingStart="24dp"
-        android:paddingEnd="24dp"
-        android:paddingBottom="24dp"
-        android:gravity="center"
         app:layout_constraintTop_toTopOf="parent">
 
-        <TextView
+        <!-- Back Button -->
+        <FrameLayout
             android:id="@+id/backButton"
-            android:layout_width="40dp"
-            android:layout_height="40dp"
-            android:text="‹"
-            android:textSize="32sp"
-            android:textColor="@color/text_white"
-            android:gravity="center"
+            android:layout_width="42dp"
+            android:layout_height="42dp"
+            android:layout_marginStart="8dp"
+            android:background="@drawable/top_icon_bg"
             android:clickable="true"
-            android:focusable="true"
-            android:background="?attr/selectableItemBackgroundBorderless" />
-
-        <LinearLayout
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:orientation="horizontal"
-            android:gravity="center"
-            android:layout_marginEnd="40dp">
+            android:focusable="true">
 
             <ImageView
-                android:layout_width="48dp"
-                android:layout_height="48dp"
-                android:src="@drawable/icon_header"
-                android:layout_marginEnd="12dp"
-                android:contentDescription="Secure Legion Logo" />
+                android:layout_width="20dp"
+                android:layout_height="20dp"
+                android:layout_gravity="center"
+                android:src="@drawable/ic_back_arrow"
+                android:contentDescription="Back" />
 
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="TOR BRIDGES"
-                android:textSize="28sp"
-                android:textStyle="bold"
-                android:fontFamily="sans-serif-black"
-                android:textColor="@color/text_white" />
+        </FrameLayout>
 
-        </LinearLayout>
+        <!-- Title -->
+        <TextView
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="Tor Bridges"
+            android:textSize="22sp"
+            android:textColor="#CCCCCC"
+            android:fontFamily="@font/space_grotesk_bold"
+            android:textStyle="bold"
+            android:gravity="center" />
+
+        <!-- Settings Button (invisible for balance) -->
+        <FrameLayout
+            android:layout_width="42dp"
+            android:layout_height="42dp"
+            android:layout_marginEnd="8dp"
+            android:visibility="invisible" />
 
     </LinearLayout>
 
@@ -65,14 +66,17 @@
         android:layout_height="0dp"
         android:fillViewport="false"
         android:scrollbars="none"
-        app:layout_constraintTop_toBottomOf="@id/bridgeHeader"
+        app:layout_constraintTop_toBottomOf="@id/header"
         app:layout_constraintBottom_toTopOf="@id/saveButton">
 
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="vertical"
-            android:padding="24dp">
+            android:paddingStart="24dp"
+            android:paddingEnd="24dp"
+            android:paddingTop="16dp"
+            android:paddingBottom="24dp">
 
             <!-- Description -->
             <TextView
@@ -80,8 +84,10 @@
                 android:layout_height="wrap_content"
                 android:text="Bridges help you connect to Tor in censored regions where Tor is blocked. Select a bridge type below."
                 android:textSize="14sp"
-                android:textColor="@color/text_gray"
-                android:layout_marginBottom="24dp" />
+                android:textColor="#888888"
+                android:fontFamily="@font/poppins_regular"
+                android:lineSpacingMultiplier="1.3"
+                android:layout_marginBottom="20dp" />
 
             <!-- Radio Group for Bridge Selection -->
             <RadioGroup
@@ -96,17 +102,19 @@
                     android:layout_height="wrap_content"
                     android:text="None (Default)"
                     android:textSize="16sp"
-                    android:textColor="@color/text_white"
+                    android:textColor="#FFFFFF"
+                    android:fontFamily="@font/poppins_medium"
                     android:padding="16dp"
                     android:checked="true"
-                    android:buttonTint="@color/accent_blue" />
+                    android:buttonTint="#4A90E2" />
 
                 <TextView
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:text="Connect directly to Tor without bridges"
                     android:textSize="13sp"
-                    android:textColor="@color/text_gray"
+                    android:textColor="#888888"
+                    android:fontFamily="@font/poppins_regular"
                     android:paddingStart="56dp"
                     android:paddingEnd="16dp"
                     android:paddingBottom="16dp" />
@@ -118,16 +126,18 @@
                     android:layout_height="wrap_content"
                     android:text="Snowflake"
                     android:textSize="16sp"
-                    android:textColor="@color/text_white"
+                    android:textColor="#FFFFFF"
+                    android:fontFamily="@font/poppins_medium"
                     android:padding="16dp"
-                    android:buttonTint="@color/accent_blue" />
+                    android:buttonTint="#4A90E2" />
 
                 <TextView
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:text="Uses temporary proxies from volunteers (recommended for most censored regions)"
                     android:textSize="13sp"
-                    android:textColor="@color/text_gray"
+                    android:textColor="#888888"
+                    android:fontFamily="@font/poppins_regular"
                     android:paddingStart="56dp"
                     android:paddingEnd="16dp"
                     android:paddingBottom="16dp" />
@@ -139,16 +149,18 @@
                     android:layout_height="wrap_content"
                     android:text="obfs4"
                     android:textSize="16sp"
-                    android:textColor="@color/text_white"
+                    android:textColor="#FFFFFF"
+                    android:fontFamily="@font/poppins_medium"
                     android:padding="16dp"
-                    android:buttonTint="@color/accent_blue" />
+                    android:buttonTint="#4A90E2" />
 
                 <TextView
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:text="Obfuscates traffic to look like random data"
                     android:textSize="13sp"
-                    android:textColor="@color/text_gray"
+                    android:textColor="#888888"
+                    android:fontFamily="@font/poppins_regular"
                     android:paddingStart="56dp"
                     android:paddingEnd="16dp"
                     android:paddingBottom="16dp" />
@@ -160,16 +172,18 @@
                     android:layout_height="wrap_content"
                     android:text="meek-azure"
                     android:textSize="16sp"
-                    android:textColor="@color/text_white"
+                    android:textColor="#FFFFFF"
+                    android:fontFamily="@font/poppins_medium"
                     android:padding="16dp"
-                    android:buttonTint="@color/accent_blue" />
+                    android:buttonTint="#4A90E2" />
 
                 <TextView
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:text="Routes through Microsoft Azure (slower but harder to block)"
                     android:textSize="13sp"
-                    android:textColor="@color/text_gray"
+                    android:textColor="#888888"
+                    android:fontFamily="@font/poppins_regular"
                     android:paddingStart="56dp"
                     android:paddingEnd="16dp"
                     android:paddingBottom="16dp" />
@@ -181,16 +195,18 @@
                     android:layout_height="wrap_content"
                     android:text="Custom Bridge"
                     android:textSize="16sp"
-                    android:textColor="@color/text_white"
+                    android:textColor="#FFFFFF"
+                    android:fontFamily="@font/poppins_medium"
                     android:padding="16dp"
-                    android:buttonTint="@color/accent_blue" />
+                    android:buttonTint="#4A90E2" />
 
                 <TextView
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:text="Enter your own bridge address"
                     android:textSize="13sp"
-                    android:textColor="@color/text_gray"
+                    android:textColor="#888888"
+                    android:fontFamily="@font/poppins_regular"
                     android:paddingStart="56dp"
                     android:paddingEnd="16dp"
                     android:paddingBottom="8dp" />
@@ -203,9 +219,10 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:hint="Paste bridge address here..."
-                android:textColorHint="@color/text_gray"
-                android:textColor="@color/text_white"
-                android:background="@drawable/settings_item_bg"
+                android:textColorHint="#666666"
+                android:textColor="#FFFFFF"
+                android:fontFamily="@font/poppins_regular"
+                android:background="@drawable/lock_password_input_bg"
                 android:padding="16dp"
                 android:layout_marginStart="56dp"
                 android:layout_marginEnd="16dp"
@@ -218,23 +235,38 @@
     </ScrollView>
 
     <!-- Save Button -->
-    <TextView
+    <FrameLayout
         android:id="@+id/saveButton"
-        android:layout_width="280dp"
-        android:layout_height="wrap_content"
-        android:text="SAVE"
-        android:textSize="16sp"
-        android:textStyle="bold"
-        android:textColor="@color/text_white"
-        android:background="@drawable/metallic_button_bg"
-        android:gravity="center"
-        android:padding="16dp"
+        android:layout_width="match_parent"
+        android:layout_height="60dp"
         android:layout_marginStart="24dp"
         android:layout_marginEnd="24dp"
-        android:layout_marginBottom="48dp"
+        android:layout_marginBottom="32dp"
+        android:background="@drawable/neon_blue_button_bg"
         android:clickable="true"
         android:focusable="true"
-        android:elevation="6dp"
+        app:layout_constraintBottom_toTopOf="@id/bottomNav"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:text="SAVE"
+            android:textSize="16sp"
+            android:textColor="#FFFFFF"
+            android:fontFamily="@font/space_grotesk_bold"
+            android:textStyle="bold" />
+
+    </FrameLayout>
+
+    <!-- Bottom Navigation -->
+    <include
+        android:id="@+id/bottomNav"
+        layout="@layout/bottom_navigation"
+        android:layout_width="match_parent"
+        android:layout_height="110dp"
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent" />

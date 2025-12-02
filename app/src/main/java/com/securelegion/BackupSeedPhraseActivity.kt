@@ -4,6 +4,7 @@ import android.os.Bundle
 import android.util.Log
 import android.view.View
 import android.widget.TextView
+import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.app.AppCompatActivity
 import com.securelegion.utils.ThemedToast
 
@@ -15,6 +16,16 @@ class BackupSeedPhraseActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_backup_seed_phrase)
+
+        // Prevent going back without acknowledging
+        onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() {
+                ThemedToast.show(
+                    this@BackupSeedPhraseActivity,
+                    "Please write down your seed phrase before continuing"
+                )
+            }
+        })
 
         // Get seed phrase from intent
         seedPhrase = intent.getStringExtra(EXTRA_SEED_PHRASE) ?: ""
@@ -69,15 +80,6 @@ class BackupSeedPhraseActivity : AppCompatActivity() {
             // Go back to CreateAccountActivity to continue with username setup
             finish()
         }
-    }
-
-    @Deprecated("Deprecated in Java")
-    override fun onBackPressed() {
-        // Prevent going back without acknowledging
-        ThemedToast.show(
-            this,
-            "Please write down your seed phrase before continuing"
-        )
     }
 
     companion object {

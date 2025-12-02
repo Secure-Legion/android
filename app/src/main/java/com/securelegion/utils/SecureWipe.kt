@@ -58,11 +58,40 @@ object SecureWipe {
                 secureDeleteFile(dbShm)
             }
 
-            // 3. Clear all SharedPreferences
+            // 3. Securely wipe all encrypted voice files
+            val voiceDir = File(context.filesDir, "voice_messages")
+            if (voiceDir.exists() && voiceDir.isDirectory) {
+                Log.i(TAG, "Securely wiping voice files")
+                val voiceFiles = voiceDir.listFiles()
+                voiceFiles?.forEach { voiceFile ->
+                    if (voiceFile.isFile && voiceFile.extension == "enc") {
+                        Log.d(TAG, "Securely wiping voice file: ${voiceFile.name}")
+                        secureDeleteFile(voiceFile)
+                    }
+                }
+                // Delete the directory
+                voiceDir.delete()
+            }
+
+            // 4. Securely wipe temp voice files (cache)
+            val voiceTempDir = File(context.cacheDir, "voice_temp")
+            if (voiceTempDir.exists() && voiceTempDir.isDirectory) {
+                Log.i(TAG, "Securely wiping temp voice files")
+                val tempFiles = voiceTempDir.listFiles()
+                tempFiles?.forEach { tempFile ->
+                    if (tempFile.isFile) {
+                        secureDeleteFile(tempFile)
+                    }
+                }
+                // Delete the directory
+                voiceTempDir.delete()
+            }
+
+            // 5. Clear all SharedPreferences
             Log.i(TAG, "Clearing all SharedPreferences")
             clearAllSharedPreferences(context)
 
-            // 4. Wipe cryptographic keys (managed by EncryptedSharedPreferences)
+            // 6. Wipe cryptographic keys (managed by EncryptedSharedPreferences)
             // Keys are stored in Android Keystore and will be removed when prefs are cleared
 
             Log.w(TAG, "Secure wipe completed successfully")

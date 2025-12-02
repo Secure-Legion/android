@@ -9,6 +9,7 @@ data class Wallet(
     val walletId: String,              // Unique identifier for the wallet
     val name: String,                   // User-friendly name (e.g., "Wallet 1", "Trading Wallet")
     val solanaAddress: String,          // Public Solana address
+    val zcashAddress: String? = null,   // Zcash unified address (nullable for backward compatibility)
     val isMainWallet: Boolean,          // True if this is the main account wallet
     val createdAt: Long,                // Timestamp when wallet was created
     val lastUsedAt: Long                // Timestamp when wallet was last used

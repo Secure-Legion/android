@@ -1,0 +1,76 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="horizontal"
+    android:background="@drawable/wallet_token_bg"
+    android:padding="16dp"
+    android:layout_marginBottom="12dp"
+    android:gravity="center_vertical"
+    android:clickable="true"
+    android:focusable="true">
+
+    <!-- Wallet Icon -->
+    <FrameLayout
+        android:layout_width="48dp"
+        android:layout_height="48dp"
+        android:background="@drawable/settings_icon_bg"
+        android:layout_marginEnd="12dp">
+
+        <ImageView
+            android:layout_width="24dp"
+            android:layout_height="24dp"
+            android:layout_gravity="center"
+            android:src="@drawable/ic_wallet"
+            android:tint="@color/text_white" />
+    </FrameLayout>
+
+    <!-- Wallet Info -->
+    <LinearLayout
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="1"
+        android:orientation="vertical">
+
+        <TextView
+            android:id="@+id/walletName"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Account 1"
+            android:textSize="15sp"
+            android:textColor="@color/text_white"
+            android:fontFamily="@font/poppins_medium" />
+
+        <TextView
+            android:id="@+id/walletBalance"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="9.2362 ETH"
+            android:textSize="12sp"
+            android:textColor="#888888"
+            android:fontFamily="@font/poppins_regular" />
+
+    </LinearLayout>
+
+    <!-- Balance -->
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="$0.00"
+        android:textSize="14sp"
+        android:textColor="@color/text_white"
+        android:fontFamily="@font/poppins_medium"
+        android:layout_marginEnd="12dp" />
+
+    <!-- Edit Button -->
+    <ImageView
+        android:id="@+id/walletSettingsBtn"
+        android:layout_width="20dp"
+        android:layout_height="20dp"
+        android:src="@android:drawable/ic_menu_edit"
+        android:tint="#888888"
+        android:clickable="true"
+        android:focusable="true"
+        android:contentDescription="Edit" />
+
+</LinearLayout>

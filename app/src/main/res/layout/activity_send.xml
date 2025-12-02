@@ -6,184 +6,195 @@
     android:layout_height="match_parent"
     android:background="#000000">
 
+    <!-- Header -->
+    <LinearLayout
+        android:id="@+id/header"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:paddingStart="20dp"
+        android:paddingEnd="20dp"
+        android:paddingTop="16dp"
+        android:paddingBottom="16dp"
+        android:fitsSystemWindows="true"
+        app:layout_constraintTop_toTopOf="parent">
+
+        <!-- Back Button -->
+        <FrameLayout
+            android:id="@+id/backButton"
+            android:layout_width="42dp"
+            android:layout_height="42dp"
+            android:layout_marginStart="8dp"
+            android:background="@drawable/top_icon_bg"
+            android:clickable="true"
+            android:focusable="true">
+
+            <ImageView
+                android:layout_width="20dp"
+                android:layout_height="20dp"
+                android:layout_gravity="center"
+                android:src="@drawable/ic_back_arrow"
+                android:contentDescription="Back" />
+
+        </FrameLayout>
+
+        <!-- Title -->
+        <TextView
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="Send"
+            android:textSize="28sp"
+            android:textColor="#999999"
+            android:fontFamily="@font/space_grotesk_bold"
+            android:textStyle="bold"
+            android:gravity="center" />
+
+        <!-- Spacer for alignment -->
+        <View
+            android:layout_width="42dp"
+            android:layout_height="42dp" />
+
+    </LinearLayout>
+
+    <!-- Scrollable Content -->
     <ScrollView
         android:layout_width="match_parent"
         android:layout_height="0dp"
         android:fillViewport="true"
-        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintTop_toBottomOf="@id/header"
         app:layout_constraintBottom_toTopOf="@id/bottomNav">
 
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:orientation="vertical">
+            android:orientation="vertical"
+            android:paddingStart="24dp"
+            android:paddingEnd="24dp"
+            android:paddingTop="24dp"
+            android:paddingBottom="32dp"
+            android:gravity="center_horizontal">
 
-            <!-- Header -->
+            <!-- Currency Dropdown Selector -->
             <LinearLayout
-                android:layout_width="match_parent"
+                android:id="@+id/currencyDropdown"
+                android:layout_width="270dp"
                 android:layout_height="wrap_content"
                 android:orientation="horizontal"
-                android:background="@drawable/header_bg"
-                android:fitsSystemWindows="true"
-                android:paddingStart="24dp"
-                android:paddingEnd="24dp"
-                android:paddingBottom="24dp"
-                android:gravity="center_vertical">
+                android:background="@drawable/wallet_dropdown_bg"
+                android:paddingStart="16dp"
+                android:paddingEnd="16dp"
+                android:paddingTop="12dp"
+                android:paddingBottom="12dp"
+                android:gravity="center_vertical"
+                android:layout_marginBottom="24dp"
+                android:clickable="true"
+                android:focusable="true">
+
+                <ImageView
+                    android:id="@+id/selectedCurrencyIcon"
+                    android:layout_width="28dp"
+                    android:layout_height="28dp"
+                    android:src="@drawable/ic_solana"
+                    android:layout_marginEnd="12dp"
+                    android:contentDescription="Currency Icon" />
 
                 <TextView
-                    android:id="@+id/backButton"
-                    android:layout_width="40dp"
-                    android:layout_height="40dp"
-                    android:text="‹"
-                    android:textSize="32sp"
-                    android:textColor="@color/text_white"
-                    android:gravity="center"
-                    android:clickable="true"
-                    android:focusable="true"
-                    android:background="?attr/selectableItemBackgroundBorderless" />
-
-                <LinearLayout
+                    android:id="@+id/selectedCurrencyName"
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:layout_weight="1"
+                    android:text="Solana"
+                    android:textSize="16sp"
+                    android:textColor="#FFFFFF"
+                    android:fontFamily="@font/poppins_medium" />
+
+                <ImageView
+                    android:layout_width="20dp"
+                    android:layout_height="20dp"
+                    android:src="@drawable/ic_arrow_forward"
+                    android:rotation="90"
+                    android:tint="#888888"
+                    android:contentDescription="Dropdown" />
+
+            </LinearLayout>
+
+            <!-- Recipient Address Section -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:layout_marginBottom="24dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Recipient Address"
+                    android:textSize="12sp"
+                    android:textColor="#888888"
+                    android:fontFamily="@font/poppins_regular"
+                    android:layout_marginBottom="8dp" />
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
                     android:orientation="horizontal"
-                    android:gravity="center"
-                    android:layout_marginEnd="40dp">
+                    android:background="@drawable/wallet_token_bg"
+                    android:padding="12dp"
+                    android:gravity="center_vertical">
+
+                    <EditText
+                        android:id="@+id/recipientAddressInput"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:background="@android:color/transparent"
+                        android:hint="Enter or scan address"
+                        android:textColorHint="#666666"
+                        android:textColor="#FFFFFF"
+                        android:textSize="13sp"
+                        android:fontFamily="monospace"
+                        android:inputType="text" />
 
                     <ImageView
-                        android:layout_width="48dp"
-                        android:layout_height="48dp"
-                        android:src="@drawable/icon_header"
-                        android:layout_marginEnd="12dp"
-                        android:contentDescription="Secure Legion Logo" />
-
-                    <TextView
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="SEND"
-                        android:textSize="28sp"
-                        android:textStyle="bold"
-                        android:fontFamily="sans-serif-black"
-                        android:textColor="@color/text_white" />
+                        android:id="@+id/scanQRButton"
+                        android:layout_width="32dp"
+                        android:layout_height="32dp"
+                        android:src="@android:drawable/ic_menu_camera"
+                        android:tint="#888888"
+                        android:layout_marginStart="8dp"
+                        android:clickable="true"
+                        android:focusable="true"
+                        android:contentDescription="Scan QR Code" />
 
                 </LinearLayout>
 
             </LinearLayout>
 
-            <!-- Content -->
+            <!-- Amount Section -->
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:orientation="vertical"
-                android:padding="24dp">
+                android:layout_marginBottom="24dp">
 
-                <!-- From Wallet Section -->
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="From Wallet"
-                    android:textSize="14sp"
-                    android:textStyle="bold"
-                    android:textColor="@color/text_white"
-                    android:layout_marginBottom="8dp" />
-
-                <androidx.cardview.widget.CardView
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    app:cardBackgroundColor="@color/card_bg"
-                    app:cardCornerRadius="12dp"
-                    app:cardElevation="0dp"
-                    app:strokeWidth="1dp"
-                    app:strokeColor="@color/border_color"
-                    android:layout_marginBottom="24dp">
-
-                    <LinearLayout
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:orientation="horizontal"
-                        android:padding="16dp"
-                        android:gravity="center_vertical">
-
-                        <ImageView
-                            android:layout_width="32dp"
-                            android:layout_height="32dp"
-                            android:src="@drawable/ic_wallet"
-                            app:tint="@color/primary_blue"
-                            android:layout_marginEnd="12dp"
-                            android:contentDescription="Wallet" />
-
-                        <LinearLayout
-                            android:layout_width="0dp"
-                            android:layout_height="wrap_content"
-                            android:layout_weight="1"
-                            android:orientation="vertical">
-
-                            <TextView
-                                android:id="@+id/fromWalletName"
-                                android:layout_width="wrap_content"
-                                android:layout_height="wrap_content"
-                                android:text="Wallet 1"
-                                android:textSize="16sp"
-                                android:textStyle="bold"
-                                android:textColor="@color/text_white" />
-
-                            <TextView
-                                android:id="@+id/fromWalletAddress"
-                                android:layout_width="wrap_content"
-                                android:layout_height="wrap_content"
-                                android:text="Loading..."
-                                android:textSize="11sp"
-                                android:textColor="@color/text_gray"
-                                android:fontFamily="monospace"
-                                android:layout_marginTop="2dp" />
-
-                        </LinearLayout>
-
-                    </LinearLayout>
-
-                </androidx.cardview.widget.CardView>
-
-                <!-- Recipient Address -->
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="Recipient Address"
-                    android:textSize="14sp"
-                    android:textStyle="bold"
-                    android:textColor="@color/text_white"
-                    android:layout_marginBottom="8dp" />
-
-                <EditText
-                    android:id="@+id/recipientAddressInput"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:background="@drawable/input_field_bg"
-                    android:hint="Enter wallet address"
-                    android:textColorHint="@color/text_gray"
-                    android:textColor="@color/text_white"
-                    android:textSize="16sp"
-                    android:fontFamily="monospace"
-                    android:padding="16dp"
-                    android:layout_marginBottom="32dp" />
-
-                <!-- Amount Section -->
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="Amount"
-                    android:textSize="14sp"
-                    android:textStyle="bold"
-                    android:textColor="@color/text_white"
+                    android:textSize="12sp"
+                    android:textColor="#888888"
+                    android:fontFamily="@font/poppins_regular"
                     android:layout_marginBottom="8dp" />
 
                 <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:orientation="horizontal"
-                    android:gravity="center_vertical"
-                    android:background="@drawable/input_field_bg"
+                    android:background="@drawable/wallet_token_bg"
                     android:padding="16dp"
-                    android:layout_marginBottom="16dp">
+                    android:gravity="center_vertical">
 
                     <EditText
                         android:id="@+id/amountInput"
@@ -192,103 +203,326 @@
                         android:layout_weight="1"
                         android:background="@android:color/transparent"
                         android:hint="0.00"
-                        android:textColorHint="@color/text_gray"
-                        android:textColor="@color/text_white"
-                        android:textSize="28sp"
+                        android:textColorHint="#666666"
+                        android:textColor="#FFFFFF"
+                        android:textSize="24sp"
                         android:textStyle="bold"
                         android:inputType="numberDecimal"
-                        android:fontFamily="sans-serif-black" />
+                        android:fontFamily="@font/space_grotesk_bold" />
 
-                    <ImageView
-                        android:layout_width="32dp"
-                        android:layout_height="32dp"
-                        android:src="@drawable/ic_solana"
-                        android:contentDescription="Solana Logo"
-                        android:layout_marginStart="16dp" />
+                    <TextView
+                        android:id="@+id/currencySymbol"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="SOL"
+                        android:textSize="16sp"
+                        android:textColor="#888888"
+                        android:fontFamily="@font/poppins_medium"
+                        android:layout_marginStart="12dp" />
 
                 </LinearLayout>
 
-                <!-- Available Balance Card -->
-                <androidx.cardview.widget.CardView
+            </LinearLayout>
+
+            <!-- Wallet Info Box -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:background="@drawable/wallet_token_bg"
+                android:padding="16dp"
+                android:layout_marginBottom="24dp">
+
+                <!-- Wallet Name Row -->
+                <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    app:cardBackgroundColor="@color/card_bg"
-                    app:cardCornerRadius="14dp"
-                    app:cardElevation="0dp"
-                    app:strokeWidth="1dp"
-                    app:strokeColor="@color/border_color"
-                    android:layout_marginBottom="24dp">
+                    android:orientation="horizontal"
+                    android:layout_marginBottom="8dp">
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="Wallet Name"
+                        android:textSize="12sp"
+                        android:textColor="#888888"
+                        android:fontFamily="@font/poppins_regular" />
 
                     <LinearLayout
-                        android:layout_width="match_parent"
+                        android:id="@+id/walletNameDropdown"
+                        android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:orientation="vertical"
-                        android:padding="16dp"
-                        android:gravity="center">
+                        android:orientation="horizontal"
+                        android:gravity="center_vertical"
+                        android:clickable="true"
+                        android:focusable="true">
 
                         <TextView
+                            android:id="@+id/walletNameText"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
-                            android:text="Available Balance"
+                            android:text="Wallet 1"
                             android:textSize="12sp"
-                            android:textColor="@color/text_gray"
-                            android:textAllCaps="true"
-                            android:letterSpacing="0.1"
-                            android:layout_marginBottom="8dp" />
+                            android:textColor="#FFFFFF"
+                            android:fontFamily="@font/poppins_medium"
+                            android:layout_marginEnd="4dp" />
 
-                        <TextView
-                            android:id="@+id/balanceSOL"
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:text="0.0000 SOL"
-                            android:textSize="24sp"
-                            android:textStyle="bold"
-                            android:textColor="@color/text_white"
-                            android:fontFamily="sans-serif-black"
-                            android:layout_marginBottom="4dp" />
-
-                        <TextView
-                            android:id="@+id/balanceUSD"
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:text="≈ $0.00 USD"
-                            android:textSize="14sp"
-                            android:textColor="@color/text_gray" />
+                        <ImageView
+                            android:layout_width="16dp"
+                            android:layout_height="16dp"
+                            android:src="@drawable/ic_arrow_forward"
+                            android:rotation="90"
+                            android:tint="#888888"
+                            android:contentDescription="Dropdown" />
 
                     </LinearLayout>
 
-                </androidx.cardview.widget.CardView>
+                </LinearLayout>
 
-                <!-- Send Button -->
-                <TextView
-                    android:id="@+id/sendButton"
+                <!-- Address Row -->
+                <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:text="Send SOL"
-                    android:textSize="16sp"
-                    android:textStyle="bold"
-                    android:textColor="@color/text_white"
-                    android:background="@drawable/metallic_button_bg"
-                    android:gravity="center"
-                    android:padding="16dp"
-                    android:clickable="true"
-                    android:focusable="true"
-                    android:elevation="6dp" />
+                    android:orientation="horizontal">
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="Address"
+                        android:textSize="12sp"
+                        android:textColor="#888888"
+                        android:fontFamily="@font/poppins_regular" />
+
+                    <TextView
+                        android:id="@+id/walletAddressShort"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="ADm9P.....2eoLX5"
+                        android:textSize="12sp"
+                        android:textColor="#FFFFFF"
+                        android:fontFamily="monospace" />
+
+                </LinearLayout>
 
             </LinearLayout>
+
+            <!-- Available Balance Box -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:background="@drawable/wallet_token_bg"
+                android:padding="16dp"
+                android:layout_marginBottom="24dp">
+
+                <!-- Balance Row -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:layout_marginBottom="8dp">
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="Available Balance"
+                        android:textSize="12sp"
+                        android:textColor="#888888"
+                        android:fontFamily="@font/poppins_regular" />
+
+                    <TextView
+                        android:id="@+id/availableBalance"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="0.00 SOL"
+                        android:textSize="12sp"
+                        android:textColor="#FFFFFF"
+                        android:fontFamily="@font/poppins_medium" />
+
+                </LinearLayout>
+
+                <!-- USD Value Row -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal">
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="USD Value"
+                        android:textSize="12sp"
+                        android:textColor="#888888"
+                        android:fontFamily="@font/poppins_regular" />
+
+                    <TextView
+                        android:id="@+id/usdValue"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="$0.00"
+                        android:textSize="12sp"
+                        android:textColor="#FFFFFF"
+                        android:fontFamily="@font/poppins_medium" />
+
+                </LinearLayout>
+
+            </LinearLayout>
+
+            <!-- Send Button -->
+            <TextView
+                android:id="@+id/sendButton"
+                android:layout_width="match_parent"
+                android:layout_height="60dp"
+                android:text="SEND"
+                android:textSize="16sp"
+                android:textStyle="bold"
+                android:textColor="#FFFFFF"
+                android:background="@drawable/wallet_dropdown_bg"
+                android:gravity="center"
+                android:fontFamily="@font/space_grotesk_bold"
+                android:clickable="true"
+                android:focusable="true" />
 
         </LinearLayout>
 
     </ScrollView>
 
     <!-- Bottom Navigation -->
-    <include
+    <LinearLayout
         android:id="@+id/bottomNav"
-        layout="@layout/bottom_navigation"
         android:layout_width="match_parent"
-        android:layout_height="90dp"
-        app:layout_constraintBottom_toBottomOf="parent"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintEnd_toEndOf="parent" />
+        android:layout_height="110dp"
+        android:orientation="horizontal"
+        android:background="#0A0A0A"
+        android:gravity="center"
+        android:paddingTop="12dp"
+        android:paddingBottom="12dp"
+        app:layout_constraintBottom_toBottomOf="parent">
+
+        <!-- Messages Nav Item -->
+        <LinearLayout
+            android:id="@+id/navMessages"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:orientation="vertical"
+            android:gravity="center"
+            android:background="@drawable/nav_item_ripple"
+            android:clickable="true"
+            android:focusable="true">
+
+            <ImageView
+                android:layout_width="24dp"
+                android:layout_height="24dp"
+                android:src="@android:drawable/sym_action_chat"
+                android:tint="@color/text_gray"
+                android:layout_marginBottom="4dp"
+                android:contentDescription="Messages" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Messages"
+                android:textSize="11sp"
+                android:textColor="@color/text_gray"
+                android:fontFamily="@font/poppins_medium" />
+
+        </LinearLayout>
+
+        <!-- Wallet Nav Item -->
+        <LinearLayout
+            android:id="@+id/navWallet"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:orientation="vertical"
+            android:gravity="center"
+            android:background="@drawable/nav_item_ripple"
+            android:clickable="true"
+            android:focusable="true">
+
+            <ImageView
+                android:layout_width="24dp"
+                android:layout_height="24dp"
+                android:src="@drawable/ic_wallet"
+                android:layout_marginBottom="4dp"
+                android:tint="@color/text_gray"
+                android:contentDescription="Wallet" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Wallet"
+                android:textSize="11sp"
+                android:textColor="@color/text_gray"
+                android:fontFamily="@font/poppins_medium" />
+
+        </LinearLayout>
+
+        <!-- Add Friend Nav Item -->
+        <LinearLayout
+            android:id="@+id/navAddFriend"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:orientation="vertical"
+            android:gravity="center"
+            android:background="@drawable/nav_item_ripple"
+            android:clickable="true"
+            android:focusable="true">
+
+            <ImageView
+                android:layout_width="24dp"
+                android:layout_height="24dp"
+                android:src="@drawable/ic_add_friend"
+                android:tint="@color/text_gray"
+                android:layout_marginBottom="4dp"
+                android:contentDescription="Add Friend" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Add Friend"
+                android:textSize="11sp"
+                android:textColor="@color/text_gray"
+                android:fontFamily="@font/poppins_medium" />
+
+        </LinearLayout>
+
+        <!-- Lock Nav Item -->
+        <LinearLayout
+            android:id="@+id/navLock"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:orientation="vertical"
+            android:gravity="center"
+            android:background="@drawable/nav_item_ripple"
+            android:clickable="true"
+            android:focusable="true">
+
+            <ImageView
+                android:layout_width="24dp"
+                android:layout_height="24dp"
+                android:src="@drawable/ic_lock"
+                android:layout_marginBottom="4dp"
+                android:tint="@color/text_gray"
+                android:contentDescription="Lock" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Lock"
+                android:textSize="11sp"
+                android:textColor="@color/text_gray"
+                android:fontFamily="@font/poppins_medium" />
+
+        </LinearLayout>
+
+    </LinearLayout>
 
 </androidx.constraintlayout.widget.ConstraintLayout>

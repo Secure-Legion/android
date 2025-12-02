@@ -4,25 +4,37 @@
     android:layout_height="match_parent"
     android:orientation="vertical"
     android:background="@color/dark_bg"
-    android:padding="24dp">
+    android:fitsSystemWindows="true">
 
-    <!-- Header -->
-    <TextView
+    <ScrollView
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:text="Auto-Lock Timer"
-        android:textSize="28sp"
-        android:textColor="@color/white"
-        android:textStyle="bold"
-        android:layout_marginBottom="8dp" />
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:fillViewport="true">
 
-    <TextView
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:text="Lock the app automatically after inactivity"
-        android:textSize="14sp"
-        android:textColor="@color/text_gray"
-        android:layout_marginBottom="32dp" />
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:padding="24dp">
+
+            <!-- Header -->
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Auto-Lock Timer"
+                android:textSize="28sp"
+                android:textColor="@color/white"
+                android:textStyle="bold"
+                android:layout_marginBottom="8dp" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Lock the app automatically after inactivity"
+                android:textSize="14sp"
+                android:textColor="@color/text_gray"
+                android:layout_marginBottom="32dp" />
 
     <!-- Timer Options -->
     <RadioGroup
@@ -117,5 +129,9 @@
         android:textSize="12sp"
         android:textColor="@color/text_gray"
         android:layout_marginTop="16dp" />
+
+        </LinearLayout>
+
+    </ScrollView>
 
 </LinearLayout>

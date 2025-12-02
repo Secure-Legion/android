@@ -21,11 +21,7 @@ class DevicePasswordActivity : AppCompatActivity() {
         setContentView(R.layout.activity_device_password)
 
         setupBottomNavigation()
-
-        // Back button
-        findViewById<View>(R.id.backButton).setOnClickListener {
-            finish()
-        }
+        setupBackButton()
 
         // Change Password button
         findViewById<View>(R.id.changePasswordButton).setOnClickListener {
@@ -99,6 +95,12 @@ class DevicePasswordActivity : AppCompatActivity() {
                     }
                 }
             }
+        }
+    }
+
+    private fun setupBackButton() {
+        findViewById<View>(R.id.backButton).setOnClickListener {
+            finish()
         }
     }
 

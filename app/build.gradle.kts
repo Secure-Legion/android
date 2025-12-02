@@ -20,7 +20,7 @@ android {
 
     defaultConfig {
         applicationId = "com.securelegion"
-        minSdk = 26
+        minSdk = 27  // Increased from 26 for Zcash SDK compatibility
         targetSdk = 36
         versionCode = 1
         versionName = "1.0"
@@ -76,6 +76,7 @@ android {
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_11
         targetCompatibility = JavaVersion.VERSION_11
+        isCoreLibraryDesugaringEnabled = true
     }
     kotlinOptions {
         jvmTarget = "11"
@@ -83,10 +84,16 @@ android {
 }
 
 dependencies {
+    // Core library desugaring (required by Zcash SDK for Java 8+ APIs on older Android)
+    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.5")
+
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.appcompat)
     implementation(libs.material)
     implementation("androidx.constraintlayout:constraintlayout:2.1.4")
+
+    // Splash Screen API (Android 12+)
+    implementation("androidx.core:core-splashscreen:1.0.1")
 
     // SwipeRefreshLayout
     implementation("androidx.swiperefreshlayout:swiperefreshlayout:1.1.0")
@@ -119,8 +126,24 @@ dependencies {
     implementation("com.google.zxing:core:3.5.2")
     implementation("com.journeyapps:zxing-android-embedded:4.3.0")
 
+    // CameraX for QR scanning
+    val cameraxVersion = "1.3.1"
+    implementation("androidx.camera:camera-core:$cameraxVersion")
+    implementation("androidx.camera:camera-camera2:$cameraxVersion")
+    implementation("androidx.camera:camera-lifecycle:$cameraxVersion")
+    implementation("androidx.camera:camera-view:$cameraxVersion")
+
+    // ML Kit Barcode Scanning
+    implementation("com.google.mlkit:barcode-scanning:17.2.0")
+
     // Base58 encoding for Solana addresses
     implementation("org.bitcoinj:bitcoinj-core:0.16.2")
+
+    // Zcash Android SDK for wallet functionality (latest 2025 version)
+    implementation("cash.z.ecc.android:zcash-android-sdk:2.4.0")
+
+    // Zcash BIP39 library (required for seed phrase handling)
+    implementation("cash.z.ecc.android:kotlin-bip39:1.0.9")
 
     // Room Database with SQLCipher encryption
     val roomVersion = "2.6.1"

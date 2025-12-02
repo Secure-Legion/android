@@ -31,8 +31,6 @@
         android:allowBackup="false"
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:fullBackupContent="@xml/backup_rules"
-        android:extractNativeLibs="true"
-        tools:replace="android:allowBackup"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
         android:roundIcon="@mipmap/ic_launcher_round"
@@ -49,7 +47,7 @@
         <activity
             android:name=".ChatActivity"
             android:exported="false"
-            android:windowSoftInputMode="adjustResize" />
+            android:windowSoftInputMode="adjustPan" />
 
         <activity
             android:name=".ComposeActivity"
@@ -66,6 +64,11 @@
             android:exported="false" />
 
         <activity
+            android:name=".QRScannerActivity"
+            android:exported="false"
+            android:screenOrientation="portrait" />
+
+        <activity
             android:name=".BackupSeedPhraseActivity"
             android:exported="false" />
 
@@ -73,7 +76,7 @@
             android:name=".SplashActivity"
             android:exported="true"
             android:launchMode="singleTask"
-            android:theme="@style/Theme.SecureLegion">
+            android:theme="@style/Theme.SecureLegion.Splash">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
@@ -103,6 +106,10 @@
             android:exported="false" />
 
         <activity
+            android:name=".WalletActivity"
+            android:exported="false" />
+
+        <activity
             android:name=".DevicePasswordActivity"
             android:exported="false"
             android:windowSoftInputMode="adjustPan" />
@@ -129,9 +136,14 @@
             android:windowSoftInputMode="adjustPan" />
 
         <activity
+            android:name=".WelcomeActivity"
+            android:exported="false"
+            android:theme="@style/Theme.SecureLegion.NoStartingWindow" />
+
+        <activity
             android:name=".CreateAccountActivity"
             android:exported="false"
-            android:windowSoftInputMode="adjustPan" />
+            android:windowSoftInputMode="adjustResize" />
 
         <activity
             android:name=".AccountCreatedActivity"
@@ -140,7 +152,7 @@
         <activity
             android:name=".RestoreAccountActivity"
             android:exported="false"
-            android:windowSoftInputMode="adjustPan" />
+            android:windowSoftInputMode="adjustResize" />
 
         <activity
             android:name=".ReceiveActivity"
@@ -205,11 +217,6 @@
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="Downloads encrypted messages via Tor" />
         </service>
-
-        <!-- Remove unused VPN service from apt-meek-obfs4-legacy library -->
-        <service
-            android:name="info.pluggabletransports.dispatch.service.DispatchVPN"
-            tools:node="remove" />
 
         <!-- Broadcast receiver for TorService restart via AlarmManager -->
         <receiver

@@ -53,6 +53,7 @@ release-keystore.jks
 # Files to keep locally but not in git
 ANDROID_BUILD_SUCCESS.md
 QUICKSTART.md
+docs/IPFS_P2P_BACKUP_SYSTEM.md
 gradlew.bat
 *.png
 notification_*.png

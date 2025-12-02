@@ -3,34 +3,7 @@
     android:layout_width="match_parent"
     android:layout_height="wrap_content">
 
-    <!-- Delete Button Background (revealed on swipe) -->
-    <LinearLayout
-        android:layout_width="match_parent"
-        android:layout_height="match_parent"
-        android:orientation="horizontal"
-        android:gravity="end">
-
-        <LinearLayout
-            android:id="@+id/deleteButtonContainer"
-            android:layout_width="80dp"
-            android:layout_height="match_parent"
-            android:background="#DC3545"
-            android:gravity="center"
-            android:orientation="vertical">
-
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="✕"
-                android:textSize="24sp"
-                android:textStyle="bold"
-                android:textColor="@android:color/white" />
-
-        </LinearLayout>
-
-    </LinearLayout>
-
-    <!-- Foreground Content (swipeable) -->
+    <!-- Foreground Content (swipeable) with lines -->
     <LinearLayout
         android:id="@+id/chatItemForeground"
         android:layout_width="match_parent"
@@ -38,146 +11,139 @@
         android:orientation="vertical"
         android:clickable="true"
         android:focusable="true"
-        android:background="@color/dark_bg"
-        android:foreground="@drawable/chat_item_ripple">
+        android:background="@android:color/transparent">
 
-    <!-- Top Border -->
-    <View
-        android:layout_width="match_parent"
-        android:layout_height="1dp"
-        android:background="@color/border_color" />
+        <!-- Top border line -->
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:background="#1A1A1A" />
 
-    <LinearLayout
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:orientation="horizontal"
-        android:paddingStart="24dp"
-        android:paddingEnd="24dp"
-        android:paddingTop="16dp"
-        android:paddingBottom="16dp"
-        android:gravity="center_vertical">
-
-    <!-- Chat Info -->
-    <LinearLayout
-        android:layout_width="0dp"
-        android:layout_height="wrap_content"
-        android:layout_weight="1"
-        android:orientation="vertical">
-
-        <!-- Name and Time -->
+        <!-- Chat content -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="horizontal"
+            android:paddingStart="16dp"
+            android:paddingEnd="16dp"
+            android:paddingTop="12dp"
+            android:paddingBottom="12dp"
             android:gravity="center_vertical">
 
-            <!-- Online Status Dot -->
-            <TextView
-                android:id="@+id/onlineIndicator"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="●"
-                android:textSize="10sp"
-                android:textColor="@color/primary_blue"
-                android:layout_marginEnd="6dp"
-                android:visibility="gone" />
+        <!-- Avatar Circle -->
+        <TextView
+            android:id="@+id/chatAvatar"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:background="@drawable/profile_circle_bg"
+            android:gravity="center"
+            android:text="W"
+            android:textSize="20sp"
+            android:textColor="@color/text_white"
+            android:fontFamily="@font/space_grotesk_bold"
+            android:layout_marginEnd="16dp" />
 
-            <TextView
-                android:id="@+id/chatName"
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:text="@nickname"
-                android:textSize="16sp"
-                android:textStyle="bold"
-                android:textColor="@color/text_white" />
-
-            <TextView
-                android:id="@+id/chatTime"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="2m"
-                android:textSize="13sp"
-                android:textColor="@color/text_gray" />
-
-        </LinearLayout>
-
-        <!-- Message Preview with Security Badge -->
+        <!-- Chat Info -->
         <LinearLayout
-            android:layout_width="match_parent"
+            android:layout_width="0dp"
             android:layout_height="wrap_content"
-            android:layout_marginTop="4dp"
-            android:orientation="horizontal"
-            android:gravity="center_vertical">
+            android:layout_weight="1"
+            android:orientation="vertical">
 
+            <!-- Name and Time -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical">
+
+                <TextView
+                    android:id="@+id/chatName"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="@Wizard"
+                    android:textSize="16sp"
+                    android:textColor="@color/text_white"
+                    android:fontFamily="@font/poppins_medium" />
+
+                <TextView
+                    android:id="@+id/chatTime"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="1m ago"
+                    android:textSize="13sp"
+                    android:textColor="@color/text_gray"
+                    android:fontFamily="@font/poppins_regular"
+                    android:layout_marginStart="8dp" />
+
+            </LinearLayout>
+
+            <!-- Message Preview -->
             <TextView
                 android:id="@+id/chatMessage"
-                android:layout_width="0dp"
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:text="Message preview..."
-                android:textSize="15sp"
+                android:layout_marginTop="4dp"
+                android:text="What's good? How are you."
+                android:textSize="14sp"
                 android:textColor="@color/text_gray"
+                android:fontFamily="@font/poppins_regular"
                 android:maxLines="1"
                 android:ellipsize="end" />
 
-            <TextView
-                android:id="@+id/securityBadge"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginStart="8dp"
-                android:background="@drawable/security_badge_bg"
-                android:paddingStart="8dp"
-                android:paddingEnd="8dp"
-                android:paddingTop="4dp"
-                android:paddingBottom="4dp"
-                android:text=""
-                android:textSize="10sp"
-                android:textStyle="bold"
-                android:textColor="@color/primary_blue"
-                android:visibility="gone" />
+        </LinearLayout>
+
+        <!-- Download Button for Pending Messages -->
+        <androidx.appcompat.widget.AppCompatButton
+            android:id="@+id/downloadButton"
+            android:layout_width="wrap_content"
+            android:layout_height="32dp"
+            android:layout_marginStart="8dp"
+            android:background="@drawable/primary_button_bg"
+            android:paddingStart="12dp"
+            android:paddingEnd="12dp"
+            android:text="Download"
+            android:textSize="12sp"
+            android:textStyle="bold"
+            android:textColor="@color/text_white"
+            android:textAllCaps="false"
+            android:visibility="gone" />
+
+        <!-- Unread Badge -->
+        <TextView
+            android:id="@+id/unreadBadge"
+            android:layout_width="24dp"
+            android:layout_height="24dp"
+            android:layout_marginStart="8dp"
+            android:background="@drawable/unread_badge_bg"
+            android:gravity="center"
+            android:text="2"
+            android:textSize="12sp"
+            android:textStyle="bold"
+            android:textColor="@color/text_white"
+            android:visibility="gone" />
+
+        <!-- Hidden elements (not shown, kept for compatibility) -->
+        <TextView
+            android:id="@+id/onlineIndicator"
+            android:layout_width="0dp"
+            android:layout_height="0dp"
+            android:visibility="gone" />
+
+        <TextView
+            android:id="@+id/securityBadge"
+            android:layout_width="0dp"
+            android:layout_height="0dp"
+            android:visibility="gone" />
 
         </LinearLayout>
 
-    </LinearLayout>
-
-    <!-- Download Button for Pending Messages -->
-    <androidx.appcompat.widget.AppCompatButton
-        android:id="@+id/downloadButton"
-        android:layout_width="wrap_content"
-        android:layout_height="32dp"
-        android:layout_marginStart="8dp"
-        android:background="@drawable/primary_button_bg"
-        android:paddingStart="12dp"
-        android:paddingEnd="12dp"
-        android:text="Download"
-        android:textSize="12sp"
-        android:textStyle="bold"
-        android:textColor="@color/text_white"
-        android:textAllCaps="false"
-        android:visibility="gone" />
-
-    <!-- Unread Badge -->
-    <TextView
-        android:id="@+id/unreadBadge"
-        android:layout_width="24dp"
-        android:layout_height="24dp"
-        android:layout_marginStart="8dp"
-        android:background="@drawable/unread_badge_bg"
-        android:gravity="center"
-        android:text="2"
-        android:textSize="12sp"
-        android:textStyle="bold"
-        android:textColor="@color/text_white"
-        android:visibility="gone" />
-
-    </LinearLayout>
-
-    <!-- Bottom Border -->
-    <View
-        android:layout_width="match_parent"
-        android:layout_height="1dp"
-        android:background="@color/border_color" />
+        <!-- Bottom border line -->
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:background="#1A1A1A" />
 
     </LinearLayout>
 

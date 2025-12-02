@@ -8,141 +8,287 @@
 
     <!-- Header -->
     <LinearLayout
-        android:id="@+id/composeHeader"
+        android:id="@+id/header"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="horizontal"
-        android:background="@color/dark_bg"
-        android:fitsSystemWindows="true"
-        android:paddingStart="16dp"
-        android:paddingEnd="16dp"
-        android:paddingBottom="12dp"
         android:gravity="center_vertical"
+        android:paddingStart="20dp"
+        android:paddingEnd="20dp"
+        android:paddingTop="16dp"
+        android:paddingBottom="16dp"
+        android:fitsSystemWindows="true"
         app:layout_constraintTop_toTopOf="parent">
 
-        <TextView
+        <!-- Back Button -->
+        <FrameLayout
             android:id="@+id/backButton"
-            android:layout_width="40dp"
-            android:layout_height="40dp"
-            android:text="‹"
-            android:textSize="32sp"
-            android:textColor="@color/text_white"
-            android:gravity="center"
+            android:layout_width="42dp"
+            android:layout_height="42dp"
+            android:layout_marginStart="8dp"
+            android:background="@drawable/top_icon_bg"
             android:clickable="true"
-            android:focusable="true"
-            android:background="?attr/selectableItemBackgroundBorderless" />
+            android:focusable="true">
 
+            <ImageView
+                android:layout_width="20dp"
+                android:layout_height="20dp"
+                android:layout_gravity="center"
+                android:src="@drawable/ic_back_arrow"
+                android:contentDescription="Back" />
+
+        </FrameLayout>
+
+        <!-- Title -->
         <TextView
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
-            android:text="New Message"
-            android:textSize="18sp"
+            android:text="Compose"
+            android:textSize="22sp"
+            android:textColor="#CCCCCC"
+            android:fontFamily="@font/space_grotesk_bold"
             android:textStyle="bold"
-            android:textColor="@color/text_white"
-            android:layout_marginStart="8dp" />
+            android:gravity="center" />
 
-        <TextView
-            android:id="@+id/sendButton"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="Send"
-            android:textSize="16sp"
-            android:textStyle="bold"
-            android:textColor="@color/text_white"
-            android:paddingStart="20dp"
-            android:paddingEnd="20dp"
-            android:paddingTop="8dp"
-            android:paddingBottom="8dp"
+        <!-- Settings Button -->
+        <FrameLayout
+            android:id="@+id/settingsButton"
+            android:layout_width="42dp"
+            android:layout_height="42dp"
             android:layout_marginEnd="8dp"
-            android:gravity="center"
+            android:background="@drawable/top_icon_bg"
             android:clickable="true"
-            android:focusable="true"
-            android:background="@drawable/metallic_button_bg"
-            android:elevation="6dp" />
+            android:focusable="true">
+
+            <ImageView
+                android:layout_width="20dp"
+                android:layout_height="20dp"
+                android:layout_gravity="center"
+                android:src="@drawable/ic_settings_cog"
+                android:tint="#888888"
+                android:contentDescription="Settings" />
+
+        </FrameLayout>
 
     </LinearLayout>
 
-    <!-- Content -->
-    <ScrollView
+    <!-- Search Bar -->
+    <LinearLayout
+        android:id="@+id/searchContainer"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:background="@drawable/lock_password_input_bg"
+        android:paddingStart="16dp"
+        android:paddingEnd="16dp"
+        android:paddingTop="12dp"
+        android:paddingBottom="12dp"
+        android:layout_marginStart="24dp"
+        android:layout_marginEnd="24dp"
+        android:layout_marginTop="8dp"
+        android:layout_marginBottom="16dp"
+        android:gravity="center_vertical"
+        app:layout_constraintTop_toBottomOf="@id/header">
+
+        <ImageView
+            android:layout_width="20dp"
+            android:layout_height="20dp"
+            android:src="@android:drawable/ic_menu_search"
+            android:tint="#666666"
+            android:layout_marginEnd="12dp"
+            android:contentDescription="Search" />
+
+        <EditText
+            android:id="@+id/searchInput"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:background="@android:color/transparent"
+            android:hint="Search..."
+            android:textColorHint="#666666"
+            android:textColor="#FFFFFF"
+            android:textSize="15sp"
+            android:fontFamily="@font/poppins_regular"
+            android:inputType="text"
+            android:maxLines="1" />
+
+    </LinearLayout>
+
+    <!-- Contacts List -->
+    <androidx.recyclerview.widget.RecyclerView
+        android:id="@+id/contactsList"
         android:layout_width="match_parent"
         android:layout_height="0dp"
         android:paddingStart="24dp"
         android:paddingEnd="24dp"
-        android:paddingTop="16dp"
-        app:layout_constraintTop_toBottomOf="@id/composeHeader"
+        android:clipToPadding="false"
+        app:layout_constraintTop_toBottomOf="@id/searchContainer"
+        app:layout_constraintBottom_toTopOf="@id/bottomNav" />
+
+    <!-- Empty State -->
+    <LinearLayout
+        android:id="@+id/emptyState"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:orientation="vertical"
+        android:gravity="center"
+        android:visibility="gone"
+        app:layout_constraintTop_toBottomOf="@id/searchContainer"
         app:layout_constraintBottom_toTopOf="@id/bottomNav">
 
-        <LinearLayout
-            android:layout_width="match_parent"
+        <TextView
+            android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:orientation="vertical">
+            android:text="No Contacts"
+            android:textSize="18sp"
+            android:textColor="#CCCCCC"
+            android:fontFamily="@font/space_grotesk_bold"
+            android:textStyle="bold"
+            android:layout_marginBottom="8dp" />
 
-            <!-- To Field -->
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Add friends to start messaging"
+            android:textSize="14sp"
+            android:textColor="#888888"
+            android:fontFamily="@font/poppins_regular" />
+
+    </LinearLayout>
+
+    <!-- Bottom Navigation -->
+    <LinearLayout
+        android:id="@+id/bottomNav"
+        android:layout_width="match_parent"
+        android:layout_height="110dp"
+        android:orientation="horizontal"
+        android:background="#0A0A0A"
+        android:gravity="center"
+        android:paddingTop="12dp"
+        android:paddingBottom="12dp"
+        app:layout_constraintBottom_toBottomOf="parent">
+
+        <!-- Messages Nav Item -->
+        <LinearLayout
+            android:id="@+id/navMessages"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:orientation="vertical"
+            android:gravity="center"
+            android:background="@drawable/nav_item_ripple"
+            android:clickable="true"
+            android:focusable="true">
+
+            <ImageView
+                android:layout_width="24dp"
+                android:layout_height="24dp"
+                android:src="@android:drawable/sym_action_chat"
+                android:tint="@color/text_gray"
+                android:layout_marginBottom="4dp"
+                android:contentDescription="Messages" />
+
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="To"
-                android:textSize="13sp"
+                android:text="Messages"
+                android:textSize="11sp"
                 android:textColor="@color/text_gray"
-                android:layout_marginBottom="8dp" />
-
-            <EditText
-                android:id="@+id/recipientInput"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:background="@drawable/input_field_bg"
-                android:hint="@username or wallet address"
-                android:textColorHint="@color/text_gray"
-                android:textColor="@color/text_white"
-                android:textSize="16sp"
-                android:padding="16dp"
-                android:layout_marginBottom="8dp" />
-
-            <!-- Contact Search Results -->
-            <androidx.recyclerview.widget.RecyclerView
-                android:id="@+id/contactSearchResults"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:maxHeight="200dp"
-                android:visibility="gone"
-                android:layout_marginBottom="24dp" />
-
-            <!-- Message Field -->
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="Message"
-                android:textSize="13sp"
-                android:textColor="@color/text_gray"
-                android:layout_marginBottom="8dp" />
-
-            <EditText
-                android:id="@+id/messageInput"
-                android:layout_width="match_parent"
-                android:layout_height="200dp"
-                android:background="@drawable/input_field_bg"
-                android:hint="Type your encrypted message..."
-                android:textColorHint="@color/text_gray"
-                android:textColor="@color/text_white"
-                android:textSize="16sp"
-                android:padding="16dp"
-                android:gravity="top"
-                android:inputType="textMultiLine"
-                android:layout_marginBottom="24dp" />
+                android:fontFamily="@font/poppins_medium" />
 
         </LinearLayout>
 
-    </ScrollView>
+        <!-- Wallet Nav Item -->
+        <LinearLayout
+            android:id="@+id/navWallet"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:orientation="vertical"
+            android:gravity="center"
+            android:background="@drawable/nav_item_ripple"
+            android:clickable="true"
+            android:focusable="true">
 
-    <!-- Bottom Navigation -->
-    <include
-        android:id="@+id/bottomNav"
-        layout="@layout/bottom_navigation"
-        android:layout_width="match_parent"
-        android:layout_height="90dp"
-        app:layout_constraintBottom_toBottomOf="parent"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintEnd_toEndOf="parent" />
+            <ImageView
+                android:layout_width="24dp"
+                android:layout_height="24dp"
+                android:src="@drawable/ic_wallet"
+                android:layout_marginBottom="4dp"
+                android:tint="@color/text_gray"
+                android:contentDescription="Wallet" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Wallet"
+                android:textSize="11sp"
+                android:textColor="@color/text_gray"
+                android:fontFamily="@font/poppins_medium" />
+
+        </LinearLayout>
+
+        <!-- Add Friend Nav Item -->
+        <LinearLayout
+            android:id="@+id/navAddFriend"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:orientation="vertical"
+            android:gravity="center"
+            android:background="@drawable/nav_item_ripple"
+            android:clickable="true"
+            android:focusable="true">
+
+            <ImageView
+                android:layout_width="24dp"
+                android:layout_height="24dp"
+                android:src="@drawable/ic_add_friend"
+                android:tint="@color/text_gray"
+                android:layout_marginBottom="4dp"
+                android:contentDescription="Add Friend" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Add Friend"
+                android:textSize="11sp"
+                android:textColor="@color/text_gray"
+                android:fontFamily="@font/poppins_medium" />
+
+        </LinearLayout>
+
+        <!-- Lock Nav Item -->
+        <LinearLayout
+            android:id="@+id/navLock"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:orientation="vertical"
+            android:gravity="center"
+            android:background="@drawable/nav_item_ripple"
+            android:clickable="true"
+            android:focusable="true">
+
+            <ImageView
+                android:layout_width="24dp"
+                android:layout_height="24dp"
+                android:src="@drawable/ic_lock"
+                android:layout_marginBottom="4dp"
+                android:tint="@color/text_gray"
+                android:contentDescription="Lock" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Lock"
+                android:textSize="11sp"
+                android:textColor="@color/text_gray"
+                android:fontFamily="@font/poppins_medium" />
+
+        </LinearLayout>
+
+    </LinearLayout>
 
 </androidx.constraintlayout.widget.ConstraintLayout>

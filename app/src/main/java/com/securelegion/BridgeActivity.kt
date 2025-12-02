@@ -23,6 +23,7 @@ class BridgeActivity : AppCompatActivity() {
         bridgeRadioGroup = findViewById(R.id.bridgeRadioGroup)
         customBridgeInput = findViewById(R.id.customBridgeInput)
 
+        BottomNavigationHelper.setupBottomNavigation(this)
         setupClickListeners()
         loadSavedBridgeSettings()
     }

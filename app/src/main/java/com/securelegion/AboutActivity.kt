@@ -15,7 +15,6 @@ class AboutActivity : BaseActivity() {
     }
 
     private fun setupClickListeners() {
-        // Back button
         findViewById<View>(R.id.backButton).setOnClickListener {
             finish()
         }

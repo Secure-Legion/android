@@ -9,6 +9,8 @@ import android.util.Base64
 import android.util.Log
 import android.view.View
 import android.widget.EditText
+import android.widget.FrameLayout
+import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import com.securelegion.crypto.KeyManager
 import com.securelegion.utils.ThemedToast
@@ -30,45 +32,136 @@ class AddFriendActivity : BaseActivity() {
         private const val TAG = "AddFriend"
     }
 
+    private lateinit var loadingOverlay: FrameLayout
+    private lateinit var loadingText: TextView
+    private lateinit var loadingSubtext: TextView
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_add_friend)
 
+        // Initialize loading overlay
+        loadingOverlay = findViewById(R.id.loadingOverlay)
+        loadingText = findViewById(R.id.loadingText)
+        loadingSubtext = findViewById(R.id.loadingSubtext)
+
         // Back button
         findViewById<View>(R.id.backButton).setOnClickListener {
             finish()
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                overrideActivityTransition(Activity.OVERRIDE_TRANSITION_CLOSE, 0, 0)
-            } else {
-                @Suppress("DEPRECATION")
-                overridePendingTransition(0, 0)
-            }
         }
 
-        // Add Friend button
+        // Setup PIN boxes with auto-advance
+        setupPinBoxes()
+
+        // Send Friend Request button (CID + PIN required)
         findViewById<View>(R.id.searchButton).setOnClickListener {
             val cid = findViewById<EditText>(R.id.cidInput).text.toString().trim()
-            val pin = findViewById<EditText>(R.id.pinInput).text.toString().trim()
+            val pin = getPinFromBoxes().trim()
 
             if (cid.isEmpty()) {
                 ThemedToast.show(this, "Please enter CID")
                 return@setOnClickListener
             }
 
-            if (pin.isEmpty()) {
-                ThemedToast.show(this, "Please enter PIN")
+            if (pin.length != 6) {
+                ThemedToast.show(this, "Please enter 6-digit PIN")
                 return@setOnClickListener
             }
 
-            if (pin.length != 6 || !pin.all { it.isDigit() }) {
+            if (!pin.all { it.isDigit() }) {
                 ThemedToast.show(this, "PIN must be 6 digits")
                 return@setOnClickListener
             }
 
-            downloadContactCard(cid, pin)
+            // Check if this is accepting an incoming request
+            val prefs = getSharedPreferences("friend_requests", Context.MODE_PRIVATE)
+            val pendingRequestsV2 = prefs.getStringSet("pending_requests_v2", mutableSetOf()) ?: mutableSetOf()
+            val isAccepting = pendingRequestsV2.any { requestJson ->
+                try {
+                    val request = com.securelegion.models.PendingFriendRequest.fromJson(requestJson)
+                    request.ipfsCid == cid && request.direction == com.securelegion.models.PendingFriendRequest.DIRECTION_INCOMING
+                } catch (e: Exception) {
+                    false
+                }
+            }
+
+            downloadContactCard(cid, pin, isAccepting)
         }
 
         setupBottomNav()
+    }
+
+    private fun setupPinBoxes() {
+        val pinBox1 = findViewById<EditText>(R.id.pinBox1)
+        val pinBox2 = findViewById<EditText>(R.id.pinBox2)
+        val pinBox3 = findViewById<EditText>(R.id.pinBox3)
+        val pinBox4 = findViewById<EditText>(R.id.pinBox4)
+        val pinBox5 = findViewById<EditText>(R.id.pinBox5)
+        val pinBox6 = findViewById<EditText>(R.id.pinBox6)
+
+        // Auto-advance to next box when digit is entered
+        pinBox1.addTextChangedListener(object : android.text.TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+            override fun afterTextChanged(s: android.text.Editable?) {
+                if (s?.length == 1) pinBox2.requestFocus()
+            }
+        })
+
+        pinBox2.addTextChangedListener(object : android.text.TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+            override fun afterTextChanged(s: android.text.Editable?) {
+                if (s?.length == 1) pinBox3.requestFocus()
+                else if (s?.isEmpty() == true) pinBox1.requestFocus()
+            }
+        })
+
+        pinBox3.addTextChangedListener(object : android.text.TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+            override fun afterTextChanged(s: android.text.Editable?) {
+                if (s?.length == 1) pinBox4.requestFocus()
+                else if (s?.isEmpty() == true) pinBox2.requestFocus()
+            }
+        })
+
+        pinBox4.addTextChangedListener(object : android.text.TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+            override fun afterTextChanged(s: android.text.Editable?) {
+                if (s?.length == 1) pinBox5.requestFocus()
+                else if (s?.isEmpty() == true) pinBox3.requestFocus()
+            }
+        })
+
+        pinBox5.addTextChangedListener(object : android.text.TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+            override fun afterTextChanged(s: android.text.Editable?) {
+                if (s?.length == 1) pinBox6.requestFocus()
+                else if (s?.isEmpty() == true) pinBox4.requestFocus()
+            }
+        })
+
+        pinBox6.addTextChangedListener(object : android.text.TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+            override fun afterTextChanged(s: android.text.Editable?) {
+                if (s?.isEmpty() == true) pinBox5.requestFocus()
+            }
+        })
+    }
+
+    private fun getPinFromBoxes(): String {
+        val pinBox1 = findViewById<EditText>(R.id.pinBox1).text.toString()
+        val pinBox2 = findViewById<EditText>(R.id.pinBox2).text.toString()
+        val pinBox3 = findViewById<EditText>(R.id.pinBox3).text.toString()
+        val pinBox4 = findViewById<EditText>(R.id.pinBox4).text.toString()
+        val pinBox5 = findViewById<EditText>(R.id.pinBox5).text.toString()
+        val pinBox6 = findViewById<EditText>(R.id.pinBox6).text.toString()
+
+        return pinBox1 + pinBox2 + pinBox3 + pinBox4 + pinBox5 + pinBox6
     }
 
     override fun onResume() {
@@ -84,25 +177,47 @@ class AddFriendActivity : BaseActivity() {
     private fun loadPendingFriendRequests() {
         try {
             val prefs = getSharedPreferences("friend_requests", Context.MODE_PRIVATE)
-            val pendingRequestsSet = prefs.getStringSet("pending_requests", mutableSetOf()) ?: mutableSetOf()
+            val pendingRequestsSet = prefs.getStringSet("pending_requests_v2", mutableSetOf()) ?: mutableSetOf()
 
             Log.d(TAG, "Loading pending friend requests: ${pendingRequestsSet.size} requests")
 
-            // Deduplicate based on CID (in case same request was received multiple times)
-            val uniqueRequests = mutableMapOf<String, FriendRequest>()
-
+            // Parse pending requests (new format with direction and status)
+            val pendingRequests = mutableListOf<com.securelegion.models.PendingFriendRequest>()
             for (requestJson in pendingRequestsSet) {
-                val friendRequest = FriendRequest.fromJson(requestJson)
-                // Use CID as unique key - overwrites duplicates
-                uniqueRequests[friendRequest.ipfsCid] = friendRequest
+                try {
+                    val request = com.securelegion.models.PendingFriendRequest.fromJson(requestJson)
+                    pendingRequests.add(request)
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to parse pending request: $requestJson", e)
+                }
             }
 
-            val friendRequests = uniqueRequests.values.toList()
+            // Also check for old format incoming requests and migrate them
+            val oldRequestsSet = prefs.getStringSet("pending_requests", mutableSetOf()) ?: mutableSetOf()
+            for (requestJson in oldRequestsSet) {
+                try {
+                    val oldRequest = FriendRequest.fromJson(requestJson)
+                    // Convert to new format as incoming request
+                    val newRequest = com.securelegion.models.PendingFriendRequest(
+                        displayName = oldRequest.displayName,
+                        ipfsCid = oldRequest.ipfsCid,
+                        direction = com.securelegion.models.PendingFriendRequest.DIRECTION_INCOMING,
+                        status = com.securelegion.models.PendingFriendRequest.STATUS_PENDING,
+                        timestamp = oldRequest.timestamp
+                    )
+                    pendingRequests.add(newRequest)
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to parse old request: $requestJson", e)
+                }
+            }
 
-            Log.d(TAG, "Loaded ${friendRequests.size} unique pending friend requests (${pendingRequestsSet.size} total, ${pendingRequestsSet.size - friendRequests.size} duplicates)")
+            // Deduplicate based on CID
+            val uniqueRequests = pendingRequests.distinctBy { it.ipfsCid }
+
+            Log.d(TAG, "Loaded ${uniqueRequests.size} unique pending friend requests")
 
             // Display friend requests in UI
-            displayFriendRequests(friendRequests)
+            displayFriendRequests(uniqueRequests)
 
         } catch (e: Exception) {
             Log.e(TAG, "Failed to load pending friend requests", e)
@@ -112,7 +227,7 @@ class AddFriendActivity : BaseActivity() {
     /**
      * Display friend requests in the UI
      */
-    private fun displayFriendRequests(friendRequests: List<FriendRequest>) {
+    private fun displayFriendRequests(friendRequests: List<com.securelegion.models.PendingFriendRequest>) {
         val requestsContainer = findViewById<View>(R.id.friendRequestsContainer)
         val requestsList = findViewById<android.widget.LinearLayout>(R.id.friendRequestsList)
 
@@ -126,87 +241,112 @@ class AddFriendActivity : BaseActivity() {
 
         requestsContainer.visibility = View.VISIBLE
 
-        // Add each friend request as a clickable card
+        // Add each friend request using the new layout
         for (friendRequest in friendRequests) {
-            // Create horizontal layout for the request card
-            val cardLayout = android.widget.LinearLayout(this).apply {
-                orientation = android.widget.LinearLayout.HORIZONTAL
-                setBackgroundResource(R.drawable.message_input_bg)
-                setPadding(32, 24, 32, 24)
-                layoutParams = android.widget.LinearLayout.LayoutParams(
-                    android.widget.LinearLayout.LayoutParams.MATCH_PARENT,
-                    android.widget.LinearLayout.LayoutParams.WRAP_CONTENT
-                ).apply {
-                    bottomMargin = 16
+            val requestView = layoutInflater.inflate(R.layout.item_friend_request, requestsList, false)
+
+            val requestName = requestView.findViewById<android.widget.TextView>(R.id.requestName)
+            val requestStatus = requestView.findViewById<android.widget.TextView>(R.id.requestStatus)
+            val requestMenu = requestView.findViewById<android.widget.ImageView>(R.id.requestMenu)
+
+            // Set name (remove @ prefix)
+            requestName.text = friendRequest.displayName.removePrefix("@")
+
+            // Set status based on direction and status
+            when {
+                friendRequest.direction == com.securelegion.models.PendingFriendRequest.DIRECTION_INCOMING -> {
+                    requestStatus.text = "Accept"
+                    requestStatus.setTextColor(getColor(R.color.text_gray))
+                }
+                friendRequest.status == com.securelegion.models.PendingFriendRequest.STATUS_FAILED -> {
+                    requestStatus.text = "Retry"
+                    requestStatus.setTextColor(getColor(android.R.color.holo_orange_light))
+                }
+                else -> {
+                    requestStatus.text = "Pending"
+                    requestStatus.setTextColor(getColor(R.color.text_gray))
                 }
             }
 
-            // Create vertical layout for text content
-            val textLayout = android.widget.LinearLayout(this).apply {
-                orientation = android.widget.LinearLayout.VERTICAL
-                layoutParams = android.widget.LinearLayout.LayoutParams(
-                    0,
-                    android.widget.LinearLayout.LayoutParams.WRAP_CONTENT,
-                    1f // Weight 1 to fill remaining space
-                )
-            }
+            // Handle status badge click
+            requestStatus.setOnClickListener {
+                if (friendRequest.direction == com.securelegion.models.PendingFriendRequest.DIRECTION_OUTGOING) {
+                    // Outgoing request - resend using saved ContactCard
+                    resendFriendRequest(friendRequest)
+                } else {
+                    // Incoming request - auto-fill CID for acceptance
+                    val cidInput = findViewById<EditText>(R.id.cidInput)
+                    cidInput.setText(friendRequest.ipfsCid)
 
-            // Name text
-            val nameText = android.widget.TextView(this).apply {
-                text = friendRequest.displayName
-                textSize = 16f
-                setTextColor(getColor(R.color.text_white))
-                setTypeface(null, android.graphics.Typeface.BOLD)
-            }
+                    // Disable the Accept button
+                    requestStatus.isEnabled = false
+                    requestStatus.alpha = 0.5f
 
-            // Hint text
-            val hintText = android.widget.TextView(this).apply {
-                text = "Tap to auto-fill CID"
-                textSize = 13f
-                setTextColor(getColor(R.color.text_gray))
-            }
+                    // Change main button text to "Accept Friend Request"
+                    val mainButton = findViewById<TextView>(R.id.searchButton)
+                    mainButton.text = "Accept Friend Request"
 
-            textLayout.addView(nameText)
-            textLayout.addView(hintText)
+                    val scrollView = findViewById<android.widget.ScrollView>(R.id.addFriendScrollView)
+                    scrollView?.post {
+                        scrollView.smoothScrollTo(0, 0)
+                    }
 
-            // Delete button (X)
-            val deleteButton = android.widget.TextView(this).apply {
-                text = "✕"
-                textSize = 24f
-                setTextColor(getColor(R.color.text_gray))
-                setPadding(16, 0, 0, 0)
-                setOnClickListener {
-                    declineFriendRequest(friendRequest)
+                    val pinBox1 = findViewById<EditText>(R.id.pinBox1)
+                    pinBox1.requestFocus()
+
+                    val inputMethodManager = getSystemService(android.view.inputmethod.InputMethodManager::class.java)
+                    inputMethodManager.showSoftInput(pinBox1, android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT)
+
+                    ThemedToast.show(this, "CID auto-filled. Enter their PIN to accept friend request")
                 }
             }
-
-            cardLayout.addView(textLayout)
-            cardLayout.addView(deleteButton)
 
             // Handle card click - auto-fill CID field
-            cardLayout.setOnClickListener {
-                // Auto-fill CID (will show as dots due to password inputType)
+            requestView.setOnClickListener {
                 val cidInput = findViewById<EditText>(R.id.cidInput)
                 cidInput.setText(friendRequest.ipfsCid)
 
-                // Scroll to top so user sees the auto-filled CID
+                // If incoming request, disable Accept button and update main button
+                if (friendRequest.direction == com.securelegion.models.PendingFriendRequest.DIRECTION_INCOMING) {
+                    requestStatus.isEnabled = false
+                    requestStatus.alpha = 0.5f
+
+                    val mainButton = findViewById<TextView>(R.id.searchButton)
+                    mainButton.text = "Accept Friend Request"
+                }
+
                 val scrollView = findViewById<android.widget.ScrollView>(R.id.addFriendScrollView)
                 scrollView?.post {
                     scrollView.smoothScrollTo(0, 0)
                 }
 
-                // Focus on PIN input
-                val pinInput = findViewById<EditText>(R.id.pinInput)
-                pinInput.requestFocus()
+                val pinBox1 = findViewById<EditText>(R.id.pinBox1)
+                pinBox1.requestFocus()
 
-                // Show keyboard for PIN input
                 val inputMethodManager = getSystemService(android.view.inputmethod.InputMethodManager::class.java)
-                inputMethodManager.showSoftInput(pinInput, android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT)
+                inputMethodManager.showSoftInput(pinBox1, android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT)
 
-                ThemedToast.show(this, "CID auto-filled. Enter PIN and tap 'Add Friend'")
+                val statusText = if (friendRequest.direction == com.securelegion.models.PendingFriendRequest.DIRECTION_INCOMING) {
+                    "CID auto-filled. Enter their PIN to accept friend request"
+                } else {
+                    "CID auto-filled. Enter PIN to complete request"
+                }
+                ThemedToast.show(this, statusText)
             }
 
-            requestsList.addView(cardLayout)
+            // Handle menu click - show delete option
+            requestMenu.setOnClickListener {
+                androidx.appcompat.app.AlertDialog.Builder(this, R.style.CustomAlertDialog)
+                    .setTitle("Delete Request")
+                    .setMessage("Remove this friend request?")
+                    .setPositiveButton("Delete") { _, _ ->
+                        removePendingFriendRequest(friendRequest)
+                    }
+                    .setNegativeButton("Cancel", null)
+                    .show()
+            }
+
+            requestsList.addView(requestView)
         }
     }
 
@@ -345,14 +485,25 @@ class AddFriendActivity : BaseActivity() {
         BadgeUtils.updateFriendRequestBadge(this, rootView)
     }
 
-    private fun downloadContactCard(cid: String, pin: String) {
+    private fun showLoading(text: String, subtext: String = "Please wait") {
+        loadingText.text = text
+        loadingSubtext.text = subtext
+        loadingOverlay.visibility = View.VISIBLE
+    }
+
+    private fun hideLoading() {
+        loadingOverlay.visibility = View.GONE
+    }
+
+    private fun downloadContactCard(cid: String, pin: String, isAccepting: Boolean = false) {
         CoroutineScope(Dispatchers.Main).launch {
             try {
                 Log.d(TAG, "Downloading contact card from IPFS...")
                 Log.d(TAG, "CID: $cid")
                 Log.d(TAG, "PIN: $pin")
 
-                ThemedToast.show(this@AddFriendActivity, "Downloading contact card...")
+                val loadingText = if (isAccepting) "Accepting friend request..." else "Sending request..."
+                showLoading(loadingText)
 
                 val cardManager = ContactCardManager(this@AddFriendActivity)
                 val result = withContext(Dispatchers.IO) {
@@ -366,6 +517,7 @@ class AddFriendActivity : BaseActivity() {
                     throw result.exceptionOrNull()!!
                 }
             } catch (e: Exception) {
+                hideLoading()
                 Log.e(TAG, "Failed to download contact card", e)
                 val errorMessage = when {
                     e.message?.contains("invalid PIN", ignoreCase = true) == true ||
@@ -408,6 +560,7 @@ class AddFriendActivity : BaseActivity() {
                 }
 
                 if (existingContact != null) {
+                    hideLoading()
                     Log.w(TAG, "Contact already exists in database")
                     ThemedToast.show(this@AddFriendActivity, "Contact already exists: ${contactCard.displayName}")
                     finish()
@@ -421,10 +574,25 @@ class AddFriendActivity : BaseActivity() {
                 }
 
                 Log.d(TAG, "Step 5: Check if this is accepting a friend request...")
-                // Check if we have a pending friend request from this person
+                // Check if we have a pending INCOMING friend request from this person
                 val prefs = getSharedPreferences("friend_requests", Context.MODE_PRIVATE)
-                val pendingRequests = prefs.getStringSet("pending_requests", mutableSetOf()) ?: mutableSetOf()
-                val isAcceptingFriendRequest = pendingRequests.any { requestJson ->
+
+                // Check new format
+                val pendingRequestsV2 = prefs.getStringSet("pending_requests_v2", mutableSetOf()) ?: mutableSetOf()
+                val incomingRequest = pendingRequestsV2.mapNotNull { requestJson ->
+                    try {
+                        com.securelegion.models.PendingFriendRequest.fromJson(requestJson)
+                    } catch (e: Exception) {
+                        null
+                    }
+                }.find {
+                    it.ipfsCid == cid &&
+                    it.direction == com.securelegion.models.PendingFriendRequest.DIRECTION_INCOMING
+                }
+
+                // Also check old format for backwards compatibility
+                val oldRequests = prefs.getStringSet("pending_requests", mutableSetOf()) ?: mutableSetOf()
+                val hasOldIncomingRequest = oldRequests.any { requestJson ->
                     try {
                         val request = com.securelegion.models.FriendRequest.fromJson(requestJson)
                         request.ipfsCid == cid
@@ -433,54 +601,68 @@ class AddFriendActivity : BaseActivity() {
                     }
                 }
 
-                val friendshipStatus = if (isAcceptingFriendRequest) {
-                    Log.i(TAG, "This is a friend request acceptance - setting status to CONFIRMED")
-                    Contact.FRIENDSHIP_CONFIRMED
-                } else {
-                    Log.i(TAG, "This is a manual add - setting status to PENDING_SENT")
-                    Contact.FRIENDSHIP_PENDING_SENT
-                }
+                val isAcceptingFriendRequest = (incomingRequest != null) || hasOldIncomingRequest
+                Log.d(TAG, "Is accepting friend request: $isAcceptingFriendRequest")
 
-                Log.d(TAG, "Step 6: Creating Contact entity...")
-                val contact = Contact(
-                    displayName = contactCard.displayName,
-                    solanaAddress = contactCard.solanaAddress,
-                    publicKeyBase64 = Base64.encodeToString(
-                        contactCard.solanaPublicKey,
-                        Base64.NO_WRAP
-                    ),
-                    x25519PublicKeyBase64 = Base64.encodeToString(
-                        contactCard.x25519PublicKey,
-                        Base64.NO_WRAP
-                    ),
-                    torOnionAddress = contactCard.torOnionAddress,
-                    addedTimestamp = System.currentTimeMillis(),
-                    lastContactTimestamp = System.currentTimeMillis(),
-                    trustLevel = Contact.TRUST_UNTRUSTED,
-                    friendshipStatus = friendshipStatus
-                )
-                Log.d(TAG, "Contact entity created: ${contact.displayName} (friendshipStatus=$friendshipStatus)")
-
-                Log.d(TAG, "Step 7: Inserting contact into database...")
-                val contactId = withContext(Dispatchers.IO) {
-                    database.contactDao().insertContact(contact)
-                }
-
-                Log.i(TAG, "SUCCESS! Contact saved to database with ID: $contactId")
-
-                // Remove the friend request from pending list (if it exists)
-                removeFriendRequestByCid(cid)
-
-                // Send appropriate notification based on context
                 if (isAcceptingFriendRequest) {
+                    // Accepting an incoming request - add to Contacts immediately
+                    Log.d(TAG, "Step 6: Adding to Contacts (mutual friends)...")
+                    val contact = Contact(
+                        displayName = contactCard.displayName,
+                        solanaAddress = contactCard.solanaAddress,
+                        publicKeyBase64 = Base64.encodeToString(
+                            contactCard.solanaPublicKey,
+                            Base64.NO_WRAP
+                        ),
+                        x25519PublicKeyBase64 = Base64.encodeToString(
+                            contactCard.x25519PublicKey,
+                            Base64.NO_WRAP
+                        ),
+                        torOnionAddress = contactCard.torOnionAddress,
+                        addedTimestamp = System.currentTimeMillis(),
+                        lastContactTimestamp = System.currentTimeMillis(),
+                        trustLevel = Contact.TRUST_UNTRUSTED,
+                        friendshipStatus = Contact.FRIENDSHIP_CONFIRMED
+                    )
+
+                    val contactId = withContext(Dispatchers.IO) {
+                        database.contactDao().insertContact(contact)
+                    }
+
+                    Log.i(TAG, "SUCCESS! Contact added with ID: $contactId")
+
+                    // Remove the incoming request from pending
+                    removeFriendRequestByCid(cid)
+
+                    // Send acceptance notification
                     Log.i(TAG, "Sending FRIEND_REQUEST_ACCEPTED notification...")
                     sendFriendRequestAccepted(contactCard)
+
+                    ThemedToast.showLong(this@AddFriendActivity, "Contact added: ${contactCard.displayName}")
                 } else {
+                    // Initiating a friend request - save to pending (NOT Contacts yet)
+                    Log.d(TAG, "Step 6: Saving to pending outgoing requests (NOT adding to Contacts)...")
+
+                    val pendingRequest = com.securelegion.models.PendingFriendRequest(
+                        displayName = contactCard.displayName,
+                        ipfsCid = cid,
+                        direction = com.securelegion.models.PendingFriendRequest.DIRECTION_OUTGOING,
+                        status = com.securelegion.models.PendingFriendRequest.STATUS_PENDING,
+                        timestamp = System.currentTimeMillis(),
+                        contactCardJson = contactCard.toJson() // Save contact card for later
+                    )
+
+                    // Save to pending requests
+                    savePendingFriendRequest(pendingRequest)
+
+                    // Send friend request notification
                     Log.i(TAG, "Sending initial FRIEND_REQUEST...")
                     sendFriendRequest(contactCard)
+
+                    ThemedToast.showLong(this@AddFriendActivity, "Friend request sent to ${contactCard.displayName}. Waiting for acceptance.")
                 }
 
-                ThemedToast.showLong(this@AddFriendActivity, "Contact added: ${contactCard.displayName}")
+                hideLoading()
 
                 // Navigate back to main screen (Messages view)
                 val intent = Intent(this@AddFriendActivity, MainActivity::class.java)
@@ -510,7 +692,20 @@ class AddFriendActivity : BaseActivity() {
                         "Database error: ${e.javaClass.simpleName}"
                 }
 
+                hideLoading()
                 ThemedToast.showLong(this@AddFriendActivity, errorMsg)
+
+                // Navigate back to main screen even on error
+                val intent = Intent(this@AddFriendActivity, MainActivity::class.java)
+                intent.flags = Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
+                startActivity(intent)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                    overrideActivityTransition(Activity.OVERRIDE_TRANSITION_CLOSE, 0, 0)
+                } else {
+                    @Suppress("DEPRECATION")
+                    overridePendingTransition(0, 0)
+                }
+                finish()
             }
         }
     }
@@ -523,6 +718,13 @@ class AddFriendActivity : BaseActivity() {
         CoroutineScope(Dispatchers.Main).launch {
             try {
                 Log.d(TAG, "Sending friend request to ${recipientContactCard.displayName}")
+
+                // Check if Tor is ready before attempting to send
+                if (!com.securelegion.services.TorService.isMessagingReady()) {
+                    Log.w(TAG, "Tor not ready - cannot send friend request. Will retry when Tor connects.")
+                    ThemedToast.show(this@AddFriendActivity, "Tor not ready. Friend request will be sent when connected.")
+                    return@launch
+                }
 
                 // Get own account information (just username and CID)
                 val keyManager = KeyManager.getInstance(this@AddFriendActivity)
@@ -570,6 +772,85 @@ class AddFriendActivity : BaseActivity() {
                 Log.e(TAG, "Error sending friend request", e)
                 // Don't show error to user - friend request sending is best-effort
                 // The important part is that we added them to our contacts
+            }
+        }
+    }
+
+    /**
+     * Resend friend request from pending request (retry functionality)
+     * Uses saved ContactCard data - no PIN needed, no re-download
+     */
+    private fun resendFriendRequest(pendingRequest: com.securelegion.models.PendingFriendRequest) {
+        CoroutineScope(Dispatchers.Main).launch {
+            try {
+                Log.d(TAG, "Resending friend request to ${pendingRequest.displayName}")
+
+                // Check if Tor is ready before attempting to send
+                if (!com.securelegion.services.TorService.isMessagingReady()) {
+                    Log.w(TAG, "Tor not ready - cannot resend friend request")
+                    ThemedToast.showLong(this@AddFriendActivity, "Tor not ready. Please wait and try again.")
+                    return@launch
+                }
+
+                // Check if we have saved ContactCard data
+                if (pendingRequest.contactCardJson == null) {
+                    ThemedToast.showLong(this@AddFriendActivity, "Cannot resend: Contact card data missing")
+                    Log.e(TAG, "No ContactCard data saved with pending request")
+                    return@launch
+                }
+
+                // Parse saved ContactCard
+                val recipientContactCard = try {
+                    com.securelegion.models.ContactCard.fromJson(pendingRequest.contactCardJson)
+                } catch (e: Exception) {
+                    ThemedToast.showLong(this@AddFriendActivity, "Cannot resend: Invalid contact card data")
+                    Log.e(TAG, "Failed to parse saved ContactCard", e)
+                    return@launch
+                }
+
+                // Get own account information
+                val keyManager = KeyManager.getInstance(this@AddFriendActivity)
+                val ownDisplayName = keyManager.getUsername()
+                    ?: throw Exception("Username not set")
+                val ownCid = keyManager.getContactCardCid()
+                    ?: throw Exception("Contact card CID not found")
+
+                // Create friend request object
+                val friendRequest = com.securelegion.models.FriendRequest(
+                    displayName = ownDisplayName,
+                    ipfsCid = ownCid
+                )
+
+                // Serialize to JSON
+                val friendRequestJson = friendRequest.toJson()
+
+                // Encrypt the friend request using recipient's X25519 public key
+                val encryptedFriendRequest = withContext(Dispatchers.IO) {
+                    com.securelegion.crypto.RustBridge.encryptMessage(
+                        plaintext = friendRequestJson,
+                        recipientX25519PublicKey = recipientContactCard.x25519PublicKey
+                    )
+                }
+
+                // Send via Tor
+                val success = withContext(Dispatchers.IO) {
+                    com.securelegion.crypto.RustBridge.sendFriendRequest(
+                        recipientOnion = recipientContactCard.torOnionAddress,
+                        encryptedFriendRequest = encryptedFriendRequest
+                    )
+                }
+
+                if (success) {
+                    Log.i(TAG, "Friend request resent successfully to ${recipientContactCard.displayName}")
+                    ThemedToast.show(this@AddFriendActivity, "Friend request resent to ${pendingRequest.displayName}")
+                } else {
+                    Log.w(TAG, "Failed to resend friend request to ${recipientContactCard.displayName} (recipient may be offline)")
+                    ThemedToast.showLong(this@AddFriendActivity, "Send failed - recipient may be offline. Try again later.")
+                }
+
+            } catch (e: Exception) {
+                Log.e(TAG, "Error resending friend request", e)
+                ThemedToast.showLong(this@AddFriendActivity, "Failed to resend friend request")
             }
         }
     }
@@ -627,6 +908,63 @@ class AddFriendActivity : BaseActivity() {
                 Log.e(TAG, "Error sending friend request accepted notification", e)
                 // Don't show error to user - notification sending is best-effort
             }
+        }
+    }
+
+    /**
+     * Save pending friend request to SharedPreferences
+     */
+    private fun savePendingFriendRequest(request: com.securelegion.models.PendingFriendRequest) {
+        try {
+            val prefs = getSharedPreferences("friend_requests", Context.MODE_PRIVATE)
+            val pendingRequestsSet = prefs.getStringSet("pending_requests_v2", mutableSetOf()) ?: mutableSetOf()
+
+            // Add new request
+            val newSet = pendingRequestsSet.toMutableSet()
+            newSet.add(request.toJson())
+
+            prefs.edit()
+                .putStringSet("pending_requests_v2", newSet)
+                .apply()
+
+            Log.d(TAG, "Saved pending friend request for ${request.displayName}")
+
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to save pending friend request", e)
+        }
+    }
+
+    /**
+     * Remove pending friend request from SharedPreferences
+     */
+    private fun removePendingFriendRequest(request: com.securelegion.models.PendingFriendRequest) {
+        try {
+            val prefs = getSharedPreferences("friend_requests", Context.MODE_PRIVATE)
+            val pendingRequestsSet = prefs.getStringSet("pending_requests_v2", mutableSetOf()) ?: mutableSetOf()
+
+            // Rebuild set without this request
+            val newSet = mutableSetOf<String>()
+            for (requestJson in pendingRequestsSet) {
+                val existingRequest = com.securelegion.models.PendingFriendRequest.fromJson(requestJson)
+
+                // Keep all requests except the one we're removing
+                if (existingRequest.ipfsCid != request.ipfsCid) {
+                    newSet.add(requestJson)
+                }
+            }
+
+            prefs.edit()
+                .putStringSet("pending_requests_v2", newSet)
+                .apply()
+
+            Log.d(TAG, "Removed pending friend request for ${request.displayName}")
+
+            // Reload the UI
+            loadPendingFriendRequests()
+            updateFriendRequestBadge()
+
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to remove pending friend request", e)
         }
     }
 

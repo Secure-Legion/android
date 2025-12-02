@@ -13,61 +13,109 @@ import com.securelegion.models.Contact
 class ContactAdapter(
     private var contacts: List<Contact>,
     private val onContactClick: (Contact) -> Unit
-) : RecyclerView.Adapter<ContactAdapter.ContactViewHolder>() {
+) : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
+
+    companion object {
+        private const val VIEW_TYPE_SECTION = 0
+        private const val VIEW_TYPE_CONTACT = 1
+    }
+
+    // Data structure to hold sections and contacts
+    private data class ListItem(
+        val type: Int,
+        val contact: Contact? = null,
+        val sectionHeader: String? = null
+    )
+
+    private var listItems = mutableListOf<ListItem>()
+
+    init {
+        buildListItems()
+    }
+
+    private fun buildListItems() {
+        listItems.clear()
+
+        // Sort contacts alphabetically by name
+        val sortedContacts = contacts.sortedBy {
+            it.name.removePrefix("@").uppercase()
+        }
+
+        var currentSection = ""
+        sortedContacts.forEach { contact ->
+            val firstLetter = contact.name.removePrefix("@").firstOrNull()?.uppercaseChar()?.toString() ?: "#"
+
+            // Add section header if it's a new section
+            if (firstLetter != currentSection) {
+                currentSection = firstLetter
+                listItems.add(ListItem(VIEW_TYPE_SECTION, sectionHeader = firstLetter))
+            }
+
+            // Add contact
+            listItems.add(ListItem(VIEW_TYPE_CONTACT, contact = contact))
+        }
+    }
+
+    class SectionViewHolder(view: View) : RecyclerView.ViewHolder(view) {
+        val sectionHeader: TextView = view.findViewById(R.id.sectionHeader)
+    }
 
     class ContactViewHolder(view: View) : RecyclerView.ViewHolder(view) {
         val nameView: TextView = view.findViewById(R.id.contactName)
-        val addressView: TextView = view.findViewById(R.id.contactAddress)
-        val friendsIcon: ImageView = view.findViewById(R.id.friendsIcon)
-        val pendingBadge: TextView = view.findViewById(R.id.pendingBadge)
+        val initialView: TextView = view.findViewById(R.id.contactInitial)
+        val lastMessageView: TextView = view.findViewById(R.id.lastMessage)
+        val timestampView: TextView = view.findViewById(R.id.messageTimestamp)
     }
 
-    override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): ContactViewHolder {
-        val view = LayoutInflater.from(parent.context)
-            .inflate(R.layout.item_contact, parent, false)
-        return ContactViewHolder(view)
+    override fun getItemViewType(position: Int): Int {
+        return listItems[position].type
     }
 
-    override fun onBindViewHolder(holder: ContactViewHolder, position: Int) {
-        val contact = contacts[position]
-
-        // Display contact name
-        holder.nameView.text = contact.name
-
-        // Display truncated Solana address
-        val truncatedAddress = if (contact.address.length > 40) {
-            contact.address.take(40) + "..."
-        } else {
-            contact.address
-        }
-        holder.addressView.text = truncatedAddress
-
-        // Show friendship status
-        when (contact.friendshipStatus) {
-            "CONFIRMED" -> {
-                holder.friendsIcon.visibility = View.VISIBLE
-                holder.pendingBadge.visibility = View.GONE
-            }
-            "PENDING_SENT" -> {
-                holder.friendsIcon.visibility = View.GONE
-                holder.pendingBadge.visibility = View.VISIBLE
+    override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): RecyclerView.ViewHolder {
+        return when (viewType) {
+            VIEW_TYPE_SECTION -> {
+                val view = LayoutInflater.from(parent.context)
+                    .inflate(R.layout.item_contact_section, parent, false)
+                SectionViewHolder(view)
             }
             else -> {
-                // Default to PENDING if unknown status
-                holder.friendsIcon.visibility = View.GONE
-                holder.pendingBadge.visibility = View.VISIBLE
+                val view = LayoutInflater.from(parent.context)
+                    .inflate(R.layout.item_contact, parent, false)
+                ContactViewHolder(view)
             }
         }
-
-        Log.d("ContactAdapter", "Binding contact: ${contact.name}, status: ${contact.friendshipStatus}")
-
-        holder.itemView.setOnClickListener { onContactClick(contact) }
     }
 
-    override fun getItemCount() = contacts.size
+    override fun onBindViewHolder(holder: RecyclerView.ViewHolder, position: Int) {
+        val item = listItems[position]
+
+        when (holder) {
+            is SectionViewHolder -> {
+                holder.sectionHeader.text = item.sectionHeader
+            }
+            is ContactViewHolder -> {
+                val contact = item.contact ?: return
+
+                // Display contact name (without @ prefix, normal case)
+                val displayName = contact.name.removePrefix("@")
+                holder.nameView.text = displayName
+
+                // Display first letter of name as initial (uppercase)
+                val initial = contact.name.removePrefix("@").firstOrNull()?.uppercaseChar()?.toString() ?: "?"
+                holder.initialView.text = initial
+
+                Log.d("ContactAdapter", "Binding contact: ${contact.name}, display: $displayName, initial: $initial")
+
+                holder.itemView.setOnClickListener { onContactClick(contact) }
+            }
+        }
+    }
+
+    override fun getItemCount() = listItems.size
 
     fun updateContacts(newContacts: List<Contact>) {
         contacts = newContacts
+        buildListItems()
         notifyDataSetChanged()
     }
 }

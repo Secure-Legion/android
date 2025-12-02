@@ -169,21 +169,24 @@ class VoiceRecorder(private val context: Context) {
     }
 
     /**
-     * Save audio ByteArray to file in permanent storage
-     * @param audioBytes The audio data
+     * Save audio ByteArray to file in permanent storage (ENCRYPTED)
+     * @param audioBytes The audio data (will be encrypted before saving)
      * @param duration Duration in seconds
-     * @return File path where audio is saved
+     * @return File path where encrypted audio is saved
      */
     fun saveVoiceMessage(audioBytes: ByteArray, duration: Int): String {
         val voiceDir = File(context.filesDir, "voice_messages")
         voiceDir.mkdirs()
 
-        val fileName = "voice_${System.currentTimeMillis()}.m4a"
+        val fileName = "voice_${System.currentTimeMillis()}.enc"  // .enc for encrypted
         val voiceFile = File(voiceDir, fileName)
 
-        voiceFile.writeBytes(audioBytes)
+        // Encrypt audio before saving to disk
+        val keyManager = com.securelegion.crypto.KeyManager.getInstance(context)
+        val encryptedBytes = keyManager.encryptVoiceFile(audioBytes)
+        voiceFile.writeBytes(encryptedBytes)
 
-        Log.d(TAG, "Voice message saved: ${voiceFile.absolutePath} (${audioBytes.size} bytes, ${duration}s)")
+        Log.d(TAG, "Voice message saved (encrypted): ${voiceFile.absolutePath} (${audioBytes.size} bytes → ${encryptedBytes.size} bytes, ${duration}s)")
 
         return voiceFile.absolutePath
     }

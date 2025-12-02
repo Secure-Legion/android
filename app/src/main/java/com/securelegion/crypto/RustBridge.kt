@@ -181,6 +181,12 @@ object RustBridge {
     external fun testSocksConnectivity(): Boolean
 
     /**
+     * Start the Tor bootstrap event listener
+     * This should be called early, before Tor initialization
+     */
+    external fun startBootstrapListener()
+
+    /**
      * Get Tor bootstrap status (0-100%)
      * @return Bootstrap percentage (0-100), or -1 on error
      */

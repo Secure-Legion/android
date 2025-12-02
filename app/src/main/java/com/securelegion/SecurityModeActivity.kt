@@ -11,11 +11,6 @@ class SecurityModeActivity : BaseActivity() {
 
         setupBottomNavigation()
         setupAutoLock()
-
-        // Back button
-        findViewById<View>(R.id.backButton).setOnClickListener {
-            finish()
-        }
     }
 
     override fun onResume() {

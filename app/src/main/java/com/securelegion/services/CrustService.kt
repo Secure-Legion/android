@@ -129,11 +129,15 @@ class CrustService(
 
                 Log.i(TAG, "Successfully uploaded to Crust: $cid")
 
-                // Pin the file to Crust network for permanent storage
+                // Pin the file to Crust network for permanent storage (with 3 retries)
                 val pinResult = pinToCrust(cid, publicKey)
                 if (pinResult.isFailure) {
-                    Log.w(TAG, "Pinning failed but file is uploaded: ${pinResult.exceptionOrNull()?.message}")
+                    Log.w(TAG, "WARNING: Pinning failed after retries: ${pinResult.exceptionOrNull()?.message}")
+                    Log.w(TAG, "File is temporarily accessible on IPFS but may disappear. User should re-upload contact card.")
                     // Continue anyway - file is temporarily accessible
+                    // TODO: In the future, we could queue this for background retry
+                } else {
+                    Log.i(TAG, "Successfully pinned to Crust network - file will be permanently stored")
                 }
 
                 Result.success(cid)
@@ -148,11 +152,12 @@ class CrustService(
      * Pin file to Crust network for permanent storage
      * @param cid IPFS CID to pin
      * @param publicKey User's Solana public key (for authentication)
+     * @param retryCount Number of retries attempted (for recursion)
      * @return Success or failure
      */
-    private suspend fun pinToCrust(cid: String, publicKey: String): Result<Unit> = withContext(Dispatchers.IO) {
+    private suspend fun pinToCrust(cid: String, publicKey: String, retryCount: Int = 0): Result<Unit> = withContext(Dispatchers.IO) {
         try {
-            Log.d(TAG, "Pinning $cid to Crust network for permanent storage")
+            Log.d(TAG, "Pinning $cid to Crust network for permanent storage (attempt ${retryCount + 1}/3)")
 
             // Get auth header (Bearer token for pinning service)
             val authHeaderResult = createAuthHeader(publicKey)
@@ -182,8 +187,16 @@ class CrustService(
                 if (!response.isSuccessful) {
                     val errorBody = response.body?.string() ?: "Unknown error"
                     Log.e(TAG, "Crust pinning failed: ${response.code} - $errorBody")
+
+                    // Retry on network errors (timeout, connection issues, 5xx errors)
+                    if (retryCount < 2 && (response.code >= 500 || response.code == 408)) {
+                        Log.w(TAG, "Retrying pinning after ${(retryCount + 1) * 2} seconds...")
+                        kotlinx.coroutines.delay((retryCount + 1) * 2000L)
+                        return@withContext pinToCrust(cid, publicKey, retryCount + 1)
+                    }
+
                     return@withContext Result.failure(
-                        IOException("Pinning failed: ${response.code} - $errorBody")
+                        IOException("Pinning failed after ${retryCount + 1} attempts: ${response.code} - $errorBody")
                     )
                 }
 
@@ -192,7 +205,15 @@ class CrustService(
             }
         } catch (e: Exception) {
             Log.e(TAG, "Failed to pin to Crust", e)
-            Result.failure(e)
+
+            // Retry on network exceptions (timeout, connection refused, etc.)
+            if (retryCount < 2 && (e is IOException)) {
+                Log.w(TAG, "Retrying pinning after ${(retryCount + 1) * 2} seconds due to: ${e.message}")
+                kotlinx.coroutines.delay((retryCount + 1) * 2000L)
+                return@withContext pinToCrust(cid, publicKey, retryCount + 1)
+            }
+
+            Result.failure(Exception("Pinning failed after ${retryCount + 1} attempts: ${e.message}", e))
         }
     }
 
@@ -213,15 +234,23 @@ class CrustService(
             }
 
             // Download from public IPFS gateway (no auth required)
-            Log.d(TAG, "Downloading from IPFS gateway: $PUBLIC_IPFS_GATEWAY/ipfs/$cid")
+            val url = "$PUBLIC_IPFS_GATEWAY/ipfs/$cid"
+            Log.d(TAG, "Downloading from IPFS gateway: $url")
+            Log.d(TAG, "Using Tor SOCKS proxy: 127.0.0.1:9050")
 
             val request = Request.Builder()
-                .url("$PUBLIC_IPFS_GATEWAY/ipfs/$cid")
+                .url(url)
                 .addHeader("User-Agent", "Mozilla/5.0 (Android; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36")
                 .get()
                 .build()
 
+            Log.d(TAG, "Starting HTTP GET request...")
+            val startTime = System.currentTimeMillis()
+
             client.newCall(request).execute().use { response ->
+                val elapsedTime = System.currentTimeMillis() - startTime
+                Log.d(TAG, "HTTP response received after ${elapsedTime}ms - Code: ${response.code}")
+
                 if (!response.isSuccessful) {
                     val errorBody = response.body?.string() ?: "Unknown error"
                     Log.e(TAG, "Download failed: ${response.code} - $errorBody")
@@ -230,8 +259,9 @@ class CrustService(
                     )
                 }
 
+                Log.d(TAG, "Reading response body...")
                 val encryptedData = response.body!!.bytes()
-                Log.i(TAG, "Successfully downloaded from Crust (${encryptedData.size} bytes)")
+                Log.i(TAG, "Successfully downloaded from IPFS (${encryptedData.size} bytes in ${elapsedTime}ms)")
                 Result.success(encryptedData)
             }
         } catch (e: Exception) {

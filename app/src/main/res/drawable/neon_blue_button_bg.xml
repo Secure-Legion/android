@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="utf-8"?>
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- Shadow layer -->
+    <item android:bottom="4dp">
+        <shape android:shape="rectangle">
+            <solid android:color="#40000000" />
+            <corners android:radius="12dp" />
+        </shape>
+    </item>
+
+    <!-- Main button body -->
+    <item android:bottom="4dp">
+        <layer-list>
+            <!-- Base solid neon blue - matching helmet -->
+            <item>
+                <shape android:shape="rectangle">
+                    <solid android:color="#2196F3" />
+                    <corners android:radius="12dp" />
+                </shape>
+            </item>
+
+            <!-- Top highlight (inset light) -->
+            <item android:top="1dp">
+                <shape android:shape="rectangle">
+                    <gradient
+                        android:angle="270"
+                        android:startColor="#50FFFFFF"
+                        android:centerColor="#15FFFFFF"
+                        android:endColor="#00FFFFFF"
+                        android:type="linear" />
+                    <corners android:radius="12dp" />
+                </shape>
+            </item>
+
+            <!-- Bottom shadow (inset dark) -->
+            <item android:bottom="1dp">
+                <shape android:shape="rectangle">
+                    <gradient
+                        android:angle="90"
+                        android:startColor="#4D000000"
+                        android:centerColor="#10000000"
+                        android:endColor="#00000000"
+                        android:type="linear" />
+                    <corners android:radius="12dp" />
+                </shape>
+            </item>
+
+            <!-- Diagonal shine overlay -->
+            <item>
+                <shape android:shape="rectangle">
+                    <gradient
+                        android:angle="135"
+                        android:startColor="#00FFFFFF"
+                        android:centerColor="#30FFFFFF"
+                        android:endColor="#00FFFFFF"
+                        android:type="linear" />
+                    <corners android:radius="12dp" />
+                </shape>
+            </item>
+
+            <!-- Border with subtle neon glow -->
+            <item>
+                <shape android:shape="rectangle">
+                    <stroke
+                        android:width="1dp"
+                        android:color="#6064B5F6" />
+                    <corners android:radius="12dp" />
+                </shape>
+            </item>
+        </layer-list>
+    </item>
+
+</layer-list>

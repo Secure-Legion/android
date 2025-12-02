@@ -21,8 +21,6 @@
         <item name="alertDialogTheme">@style/CustomAlertDialog</item>
         <!-- Edge-to-edge and display cutout support -->
         <item name="android:windowLayoutInDisplayCutoutMode">shortEdges</item>
-        <item name="android:enforceStatusBarContrast">false</item>
-        <item name="android:enforceNavigationBarContrast">false</item>
     </style>
 
     <style name="CustomAlertDialog" parent="ThemeOverlay.MaterialComponents.MaterialAlertDialog">
@@ -57,5 +55,42 @@
 
     <style name="DialogBodyTextStyle" parent="MaterialAlertDialog.MaterialComponents.Body.Text">
         <item name="android:textColor">@color/text_white</item>
+    </style>
+
+    <!-- Secure Legion Custom Progress Bar Style -->
+    <style name="SecureLegionProgressBar" parent="android:Widget.ProgressBar.Horizontal">
+        <item name="android:indeterminateOnly">false</item>
+        <item name="android:progressDrawable">@drawable/secure_legion_progress_bar</item>
+        <item name="android:minHeight">12dp</item>
+        <item name="android:maxHeight">12dp</item>
+    </style>
+
+    <!-- Seed Word Input Style -->
+    <style name="SeedWordInput">
+        <item name="android:layout_width">0dp</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:layout_columnWeight">1</item>
+        <item name="android:layout_margin">4dp</item>
+        <item name="android:padding">12dp</item>
+        <item name="android:background">@drawable/lock_password_input_bg</item>
+        <item name="android:textColor">#FFFFFF</item>
+        <item name="android:textColorHint">#666666</item>
+        <item name="android:textSize">14sp</item>
+        <item name="android:fontFamily">@font/poppins_medium</item>
+        <item name="android:inputType">text</item>
+        <item name="android:maxLines">1</item>
+        <item name="android:gravity">center</item>
+    </style>
+
+    <!-- Theme for WelcomeActivity - disables starting window preview to prevent cached screenshot flash -->
+    <style name="Theme.SecureLegion.NoStartingWindow" parent="Theme.SecureLegion">
+        <item name="android:windowDisablePreview">true</item>
+    </style>
+
+    <!-- Switch Theme -->
+    <style name="SwitchTheme" parent="Theme.MaterialComponents">
+        <item name="colorControlActivated">#4A90E2</item>
+        <item name="colorSwitchThumbNormal">#888888</item>
+        <item name="android:colorForeground">#333333</item>
     </style>
 </resources>

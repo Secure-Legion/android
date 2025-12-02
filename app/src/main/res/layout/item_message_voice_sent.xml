@@ -29,7 +29,7 @@
             android:layout_height="14dp"
             android:layout_marginStart="4dp"
             android:src="@drawable/ic_check"
-            android:tint="#999999"
+            app:tint="#999999"
             android:contentDescription="Message status" />
     </LinearLayout>
 
@@ -64,7 +64,7 @@
             android:layout_width="36dp"
             android:layout_height="36dp"
             android:src="@drawable/ic_play"
-            android:tint="#FFFFFF"
+            app:tint="#FFFFFF"
             android:background="?attr/selectableItemBackgroundBorderless"
             android:padding="6dp"
             android:contentDescription="Play voice message" />

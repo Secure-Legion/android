@@ -4,195 +4,452 @@
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="@color/header_bg">
-
-    <!-- Header -->
-    <LinearLayout
-        android:id="@+id/header"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:orientation="vertical"
-        android:background="@drawable/header_bg"
-        android:fitsSystemWindows="true"
-        android:paddingStart="24dp"
-        android:paddingEnd="24dp"
-        android:paddingBottom="24dp"
-        android:gravity="center"
-        app:layout_constraintTop_toTopOf="parent">
-
-        <ImageView
-            android:layout_width="80dp"
-            android:layout_height="80dp"
-            android:src="@drawable/icon_header"
-            android:contentDescription="Secure Legion Logo"
-            android:layout_marginBottom="16dp" />
-
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="Account Created Successfully!"
-            android:textSize="20sp"
-            android:textStyle="bold"
-            android:textColor="@color/text_white"
-            android:gravity="center" />
-
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="You can view this information anytime in Settings"
-            android:textSize="14sp"
-            android:textColor="@color/text_gray"
-            android:gravity="center"
-            android:layout_marginTop="8dp" />
-
-    </LinearLayout>
+    android:background="#000000">
 
     <!-- Content -->
     <ScrollView
         android:layout_width="match_parent"
         android:layout_height="0dp"
         android:fillViewport="true"
-        app:layout_constraintTop_toBottomOf="@id/header"
+        app:layout_constraintTop_toTopOf="parent"
         app:layout_constraintBottom_toBottomOf="parent">
 
-        <LinearLayout
+        <androidx.constraintlayout.widget.ConstraintLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:orientation="vertical"
-            android:padding="24dp">
+            android:fitsSystemWindows="true"
+            android:paddingStart="32dp"
+            android:paddingEnd="32dp"
+            android:paddingTop="60dp"
+            android:paddingBottom="32dp">
 
-            <!-- Username Section -->
+            <!-- Title -->
             <TextView
+                android:id="@+id/titleText"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="Your Username"
-                android:textSize="14sp"
-                android:textStyle="bold"
-                android:textColor="@color/text_white"
-                android:layout_marginBottom="8dp" />
+                android:text="Account Details"
+                android:fontFamily="@font/space_grotesk_bold"
+                android:textSize="34sp"
+                android:textColor="@color/lock_title_gray"
+                android:layout_marginBottom="40dp"
+                app:layout_constraintTop_toTopOf="parent"
+                app:layout_constraintStart_toStartOf="parent"
+                app:layout_constraintEnd_toEndOf="parent" />
 
+            <!-- CID Section -->
             <TextView
-                android:id="@+id/usernameText"
-                android:layout_width="match_parent"
+                android:id="@+id/cidLabel"
+                android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:background="@drawable/input_field_bg"
-                android:textColor="@color/text_white"
+                android:text="CID (IPFS Contact ID)"
                 android:textSize="18sp"
-                android:textStyle="bold"
-                android:padding="16dp"
-                android:layout_marginBottom="24dp" />
-
-            <!-- Wallet Address Section -->
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="Public Wallet Address"
-                android:textSize="14sp"
-                android:textStyle="bold"
-                android:textColor="@color/text_white"
-                android:layout_marginBottom="8dp" />
-
-            <TextView
-                android:id="@+id/walletAddressText"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:background="@drawable/input_field_bg"
-                android:textColor="@color/text_white"
-                android:textSize="12sp"
-                android:fontFamily="monospace"
-                android:padding="16dp"
-                android:layout_marginBottom="24dp" />
-
-            <!-- Contact Card Section -->
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="Contact Card Information"
-                android:textSize="16sp"
-                android:textStyle="bold"
-                android:textColor="@color/text_white"
-                android:layout_marginBottom="8dp" />
-
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="Share your CID and PIN to let others add you"
-                android:textSize="12sp"
-                android:textColor="@color/text_gray"
-                android:layout_marginBottom="16dp" />
-
-            <!-- CID -->
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="CID (IPFS Content ID)"
-                android:textSize="14sp"
-                android:textStyle="bold"
-                android:textColor="@color/text_white"
-                android:layout_marginBottom="8dp" />
+                android:textColor="@color/lock_title_gray"
+                android:fontFamily="@font/space_grotesk_bold"
+                android:layout_marginTop="40dp"
+                app:layout_constraintTop_toBottomOf="@id/titleText"
+                app:layout_constraintStart_toStartOf="parent" />
 
             <TextView
                 android:id="@+id/contactCardCid"
-                android:layout_width="match_parent"
+                android:layout_width="0dp"
                 android:layout_height="wrap_content"
-                android:background="@drawable/input_field_bg"
+                android:layout_marginTop="8dp"
+                android:layout_marginEnd="60dp"
+                android:background="@drawable/lock_password_input_bg"
                 android:foreground="?attr/selectableItemBackground"
-                android:textColor="@color/text_white"
-                android:textSize="12sp"
+                android:textColor="#FFFFFF"
+                android:textSize="11sp"
                 android:fontFamily="monospace"
-                android:padding="16dp"
+                android:padding="14dp"
                 android:clickable="true"
                 android:focusable="true"
-                android:layout_marginBottom="8dp" />
+                app:layout_constraintTop_toBottomOf="@id/cidLabel"
+                app:layout_constraintStart_toStartOf="parent"
+                app:layout_constraintEnd_toEndOf="parent" />
 
+            <!-- PIN Section -->
             <TextView
+                android:id="@+id/pinLabel"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="Tap to copy"
-                android:textSize="11sp"
-                android:textColor="@color/text_gray"
-                android:layout_marginBottom="24dp" />
+                android:text="Contact PIN"
+                android:textSize="18sp"
+                android:textColor="@color/lock_title_gray"
+                android:fontFamily="@font/space_grotesk_bold"
+                android:layout_marginTop="24dp"
+                app:layout_constraintTop_toBottomOf="@id/contactCardCid"
+                app:layout_constraintStart_toStartOf="parent" />
 
-            <!-- PIN -->
-            <TextView
+            <!-- 6 PIN boxes -->
+            <LinearLayout
+                android:id="@+id/pinBoxesContainer"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="PIN (Decryption Key)"
+                android:layout_marginTop="8dp"
+                android:orientation="horizontal"
+                app:layout_constraintTop_toBottomOf="@id/pinLabel"
+                app:layout_constraintStart_toStartOf="parent"
+                app:layout_constraintEnd_toEndOf="parent">
+
+                <TextView
+                    android:id="@+id/pinDigit1"
+                    android:layout_width="48dp"
+                    android:layout_height="48dp"
+                    android:background="@drawable/lock_password_input_bg"
+                    android:foreground="?attr/selectableItemBackground"
+                    android:textColor="#FFFFFF"
+                    android:textSize="18sp"
+                    android:fontFamily="monospace"
+                    android:gravity="center"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:layout_marginEnd="8dp" />
+
+                <TextView
+                    android:id="@+id/pinDigit2"
+                    android:layout_width="48dp"
+                    android:layout_height="48dp"
+                    android:background="@drawable/lock_password_input_bg"
+                    android:foreground="?attr/selectableItemBackground"
+                    android:textColor="#FFFFFF"
+                    android:textSize="18sp"
+                    android:fontFamily="monospace"
+                    android:gravity="center"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:layout_marginEnd="8dp" />
+
+                <TextView
+                    android:id="@+id/pinDigit3"
+                    android:layout_width="48dp"
+                    android:layout_height="48dp"
+                    android:background="@drawable/lock_password_input_bg"
+                    android:foreground="?attr/selectableItemBackground"
+                    android:textColor="#FFFFFF"
+                    android:textSize="18sp"
+                    android:fontFamily="monospace"
+                    android:gravity="center"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:layout_marginEnd="8dp" />
+
+                <TextView
+                    android:id="@+id/pinDigit4"
+                    android:layout_width="48dp"
+                    android:layout_height="48dp"
+                    android:background="@drawable/lock_password_input_bg"
+                    android:foreground="?attr/selectableItemBackground"
+                    android:textColor="#FFFFFF"
+                    android:textSize="18sp"
+                    android:fontFamily="monospace"
+                    android:gravity="center"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:layout_marginEnd="8dp" />
+
+                <TextView
+                    android:id="@+id/pinDigit5"
+                    android:layout_width="48dp"
+                    android:layout_height="48dp"
+                    android:background="@drawable/lock_password_input_bg"
+                    android:foreground="?attr/selectableItemBackground"
+                    android:textColor="#FFFFFF"
+                    android:textSize="18sp"
+                    android:fontFamily="monospace"
+                    android:gravity="center"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:layout_marginEnd="8dp" />
+
+                <TextView
+                    android:id="@+id/pinDigit6"
+                    android:layout_width="48dp"
+                    android:layout_height="48dp"
+                    android:background="@drawable/lock_password_input_bg"
+                    android:foreground="?attr/selectableItemBackground"
+                    android:textColor="#FFFFFF"
+                    android:textSize="18sp"
+                    android:fontFamily="monospace"
+                    android:gravity="center"
+                    android:clickable="true"
+                    android:focusable="true" />
+
+            </LinearLayout>
+
+            <!-- PIN subtitle -->
+            <TextView
+                android:id="@+id/pinSubtitle"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="CID/PIN are located under Settings → Identity."
+                android:textSize="12sp"
+                android:textColor="#5C5C5C"
+                android:fontFamily="@font/poppins_regular"
+                android:layout_marginTop="12dp"
+                app:layout_constraintTop_toBottomOf="@id/pinBoxesContainer"
+                app:layout_constraintStart_toStartOf="parent" />
+
+            <!-- Recovery Seed Section -->
+            <TextView
+                android:id="@+id/seedLabel"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Account Recovery Seed"
+                android:textSize="18sp"
+                android:textColor="@color/lock_title_gray"
+                android:fontFamily="@font/space_grotesk_bold"
+                android:layout_marginTop="24dp"
+                app:layout_constraintTop_toBottomOf="@id/pinSubtitle"
+                app:layout_constraintStart_toStartOf="parent" />
+
+            <!-- 12-word grid (4 rows x 3 columns) -->
+            <GridLayout
+                android:id="@+id/seedPhraseGrid"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:columnCount="3"
+                android:rowCount="4"
+                app:layout_constraintTop_toBottomOf="@id/seedLabel"
+                app:layout_constraintStart_toStartOf="parent"
+                app:layout_constraintEnd_toEndOf="parent">
+
+                <!-- Row 1 -->
+                <TextView
+                    android:id="@+id/word1"
+                    android:layout_width="108dp"
+                    android:layout_height="wrap_content"
+                    android:layout_margin="4dp"
+                    android:text="1."
+                    android:textSize="13sp"
+                    android:textColor="#FFFFFF"
+                    android:fontFamily="monospace"
+                    android:paddingStart="14dp"
+                    android:paddingEnd="10dp"
+                    android:paddingTop="10dp"
+                    android:paddingBottom="10dp"
+                    android:background="@drawable/lock_password_input_bg" />
+
+                <TextView
+                    android:id="@+id/word2"
+                    android:layout_width="108dp"
+                    android:layout_height="wrap_content"
+                    android:layout_margin="4dp"
+                    android:text="2."
+                    android:textSize="13sp"
+                    android:textColor="#FFFFFF"
+                    android:fontFamily="monospace"
+                    android:paddingStart="14dp"
+                    android:paddingEnd="10dp"
+                    android:paddingTop="10dp"
+                    android:paddingBottom="10dp"
+                    android:background="@drawable/lock_password_input_bg" />
+
+                <TextView
+                    android:id="@+id/word3"
+                    android:layout_width="108dp"
+                    android:layout_height="wrap_content"
+                    android:layout_margin="4dp"
+                    android:text="3."
+                    android:textSize="13sp"
+                    android:textColor="#FFFFFF"
+                    android:fontFamily="monospace"
+                    android:paddingStart="14dp"
+                    android:paddingEnd="10dp"
+                    android:paddingTop="10dp"
+                    android:paddingBottom="10dp"
+                    android:background="@drawable/lock_password_input_bg" />
+
+                <!-- Row 2 -->
+                <TextView
+                    android:id="@+id/word4"
+                    android:layout_width="108dp"
+                    android:layout_height="wrap_content"
+                    android:layout_margin="4dp"
+                    android:text="4."
+                    android:textSize="13sp"
+                    android:textColor="#FFFFFF"
+                    android:fontFamily="monospace"
+                    android:paddingStart="14dp"
+                    android:paddingEnd="10dp"
+                    android:paddingTop="10dp"
+                    android:paddingBottom="10dp"
+                    android:background="@drawable/lock_password_input_bg" />
+
+                <TextView
+                    android:id="@+id/word5"
+                    android:layout_width="108dp"
+                    android:layout_height="wrap_content"
+                    android:layout_margin="4dp"
+                    android:text="5."
+                    android:textSize="13sp"
+                    android:textColor="#FFFFFF"
+                    android:fontFamily="monospace"
+                    android:paddingStart="14dp"
+                    android:paddingEnd="10dp"
+                    android:paddingTop="10dp"
+                    android:paddingBottom="10dp"
+                    android:background="@drawable/lock_password_input_bg" />
+
+                <TextView
+                    android:id="@+id/word6"
+                    android:layout_width="108dp"
+                    android:layout_height="wrap_content"
+                    android:layout_margin="4dp"
+                    android:text="6."
+                    android:textSize="13sp"
+                    android:textColor="#FFFFFF"
+                    android:fontFamily="monospace"
+                    android:paddingStart="14dp"
+                    android:paddingEnd="10dp"
+                    android:paddingTop="10dp"
+                    android:paddingBottom="10dp"
+                    android:background="@drawable/lock_password_input_bg" />
+
+                <!-- Row 3 -->
+                <TextView
+                    android:id="@+id/word7"
+                    android:layout_width="108dp"
+                    android:layout_height="wrap_content"
+                    android:layout_margin="4dp"
+                    android:text="7."
+                    android:textSize="13sp"
+                    android:textColor="#FFFFFF"
+                    android:fontFamily="monospace"
+                    android:paddingStart="14dp"
+                    android:paddingEnd="10dp"
+                    android:paddingTop="10dp"
+                    android:paddingBottom="10dp"
+                    android:background="@drawable/lock_password_input_bg" />
+
+                <TextView
+                    android:id="@+id/word8"
+                    android:layout_width="108dp"
+                    android:layout_height="wrap_content"
+                    android:layout_margin="4dp"
+                    android:text="8."
+                    android:textSize="13sp"
+                    android:textColor="#FFFFFF"
+                    android:fontFamily="monospace"
+                    android:paddingStart="14dp"
+                    android:paddingEnd="10dp"
+                    android:paddingTop="10dp"
+                    android:paddingBottom="10dp"
+                    android:background="@drawable/lock_password_input_bg" />
+
+                <TextView
+                    android:id="@+id/word9"
+                    android:layout_width="108dp"
+                    android:layout_height="wrap_content"
+                    android:layout_margin="4dp"
+                    android:text="9."
+                    android:textSize="13sp"
+                    android:textColor="#FFFFFF"
+                    android:fontFamily="monospace"
+                    android:paddingStart="14dp"
+                    android:paddingEnd="10dp"
+                    android:paddingTop="10dp"
+                    android:paddingBottom="10dp"
+                    android:background="@drawable/lock_password_input_bg" />
+
+                <!-- Row 4 -->
+                <TextView
+                    android:id="@+id/word10"
+                    android:layout_width="108dp"
+                    android:layout_height="wrap_content"
+                    android:layout_margin="4dp"
+                    android:text="10."
+                    android:textSize="13sp"
+                    android:textColor="#FFFFFF"
+                    android:fontFamily="monospace"
+                    android:paddingStart="14dp"
+                    android:paddingEnd="10dp"
+                    android:paddingTop="10dp"
+                    android:paddingBottom="10dp"
+                    android:background="@drawable/lock_password_input_bg" />
+
+                <TextView
+                    android:id="@+id/word11"
+                    android:layout_width="108dp"
+                    android:layout_height="wrap_content"
+                    android:layout_margin="4dp"
+                    android:text="11."
+                    android:textSize="13sp"
+                    android:textColor="#FFFFFF"
+                    android:fontFamily="monospace"
+                    android:paddingStart="14dp"
+                    android:paddingEnd="10dp"
+                    android:paddingTop="10dp"
+                    android:paddingBottom="10dp"
+                    android:background="@drawable/lock_password_input_bg" />
+
+                <TextView
+                    android:id="@+id/word12"
+                    android:layout_width="108dp"
+                    android:layout_height="wrap_content"
+                    android:layout_margin="4dp"
+                    android:text="12."
+                    android:textSize="13sp"
+                    android:textColor="#FFFFFF"
+                    android:fontFamily="monospace"
+                    android:paddingStart="14dp"
+                    android:paddingEnd="10dp"
+                    android:paddingTop="10dp"
+                    android:paddingBottom="10dp"
+                    android:background="@drawable/lock_password_input_bg" />
+
+            </GridLayout>
+
+            <!-- Warning Text -->
+            <TextView
+                android:id="@+id/warningText"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:textSize="13sp"
+                android:fontFamily="@font/poppins_regular"
+                android:lineSpacingMultiplier="1.3"
+                android:layout_marginTop="16dp"
+                app:layout_constraintTop_toBottomOf="@id/seedPhraseGrid"
+                app:layout_constraintStart_toStartOf="parent"
+                app:layout_constraintEnd_toEndOf="parent" />
+
+            <!-- Checkbox -->
+            <CheckBox
+                android:id="@+id/confirmCheckbox"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
                 android:textSize="14sp"
-                android:textStyle="bold"
-                android:textColor="@color/text_white"
-                android:layout_marginBottom="8dp" />
-
-            <TextView
-                android:id="@+id/contactCardPin"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:background="@drawable/input_field_bg"
-                android:textColor="@color/text_white"
-                android:textSize="16sp"
-                android:fontFamily="monospace"
-                android:textStyle="bold"
-                android:padding="16dp"
-                android:gravity="center"
-                android:layout_marginBottom="32dp" />
+                android:textColor="#FFFFFF"
+                android:fontFamily="@font/poppins_regular"
+                android:button="@drawable/custom_checkbox"
+                android:buttonTint="@null"
+                android:paddingStart="8dp"
+                android:layout_marginTop="16dp"
+                app:layout_constraintTop_toBottomOf="@id/warningText"
+                app:layout_constraintStart_toStartOf="parent" />
 
             <!-- Continue Button -->
             <TextView
                 android:id="@+id/continueButton"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="Continue to App"
+                android:layout_width="0dp"
+                android:layout_height="60dp"
+                android:layout_marginTop="24dp"
+                android:text="Continue"
                 android:textSize="16sp"
-                android:textStyle="bold"
-                android:textColor="@color/text_white"
-                android:background="@drawable/metallic_button_bg"
+                android:textColor="#FFFFFF"
+                android:fontFamily="@font/space_grotesk_bold"
+                android:background="@drawable/lock_button_bg"
                 android:gravity="center"
-                android:padding="16dp"
                 android:clickable="true"
                 android:focusable="true"
-                android:elevation="6dp" />
+                android:alpha="0.5"
+                android:enabled="false"
+                app:layout_constraintTop_toBottomOf="@id/confirmCheckbox"
+                app:layout_constraintStart_toStartOf="parent"
+                app:layout_constraintEnd_toEndOf="parent" />
 
-        </LinearLayout>
+        </androidx.constraintlayout.widget.ConstraintLayout>
 
     </ScrollView>
 
