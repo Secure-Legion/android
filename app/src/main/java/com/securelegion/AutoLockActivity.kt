@@ -1,6 +1,7 @@
 package com.securelegion
 
 import android.os.Bundle
+import android.view.View
 import android.widget.RadioButton
 import android.widget.RadioGroup
 import androidx.appcompat.app.AppCompatActivity
@@ -9,7 +10,7 @@ import androidx.appcompat.app.AppCompatActivity
  * Activity for configuring auto-lock timer
  * User can select how long before the app automatically locks after inactivity
  */
-class AutoLockActivity : AppCompatActivity() {
+class AutoLockActivity : BaseActivity() {
 
     companion object {
         const val PREF_AUTO_LOCK_TIMEOUT = "auto_lock_timeout_ms"
@@ -29,6 +30,9 @@ class AutoLockActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_auto_lock)
+
+        setupClickListeners()
+        BottomNavigationHelper.setupBottomNavigation(this)
 
         val timerGroup = findViewById<RadioGroup>(R.id.autoLockTimerGroup)
         val timer30s = findViewById<RadioButton>(R.id.timer30Seconds)
@@ -88,6 +92,13 @@ class AutoLockActivity : AppCompatActivity() {
             android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
                 finish()
             }, 500)
+        }
+    }
+
+    private fun setupClickListeners() {
+        // Back Button
+        findViewById<View>(R.id.backButton).setOnClickListener {
+            finish()
         }
     }
 }

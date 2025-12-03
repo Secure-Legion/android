@@ -180,6 +180,7 @@ data class Message(
         // Message type constants
         const val MESSAGE_TYPE_TEXT = "TEXT"
         const val MESSAGE_TYPE_VOICE = "VOICE"
+        const val MESSAGE_TYPE_IMAGE = "IMAGE"
 
         // Message status constants
         const val STATUS_PENDING = 0

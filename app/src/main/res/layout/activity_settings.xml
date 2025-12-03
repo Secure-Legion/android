@@ -590,6 +590,7 @@
                 android:contentDescription="Messages" />
 
             <TextView
+                android:id="@+id/navMessagesLabel"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:text="Messages"
@@ -620,6 +621,7 @@
                 android:contentDescription="Wallet" />
 
             <TextView
+                android:id="@+id/navWalletLabel"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:text="Wallet"
@@ -641,13 +643,35 @@
             android:clickable="true"
             android:focusable="true">
 
-            <ImageView
-                android:layout_width="24dp"
-                android:layout_height="24dp"
-                android:src="@drawable/ic_add_friend"
-                android:tint="@color/text_gray"
-                android:layout_marginBottom="4dp"
-                android:contentDescription="Add Friend" />
+            <FrameLayout
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="2dp"
+                android:layout_marginBottom="4dp">
+
+                <ImageView
+                    android:layout_width="24dp"
+                    android:layout_height="24dp"
+                    android:src="@drawable/ic_add_friend"
+                    android:tint="@color/text_gray"
+                    android:contentDescription="Add Friend" />
+
+                <!-- Badge for pending friend requests -->
+                <TextView
+                    android:id="@+id/friendRequestBadge"
+                    android:layout_width="16dp"
+                    android:layout_height="16dp"
+                    android:layout_gravity="top|end"
+                    android:layout_marginTop="-4dp"
+                    android:layout_marginEnd="-4dp"
+                    android:background="@drawable/badge_bg"
+                    android:gravity="center"
+                    android:textSize="9sp"
+                    android:textStyle="bold"
+                    android:textColor="@color/text_white"
+                    android:visibility="gone" />
+
+            </FrameLayout>
 
             <TextView
                 android:layout_width="wrap_content"

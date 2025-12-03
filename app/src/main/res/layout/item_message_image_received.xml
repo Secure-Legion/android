@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
     android:orientation="vertical"
@@ -23,42 +24,9 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="horizontal"
-        android:gravity="end">
+        android:gravity="start">
 
-        <!-- Message Bubble -->
-        <LinearLayout
-            android:id="@+id/messageBubble"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:orientation="vertical"
-            android:maxWidth="280dp"
-            android:background="@drawable/message_sent_bg"
-            android:padding="12dp">
-
-            <TextView
-                android:id="@+id/messageText"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="Message content"
-                android:textColor="@color/text_white"
-                android:textSize="15sp"
-                android:lineSpacingMultiplier="1.2" />
-
-            <!-- Delivery status indicator (checkmarks) -->
-            <TextView
-                android:id="@+id/messageStatus"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="✓"
-                android:textColor="@color/text_gray"
-                android:textSize="11sp"
-                android:layout_gravity="end"
-                android:layout_marginTop="4dp"
-                android:visibility="gone" />
-
-        </LinearLayout>
-
-        <!-- Swipe-revealed timestamp (right side) -->
+        <!-- Swipe-revealed timestamp (left side) -->
         <TextView
             android:id="@+id/swipeRevealedTime"
             android:layout_width="wrap_content"
@@ -67,8 +35,29 @@
             android:textColor="@color/text_gray"
             android:textSize="11sp"
             android:layout_gravity="center_vertical"
-            android:layout_marginStart="8dp"
+            android:layout_marginEnd="8dp"
             android:visibility="gone" />
+
+        <!-- Image with rounded corners (no bubble background) -->
+        <androidx.cardview.widget.CardView
+            android:id="@+id/messageBubble"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            app:cardCornerRadius="12dp"
+            app:cardElevation="0dp"
+            app:cardBackgroundColor="@android:color/transparent">
+
+            <!-- Image Content -->
+            <ImageView
+                android:id="@+id/messageImage"
+                android:layout_width="220dp"
+                android:layout_height="wrap_content"
+                android:adjustViewBounds="true"
+                android:maxHeight="280dp"
+                android:scaleType="centerCrop"
+                android:contentDescription="Image message" />
+
+        </androidx.cardview.widget.CardView>
 
         <!-- Selection Checkbox (shown in delete mode) -->
         <CheckBox

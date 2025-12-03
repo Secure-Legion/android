@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
     android:orientation="vertical"
@@ -25,38 +26,45 @@
         android:orientation="horizontal"
         android:gravity="end">
 
-        <!-- Message Bubble -->
-        <LinearLayout
+        <!-- Image with rounded corners (no bubble background) -->
+        <androidx.cardview.widget.CardView
             android:id="@+id/messageBubble"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:orientation="vertical"
-            android:maxWidth="280dp"
-            android:background="@drawable/message_sent_bg"
-            android:padding="12dp">
+            app:cardCornerRadius="12dp"
+            app:cardElevation="0dp"
+            app:cardBackgroundColor="@android:color/transparent">
 
-            <TextView
-                android:id="@+id/messageText"
+            <FrameLayout
                 android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="Message content"
-                android:textColor="@color/text_white"
-                android:textSize="15sp"
-                android:lineSpacingMultiplier="1.2" />
+                android:layout_height="wrap_content">
 
-            <!-- Delivery status indicator (checkmarks) -->
-            <TextView
-                android:id="@+id/messageStatus"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="✓"
-                android:textColor="@color/text_gray"
-                android:textSize="11sp"
-                android:layout_gravity="end"
-                android:layout_marginTop="4dp"
-                android:visibility="gone" />
+                <!-- Image Content -->
+                <ImageView
+                    android:id="@+id/messageImage"
+                    android:layout_width="220dp"
+                    android:layout_height="wrap_content"
+                    android:adjustViewBounds="true"
+                    android:maxHeight="280dp"
+                    android:scaleType="centerCrop"
+                    android:contentDescription="Image message" />
 
-        </LinearLayout>
+                <!-- Delivery status overlay (bottom right corner) -->
+                <TextView
+                    android:id="@+id/messageStatus"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="✓"
+                    android:textColor="#FFFFFF"
+                    android:textSize="11sp"
+                    android:layout_gravity="bottom|end"
+                    android:padding="6dp"
+                    android:background="#66000000"
+                    android:visibility="gone" />
+
+            </FrameLayout>
+
+        </androidx.cardview.widget.CardView>
 
         <!-- Swipe-revealed timestamp (right side) -->
         <TextView

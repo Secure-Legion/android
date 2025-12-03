@@ -6,21 +6,34 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.graphics.Matrix
+import android.media.ExifInterface
+import android.net.Uri
+import android.os.Build
 import android.os.Bundle
+import android.os.Environment
 import android.os.Handler
 import android.os.Looper
+import android.provider.MediaStore
 import android.text.Editable
 import android.text.TextWatcher
+import android.util.Base64
 import android.util.Log
 import android.view.MotionEvent
 import android.view.View
+import android.view.ViewGroup
 import android.widget.EditText
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import androidx.core.content.FileProvider
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowCompat
@@ -40,7 +53,12 @@ import com.securelegion.utils.VoicePlayer
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.ByteArrayOutputStream
 import java.io.File
+import java.io.FileOutputStream
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 class ChatActivity : BaseActivity() {
 
@@ -50,6 +68,10 @@ class ChatActivity : BaseActivity() {
         const val EXTRA_CONTACT_NAME = "CONTACT_NAME"
         const val EXTRA_CONTACT_ADDRESS = "CONTACT_ADDRESS"
         private const val PERMISSION_REQUEST_CODE = 100
+        private const val CAMERA_PERMISSION_REQUEST_CODE = 101
+        private const val MAX_IMAGE_WIDTH = 1920  // 1080p width
+        private const val MAX_IMAGE_HEIGHT = 1080 // 1080p height
+        private const val JPEG_QUALITY = 85       // Good quality, reasonable size
     }
 
     private lateinit var messagesRecyclerView: RecyclerView
@@ -81,6 +103,25 @@ class ChatActivity : BaseActivity() {
     private var recordingFile: File? = null
     private var recordingHandler: Handler? = null
     private var currentlyPlayingMessageId: String? = null
+
+    // Image capture
+    private var cameraPhotoUri: Uri? = null
+    private var cameraPhotoFile: File? = null
+
+    // Activity result launchers for image picking
+    private val galleryLauncher = registerForActivityResult(
+        ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        uri?.let { handleSelectedImage(it) }
+    }
+
+    private val cameraLauncher = registerForActivityResult(
+        ActivityResultContracts.TakePicture()
+    ) { success: Boolean ->
+        if (success && cameraPhotoUri != null) {
+            handleSelectedImage(cameraPhotoUri!!)
+        }
+    }
 
     // BroadcastReceiver for instant message display and new Pings
     private val messageReceiver = object : BroadcastReceiver() {
@@ -315,6 +356,9 @@ class ChatActivity : BaseActivity() {
                 if (!isSelectionMode) {
                     toggleSelectionMode()
                 }
+            },
+            onImageClick = { imageBase64 ->
+                showFullImage(imageBase64)
             }
         )
 
@@ -489,8 +533,7 @@ class ChatActivity : BaseActivity() {
         // Send Image option
         view.findViewById<View>(R.id.sendImageOption).setOnClickListener {
             bottomSheet.dismiss()
-            ThemedToast.show(this, "Send Image - Coming soon")
-            // TODO: Implement send image functionality
+            showImageSourceDialog()
         }
 
         // Send Video option
@@ -502,6 +545,293 @@ class ChatActivity : BaseActivity() {
 
         bottomSheet.show()
     }
+
+    // ==================== IMAGE SENDING ====================
+
+    private fun showImageSourceDialog() {
+        val bottomSheet = com.google.android.material.bottomsheet.BottomSheetDialog(this)
+        val view = layoutInflater.inflate(R.layout.bottom_sheet_image_source, null)
+        bottomSheet.setContentView(view)
+
+        // Make background transparent
+        bottomSheet.window?.setBackgroundDrawableResource(android.R.color.transparent)
+        bottomSheet.window?.findViewById<View>(com.google.android.material.R.id.design_bottom_sheet)?.setBackgroundResource(android.R.color.transparent)
+
+        view.post {
+            val parentView = view.parent as? View
+            parentView?.setBackgroundResource(android.R.color.transparent)
+        }
+
+        // Take Photo option
+        view.findViewById<View>(R.id.takePhotoOption).setOnClickListener {
+            bottomSheet.dismiss()
+            openCamera()
+        }
+
+        // Choose from Gallery option
+        view.findViewById<View>(R.id.chooseGalleryOption).setOnClickListener {
+            bottomSheet.dismiss()
+            openGallery()
+        }
+
+        bottomSheet.show()
+    }
+
+    private fun openCamera() {
+        // Check camera permission
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA)
+            != PackageManager.PERMISSION_GRANTED) {
+            ActivityCompat.requestPermissions(
+                this,
+                arrayOf(Manifest.permission.CAMERA),
+                CAMERA_PERMISSION_REQUEST_CODE
+            )
+            return
+        }
+
+        try {
+            // Create temp file for camera photo
+            val timeStamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
+            val imageFileName = "JPEG_${timeStamp}_"
+            val storageDir = getExternalFilesDir(Environment.DIRECTORY_PICTURES)
+            cameraPhotoFile = File.createTempFile(imageFileName, ".jpg", storageDir)
+
+            cameraPhotoUri = FileProvider.getUriForFile(
+                this,
+                "${packageName}.fileprovider",
+                cameraPhotoFile!!
+            )
+
+            cameraLauncher.launch(cameraPhotoUri)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to open camera", e)
+            ThemedToast.show(this, "Failed to open camera")
+        }
+    }
+
+    private fun openGallery() {
+        // Check storage permission for older Android versions
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_EXTERNAL_STORAGE)
+                != PackageManager.PERMISSION_GRANTED) {
+                ActivityCompat.requestPermissions(
+                    this,
+                    arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE),
+                    CAMERA_PERMISSION_REQUEST_CODE
+                )
+                return
+            }
+        }
+        galleryLauncher.launch("image/*")
+    }
+
+    private fun handleSelectedImage(uri: Uri) {
+        lifecycleScope.launch {
+            try {
+                ThemedToast.show(this@ChatActivity, "Processing image...")
+
+                val compressedImageData = withContext(Dispatchers.IO) {
+                    compressImage(uri)
+                }
+
+                if (compressedImageData == null) {
+                    ThemedToast.show(this@ChatActivity, "Failed to process image")
+                    return@launch
+                }
+
+                val imageSizeKB = compressedImageData.size / 1024
+                Log.d(TAG, "Compressed image size: ${imageSizeKB}KB")
+
+                if (imageSizeKB > 500) {
+                    ThemedToast.show(this@ChatActivity, "Image too large (${imageSizeKB}KB). Max 500KB.")
+                    return@launch
+                }
+
+                // Send the image message
+                sendImageMessage(compressedImageData)
+
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to handle image", e)
+                ThemedToast.show(this@ChatActivity, "Failed to send image: ${e.message}")
+            }
+        }
+    }
+
+    private fun compressImage(uri: Uri): ByteArray? {
+        try {
+            // Get input stream
+            val inputStream = contentResolver.openInputStream(uri) ?: return null
+
+            // Decode bounds first
+            val options = BitmapFactory.Options().apply {
+                inJustDecodeBounds = true
+            }
+            BitmapFactory.decodeStream(inputStream, null, options)
+            inputStream.close()
+
+            // Calculate sample size for downscaling (use minimal downsampling)
+            val (width, height) = options.outWidth to options.outHeight
+            var sampleSize = 1
+            // Only downsample if image is significantly larger than target
+            // Use sampleSize that keeps image at least as large as target dimensions
+            while (width / (sampleSize * 2) >= MAX_IMAGE_WIDTH && height / (sampleSize * 2) >= MAX_IMAGE_HEIGHT) {
+                sampleSize *= 2
+            }
+
+            // Decode with sample size
+            val decodeOptions = BitmapFactory.Options().apply {
+                inSampleSize = sampleSize
+            }
+            val newInputStream = contentResolver.openInputStream(uri) ?: return null
+            var bitmap = BitmapFactory.decodeStream(newInputStream, null, decodeOptions)
+            newInputStream.close()
+
+            if (bitmap == null) return null
+
+            // Handle EXIF rotation
+            bitmap = rotateImageIfRequired(uri, bitmap)
+
+            // Scale to exact 720p if needed
+            bitmap = scaleBitmap(bitmap, MAX_IMAGE_WIDTH, MAX_IMAGE_HEIGHT)
+
+            // Compress to JPEG
+            // SECURITY: Bitmap.compress() creates a fresh JPEG with NO EXIF metadata.
+            // All sensitive metadata (GPS, device info, timestamps) from the original
+            // image is stripped. Only pixel data is transmitted over Tor.
+            val outputStream = ByteArrayOutputStream()
+            bitmap.compress(Bitmap.CompressFormat.JPEG, JPEG_QUALITY, outputStream)
+            bitmap.recycle()
+
+            return outputStream.toByteArray()
+        } catch (e: Exception) {
+            Log.e(TAG, "Image compression failed", e)
+            return null
+        }
+    }
+
+    private fun rotateImageIfRequired(uri: Uri, bitmap: Bitmap): Bitmap {
+        try {
+            val inputStream = contentResolver.openInputStream(uri) ?: return bitmap
+            val exif = ExifInterface(inputStream)
+            inputStream.close()
+
+            val orientation = exif.getAttributeInt(
+                ExifInterface.TAG_ORIENTATION,
+                ExifInterface.ORIENTATION_NORMAL
+            )
+
+            val rotationDegrees = when (orientation) {
+                ExifInterface.ORIENTATION_ROTATE_90 -> 90f
+                ExifInterface.ORIENTATION_ROTATE_180 -> 180f
+                ExifInterface.ORIENTATION_ROTATE_270 -> 270f
+                else -> return bitmap
+            }
+
+            val matrix = Matrix()
+            matrix.postRotate(rotationDegrees)
+            val rotatedBitmap = Bitmap.createBitmap(
+                bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true
+            )
+            if (rotatedBitmap != bitmap) {
+                bitmap.recycle()
+            }
+            return rotatedBitmap
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to check EXIF rotation", e)
+            return bitmap
+        }
+    }
+
+    private fun scaleBitmap(bitmap: Bitmap, maxWidth: Int, maxHeight: Int): Bitmap {
+        val width = bitmap.width
+        val height = bitmap.height
+
+        if (width <= maxWidth && height <= maxHeight) {
+            return bitmap
+        }
+
+        val ratio = minOf(maxWidth.toFloat() / width, maxHeight.toFloat() / height)
+        val newWidth = (width * ratio).toInt()
+        val newHeight = (height * ratio).toInt()
+
+        // Use high-quality scaling with FILTER_BITMAP flag
+        val scaledBitmap = Bitmap.createScaledBitmap(bitmap, newWidth, newHeight, true)
+        if (scaledBitmap != bitmap) {
+            bitmap.recycle()
+        }
+
+        Log.d(TAG, "Scaled image from ${width}x${height} to ${newWidth}x${newHeight}")
+        return scaledBitmap
+    }
+
+    private fun sendImageMessage(imageData: ByteArray) {
+        lifecycleScope.launch {
+            try {
+                val imageBase64 = Base64.encodeToString(imageData, Base64.NO_WRAP)
+
+                Log.d(TAG, "Sending image message, base64 length: ${imageBase64.length}")
+
+                // Send as IMAGE message type
+                val result = messageService.sendImageMessage(
+                    contactId = contactId,
+                    imageBase64 = imageBase64,
+                    onMessageSaved = { savedMessage ->
+                        // Update UI immediately when message is saved
+                        runOnUiThread {
+                            lifecycleScope.launch {
+                                loadMessages()
+                            }
+                        }
+                    }
+                )
+
+                if (result.isSuccess) {
+                    Log.i(TAG, "Image message sent successfully")
+                } else {
+                    ThemedToast.show(this@ChatActivity, "Failed to send image")
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to send image message", e)
+                ThemedToast.show(this@ChatActivity, "Failed to send image: ${e.message}")
+            }
+        }
+    }
+
+    private fun showFullImage(imageBase64: String) {
+        if (imageBase64.isEmpty()) {
+            ThemedToast.show(this, "Image not available")
+            return
+        }
+
+        try {
+            // Create full-screen dialog to show image
+            val dialog = android.app.Dialog(this, android.R.style.Theme_Black_NoTitleBar_Fullscreen)
+            val imageView = ImageView(this)
+            imageView.layoutParams = ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+            )
+
+            // Decode and display image
+            val imageBytes = Base64.decode(imageBase64, Base64.DEFAULT)
+            val bitmap = android.graphics.BitmapFactory.decodeByteArray(imageBytes, 0, imageBytes.size)
+            imageView.setImageBitmap(bitmap)
+            imageView.scaleType = ImageView.ScaleType.FIT_CENTER
+
+            // Click to dismiss
+            imageView.setOnClickListener {
+                dialog.dismiss()
+            }
+
+            dialog.setContentView(imageView)
+            dialog.show()
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to show full image", e)
+            ThemedToast.show(this, "Failed to open image")
+        }
+    }
+
+    // ==================== VOICE RECORDING ====================
 
     private fun startVoiceRecording() {
         // Check permission

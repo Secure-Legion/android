@@ -726,6 +726,46 @@ class DownloadMessageService : Service() {
                     }
                 }
 
+                0x09 -> {
+                    // IMAGE message (MSG_TYPE_IMAGE = 0x09)
+                    Log.d(TAG, "Processing IMAGE message...")
+
+                    // Save to database via MessageService
+                    val messageService = MessageService(this@DownloadMessageService)
+                    // Reconstruct encrypted wire for database storage (NO type byte)
+                    // Format: [X25519 32 bytes][Encrypted image data]
+                    val encryptedWire = senderX25519PublicKey + encryptedPayload
+                    val encryptedBase64 = android.util.Base64.encodeToString(encryptedWire, android.util.Base64.NO_WRAP)
+
+                    val result = messageService.receiveMessage(
+                        encryptedData = encryptedBase64,
+                        senderPublicKey = senderPublicKey,
+                        senderOnionAddress = contact.torOnionAddress,
+                        messageType = com.securelegion.database.entities.Message.MESSAGE_TYPE_IMAGE,
+                        pingId = pingId
+                    )
+
+                    if (result.isSuccess) {
+                        Log.i(TAG, "✓ IMAGE message saved to database")
+                        // Send MESSAGE_ACK to sender
+                        sendMessageAck(contactId, contactName, connectionId)
+                        // Dismiss the pending message notification
+                        val notificationManager = getSystemService(android.app.NotificationManager::class.java)
+                        notificationManager?.cancel(contactId.toInt() + 20000)
+                    } else {
+                        val errorMessage = result.exceptionOrNull()?.message
+                        if (errorMessage?.contains("Duplicate message") == true) {
+                            Log.w(TAG, "Message already downloaded - treating as success")
+                            // Message was already downloaded, so clear the notification and send ACK
+                            sendMessageAck(contactId, contactName, connectionId)
+                            val notificationManager = getSystemService(android.app.NotificationManager::class.java)
+                            notificationManager?.cancel(contactId.toInt() + 20000)
+                        } else {
+                            Log.e(TAG, "Failed to save IMAGE message: $errorMessage")
+                        }
+                    }
+                }
+
                 else -> {
                     Log.w(TAG, "Unknown message type: 0x${String.format("%02X", typeByte)}")
                 }

@@ -1,137 +1,176 @@
 <?xml version="1.0" encoding="utf-8"?>
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<androidx.constraintlayout.widget.ConstraintLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:orientation="vertical"
-    android:background="@color/dark_bg"
-    android:fitsSystemWindows="true">
+    android:background="#000000">
+
+    <!-- Header -->
+    <LinearLayout
+        android:id="@+id/header"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:paddingStart="20dp"
+        android:paddingEnd="20dp"
+        android:paddingTop="16dp"
+        android:paddingBottom="16dp"
+        android:fitsSystemWindows="true"
+        app:layout_constraintTop_toTopOf="parent">
+
+        <!-- Back Button -->
+        <FrameLayout
+            android:id="@+id/backButton"
+            android:layout_width="42dp"
+            android:layout_height="42dp"
+            android:background="@drawable/top_icon_bg"
+            android:clickable="true"
+            android:focusable="true">
+
+            <ImageView
+                android:layout_width="20dp"
+                android:layout_height="20dp"
+                android:layout_gravity="center"
+                android:src="@drawable/ic_back_arrow"
+                android:contentDescription="Back" />
+
+        </FrameLayout>
+
+        <!-- Title -->
+        <TextView
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="Auto-Lock Timer"
+            android:textSize="24sp"
+            android:textColor="#999999"
+            android:fontFamily="@font/space_grotesk_bold"
+            android:textStyle="bold"
+            android:gravity="center" />
+
+        <!-- Spacer for alignment -->
+        <View
+            android:layout_width="42dp"
+            android:layout_height="42dp" />
+
+    </LinearLayout>
 
     <ScrollView
         android:layout_width="match_parent"
         android:layout_height="0dp"
-        android:layout_weight="1"
-        android:fillViewport="true">
+        android:fillViewport="true"
+        app:layout_constraintTop_toBottomOf="@id/header"
+        app:layout_constraintBottom_toTopOf="@id/bottomNav">
 
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="vertical"
-            android:padding="24dp">
+            android:paddingStart="24dp"
+            android:paddingEnd="24dp"
+            android:paddingTop="16dp"
+            android:paddingBottom="24dp">
 
-            <!-- Header -->
-            <TextView
+            <!-- Timer Options -->
+            <RadioGroup
+                android:id="@+id/autoLockTimerGroup"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="Auto-Lock Timer"
-                android:textSize="28sp"
-                android:textColor="@color/white"
-                android:textStyle="bold"
-                android:layout_marginBottom="8dp" />
+                android:orientation="vertical">
 
-            <TextView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="Lock the app automatically after inactivity"
-                android:textSize="14sp"
-                android:textColor="@color/text_gray"
-                android:layout_marginBottom="32dp" />
+                <RadioButton
+                    android:id="@+id/timer30Seconds"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="30 seconds"
+                    android:textSize="16sp"
+                    android:textColor="#FFFFFF"
+                    android:fontFamily="@font/poppins_medium"
+                    android:buttonTint="#FFFFFF"
+                    android:padding="16dp"
+                    android:background="@drawable/settings_item_bg"
+                    android:layout_marginBottom="12dp" />
 
-    <!-- Timer Options -->
-    <RadioGroup
-        android:id="@+id/autoLockTimerGroup"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:orientation="vertical">
+                <RadioButton
+                    android:id="@+id/timer1Minute"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="1 minute"
+                    android:textSize="16sp"
+                    android:textColor="#FFFFFF"
+                    android:fontFamily="@font/poppins_medium"
+                    android:buttonTint="#FFFFFF"
+                    android:padding="16dp"
+                    android:background="@drawable/settings_item_bg"
+                    android:layout_marginBottom="12dp" />
 
-        <RadioButton
-            android:id="@+id/timer30Seconds"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="30 seconds"
-            android:textSize="16sp"
-            android:textColor="@color/text_white"
-            android:buttonTint="@color/accent_blue"
-            android:padding="16dp"
-            android:background="@drawable/settings_item_bg"
-            android:layout_marginBottom="12dp" />
+                <RadioButton
+                    android:id="@+id/timer5Minutes"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="5 minutes"
+                    android:textSize="16sp"
+                    android:textColor="#FFFFFF"
+                    android:fontFamily="@font/poppins_medium"
+                    android:buttonTint="#FFFFFF"
+                    android:padding="16dp"
+                    android:background="@drawable/settings_item_bg"
+                    android:layout_marginBottom="12dp" />
 
-        <RadioButton
-            android:id="@+id/timer1Minute"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="1 minute"
-            android:textSize="16sp"
-            android:textColor="@color/text_white"
-            android:buttonTint="@color/accent_blue"
-            android:padding="16dp"
-            android:background="@drawable/settings_item_bg"
-            android:layout_marginBottom="12dp" />
+                <RadioButton
+                    android:id="@+id/timer15Minutes"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="15 minutes"
+                    android:textSize="16sp"
+                    android:textColor="#FFFFFF"
+                    android:fontFamily="@font/poppins_medium"
+                    android:buttonTint="#FFFFFF"
+                    android:padding="16dp"
+                    android:background="@drawable/settings_item_bg"
+                    android:layout_marginBottom="12dp" />
 
-        <RadioButton
-            android:id="@+id/timer5Minutes"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="5 minutes"
-            android:textSize="16sp"
-            android:textColor="@color/text_white"
-            android:buttonTint="@color/accent_blue"
-            android:padding="16dp"
-            android:background="@drawable/settings_item_bg"
-            android:layout_marginBottom="12dp" />
+                <RadioButton
+                    android:id="@+id/timer30Minutes"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="30 minutes"
+                    android:textSize="16sp"
+                    android:textColor="#FFFFFF"
+                    android:fontFamily="@font/poppins_medium"
+                    android:buttonTint="#FFFFFF"
+                    android:padding="16dp"
+                    android:background="@drawable/settings_item_bg"
+                    android:layout_marginBottom="12dp" />
 
-        <RadioButton
-            android:id="@+id/timer15Minutes"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="15 minutes"
-            android:textSize="16sp"
-            android:textColor="@color/text_white"
-            android:buttonTint="@color/accent_blue"
-            android:padding="16dp"
-            android:background="@drawable/settings_item_bg"
-            android:layout_marginBottom="12dp" />
+                <RadioButton
+                    android:id="@+id/timerNever"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Never"
+                    android:textSize="16sp"
+                    android:textColor="#FFFFFF"
+                    android:fontFamily="@font/poppins_medium"
+                    android:buttonTint="#FFFFFF"
+                    android:padding="16dp"
+                    android:background="@drawable/settings_item_bg" />
 
-        <RadioButton
-            android:id="@+id/timer30Minutes"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="30 minutes"
-            android:textSize="16sp"
-            android:textColor="@color/text_white"
-            android:buttonTint="@color/accent_blue"
-            android:padding="16dp"
-            android:background="@drawable/settings_item_bg"
-            android:layout_marginBottom="12dp" />
-
-        <RadioButton
-            android:id="@+id/timerNever"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="Never (Not Recommended)"
-            android:textSize="16sp"
-            android:textColor="@color/warning_red"
-            android:buttonTint="@color/warning_red"
-            android:padding="16dp"
-            android:background="@drawable/settings_item_bg" />
-
-    </RadioGroup>
-
-    <View
-        android:layout_width="match_parent"
-        android:layout_height="0dp"
-        android:layout_weight="1" />
-
-    <!-- Info Text -->
-    <TextView
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:text="The app will lock after the selected period of inactivity. You'll need to enter your PIN or use biometric authentication to unlock."
-        android:textSize="12sp"
-        android:textColor="@color/text_gray"
-        android:layout_marginTop="16dp" />
+            </RadioGroup>
 
         </LinearLayout>
 
     </ScrollView>
 
-</LinearLayout>
+    <!-- Bottom Navigation -->
+    <include
+        android:id="@+id/bottomNav"
+        layout="@layout/bottom_navigation"
+        android:layout_width="match_parent"
+        android:layout_height="110dp"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent" />
+
+</androidx.constraintlayout.widget.ConstraintLayout>

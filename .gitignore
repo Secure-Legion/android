@@ -44,6 +44,11 @@ TODO.md
 OWASP_MASTG_Assessment.md
 *ACK.md
 
+# Exploration notes (auto-generated, not tracked)
+*_exploration_*.md
+*_analysis_*.md
+SecureLegion_Payment_System_Analysis*.md
+
 # Signing keys (NEVER commit these!)
 *.jks
 *.keystore

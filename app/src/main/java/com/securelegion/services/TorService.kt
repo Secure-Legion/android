@@ -1510,7 +1510,7 @@ class TorService : Service() {
                 Log.d(TAG, "First byte: 0x${String.format("%02X", encryptedMessage[0])}")
             }
 
-            // Check for metadata byte (0x00 = TEXT, 0x01 = VOICE)
+            // Check for metadata byte (0x00 = TEXT, 0x01 = VOICE, 0x02 = IMAGE)
             if (encryptedMessage.isNotEmpty()) {
                 when (encryptedMessage[0].toInt()) {
                     0x00 -> {
@@ -1536,6 +1536,13 @@ class TorService : Service() {
                             Log.e(TAG, "✗ VOICE message too short - missing duration metadata (only ${encryptedMessage.size} bytes)")
                             return
                         }
+                    }
+                    0x02 -> {
+                        // IMAGE message - strip metadata byte
+                        Log.d(TAG, "Message type: IMAGE (v2)")
+                        messageType = com.securelegion.database.entities.Message.MESSAGE_TYPE_IMAGE
+                        actualEncryptedMessage = encryptedMessage.copyOfRange(1, encryptedMessage.size)
+                        Log.d(TAG, "  Stripped 1 byte metadata, encrypted payload: ${actualEncryptedMessage.size} bytes")
                     }
                     else -> {
                         // Legacy message without metadata - treat as TEXT
@@ -1614,12 +1621,27 @@ class TorService : Service() {
                         }
                     }
 
+                    // If it's an image message, convert bytes to Base64 for storage
+                    var imageBase64: String? = null
+                    if (messageType == com.securelegion.database.entities.Message.MESSAGE_TYPE_IMAGE) {
+                        try {
+                            val imageBytes = plaintext.toByteArray(Charsets.ISO_8859_1)
+                            imageBase64 = android.util.Base64.encodeToString(imageBytes, android.util.Base64.NO_WRAP)
+                            Log.d(TAG, "✓ Converted image to Base64: ${imageBase64.length} chars")
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Failed to convert image to Base64", e)
+                            // Continue anyway
+                        }
+                    }
+
                     // Create message entity (store plaintext in encryptedContent field for now)
                     val message = com.securelegion.database.entities.Message(
                         contactId = contact.id,
                         messageId = messageId,
-                        encryptedContent = if (messageType == com.securelegion.database.entities.Message.MESSAGE_TYPE_TEXT) plaintext else "", // Store plaintext for TEXT, empty for VOICE
+                        encryptedContent = if (messageType == com.securelegion.database.entities.Message.MESSAGE_TYPE_TEXT) plaintext else "", // Store plaintext for TEXT, empty for VOICE/IMAGE
                         messageType = messageType,
+                        attachmentType = if (messageType == com.securelegion.database.entities.Message.MESSAGE_TYPE_IMAGE) "image" else null,
+                        attachmentData = imageBase64, // Store Base64 image data for IMAGE messages
                         voiceDuration = voiceDuration,
                         voiceFilePath = voiceFilePath,
                         isSentByMe = false,

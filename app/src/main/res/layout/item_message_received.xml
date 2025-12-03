@@ -61,8 +61,8 @@
         <!-- Selection Checkbox (shown in delete mode) -->
         <CheckBox
             android:id="@+id/messageCheckbox"
-            android:layout_width="24dp"
-            android:layout_height="24dp"
+            android:layout_width="18dp"
+            android:layout_height="18dp"
             android:layout_gravity="center_vertical"
             android:layout_marginStart="8dp"
             android:visibility="gone"

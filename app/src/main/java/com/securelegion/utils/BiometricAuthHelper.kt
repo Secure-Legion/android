@@ -76,7 +76,33 @@ class BiometricAuthHelper(private val context: Context) {
      */
     fun isBiometricEnabled(): Boolean {
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        return prefs.contains(PREF_ENCRYPTED_PASSWORD_HASH)
+        val hasEncryptedData = prefs.contains(PREF_ENCRYPTED_PASSWORD_HASH)
+
+        if (!hasEncryptedData) {
+            return false
+        }
+
+        // Also verify the key still exists (it can be invalidated by lockout)
+        val keyExists = try {
+            val keyStore = KeyStore.getInstance(ANDROID_KEYSTORE)
+            keyStore.load(null)
+            keyStore.containsAlias(KEY_NAME)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to check key existence", e)
+            false
+        }
+
+        // If key is missing but data exists, clean up the orphaned data
+        if (!keyExists && hasEncryptedData) {
+            Log.w(TAG, "Biometric key invalidated - cleaning up orphaned encrypted data")
+            prefs.edit()
+                .remove(PREF_ENCRYPTED_PASSWORD_HASH)
+                .remove(PREF_IV)
+                .apply()
+            return false
+        }
+
+        return keyExists
     }
 
     /**
@@ -96,7 +122,22 @@ class BiometricAuthHelper(private val context: Context) {
         try {
             val cipher = getCipher()
             val secretKey = getOrCreateSecretKey()
-            cipher.init(Cipher.ENCRYPT_MODE, secretKey)
+
+            try {
+                cipher.init(Cipher.ENCRYPT_MODE, secretKey)
+            } catch (e: android.security.keystore.KeyPermanentlyInvalidatedException) {
+                // Key was invalidated (e.g., after biometric lockout or new fingerprint enrolled)
+                Log.w(TAG, "Biometric key invalidated - deleting and creating new one")
+
+                // Delete the invalid key
+                val keyStore = KeyStore.getInstance(ANDROID_KEYSTORE)
+                keyStore.load(null)
+                keyStore.deleteEntry(KEY_NAME)
+
+                // Create a fresh key and try again
+                val newSecretKey = getOrCreateSecretKey()
+                cipher.init(Cipher.ENCRYPT_MODE, newSecretKey)
+            }
 
             val biometricPrompt = createBiometricPrompt(activity,
                 onAuthSuccess = { cryptoObject ->

@@ -178,6 +178,143 @@ class MessageService(private val context: Context) {
     }
 
     /**
+     * Send an image message to a contact via Tor
+     * @param contactId Database ID of the recipient contact
+     * @param imageBase64 The compressed image as Base64 string
+     * @param selfDestructDurationMs Custom self-destruct duration in milliseconds (null = disabled)
+     * @param onMessageSaved Callback when message is saved to DB (before sending)
+     * @return Result with Message entity if successful
+     */
+    suspend fun sendImageMessage(
+        contactId: Long,
+        imageBase64: String,
+        selfDestructDurationMs: Long? = null,
+        onMessageSaved: ((Message) -> Unit)? = null
+    ): Result<Message> = withContext(Dispatchers.IO) {
+        try {
+            Log.d(TAG, "Sending image message to contact ID: $contactId (${imageBase64.length} Base64 chars)")
+
+            // Get database instance
+            val dbPassphrase = keyManager.getDatabasePassphrase()
+            val database = SecureLegionDatabase.getInstance(context, dbPassphrase)
+
+            // Get contact details
+            val contact = database.contactDao().getContactById(contactId)
+                ?: return@withContext Result.failure(Exception("Contact not found"))
+
+            Log.d(TAG, "Sending image to: ${contact.displayName} (${contact.torOnionAddress})")
+
+            // Generate unique message ID
+            val messageId = UUID.randomUUID().toString()
+
+            // Get our keypair for signing
+            val ourPublicKey = keyManager.getSigningPublicKey()
+            val ourPrivateKey = keyManager.getSigningKeyBytes()
+
+            // Get recipient's X25519 public key (for encryption)
+            val recipientX25519PublicKey = Base64.decode(contact.x25519PublicKeyBase64, Base64.NO_WRAP)
+
+            // Encrypt the image bytes
+            Log.d(TAG, "Encrypting image message...")
+            val imageBytes = Base64.decode(imageBase64, Base64.NO_WRAP)
+            Log.d(TAG, "  Image bytes: ${imageBytes.size} bytes")
+
+            val encryptedBytes = RustBridge.encryptMessage(
+                String(imageBytes, Charsets.ISO_8859_1), // Convert bytes to string for encryption
+                recipientX25519PublicKey
+            )
+            Log.d(TAG, "  Encrypted: ${encryptedBytes.size} bytes")
+
+            // Prepend metadata byte (0x02 = IMAGE) AFTER encryption (like VOICE messages)
+            val encryptedWithMetadata = byteArrayOf(0x02.toByte()) + encryptedBytes
+            Log.d(TAG, "  Total with metadata: ${encryptedWithMetadata.size} bytes (prepended 0x02)")
+
+            // NOTE: Type byte (0x09) is added by android.rs sendPing(), not here
+            // encryptedWithMetadata format: [0x02][Our X25519 Public Key - 32 bytes][Encrypted Message]
+            val encryptedBase64 = Base64.encodeToString(encryptedWithMetadata, Base64.NO_WRAP)
+
+            Log.d(TAG, "  Total payload: ${encryptedBytes.size} bytes (${encryptedBase64.length} Base64 chars)")
+
+            // Generate nonce (first 24 bytes of encrypted data)
+            val nonce = encryptedBytes.take(24).toByteArray()
+            val nonceBase64 = Base64.encodeToString(nonce, Base64.NO_WRAP)
+
+            // Sign the message
+            Log.d(TAG, "Signing image message...")
+            val messageData = (messageId + System.currentTimeMillis()).toByteArray()
+            val signature = RustBridge.signData(messageData, ourPrivateKey)
+            val signatureBase64 = Base64.encodeToString(signature, Base64.NO_WRAP)
+
+            // Calculate self-destruct timestamp if custom duration provided
+            val currentTime = System.currentTimeMillis()
+            val selfDestructAt = selfDestructDurationMs?.let { currentTime + it }
+
+            // Generate Ping ID for persistent messaging
+            val pingId = UUID.randomUUID().toString()
+            Log.d(TAG, "Generated Ping ID: $pingId")
+
+            // Create message entity with IMAGE type
+            val message = Message(
+                contactId = contactId,
+                messageId = messageId,
+                encryptedContent = "", // Empty for image messages
+                messageType = Message.MESSAGE_TYPE_IMAGE,
+                attachmentType = "image",
+                attachmentData = imageBase64, // Store original for display
+                isSentByMe = true,
+                timestamp = currentTime,
+                status = Message.STATUS_PING_SENT,
+                signatureBase64 = signatureBase64,
+                nonceBase64 = nonceBase64,
+                selfDestructAt = selfDestructAt,
+                requiresReadReceipt = false, // Image messages don't need read receipts
+                pingId = pingId,
+                encryptedPayload = encryptedBase64,
+                retryCount = 0,
+                lastRetryTimestamp = currentTime
+            )
+
+            Log.d(TAG, "Image message queued for persistent delivery (PING_SENT)")
+
+            // Save to database
+            Log.d(TAG, "Saving image message to database...")
+            val savedMessageId = database.messageDao().insertMessage(message)
+            val savedMessage = message.copy(id = savedMessageId)
+
+            // Notify that message is saved (allows UI to update immediately)
+            onMessageSaved?.invoke(savedMessage)
+
+            // Broadcast to MainActivity to refresh chat list preview
+            val intent = android.content.Intent("com.securelegion.NEW_PING")
+            intent.setPackage(context.packageName)
+            intent.putExtra("CONTACT_ID", contactId)
+            context.sendBroadcast(intent)
+            Log.d(TAG, "Sent explicit NEW_PING broadcast to refresh MainActivity chat list")
+
+            // Immediately attempt to send Ping
+            Log.i(TAG, "Image message queued successfully: $messageId (Ping ID: $pingId)")
+            Log.d(TAG, "Attempting immediate Ping send...")
+
+            try {
+                sendPingForMessage(savedMessage)
+                Log.d(TAG, "Ping sent immediately, will poll for Pong later")
+            } catch (e: Exception) {
+                Log.w(TAG, "Immediate Ping send failed, retry worker will retry: ${e.message}")
+            }
+
+            // Schedule fast retry worker for this message (5s intervals)
+            ImmediateRetryWorker.scheduleForMessage(context, messageId)
+            Log.d(TAG, "Scheduled immediate retry worker for message $messageId")
+
+            Result.success(savedMessage)
+
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to send image message", e)
+            Result.failure(e)
+        }
+    }
+
+    /**
      * Send an encrypted message to a contact via Tor
      * @param contactId Database ID of the recipient contact
      * @param plaintext The message content
@@ -357,68 +494,102 @@ class MessageService(private val context: Context) {
             val nonceBase64 = Base64.encodeToString(nonce, Base64.NO_WRAP)
 
             // Handle based on message type
-            val message = if (messageType == Message.MESSAGE_TYPE_VOICE) {
-                // Voice message: decryptedData is audio bytes
-                val audioBytes = decryptedData.toByteArray(Charsets.ISO_8859_1)
+            val message = when (messageType) {
+                Message.MESSAGE_TYPE_VOICE -> {
+                    // Voice message: decryptedData is audio bytes
+                    val audioBytes = decryptedData.toByteArray(Charsets.ISO_8859_1)
 
-                // Save audio to local storage
-                val voiceRecorder = com.securelegion.utils.VoiceRecorder(context)
-                val voiceFilePath = voiceRecorder.saveVoiceMessage(audioBytes, voiceDuration ?: 0)
+                    // Save audio to local storage
+                    val voiceRecorder = com.securelegion.utils.VoiceRecorder(context)
+                    val voiceFilePath = voiceRecorder.saveVoiceMessage(audioBytes, voiceDuration ?: 0)
 
-                // Generate message ID from voice file hash + sender (for deduplication)
-                // NOTE: Don't use nonce - each retry has a new nonce but same content
-                val messageId = generateMessageId(android.util.Base64.encodeToString(audioBytes, android.util.Base64.NO_WRAP), senderOnionAddress)
+                    // Generate message ID from voice file hash + sender (for deduplication)
+                    // NOTE: Don't use nonce - each retry has a new nonce but same content
+                    val messageId = generateMessageId(android.util.Base64.encodeToString(audioBytes, android.util.Base64.NO_WRAP), senderOnionAddress)
 
-                // Check for duplicate
-                if (database.messageDao().messageExists(messageId)) {
-                    Log.w(TAG, "Duplicate voice message ignored: $messageId")
-                    return@withContext Result.failure(Exception("Duplicate message"))
+                    // Check for duplicate
+                    if (database.messageDao().messageExists(messageId)) {
+                        Log.w(TAG, "Duplicate voice message ignored: $messageId")
+                        return@withContext Result.failure(Exception("Duplicate message"))
+                    }
+
+                    Message(
+                        contactId = contact.id,
+                        messageId = messageId,
+                        encryptedContent = "", // Empty for voice messages
+                        messageType = Message.MESSAGE_TYPE_VOICE,
+                        voiceDuration = voiceDuration,
+                        voiceFilePath = voiceFilePath,
+                        isSentByMe = false,
+                        timestamp = System.currentTimeMillis(),
+                        status = Message.STATUS_DELIVERED,
+                        signatureBase64 = "",
+                        nonceBase64 = nonceBase64,
+                        selfDestructAt = selfDestructAt,
+                        requiresReadReceipt = requiresReadReceipt,
+                        pingId = pingId
+                    )
                 }
+                Message.MESSAGE_TYPE_IMAGE -> {
+                    // Image message: decryptedData is image bytes
+                    val imageBytes = decryptedData.toByteArray(Charsets.ISO_8859_1)
+                    val imageBase64 = Base64.encodeToString(imageBytes, Base64.NO_WRAP)
 
-                Message(
-                    contactId = contact.id,
-                    messageId = messageId,
-                    encryptedContent = "", // Empty for voice messages
-                    messageType = Message.MESSAGE_TYPE_VOICE,
-                    voiceDuration = voiceDuration,
-                    voiceFilePath = voiceFilePath,
-                    isSentByMe = false,
-                    timestamp = System.currentTimeMillis(),
-                    status = Message.STATUS_DELIVERED,
-                    signatureBase64 = "",
-                    nonceBase64 = nonceBase64,
-                    selfDestructAt = selfDestructAt,
-                    requiresReadReceipt = requiresReadReceipt,
-                    pingId = pingId
-                )
-            } else {
-                // Text message
-                val plaintext = decryptedData
+                    // Generate message ID from image hash + sender (for deduplication)
+                    val messageId = generateMessageId(imageBase64, senderOnionAddress)
 
-                // Generate message ID from content + sender (for deduplication)
-                // NOTE: Don't use nonce - each retry has a new nonce but same content
-                val messageId = generateMessageId(plaintext, senderOnionAddress)
+                    // Check for duplicate
+                    if (database.messageDao().messageExists(messageId)) {
+                        Log.w(TAG, "Duplicate image message ignored: $messageId")
+                        return@withContext Result.failure(Exception("Duplicate message"))
+                    }
 
-                // Check for duplicate
-                if (database.messageDao().messageExists(messageId)) {
-                    Log.w(TAG, "Duplicate message ignored: $messageId")
-                    return@withContext Result.failure(Exception("Duplicate message"))
+                    Message(
+                        contactId = contact.id,
+                        messageId = messageId,
+                        encryptedContent = "", // Empty for image messages
+                        messageType = Message.MESSAGE_TYPE_IMAGE,
+                        attachmentType = "image",
+                        attachmentData = imageBase64, // Store Base64 for display
+                        isSentByMe = false,
+                        timestamp = System.currentTimeMillis(),
+                        status = Message.STATUS_DELIVERED,
+                        signatureBase64 = "",
+                        nonceBase64 = nonceBase64,
+                        selfDestructAt = selfDestructAt,
+                        requiresReadReceipt = requiresReadReceipt,
+                        pingId = pingId
+                    )
                 }
+                else -> {
+                    // Text message (default)
+                    val plaintext = decryptedData
 
-                Message(
-                    contactId = contact.id,
-                    messageId = messageId,
-                    encryptedContent = plaintext,
-                    messageType = Message.MESSAGE_TYPE_TEXT,
-                    isSentByMe = false,
-                    timestamp = System.currentTimeMillis(),
-                    status = Message.STATUS_DELIVERED,
-                    signatureBase64 = "",
-                    nonceBase64 = nonceBase64,
-                    selfDestructAt = selfDestructAt,
-                    requiresReadReceipt = requiresReadReceipt,
-                    pingId = pingId
-                )
+                    // Generate message ID from content + sender (for deduplication)
+                    // NOTE: Don't use nonce - each retry has a new nonce but same content
+                    val messageId = generateMessageId(plaintext, senderOnionAddress)
+
+                    // Check for duplicate
+                    if (database.messageDao().messageExists(messageId)) {
+                        Log.w(TAG, "Duplicate message ignored: $messageId")
+                        return@withContext Result.failure(Exception("Duplicate message"))
+                    }
+
+                    Message(
+                        contactId = contact.id,
+                        messageId = messageId,
+                        encryptedContent = plaintext,
+                        messageType = Message.MESSAGE_TYPE_TEXT,
+                        isSentByMe = false,
+                        timestamp = System.currentTimeMillis(),
+                        status = Message.STATUS_DELIVERED,
+                        signatureBase64 = "",
+                        nonceBase64 = nonceBase64,
+                        selfDestructAt = selfDestructAt,
+                        requiresReadReceipt = requiresReadReceipt,
+                        pingId = pingId
+                    )
+                }
             }
 
             if (selfDestructAt != null) {
@@ -548,6 +719,7 @@ class MessageService(private val context: Context) {
             // Convert message type to wire protocol type byte
             val messageTypeByte: Byte = when (message.messageType) {
                 Message.MESSAGE_TYPE_VOICE -> 0x04.toByte()  // VOICE
+                Message.MESSAGE_TYPE_IMAGE -> 0x09.toByte()  // IMAGE
                 else -> 0x03.toByte()                         // TEXT (default)
             }
             Log.d(TAG, "Message type: ${message.messageType} → wire byte: 0x${messageTypeByte.toString(16).padStart(2, '0')}")
@@ -687,6 +859,7 @@ class MessageService(private val context: Context) {
                     // Convert message type to wire protocol type byte
                     val messageTypeByte: Byte = when (message.messageType) {
                         Message.MESSAGE_TYPE_VOICE -> 0x04.toByte()  // VOICE
+                        Message.MESSAGE_TYPE_IMAGE -> 0x09.toByte()  // IMAGE
                         else -> 0x03.toByte()                         // TEXT (default)
                     }
 

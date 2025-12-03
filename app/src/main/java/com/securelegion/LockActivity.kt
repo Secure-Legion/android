@@ -517,6 +517,17 @@ class LockActivity : AppCompatActivity() {
             try {
                 Log.w("LockActivity", "WIPING ALL DATA (3-pass secure overwrite)")
 
+                // Stop TorService FIRST to prevent connection loops after wipe
+                withContext(Dispatchers.Main) {
+                    try {
+                        val torServiceIntent = Intent(this@LockActivity, com.securelegion.services.TorService::class.java)
+                        stopService(torServiceIntent)
+                        Log.w("LockActivity", "Stopped TorService before wipe")
+                    } catch (e: Exception) {
+                        Log.e("LockActivity", "Failed to stop TorService", e)
+                    }
+                }
+
                 // Wipe all cryptographic keys
                 val keyManager = KeyManager.getInstance(this@LockActivity)
                 keyManager.wipeAllKeys()
@@ -526,9 +537,9 @@ class LockActivity : AppCompatActivity() {
 
                 Log.w("LockActivity", "All data securely wiped")
 
-                // Restart app to show account creation screen
+                // Redirect to CreateAccountActivity since no account exists anymore
                 withContext(Dispatchers.Main) {
-                    val intent = Intent(this@LockActivity, LockActivity::class.java)
+                    val intent = Intent(this@LockActivity, CreateAccountActivity::class.java)
                     intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
                     startActivity(intent)
                     finish()

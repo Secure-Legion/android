@@ -9,8 +9,16 @@ class SecurityModeActivity : BaseActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_security_mode)
 
+        setupClickListeners()
         setupBottomNavigation()
         setupAutoLock()
+    }
+
+    private fun setupClickListeners() {
+        // Back Button
+        findViewById<View>(R.id.backButton).setOnClickListener {
+            finish()
+        }
     }
 
     override fun onResume() {

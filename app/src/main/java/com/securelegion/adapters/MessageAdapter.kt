@@ -2,6 +2,8 @@ package com.securelegion.adapters
 
 import android.animation.AnimatorSet
 import android.animation.ObjectAnimator
+import android.graphics.BitmapFactory
+import android.util.Base64
 import android.view.GestureDetector
 import android.view.LayoutInflater
 import android.view.MotionEvent
@@ -11,9 +13,11 @@ import android.widget.CheckBox
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
+import androidx.cardview.widget.CardView
 import androidx.recyclerview.widget.RecyclerView
 import com.securelegion.R
 import com.securelegion.database.entities.Message
+import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
@@ -26,7 +30,8 @@ class MessageAdapter(
     private val onDownloadClick: ((String) -> Unit)? = null,  // Now passes ping ID
     private val onVoicePlayClick: ((Message) -> Unit)? = null,
     private var currentlyPlayingMessageId: String? = null,
-    private val onMessageLongClick: (() -> Unit)? = null
+    private val onMessageLongClick: (() -> Unit)? = null,
+    private val onImageClick: ((String) -> Unit)? = null  // Base64 image data
 ) : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
 
     companion object {
@@ -35,6 +40,8 @@ class MessageAdapter(
         private const val VIEW_TYPE_PENDING = 3
         private const val VIEW_TYPE_VOICE_SENT = 4
         private const val VIEW_TYPE_VOICE_RECEIVED = 5
+        private const val VIEW_TYPE_IMAGE_SENT = 6
+        private const val VIEW_TYPE_IMAGE_RECEIVED = 7
     }
 
     // Track which message is currently showing swipe-revealed time
@@ -104,6 +111,23 @@ class MessageAdapter(
         val messageCheckbox: CheckBox = view.findViewById(R.id.messageCheckbox)
     }
 
+    class ImageSentMessageViewHolder(view: View) : RecyclerView.ViewHolder(view) {
+        val timestampHeader: TextView = view.findViewById(R.id.timestampHeader)
+        val messageBubble: CardView = view.findViewById(R.id.messageBubble)
+        val messageImage: ImageView = view.findViewById(R.id.messageImage)
+        val messageStatus: TextView = view.findViewById(R.id.messageStatus)
+        val swipeRevealedTime: TextView = view.findViewById(R.id.swipeRevealedTime)
+        val messageCheckbox: CheckBox = view.findViewById(R.id.messageCheckbox)
+    }
+
+    class ImageReceivedMessageViewHolder(view: View) : RecyclerView.ViewHolder(view) {
+        val timestampHeader: TextView = view.findViewById(R.id.timestampHeader)
+        val messageBubble: CardView = view.findViewById(R.id.messageBubble)
+        val messageImage: ImageView = view.findViewById(R.id.messageImage)
+        val swipeRevealedTime: TextView = view.findViewById(R.id.swipeRevealedTime)
+        val messageCheckbox: CheckBox = view.findViewById(R.id.messageCheckbox)
+    }
+
     override fun getItemViewType(position: Int): Int {
         // Check if this is in the pending messages range (after regular messages)
         if (position >= messages.size) {
@@ -115,6 +139,8 @@ class MessageAdapter(
         return when {
             message.messageType == Message.MESSAGE_TYPE_VOICE && message.isSentByMe -> VIEW_TYPE_VOICE_SENT
             message.messageType == Message.MESSAGE_TYPE_VOICE && !message.isSentByMe -> VIEW_TYPE_VOICE_RECEIVED
+            message.messageType == Message.MESSAGE_TYPE_IMAGE && message.isSentByMe -> VIEW_TYPE_IMAGE_SENT
+            message.messageType == Message.MESSAGE_TYPE_IMAGE && !message.isSentByMe -> VIEW_TYPE_IMAGE_RECEIVED
             message.isSentByMe -> VIEW_TYPE_SENT
             else -> VIEW_TYPE_RECEIVED
         }
@@ -142,6 +168,16 @@ class MessageAdapter(
                     .inflate(R.layout.item_message_voice_received, parent, false)
                 VoiceReceivedMessageViewHolder(view)
             }
+            VIEW_TYPE_IMAGE_SENT -> {
+                val view = LayoutInflater.from(parent.context)
+                    .inflate(R.layout.item_message_image_sent, parent, false)
+                ImageSentMessageViewHolder(view)
+            }
+            VIEW_TYPE_IMAGE_RECEIVED -> {
+                val view = LayoutInflater.from(parent.context)
+                    .inflate(R.layout.item_message_image_received, parent, false)
+                ImageReceivedMessageViewHolder(view)
+            }
             else -> {
                 val view = LayoutInflater.from(parent.context)
                     .inflate(R.layout.item_message_received, parent, false)
@@ -167,6 +203,14 @@ class MessageAdapter(
             is VoiceReceivedMessageViewHolder -> {
                 val message = messages[position]
                 bindVoiceReceivedMessage(holder, message, position)
+            }
+            is ImageSentMessageViewHolder -> {
+                val message = messages[position]
+                bindImageSentMessage(holder, message, position)
+            }
+            is ImageReceivedMessageViewHolder -> {
+                val message = messages[position]
+                bindImageReceivedMessage(holder, message, position)
             }
             is PendingMessageViewHolder -> {
                 bindPendingMessage(holder, position)
@@ -506,6 +550,194 @@ class MessageAdapter(
 
         // Reset progress
         holder.progressBar.progress = 0
+    }
+
+    private fun bindImageSentMessage(holder: ImageSentMessageViewHolder, message: Message, position: Int) {
+        // Load image from attachmentData (Base64 encoded)
+        loadImageIntoView(holder.messageImage, message.attachmentData)
+
+        holder.messageStatus.text = getStatusIcon(message.status)
+
+        // Show timestamp header if this is the first message or date changed
+        if (shouldShowTimestampHeader(position)) {
+            holder.timestampHeader.visibility = View.VISIBLE
+            holder.timestampHeader.text = formatDateHeaderWithTime(message.timestamp)
+        } else {
+            holder.timestampHeader.visibility = View.GONE
+        }
+
+        // Set swipe-revealed time
+        holder.swipeRevealedTime.text = formatTime(message.timestamp)
+        holder.swipeRevealedTime.visibility = if (position == currentSwipeRevealedPosition) View.VISIBLE else View.GONE
+
+        // Handle selection mode
+        if (isSelectionMode) {
+            holder.messageCheckbox.visibility = View.VISIBLE
+            val messageIdStr = message.id.toString()
+            holder.messageCheckbox.isChecked = selectedMessages.contains(messageIdStr)
+            holder.messageCheckbox.setOnCheckedChangeListener { _, isChecked ->
+                if (isChecked) {
+                    selectedMessages.add(messageIdStr)
+                } else {
+                    selectedMessages.remove(messageIdStr)
+                }
+            }
+
+            // Allow tapping image bubble to toggle selection
+            holder.messageBubble.setOnClickListener {
+                val isSelected = selectedMessages.contains(messageIdStr)
+                if (isSelected) {
+                    selectedMessages.remove(messageIdStr)
+                    holder.messageCheckbox.isChecked = false
+                } else {
+                    selectedMessages.add(messageIdStr)
+                    holder.messageCheckbox.isChecked = true
+                }
+            }
+        } else {
+            holder.messageCheckbox.visibility = View.GONE
+            holder.messageCheckbox.setOnCheckedChangeListener(null)
+
+            // Click to view full image
+            holder.messageBubble.setOnClickListener {
+                onImageClick?.invoke(message.attachmentData ?: "")
+            }
+
+            // Add long-press listener to enter selection mode
+            holder.messageBubble.setOnLongClickListener {
+                onMessageLongClick?.invoke()
+                true
+            }
+        }
+
+        // Setup swipe gesture (disabled in selection mode)
+        if (!isSelectionMode) {
+            setupSwipeGestureForCard(holder.messageBubble, holder.swipeRevealedTime, holder.messageStatus, position, isSent = true)
+        }
+    }
+
+    private fun bindImageReceivedMessage(holder: ImageReceivedMessageViewHolder, message: Message, position: Int) {
+        // Load image from attachmentData (Base64 encoded)
+        loadImageIntoView(holder.messageImage, message.attachmentData)
+
+        // Show timestamp header if this is the first message or date changed
+        if (shouldShowTimestampHeader(position)) {
+            holder.timestampHeader.visibility = View.VISIBLE
+            holder.timestampHeader.text = formatDateHeaderWithTime(message.timestamp)
+        } else {
+            holder.timestampHeader.visibility = View.GONE
+        }
+
+        // Set swipe-revealed time
+        holder.swipeRevealedTime.text = formatTime(message.timestamp)
+        holder.swipeRevealedTime.visibility = if (position == currentSwipeRevealedPosition) View.VISIBLE else View.GONE
+
+        // Handle selection mode
+        if (isSelectionMode) {
+            holder.messageCheckbox.visibility = View.VISIBLE
+            val messageIdStr = message.id.toString()
+            holder.messageCheckbox.isChecked = selectedMessages.contains(messageIdStr)
+            holder.messageCheckbox.setOnCheckedChangeListener { _, isChecked ->
+                if (isChecked) {
+                    selectedMessages.add(messageIdStr)
+                } else {
+                    selectedMessages.remove(messageIdStr)
+                }
+            }
+
+            // Allow tapping image bubble to toggle selection
+            holder.messageBubble.setOnClickListener {
+                val isSelected = selectedMessages.contains(messageIdStr)
+                if (isSelected) {
+                    selectedMessages.remove(messageIdStr)
+                    holder.messageCheckbox.isChecked = false
+                } else {
+                    selectedMessages.add(messageIdStr)
+                    holder.messageCheckbox.isChecked = true
+                }
+            }
+        } else {
+            holder.messageCheckbox.visibility = View.GONE
+            holder.messageCheckbox.setOnCheckedChangeListener(null)
+
+            // Click to view full image
+            holder.messageBubble.setOnClickListener {
+                onImageClick?.invoke(message.attachmentData ?: "")
+            }
+
+            // Add long-press listener to enter selection mode
+            holder.messageBubble.setOnLongClickListener {
+                onMessageLongClick?.invoke()
+                true
+            }
+        }
+
+        // Setup swipe gesture (disabled in selection mode)
+        if (!isSelectionMode) {
+            setupSwipeGestureForCard(holder.messageBubble, holder.swipeRevealedTime, null, position, isSent = false)
+        }
+    }
+
+    private fun loadImageIntoView(imageView: ImageView, base64Data: String?) {
+        if (base64Data.isNullOrEmpty()) {
+            imageView.setImageResource(R.drawable.ic_image_placeholder)
+            return
+        }
+
+        try {
+            val imageBytes = Base64.decode(base64Data, Base64.DEFAULT)
+            val bitmap = BitmapFactory.decodeByteArray(imageBytes, 0, imageBytes.size)
+            if (bitmap != null) {
+                imageView.setImageBitmap(bitmap)
+            } else {
+                imageView.setImageResource(R.drawable.ic_image_placeholder)
+            }
+        } catch (e: Exception) {
+            imageView.setImageResource(R.drawable.ic_image_placeholder)
+        }
+    }
+
+    private fun setupSwipeGestureForCard(
+        bubble: CardView,
+        timeView: TextView,
+        statusView: TextView?,
+        position: Int,
+        isSent: Boolean
+    ) {
+        val gestureDetector = GestureDetector(bubble.context, object : GestureDetector.SimpleOnGestureListener() {
+            override fun onDown(e: MotionEvent): Boolean = true
+
+            override fun onScroll(
+                e1: MotionEvent?,
+                e2: MotionEvent,
+                distanceX: Float,
+                distanceY: Float
+            ): Boolean {
+                val swipeThreshold = 50f
+                val delta = (e2.x - (e1?.x ?: 0f))
+
+                if (!isSent && delta > swipeThreshold) {
+                    revealTimestamp(position)
+                    return true
+                } else if (isSent && delta < -swipeThreshold) {
+                    revealTimestamp(position)
+                    return true
+                }
+                return false
+            }
+
+            override fun onSingleTapUp(e: MotionEvent): Boolean {
+                if (position == currentSwipeRevealedPosition) {
+                    hideTimestamp(position)
+                }
+                return true
+            }
+        })
+
+        bubble.setOnTouchListener { _, event ->
+            gestureDetector.onTouchEvent(event)
+            false
+        }
     }
 
     private fun formatDuration(seconds: Int): String {
