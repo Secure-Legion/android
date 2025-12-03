@@ -35,6 +35,8 @@ class AddFriendActivity : BaseActivity() {
     private lateinit var loadingOverlay: FrameLayout
     private lateinit var loadingText: TextView
     private lateinit var loadingSubtext: TextView
+    private var isDeleteMode = false
+    private val selectedRequests = mutableSetOf<String>()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -47,7 +49,20 @@ class AddFriendActivity : BaseActivity() {
 
         // Back button
         findViewById<View>(R.id.backButton).setOnClickListener {
-            finish()
+            if (isDeleteMode) {
+                exitDeleteMode()
+            } else {
+                finish()
+            }
+        }
+
+        // Delete button
+        findViewById<View>(R.id.deleteButton).setOnClickListener {
+            if (isDeleteMode) {
+                deleteSelectedRequests()
+            } else {
+                enterDeleteMode()
+            }
         }
 
         // Setup PIN boxes with auto-advance
@@ -230,16 +245,19 @@ class AddFriendActivity : BaseActivity() {
     private fun displayFriendRequests(friendRequests: List<com.securelegion.models.PendingFriendRequest>) {
         val requestsContainer = findViewById<View>(R.id.friendRequestsContainer)
         val requestsList = findViewById<android.widget.LinearLayout>(R.id.friendRequestsList)
+        val deleteButton = findViewById<View>(R.id.deleteButton)
 
         // Clear existing views
         requestsList.removeAllViews()
 
         if (friendRequests.isEmpty()) {
             requestsContainer.visibility = View.GONE
+            deleteButton.visibility = View.GONE
             return
         }
 
         requestsContainer.visibility = View.VISIBLE
+        deleteButton.visibility = View.VISIBLE
 
         // Add each friend request using the new layout
         for (friendRequest in friendRequests) {
@@ -247,10 +265,27 @@ class AddFriendActivity : BaseActivity() {
 
             val requestName = requestView.findViewById<android.widget.TextView>(R.id.requestName)
             val requestStatus = requestView.findViewById<android.widget.TextView>(R.id.requestStatus)
-            val requestMenu = requestView.findViewById<android.widget.ImageView>(R.id.requestMenu)
+            val requestContainer = requestView.findViewById<View>(R.id.requestContainer)
+            val requestCheckbox = requestView.findViewById<android.widget.CheckBox>(R.id.requestCheckbox)
 
             // Set name (remove @ prefix)
             requestName.text = friendRequest.displayName.removePrefix("@")
+
+            // Handle checkbox clicks
+            requestCheckbox.setOnCheckedChangeListener { _, isChecked ->
+                if (isChecked) {
+                    selectedRequests.add(friendRequest.ipfsCid)
+                } else {
+                    selectedRequests.remove(friendRequest.ipfsCid)
+                }
+            }
+
+            // Show checkbox if in delete mode
+            if (isDeleteMode) {
+                requestCheckbox.visibility = View.VISIBLE
+            } else {
+                requestCheckbox.visibility = View.GONE
+            }
 
             // Set status based on direction and status
             when {
@@ -334,17 +369,7 @@ class AddFriendActivity : BaseActivity() {
                 ThemedToast.show(this, statusText)
             }
 
-            // Handle menu click - show delete option
-            requestMenu.setOnClickListener {
-                androidx.appcompat.app.AlertDialog.Builder(this, R.style.CustomAlertDialog)
-                    .setTitle("Delete Request")
-                    .setMessage("Remove this friend request?")
-                    .setPositiveButton("Delete") { _, _ ->
-                        removePendingFriendRequest(friendRequest)
-                    }
-                    .setNegativeButton("Cancel", null)
-                    .show()
-            }
+            // Menu removed - deletion now handled via delete mode
 
             requestsList.addView(requestView)
         }
@@ -448,25 +473,24 @@ class AddFriendActivity : BaseActivity() {
     private fun removeFriendRequestByCid(cid: String) {
         try {
             val prefs = getSharedPreferences("friend_requests", Context.MODE_PRIVATE)
-            val pendingRequestsSet = prefs.getStringSet("pending_requests", mutableSetOf()) ?: mutableSetOf()
+            val pendingRequestsV2 = prefs.getStringSet("pending_requests_v2", mutableSetOf())?.toMutableSet() ?: mutableSetOf()
 
-            // Rebuild set without requests matching this CID
-            val newSet = mutableSetOf<String>()
-            for (requestJson in pendingRequestsSet) {
-                val request = FriendRequest.fromJson(requestJson)
-
-                // Keep all requests except those matching this CID
-                if (request.ipfsCid != cid) {
-                    newSet.add(requestJson)
+            // Remove requests matching this CID
+            val updatedRequests = pendingRequestsV2.filter { requestJson ->
+                try {
+                    val request = com.securelegion.models.PendingFriendRequest.fromJson(requestJson)
+                    request.ipfsCid != cid  // Keep if CID doesn't match
+                } catch (e: Exception) {
+                    true // Keep if can't parse
                 }
-            }
+            }.toMutableSet()
 
             // Save updated set
             prefs.edit()
-                .putStringSet("pending_requests", newSet)
+                .putStringSet("pending_requests_v2", updatedRequests)
                 .apply()
 
-            Log.d(TAG, "Removed friend request with CID=$cid - ${newSet.size} remaining")
+            Log.d(TAG, "Removed friend request with CID=$cid - ${updatedRequests.size} remaining")
 
             // Reload the UI
             loadPendingFriendRequests()
@@ -657,7 +681,7 @@ class AddFriendActivity : BaseActivity() {
 
                     // Send friend request notification
                     Log.i(TAG, "Sending initial FRIEND_REQUEST...")
-                    sendFriendRequest(contactCard)
+                    sendFriendRequest(contactCard, cid)
 
                     ThemedToast.showLong(this@AddFriendActivity, "Friend request sent to ${contactCard.displayName}. Waiting for acceptance.")
                 }
@@ -714,7 +738,7 @@ class AddFriendActivity : BaseActivity() {
      * Send friend request to newly added contact
      * This notifies them that someone wants to add them as a friend
      */
-    private fun sendFriendRequest(recipientContactCard: ContactCard) {
+    private fun sendFriendRequest(recipientContactCard: ContactCard, recipientCid: String) {
         CoroutineScope(Dispatchers.Main).launch {
             try {
                 Log.d(TAG, "Sending friend request to ${recipientContactCard.displayName}")
@@ -724,6 +748,24 @@ class AddFriendActivity : BaseActivity() {
                     Log.w(TAG, "Tor not ready - cannot send friend request. Will retry when Tor connects.")
                     ThemedToast.show(this@AddFriendActivity, "Tor not ready. Friend request will be sent when connected.")
                     return@launch
+                }
+
+                // Additional check: verify SOCKS proxy is actually running
+                val socksRunning = withContext(Dispatchers.IO) {
+                    com.securelegion.crypto.RustBridge.isSocksProxyRunning()
+                }
+                if (!socksRunning) {
+                    Log.w(TAG, "SOCKS proxy not running - attempting to start")
+                    val started = withContext(Dispatchers.IO) {
+                        com.securelegion.crypto.RustBridge.startSocksProxy()
+                    }
+                    if (!started) {
+                        Log.e(TAG, "Failed to start SOCKS proxy")
+                        ThemedToast.show(this@AddFriendActivity, "Network proxy unavailable. Friend request saved as pending.")
+                        return@launch
+                    }
+                    // Wait a moment for SOCKS proxy to initialize
+                    kotlinx.coroutines.delay(1000)
                 }
 
                 // Get own account information (just username and CID)
@@ -766,12 +808,16 @@ class AddFriendActivity : BaseActivity() {
                     Log.i(TAG, "Friend request sent successfully to ${recipientContactCard.displayName}")
                 } else {
                     Log.w(TAG, "Failed to send friend request to ${recipientContactCard.displayName} (recipient may be offline)")
+
+                    // Mark request as failed and show toast
+                    ThemedToast.showLong(this@AddFriendActivity, "Friend request failed - Retry in add friend tab")
+                    markRequestAsFailed(recipientCid)
                 }
 
             } catch (e: Exception) {
                 Log.e(TAG, "Error sending friend request", e)
-                // Don't show error to user - friend request sending is best-effort
-                // The important part is that we added them to our contacts
+                ThemedToast.showLong(this@AddFriendActivity, "Friend request failed - Retry in add friend tab")
+                markRequestAsFailed(recipientCid)
             }
         }
     }
@@ -790,6 +836,24 @@ class AddFriendActivity : BaseActivity() {
                     Log.w(TAG, "Tor not ready - cannot resend friend request")
                     ThemedToast.showLong(this@AddFriendActivity, "Tor not ready. Please wait and try again.")
                     return@launch
+                }
+
+                // Additional check: verify SOCKS proxy is actually running
+                val socksRunning = withContext(Dispatchers.IO) {
+                    com.securelegion.crypto.RustBridge.isSocksProxyRunning()
+                }
+                if (!socksRunning) {
+                    Log.w(TAG, "SOCKS proxy not running - attempting to start")
+                    val started = withContext(Dispatchers.IO) {
+                        com.securelegion.crypto.RustBridge.startSocksProxy()
+                    }
+                    if (!started) {
+                        Log.e(TAG, "Failed to start SOCKS proxy")
+                        ThemedToast.showLong(this@AddFriendActivity, "Network proxy unavailable. Please restart the app.")
+                        return@launch
+                    }
+                    // Wait a moment for SOCKS proxy to initialize
+                    kotlinx.coroutines.delay(1000)
                 }
 
                 // Check if we have saved ContactCard data
@@ -1008,6 +1072,100 @@ class AddFriendActivity : BaseActivity() {
                 overridePendingTransition(0, 0)
             }
             finish()
+        }
+    }
+
+    private fun enterDeleteMode() {
+        isDeleteMode = true
+        selectedRequests.clear()
+
+        // Show all checkboxes
+        val requestsList = findViewById<android.widget.LinearLayout>(R.id.friendRequestsList)
+        for (i in 0 until requestsList.childCount) {
+            val requestView = requestsList.getChildAt(i)
+            val checkbox = requestView.findViewById<android.widget.CheckBox>(R.id.requestCheckbox)
+            checkbox?.visibility = View.VISIBLE
+        }
+
+        ThemedToast.show(this, "Select requests to delete")
+    }
+
+    private fun exitDeleteMode() {
+        isDeleteMode = false
+        selectedRequests.clear()
+
+        // Hide all checkboxes
+        val requestsList = findViewById<android.widget.LinearLayout>(R.id.friendRequestsList)
+        for (i in 0 until requestsList.childCount) {
+            val requestView = requestsList.getChildAt(i)
+            val checkbox = requestView.findViewById<android.widget.CheckBox>(R.id.requestCheckbox)
+            checkbox?.visibility = View.GONE
+            checkbox?.isChecked = false
+        }
+    }
+
+    private fun deleteSelectedRequests() {
+        if (selectedRequests.isEmpty()) {
+            ThemedToast.show(this, "No requests selected")
+            return
+        }
+
+        try {
+            val prefs = getSharedPreferences("friend_requests", Context.MODE_PRIVATE)
+            val pendingRequestsV2 = prefs.getStringSet("pending_requests_v2", mutableSetOf())?.toMutableSet() ?: mutableSetOf()
+
+            // Remove selected requests
+            val updatedRequests = pendingRequestsV2.filter { requestJson ->
+                try {
+                    val request = com.securelegion.models.PendingFriendRequest.fromJson(requestJson)
+                    !selectedRequests.contains(request.ipfsCid)
+                } catch (e: Exception) {
+                    true // Keep if can't parse
+                }
+            }.toMutableSet()
+
+            prefs.edit().putStringSet("pending_requests_v2", updatedRequests).apply()
+
+            ThemedToast.show(this, "Deleted ${selectedRequests.size} request(s)")
+
+            // Exit delete mode and reload
+            exitDeleteMode()
+            loadPendingFriendRequests()
+
+        } catch (e: Exception) {
+            Log.e(TAG, "Error deleting requests", e)
+            ThemedToast.show(this, "Failed to delete requests")
+        }
+    }
+
+    private fun markRequestAsFailed(ipfsCid: String) {
+        try {
+            val prefs = getSharedPreferences("friend_requests", Context.MODE_PRIVATE)
+            val pendingRequestsV2 = prefs.getStringSet("pending_requests_v2", mutableSetOf())?.toMutableSet() ?: mutableSetOf()
+
+            // Find and update the request to mark as failed
+            val updatedRequests = pendingRequestsV2.map { requestJson ->
+                try {
+                    val request = com.securelegion.models.PendingFriendRequest.fromJson(requestJson)
+                    if (request.ipfsCid == ipfsCid) {
+                        // Create a copy with failed status
+                        val failedRequest = request.copy(status = com.securelegion.models.PendingFriendRequest.STATUS_FAILED)
+                        failedRequest.toJson()
+                    } else {
+                        requestJson
+                    }
+                } catch (e: Exception) {
+                    requestJson
+                }
+            }.toMutableSet()
+
+            prefs.edit().putStringSet("pending_requests_v2", updatedRequests).apply()
+
+            // Reload to show updated status
+            loadPendingFriendRequests()
+
+        } catch (e: Exception) {
+            Log.e(TAG, "Error marking request as failed", e)
         }
     }
 }

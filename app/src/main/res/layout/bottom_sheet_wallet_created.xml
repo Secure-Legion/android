@@ -1,0 +1,158 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:background="@drawable/bottom_sheet_bg"
+    android:padding="24dp">
+
+    <!-- Success Icon -->
+    <ImageView
+        android:layout_width="64dp"
+        android:layout_height="64dp"
+        android:src="@drawable/ic_check"
+        android:tint="#4CAF50"
+        android:layout_gravity="center_horizontal"
+        android:layout_marginBottom="16dp"
+        android:contentDescription="Success" />
+
+    <!-- Title -->
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Wallet Created Successfully"
+        android:textSize="20sp"
+        android:textColor="@color/text_white"
+        android:fontFamily="@font/space_grotesk_bold"
+        android:layout_gravity="center_horizontal"
+        android:layout_marginBottom="8dp" />
+
+    <!-- Subtitle -->
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Your new wallet has been generated"
+        android:textSize="14sp"
+        android:textColor="#888888"
+        android:fontFamily="@font/poppins_regular"
+        android:layout_gravity="center_horizontal"
+        android:layout_marginBottom="24dp" />
+
+    <!-- Wallet Name -->
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Wallet Name"
+        android:textSize="12sp"
+        android:textColor="#666666"
+        android:fontFamily="@font/poppins_medium"
+        android:layout_marginBottom="4dp" />
+
+    <TextView
+        android:id="@+id/walletNameText"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Wallet 2"
+        android:textSize="16sp"
+        android:textColor="@color/text_white"
+        android:fontFamily="@font/poppins_medium"
+        android:layout_marginBottom="16dp" />
+
+    <!-- Wallet Address -->
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Wallet Address"
+        android:textSize="12sp"
+        android:textColor="#666666"
+        android:fontFamily="@font/poppins_medium"
+        android:layout_marginBottom="4dp" />
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:background="@drawable/settings_box_bg"
+        android:padding="12dp"
+        android:layout_marginBottom="16dp">
+
+        <TextView
+            android:id="@+id/walletAddressText"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="ADm9P...2eoLX5"
+            android:textSize="14sp"
+            android:textColor="@color/text_white"
+            android:fontFamily="@font/poppins_regular"
+            android:ellipsize="middle"
+            android:singleLine="true" />
+
+        <ImageView
+            android:id="@+id/copyAddressButton"
+            android:layout_width="24dp"
+            android:layout_height="24dp"
+            android:src="@drawable/ic_copy"
+            android:tint="#888888"
+            android:clickable="true"
+            android:focusable="true"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:contentDescription="Copy address" />
+
+    </LinearLayout>
+
+    <!-- Private Key Warning -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:background="#1A1A1A"
+        android:padding="12dp"
+        android:layout_marginBottom="16dp">
+
+        <ImageView
+            android:layout_width="20dp"
+            android:layout_height="20dp"
+            android:src="@drawable/ic_shield"
+            android:tint="#FFA726"
+            android:layout_marginEnd="8dp"
+            android:contentDescription="Warning" />
+
+        <TextView
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="Make sure to backup your private key securely. You can view it anytime from wallet settings."
+            android:textSize="12sp"
+            android:textColor="#888888"
+            android:fontFamily="@font/poppins_regular"
+            android:lineSpacingExtra="2dp" />
+
+    </LinearLayout>
+
+    <!-- View Private Key Button -->
+    <androidx.appcompat.widget.AppCompatButton
+        android:id="@+id/viewPrivateKeyButton"
+        android:layout_width="match_parent"
+        android:layout_height="48dp"
+        android:text="View Private Key"
+        android:textSize="14sp"
+        android:textColor="@color/text_white"
+        android:fontFamily="@font/poppins_semibold"
+        android:textAllCaps="false"
+        android:background="@drawable/swap_button_bg"
+        android:layout_marginBottom="12dp" />
+
+    <!-- Done Button -->
+    <androidx.appcompat.widget.AppCompatButton
+        android:id="@+id/doneButton"
+        android:layout_width="match_parent"
+        android:layout_height="56dp"
+        android:text="Done"
+        android:textSize="16sp"
+        android:textColor="@color/text_white"
+        android:fontFamily="@font/poppins_semibold"
+        android:textAllCaps="false"
+        android:background="@drawable/neon_blue_button_bg" />
+
+</LinearLayout>

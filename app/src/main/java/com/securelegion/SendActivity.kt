@@ -80,11 +80,8 @@ class SendActivity : BaseActivity() {
                 return@setOnClickListener
             }
 
-            // Send transaction based on selected currency
-            when (selectedCurrency) {
-                "SOL" -> sendSolanaTransaction(recipientAddress, amount.toDouble())
-                "ZEC" -> sendZcashTransaction(recipientAddress, amount.toDouble())
-            }
+            // Show confirmation dialog before sending
+            showSendConfirmation(recipientAddress, amount.toDouble())
         }
     }
 
@@ -258,6 +255,76 @@ class SendActivity : BaseActivity() {
                 }
             }
         }
+    }
+
+    private fun showSendConfirmation(recipientAddress: String, amount: Double) {
+        // Create bottom sheet dialog
+        val bottomSheet = BottomSheetDialog(this)
+        val view = layoutInflater.inflate(R.layout.bottom_sheet_send_confirm, null)
+
+        // Set minimum height on the view itself
+        val displayMetrics = resources.displayMetrics
+        val screenHeight = displayMetrics.heightPixels
+        val desiredHeight = (screenHeight * 0.7).toInt()
+        view.minimumHeight = desiredHeight
+
+        bottomSheet.setContentView(view)
+
+        // Configure bottom sheet behavior
+        bottomSheet.behavior.isDraggable = true
+        bottomSheet.behavior.isFitToContents = true
+        bottomSheet.behavior.skipCollapsed = true
+
+        // Make all backgrounds transparent
+        bottomSheet.window?.setBackgroundDrawableResource(android.R.color.transparent)
+        bottomSheet.window?.findViewById<View>(com.google.android.material.R.id.design_bottom_sheet)?.setBackgroundResource(android.R.color.transparent)
+
+        // Remove the white background box
+        view.post {
+            val parentView = view.parent as? View
+            parentView?.setBackgroundResource(android.R.color.transparent)
+        }
+
+        // Populate confirmation details
+        val confirmAmount = view.findViewById<TextView>(R.id.confirmAmount)
+        val confirmRecipientShort = view.findViewById<TextView>(R.id.confirmRecipientShort)
+        val confirmFromWallet = view.findViewById<TextView>(R.id.confirmFromWallet)
+        val confirmToAddress = view.findViewById<TextView>(R.id.confirmToAddress)
+        val confirmCurrency = view.findViewById<TextView>(R.id.confirmCurrency)
+        val confirmNetworkFee = view.findViewById<TextView>(R.id.confirmNetworkFee)
+
+        // Set values
+        confirmAmount.text = "$amount $selectedCurrency"
+        confirmRecipientShort.text = "${recipientAddress.take(5)}...${recipientAddress.takeLast(6)}"
+        confirmFromWallet.text = currentWalletName
+        confirmToAddress.text = "${recipientAddress.take(5)}...${recipientAddress.takeLast(6)}"
+        confirmCurrency.text = selectedCurrency
+
+        // Show estimated network fee
+        when (selectedCurrency) {
+            "SOL" -> confirmNetworkFee.text = "~0.000005 SOL"
+            "ZEC" -> confirmNetworkFee.text = "~0.0001 ZEC"
+        }
+
+        // Confirm button
+        val confirmButton = view.findViewById<View>(R.id.confirmSendButton)
+        confirmButton.setOnClickListener {
+            bottomSheet.dismiss()
+
+            // Send transaction based on selected currency
+            when (selectedCurrency) {
+                "SOL" -> sendSolanaTransaction(recipientAddress, amount)
+                "ZEC" -> sendZcashTransaction(recipientAddress, amount)
+            }
+        }
+
+        // Cancel button
+        val cancelButton = view.findViewById<View>(R.id.cancelSendButton)
+        cancelButton.setOnClickListener {
+            bottomSheet.dismiss()
+        }
+
+        bottomSheet.show()
     }
 
     private fun selectCurrency(currency: String) {

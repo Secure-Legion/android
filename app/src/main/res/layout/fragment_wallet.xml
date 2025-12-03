@@ -307,20 +307,41 @@
                 android:paddingTop="20dp"
                 android:paddingBottom="120dp">
 
-                <!-- Section Header -->
+                <!-- Section Header with Tabs -->
                 <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:orientation="horizontal"
+                    android:gravity="end"
                     android:paddingBottom="16dp">
 
                     <TextView
-                        android:layout_width="match_parent"
+                        android:id="@+id/tokensTab"
+                        android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:text="Tokens"
                         android:textSize="18sp"
                         android:textColor="@color/text_white"
-                        android:fontFamily="@font/space_grotesk_bold" />
+                        android:fontFamily="@font/space_grotesk_bold"
+                        android:paddingStart="16dp"
+                        android:paddingEnd="16dp"
+                        android:clickable="true"
+                        android:focusable="true"
+                        android:background="?attr/selectableItemBackgroundBorderless" />
+
+                    <TextView
+                        android:id="@+id/recentTab"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Recent"
+                        android:textSize="18sp"
+                        android:textColor="@color/text_white"
+                        android:fontFamily="@font/space_grotesk_bold"
+                        android:paddingStart="16dp"
+                        android:paddingEnd="16dp"
+                        android:clickable="true"
+                        android:focusable="true"
+                        android:background="?attr/selectableItemBackgroundBorderless" />
 
                 </LinearLayout>
 

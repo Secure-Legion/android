@@ -48,7 +48,8 @@ class WalletActivity : AppCompatActivity() {
 
         // Swap button
         findViewById<View>(R.id.swapButton).setOnClickListener {
-            ThemedToast.show(this, "Swap feature coming soon")
+            val intent = Intent(this, SwapActivity::class.java)
+            startActivity(intent)
         }
 
         // Wallet settings button
@@ -96,6 +97,19 @@ class WalletActivity : AppCompatActivity() {
         // Currency dropdown - toggle between USD and token display
         findViewById<View>(R.id.currencyDropdown)?.setOnClickListener {
             toggleCurrencyDisplay()
+        }
+
+        // Tokens tab
+        findViewById<TextView>(R.id.tokensTab)?.setOnClickListener {
+            // Already on tokens view, just update tab colors
+            findViewById<TextView>(R.id.tokensTab)?.setTextColor(resources.getColor(R.color.text_white, null))
+            findViewById<TextView>(R.id.recentTab)?.setTextColor(resources.getColor(android.R.color.darker_gray, null))
+        }
+
+        // Recent tab
+        findViewById<TextView>(R.id.recentTab)?.setOnClickListener {
+            val intent = Intent(this, RecentTransactionsActivity::class.java)
+            startActivity(intent)
         }
     }
 

@@ -4,15 +4,21 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.graphics.Bitmap
 import android.os.Bundle
 import android.util.Log
 import android.view.View
 import android.widget.Button
 import android.widget.EditText
+import android.widget.ImageView
 import android.widget.TextView
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.FileProvider
 import androidx.lifecycle.lifecycleScope
+import com.google.android.material.bottomsheet.BottomSheetDialog
+import com.google.zxing.BarcodeFormat
+import com.google.zxing.qrcode.QRCodeWriter
 import com.securelegion.crypto.KeyManager
 import com.securelegion.models.ContactCard
 import com.securelegion.services.ContactCardManager
@@ -21,6 +27,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.web3j.crypto.MnemonicUtils
+import java.io.File
+import java.io.FileOutputStream
 import java.security.SecureRandom
 
 class WalletIdentityActivity : AppCompatActivity() {
@@ -57,6 +65,122 @@ class WalletIdentityActivity : AppCompatActivity() {
                 copyToClipboard(pin, "PIN")
             }
         }
+
+        // Identity QR Code button
+        findViewById<View>(R.id.identityQrCodeButton).setOnClickListener {
+            showIdentityQrCode()
+        }
+    }
+
+    private fun showIdentityQrCode() {
+        val keyManager = KeyManager.getInstance(this)
+        val cid = keyManager.getContactCardCid()
+
+        if (cid == null) {
+            ThemedToast.show(this, "No CID available")
+            return
+        }
+
+        // Create bottom sheet dialog
+        val bottomSheet = BottomSheetDialog(this)
+        val view = layoutInflater.inflate(R.layout.bottom_sheet_identity_qr, null)
+
+        // Set minimum height
+        val displayMetrics = resources.displayMetrics
+        val screenHeight = displayMetrics.heightPixels
+        val desiredHeight = (screenHeight * 0.65).toInt()
+        view.minimumHeight = desiredHeight
+
+        bottomSheet.setContentView(view)
+
+        // Configure bottom sheet behavior
+        bottomSheet.behavior.isDraggable = true
+        bottomSheet.behavior.isFitToContents = true
+        bottomSheet.behavior.skipCollapsed = true
+
+        // Make backgrounds transparent
+        bottomSheet.window?.setBackgroundDrawableResource(android.R.color.transparent)
+        bottomSheet.window?.findViewById<View>(com.google.android.material.R.id.design_bottom_sheet)?.setBackgroundResource(android.R.color.transparent)
+
+        view.post {
+            val parentView = view.parent as? View
+            parentView?.setBackgroundResource(android.R.color.transparent)
+        }
+
+        // Generate QR code
+        val qrCodeImage = view.findViewById<ImageView>(R.id.qrCodeImage)
+        val qrBitmap = generateQrCode(cid, 512)
+        if (qrBitmap != null) {
+            qrCodeImage.setImageBitmap(qrBitmap)
+        }
+
+        // Set CID text
+        view.findViewById<TextView>(R.id.cidText).text = cid
+
+        // Share button
+        view.findViewById<View>(R.id.shareQrButton).setOnClickListener {
+            shareQrCode(qrBitmap, cid)
+            bottomSheet.dismiss()
+        }
+
+        bottomSheet.show()
+    }
+
+    private fun generateQrCode(content: String, size: Int): Bitmap? {
+        return try {
+            val writer = QRCodeWriter()
+            val bitMatrix = writer.encode(content, BarcodeFormat.QR_CODE, size, size)
+            val width = bitMatrix.width
+            val height = bitMatrix.height
+            val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.RGB_565)
+
+            for (x in 0 until width) {
+                for (y in 0 until height) {
+                    bitmap.setPixel(x, y, if (bitMatrix[x, y]) 0xFF000000.toInt() else 0xFFFFFFFF.toInt())
+                }
+            }
+            bitmap
+        } catch (e: Exception) {
+            Log.e("WalletIdentity", "Failed to generate QR code", e)
+            null
+        }
+    }
+
+    private fun shareQrCode(bitmap: Bitmap?, cid: String) {
+        if (bitmap == null) {
+            ThemedToast.show(this, "Failed to generate QR code")
+            return
+        }
+
+        try {
+            // Save bitmap to cache directory
+            val cachePath = File(cacheDir, "images")
+            cachePath.mkdirs()
+            val file = File(cachePath, "identity_qr.png")
+            FileOutputStream(file).use { stream ->
+                bitmap.compress(Bitmap.CompressFormat.PNG, 100, stream)
+            }
+
+            // Get content URI via FileProvider
+            val contentUri = FileProvider.getUriForFile(
+                this,
+                "${packageName}.fileprovider",
+                file
+            )
+
+            // Create share intent
+            val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                type = "image/png"
+                putExtra(Intent.EXTRA_STREAM, contentUri)
+                putExtra(Intent.EXTRA_TEXT, "Add me on Secure!\nCID: $cid")
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+
+            startActivity(Intent.createChooser(shareIntent, "Share Identity QR Code"))
+        } catch (e: Exception) {
+            Log.e("WalletIdentity", "Failed to share QR code", e)
+            ThemedToast.show(this, "Failed to share QR code")
+        }
     }
 
     private fun getPinFromDigits(): String {
@@ -70,14 +194,47 @@ class WalletIdentityActivity : AppCompatActivity() {
     }
 
     private fun showNewIdentityConfirmation() {
-        AlertDialog.Builder(this, R.style.CustomAlertDialog)
-            .setTitle("Create New Identity?")
-            .setMessage("This will generate:\n\n• New Wallet Address\n• New Contact Card (CID/PIN)\n• New Tor Onion Address\n\nYour current identity will be replaced. Make sure to backup your seed phrase first!")
-            .setPositiveButton("Create New Identity") { _, _ ->
-                createNewIdentity()
-            }
-            .setNegativeButton("Cancel", null)
-            .show()
+        // Create bottom sheet dialog
+        val bottomSheet = BottomSheetDialog(this)
+        val view = layoutInflater.inflate(R.layout.bottom_sheet_new_identity_confirm, null)
+
+        // Set minimum height on the view itself
+        val displayMetrics = resources.displayMetrics
+        val screenHeight = displayMetrics.heightPixels
+        val desiredHeight = (screenHeight * 0.75).toInt()
+        view.minimumHeight = desiredHeight
+
+        bottomSheet.setContentView(view)
+
+        // Configure bottom sheet behavior
+        bottomSheet.behavior.isDraggable = true
+        bottomSheet.behavior.isFitToContents = true
+        bottomSheet.behavior.skipCollapsed = true
+
+        // Make all backgrounds transparent
+        bottomSheet.window?.setBackgroundDrawableResource(android.R.color.transparent)
+        bottomSheet.window?.findViewById<View>(com.google.android.material.R.id.design_bottom_sheet)?.setBackgroundResource(android.R.color.transparent)
+
+        // Remove the white background box
+        view.post {
+            val parentView = view.parent as? View
+            parentView?.setBackgroundResource(android.R.color.transparent)
+        }
+
+        // Confirm button
+        val confirmButton = view.findViewById<View>(R.id.confirmNewIdentityButton)
+        confirmButton.setOnClickListener {
+            bottomSheet.dismiss()
+            createNewIdentity()
+        }
+
+        // Cancel button
+        val cancelButton = view.findViewById<View>(R.id.cancelNewIdentityButton)
+        cancelButton.setOnClickListener {
+            bottomSheet.dismiss()
+        }
+
+        bottomSheet.show()
     }
 
     private fun createNewIdentity() {

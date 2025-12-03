@@ -51,10 +51,26 @@
             android:textStyle="bold"
             android:gravity="center" />
 
-        <!-- Spacer for alignment -->
-        <View
+        <!-- Delete Button -->
+        <FrameLayout
+            android:id="@+id/deleteButton"
             android:layout_width="42dp"
-            android:layout_height="42dp" />
+            android:layout_height="42dp"
+            android:layout_marginEnd="8dp"
+            android:background="@drawable/top_icon_bg"
+            android:clickable="true"
+            android:focusable="true"
+            android:visibility="gone">
+
+            <ImageView
+                android:layout_width="20dp"
+                android:layout_height="20dp"
+                android:layout_gravity="center"
+                android:src="@android:drawable/ic_menu_delete"
+                android:tint="#888888"
+                android:contentDescription="Delete" />
+
+        </FrameLayout>
 
     </LinearLayout>
 

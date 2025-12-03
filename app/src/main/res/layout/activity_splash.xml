@@ -25,7 +25,7 @@
         android:id="@+id/appTitle"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:text="SECURE LEGION"
+        android:text="SECURE"
         android:fontFamily="@font/space_grotesk_bold"
         android:textSize="34sp"
         android:textColor="#888888"

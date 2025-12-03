@@ -462,15 +462,21 @@ class ChatActivity : BaseActivity() {
         // Send Money option
         view.findViewById<View>(R.id.sendMoneyOption).setOnClickListener {
             bottomSheet.dismiss()
-            ThemedToast.show(this, "Send Money - Coming soon")
-            // TODO: Implement send money functionality
+            val intent = Intent(this, SendMoneyActivity::class.java).apply {
+                putExtra(SendMoneyActivity.EXTRA_RECIPIENT_NAME, contactName)
+                putExtra(SendMoneyActivity.EXTRA_RECIPIENT_ADDRESS, contactAddress)
+            }
+            startActivity(intent)
         }
 
         // Request Money option
         view.findViewById<View>(R.id.requestMoneyOption).setOnClickListener {
             bottomSheet.dismiss()
-            ThemedToast.show(this, "Request Money - Coming soon")
-            // TODO: Implement request money functionality
+            val intent = Intent(this, RequestMoneyActivity::class.java).apply {
+                putExtra(RequestMoneyActivity.EXTRA_RECIPIENT_NAME, contactName)
+                putExtra(RequestMoneyActivity.EXTRA_RECIPIENT_ADDRESS, contactAddress)
+            }
+            startActivity(intent)
         }
 
         // Send File option

@@ -54,6 +54,7 @@ release-keystore.jks
 ANDROID_BUILD_SUCCESS.md
 QUICKSTART.md
 docs/IPFS_P2P_BACKUP_SYSTEM.md
+docs/MULTI_IDENTITY_SYSTEM.md
 gradlew.bat
 *.png
 notification_*.png

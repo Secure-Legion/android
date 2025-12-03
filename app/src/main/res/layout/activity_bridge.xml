@@ -45,8 +45,8 @@
             android:layout_height="wrap_content"
             android:layout_weight="1"
             android:text="Tor Bridges"
-            android:textSize="22sp"
-            android:textColor="#CCCCCC"
+            android:textSize="24sp"
+            android:textColor="#999999"
             android:fontFamily="@font/space_grotesk_bold"
             android:textStyle="bold"
             android:gravity="center" />

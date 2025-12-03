@@ -112,6 +112,16 @@
 # Keep IPtProxy (Pluggable Transports) - Go library via JNI
 -dontwarn IPtProxy.**
 
+# Keep Tor JNI service completely intact (CRITICAL for JNI field access)
+-keep class org.torproject.jni.TorService {
+    *;
+}
+
+# Keep all Tor project JNI classes
+-keep class org.torproject.jni.** {
+    *;
+}
+
 # Tor project libraries
 -dontwarn org.torproject.**
 

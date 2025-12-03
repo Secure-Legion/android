@@ -6,41 +6,57 @@
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:orientation="vertical"
-    android:background="@color/header_bg">
+    android:background="#000000">
 
     <!-- Header -->
     <LinearLayout
+        android:id="@+id/header"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="horizontal"
-        android:fitsSystemWindows="true"
-        android:paddingStart="16dp"
-        android:paddingEnd="16dp"
-        android:paddingBottom="16dp"
         android:gravity="center_vertical"
-        android:background="@color/header_bg">
+        android:paddingStart="20dp"
+        android:paddingEnd="20dp"
+        android:paddingTop="16dp"
+        android:paddingBottom="16dp"
+        android:fitsSystemWindows="true">
 
-        <ImageView
+        <!-- Back Button -->
+        <FrameLayout
             android:id="@+id/backButton"
-            android:layout_width="32dp"
-            android:layout_height="32dp"
-            android:src="@drawable/ic_arrow_back"
-            app:tint="@color/text_white"
-            android:padding="4dp"
+            android:layout_width="42dp"
+            android:layout_height="42dp"
+            android:layout_marginStart="8dp"
+            android:background="@drawable/top_icon_bg"
             android:clickable="true"
-            android:focusable="true"
-            android:background="?attr/selectableItemBackgroundBorderless"
-            android:contentDescription="Back" />
+            android:focusable="true">
 
+            <ImageView
+                android:layout_width="20dp"
+                android:layout_height="20dp"
+                android:layout_gravity="center"
+                android:src="@drawable/ic_back_arrow"
+                android:contentDescription="Back" />
+
+        </FrameLayout>
+
+        <!-- Title -->
         <TextView
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
-            android:text="Create New Wallet"
-            android:textSize="20sp"
+            android:text="Create Wallet"
+            android:textSize="28sp"
+            android:textColor="#999999"
+            android:fontFamily="@font/space_grotesk_bold"
             android:textStyle="bold"
-            android:textColor="@color/text_white"
-            android:layout_marginStart="12dp" />
+            android:gravity="center" />
+
+        <!-- Spacer for alignment -->
+        <View
+            android:layout_width="42dp"
+            android:layout_height="42dp"
+            android:layout_marginEnd="8dp" />
 
     </LinearLayout>
 
@@ -55,56 +71,10 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="vertical"
-            android:padding="20dp">
-
-            <!-- Info Card -->
-            <androidx.cardview.widget.CardView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                app:cardBackgroundColor="@color/card_bg"
-                app:cardCornerRadius="12dp"
-                app:cardElevation="0dp"
-                app:strokeWidth="1dp"
-                app:strokeColor="@color/border_color"
-                android:layout_marginBottom="24dp">
-
-                <LinearLayout
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:orientation="vertical"
-                    android:padding="16dp">
-
-                    <ImageView
-                        android:layout_width="48dp"
-                        android:layout_height="48dp"
-                        android:src="@drawable/ic_wallet"
-                        app:tint="@color/primary_blue"
-                        android:layout_gravity="center_horizontal"
-                        android:layout_marginBottom="12dp"
-                        android:contentDescription="Wallet" />
-
-                    <TextView
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="Create a new Solana wallet"
-                        android:textSize="16sp"
-                        android:textStyle="bold"
-                        android:textColor="@color/text_white"
-                        android:layout_gravity="center_horizontal"
-                        android:layout_marginBottom="8dp" />
-
-                    <TextView
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:text="This will generate a new wallet address with its own private key. You can use multiple wallets to organize your funds."
-                        android:textSize="14sp"
-                        android:textColor="@color/text_gray"
-                        android:gravity="center"
-                        android:lineSpacingExtra="4dp" />
-
-                </LinearLayout>
-
-            </androidx.cardview.widget.CardView>
+            android:paddingStart="24dp"
+            android:paddingEnd="24dp"
+            android:paddingTop="20dp"
+            android:paddingBottom="24dp">
 
             <!-- Wallet Name Input -->
             <TextView
@@ -112,78 +82,169 @@
                 android:layout_height="wrap_content"
                 android:text="Wallet Name"
                 android:textSize="14sp"
-                android:textStyle="bold"
-                android:textColor="@color/text_white"
+                android:textColor="#888888"
+                android:fontFamily="@font/poppins_medium"
                 android:layout_marginBottom="8dp" />
 
             <EditText
                 android:id="@+id/walletNameInput"
                 android:layout_width="match_parent"
                 android:layout_height="56dp"
-                android:background="@drawable/input_field_bg"
+                android:background="@drawable/settings_box_bg"
                 android:padding="16dp"
                 android:hint="Enter wallet name"
                 android:textColor="@color/text_white"
-                android:textColorHint="@color/text_gray"
+                android:textColorHint="#555555"
+                android:fontFamily="@font/poppins_regular"
                 android:textSize="16sp"
                 android:maxLines="1"
                 android:imeOptions="actionDone"
                 android:inputType="text"
-                android:layout_marginBottom="24dp" />
+                android:layout_marginBottom="32dp" />
 
-            <!-- Warning Box -->
-            <androidx.cardview.widget.CardView
+            <!-- Wallet Type Selection -->
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Wallet Type"
+                android:textSize="14sp"
+                android:textColor="#888888"
+                android:fontFamily="@font/poppins_medium"
+                android:layout_marginBottom="12dp" />
+
+            <!-- Solana Option -->
+            <LinearLayout
+                android:id="@+id/solanaOption"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                app:cardBackgroundColor="#1A1E90FF"
-                app:cardCornerRadius="12dp"
-                app:cardElevation="0dp"
-                app:strokeWidth="1dp"
-                app:strokeColor="#331E90FF"
-                android:layout_marginBottom="24dp">
+                android:orientation="horizontal"
+                android:background="@drawable/settings_box_bg"
+                android:padding="16dp"
+                android:layout_marginBottom="12dp"
+                android:gravity="center_vertical"
+                android:clickable="true"
+                android:focusable="true">
 
-                <LinearLayout
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:orientation="horizontal"
-                    android:padding="16dp">
+                <FrameLayout
+                    android:layout_width="48dp"
+                    android:layout_height="48dp"
+                    android:layout_marginEnd="12dp"
+                    android:background="@drawable/settings_icon_bg">
 
                     <ImageView
-                        android:layout_width="24dp"
-                        android:layout_height="24dp"
-                        android:src="@drawable/ic_shield"
-                        app:tint="@color/primary_blue"
-                        android:layout_marginEnd="12dp"
-                        android:contentDescription="Info" />
+                        android:layout_width="34dp"
+                        android:layout_height="34dp"
+                        android:layout_gravity="center"
+                        android:src="@drawable/ic_solana"
+                        android:contentDescription="Solana" />
+
+                </FrameLayout>
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:orientation="vertical">
 
                     <TextView
-                        android:layout_width="0dp"
+                        android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:text="Make sure to securely backup your wallet's seed phrase after creation. You can export it from wallet settings."
-                        android:textSize="13sp"
+                        android:text="Solana"
+                        android:textSize="16sp"
                         android:textColor="@color/text_white"
-                        android:lineSpacingExtra="2dp" />
+                        android:fontFamily="@font/poppins_semibold" />
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="SOL blockchain wallet"
+                        android:textSize="12sp"
+                        android:textColor="#888888"
+                        android:fontFamily="@font/poppins_regular" />
 
                 </LinearLayout>
 
-            </androidx.cardview.widget.CardView>
+                <View
+                    android:id="@+id/solanaCheckbox"
+                    android:layout_width="20dp"
+                    android:layout_height="20dp"
+                    android:background="@drawable/custom_checkbox" />
 
-            <!-- Create Button -->
-            <TextView
-                android:id="@+id/createWalletButton"
+            </LinearLayout>
+
+            <!-- Zcash Option -->
+            <LinearLayout
+                android:id="@+id/zcashOption"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:background="@drawable/settings_box_bg"
+                android:padding="16dp"
+                android:layout_marginBottom="32dp"
+                android:gravity="center_vertical"
+                android:clickable="true"
+                android:focusable="true">
+
+                <FrameLayout
+                    android:layout_width="48dp"
+                    android:layout_height="48dp"
+                    android:layout_marginEnd="12dp"
+                    android:background="@drawable/settings_icon_bg">
+
+                    <ImageView
+                        android:layout_width="34dp"
+                        android:layout_height="34dp"
+                        android:layout_gravity="center"
+                        android:src="@drawable/ic_zcash"
+                        android:contentDescription="Zcash" />
+
+                </FrameLayout>
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:orientation="vertical">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Zcash"
+                        android:textSize="16sp"
+                        android:textColor="@color/text_white"
+                        android:fontFamily="@font/poppins_semibold" />
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="ZEC blockchain wallet"
+                        android:textSize="12sp"
+                        android:textColor="#888888"
+                        android:fontFamily="@font/poppins_regular" />
+
+                </LinearLayout>
+
+                <View
+                    android:id="@+id/zcashCheckbox"
+                    android:layout_width="20dp"
+                    android:layout_height="20dp"
+                    android:background="@drawable/custom_checkbox" />
+
+            </LinearLayout>
+
+            <!-- Create Button -->
+            <androidx.appcompat.widget.AppCompatButton
+                android:id="@+id/createWalletButton"
+                android:layout_width="match_parent"
+                android:layout_height="56dp"
                 android:text="Create Wallet"
                 android:textSize="16sp"
-                android:textStyle="bold"
                 android:textColor="@color/text_white"
-                android:background="@drawable/metallic_button_bg"
-                android:gravity="center"
-                android:padding="16dp"
+                android:fontFamily="@font/poppins_semibold"
+                android:textAllCaps="false"
+                android:background="@drawable/swap_button_bg"
                 android:clickable="true"
-                android:focusable="true"
-                android:elevation="6dp" />
+                android:focusable="true" />
 
         </LinearLayout>
 

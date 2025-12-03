@@ -1488,9 +1488,8 @@ class TorService : Service() {
                 return
             }
 
-            // Known contact - this is a regular message (but routed incorrectly!)
-            Log.w(TAG, "⚠️  Message from known contact ${contact.displayName} came through FRIEND_REQUEST channel!")
-            Log.w(TAG, "    This should only happen for friend requests from unknown contacts or acceptance notifications")
+            // Known contact - this is a regular message
+            // Note: All message types (TEXT, VOICE, FRIEND_REQUEST, etc.) come through the same listener channel
             val encryptedMessage = encryptedPayload
 
             Log.i(TAG, "Processing message from: ${contact.displayName}")
@@ -1725,6 +1724,38 @@ class TorService : Service() {
             val friendRequest = com.securelegion.models.FriendRequest.fromJson(friendRequestJson)
             Log.i(TAG, "Friend request from: ${friendRequest.displayName}")
             Log.i(TAG, "  IPFS CID: ${friendRequest.ipfsCid}")
+
+            // Check if we already have this person in our contacts (by X25519 public key)
+            val dbPassphrase = keyManager.getDatabasePassphrase()
+            val database = com.securelegion.database.SecureLegionDatabase.getInstance(this, dbPassphrase)
+            val senderX25519Base64 = android.util.Base64.encodeToString(senderX25519PublicKey, android.util.Base64.NO_WRAP)
+            val existingContact = kotlinx.coroutines.runBlocking {
+                database.contactDao().getContactByX25519PublicKey(senderX25519Base64)
+            }
+
+            if (existingContact != null && existingContact.friendshipStatus == com.securelegion.database.entities.Contact.FRIENDSHIP_CONFIRMED) {
+                Log.i(TAG, "✓ Already have ${friendRequest.displayName} as a confirmed friend")
+                Log.i(TAG, "→ This is a status check - sending FRIEND_REQUEST_ACCEPTED back")
+
+                // They're checking if we accepted - send acceptance back
+                try {
+                    // Get their contact card to send acceptance
+                    val contactCard = com.securelegion.models.ContactCard(
+                        displayName = existingContact.displayName,
+                        solanaPublicKey = android.util.Base64.decode(existingContact.publicKeyBase64, android.util.Base64.NO_WRAP),
+                        x25519PublicKey = android.util.Base64.decode(existingContact.x25519PublicKeyBase64, android.util.Base64.NO_WRAP),
+                        solanaAddress = existingContact.solanaAddress,
+                        torOnionAddress = existingContact.torOnionAddress,
+                        timestamp = existingContact.addedTimestamp
+                    )
+
+                    // Send acceptance notification back
+                    sendFriendRequestAcceptedResponse(contactCard)
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to send acceptance response", e)
+                }
+                return // Don't store as pending request
+            }
 
             // Store in SharedPreferences as pending friend request (v2 format with direction)
             val prefs = getSharedPreferences("friend_requests", MODE_PRIVATE)
@@ -1988,6 +2019,55 @@ class TorService : Service() {
             Log.i(TAG, "Friend request notification shown for $senderName (ID: $friendRequestNotificationId)")
         } catch (e: Exception) {
             Log.e(TAG, "Failed to show friend request notification", e)
+        }
+    }
+
+    /**
+     * Send friend request accepted response
+     * Used when someone resends a friend request and we already have them confirmed
+     */
+    private fun sendFriendRequestAcceptedResponse(recipientContactCard: com.securelegion.models.ContactCard) {
+        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+            try {
+                Log.d(TAG, "Sending FRIEND_REQUEST_ACCEPTED response to ${recipientContactCard.displayName}")
+
+                // Get own account information
+                val keyManager = com.securelegion.crypto.KeyManager.getInstance(this@TorService)
+                val ownDisplayName = keyManager.getUsername()
+                    ?: throw Exception("Username not set")
+                val ownCid = keyManager.getContactCardCid()
+                    ?: throw Exception("Contact card CID not found")
+
+                // Create acceptance notification
+                val acceptance = com.securelegion.models.FriendRequest(
+                    displayName = ownDisplayName,
+                    ipfsCid = ownCid
+                )
+
+                // Serialize to JSON
+                val acceptanceJson = acceptance.toJson()
+
+                // Encrypt the acceptance using recipient's X25519 public key
+                val encryptedAcceptance = com.securelegion.crypto.RustBridge.encryptMessage(
+                    plaintext = acceptanceJson,
+                    recipientX25519PublicKey = recipientContactCard.x25519PublicKey
+                )
+
+                // Send via Tor
+                val success = com.securelegion.crypto.RustBridge.sendFriendRequestAccepted(
+                    recipientOnion = recipientContactCard.torOnionAddress,
+                    encryptedAcceptance = encryptedAcceptance
+                )
+
+                if (success) {
+                    Log.i(TAG, "✓ Sent FRIEND_REQUEST_ACCEPTED response to ${recipientContactCard.displayName}")
+                } else {
+                    Log.w(TAG, "Failed to send acceptance response (recipient may be offline)")
+                }
+
+            } catch (e: Exception) {
+                Log.e(TAG, "Error sending friend request accepted response", e)
+            }
         }
     }
 
@@ -2829,6 +2909,12 @@ class TorService : Service() {
 
                 // Test SOCKS connectivity even when connected
                 testSocksConnectivity()
+
+                // Ensure incoming listener is running when connected
+                if (!isListenerRunning) {
+                    Log.w(TAG, "Health check: Listener not running but Tor is connected - restarting listener")
+                    startIncomingListener()
+                }
             } else if (!hasNetworkConnection) {
                 Log.d(TAG, "Health check: No network connection available")
                 torConnected = false

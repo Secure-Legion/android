@@ -1,14 +1,20 @@
 package com.securelegion
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import android.os.Bundle
 import android.util.Log
 import android.view.View
 import android.widget.EditText
+import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
+import com.google.android.material.bottomsheet.BottomSheetDialog
 import com.securelegion.crypto.KeyManager
 import com.securelegion.database.SecureLegionDatabase
 import com.securelegion.database.entities.Wallet
+import com.securelegion.utils.ThemedToast
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -16,15 +22,26 @@ import kotlinx.coroutines.withContext
 class CreateWalletActivity : AppCompatActivity() {
 
     private lateinit var walletNameInput: EditText
+    private lateinit var solanaOption: View
+    private lateinit var zcashOption: View
+    private lateinit var solanaCheckbox: View
+    private lateinit var zcashCheckbox: View
+
+    private var selectedWalletType = "SOLANA" // Default to Solana
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_create_wallet)
 
         walletNameInput = findViewById(R.id.walletNameInput)
+        solanaOption = findViewById(R.id.solanaOption)
+        zcashOption = findViewById(R.id.zcashOption)
+        solanaCheckbox = findViewById(R.id.solanaCheckbox)
+        zcashCheckbox = findViewById(R.id.zcashCheckbox)
 
         setupClickListeners()
         setDefaultWalletName()
+        updateWalletTypeSelection()
     }
 
     private fun setDefaultWalletName() {
@@ -51,13 +68,36 @@ class CreateWalletActivity : AppCompatActivity() {
             finish()
         }
 
+        // Solana option
+        solanaOption.setOnClickListener {
+            selectedWalletType = "SOLANA"
+            updateWalletTypeSelection()
+        }
+
+        // Zcash option
+        zcashOption.setOnClickListener {
+            selectedWalletType = "ZCASH"
+            updateWalletTypeSelection()
+        }
+
         // Create button
         findViewById<View>(R.id.createWalletButton).setOnClickListener {
             val walletName = walletNameInput.text.toString().trim()
             if (walletName.isEmpty()) {
+                ThemedToast.show(this, "Please enter a wallet name")
                 return@setOnClickListener
             }
             createNewWallet(walletName)
+        }
+    }
+
+    private fun updateWalletTypeSelection() {
+        if (selectedWalletType == "SOLANA") {
+            solanaCheckbox.isSelected = true
+            zcashCheckbox.isSelected = false
+        } else {
+            solanaCheckbox.isSelected = false
+            zcashCheckbox.isSelected = true
         }
     }
 
@@ -68,17 +108,17 @@ class CreateWalletActivity : AppCompatActivity() {
 
         lifecycleScope.launch(Dispatchers.IO) {
             try {
-                Log.i("CreateWallet", "Creating new wallet: $walletName")
+                Log.i("CreateWallet", "Creating new $selectedWalletType wallet: $walletName")
 
                 val keyManager = KeyManager.getInstance(this@CreateWalletActivity)
-                val (walletId, solanaAddress) = keyManager.generateNewWallet()
+                val (walletId, address) = keyManager.generateNewWallet()
 
                 // Create wallet entity
                 val timestamp = System.currentTimeMillis()
                 val wallet = Wallet(
                     walletId = walletId,
                     name = walletName,
-                    solanaAddress = solanaAddress,
+                    solanaAddress = if (selectedWalletType == "SOLANA") address else "",
                     isMainWallet = false,
                     createdAt = timestamp,
                     lastUsedAt = timestamp
@@ -89,19 +129,66 @@ class CreateWalletActivity : AppCompatActivity() {
                 val database = SecureLegionDatabase.getInstance(this@CreateWalletActivity, dbPassphrase)
                 database.walletDao().insertWallet(wallet)
 
+                // Get private key
+                val privateKeyBytes = keyManager.getWalletPrivateKey(walletId)
+                val privateKey = privateKeyBytes?.let { android.util.Base64.encodeToString(it, android.util.Base64.NO_WRAP) }
+
                 withContext(Dispatchers.Main) {
                     Log.i("CreateWallet", "Wallet created successfully: $walletId")
-
-                    // Navigate back to wallet settings
-                    finish()
+                    createButton.isEnabled = true
+                    showWalletCreatedBottomSheet(walletName, address, privateKey)
                 }
 
             } catch (e: Exception) {
                 Log.e("CreateWallet", "Failed to create wallet", e)
                 withContext(Dispatchers.Main) {
                     createButton.isEnabled = true
+                    ThemedToast.show(this@CreateWalletActivity, "Failed to create wallet: ${e.message}")
                 }
             }
         }
+    }
+
+    private fun showWalletCreatedBottomSheet(walletName: String, address: String, privateKey: String?) {
+        val bottomSheet = BottomSheetDialog(this)
+        val view = layoutInflater.inflate(R.layout.bottom_sheet_wallet_created, null)
+
+        // Set wallet details
+        view.findViewById<TextView>(R.id.walletNameText).text = walletName
+
+        val addressShort = if (address.length > 15) {
+            "${address.take(5)}.....${address.takeLast(6)}"
+        } else {
+            address
+        }
+        view.findViewById<TextView>(R.id.walletAddressText).text = addressShort
+
+        // Copy address button
+        view.findViewById<View>(R.id.copyAddressButton).setOnClickListener {
+            val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+            val clip = ClipData.newPlainText("Wallet Address", address)
+            clipboard.setPrimaryClip(clip)
+            ThemedToast.show(this, "Address copied to clipboard")
+        }
+
+        // View private key button
+        view.findViewById<View>(R.id.viewPrivateKeyButton).setOnClickListener {
+            if (privateKey != null) {
+                ThemedToast.show(this, "Private key viewing not yet implemented")
+                // TODO: Show private key in a secure dialog
+            } else {
+                ThemedToast.show(this, "Private key not available")
+            }
+        }
+
+        // Done button
+        view.findViewById<View>(R.id.doneButton).setOnClickListener {
+            bottomSheet.dismiss()
+            finish()
+        }
+
+        bottomSheet.setContentView(view)
+        bottomSheet.setCancelable(false)
+        bottomSheet.show()
     }
 }
