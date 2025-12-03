@@ -106,7 +106,7 @@
                     android:fontFamily="@font/poppins_medium"
                     android:padding="16dp"
                     android:checked="true"
-                    android:buttonTint="#4A90E2" />
+                    android:buttonTint="#FFFFFF" />
 
                 <TextView
                     android:layout_width="match_parent"
@@ -129,7 +129,7 @@
                     android:textColor="#FFFFFF"
                     android:fontFamily="@font/poppins_medium"
                     android:padding="16dp"
-                    android:buttonTint="#4A90E2" />
+                    android:buttonTint="#FFFFFF" />
 
                 <TextView
                     android:layout_width="match_parent"
@@ -152,7 +152,7 @@
                     android:textColor="#FFFFFF"
                     android:fontFamily="@font/poppins_medium"
                     android:padding="16dp"
-                    android:buttonTint="#4A90E2" />
+                    android:buttonTint="#FFFFFF" />
 
                 <TextView
                     android:layout_width="match_parent"
@@ -175,7 +175,7 @@
                     android:textColor="#FFFFFF"
                     android:fontFamily="@font/poppins_medium"
                     android:padding="16dp"
-                    android:buttonTint="#4A90E2" />
+                    android:buttonTint="#FFFFFF" />
 
                 <TextView
                     android:layout_width="match_parent"
@@ -198,7 +198,7 @@
                     android:textColor="#FFFFFF"
                     android:fontFamily="@font/poppins_medium"
                     android:padding="16dp"
-                    android:buttonTint="#4A90E2" />
+                    android:buttonTint="#FFFFFF" />
 
                 <TextView
                     android:layout_width="match_parent"
@@ -242,7 +242,7 @@
         android:layout_marginStart="24dp"
         android:layout_marginEnd="24dp"
         android:layout_marginBottom="32dp"
-        android:background="@drawable/neon_blue_button_bg"
+        android:background="@drawable/settings_box_bg"
         android:clickable="true"
         android:focusable="true"
         app:layout_constraintBottom_toTopOf="@id/bottomNav"
