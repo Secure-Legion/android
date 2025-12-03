@@ -167,6 +167,7 @@ pub const MSG_TYPE_TAP: u8 = 0x05;
 pub const MSG_TYPE_DELIVERY_CONFIRMATION: u8 = 0x06;
 pub const MSG_TYPE_FRIEND_REQUEST: u8 = 0x07;
 pub const MSG_TYPE_FRIEND_REQUEST_ACCEPTED: u8 = 0x08;
+pub const MSG_TYPE_IMAGE: u8 = 0x09;
 
 /// Structure representing a pending connection waiting for Pong response
 pub struct PendingConnection {
@@ -710,9 +711,14 @@ impl TorManager {
                 // Send directly to whichever channel is listening
                 tx.send((conn_id, data)).ok();
             }
-            MSG_TYPE_TEXT | MSG_TYPE_VOICE => {
+            MSG_TYPE_TEXT | MSG_TYPE_VOICE | MSG_TYPE_IMAGE => {
                 log::info!("→ Routing to MESSAGE handler (type={})",
-                    if msg_type == MSG_TYPE_TEXT { "TEXT" } else { "VOICE" });
+                    match msg_type {
+                        MSG_TYPE_TEXT => "TEXT",
+                        MSG_TYPE_VOICE => "VOICE",
+                        MSG_TYPE_IMAGE => "IMAGE",
+                        _ => "UNKNOWN"
+                    });
 
                 // Messages might need connection stored for delivery confirmation
                 {
