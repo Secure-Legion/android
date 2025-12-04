@@ -359,8 +359,23 @@ class ChatActivity : BaseActivity() {
             },
             onImageClick = { imageBase64 ->
                 showFullImage(imageBase64)
+            },
+            onPaymentRequestClick = { message ->
+                // User clicked "Pay" on a payment request
+                handlePaymentRequestClick(message)
+            },
+            onPaymentDetailsClick = { message ->
+                // User clicked to view payment details
+                handlePaymentDetailsClick(message)
+            },
+            onPriceRefreshClick = { message, usdView, cryptoView ->
+                // Refresh price when crypto amount is clicked
+                refreshPaymentPrice(message, usdView, cryptoView)
             }
         )
+
+        // Fetch initial prices
+        fetchCryptoPrices()
 
         messagesRecyclerView.apply {
             layoutManager = LinearLayoutManager(this@ChatActivity)
@@ -509,6 +524,7 @@ class ChatActivity : BaseActivity() {
             val intent = Intent(this, SendMoneyActivity::class.java).apply {
                 putExtra(SendMoneyActivity.EXTRA_RECIPIENT_NAME, contactName)
                 putExtra(SendMoneyActivity.EXTRA_RECIPIENT_ADDRESS, contactAddress)
+                putExtra(SendMoneyActivity.EXTRA_CONTACT_ID, contactId)
             }
             startActivity(intent)
         }
@@ -519,6 +535,7 @@ class ChatActivity : BaseActivity() {
             val intent = Intent(this, RequestMoneyActivity::class.java).apply {
                 putExtra(RequestMoneyActivity.EXTRA_RECIPIENT_NAME, contactName)
                 putExtra(RequestMoneyActivity.EXTRA_RECIPIENT_ADDRESS, contactAddress)
+                putExtra(RequestMoneyActivity.EXTRA_CONTACT_ID, contactId)
             }
             startActivity(intent)
         }
@@ -804,30 +821,61 @@ class ChatActivity : BaseActivity() {
         }
 
         try {
-            // Create full-screen dialog to show image
-            val dialog = android.app.Dialog(this, android.R.style.Theme_Black_NoTitleBar_Fullscreen)
-            val imageView = ImageView(this)
-            imageView.layoutParams = ViewGroup.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT
-            )
-
-            // Decode and display image
+            // Decode image
             val imageBytes = Base64.decode(imageBase64, Base64.DEFAULT)
             val bitmap = android.graphics.BitmapFactory.decodeByteArray(imageBytes, 0, imageBytes.size)
-            imageView.setImageBitmap(bitmap)
-            imageView.scaleType = ImageView.ScaleType.FIT_CENTER
 
-            // Click to dismiss
-            imageView.setOnClickListener {
+            // Create full-screen dialog to show image
+            val dialog = android.app.Dialog(this, android.R.style.Theme_Black_NoTitleBar_Fullscreen)
+            val view = layoutInflater.inflate(R.layout.dialog_full_image, null)
+
+            // Set the image
+            val imageView = view.findViewById<ImageView>(R.id.fullImageView)
+            imageView.setImageBitmap(bitmap)
+
+            // Close button
+            view.findViewById<View>(R.id.closeButton).setOnClickListener {
                 dialog.dismiss()
             }
 
-            dialog.setContentView(imageView)
+            // Save button
+            view.findViewById<View>(R.id.saveImageButton).setOnClickListener {
+                saveImageToGallery(bitmap)
+            }
+
+            dialog.setContentView(view)
             dialog.show()
         } catch (e: Exception) {
             Log.e(TAG, "Failed to show full image", e)
             ThemedToast.show(this, "Failed to open image")
+        }
+    }
+
+    private fun saveImageToGallery(bitmap: android.graphics.Bitmap) {
+        try {
+            val filename = "SecureLegion_${System.currentTimeMillis()}.jpg"
+            val contentValues = android.content.ContentValues().apply {
+                put(android.provider.MediaStore.Images.Media.DISPLAY_NAME, filename)
+                put(android.provider.MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
+                put(android.provider.MediaStore.Images.Media.RELATIVE_PATH, android.os.Environment.DIRECTORY_PICTURES + "/SecureLegion")
+            }
+
+            val resolver = contentResolver
+            val imageUri = resolver.insert(android.provider.MediaStore.Images.Media.EXTERNAL_CONTENT_URI, contentValues)
+
+            if (imageUri != null) {
+                resolver.openOutputStream(imageUri)?.use { outputStream ->
+                    bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 95, outputStream)
+                }
+                ThemedToast.show(this, "Image saved to gallery")
+                Log.i(TAG, "Image saved to gallery: $filename")
+            } else {
+                ThemedToast.show(this, "Failed to save image")
+                Log.e(TAG, "Failed to create MediaStore entry")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to save image to gallery", e)
+            ThemedToast.show(this, "Failed to save image: ${e.message}")
         }
     }
 
@@ -1365,6 +1413,211 @@ class ChatActivity : BaseActivity() {
             }
             .setNegativeButton("Cancel", null)
             .show()
+    }
+
+    // ==================== PAYMENT HANDLERS ====================
+
+    /**
+     * Handle click on "Pay" or "Accept" button for a received payment request
+     *
+     * Two flows:
+     * 1. Request Money: They put their wallet as recipient → I pay to their wallet → SendMoneyActivity
+     * 2. Send Money: Recipient is empty → They want to send to me → AcceptPaymentActivity
+     */
+    private fun handlePaymentRequestClick(message: Message) {
+        Log.d(TAG, "Payment request clicked: ${message.messageId}")
+
+        // Extract quote JSON and parse it
+        val quoteJson = message.paymentQuoteJson
+        if (quoteJson == null) {
+            ThemedToast.show(this, "Invalid payment request")
+            return
+        }
+
+        // Parse quote to check if this is a "Request Money" or "Send Money" offer
+        val quote = com.securelegion.crypto.NLx402Manager.PaymentQuote.fromJson(quoteJson)
+        if (quote == null) {
+            ThemedToast.show(this, "Failed to parse payment request")
+            return
+        }
+
+        // Check recipient field to determine flow type
+        if (quote.recipient.isNullOrEmpty()) {
+            // Empty recipient = "Send Money" offer → They want to send me money
+            // Open AcceptPaymentActivity so I can provide my wallet address
+            Log.d(TAG, "Send Money offer detected - opening AcceptPaymentActivity")
+            val intent = Intent(this, AcceptPaymentActivity::class.java).apply {
+                putExtra(AcceptPaymentActivity.EXTRA_SENDER_NAME, contactName)
+                putExtra(AcceptPaymentActivity.EXTRA_CONTACT_ID, contactId)
+                putExtra(AcceptPaymentActivity.EXTRA_PAYMENT_AMOUNT, message.paymentAmount ?: 0L)
+                putExtra(AcceptPaymentActivity.EXTRA_PAYMENT_TOKEN, message.paymentToken ?: "SOL")
+                putExtra(AcceptPaymentActivity.EXTRA_PAYMENT_QUOTE_JSON, quoteJson)
+                putExtra(AcceptPaymentActivity.EXTRA_MESSAGE_ID, message.messageId)
+                putExtra(AcceptPaymentActivity.EXTRA_EXPIRY_TIME, quote.expiresAt * 1000) // Convert to millis
+            }
+            startActivity(intent)
+        } else {
+            // Has recipient = "Request Money" → They're requesting money from me
+            // Open SendMoneyActivity to pay them
+            Log.d(TAG, "Request Money detected - opening SendMoneyActivity")
+            val intent = Intent(this, SendMoneyActivity::class.java).apply {
+                putExtra(SendMoneyActivity.EXTRA_RECIPIENT_NAME, contactName)
+                putExtra(SendMoneyActivity.EXTRA_RECIPIENT_ADDRESS, quote.recipient)
+                putExtra(SendMoneyActivity.EXTRA_CONTACT_ID, contactId.toLong())
+                putExtra(SendMoneyActivity.EXTRA_PAYMENT_QUOTE_JSON, quoteJson)
+                putExtra(SendMoneyActivity.EXTRA_PAYMENT_AMOUNT, message.paymentAmount ?: 0L)
+                putExtra(SendMoneyActivity.EXTRA_PAYMENT_TOKEN, message.paymentToken ?: "SOL")
+                putExtra(SendMoneyActivity.EXTRA_IS_PAYMENT_REQUEST, true)
+            }
+            startActivity(intent)
+        }
+    }
+
+    /**
+     * Handle click on a payment card to view details
+     * Opens TransferDetailsActivity or RequestDetailsActivity based on message type
+     */
+    private fun handlePaymentDetailsClick(message: Message) {
+        Log.d(TAG, "Payment details clicked: ${message.messageId}")
+
+        when (message.messageType) {
+            Message.MESSAGE_TYPE_PAYMENT_REQUEST -> {
+                // Show request details (I requested money)
+                val intent = Intent(this, RequestDetailsActivity::class.java).apply {
+                    putExtra(RequestDetailsActivity.EXTRA_RECIPIENT_NAME, contactName)
+                    putExtra(RequestDetailsActivity.EXTRA_QUOTE_JSON, message.paymentQuoteJson)
+                    putExtra(RequestDetailsActivity.EXTRA_AMOUNT, (message.paymentAmount ?: 0L).toDouble() / getTokenDivisor(message.paymentToken))
+                    putExtra(RequestDetailsActivity.EXTRA_CURRENCY, message.paymentToken ?: "SOL")
+                    putExtra(RequestDetailsActivity.EXTRA_TRANSACTION_NUMBER, message.messageId)
+                    putExtra(RequestDetailsActivity.EXTRA_TIME, formatTime(message.timestamp))
+                    putExtra(RequestDetailsActivity.EXTRA_DATE, formatDate(message.timestamp))
+                    putExtra(RequestDetailsActivity.EXTRA_PAYMENT_STATUS, message.paymentStatus ?: Message.PAYMENT_STATUS_PENDING)
+                }
+                startActivity(intent)
+            }
+            Message.MESSAGE_TYPE_PAYMENT_SENT -> {
+                // Show transfer details (I paid or they paid me)
+                val intent = Intent(this, TransferDetailsActivity::class.java).apply {
+                    putExtra(TransferDetailsActivity.EXTRA_RECIPIENT_NAME, contactName)
+                    putExtra(TransferDetailsActivity.EXTRA_AMOUNT, (message.paymentAmount ?: 0L).toDouble() / getTokenDivisor(message.paymentToken))
+                    putExtra(TransferDetailsActivity.EXTRA_CURRENCY, message.paymentToken ?: "SOL")
+                    putExtra(TransferDetailsActivity.EXTRA_TRANSACTION_NUMBER, message.txSignature ?: message.messageId)
+                    putExtra(TransferDetailsActivity.EXTRA_TIME, formatTime(message.timestamp))
+                    putExtra(TransferDetailsActivity.EXTRA_DATE, formatDate(message.timestamp))
+                    putExtra(TransferDetailsActivity.EXTRA_IS_OUTGOING, message.isSentByMe)
+                }
+                startActivity(intent)
+            }
+        }
+    }
+
+    private fun getTokenDivisor(token: String?): Double {
+        return when (token?.uppercase()) {
+            "SOL" -> 1_000_000_000.0  // 9 decimals
+            "ZEC" -> 100_000_000.0    // 8 decimals
+            "USDC", "USDT" -> 1_000_000.0  // 6 decimals
+            else -> 1_000_000_000.0   // Default to SOL
+        }
+    }
+
+    private fun formatTime(timestamp: Long): String {
+        val sdf = SimpleDateFormat("hh:mm a", Locale.getDefault())
+        return sdf.format(Date(timestamp))
+    }
+
+    private fun formatDate(timestamp: Long): String {
+        val sdf = SimpleDateFormat("dd MMM, yyyy", Locale.getDefault())
+        return sdf.format(Date(timestamp))
+    }
+
+    /**
+     * Fetch live crypto prices and cache them in the adapter
+     */
+    private fun fetchCryptoPrices() {
+        lifecycleScope.launch {
+            try {
+                val solanaService = com.securelegion.services.SolanaService(this@ChatActivity)
+                val zcashService = com.securelegion.services.ZcashService.getInstance(this@ChatActivity)
+
+                // Fetch SOL price
+                val solResult = solanaService.getSolPrice()
+                if (solResult.isSuccess) {
+                    MessageAdapter.cachedSolPrice = solResult.getOrNull() ?: 0.0
+                    Log.d(TAG, "Cached SOL price: ${MessageAdapter.cachedSolPrice}")
+                }
+
+                // Fetch ZEC price
+                val zecResult = zcashService.getZecPrice()
+                if (zecResult.isSuccess) {
+                    MessageAdapter.cachedZecPrice = zecResult.getOrNull() ?: 0.0
+                    Log.d(TAG, "Cached ZEC price: ${MessageAdapter.cachedZecPrice}")
+                }
+
+                // Refresh adapter to show updated prices
+                withContext(Dispatchers.Main) {
+                    messageAdapter.notifyDataSetChanged()
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to fetch crypto prices", e)
+            }
+        }
+    }
+
+    /**
+     * Refresh price for a specific payment card when clicked
+     */
+    private fun refreshPaymentPrice(message: Message, usdView: TextView, cryptoView: TextView) {
+        val token = message.paymentToken ?: "SOL"
+
+        lifecycleScope.launch {
+            try {
+                ThemedToast.show(this@ChatActivity, "Refreshing price...")
+
+                val price = when (token.uppercase()) {
+                    "SOL" -> {
+                        val solanaService = com.securelegion.services.SolanaService(this@ChatActivity)
+                        val result = solanaService.getSolPrice()
+                        if (result.isSuccess) {
+                            MessageAdapter.cachedSolPrice = result.getOrNull() ?: 0.0
+                            MessageAdapter.cachedSolPrice
+                        } else 0.0
+                    }
+                    "ZEC" -> {
+                        val zcashService = com.securelegion.services.ZcashService.getInstance(this@ChatActivity)
+                        val result = zcashService.getZecPrice()
+                        if (result.isSuccess) {
+                            MessageAdapter.cachedZecPrice = result.getOrNull() ?: 0.0
+                            MessageAdapter.cachedZecPrice
+                        } else 0.0
+                    }
+                    else -> 0.0
+                }
+
+                if (price > 0) {
+                    // Calculate and update USD amount
+                    val amount = message.paymentAmount ?: 0L
+                    val decimals = when (token.uppercase()) {
+                        "SOL" -> 9
+                        "ZEC" -> 8
+                        "USDC", "USDT" -> 6
+                        else -> 9
+                    }
+                    val divisor = java.math.BigDecimal.TEN.pow(decimals)
+                    val cryptoAmount = java.math.BigDecimal(amount).divide(divisor).toDouble()
+                    val usdValue = cryptoAmount * price
+
+                    withContext(Dispatchers.Main) {
+                        usdView.text = String.format("$%.2f", usdValue)
+                        ThemedToast.show(this@ChatActivity, "Price updated")
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to refresh price", e)
+                withContext(Dispatchers.Main) {
+                    ThemedToast.show(this@ChatActivity, "Failed to refresh price")
+                }
+            }
+        }
     }
 
 }

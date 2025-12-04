@@ -21,6 +21,9 @@ class TransferDetailsActivity : AppCompatActivity() {
         const val EXTRA_EXPIRY_DATETIME = "EXPIRY_DATETIME"
         const val EXTRA_TIME = "TIME"
         const val EXTRA_DATE = "DATE"
+        const val EXTRA_TX_SIGNATURE = "TX_SIGNATURE"
+        const val EXTRA_SUCCESS = "SUCCESS"
+        const val EXTRA_IS_OUTGOING = "IS_OUTGOING"
     }
 
     private lateinit var backButton: View
@@ -96,40 +99,69 @@ class TransferDetailsActivity : AppCompatActivity() {
     private fun loadTransferDetails() {
         val name = intent.getStringExtra(EXTRA_RECIPIENT_NAME) ?: "User"
         val amount = intent.getDoubleExtra(EXTRA_AMOUNT, 0.0)
-        val currency = intent.getStringExtra(EXTRA_CURRENCY) ?: "USD"
+        val currency = intent.getStringExtra(EXTRA_CURRENCY) ?: "SOL"
+        val txSignature = intent.getStringExtra(EXTRA_TX_SIGNATURE)
+        val isSuccess = intent.getBooleanExtra(EXTRA_SUCCESS, false)
 
         recipientName.text = name
+
+        // Display amount based on currency
         amountSent.text = if (currency == "USD") {
             "$${String.format("%.2f", amount).replace(Regex("(\\d)(?=(\\d{3})+\\.)"),"$1,")}"
         } else {
-            String.format("%.4f", amount)
+            "${String.format("%.6f", amount)} SOL"
         }
 
-        fromWalletName.text = intent.getStringExtra(EXTRA_FROM_WALLET) ?: "Wallet 1"
-        fromAddress.text = intent.getStringExtra(EXTRA_FROM_ADDRESS) ?: "Unknown"
-        toWalletName.text = intent.getStringExtra(EXTRA_TO_WALLET) ?: "Wallet 1"
-        toAddress.text = intent.getStringExtra(EXTRA_TO_ADDRESS) ?: "Unknown"
+        fromWalletName.text = intent.getStringExtra(EXTRA_FROM_WALLET) ?: "Main Wallet"
 
-        // Calculate SOL amount (placeholder conversion)
-        val solAmount = amount / 125.0  // Example: $1,250 / $125 per SOL = 10 SOL
-        sentSol.text = String.format("%.2f", solAmount)
+        // Format addresses for display
+        val fromAddr = intent.getStringExtra(EXTRA_FROM_ADDRESS) ?: "Unknown"
+        fromAddress.text = formatAddressForDisplay(fromAddr)
 
-        moneySent.text = "$${String.format("%.2f", amount).replace(Regex("(\\d)(?=(\\d{3})+\\.)"),"$1,")}"
+        toWalletName.text = intent.getStringExtra(EXTRA_TO_WALLET) ?: "Recipient"
+        val toAddr = intent.getStringExtra(EXTRA_TO_ADDRESS) ?: "Unknown"
+        toAddress.text = formatAddressForDisplay(toAddr)
+
+        // Show actual SOL amount
+        sentSol.text = String.format("%.6f", amount)
+        moneySent.text = "${String.format("%.6f", amount)} SOL"
+
         expiryDateTime.text = intent.getStringExtra(EXTRA_EXPIRY_DATETIME) ?: ""
-        transactionNumber.text = intent.getStringExtra(EXTRA_TRANSACTION_NUMBER) ?: ""
-        applicationsFee.text = "$00.00"
+
+        // Show transaction signature or quote ID
+        transactionNumber.text = if (txSignature != null) {
+            formatAddressForDisplay(txSignature)
+        } else {
+            intent.getStringExtra(EXTRA_TRANSACTION_NUMBER) ?: ""
+        }
+
+        applicationsFee.text = "~0.000005 SOL"
         transactionTime.text = intent.getStringExtra(EXTRA_TIME) ?: ""
         transactionDate.text = intent.getStringExtra(EXTRA_DATE) ?: ""
     }
 
-    private fun shareTransferDetails() {
-        val details = """
-            Transfer Details
+    private fun formatAddressForDisplay(address: String): String {
+        return if (address.length > 16) {
+            "${address.take(8)}...${address.takeLast(8)}"
+        } else {
+            address
+        }
+    }
 
-            Recipient: ${recipientName.text}
+    private fun shareTransferDetails() {
+        val txSignature = intent.getStringExtra(EXTRA_TX_SIGNATURE)
+        val explorerUrl = if (txSignature != null) {
+            "\nView on Solscan: https://solscan.io/tx/$txSignature"
+        } else ""
+
+        val details = """
+            Secure Legion Transfer
+
+            To: ${recipientName.text}
             Amount: ${amountSent.text}
             Transaction: ${transactionNumber.text}
             Date: ${transactionDate.text} ${transactionTime.text}
+            $explorerUrl
         """.trimIndent()
 
         val shareIntent = Intent(Intent.ACTION_SEND).apply {

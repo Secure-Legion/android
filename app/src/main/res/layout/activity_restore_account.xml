@@ -223,6 +223,68 @@
             app:layout_constraintStart_toStartOf="parent"
             app:layout_constraintEnd_toEndOf="parent" />
 
+        <!-- Zcash Wallet Birthday Heading -->
+        <TextView
+            android:id="@+id/zcashBirthdayHeading"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="32dp"
+            android:layout_marginTop="24dp"
+            android:text="Zcash Wallet Birthday (Optional)"
+            android:fontFamily="@font/space_grotesk_bold"
+            android:textSize="16sp"
+            android:textColor="#999999"
+            app:layout_constraintTop_toBottomOf="@id/passwordHelperText"
+            app:layout_constraintStart_toStartOf="parent" />
+
+        <!-- Zcash Birthday Input -->
+        <androidx.constraintlayout.widget.ConstraintLayout
+            android:id="@+id/zcashBirthdayContainer"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="32dp"
+            android:layout_marginEnd="32dp"
+            android:layout_marginTop="12dp"
+            android:background="@drawable/lock_password_input_bg"
+            android:padding="16dp"
+            app:layout_constraintTop_toBottomOf="@id/zcashBirthdayHeading"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintEnd_toEndOf="parent">
+
+            <EditText
+                android:id="@+id/zcashBirthdayInput"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:hint="Block height (e.g. 2000000)"
+                android:inputType="number"
+                android:textColorHint="#666666"
+                android:textColor="#FFFFFF"
+                android:fontFamily="@font/poppins_medium"
+                android:textSize="16sp"
+                android:background="@android:color/transparent"
+                app:layout_constraintTop_toTopOf="parent"
+                app:layout_constraintBottom_toBottomOf="parent"
+                app:layout_constraintStart_toStartOf="parent"
+                app:layout_constraintEnd_toEndOf="parent" />
+
+        </androidx.constraintlayout.widget.ConstraintLayout>
+
+        <!-- Zcash Birthday Helper Text -->
+        <TextView
+            android:id="@+id/zcashBirthdayHelperText"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="32dp"
+            android:layout_marginEnd="32dp"
+            android:layout_marginTop="8dp"
+            android:text="Enter the block height when your wallet was created to find old transactions. Leave blank for a new wallet."
+            android:fontFamily="@font/poppins_regular"
+            android:textSize="12sp"
+            android:textColor="#5C5C5C"
+            app:layout_constraintTop_toBottomOf="@id/zcashBirthdayContainer"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintEnd_toEndOf="parent" />
+
         <!-- Import Button -->
         <TextView
             android:id="@+id/importButton"
@@ -239,7 +301,7 @@
             android:gravity="center"
             android:clickable="true"
             android:focusable="true"
-            app:layout_constraintTop_toBottomOf="@id/passwordHelperText"
+            app:layout_constraintTop_toBottomOf="@id/zcashBirthdayHelperText"
             app:layout_constraintStart_toStartOf="parent"
             app:layout_constraintEnd_toEndOf="parent" />
 

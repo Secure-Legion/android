@@ -6,16 +6,6 @@
     android:background="@drawable/bottom_sheet_bg"
     android:padding="24dp">
 
-    <!-- Success Icon -->
-    <ImageView
-        android:layout_width="64dp"
-        android:layout_height="64dp"
-        android:src="@drawable/ic_check"
-        android:tint="#4CAF50"
-        android:layout_gravity="center_horizontal"
-        android:layout_marginBottom="16dp"
-        android:contentDescription="Success" />
-
     <!-- Title -->
     <TextView
         android:layout_width="wrap_content"
@@ -110,18 +100,9 @@
         android:padding="12dp"
         android:layout_marginBottom="16dp">
 
-        <ImageView
-            android:layout_width="20dp"
-            android:layout_height="20dp"
-            android:src="@drawable/ic_shield"
-            android:tint="#FFA726"
-            android:layout_marginEnd="8dp"
-            android:contentDescription="Warning" />
-
         <TextView
-            android:layout_width="0dp"
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_weight="1"
             android:text="Make sure to backup your private key securely. You can view it anytime from wallet settings."
             android:textSize="12sp"
             android:textColor="#888888"
@@ -129,19 +110,6 @@
             android:lineSpacingExtra="2dp" />
 
     </LinearLayout>
-
-    <!-- View Private Key Button -->
-    <androidx.appcompat.widget.AppCompatButton
-        android:id="@+id/viewPrivateKeyButton"
-        android:layout_width="match_parent"
-        android:layout_height="48dp"
-        android:text="View Private Key"
-        android:textSize="14sp"
-        android:textColor="@color/text_white"
-        android:fontFamily="@font/poppins_semibold"
-        android:textAllCaps="false"
-        android:background="@drawable/swap_button_bg"
-        android:layout_marginBottom="12dp" />
 
     <!-- Done Button -->
     <androidx.appcompat.widget.AppCompatButton
@@ -153,6 +121,6 @@
         android:textColor="@color/text_white"
         android:fontFamily="@font/poppins_semibold"
         android:textAllCaps="false"
-        android:background="@drawable/neon_blue_button_bg" />
+        android:background="@drawable/wallet_action_button_bg" />
 
 </LinearLayout>

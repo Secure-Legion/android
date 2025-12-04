@@ -172,4 +172,5 @@ interface MessageDao {
      */
     @Query("DELETE FROM messages WHERE selfDestructAt IS NOT NULL AND selfDestructAt <= :currentTime")
     suspend fun deleteExpiredMessages(currentTime: Long = System.currentTimeMillis()): Int
+
 }

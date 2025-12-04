@@ -2,6 +2,9 @@ package com.securelegion.adapters
 
 import android.animation.AnimatorSet
 import android.animation.ObjectAnimator
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import android.graphics.BitmapFactory
 import android.util.Base64
 import android.view.GestureDetector
@@ -16,7 +19,9 @@ import android.widget.TextView
 import androidx.cardview.widget.CardView
 import androidx.recyclerview.widget.RecyclerView
 import com.securelegion.R
+import com.securelegion.crypto.NLx402Manager
 import com.securelegion.database.entities.Message
+import com.securelegion.utils.ThemedToast
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Calendar
@@ -31,7 +36,10 @@ class MessageAdapter(
     private val onVoicePlayClick: ((Message) -> Unit)? = null,
     private var currentlyPlayingMessageId: String? = null,
     private val onMessageLongClick: (() -> Unit)? = null,
-    private val onImageClick: ((String) -> Unit)? = null  // Base64 image data
+    private val onImageClick: ((String) -> Unit)? = null,  // Base64 image data
+    private val onPaymentRequestClick: ((Message) -> Unit)? = null,  // Click on payment request (to pay)
+    private val onPaymentDetailsClick: ((Message) -> Unit)? = null,  // Click on completed payment (for details)
+    private val onPriceRefreshClick: ((Message, TextView, TextView) -> Unit)? = null  // Refresh price callback
 ) : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
 
     companion object {
@@ -42,6 +50,14 @@ class MessageAdapter(
         private const val VIEW_TYPE_VOICE_RECEIVED = 5
         private const val VIEW_TYPE_IMAGE_SENT = 6
         private const val VIEW_TYPE_IMAGE_RECEIVED = 7
+        private const val VIEW_TYPE_PAYMENT_REQUEST_SENT = 8
+        private const val VIEW_TYPE_PAYMENT_REQUEST_RECEIVED = 9
+        private const val VIEW_TYPE_PAYMENT_SENT = 10
+        private const val VIEW_TYPE_PAYMENT_RECEIVED = 11
+
+        // Cached prices for display (updated by ChatActivity)
+        var cachedSolPrice: Double = 0.0
+        var cachedZecPrice: Double = 0.0
     }
 
     // Track which message is currently showing swipe-revealed time
@@ -128,6 +144,52 @@ class MessageAdapter(
         val messageCheckbox: CheckBox = view.findViewById(R.id.messageCheckbox)
     }
 
+    // Payment request sent by me (I'm requesting money from them)
+    class PaymentRequestSentViewHolder(view: View) : RecyclerView.ViewHolder(view) {
+        val timestampHeader: TextView = view.findViewById(R.id.timestampHeader)
+        val messageBubble: CardView = view.findViewById(R.id.messageBubble)
+        val paymentLabel: TextView = view.findViewById(R.id.paymentLabel)
+        val paymentAmount: TextView = view.findViewById(R.id.paymentAmount)
+        val paymentAmountUsd: TextView = view.findViewById(R.id.paymentAmountUsd)
+        val paymentStatus: TextView = view.findViewById(R.id.paymentStatus)
+        val messageStatus: TextView = view.findViewById(R.id.messageStatus)
+        val messageCheckbox: CheckBox = view.findViewById(R.id.messageCheckbox)
+    }
+
+    // Payment request received (they're requesting money from me)
+    class PaymentRequestReceivedViewHolder(view: View) : RecyclerView.ViewHolder(view) {
+        val timestampHeader: TextView = view.findViewById(R.id.timestampHeader)
+        val messageBubble: CardView = view.findViewById(R.id.messageBubble)
+        val paymentLabel: TextView = view.findViewById(R.id.paymentLabel)
+        val paymentAmount: TextView = view.findViewById(R.id.paymentAmount)
+        val paymentAmountUsd: TextView = view.findViewById(R.id.paymentAmountUsd)
+        val payButton: TextView = view.findViewById(R.id.payButton)
+        val paymentStatus: TextView = view.findViewById(R.id.paymentStatus)
+        val messageCheckbox: CheckBox = view.findViewById(R.id.messageCheckbox)
+    }
+
+    // Payment sent by me (I paid them)
+    class PaymentSentViewHolder(view: View) : RecyclerView.ViewHolder(view) {
+        val timestampHeader: TextView = view.findViewById(R.id.timestampHeader)
+        val messageBubble: CardView = view.findViewById(R.id.messageBubble)
+        val paymentLabel: TextView = view.findViewById(R.id.paymentLabel)
+        val paymentAmount: TextView = view.findViewById(R.id.paymentAmount)
+        val paymentAmountUsd: TextView = view.findViewById(R.id.paymentAmountUsd)
+        val tapForDetails: TextView = view.findViewById(R.id.tapForDetails)
+        val messageCheckbox: CheckBox = view.findViewById(R.id.messageCheckbox)
+    }
+
+    // Payment received (they paid me)
+    class PaymentReceivedViewHolder(view: View) : RecyclerView.ViewHolder(view) {
+        val timestampHeader: TextView = view.findViewById(R.id.timestampHeader)
+        val messageBubble: CardView = view.findViewById(R.id.messageBubble)
+        val paymentLabel: TextView = view.findViewById(R.id.paymentLabel)
+        val paymentAmount: TextView = view.findViewById(R.id.paymentAmount)
+        val paymentAmountUsd: TextView = view.findViewById(R.id.paymentAmountUsd)
+        val tapForDetails: TextView = view.findViewById(R.id.tapForDetails)
+        val messageCheckbox: CheckBox = view.findViewById(R.id.messageCheckbox)
+    }
+
     override fun getItemViewType(position: Int): Int {
         // Check if this is in the pending messages range (after regular messages)
         if (position >= messages.size) {
@@ -141,6 +203,10 @@ class MessageAdapter(
             message.messageType == Message.MESSAGE_TYPE_VOICE && !message.isSentByMe -> VIEW_TYPE_VOICE_RECEIVED
             message.messageType == Message.MESSAGE_TYPE_IMAGE && message.isSentByMe -> VIEW_TYPE_IMAGE_SENT
             message.messageType == Message.MESSAGE_TYPE_IMAGE && !message.isSentByMe -> VIEW_TYPE_IMAGE_RECEIVED
+            message.messageType == Message.MESSAGE_TYPE_PAYMENT_REQUEST && message.isSentByMe -> VIEW_TYPE_PAYMENT_REQUEST_SENT
+            message.messageType == Message.MESSAGE_TYPE_PAYMENT_REQUEST && !message.isSentByMe -> VIEW_TYPE_PAYMENT_REQUEST_RECEIVED
+            message.messageType == Message.MESSAGE_TYPE_PAYMENT_SENT && message.isSentByMe -> VIEW_TYPE_PAYMENT_SENT
+            message.messageType == Message.MESSAGE_TYPE_PAYMENT_SENT && !message.isSentByMe -> VIEW_TYPE_PAYMENT_RECEIVED
             message.isSentByMe -> VIEW_TYPE_SENT
             else -> VIEW_TYPE_RECEIVED
         }
@@ -178,6 +244,26 @@ class MessageAdapter(
                     .inflate(R.layout.item_message_image_received, parent, false)
                 ImageReceivedMessageViewHolder(view)
             }
+            VIEW_TYPE_PAYMENT_REQUEST_SENT -> {
+                val view = LayoutInflater.from(parent.context)
+                    .inflate(R.layout.item_message_payment_request_sent, parent, false)
+                PaymentRequestSentViewHolder(view)
+            }
+            VIEW_TYPE_PAYMENT_REQUEST_RECEIVED -> {
+                val view = LayoutInflater.from(parent.context)
+                    .inflate(R.layout.item_message_payment_request_received, parent, false)
+                PaymentRequestReceivedViewHolder(view)
+            }
+            VIEW_TYPE_PAYMENT_SENT -> {
+                val view = LayoutInflater.from(parent.context)
+                    .inflate(R.layout.item_message_payment_sent, parent, false)
+                PaymentSentViewHolder(view)
+            }
+            VIEW_TYPE_PAYMENT_RECEIVED -> {
+                val view = LayoutInflater.from(parent.context)
+                    .inflate(R.layout.item_message_payment_received, parent, false)
+                PaymentReceivedViewHolder(view)
+            }
             else -> {
                 val view = LayoutInflater.from(parent.context)
                     .inflate(R.layout.item_message_received, parent, false)
@@ -211,6 +297,22 @@ class MessageAdapter(
             is ImageReceivedMessageViewHolder -> {
                 val message = messages[position]
                 bindImageReceivedMessage(holder, message, position)
+            }
+            is PaymentRequestSentViewHolder -> {
+                val message = messages[position]
+                bindPaymentRequestSent(holder, message, position)
+            }
+            is PaymentRequestReceivedViewHolder -> {
+                val message = messages[position]
+                bindPaymentRequestReceived(holder, message, position)
+            }
+            is PaymentSentViewHolder -> {
+                val message = messages[position]
+                bindPaymentSent(holder, message, position)
+            }
+            is PaymentReceivedViewHolder -> {
+                val message = messages[position]
+                bindPaymentReceived(holder, message, position)
             }
             is PendingMessageViewHolder -> {
                 bindPendingMessage(holder, position)
@@ -263,9 +365,13 @@ class MessageAdapter(
             holder.messageCheckbox.setOnCheckedChangeListener(null)
             holder.messageBubble.setOnClickListener(null)
 
-            // Add long-press listener to enter selection mode
+            // Add long-press listener to copy text
             holder.messageBubble.setOnLongClickListener {
-                onMessageLongClick?.invoke()
+                val context = holder.itemView.context
+                val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                val clip = ClipData.newPlainText("Message", message.encryptedContent)
+                clipboard.setPrimaryClip(clip)
+                ThemedToast.show(context, "Message copied")
                 true
             }
         }
@@ -320,9 +426,13 @@ class MessageAdapter(
             holder.messageCheckbox.setOnCheckedChangeListener(null)
             holder.messageBubble.setOnClickListener(null)
 
-            // Add long-press listener to enter selection mode
+            // Add long-press listener to copy text
             holder.messageBubble.setOnLongClickListener {
-                onMessageLongClick?.invoke()
+                val context = holder.itemView.context
+                val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                val clip = ClipData.newPlainText("Message", message.encryptedContent)
+                clipboard.setPrimaryClip(clip)
+                ThemedToast.show(context, "Message copied")
                 true
             }
         }
@@ -397,12 +507,7 @@ class MessageAdapter(
             holder.messageCheckbox.visibility = View.GONE
             holder.messageCheckbox.setOnCheckedChangeListener(null)
             holder.messageBubble.setOnClickListener(null)
-
-            // Add long-press listener to enter selection mode
-            holder.messageBubble.setOnLongClickListener {
-                onMessageLongClick?.invoke()
-                true
-            }
+            holder.messageBubble.setOnLongClickListener(null)
 
             // Enable download button in normal mode
             holder.downloadButton.isEnabled = true
@@ -472,12 +577,7 @@ class MessageAdapter(
             holder.messageCheckbox.visibility = View.GONE
             holder.messageCheckbox.setOnCheckedChangeListener(null)
             holder.voiceBubble.setOnClickListener(null)
-
-            // Add long-press listener to enter selection mode
-            holder.voiceBubble.setOnLongClickListener {
-                onMessageLongClick?.invoke()
-                true
-            }
+            holder.voiceBubble.setOnLongClickListener(null)
 
             // Enable play button in normal mode
             holder.playButton.isEnabled = true
@@ -534,12 +634,7 @@ class MessageAdapter(
             holder.messageCheckbox.visibility = View.GONE
             holder.messageCheckbox.setOnCheckedChangeListener(null)
             holder.voiceBubble.setOnClickListener(null)
-
-            // Add long-press listener to enter selection mode
-            holder.voiceBubble.setOnLongClickListener {
-                onMessageLongClick?.invoke()
-                true
-            }
+            holder.voiceBubble.setOnLongClickListener(null)
 
             // Enable play button in normal mode
             holder.playButton.isEnabled = true
@@ -555,6 +650,13 @@ class MessageAdapter(
     private fun bindImageSentMessage(holder: ImageSentMessageViewHolder, message: Message, position: Int) {
         // Load image from attachmentData (Base64 encoded)
         loadImageIntoView(holder.messageImage, message.attachmentData)
+
+        // Add click listener to open full screen image
+        holder.messageImage.setOnClickListener {
+            message.attachmentData?.let { imageData ->
+                onImageClick?.invoke(imageData)
+            }
+        }
 
         holder.messageStatus.text = getStatusIcon(message.status)
 
@@ -602,12 +704,7 @@ class MessageAdapter(
             holder.messageBubble.setOnClickListener {
                 onImageClick?.invoke(message.attachmentData ?: "")
             }
-
-            // Add long-press listener to enter selection mode
-            holder.messageBubble.setOnLongClickListener {
-                onMessageLongClick?.invoke()
-                true
-            }
+            holder.messageBubble.setOnLongClickListener(null)
         }
 
         // Setup swipe gesture (disabled in selection mode)
@@ -619,6 +716,13 @@ class MessageAdapter(
     private fun bindImageReceivedMessage(holder: ImageReceivedMessageViewHolder, message: Message, position: Int) {
         // Load image from attachmentData (Base64 encoded)
         loadImageIntoView(holder.messageImage, message.attachmentData)
+
+        // Add click listener to open full screen image
+        holder.messageImage.setOnClickListener {
+            message.attachmentData?.let { imageData ->
+                onImageClick?.invoke(imageData)
+            }
+        }
 
         // Show timestamp header if this is the first message or date changed
         if (shouldShowTimestampHeader(position)) {
@@ -664,18 +768,275 @@ class MessageAdapter(
             holder.messageBubble.setOnClickListener {
                 onImageClick?.invoke(message.attachmentData ?: "")
             }
-
-            // Add long-press listener to enter selection mode
-            holder.messageBubble.setOnLongClickListener {
-                onMessageLongClick?.invoke()
-                true
-            }
+            holder.messageBubble.setOnLongClickListener(null)
         }
 
         // Setup swipe gesture (disabled in selection mode)
         if (!isSelectionMode) {
             setupSwipeGestureForCard(holder.messageBubble, holder.swipeRevealedTime, null, position, isSent = false)
         }
+    }
+
+    // ==================== PAYMENT CARD BINDING FUNCTIONS ====================
+
+    private fun bindPaymentRequestSent(holder: PaymentRequestSentViewHolder, message: Message, position: Int) {
+        holder.paymentAmount.text = getUsdAmount(message)
+        holder.paymentAmountUsd.text = getCryptoAmount(message)
+
+        // Click to refresh price
+        holder.paymentAmountUsd.setOnClickListener {
+            onPriceRefreshClick?.invoke(message, holder.paymentAmount, holder.paymentAmountUsd)
+        }
+
+        // Set status based on payment status
+        val status = message.paymentStatus ?: Message.PAYMENT_STATUS_PENDING
+        holder.paymentStatus.text = when (status) {
+            Message.PAYMENT_STATUS_PAID -> "Paid"
+            Message.PAYMENT_STATUS_EXPIRED -> "Expired"
+            Message.PAYMENT_STATUS_CANCELLED -> "Cancelled"
+            else -> "Pending"
+        }
+
+        // Update status color
+        val statusColor = when (status) {
+            Message.PAYMENT_STATUS_PAID -> 0xFF00D4AA.toInt()     // Green
+            Message.PAYMENT_STATUS_EXPIRED -> 0xFF888888.toInt()  // Gray
+            Message.PAYMENT_STATUS_CANCELLED -> 0xFFFF4444.toInt() // Red
+            else -> 0xFFFFD93D.toInt()                            // Yellow (pending)
+        }
+        holder.paymentStatus.setTextColor(statusColor)
+
+        // Set message status
+        holder.messageStatus.text = getStatusIcon(message.status)
+
+        // Show timestamp header if needed
+        if (shouldShowTimestampHeader(position)) {
+            holder.timestampHeader.visibility = View.VISIBLE
+            holder.timestampHeader.text = formatDateHeaderWithTime(message.timestamp)
+        } else {
+            holder.timestampHeader.visibility = View.GONE
+        }
+
+        // Handle selection mode
+        handlePaymentSelectionMode(holder.messageCheckbox, holder.messageBubble, message)
+
+        // Click to view details
+        if (!isSelectionMode) {
+            holder.messageBubble.setOnClickListener {
+                onPaymentDetailsClick?.invoke(message)
+            }
+        }
+    }
+
+    private fun bindPaymentRequestReceived(holder: PaymentRequestReceivedViewHolder, message: Message, position: Int) {
+        holder.paymentAmount.text = getUsdAmount(message)
+        holder.paymentAmountUsd.text = getCryptoAmount(message)
+
+        // Click to refresh price
+        holder.paymentAmountUsd.setOnClickListener {
+            onPriceRefreshClick?.invoke(message, holder.paymentAmount, holder.paymentAmountUsd)
+        }
+
+        // Check if this is a "Send Money" offer (empty recipient) or "Request Money" (has recipient)
+        val isSendMoneyOffer = try {
+            val quote = NLx402Manager.PaymentQuote.fromJson(message.paymentQuoteJson ?: "")
+            quote?.recipient.isNullOrEmpty()
+        } catch (e: Exception) {
+            false
+        }
+
+        // Update button text and label based on flow type
+        if (isSendMoneyOffer) {
+            holder.payButton.text = "Accept"
+            holder.paymentLabel.text = "Wants to send you"
+        } else {
+            holder.payButton.text = "Pay"
+            holder.paymentLabel.text = "Payment Request"
+        }
+
+        val status = message.paymentStatus ?: Message.PAYMENT_STATUS_PENDING
+        val isPending = status == Message.PAYMENT_STATUS_PENDING
+
+        // Show/hide Pay/Accept button vs status text
+        if (isPending) {
+            holder.payButton.visibility = View.VISIBLE
+            holder.paymentStatus.visibility = View.GONE
+
+            // Handle button click
+            if (!isSelectionMode) {
+                holder.payButton.setOnClickListener {
+                    onPaymentRequestClick?.invoke(message)
+                }
+            }
+        } else {
+            holder.payButton.visibility = View.GONE
+            holder.paymentStatus.visibility = View.VISIBLE
+            holder.paymentStatus.text = when (status) {
+                Message.PAYMENT_STATUS_PAID -> if (isSendMoneyOffer) "Received" else "Paid"
+                Message.PAYMENT_STATUS_EXPIRED -> "Expired"
+                Message.PAYMENT_STATUS_CANCELLED -> "Cancelled"
+                else -> status
+            }
+        }
+
+        // Show timestamp header if needed
+        if (shouldShowTimestampHeader(position)) {
+            holder.timestampHeader.visibility = View.VISIBLE
+            holder.timestampHeader.text = formatDateHeaderWithTime(message.timestamp)
+        } else {
+            holder.timestampHeader.visibility = View.GONE
+        }
+
+        // Handle selection mode
+        handlePaymentSelectionMode(holder.messageCheckbox, holder.messageBubble, message)
+
+        // Remove long press listener
+        holder.messageBubble.setOnLongClickListener(null)
+    }
+
+    private fun bindPaymentSent(holder: PaymentSentViewHolder, message: Message, position: Int) {
+        holder.paymentAmount.text = getUsdAmount(message)
+        holder.paymentAmountUsd.text = getCryptoAmount(message)
+
+        // Click to refresh price
+        holder.paymentAmountUsd.setOnClickListener {
+            onPriceRefreshClick?.invoke(message, holder.paymentAmount, holder.paymentAmountUsd)
+        }
+
+        // Show timestamp header if needed
+        if (shouldShowTimestampHeader(position)) {
+            holder.timestampHeader.visibility = View.VISIBLE
+            holder.timestampHeader.text = formatDateHeaderWithTime(message.timestamp)
+        } else {
+            holder.timestampHeader.visibility = View.GONE
+        }
+
+        // Handle selection mode
+        handlePaymentSelectionMode(holder.messageCheckbox, holder.messageBubble, message)
+
+        // Click to view details
+        if (!isSelectionMode) {
+            holder.messageBubble.setOnClickListener {
+                onPaymentDetailsClick?.invoke(message)
+            }
+        }
+    }
+
+    private fun bindPaymentReceived(holder: PaymentReceivedViewHolder, message: Message, position: Int) {
+        holder.paymentAmount.text = getUsdAmount(message)
+        holder.paymentAmountUsd.text = getCryptoAmount(message)
+
+        // Click to refresh price
+        holder.paymentAmountUsd.setOnClickListener {
+            onPriceRefreshClick?.invoke(message, holder.paymentAmount, holder.paymentAmountUsd)
+        }
+
+        // Show timestamp header if needed
+        if (shouldShowTimestampHeader(position)) {
+            holder.timestampHeader.visibility = View.VISIBLE
+            holder.timestampHeader.text = formatDateHeaderWithTime(message.timestamp)
+        } else {
+            holder.timestampHeader.visibility = View.GONE
+        }
+
+        // Handle selection mode
+        handlePaymentSelectionMode(holder.messageCheckbox, holder.messageBubble, message)
+
+        // Click to view details
+        if (!isSelectionMode) {
+            holder.messageBubble.setOnClickListener {
+                onPaymentDetailsClick?.invoke(message)
+            }
+        }
+    }
+
+    private fun handlePaymentSelectionMode(checkbox: CheckBox, bubble: CardView, message: Message) {
+        val messageIdStr = message.id.toString()
+
+        if (isSelectionMode) {
+            checkbox.visibility = View.VISIBLE
+            checkbox.isChecked = selectedMessages.contains(messageIdStr)
+            checkbox.setOnCheckedChangeListener { _, isChecked ->
+                if (isChecked) {
+                    selectedMessages.add(messageIdStr)
+                } else {
+                    selectedMessages.remove(messageIdStr)
+                }
+            }
+
+            bubble.setOnClickListener {
+                val isSelected = selectedMessages.contains(messageIdStr)
+                if (isSelected) {
+                    selectedMessages.remove(messageIdStr)
+                    checkbox.isChecked = false
+                } else {
+                    selectedMessages.add(messageIdStr)
+                    checkbox.isChecked = true
+                }
+            }
+
+            bubble.setOnLongClickListener(null)
+        } else {
+            checkbox.visibility = View.GONE
+            checkbox.setOnCheckedChangeListener(null)
+            bubble.setOnLongClickListener(null)
+        }
+    }
+
+    /**
+     * Get USD amount as the main display
+     * Uses cached live prices from API
+     */
+    private fun getUsdAmount(message: Message): String {
+        val amount = message.paymentAmount ?: 0L
+        val token = message.paymentToken ?: "SOL"
+
+        val decimals = when (token.uppercase()) {
+            "SOL" -> 9
+            "ZEC" -> 8
+            "USDC", "USDT" -> 6
+            else -> 9
+        }
+        val divisor = java.math.BigDecimal.TEN.pow(decimals)
+        val cryptoAmount = java.math.BigDecimal(amount).divide(divisor).toDouble()
+
+        // Use cached live price, fallback to estimates
+        val usdPrice = when (token.uppercase()) {
+            "SOL" -> if (cachedSolPrice > 0) cachedSolPrice else 150.0
+            "ZEC" -> if (cachedZecPrice > 0) cachedZecPrice else 35.0
+            "USDC", "USDT" -> 1.0
+            else -> 0.0
+        }
+
+        val usdValue = cryptoAmount * usdPrice
+        return String.format("$%.2f", usdValue)
+    }
+
+    /**
+     * Get crypto amount with clean formatting (no excessive zeros)
+     */
+    private fun getCryptoAmount(message: Message): String {
+        val amount = message.paymentAmount ?: 0L
+        val token = message.paymentToken ?: "SOL"
+
+        val decimals = when (token.uppercase()) {
+            "SOL" -> 9
+            "ZEC" -> 8
+            "USDC", "USDT" -> 6
+            else -> 9
+        }
+        val divisor = java.math.BigDecimal.TEN.pow(decimals)
+        val cryptoAmount = java.math.BigDecimal(amount).divide(divisor).toDouble()
+
+        // Smart formatting - show appropriate precision
+        val formatted = when {
+            cryptoAmount >= 1.0 -> String.format("%.2f", cryptoAmount)
+            cryptoAmount >= 0.01 -> String.format("%.4f", cryptoAmount).trimEnd('0').trimEnd('.')
+            cryptoAmount > 0.0 -> String.format("%.6f", cryptoAmount).trimEnd('0').trimEnd('.')
+            else -> "0"
+        }
+
+        return "$formatted $token"
     }
 
     private fun loadImageIntoView(imageView: ImageView, base64Data: String?) {

@@ -107,6 +107,7 @@
                 android:focusable="true">
 
                 <ImageView
+                    android:id="@+id/walletChainIcon"
                     android:layout_width="28dp"
                     android:layout_height="28dp"
                     android:src="@drawable/ic_zcash"
@@ -118,7 +119,7 @@
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:layout_weight="1"
-                    android:text="Wallet 1"
+                    android:text="----"
                     android:textSize="16sp"
                     android:textColor="#FFFFFF"
                     android:fontFamily="@font/poppins_medium" />
@@ -239,8 +240,7 @@
                     android:id="@+id/receiveButton"
                     android:layout_width="85dp"
                     android:layout_height="85dp"
-                    android:layout_marginStart="4dp"
-                    android:layout_marginEnd="4dp"
+                    android:layout_marginStart="8dp"
                     android:orientation="vertical"
                     android:gravity="center"
                     android:background="@drawable/wallet_action_button_bg"
@@ -265,36 +265,6 @@
 
                 </LinearLayout>
 
-                <!-- Swap Button -->
-                <LinearLayout
-                    android:id="@+id/swapButton"
-                    android:layout_width="85dp"
-                    android:layout_height="85dp"
-                    android:layout_marginStart="8dp"
-                    android:orientation="vertical"
-                    android:gravity="center"
-                    android:background="@drawable/wallet_action_button_bg"
-                    android:clickable="true"
-                    android:focusable="true">
-
-                    <ImageView
-                        android:layout_width="28dp"
-                        android:layout_height="28dp"
-                        android:src="@drawable/ic_swap"
-                        android:tint="#888888"
-                        android:layout_marginBottom="6dp"
-                        android:contentDescription="Swap" />
-
-                    <TextView
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="Swap"
-                        android:textSize="12sp"
-                        android:textColor="#AAAAAA"
-                        android:fontFamily="@font/poppins_medium" />
-
-                </LinearLayout>
-
             </LinearLayout>
 
             <!-- Tokens Section -->
@@ -312,7 +282,6 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:orientation="horizontal"
-                    android:gravity="end"
                     android:paddingBottom="16dp">
 
                     <TextView
@@ -328,6 +297,11 @@
                         android:clickable="true"
                         android:focusable="true"
                         android:background="?attr/selectableItemBackgroundBorderless" />
+
+                    <View
+                        android:layout_width="0dp"
+                        android:layout_height="1dp"
+                        android:layout_weight="1" />
 
                     <TextView
                         android:id="@+id/recentTab"
@@ -482,84 +456,6 @@
 
                         <TextView
                             android:id="@+id/zecBalance"
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:text="$0.00"
-                            android:textSize="16sp"
-                            android:textColor="@color/text_white"
-                            android:fontFamily="@font/poppins_medium" />
-
-                        <ImageView
-                            android:layout_width="16dp"
-                            android:layout_height="16dp"
-                            android:src="@android:drawable/ic_menu_more"
-                            android:tint="#666666"
-                            android:layout_marginTop="2dp"
-                            android:contentDescription="More" />
-
-                    </LinearLayout>
-
-                </LinearLayout>
-
-                <!-- Secure Legion Token -->
-                <LinearLayout
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:orientation="horizontal"
-                    android:background="@drawable/wallet_token_bg"
-                    android:padding="16dp"
-                    android:layout_marginBottom="12dp"
-                    android:gravity="center_vertical"
-                    android:clickable="true"
-                    android:focusable="true">
-
-                    <FrameLayout
-                        android:layout_width="48dp"
-                        android:layout_height="48dp"
-                        android:layout_marginEnd="12dp"
-                        android:background="@drawable/settings_icon_bg">
-
-                        <ImageView
-                            android:layout_width="34dp"
-                            android:layout_height="34dp"
-                            android:layout_gravity="center"
-                            android:src="@drawable/ic_secure"
-                            android:contentDescription="Secure Legion" />
-
-                    </FrameLayout>
-
-                    <LinearLayout
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:orientation="vertical">
-
-                        <TextView
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:text="Secure Legion"
-                            android:textSize="16sp"
-                            android:textColor="@color/text_white"
-                            android:fontFamily="@font/poppins_medium" />
-
-                        <TextView
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:text="SECURE"
-                            android:textSize="12sp"
-                            android:textColor="#888888"
-                            android:fontFamily="@font/poppins_regular" />
-
-                    </LinearLayout>
-
-                    <LinearLayout
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:orientation="vertical"
-                        android:gravity="end">
-
-                        <TextView
-                            android:id="@+id/secureLegionBalance"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
                             android:text="$0.00"

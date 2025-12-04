@@ -678,7 +678,10 @@ class MainActivity : BaseActivity() {
                 val keyManager = KeyManager.getInstance(this@MainActivity)
                 val dbPassphrase = keyManager.getDatabasePassphrase()
                 val database = SecureLegionDatabase.getInstance(this@MainActivity, dbPassphrase)
-                val wallets = database.walletDao().getAllWallets()
+                val allWallets = database.walletDao().getAllWallets()
+
+                // Filter out "main" wallet - it's hidden (used only for encryption keys)
+                val wallets = allWallets.filter { it.walletId != "main" }
 
                 withContext(Dispatchers.Main) {
                     if (wallets.isNotEmpty()) {

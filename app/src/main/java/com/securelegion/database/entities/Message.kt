@@ -174,13 +174,56 @@ data class Message(
      * Stores the complete encrypted Ping token for retry without regenerating nonce
      * This prevents ghost pings by ensuring retries use the SAME Ping ID
      */
-    val pingWireBytes: String? = null
+    val pingWireBytes: String? = null,
+
+    // ==================== NLx402 PAYMENT FIELDS ====================
+
+    /**
+     * Payment quote JSON (for PAYMENT_REQUEST messages)
+     * Contains quote_id, recipient, amount, token, expiry, etc.
+     */
+    val paymentQuoteJson: String? = null,
+
+    /**
+     * Payment status
+     * null = not a payment message
+     * "pending" = payment request sent, awaiting payment
+     * "paid" = payment completed and verified
+     * "expired" = quote expired without payment
+     * "cancelled" = payment request cancelled
+     */
+    val paymentStatus: String? = null,
+
+    /**
+     * Transaction signature (for completed payments)
+     * Solana/Zcash transaction ID
+     */
+    val txSignature: String? = null,
+
+    /**
+     * Token type for payment (SOL, ZEC, USDC, etc.)
+     */
+    val paymentToken: String? = null,
+
+    /**
+     * Payment amount in smallest unit (lamports/zatoshis)
+     */
+    val paymentAmount: Long? = null
 ) {
     companion object {
         // Message type constants
         const val MESSAGE_TYPE_TEXT = "TEXT"
         const val MESSAGE_TYPE_VOICE = "VOICE"
         const val MESSAGE_TYPE_IMAGE = "IMAGE"
+        const val MESSAGE_TYPE_PAYMENT_REQUEST = "PAYMENT_REQUEST"
+        const val MESSAGE_TYPE_PAYMENT_SENT = "PAYMENT_SENT"
+        const val MESSAGE_TYPE_PAYMENT_ACCEPTED = "PAYMENT_ACCEPTED"
+
+        // Payment status constants
+        const val PAYMENT_STATUS_PENDING = "pending"
+        const val PAYMENT_STATUS_PAID = "paid"
+        const val PAYMENT_STATUS_EXPIRED = "expired"
+        const val PAYMENT_STATUS_CANCELLED = "cancelled"
 
         // Message status constants
         const val STATUS_PENDING = 0

@@ -6,6 +6,8 @@ import android.os.Build
 import android.os.Bundle
 import android.util.Log
 import android.view.View
+import android.text.Editable
+import android.text.TextWatcher
 import android.widget.Button
 import android.widget.EditText
 import android.widget.ImageView
@@ -29,6 +31,7 @@ class SendActivity : BaseActivity() {
     private var currentWalletName: String = "Wallet 1"
     private var currentWalletAddress: String = ""
     private var selectedCurrency = "SOL" // Default to Solana
+    private var currentTokenPrice: Double = 0.0 // Cached price for live conversion
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -39,19 +42,15 @@ class SendActivity : BaseActivity() {
         currentWalletName = intent.getStringExtra("WALLET_NAME") ?: "Wallet 1"
         currentWalletAddress = intent.getStringExtra("WALLET_ADDRESS") ?: ""
 
-        // If wallet address not passed, get it from KeyManager
-        if (currentWalletAddress.isEmpty()) {
-            val keyManager = KeyManager.getInstance(this)
-            currentWalletAddress = keyManager.getSolanaAddress()
-        }
-
         Log.d("SendActivity", "Sending from wallet: $currentWalletName ($currentWalletAddress)")
 
         setupCurrencySelector()
         setupQRScanner()
         setupWalletSelector()
-        loadWalletInfo()
+        setupAmountInput()
+        loadCurrentWallet()
         loadWalletBalance()
+        setupPriceRefresh()
         setupBottomNavigation()
 
         // Back button
@@ -122,6 +121,15 @@ class SendActivity : BaseActivity() {
 
     companion object {
         private const val QR_SCANNER_REQUEST_CODE = 100
+
+        private fun formatBalance(balance: Double): String {
+            return when {
+                balance >= 1.0 -> String.format("%.2f", balance)
+                balance >= 0.01 -> String.format("%.4f", balance).trimEnd('0').trimEnd('.')
+                balance > 0.0 -> String.format("%.6f", balance).trimEnd('0').trimEnd('.')
+                else -> "0"
+            }
+        }
     }
 
     private fun setupWalletSelector() {
@@ -132,10 +140,104 @@ class SendActivity : BaseActivity() {
         }
     }
 
+    private fun setupAmountInput() {
+        val amountInput = findViewById<EditText>(R.id.amountInput)
+        val amountUsdValue = findViewById<TextView>(R.id.amountUsdValue)
+
+        amountInput.addTextChangedListener(object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+            override fun afterTextChanged(s: Editable?) {
+                val amountText = s?.toString() ?: ""
+                val amount = amountText.toDoubleOrNull() ?: 0.0
+
+                if (currentTokenPrice > 0 && amount > 0) {
+                    val usdValue = amount * currentTokenPrice
+                    amountUsdValue.text = String.format("≈ $%,.2f USD", usdValue)
+                } else {
+                    amountUsdValue.text = "≈ $0.00 USD"
+                }
+            }
+        })
+
+        // Click on USD value to refresh price
+        amountUsdValue.setOnClickListener {
+            ThemedToast.show(this, "Refreshing price...")
+            loadWalletBalance()
+        }
+    }
+
+    private fun updateAmountUsdValue() {
+        val amountInput = findViewById<EditText>(R.id.amountInput)
+        val amountUsdValue = findViewById<TextView>(R.id.amountUsdValue)
+        val amountText = amountInput.text?.toString() ?: ""
+        val amount = amountText.toDoubleOrNull() ?: 0.0
+
+        if (currentTokenPrice > 0 && amount > 0) {
+            val usdValue = amount * currentTokenPrice
+            amountUsdValue.text = String.format("≈ $%,.2f USD", usdValue)
+        } else {
+            amountUsdValue.text = "≈ $0.00 USD"
+        }
+    }
+
+    private fun setupPriceRefresh() {
+        val usdValue = findViewById<TextView>(R.id.usdValue)
+        usdValue?.setOnClickListener {
+            ThemedToast.show(this, "Refreshing price...")
+            loadWalletBalance()
+        }
+    }
+
+    private fun loadCurrentWallet() {
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                val keyManager = KeyManager.getInstance(this@SendActivity)
+                val dbPassphrase = keyManager.getDatabasePassphrase()
+                val database = SecureLegionDatabase.getInstance(this@SendActivity, dbPassphrase)
+                val allWallets = database.walletDao().getAllWallets()
+
+                val wallets = allWallets.filter { it.walletId != "main" }
+
+                withContext(Dispatchers.Main) {
+                    if (wallets.isNotEmpty()) {
+                        val currentWallet = wallets.maxByOrNull { it.lastUsedAt }
+                        if (currentWallet != null) {
+                            currentWalletId = currentWallet.walletId
+                            currentWalletName = currentWallet.name
+
+                            // Get address based on wallet type
+                            currentWalletAddress = if (currentWallet.zcashAddress != null) {
+                                selectedCurrency = "ZEC"
+                                currentWallet.zcashAddress ?: ""
+                            } else {
+                                selectedCurrency = "SOL"
+                                currentWallet.solanaAddress
+                            }
+
+                            loadWalletInfo()
+                            selectCurrency(selectedCurrency)
+                        }
+                    } else {
+                        currentWalletName = "----"
+                        currentWalletAddress = ""
+                        loadWalletInfo()
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e("SendActivity", "Failed to load current wallet", e)
+            }
+        }
+    }
+
     private fun loadWalletInfo() {
         findViewById<TextView>(R.id.walletNameText)?.text = currentWalletName
-        findViewById<TextView>(R.id.walletAddressShort)?.text =
-            "${currentWalletAddress.take(5)}.....${currentWalletAddress.takeLast(6)}"
+        if (currentWalletAddress.isNotEmpty()) {
+            findViewById<TextView>(R.id.walletAddressShort)?.text =
+                "${currentWalletAddress.take(5)}.....${currentWalletAddress.takeLast(6)}"
+        } else {
+            findViewById<TextView>(R.id.walletAddressShort)?.text = "----"
+        }
     }
 
     private fun showWalletSelector() {
@@ -144,7 +246,10 @@ class SendActivity : BaseActivity() {
                 val keyManager = KeyManager.getInstance(this@SendActivity)
                 val dbPassphrase = keyManager.getDatabasePassphrase()
                 val database = SecureLegionDatabase.getInstance(this@SendActivity, dbPassphrase)
-                val wallets = database.walletDao().getAllWallets()
+                val allWallets = database.walletDao().getAllWallets()
+
+                // Filter out "main" wallet - it's hidden (used only for encryption keys)
+                val wallets = allWallets.filter { it.walletId != "main" }
 
                 withContext(Dispatchers.Main) {
                     if (wallets.isEmpty()) {
@@ -232,11 +337,17 @@ class SendActivity : BaseActivity() {
                 currentWalletId = wallet.walletId
                 currentWalletName = wallet.name
 
-                // Get new wallet address
-                val keyManager = KeyManager.getInstance(this@SendActivity)
-                currentWalletAddress = keyManager.getSolanaAddress()
+                // Get wallet address based on type
+                currentWalletAddress = if (wallet.zcashAddress != null) {
+                    selectedCurrency = "ZEC"
+                    wallet.zcashAddress ?: ""
+                } else {
+                    selectedCurrency = "SOL"
+                    wallet.solanaAddress
+                }
 
                 // Update last used timestamp
+                val keyManager = KeyManager.getInstance(this@SendActivity)
                 val dbPassphrase = keyManager.getDatabasePassphrase()
                 val database = SecureLegionDatabase.getInstance(this@SendActivity, dbPassphrase)
                 database.walletDao().updateLastUsed(wallet.walletId, System.currentTimeMillis())
@@ -244,6 +355,7 @@ class SendActivity : BaseActivity() {
                 withContext(Dispatchers.Main) {
                     // Update wallet info display
                     loadWalletInfo()
+                    selectCurrency(selectedCurrency)
 
                     // Reload balance for the new wallet
                     loadWalletBalance()
@@ -286,25 +398,18 @@ class SendActivity : BaseActivity() {
         }
 
         // Populate confirmation details
-        val confirmAmount = view.findViewById<TextView>(R.id.confirmAmount)
-        val confirmRecipientShort = view.findViewById<TextView>(R.id.confirmRecipientShort)
-        val confirmFromWallet = view.findViewById<TextView>(R.id.confirmFromWallet)
-        val confirmToAddress = view.findViewById<TextView>(R.id.confirmToAddress)
-        val confirmCurrency = view.findViewById<TextView>(R.id.confirmCurrency)
-        val confirmNetworkFee = view.findViewById<TextView>(R.id.confirmNetworkFee)
+        val confirmAmount = view.findViewById<TextView>(R.id.confirmSendAmount)
+        val confirmRecipientShort = view.findViewById<TextView>(R.id.confirmSendRecipient)
+        val confirmFromWallet = view.findViewById<TextView>(R.id.confirmSendFromWallet)
+        val confirmToAddress = view.findViewById<TextView>(R.id.confirmSendTo)
+        val confirmCurrency = view.findViewById<TextView>(R.id.confirmSendCurrency)
 
         // Set values
-        confirmAmount.text = "$amount $selectedCurrency"
-        confirmRecipientShort.text = "${recipientAddress.take(5)}...${recipientAddress.takeLast(6)}"
-        confirmFromWallet.text = currentWalletName
-        confirmToAddress.text = "${recipientAddress.take(5)}...${recipientAddress.takeLast(6)}"
-        confirmCurrency.text = selectedCurrency
-
-        // Show estimated network fee
-        when (selectedCurrency) {
-            "SOL" -> confirmNetworkFee.text = "~0.000005 SOL"
-            "ZEC" -> confirmNetworkFee.text = "~0.0001 ZEC"
-        }
+        confirmAmount?.text = "$amount $selectedCurrency"
+        confirmRecipientShort?.text = "${recipientAddress.take(5)}...${recipientAddress.takeLast(6)}"
+        confirmFromWallet?.text = currentWalletName
+        confirmToAddress?.text = "${recipientAddress.take(5)}...${recipientAddress.takeLast(6)}"
+        confirmCurrency?.text = selectedCurrency
 
         // Confirm button
         val confirmButton = view.findViewById<View>(R.id.confirmSendButton)
@@ -466,7 +571,7 @@ class SendActivity : BaseActivity() {
     }
 
     private fun loadSolanaBalance() {
-        lifecycleScope.launch {
+        lifecycleScope.launch(Dispatchers.IO) {
             try {
                 val solanaService = SolanaService(this@SendActivity)
 
@@ -476,74 +581,113 @@ class SendActivity : BaseActivity() {
                 // Fetch balance
                 val balanceResult = solanaService.getBalance(walletAddress)
 
-                if (balanceResult.isSuccess) {
-                    val balanceSOL = balanceResult.getOrNull() ?: 0.0
+                withContext(Dispatchers.Main) {
+                    if (balanceResult.isSuccess) {
+                        val balanceSOL = balanceResult.getOrNull() ?: 0.0
 
-                    // Update SOL balance
-                    findViewById<TextView>(R.id.availableBalance).text = String.format("%.4f SOL", balanceSOL)
+                        // Update SOL balance with smart formatting
+                        findViewById<TextView>(R.id.availableBalance).text = "${formatBalance(balanceSOL)} SOL"
 
-                    // Fetch live SOL price and calculate USD value
-                    val priceResult = solanaService.getSolPrice()
-                    if (priceResult.isSuccess) {
-                        val priceUSD = priceResult.getOrNull() ?: 0.0
-                        val balanceUSD = balanceSOL * priceUSD
-                        findViewById<TextView>(R.id.usdValue).text = String.format("$%.2f", balanceUSD)
+                        // Fetch live SOL price and calculate USD value
+                        lifecycleScope.launch(Dispatchers.IO) {
+                            try {
+                                val priceResult = solanaService.getSolPrice()
+                                withContext(Dispatchers.Main) {
+                                    if (priceResult.isSuccess) {
+                                        val priceUSD = priceResult.getOrNull() ?: 0.0
+                                        currentTokenPrice = priceUSD // Cache for live conversion
+                                        val balanceUSD = balanceSOL * priceUSD
+                                        findViewById<TextView>(R.id.usdValue).text = String.format("$%,.2f", balanceUSD)
+                                        // Update the amount USD value if there's already an amount
+                                        updateAmountUsdValue()
+                                    } else {
+                                        findViewById<TextView>(R.id.usdValue).text = "$0.00"
+                                    }
+                                }
+                            } catch (e: Exception) {
+                                Log.e("SendActivity", "Error loading SOL price", e)
+                                withContext(Dispatchers.Main) {
+                                    findViewById<TextView>(R.id.usdValue).text = "$0.00"
+                                }
+                            }
+                        }
+
+                        Log.i("SendActivity", "Balance loaded: $balanceSOL SOL")
                     } else {
+                        Log.e("SendActivity", "Failed to load balance: ${balanceResult.exceptionOrNull()?.message}")
+                        findViewById<TextView>(R.id.availableBalance).text = "0 SOL"
                         findViewById<TextView>(R.id.usdValue).text = "$0.00"
                     }
-
-                    Log.i("SendActivity", "Balance loaded: $balanceSOL SOL")
-                } else {
-                    Log.e("SendActivity", "Failed to load balance: ${balanceResult.exceptionOrNull()?.message}")
-                    findViewById<TextView>(R.id.availableBalance).text = "Error loading balance"
-                    findViewById<TextView>(R.id.usdValue).text = "$0.00"
                 }
             } catch (e: Exception) {
                 Log.e("SendActivity", "Error loading wallet balance", e)
-                findViewById<TextView>(R.id.availableBalance).text = "Error"
-                findViewById<TextView>(R.id.usdValue).text = "$0.00"
+                withContext(Dispatchers.Main) {
+                    findViewById<TextView>(R.id.availableBalance).text = "0 SOL"
+                    findViewById<TextView>(R.id.usdValue).text = "$0.00"
+                }
             }
         }
     }
 
     private fun loadZcashBalance() {
-        lifecycleScope.launch {
+        lifecycleScope.launch(Dispatchers.IO) {
             try {
                 val zcashService = ZcashService.getInstance(this@SendActivity)
 
                 // Fetch ZEC balance
                 val balanceResult = zcashService.getBalance()
 
-                if (balanceResult.isSuccess) {
-                    val balanceZEC = balanceResult.getOrNull() ?: 0.0
+                withContext(Dispatchers.Main) {
+                    if (balanceResult.isSuccess) {
+                        val balanceZEC = balanceResult.getOrNull() ?: 0.0
 
-                    // Update ZEC balance
-                    findViewById<TextView>(R.id.availableBalance).text = String.format("%.4f ZEC", balanceZEC)
+                        // Update ZEC balance with smart formatting
+                        findViewById<TextView>(R.id.availableBalance).text = "${formatBalance(balanceZEC)} ZEC"
 
-                    // Fetch live ZEC price and calculate USD value
-                    val priceResult = zcashService.getZecPrice()
-                    if (priceResult.isSuccess) {
-                        val priceUSD = priceResult.getOrNull() ?: 0.0
-                        if (priceUSD > 0) {
-                            val balanceUSD = balanceZEC * priceUSD
-                            findViewById<TextView>(R.id.usdValue).text = String.format("$%.2f", balanceUSD)
-                        } else {
-                            findViewById<TextView>(R.id.usdValue).text = "$0.00"
+                        // Fetch live ZEC price and calculate USD value
+                        lifecycleScope.launch(Dispatchers.IO) {
+                            try {
+                                val priceResult = zcashService.getZecPrice()
+                                withContext(Dispatchers.Main) {
+                                    if (priceResult.isSuccess) {
+                                        val priceUSD = priceResult.getOrNull() ?: 0.0
+                                        if (priceUSD > 0) {
+                                            currentTokenPrice = priceUSD // Cache for live conversion
+                                            val balanceUSD = balanceZEC * priceUSD
+                                            findViewById<TextView>(R.id.usdValue).text = String.format("$%,.2f", balanceUSD)
+                                            // Update the amount USD value if there's already an amount
+                                            updateAmountUsdValue()
+                                        } else {
+                                            findViewById<TextView>(R.id.usdValue).text = "$0.00"
+                                        }
+                                    } else {
+                                        findViewById<TextView>(R.id.usdValue).text = "$0.00"
+                                    }
+                                }
+                            } catch (e: Exception) {
+                                Log.e("SendActivity", "Error loading ZEC price", e)
+                                withContext(Dispatchers.Main) {
+                                    findViewById<TextView>(R.id.usdValue).text = "$0.00"
+                                }
+                            }
                         }
-                    } else {
-                        findViewById<TextView>(R.id.usdValue).text = "$0.00"
-                    }
 
-                    Log.i("SendActivity", "Balance loaded: $balanceZEC ZEC")
-                } else {
-                    Log.e("SendActivity", "Failed to load ZEC balance: ${balanceResult.exceptionOrNull()?.message}")
-                    findViewById<TextView>(R.id.availableBalance).text = "Error loading balance"
-                    findViewById<TextView>(R.id.usdValue).text = "$0.00"
+                        Log.i("SendActivity", "Balance loaded: $balanceZEC ZEC")
+                    } else {
+                        val errorMsg = balanceResult.exceptionOrNull()?.message ?: "Unknown error"
+                        Log.e("SendActivity", "Failed to load ZEC balance: $errorMsg")
+                        findViewById<TextView>(R.id.availableBalance).text = "0 ZEC"
+                        findViewById<TextView>(R.id.usdValue).text = "$0.00"
+                        ThemedToast.show(this@SendActivity, "ZEC wallet syncing... Balance may be unavailable")
+                    }
                 }
             } catch (e: Exception) {
                 Log.e("SendActivity", "Error loading ZEC balance", e)
-                findViewById<TextView>(R.id.availableBalance).text = "Error"
-                findViewById<TextView>(R.id.usdValue).text = "$0.00"
+                withContext(Dispatchers.Main) {
+                    findViewById<TextView>(R.id.availableBalance).text = "0 ZEC"
+                    findViewById<TextView>(R.id.usdValue).text = "$0.00"
+                    ThemedToast.show(this@SendActivity, "Unable to load ZEC balance: ${e.message}")
+                }
             }
         }
     }

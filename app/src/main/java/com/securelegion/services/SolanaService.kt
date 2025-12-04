@@ -48,6 +48,9 @@ class SolanaService(context: Context) {
         // System program ID for SOL transfers
         private const val SYSTEM_PROGRAM_ID = "11111111111111111111111111111111"
 
+        // SPL Memo Program ID (v2) for adding memos to transactions
+        private const val MEMO_PROGRAM_ID = "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr"
+
         // CoinGecko price API (free, no key required)
         private const val COINGECKO_API = "https://api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies=usd"
     }
@@ -487,6 +490,8 @@ class SolanaService(context: Context) {
      * @param toPublicKey Recipient's Solana public key (base58)
      * @param amountSOL Amount in SOL to send
      * @param keyManager KeyManager instance for secure signing
+     * @param walletId Wallet ID for multi-wallet support (default: "main")
+     * @param memo Optional memo to include in transaction (e.g., NLx402 quote hash)
      * @return Transaction signature if successful
      */
     suspend fun sendTransaction(
@@ -494,10 +499,12 @@ class SolanaService(context: Context) {
         toPublicKey: String,
         amountSOL: Double,
         keyManager: KeyManager,
-        walletId: String = "main"
+        walletId: String = "main",
+        memo: String? = null
     ): Result<String> = withContext(Dispatchers.IO) {
         try {
-            Log.d(TAG, "Sending $amountSOL SOL from $fromPublicKey to $toPublicKey")
+            Log.d(TAG, "Sending $amountSOL SOL from $fromPublicKey to $toPublicKey" +
+                    (if (memo != null) " with memo: $memo" else ""))
 
             // Convert SOL to lamports
             val lamports = (amountSOL * LAMPORTS_PER_SOL).toLong()
@@ -517,14 +524,27 @@ class SolanaService(context: Context) {
             // SystemProgram ID
             val systemProgramId = Base58.decode("11111111111111111111111111111111")
 
-            // Build transaction message
-            val message = buildTransferMessage(
-                fromPubKeyBytes,
-                toPubKeyBytes,
-                systemProgramId,
-                blockhashBytes,
-                lamports
-            )
+            // Build transaction message (with optional memo)
+            val message = if (memo != null) {
+                val memoProgramId = Base58.decode(MEMO_PROGRAM_ID)
+                buildTransferMessageWithMemo(
+                    fromPubKeyBytes,
+                    toPubKeyBytes,
+                    systemProgramId,
+                    memoProgramId,
+                    blockhashBytes,
+                    lamports,
+                    memo
+                )
+            } else {
+                buildTransferMessage(
+                    fromPubKeyBytes,
+                    toPubKeyBytes,
+                    systemProgramId,
+                    blockhashBytes,
+                    lamports
+                )
+            }
 
             // Step 3: Sign using KeyManager (private key stays secure in Rust)
             // Get the private key for the specific wallet
@@ -604,6 +624,75 @@ class SolanaService(context: Context) {
 
         // Amount in lamports as u64 little-endian
         buffer.putLong(lamports)
+
+        // Return only the used portion of the buffer
+        val messageSize = buffer.position()
+        val message = ByteArray(messageSize)
+        buffer.rewind()
+        buffer.get(message)
+        return message
+    }
+
+    /**
+     * Build Solana transfer transaction message with memo
+     * Includes SPL Memo program instruction for NLx402 quote hash
+     */
+    private fun buildTransferMessageWithMemo(
+        fromPubKey: ByteArray,
+        toPubKey: ByteArray,
+        systemProgramId: ByteArray,
+        memoProgramId: ByteArray,
+        recentBlockhash: ByteArray,
+        lamports: Long,
+        memo: String
+    ): ByteArray {
+        val memoBytes = memo.toByteArray(Charsets.UTF_8)
+        val buffer = ByteBuffer.allocate(1024 + memoBytes.size).order(ByteOrder.LITTLE_ENDIAN)
+
+        // Message header
+        buffer.put(1.toByte()) // 1 required signature
+        buffer.put(0.toByte()) // 0 readonly signed accounts
+        buffer.put(2.toByte()) // 2 readonly unsigned accounts (SystemProgram + MemoProgram)
+
+        // Account addresses (compact-u16 array)
+        buffer.put(4.toByte()) // 4 accounts total
+        buffer.put(fromPubKey) // Account 0: sender (writable, signer)
+        buffer.put(toPubKey)   // Account 1: recipient (writable)
+        buffer.put(systemProgramId) // Account 2: SystemProgram (readonly)
+        buffer.put(memoProgramId)   // Account 3: MemoProgram (readonly)
+
+        // Recent blockhash
+        buffer.put(recentBlockhash)
+
+        // Instructions (compact-u16 array)
+        buffer.put(2.toByte()) // 2 instructions (transfer + memo)
+
+        // Instruction 1: SystemProgram Transfer
+        buffer.put(2.toByte()) // program_id_index = 2 (SystemProgram)
+        buffer.put(2.toByte()) // 2 accounts in instruction
+        buffer.put(0.toByte()) // account index 0 (sender)
+        buffer.put(1.toByte()) // account index 1 (recipient)
+
+        // Instruction data (transfer instruction = type 2, + 8 bytes lamports)
+        buffer.put(12.toByte()) // data length (4 bytes u32 + 8 bytes u64 = 12 bytes)
+
+        // Instruction type: 2 (Transfer) as u32 little-endian
+        buffer.put(2.toByte())
+        buffer.put(0.toByte())
+        buffer.put(0.toByte())
+        buffer.put(0.toByte())
+
+        // Amount in lamports as u64 little-endian
+        buffer.putLong(lamports)
+
+        // Instruction 2: SPL Memo
+        buffer.put(3.toByte()) // program_id_index = 3 (MemoProgram)
+        buffer.put(1.toByte()) // 1 account in instruction (signer)
+        buffer.put(0.toByte()) // account index 0 (sender/signer)
+
+        // Memo data (just the memo string bytes)
+        buffer.put(memoBytes.size.toByte()) // data length
+        buffer.put(memoBytes)
 
         // Return only the used portion of the buffer
         val messageSize = buffer.position()
@@ -776,6 +865,84 @@ class SolanaService(context: Context) {
         } catch (e: Exception) {
             Log.e(TAG, "Failed to fetch SOL price", e)
             return@withContext Result.failure(e)
+        }
+    }
+
+    /**
+     * Get estimated network fee for a Solana transaction
+     * Fetches recent prioritization fees from the network and calculates average
+     * Falls back to standard 5000 lamports if fetch fails
+     *
+     * @return Fee in SOL (not lamports)
+     */
+    suspend fun getTransactionFee(): Result<Double> = withContext(Dispatchers.IO) {
+        try {
+            Log.d(TAG, "Fetching recent prioritization fees from network")
+
+            // Base fee is always 5000 lamports per signature
+            val baseFee = 5000L
+
+            // Fetch recent prioritization fees to estimate congestion
+            val requestBody = """
+                {
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "getRecentPrioritizationFees",
+                    "params": [[]]
+                }
+            """.trimIndent()
+
+            val request = Request.Builder()
+                .url(HELIUS_RPC_URL)
+                .post(requestBody.toRequestBody("application/json".toMediaType()))
+                .build()
+
+            client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) {
+                    Log.w(TAG, "Failed to fetch priority fees, using base fee")
+                    val feeSOL = baseFee.toDouble() / LAMPORTS_PER_SOL
+                    return@withContext Result.success(feeSOL)
+                }
+
+                val responseBody = response.body?.string()
+                val json = JSONObject(responseBody ?: "{}")
+                val result = json.optJSONArray("result")
+
+                // Calculate median priority fee from recent slots
+                var priorityFee = 0L
+                if (result != null && result.length() > 0) {
+                    val fees = mutableListOf<Long>()
+                    for (i in 0 until result.length()) {
+                        val feeObj = result.getJSONObject(i)
+                        val fee = feeObj.getLong("prioritizationFee")
+                        if (fee > 0) {
+                            fees.add(fee)
+                        }
+                    }
+
+                    if (fees.isNotEmpty()) {
+                        // Use 75th percentile for better estimate during congestion
+                        fees.sort()
+                        val percentile75Index = (fees.size * 0.75).toInt().coerceAtMost(fees.size - 1)
+                        priorityFee = fees[percentile75Index]
+                        Log.d(TAG, "75th percentile priority fee: $priorityFee lamports")
+                    }
+                }
+
+                // Total fee = base fee + priority fee
+                val totalFeeLamports = baseFee + priorityFee
+                val feeSOL = totalFeeLamports.toDouble() / LAMPORTS_PER_SOL
+
+                Log.i(TAG, "Transaction fee: $feeSOL SOL (base: $baseFee, priority: $priorityFee lamports)")
+                return@withContext Result.success(feeSOL)
+            }
+
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to fetch transaction fee, using base fee", e)
+            // Fallback to base fee
+            val baseFee = 5000L
+            val feeSOL = baseFee.toDouble() / LAMPORTS_PER_SOL
+            return@withContext Result.success(feeSOL)
         }
     }
 

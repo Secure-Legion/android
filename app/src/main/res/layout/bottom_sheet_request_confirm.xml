@@ -74,7 +74,7 @@
             android:orientation="vertical"
             android:padding="20dp">
 
-            <!-- From (Recipient) -->
+            <!-- From (Contact to request from) -->
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
@@ -86,7 +86,7 @@
                     android:layout_height="wrap_content"
                     android:layout_weight="1"
                     android:fontFamily="@font/poppins_regular"
-                    android:text="Request From"
+                    android:text="From"
                     android:textColor="#888888"
                     android:textSize="14sp" />
 
@@ -100,7 +100,7 @@
                     android:textSize="14sp" />
             </LinearLayout>
 
-            <!-- To My Wallet -->
+            <!-- To (Your wallet) -->
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
@@ -112,7 +112,7 @@
                     android:layout_height="wrap_content"
                     android:layout_weight="1"
                     android:fontFamily="@font/poppins_regular"
-                    android:text="To My Wallet"
+                    android:text="To"
                     android:textColor="#888888"
                     android:textSize="14sp" />
 
@@ -168,6 +168,7 @@
                     android:textSize="14sp" />
 
                 <TextView
+                    android:id="@+id/confirmRequestExpiry"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:fontFamily="@font/poppins_medium"

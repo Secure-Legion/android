@@ -7,12 +7,12 @@ import cash.z.ecc.android.bip39.toSeed
 import cash.z.ecc.android.sdk.Synchronizer
 import cash.z.ecc.android.sdk.WalletInitMode
 import cash.z.ecc.android.sdk.ext.convertZatoshiToZec
+import cash.z.ecc.android.sdk.model.AccountBalance
 import cash.z.ecc.android.sdk.model.AccountCreateSetup
 import cash.z.ecc.android.sdk.model.BlockHeight
 import cash.z.ecc.android.sdk.model.FirstClassByteArray
 import cash.z.ecc.android.sdk.model.TransactionSubmitResult
 import cash.z.ecc.android.sdk.model.UnifiedSpendingKey
-import cash.z.ecc.android.sdk.model.WalletBalance
 import cash.z.ecc.android.sdk.model.Zatoshi
 import cash.z.ecc.android.sdk.model.ZcashNetwork
 import cash.z.ecc.android.sdk.model.Zip32AccountIndex
@@ -22,13 +22,19 @@ import com.securelegion.crypto.KeyManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONObject
+import org.bouncycastle.crypto.digests.RIPEMD160Digest
+import org.web3j.crypto.Bip32ECKeyPair
+import org.web3j.crypto.MnemonicUtils
 import java.io.IOException
 import java.net.InetSocketAddress
 import java.net.Proxy
+import java.security.MessageDigest
 import java.util.concurrent.TimeUnit
 
 /**
@@ -66,12 +72,12 @@ class ZcashService(private val context: Context) {
         // CoinGecko price API (free, no key required)
         private const val COINGECKO_API = "https://api.coingecko.com/api/v3/simple/price?ids=zcash&vs_currencies=usd"
 
-        // Lightwalletd servers (Zcash Foundation public servers)
-        private const val MAINNET_LIGHTWALLETD_HOST = "mainnet.lightwalletd.com"
-        private const val MAINNET_LIGHTWALLETD_PORT = 9067
+        // Lightwalletd servers - using na.zec.rocks (North America, Tor-friendly)
+        private const val MAINNET_LIGHTWALLETD_HOST = "na.zec.rocks"
+        private const val MAINNET_LIGHTWALLETD_PORT = 443
 
-        private const val TESTNET_LIGHTWALLETD_HOST = "lightwalletd.testnet.electriccoin.co"
-        private const val TESTNET_LIGHTWALLETD_PORT = 9067
+        private const val TESTNET_LIGHTWALLETD_HOST = "testnet.zec.rocks"
+        private const val TESTNET_LIGHTWALLETD_PORT = 443
 
         // Synchronizer alias for this wallet instance
         private const val WALLET_ALIAS = "securelegion_wallet"
@@ -90,24 +96,169 @@ class ZcashService(private val context: Context) {
                 instance ?: ZcashService(context.applicationContext).also { instance = it }
             }
         }
+
+        /**
+         * Derive transparent Zcash address from seed phrase using BIP44
+         * Path: m/44'/133'/account'/0/addressIndex
+         *
+         * @param seedPhrase BIP39 mnemonic
+         * @param network Zcash network (mainnet or testnet)
+         * @param addressIndex Address index (usually 0 for first address)
+         * @return Transparent address (t1... for mainnet, tm... for testnet)
+         */
+        private fun deriveTransparentAddress(
+            seedPhrase: String,
+            network: ZcashNetwork,
+            addressIndex: Int = 0
+        ): String {
+            // Convert seed phrase to seed bytes using Web3j's BIP39 implementation
+            val seed = MnemonicUtils.generateSeed(seedPhrase, "")
+
+            // Derive master key from seed
+            val masterKey = Bip32ECKeyPair.generateKeyPair(seed)
+
+            // BIP44 path for Zcash: m/44'/133'/0'/0/0
+            // 44' = 0x8000002C (purpose - hardened)
+            // 133' = 0x80000085 (coin type for Zcash - hardened)
+            // 0' = 0x80000000 (account - hardened)
+            // 0 = external chain (not hardened)
+            // addressIndex = address index (not hardened)
+            val purpose = 44 or 0x80000000.toInt()  // 44' (hardened)
+            val coinType = 133 or 0x80000000.toInt() // 133' (Zcash, hardened)
+            val account = 0 or 0x80000000.toInt()   // 0' (hardened)
+            val chain = 0                            // 0 (external, not hardened)
+
+            // Build the full derivation path as an array
+            val derivationPath = intArrayOf(purpose, coinType, account, chain, addressIndex)
+
+            // Derive the key following BIP44 path
+            val addressKey = Bip32ECKeyPair.deriveKeyPair(masterKey, derivationPath)
+
+            // Get compressed public key
+            val publicKey = addressKey.publicKey.toByteArray()
+            val compressedPubKey = compressPublicKey(publicKey)
+
+            // Hash the public key (SHA-256 then RIPEMD-160)
+            val sha256 = MessageDigest.getInstance("SHA-256")
+            val sha256Hash = sha256.digest(compressedPubKey)
+
+            val ripemd160 = RIPEMD160Digest()
+            val pubKeyHash = ByteArray(20)
+            ripemd160.update(sha256Hash, 0, sha256Hash.size)
+            ripemd160.doFinal(pubKeyHash, 0)
+
+            // Add version bytes for Zcash P2PKH addresses
+            // Mainnet: 0x1CB8, Testnet: 0x1D25
+            val versionBytes = if (network == ZcashNetwork.Mainnet) {
+                byteArrayOf(0x1C.toByte(), 0xB8.toByte())
+            } else {
+                byteArrayOf(0x1D.toByte(), 0x25.toByte())
+            }
+
+            // Combine version + pubKeyHash
+            val addressBytes = versionBytes + pubKeyHash
+
+            // Encode with Base58Check
+            return base58CheckEncode(addressBytes)
+        }
+
+        /**
+         * Compress a public key to 33 bytes (02/03 prefix + x coordinate)
+         */
+        private fun compressPublicKey(publicKey: ByteArray): ByteArray {
+            if (publicKey.size == 33) return publicKey // Already compressed
+
+            // publicKey is 65 bytes: 0x04 + x (32 bytes) + y (32 bytes)
+            val x = publicKey.sliceArray(1..32)
+            val y = publicKey.sliceArray(33..64)
+
+            // If y is even, use 0x02 prefix, else 0x03
+            val prefix = if (y.last().toInt() and 1 == 0) 0x02.toByte() else 0x03.toByte()
+
+            return byteArrayOf(prefix) + x
+        }
+
+        /**
+         * Base58Check encoding for Zcash addresses
+         */
+        private fun base58CheckEncode(payload: ByteArray): String {
+            // Calculate checksum (double SHA-256)
+            val sha256 = MessageDigest.getInstance("SHA-256")
+            val hash1 = sha256.digest(payload)
+            val hash2 = sha256.digest(hash1)
+            val checksum = hash2.sliceArray(0..3)
+
+            // Combine payload + checksum
+            val addressBytes = payload + checksum
+
+            // Encode to Base58
+            return base58Encode(addressBytes)
+        }
+
+        /**
+         * Base58 encoding (Bitcoin alphabet)
+         */
+        private fun base58Encode(input: ByteArray): String {
+            val alphabet = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
+
+            // Count leading zeros
+            var leadingZeros = 0
+            while (leadingZeros < input.size && input[leadingZeros] == 0.toByte()) {
+                leadingZeros++
+            }
+
+            // Convert to base58
+            val encoded = StringBuilder()
+            var num = java.math.BigInteger(1, input)
+            val base = java.math.BigInteger.valueOf(58)
+
+            while (num > java.math.BigInteger.ZERO) {
+                val remainder = num.mod(base).toInt()
+                encoded.insert(0, alphabet[remainder])
+                num = num.divide(base)
+            }
+
+            // Add '1' for each leading zero byte
+            for (i in 0 until leadingZeros) {
+                encoded.insert(0, '1')
+            }
+
+            return encoded.toString()
+        }
     }
 
     // Synchronizer instance (lazy initialized)
     private var synchronizer: Synchronizer? = null
     private var network: ZcashNetwork = ZcashNetwork.Mainnet
+    private var zcashAccount: cash.z.ecc.android.sdk.model.Account? = null
+
+    // Cached balance (updated automatically when synced)
+    @Volatile
+    private var cachedBalance: Double = 0.0
 
     /**
      * Initialize Zcash wallet from seed phrase
      * @param seedPhrase BIP39 mnemonic (12 or 24 words)
      * @param useTestnet true for testnet, false for mainnet
+     * @param birthdayHeight Optional block height when wallet was created (for restoring old wallets)
      * @return Unified address for receiving ZEC
      */
     suspend fun initialize(
         seedPhrase: String,
-        useTestnet: Boolean = false
+        useTestnet: Boolean = false,
+        birthdayHeight: Long? = null
     ): Result<String> = withContext(Dispatchers.IO) {
         try {
-            Log.d(TAG, "Initializing Zcash wallet (testnet: $useTestnet)")
+            // If already initialized, return existing address
+            if (synchronizer != null && zcashAccount != null) {
+                val existingAddress = keyManager.getZcashAddress()
+                if (existingAddress != null) {
+                    Log.d(TAG, "ZcashService already initialized, returning existing address")
+                    return@withContext Result.success(existingAddress)
+                }
+            }
+
+            Log.d(TAG, "Initializing Zcash wallet (testnet: $useTestnet, birthday: ${birthdayHeight ?: "latest"})")
 
             // Set network
             network = if (useTestnet) ZcashNetwork.Testnet else ZcashNetwork.Mainnet
@@ -115,8 +266,13 @@ class ZcashService(private val context: Context) {
             // Convert seed phrase to bytes using Zcash BIP39 library
             val seedBytes = Mnemonics.MnemonicCode(seedPhrase.toCharArray()).toSeed()
 
-            // Get latest checkpoint for wallet birthday
-            val birthday = BlockHeight.ofLatestCheckpoint(context, network)
+            // Use provided birthday or latest checkpoint for new wallets
+            val birthday = if (birthdayHeight != null && birthdayHeight > 0) {
+                BlockHeight.new(birthdayHeight)
+            } else {
+                BlockHeight.ofLatestCheckpoint(context, network)
+            }
+            Log.d(TAG, "Using birthday block height: ${birthday.value}")
 
             // Create lightwalletd endpoint
             val endpoint = if (useTestnet) {
@@ -125,8 +281,12 @@ class ZcashService(private val context: Context) {
                 LightWalletEndpoint(MAINNET_LIGHTWALLETD_HOST, MAINNET_LIGHTWALLETD_PORT, true)
             }
 
-            // Create synchronizer with Tor routing enabled
-            synchronizer = Synchronizer.new(
+            // Enable Tor for Zcash SDK - routes through SOCKS proxy on 127.0.0.1:9050
+            // This provides full privacy: lightwalletd server can't see your IP address
+            Log.i(TAG, "Connecting to lightwalletd: ${endpoint.host}:${endpoint.port} through Tor")
+            Log.i(TAG, "Network: ${if (useTestnet) "TESTNET" else "MAINNET"}, Birthday: ${birthday.value}")
+
+            synchronizer = Synchronizer.newBlocking(
                 context = context,
                 zcashNetwork = network,
                 alias = WALLET_ALIAS,
@@ -135,41 +295,35 @@ class ZcashService(private val context: Context) {
                 walletInitMode = WalletInitMode.RestoreWallet,
                 setup = AccountCreateSetup(
                     accountName = "SecureLegion Wallet",
-                    keySource = ACCOUNT_KEY_SOURCE,
+                    keySource = null,
                     seed = FirstClassByteArray(seedBytes)
                 ),
-                isTorEnabled = true, // Route all SDK traffic through Tor for privacy
-                isExchangeRateEnabled = false // Disable exchange rate fetching for privacy
+                isTorEnabled = true,  // ✅ Route all blockchain sync through Tor (uses 127.0.0.1:9050)
+                isExchangeRateEnabled = false
             )
 
-            // Derive unified address
-            val derivationTool = DerivationTool.getInstance()
+            Log.i(TAG, "Synchronizer created successfully")
 
-            // First derive the spending key
-            val spendingKey = derivationTool.deriveUnifiedSpendingKey(
-                seed = seedBytes,
-                network = network,
-                accountIndex = Zip32AccountIndex.new(DEFAULT_ACCOUNT_INDEX)
-            )
+            zcashAccount = runBlocking { synchronizer?.getAccounts()?.firstOrNull() }
+            val unifiedAddress = runBlocking {
+                zcashAccount?.let { synchronizer?.getUnifiedAddress(it) }
+            }
+            val transparentAddress = runBlocking {
+                zcashAccount?.let { synchronizer?.getTransparentAddress(it) }
+            }
 
-            // Then derive the viewing key from the spending key
-            val viewingKey = derivationTool.deriveUnifiedFullViewingKey(
-                usk = spendingKey,
-                network = network
-            )
-
-            val unifiedAddress = derivationTool.deriveUnifiedAddress(
-                viewingKey.encoding,
-                network
-            )
-
-            // Store Zcash address in KeyManager
-            keyManager.setZcashAddress(unifiedAddress)
+            if (unifiedAddress != null) {
+                keyManager.setZcashAddress(unifiedAddress)
+                Log.i(TAG, "Unified address: $unifiedAddress")
+            }
+            if (transparentAddress != null) {
+                keyManager.setZcashTransparentAddress(transparentAddress)
+                Log.i(TAG, "Transparent address (from SDK): $transparentAddress")
+            }
 
             Log.i(TAG, "Zcash wallet initialized successfully")
-            Log.d(TAG, "Unified address: $unifiedAddress")
 
-            Result.success(unifiedAddress)
+            Result.success(unifiedAddress ?: "")
 
         } catch (e: Exception) {
             Log.e(TAG, "Failed to initialize Zcash wallet", e)
@@ -181,53 +335,60 @@ class ZcashService(private val context: Context) {
 
     /**
      * Get ZEC balance for the wallet
-     * Requires synchronizer to be initialized
+     * Returns cached balance (updated automatically by SDK) for instant response
      * @return Balance in ZEC (e.g., 0.5 ZEC)
      */
     suspend fun getBalance(): Result<Double> = withContext(Dispatchers.IO) {
         try {
-            Log.d(TAG, "Fetching ZEC balance")
-
             val sync = synchronizer
             if (sync == null) {
-                Log.w(TAG, "Synchronizer not initialized, balance unavailable")
+                Log.w(TAG, "Synchronizer not initialized")
                 return@withContext Result.success(0.0)
             }
 
-            // Get accounts
-            val accounts = sync.getAccounts()
-            if (accounts.isEmpty()) {
-                Log.w(TAG, "No accounts found")
+            val account = zcashAccount
+            if (account == null) {
+                Log.w(TAG, "Account not initialized")
                 return@withContext Result.success(0.0)
             }
 
-            val account = accounts[DEFAULT_ACCOUNT_INDEX.toInt()]
+            // Try to get latest balance quickly (no blocking)
+            try {
+                val balances = sync.walletBalances.value
+                if (balances != null) {
+                    val balance = balances[account.accountUuid]
+                    if (balance != null) {
+                        // AccountBalance structure (from Unstoppable Wallet):
+                        // - balance.sapling.available + balance.sapling.pending
+                        // - balance.orchard.available + balance.orchard.pending
+                        // - balance.unshielded (transparent balance)
+                        val saplingAvailable = balance.sapling.available.convertZatoshiToZec(4).toDouble()
+                        val saplingPending = balance.sapling.pending.convertZatoshiToZec(4).toDouble()
+                        val orchardAvailable = balance.orchard.available.convertZatoshiToZec(4).toDouble()
+                        val orchardPending = balance.orchard.pending.convertZatoshiToZec(4).toDouble()
+                        val unshieldedZEC = balance.unshielded.convertZatoshiToZec(4).toDouble()
 
-            // Get wallet balances
-            val balances = sync.walletBalances.filterNotNull().first()
-            val walletBalance = balances[account.accountUuid]
+                        // Total balance including pending
+                        val totalZEC = saplingAvailable + saplingPending + orchardAvailable + orchardPending + unshieldedZEC
 
-            if (walletBalance == null) {
-                Log.w(TAG, "Wallet balance not available yet")
-                return@withContext Result.success(0.0)
+                        cachedBalance = totalZEC
+
+                        Log.d(TAG, "ZEC Balance - Sapling: ${saplingAvailable + saplingPending}")
+                        Log.d(TAG, "             Orchard: ${orchardAvailable + orchardPending}")
+                        Log.d(TAG, "             Transparent: $unshieldedZEC")
+                        Log.d(TAG, "             Total: $totalZEC ZEC")
+                    }
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Could not get latest balance: ${e.message}")
             }
 
-            // Get shielded balance (Sapling + Orchard)
-            val saplingBalance = walletBalance.sapling
-            val orchardBalance = walletBalance.orchard
-
-            // Convert to ZEC (available balance only)
-            val totalAvailableZatoshi = saplingBalance.available.value + orchardBalance.available.value
-            val balanceZEC = totalAvailableZatoshi.toDouble() / ZATOSHIS_PER_ZEC
-
-            Log.i(TAG, "Balance: $balanceZEC ZEC ($totalAvailableZatoshi zatoshis)")
-            Log.d(TAG, "  Sapling: ${saplingBalance.available.convertZatoshiToZec()} ZEC")
-            Log.d(TAG, "  Orchard: ${orchardBalance.available.convertZatoshiToZec()} ZEC")
-
-            Result.success(balanceZEC)
+            // Return cached balance (instant, no blocking)
+            Log.d(TAG, "Returning cached balance: $cachedBalance ZEC")
+            Result.success(cachedBalance)
 
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to fetch balance", e)
+            Log.e(TAG, "Failed to get balance", e)
             Result.failure(e)
         }
     }
@@ -260,6 +421,14 @@ class ZcashService(private val context: Context) {
             Log.e(TAG, "Failed to get unified address", e)
             null
         }
+    }
+
+    /**
+     * Get transparent address for exchange compatibility
+     * Returns the t1... address that exchanges like Kraken accept
+     */
+    fun getTransparentAddress(): String? {
+        return keyManager.getZcashTransparentAddress()
     }
 
     /**
@@ -393,6 +562,37 @@ class ZcashService(private val context: Context) {
 
         } catch (e: Exception) {
             Log.e(TAG, "Failed to fetch ZEC price", e)
+            return@withContext Result.failure(e)
+        }
+    }
+
+    /**
+     * Get estimated network fee for a Zcash transaction
+     * Returns the standard recommended fee which is consistent across most transactions
+     *
+     * Unlike Solana, Zcash fees don't fluctuate based on network congestion
+     * The standard fee is 10,000 zatoshis (0.0001 ZEC) for typical transactions
+     *
+     * Note: Shielded transactions or complex operations may have slightly higher fees,
+     * but this provides an accurate estimate for >95% of transactions
+     *
+     * @return Fee in ZEC (not zatoshis)
+     */
+    suspend fun getTransactionFee(): Result<Double> = withContext(Dispatchers.IO) {
+        try {
+            // Zcash standard recommended fee
+            // This is consistent and doesn't require network calls
+            // 1 ZEC = 100,000,000 zatoshis
+            val standardFeeZatoshis = 10000L
+            val feeZEC = standardFeeZatoshis.toDouble() / 100_000_000
+
+            Log.d(TAG, "Transaction fee (standard): $feeZEC ZEC ($standardFeeZatoshis zatoshis)")
+            Log.d(TAG, "Zcash fees are consistent - no need to fetch from network")
+
+            return@withContext Result.success(feeZEC)
+
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to calculate transaction fee", e)
             return@withContext Result.failure(e)
         }
     }

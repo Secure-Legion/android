@@ -474,6 +474,75 @@ object RustBridge {
      */
     external fun decryptAndStoreAckFromListener(ackWire: ByteArray): String?
 
+    // ==================== NLx402 PAYMENT PROTOCOL ====================
+
+    /**
+     * Create a payment quote for NLx402 protocol
+     * @param recipient Recipient wallet address (Solana/Zcash)
+     * @param amount Amount in smallest unit (lamports/zatoshis)
+     * @param token Token type (SOL, ZEC, USDC, etc.)
+     * @param description Optional human-readable description (empty string for none)
+     * @param senderHandle Optional sender's handle (empty string for none)
+     * @param recipientHandle Optional recipient's handle (empty string for none)
+     * @param expirySecs Quote expiration time in seconds (e.g., 86400 for 24 hours)
+     * @return JSON string containing the quote
+     */
+    external fun createPaymentQuote(
+        recipient: String,
+        amount: Long,
+        token: String,
+        description: String,
+        senderHandle: String,
+        recipientHandle: String,
+        expirySecs: Long
+    ): String
+
+    /**
+     * Get the memo string for a payment quote (for embedding in transaction)
+     * @param quoteJson The quote JSON from createPaymentQuote
+     * @return Memo string to embed in transaction (format: "NLx402:hash")
+     */
+    external fun getQuoteMemo(quoteJson: String): String
+
+    /**
+     * Verify a payment against a quote
+     * Checks memo hash, amount, recipient, and token match
+     * NOTE: Replay protection (tx signature checking) should be done in Kotlin with local DB
+     * @param quoteJson The quote JSON to verify against
+     * @param txMemo Transaction memo containing the quote hash
+     * @param txAmount Amount sent in the transaction (in smallest unit)
+     * @param txRecipient Recipient address in the transaction
+     * @param txToken Token type in the transaction
+     * @return True if payment is valid
+     */
+    external fun verifyPayment(
+        quoteJson: String,
+        txMemo: String,
+        txAmount: Long,
+        txRecipient: String,
+        txToken: String
+    ): Boolean
+
+    /**
+     * Check if a quote has expired
+     * @param quoteJson The quote JSON to check
+     * @return True if the quote has expired
+     */
+    external fun isQuoteExpired(quoteJson: String): Boolean
+
+    /**
+     * Extract quote hash from a transaction memo
+     * @param memo Transaction memo string
+     * @return The quote hash hex string, or empty string if memo is not valid NLx402 format
+     */
+    external fun extractQuoteHashFromMemo(memo: String): String
+
+    /**
+     * Get the NLx402 protocol version
+     * @return Version string (e.g., "1.0.0")
+     */
+    external fun getNLx402Version(): String
+
     // ==================== HELPER FUNCTIONS ====================
 
     /**

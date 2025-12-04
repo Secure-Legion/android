@@ -172,11 +172,6 @@
             android:windowSoftInputMode="adjustPan" />
 
         <activity
-            android:name=".SwapActivity"
-            android:exported="false"
-            android:windowSoftInputMode="adjustPan" />
-
-        <activity
             android:name=".SendMoneyActivity"
             android:exported="false"
             android:windowSoftInputMode="adjustPan" />
@@ -212,11 +207,20 @@
             android:windowSoftInputMode="adjustPan" />
 
         <activity
+            android:name=".ImportWalletActivity"
+            android:exported="false"
+            android:windowSoftInputMode="adjustPan" />
+
+        <activity
             android:name=".TransferDetailsActivity"
             android:exported="false" />
 
         <activity
             android:name=".RequestDetailsActivity"
+            android:exported="false" />
+
+        <activity
+            android:name=".AcceptPaymentActivity"
             android:exported="false" />
 
         <!-- Tor daemon - In-process Tor via JNI (from tor-android library) -->
