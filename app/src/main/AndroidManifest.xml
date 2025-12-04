@@ -94,7 +94,7 @@
         <activity
             android:name=".LockActivity"
             android:exported="false"
-            android:windowSoftInputMode="adjustResize" />
+            android:windowSoftInputMode="adjustNothing" />
 
         <activity
             android:name=".SettingsActivity"
