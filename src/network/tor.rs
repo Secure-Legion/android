@@ -168,6 +168,9 @@ pub const MSG_TYPE_DELIVERY_CONFIRMATION: u8 = 0x06;
 pub const MSG_TYPE_FRIEND_REQUEST: u8 = 0x07;
 pub const MSG_TYPE_FRIEND_REQUEST_ACCEPTED: u8 = 0x08;
 pub const MSG_TYPE_IMAGE: u8 = 0x09;
+pub const MSG_TYPE_PAYMENT_REQUEST: u8 = 0x0A;
+pub const MSG_TYPE_PAYMENT_SENT: u8 = 0x0B;
+pub const MSG_TYPE_PAYMENT_ACCEPTED: u8 = 0x0C;
 
 /// Structure representing a pending connection waiting for Pong response
 pub struct PendingConnection {
@@ -711,12 +714,15 @@ impl TorManager {
                 // Send directly to whichever channel is listening
                 tx.send((conn_id, data)).ok();
             }
-            MSG_TYPE_TEXT | MSG_TYPE_VOICE | MSG_TYPE_IMAGE => {
+            MSG_TYPE_TEXT | MSG_TYPE_VOICE | MSG_TYPE_IMAGE | MSG_TYPE_PAYMENT_REQUEST | MSG_TYPE_PAYMENT_SENT | MSG_TYPE_PAYMENT_ACCEPTED => {
                 log::info!("→ Routing to MESSAGE handler (type={})",
                     match msg_type {
                         MSG_TYPE_TEXT => "TEXT",
                         MSG_TYPE_VOICE => "VOICE",
                         MSG_TYPE_IMAGE => "IMAGE",
+                        MSG_TYPE_PAYMENT_REQUEST => "PAYMENT_REQUEST",
+                        MSG_TYPE_PAYMENT_SENT => "PAYMENT_SENT",
+                        MSG_TYPE_PAYMENT_ACCEPTED => "PAYMENT_ACCEPTED",
                         _ => "UNKNOWN"
                     });
 
