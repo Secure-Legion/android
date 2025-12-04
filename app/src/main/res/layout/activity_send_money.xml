@@ -107,8 +107,9 @@
 
                 <TextView
                     android:id="@+id/recipientName"
-                    android:layout_width="wrap_content"
+                    android:layout_width="0dp"
                     android:layout_height="wrap_content"
+                    android:layout_weight="1"
                     android:layout_marginStart="16dp"
                     android:text="Alex"
                     android:textSize="18sp"
@@ -117,107 +118,25 @@
 
             </LinearLayout>
 
-            <!-- Wallet Card -->
-            <androidx.cardview.widget.CardView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginBottom="24dp"
-                app:cardBackgroundColor="#1A1A1A"
-                app:cardCornerRadius="16dp"
-                app:cardElevation="0dp">
-
-                <LinearLayout
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:orientation="vertical"
-                    android:padding="16dp">
-
-                    <!-- Wallet Name Row -->
-                    <LinearLayout
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:orientation="horizontal"
-                        android:layout_marginBottom="12dp">
-
-                        <TextView
-                            android:layout_width="0dp"
-                            android:layout_height="wrap_content"
-                            android:layout_weight="1"
-                            android:text="Wallet Name"
-                            android:textSize="12sp"
-                            android:textColor="#888888"
-                            android:fontFamily="@font/poppins_regular" />
-
-                        <LinearLayout
-                            android:id="@+id/walletNameDropdown"
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:orientation="horizontal"
-                            android:gravity="center_vertical"
-                            android:clickable="true"
-                            android:focusable="true"
-                            android:background="?attr/selectableItemBackgroundBorderless">
-
-                            <TextView
-                                android:id="@+id/walletNameText"
-                                android:layout_width="wrap_content"
-                                android:layout_height="wrap_content"
-                                android:text="Wallet 1"
-                                android:textSize="14sp"
-                                android:textColor="#FFFFFF"
-                                android:fontFamily="@font/poppins_medium"
-                                android:layout_marginEnd="4dp" />
-
-                            <ImageView
-                                android:layout_width="16dp"
-                                android:layout_height="16dp"
-                                android:src="@drawable/ic_arrow_forward"
-                                android:rotation="90"
-                                android:tint="#888888"
-                                android:contentDescription="Dropdown" />
-
-                        </LinearLayout>
-
-                    </LinearLayout>
-
-                    <!-- Address Row -->
-                    <LinearLayout
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:orientation="horizontal">
-
-                        <TextView
-                            android:layout_width="0dp"
-                            android:layout_height="wrap_content"
-                            android:layout_weight="1"
-                            android:text="Address"
-                            android:textSize="12sp"
-                            android:textColor="#888888"
-                            android:fontFamily="@font/poppins_regular" />
-
-                        <TextView
-                            android:id="@+id/walletAddressShort"
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:text="ADm9P.....2eoLX5"
-                            android:textSize="12sp"
-                            android:textColor="#FFFFFF"
-                            android:fontFamily="monospace" />
-
-                    </LinearLayout>
-
-                </LinearLayout>
-
-            </androidx.cardview.widget.CardView>
-
-            <!-- Transaction Details -->
+            <!-- FROM Card (Your wallet - where you send money from) -->
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:orientation="vertical"
-                android:layout_marginBottom="32dp">
+                android:background="@drawable/wallet_token_bg"
+                android:padding="16dp"
+                android:layout_marginBottom="16dp">
 
-                <!-- Expirers Date/Time -->
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="FROM (Your Wallet):"
+                    android:textSize="13sp"
+                    android:textColor="#888888"
+                    android:fontFamily="@font/poppins_regular"
+                    android:layout_marginBottom="12dp" />
+
+                <!-- Wallet Name Row -->
                 <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
@@ -228,104 +147,44 @@
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
                         android:layout_weight="1"
-                        android:text="Expirers Date/ Time"
-                        android:textSize="13sp"
+                        android:text="Wallet Name"
+                        android:textSize="12sp"
                         android:textColor="#888888"
                         android:fontFamily="@font/poppins_regular" />
 
-                    <TextView
-                        android:id="@+id/expiryDateTime"
+                    <LinearLayout
+                        android:id="@+id/walletNameDropdown"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="15 Min 17 Feb 2023"
-                        android:textSize="13sp"
-                        android:textColor="#FFFFFF"
-                        android:fontFamily="@font/poppins_regular" />
+                        android:orientation="horizontal"
+                        android:gravity="center_vertical"
+                        android:clickable="true"
+                        android:focusable="true"
+                        android:background="?attr/selectableItemBackgroundBorderless">
+
+                        <TextView
+                            android:id="@+id/walletNameText"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="Wallet 1"
+                            android:textSize="14sp"
+                            android:textColor="#FFFFFF"
+                            android:fontFamily="@font/poppins_medium"
+                            android:layout_marginEnd="4dp" />
+
+                        <ImageView
+                            android:layout_width="16dp"
+                            android:layout_height="16dp"
+                            android:src="@drawable/ic_arrow_forward"
+                            android:rotation="90"
+                            android:tint="#888888"
+                            android:contentDescription="Dropdown" />
+
+                    </LinearLayout>
 
                 </LinearLayout>
 
-                <!-- Invoice number -->
-                <LinearLayout
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:orientation="horizontal"
-                    android:layout_marginBottom="8dp">
-
-                    <TextView
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:text="Invoice number"
-                        android:textSize="13sp"
-                        android:textColor="#888888"
-                        android:fontFamily="@font/poppins_regular" />
-
-                    <TextView
-                        android:id="@+id/invoiceNumber"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="#2023ED101"
-                        android:textSize="13sp"
-                        android:textColor="#FFFFFF"
-                        android:fontFamily="@font/poppins_regular" />
-
-                </LinearLayout>
-
-                <!-- Applications fee -->
-                <LinearLayout
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:orientation="horizontal"
-                    android:layout_marginBottom="8dp">
-
-                    <TextView
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:text="Applications fee"
-                        android:textSize="13sp"
-                        android:textColor="#888888"
-                        android:fontFamily="@font/poppins_regular" />
-
-                    <TextView
-                        android:id="@+id/applicationFee"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="$00.00"
-                        android:textSize="13sp"
-                        android:textColor="#FFFFFF"
-                        android:fontFamily="@font/poppins_regular" />
-
-                </LinearLayout>
-
-                <!-- Time -->
-                <LinearLayout
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:orientation="horizontal"
-                    android:layout_marginBottom="8dp">
-
-                    <TextView
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:text="Time"
-                        android:textSize="13sp"
-                        android:textColor="#888888"
-                        android:fontFamily="@font/poppins_regular" />
-
-                    <TextView
-                        android:id="@+id/transactionTime"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="09:41 pm"
-                        android:textSize="13sp"
-                        android:textColor="#FFFFFF"
-                        android:fontFamily="@font/poppins_regular" />
-
-                </LinearLayout>
-
-                <!-- Date -->
+                <!-- Address Row -->
                 <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
@@ -335,19 +194,19 @@
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
                         android:layout_weight="1"
-                        android:text="Date"
-                        android:textSize="13sp"
+                        android:text="Address"
+                        android:textSize="12sp"
                         android:textColor="#888888"
                         android:fontFamily="@font/poppins_regular" />
 
                     <TextView
-                        android:id="@+id/transactionDate"
+                        android:id="@+id/walletAddressShort"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="17 Feb, 2023"
-                        android:textSize="13sp"
+                        android:text="ADm9P.....2eoLX5"
+                        android:textSize="12sp"
                         android:textColor="#FFFFFF"
-                        android:fontFamily="@font/poppins_regular" />
+                        android:fontFamily="monospace" />
 
                 </LinearLayout>
 
@@ -358,59 +217,55 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:orientation="vertical"
-                android:gravity="center"
-                android:layout_marginBottom="32dp">
+                android:background="@drawable/wallet_token_bg"
+                android:padding="16dp"
+                android:layout_marginBottom="24dp">
 
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="Amount"
-                    android:textSize="14sp"
+                    android:textSize="12sp"
                     android:textColor="#888888"
                     android:fontFamily="@font/poppins_regular"
                     android:layout_marginBottom="8dp" />
 
                 <LinearLayout
-                    android:id="@+id/amountDropdown"
-                    android:layout_width="wrap_content"
+                    android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:orientation="horizontal"
-                    android:gravity="center_vertical"
-                    android:clickable="true"
-                    android:focusable="true"
-                    android:background="?attr/selectableItemBackgroundBorderless">
+                    android:gravity="center_vertical">
 
                     <EditText
                         android:id="@+id/amountInput"
-                        android:layout_width="wrap_content"
+                        android:layout_width="0dp"
                         android:layout_height="wrap_content"
+                        android:layout_weight="1"
                         android:background="@android:color/transparent"
-                        android:text="$1,250"
-                        android:textSize="48sp"
-                        android:textColor="#C0C0C0"
+                        android:hint="0.00"
+                        android:textSize="24sp"
+                        android:textColor="#FFFFFF"
+                        android:textColorHint="#666666"
+                        android:textStyle="bold"
                         android:fontFamily="@font/space_grotesk_bold"
-                        android:inputType="numberDecimal"
-                        android:minWidth="150dp"
-                        android:gravity="center"
-                        android:layout_marginEnd="8dp" />
+                        android:inputType="numberDecimal" />
 
                     <LinearLayout
+                        android:id="@+id/currencyDropdown"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:orientation="horizontal"
-                        android:background="@drawable/settings_icon_bg"
-                        android:paddingStart="12dp"
-                        android:paddingEnd="12dp"
-                        android:paddingTop="6dp"
-                        android:paddingBottom="6dp"
-                        android:gravity="center_vertical">
+                        android:gravity="center_vertical"
+                        android:clickable="true"
+                        android:focusable="true"
+                        android:background="?attr/selectableItemBackgroundBorderless">
 
                         <TextView
                             android:id="@+id/currencyLabel"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
-                            android:text="USD"
-                            android:textSize="12sp"
+                            android:text="SOL"
+                            android:textSize="16sp"
                             android:textColor="#888888"
                             android:fontFamily="@font/poppins_medium"
                             android:layout_marginEnd="4dp" />
@@ -429,21 +284,72 @@
 
             </LinearLayout>
 
+            <!-- Expiry Time Picker -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:background="@drawable/wallet_token_bg"
+                android:padding="16dp"
+                android:gravity="center_vertical"
+                android:layout_marginBottom="24dp">
+
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="Expires In"
+                    android:textSize="14sp"
+                    android:textColor="#888888"
+                    android:fontFamily="@font/poppins_regular" />
+
+                <LinearLayout
+                    android:id="@+id/expiryDropdown"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:background="?attr/selectableItemBackgroundBorderless">
+
+                    <TextView
+                        android:id="@+id/expiryText"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="24 hours"
+                        android:textSize="14sp"
+                        android:textColor="#FFFFFF"
+                        android:fontFamily="@font/poppins_medium"
+                        android:layout_marginEnd="4dp" />
+
+                    <ImageView
+                        android:layout_width="16dp"
+                        android:layout_height="16dp"
+                        android:src="@drawable/ic_arrow_forward"
+                        android:rotation="90"
+                        android:tint="#888888"
+                        android:contentDescription="Dropdown" />
+
+                </LinearLayout>
+
+            </LinearLayout>
+
+            <!-- Send Now Button -->
+            <androidx.appcompat.widget.AppCompatButton
+                android:id="@+id/sendNowButton"
+                android:layout_width="match_parent"
+                android:layout_height="56dp"
+                android:layout_marginTop="16dp"
+                android:background="@drawable/wallet_action_button_bg"
+                android:fontFamily="@font/poppins_semibold"
+                android:text="Send Now"
+                android:textAllCaps="false"
+                android:textColor="@color/text_white"
+                android:textSize="16sp" />
+
         </LinearLayout>
 
     </ScrollView>
-
-    <!-- Send Now Button -->
-    <androidx.appcompat.widget.AppCompatButton
-        android:id="@+id/sendNowButton"
-        android:layout_width="match_parent"
-        android:layout_height="56dp"
-        android:layout_margin="24dp"
-        android:background="@drawable/swap_button_bg"
-        android:fontFamily="@font/poppins_semibold"
-        android:text="Send Now"
-        android:textAllCaps="false"
-        android:textColor="@color/text_white"
-        android:textSize="16sp" />
 
 </LinearLayout>

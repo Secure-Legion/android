@@ -136,15 +136,62 @@
                 android:id="@+id/qrCodeImage"
                 android:layout_width="220dp"
                 android:layout_height="220dp"
-                android:layout_marginBottom="24dp"
+                android:layout_marginBottom="16dp"
                 android:contentDescription="QR Code" />
+
+            <!-- Address Type Selector (Only for ZEC) -->
+            <LinearLayout
+                android:id="@+id/addressTypeSelector"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:background="@drawable/wallet_token_bg"
+                android:padding="4dp"
+                android:layout_marginBottom="16dp"
+                android:visibility="gone">
+
+                <androidx.appcompat.widget.AppCompatButton
+                    android:id="@+id/unifiedAddressButton"
+                    android:layout_width="120dp"
+                    android:layout_height="36dp"
+                    android:text="Unified"
+                    android:textSize="12sp"
+                    android:textColor="#FFFFFF"
+                    android:fontFamily="@font/poppins_medium"
+                    android:background="@drawable/wallet_action_button_bg"
+                    android:textAllCaps="false" />
+
+                <androidx.appcompat.widget.AppCompatButton
+                    android:id="@+id/transparentAddressButton"
+                    android:layout_width="120dp"
+                    android:layout_height="36dp"
+                    android:text="Exchange"
+                    android:textSize="12sp"
+                    android:textColor="#888888"
+                    android:fontFamily="@font/poppins_medium"
+                    android:background="@android:color/transparent"
+                    android:textAllCaps="false" />
+
+            </LinearLayout>
+
+            <!-- Address Type Label (Only for ZEC) -->
+            <TextView
+                android:id="@+id/addressTypeLabel"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="For private SecureLegion transfers"
+                android:textSize="11sp"
+                android:textColor="#666666"
+                android:fontFamily="@font/poppins_regular"
+                android:layout_marginBottom="8dp"
+                android:visibility="gone" />
 
             <!-- Deposit Address -->
             <TextView
                 android:id="@+id/depositAddress"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="ADm9Pvbs2q472vJRu3YPaJXYNcUfszRTEcbZqK2eoLX5"
+                android:text="Loading..."
                 android:textSize="12sp"
                 android:textColor="#CCCCCC"
                 android:fontFamily="monospace"
@@ -226,7 +273,7 @@
                         android:id="@+id/walletAddressShort"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="ADm9P.....2eoLX5"
+                        android:text="Loading..."
                         android:textSize="12sp"
                         android:textColor="#FFFFFF"
                         android:fontFamily="monospace" />

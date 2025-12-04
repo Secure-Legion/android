@@ -145,9 +145,10 @@
                 android:layout_marginBottom="32dp">
 
                 <TextView
+                    android:id="@+id/statusMessage"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="You have successfully Request!"
+                    android:text="You have successfully requested!"
                     android:textSize="14sp"
                     android:textColor="#888888"
                     android:fontFamily="@font/poppins_regular"
@@ -157,7 +158,7 @@
                     android:id="@+id/amountRequested"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="$1,250"
+                    android:text="$0.00"
                     android:textSize="48sp"
                     android:textColor="#C0C0C0"
                     android:fontFamily="@font/space_grotesk_bold" />
@@ -170,7 +171,7 @@
                 android:layout_height="wrap_content"
                 android:orientation="vertical">
 
-                <!-- Sent $SOL -->
+                <!-- Requested Amount (crypto) -->
                 <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
@@ -178,10 +179,11 @@
                     android:layout_marginBottom="16dp">
 
                     <TextView
+                        android:id="@+id/cryptoAmountLabel"
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
                         android:layout_weight="1"
-                        android:text="Sent $SOL"
+                        android:text="Requested"
                         android:textSize="13sp"
                         android:textColor="#888888"
                         android:fontFamily="@font/poppins_regular" />
@@ -190,14 +192,14 @@
                         android:id="@+id/sentSol"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="10"
+                        android:text="0.00 ZEC"
                         android:textSize="13sp"
                         android:textColor="#FFFFFF"
                         android:fontFamily="@font/poppins_regular" />
 
                 </LinearLayout>
 
-                <!-- Money Sent -->
+                <!-- USD Value -->
                 <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
@@ -208,7 +210,7 @@
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
                         android:layout_weight="1"
-                        android:text="Money Sent"
+                        android:text="USD Value"
                         android:textSize="13sp"
                         android:textColor="#888888"
                         android:fontFamily="@font/poppins_regular" />
@@ -217,14 +219,14 @@
                         android:id="@+id/moneySent"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="$1,250"
+                        android:text="$0.00"
                         android:textSize="13sp"
                         android:textColor="#FFFFFF"
                         android:fontFamily="@font/poppins_regular" />
 
                 </LinearLayout>
 
-                <!-- Expirers Date/Time -->
+                <!-- Expires -->
                 <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
@@ -235,7 +237,7 @@
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
                         android:layout_weight="1"
-                        android:text="Expirers Date/ Time"
+                        android:text="Expires"
                         android:textSize="13sp"
                         android:textColor="#888888"
                         android:fontFamily="@font/poppins_regular" />
@@ -244,14 +246,14 @@
                         android:id="@+id/expiryDateTime"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="15 Min 17 Feb 2023"
+                        android:text="24 hours"
                         android:textSize="13sp"
                         android:textColor="#FFFFFF"
                         android:fontFamily="@font/poppins_regular" />
 
                 </LinearLayout>
 
-                <!-- Transaction number -->
+                <!-- Transaction ID -->
                 <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
@@ -262,23 +264,27 @@
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
                         android:layout_weight="1"
-                        android:text="Transaction number"
+                        android:text="Request ID"
                         android:textSize="13sp"
                         android:textColor="#888888"
                         android:fontFamily="@font/poppins_regular" />
 
                     <TextView
                         android:id="@+id/transactionNumber"
-                        android:layout_width="wrap_content"
+                        android:layout_width="0dp"
                         android:layout_height="wrap_content"
-                        android:text="#2023ED101"
+                        android:layout_weight="1"
+                        android:gravity="end"
+                        android:text=""
                         android:textSize="13sp"
                         android:textColor="#FFFFFF"
-                        android:fontFamily="@font/poppins_regular" />
+                        android:fontFamily="@font/poppins_regular"
+                        android:ellipsize="middle"
+                        android:singleLine="true" />
 
                 </LinearLayout>
 
-                <!-- Applications fee -->
+                <!-- Network Fee -->
                 <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
@@ -289,7 +295,7 @@
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
                         android:layout_weight="1"
-                        android:text="Applications fee"
+                        android:text="Network Fee"
                         android:textSize="13sp"
                         android:textColor="#888888"
                         android:fontFamily="@font/poppins_regular" />
@@ -298,7 +304,7 @@
                         android:id="@+id/applicationsFee"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="$00.00"
+                        android:text="$0.00"
                         android:textSize="13sp"
                         android:textColor="#FFFFFF"
                         android:fontFamily="@font/poppins_regular" />
@@ -325,7 +331,7 @@
                         android:id="@+id/transactionTime"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="09:41 pm"
+                        android:text=""
                         android:textSize="13sp"
                         android:textColor="#FFFFFF"
                         android:fontFamily="@font/poppins_regular" />
@@ -351,7 +357,7 @@
                         android:id="@+id/transactionDate"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="17 Feb, 2023"
+                        android:text=""
                         android:textSize="13sp"
                         android:textColor="#FFFFFF"
                         android:fontFamily="@font/poppins_regular" />

@@ -47,6 +47,7 @@ class KeyManager private constructor(context: Context) {
         private const val DEVICE_PASSWORD_HASH_ALIAS = "${KEYSTORE_ALIAS_PREFIX}device_password_hash"
         private const val DEVICE_PASSWORD_SALT_ALIAS = "${KEYSTORE_ALIAS_PREFIX}device_password_salt"
         private const val ZCASH_ADDRESS_ALIAS = "${KEYSTORE_ALIAS_PREFIX}zcash_address"
+        private const val ZCASH_TRANSPARENT_ADDRESS_ALIAS = "${KEYSTORE_ALIAS_PREFIX}zcash_transparent_address"
 
         init {
             // Register BouncyCastle provider for SHA3-256 support
@@ -227,6 +228,36 @@ class KeyManager private constructor(context: Context) {
             putString(ZCASH_ADDRESS_ALIAS, address)
         }
         Log.d(TAG, "Zcash address stored: $address")
+    }
+
+    /**
+     * Get Zcash transparent address (for exchange compatibility)
+     */
+    fun getZcashTransparentAddress(): String? {
+        return encryptedPrefs.getString(ZCASH_TRANSPARENT_ADDRESS_ALIAS, null)
+    }
+
+    /**
+     * Store Zcash transparent address
+     * This is the t1... address compatible with exchanges
+     */
+    fun setZcashTransparentAddress(address: String) {
+        encryptedPrefs.edit {
+            putString(ZCASH_TRANSPARENT_ADDRESS_ALIAS, address)
+        }
+        Log.d(TAG, "Zcash transparent address stored: $address")
+    }
+
+    /**
+     * Clear all stored Zcash addresses
+     * Use this when deleting a Zcash wallet or switching accounts
+     */
+    fun clearZcashAddresses() {
+        encryptedPrefs.edit {
+            remove(ZCASH_ADDRESS_ALIAS)
+            remove(ZCASH_TRANSPARENT_ADDRESS_ALIAS)
+        }
+        Log.d(TAG, "Zcash addresses cleared from KeyManager")
     }
 
     /**
@@ -546,6 +577,24 @@ class KeyManager private constructor(context: Context) {
             putString("seed_phrase_backup", seedPhrase)
         }
         Log.i(TAG, "Stored seed phrase for backup display")
+    }
+
+    /**
+     * Store seed phrase permanently for main wallet (needed for Zcash initialization)
+     */
+    fun storeMainWalletSeed(seedPhrase: String) {
+        encryptedPrefs.edit {
+            putString("${KEYSTORE_ALIAS_PREFIX}wallet_main_seed", seedPhrase)
+        }
+        Log.i(TAG, "Stored seed phrase permanently for main wallet")
+    }
+
+    /**
+     * Get main wallet seed phrase for internal use (Zcash initialization)
+     * This bypasses the export protection in getWalletSeedPhrase()
+     */
+    fun getMainWalletSeedForZcash(): String? {
+        return encryptedPrefs.getString("${KEYSTORE_ALIAS_PREFIX}wallet_main_seed", null)
     }
 
     /**
@@ -946,13 +995,13 @@ class KeyManager private constructor(context: Context) {
 
     /**
      * Get private key for a specific wallet (for export)
-     * NOTE: Main wallet (walletId="main") will return null for security
+     * NOTE: Protected wallets will return null for security
      */
     fun getWalletPrivateKey(walletId: String): ByteArray? {
         try {
-            // Don't allow exporting main wallet private key
+            // Don't allow exporting protected wallet private key
             if (walletId == "main") {
-                Log.w(TAG, "Cannot export main wallet private key")
+                Log.w(TAG, "Cannot export protected wallet private key")
                 return null
             }
 
@@ -971,13 +1020,13 @@ class KeyManager private constructor(context: Context) {
 
     /**
      * Get seed phrase for a specific wallet (for backup)
-     * NOTE: Main wallet will return null for security
+     * NOTE: Protected wallets will return null for security
      */
     fun getWalletSeedPhrase(walletId: String): String? {
         try {
-            // Don't allow exporting main wallet seed
+            // Don't allow exporting protected wallet seed
             if (walletId == "main") {
-                Log.w(TAG, "Cannot export main wallet seed phrase")
+                Log.w(TAG, "Cannot export protected wallet seed phrase")
                 return null
             }
 
@@ -995,13 +1044,168 @@ class KeyManager private constructor(context: Context) {
     }
 
     /**
-     * Delete a wallet (NOT allowed for main wallet)
+     * Import wallet from seed phrase
+     */
+    fun importWalletFromSeed(walletId: String, seedPhrase: String): Boolean {
+        try {
+            Log.i(TAG, "Importing wallet from seed phrase: $walletId")
+
+            // Validate seed phrase (should be 12 words)
+            val words = seedPhrase.trim().split("\\s+".toRegex())
+            if (words.size != 12) {
+                Log.e(TAG, "Invalid seed phrase: expected 12 words, got ${words.size}")
+                return false
+            }
+
+            // Store the seed phrase
+            val walletSeedAlias = "${KEYSTORE_ALIAS_PREFIX}wallet_${walletId}_seed"
+            encryptedPrefs.edit {
+                putString(walletSeedAlias, seedPhrase)
+            }
+
+            // Derive Ed25519 keypair from seed
+            val seed = mnemonicToSeed(seedPhrase)
+            val keyPair = deriveEd25519KeyPair(seed)
+
+            // Store Ed25519 keys
+            val walletKeyAlias = "${KEYSTORE_ALIAS_PREFIX}wallet_${walletId}_ed25519"
+            encryptedPrefs.edit {
+                putString(walletKeyAlias + "_private", android.util.Base64.encodeToString(keyPair.privateKey, android.util.Base64.NO_WRAP))
+                putString(walletKeyAlias + "_public", android.util.Base64.encodeToString(keyPair.publicKey, android.util.Base64.NO_WRAP))
+            }
+
+            Log.i(TAG, "Wallet imported successfully from seed phrase: $walletId")
+            return true
+
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to import wallet from seed", e)
+            return false
+        }
+    }
+
+    /**
+     * Import Solana wallet from private key (base58 encoded)
+     */
+    fun importSolanaWalletFromPrivateKey(walletId: String, privateKeyBase58: String): Boolean {
+        try {
+            Log.i(TAG, "Importing Solana wallet from private key: $walletId")
+
+            // Decode base58 private key
+            val privateKeyBytes = try {
+                org.bitcoinj.core.Base58.decode(privateKeyBase58)
+            } catch (e: Exception) {
+                Log.e(TAG, "Invalid base58 private key", e)
+                return false
+            }
+
+            // Solana uses Ed25519, private key should be 32 or 64 bytes
+            val actualPrivateKey = if (privateKeyBytes.size == 64) {
+                // If 64 bytes, first 32 are the private key, last 32 are public key
+                privateKeyBytes.copyOfRange(0, 32)
+            } else if (privateKeyBytes.size == 32) {
+                privateKeyBytes
+            } else {
+                Log.e(TAG, "Invalid private key size: ${privateKeyBytes.size}")
+                return false
+            }
+
+            // Derive public key from private key
+            val publicKey = deriveEd25519PublicKey(actualPrivateKey)
+
+            // Store Ed25519 keys
+            val walletKeyAlias = "${KEYSTORE_ALIAS_PREFIX}wallet_${walletId}_ed25519"
+            encryptedPrefs.edit {
+                putString(walletKeyAlias + "_private", android.util.Base64.encodeToString(actualPrivateKey, android.util.Base64.NO_WRAP))
+                putString(walletKeyAlias + "_public", android.util.Base64.encodeToString(publicKey, android.util.Base64.NO_WRAP))
+            }
+
+            Log.i(TAG, "Solana wallet imported successfully from private key: $walletId")
+            return true
+
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to import Solana wallet from private key", e)
+            return false
+        }
+    }
+
+    /**
+     * Import Zcash wallet from private key (WIF format)
+     */
+    fun importZcashWalletFromPrivateKey(walletId: String, privateKeyWIF: String): Boolean {
+        try {
+            Log.i(TAG, "Importing Zcash wallet from private key: $walletId")
+
+            // For now, treat WIF as base58 and decode
+            // Note: Full WIF parsing would require checksum validation
+            val privateKeyBytes = try {
+                org.bitcoinj.core.Base58.decode(privateKeyWIF)
+            } catch (e: Exception) {
+                Log.e(TAG, "Invalid WIF private key", e)
+                return false
+            }
+
+            // Remove version byte and checksum if present
+            val actualPrivateKey = when {
+                privateKeyBytes.size == 37 && privateKeyBytes[0] == 0x80.toByte() -> {
+                    // Mainnet WIF: 1 byte version + 32 bytes key + 4 bytes checksum
+                    privateKeyBytes.copyOfRange(1, 33)
+                }
+                privateKeyBytes.size == 38 && privateKeyBytes[0] == 0x80.toByte() -> {
+                    // Compressed WIF: 1 byte version + 32 bytes key + 1 byte compression flag + 4 bytes checksum
+                    privateKeyBytes.copyOfRange(1, 33)
+                }
+                privateKeyBytes.size == 32 -> {
+                    // Raw 32-byte key
+                    privateKeyBytes
+                }
+                else -> {
+                    Log.e(TAG, "Invalid WIF key size: ${privateKeyBytes.size}")
+                    return false
+                }
+            }
+
+            // Derive public key from private key
+            val publicKey = deriveEd25519PublicKey(actualPrivateKey)
+
+            // Store Ed25519 keys
+            val walletKeyAlias = "${KEYSTORE_ALIAS_PREFIX}wallet_${walletId}_ed25519"
+            encryptedPrefs.edit {
+                putString(walletKeyAlias + "_private", android.util.Base64.encodeToString(actualPrivateKey, android.util.Base64.NO_WRAP))
+                putString(walletKeyAlias + "_public", android.util.Base64.encodeToString(publicKey, android.util.Base64.NO_WRAP))
+            }
+
+            Log.i(TAG, "Zcash wallet imported successfully from private key: $walletId")
+            return true
+
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to import Zcash wallet from private key", e)
+            return false
+        }
+    }
+
+    /**
+     * Derive Ed25519 public key from private key
+     */
+    private fun deriveEd25519PublicKey(privateKey: ByteArray): ByteArray {
+        try {
+            // Use BouncyCastle Ed25519 to derive public key from private key
+            val privateKeyParams = org.bouncycastle.crypto.params.Ed25519PrivateKeyParameters(privateKey, 0)
+            val publicKeyParams = privateKeyParams.generatePublicKey()
+            return publicKeyParams.encoded
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to derive public key from private key", e)
+            throw KeyManagerException("Failed to derive public key from private key", e)
+        }
+    }
+
+    /**
+     * Delete a wallet (NOT allowed for protected wallets)
      */
     fun deleteWallet(walletId: String): Boolean {
         try {
-            // Don't allow deleting main wallet
+            // Don't allow deleting protected wallet
             if (walletId == "main") {
-                Log.w(TAG, "Cannot delete main wallet")
+                Log.w(TAG, "Cannot delete protected wallet")
                 return false
             }
 

@@ -1,0 +1,104 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:background="@drawable/bottom_sheet_bg"
+    android:paddingTop="8dp"
+    android:paddingBottom="32dp">
+
+    <!-- Handle Bar -->
+    <View
+        android:layout_width="60dp"
+        android:layout_height="5dp"
+        android:layout_gravity="center_horizontal"
+        android:background="#4A4A4A"
+        android:layout_marginBottom="20dp" />
+
+    <!-- Title -->
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Seed Phrase"
+        android:textSize="24sp"
+        android:textColor="@color/text_white"
+        android:fontFamily="@font/space_grotesk_bold"
+        android:gravity="center"
+        android:layout_marginBottom="8dp" />
+
+    <!-- Warning Text -->
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Never share this with anyone!"
+        android:textSize="14sp"
+        android:textColor="#FF6B6B"
+        android:fontFamily="@font/poppins_medium"
+        android:gravity="center"
+        android:layout_marginBottom="24dp"
+        android:paddingStart="24dp"
+        android:paddingEnd="24dp" />
+
+    <!-- Seed Phrase Container -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:background="@drawable/settings_box_bg"
+        android:padding="20dp"
+        android:layout_marginStart="24dp"
+        android:layout_marginEnd="24dp"
+        android:layout_marginBottom="24dp">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Your 12-word seed phrase:"
+            android:textSize="12sp"
+            android:textColor="#888888"
+            android:fontFamily="@font/poppins_regular"
+            android:layout_marginBottom="12dp" />
+
+        <TextView
+            android:id="@+id/seedPhraseText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12"
+            android:textSize="16sp"
+            android:textColor="@color/text_white"
+            android:fontFamily="monospace"
+            android:lineSpacingMultiplier="1.4"
+            android:textIsSelectable="true" />
+
+    </LinearLayout>
+
+    <!-- Copy Button -->
+    <androidx.appcompat.widget.AppCompatButton
+        android:id="@+id/copyButton"
+        android:layout_width="match_parent"
+        android:layout_height="56dp"
+        android:layout_marginStart="24dp"
+        android:layout_marginEnd="24dp"
+        android:layout_marginBottom="12dp"
+        android:background="@drawable/wallet_action_button_bg"
+        android:fontFamily="@font/poppins_semibold"
+        android:text="Copy to Clipboard"
+        android:textAllCaps="false"
+        android:textColor="@color/text_white"
+        android:textSize="16sp" />
+
+    <!-- Close Button -->
+    <androidx.appcompat.widget.AppCompatButton
+        android:id="@+id/closeButton"
+        android:layout_width="match_parent"
+        android:layout_height="56dp"
+        android:layout_marginStart="24dp"
+        android:layout_marginEnd="24dp"
+        android:background="@android:color/transparent"
+        android:fontFamily="@font/poppins_medium"
+        android:text="Close"
+        android:textAllCaps="false"
+        android:textColor="#888888"
+        android:textSize="16sp" />
+
+</LinearLayout>

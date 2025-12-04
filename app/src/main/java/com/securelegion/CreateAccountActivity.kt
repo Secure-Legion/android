@@ -255,7 +255,11 @@ class CreateAccountActivity : AppCompatActivity() {
 
                 // Store the seed phrase for display on next screen
                 keyManager.storeSeedPhrase(mnemonic)
-                Log.i("CreateAccount", "Seed phrase stored")
+                Log.i("CreateAccount", "Seed phrase stored for display")
+
+                // Store permanently for main wallet (needed for Zcash)
+                keyManager.storeMainWalletSeed(mnemonic)
+                Log.i("CreateAccount", "Seed phrase stored permanently for main wallet")
 
                 // Get the Solana wallet address
                 val walletAddress = keyManager.getSolanaAddress()
@@ -309,7 +313,7 @@ class CreateAccountActivity : AppCompatActivity() {
                         }
 
                         Log.d("CreateAccount", "Creating hidden service...")
-                        val address = com.securelegion.crypto.RustBridge.createHiddenService(8080, 8080)
+                        val address = com.securelegion.crypto.RustBridge.createHiddenService(9150, 8080)
                         torManager.saveOnionAddress(address)
                         Log.i("CreateAccount", "Hidden service created: $address")
                         address
@@ -350,7 +354,7 @@ class CreateAccountActivity : AppCompatActivity() {
                     // Store CID and PIN in encrypted storage
                     keyManager.storeContactCardInfo(cid, contactCardPin)
 
-                    // Initialize main wallet in database
+                    // Initialize internal wallet in database
                     val dbPassphrase = keyManager.getDatabasePassphrase()
                     val database = SecureLegionDatabase.getInstance(this@CreateAccountActivity, dbPassphrase)
                     val timestamp = System.currentTimeMillis()
@@ -363,7 +367,7 @@ class CreateAccountActivity : AppCompatActivity() {
                         lastUsedAt = timestamp
                     )
                     database.walletDao().insertWallet(mainWallet)
-                    Log.i("CreateAccount", "Main wallet initialized in database")
+                    Log.i("CreateAccount", "Internal wallet initialized in database")
 
                     Log.i("CreateAccount", "Contact card uploaded successfully")
                     Log.i("CreateAccount", "CID: $cid")

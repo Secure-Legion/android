@@ -10,10 +10,12 @@ import androidx.sqlite.db.SupportSQLiteDatabase
 import com.securelegion.database.dao.ContactDao
 import com.securelegion.database.dao.MessageDao
 import com.securelegion.database.dao.ReceivedIdDao
+import com.securelegion.database.dao.UsedSignatureDao
 import com.securelegion.database.dao.WalletDao
 import com.securelegion.database.entities.Contact
 import com.securelegion.database.entities.Message
 import com.securelegion.database.entities.ReceivedId
+import com.securelegion.database.entities.UsedSignature
 import com.securelegion.database.entities.Wallet
 import net.sqlcipher.database.SQLiteDatabase
 import net.sqlcipher.database.SupportFactory
@@ -31,8 +33,8 @@ import net.sqlcipher.database.SupportFactory
  * Database file location: /data/data/com.securelegion/databases/secure_legion.db
  */
 @Database(
-    entities = [Contact::class, Message::class, Wallet::class, ReceivedId::class],
-    version = 15,
+    entities = [Contact::class, Message::class, Wallet::class, ReceivedId::class, UsedSignature::class],
+    version = 17,
     exportSchema = false
 )
 abstract class SecureLegionDatabase : RoomDatabase() {
@@ -41,6 +43,7 @@ abstract class SecureLegionDatabase : RoomDatabase() {
     abstract fun messageDao(): MessageDao
     abstract fun walletDao(): WalletDao
     abstract fun receivedIdDao(): ReceivedIdDao
+    abstract fun usedSignatureDao(): UsedSignatureDao
 
     companion object {
         private const val TAG = "SecureLegionDatabase"
@@ -252,6 +255,45 @@ abstract class SecureLegionDatabase : RoomDatabase() {
         }
 
         /**
+         * Migration from version 15 to 16: Add NLx402 payment fields
+         */
+        private val MIGRATION_15_16 = object : Migration(15, 16) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                Log.i(TAG, "Migrating database from version 15 to 16")
+                // Add NLx402 payment fields to messages table
+                database.execSQL("ALTER TABLE messages ADD COLUMN paymentQuoteJson TEXT")
+                database.execSQL("ALTER TABLE messages ADD COLUMN paymentStatus TEXT")
+                database.execSQL("ALTER TABLE messages ADD COLUMN txSignature TEXT")
+                database.execSQL("ALTER TABLE messages ADD COLUMN paymentToken TEXT")
+                database.execSQL("ALTER TABLE messages ADD COLUMN paymentAmount INTEGER")
+                Log.i(TAG, "Migration completed: Added NLx402 payment fields")
+            }
+        }
+
+        /**
+         * Migration from version 16 to 17: Add used_signatures table for replay protection
+         */
+        private val MIGRATION_16_17 = object : Migration(16, 17) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                Log.i(TAG, "Migrating database from version 16 to 17")
+                // Create used_signatures table for NLx402 replay protection
+                database.execSQL("""
+                    CREATE TABLE IF NOT EXISTS used_signatures (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        signature TEXT NOT NULL,
+                        quoteId TEXT NOT NULL,
+                        token TEXT NOT NULL,
+                        amount INTEGER NOT NULL,
+                        usedAt INTEGER NOT NULL
+                    )
+                """.trimIndent())
+                // Create unique index on signature
+                database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_used_signatures_signature ON used_signatures(signature)")
+                Log.i(TAG, "Migration completed: Added used_signatures table for replay protection")
+            }
+        }
+
+        /**
          * Get database instance
          * @param context Application context
          * @param passphrase Encryption passphrase (should be derived from KeyManager)
@@ -317,7 +359,7 @@ abstract class SecureLegionDatabase : RoomDatabase() {
                     DATABASE_NAME
                 )
                     .openHelperFactory(factory)
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17)
                     .addCallback(object : RoomDatabase.Callback() {
                         override fun onCreate(db: SupportSQLiteDatabase) {
                             super.onCreate(db)
@@ -408,7 +450,7 @@ abstract class SecureLegionDatabase : RoomDatabase() {
                         DATABASE_NAME
                     )
                         .openHelperFactory(SupportFactory(passphrase))
-                        .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15)
+                        .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17)
                         .addCallback(object : RoomDatabase.Callback() {
                             override fun onCreate(db: SupportSQLiteDatabase) {
                                 super.onCreate(db)

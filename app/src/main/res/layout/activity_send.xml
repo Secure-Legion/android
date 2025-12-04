@@ -191,34 +191,54 @@
                 <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:orientation="horizontal"
+                    android:orientation="vertical"
                     android:background="@drawable/wallet_token_bg"
-                    android:padding="16dp"
-                    android:gravity="center_vertical">
+                    android:padding="16dp">
 
-                    <EditText
-                        android:id="@+id/amountInput"
-                        android:layout_width="0dp"
+                    <LinearLayout
+                        android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:background="@android:color/transparent"
-                        android:hint="0.00"
-                        android:textColorHint="#666666"
-                        android:textColor="#FFFFFF"
-                        android:textSize="24sp"
-                        android:textStyle="bold"
-                        android:inputType="numberDecimal"
-                        android:fontFamily="@font/space_grotesk_bold" />
+                        android:orientation="horizontal"
+                        android:gravity="center_vertical">
 
+                        <EditText
+                            android:id="@+id/amountInput"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:background="@android:color/transparent"
+                            android:hint="0.00"
+                            android:textColorHint="#666666"
+                            android:textColor="#FFFFFF"
+                            android:textSize="24sp"
+                            android:textStyle="bold"
+                            android:inputType="numberDecimal"
+                            android:fontFamily="@font/space_grotesk_bold" />
+
+                        <TextView
+                            android:id="@+id/currencySymbol"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="SOL"
+                            android:textSize="16sp"
+                            android:textColor="#888888"
+                            android:fontFamily="@font/poppins_medium"
+                            android:layout_marginStart="12dp" />
+
+                    </LinearLayout>
+
+                    <!-- Live USD conversion -->
                     <TextView
-                        android:id="@+id/currencySymbol"
+                        android:id="@+id/amountUsdValue"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="SOL"
-                        android:textSize="16sp"
+                        android:text="≈ $0.00 USD"
+                        android:textSize="14sp"
                         android:textColor="#888888"
-                        android:fontFamily="@font/poppins_medium"
-                        android:layout_marginStart="12dp" />
+                        android:fontFamily="@font/poppins_regular"
+                        android:layout_marginTop="8dp"
+                        android:clickable="true"
+                        android:focusable="true" />
 
                 </LinearLayout>
 
@@ -299,7 +319,7 @@
                         android:id="@+id/walletAddressShort"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="ADm9P.....2eoLX5"
+                        android:text=""
                         android:textSize="12sp"
                         android:textColor="#FFFFFF"
                         android:fontFamily="monospace" />
@@ -366,7 +386,10 @@
                         android:text="$0.00"
                         android:textSize="12sp"
                         android:textColor="#FFFFFF"
-                        android:fontFamily="@font/poppins_medium" />
+                        android:fontFamily="@font/poppins_medium"
+                        android:clickable="true"
+                        android:focusable="true"
+                        android:background="?attr/selectableItemBackgroundBorderless" />
 
                 </LinearLayout>
 

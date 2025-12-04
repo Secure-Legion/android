@@ -5,6 +5,7 @@ import android.graphics.Shader
 import android.os.Bundle
 import android.text.Editable
 import android.text.TextWatcher
+import android.util.Log
 import android.view.View
 import android.widget.Button
 import android.widget.EditText
@@ -13,6 +14,11 @@ import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
 import com.google.android.material.bottomsheet.BottomSheetDialog
+import com.securelegion.crypto.KeyManager
+import com.securelegion.database.SecureLegionDatabase
+import com.securelegion.database.entities.Wallet
+import com.securelegion.services.SolanaService
+import com.securelegion.services.ZcashService
 import com.securelegion.utils.ThemedToast
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -29,11 +35,15 @@ class SwapActivity : AppCompatActivity() {
 
     // From (top) card
     private lateinit var fromTokenText: TextView
+    private lateinit var fromWalletNameText: TextView
+    private lateinit var fromWalletAddressText: TextView
     private lateinit var fromBalanceText: TextView
     private lateinit var fromAmountInput: EditText
 
     // To (bottom) card
     private lateinit var toTokenText: TextView
+    private lateinit var toWalletNameText: TextView
+    private lateinit var toWalletAddressText: TextView
     private lateinit var toBalanceText: TextView
     private lateinit var toAmountText: TextView
 
@@ -43,9 +53,14 @@ class SwapActivity : AppCompatActivity() {
 
     private var fromToken = "SOL"
     private var toToken = "ZEC"
-    private var fromBalance = 12000.00
-    private var toBalance = 10399.00
+    private var fromBalance = 0.0
+    private var toBalance = 0.0
     private var showUSD = true  // Toggle between USD and token display
+
+    // Selected wallets
+    private var fromWallet: Wallet? = null
+    private var toWallet: Wallet? = null
+    private var availableWallets: List<Wallet> = emptyList()
 
     // Exchange rate (example, would come from API)
     private val exchangeRate = 0.9347  // 1 SOL = 0.9347 ZEC
@@ -69,10 +84,14 @@ class SwapActivity : AppCompatActivity() {
         currencyLabel = findViewById(R.id.currencyLabel)
 
         fromTokenText = findViewById(R.id.fromTokenText)
+        fromWalletNameText = findViewById(R.id.fromWalletNameText)
+        fromWalletAddressText = findViewById(R.id.fromWalletAddressText)
         fromBalanceText = findViewById(R.id.fromBalanceText)
         fromAmountInput = findViewById(R.id.fromAmountInput)
 
         toTokenText = findViewById(R.id.toTokenText)
+        toWalletNameText = findViewById(R.id.toWalletNameText)
+        toWalletAddressText = findViewById(R.id.toWalletAddressText)
         toBalanceText = findViewById(R.id.toBalanceText)
         toAmountText = findViewById(R.id.toAmountText)
 
@@ -103,6 +122,14 @@ class SwapActivity : AppCompatActivity() {
         currencyDropdown.setOnClickListener {
             toggleCurrencyDisplay()
         }
+
+        fromTokenText.setOnClickListener {
+            showWalletSelector(isFromWallet = true)
+        }
+
+        toTokenText.setOnClickListener {
+            showWalletSelector(isFromWallet = false)
+        }
     }
 
     private fun setupTextWatcher() {
@@ -117,17 +144,74 @@ class SwapActivity : AppCompatActivity() {
     }
 
     private fun loadWalletBalances() {
-        // TODO: Load real balances from blockchain services
-        // For now, using placeholder values
-        lifecycleScope.launch {
+        lifecycleScope.launch(Dispatchers.IO) {
             try {
-                // Placeholder values - will be replaced with real API calls
-                fromBalance = 12000.00
-                toBalance = 10399.00
+                val keyManager = KeyManager.getInstance(this@SwapActivity)
+                val dbPassphrase = keyManager.getDatabasePassphrase()
+                val database = SecureLegionDatabase.getInstance(this@SwapActivity, dbPassphrase)
+                val allWallets = database.walletDao().getAllWallets()
 
-                updateDisplay()
+                // Filter out main wallet
+                availableWallets = allWallets.filter { it.walletId != "main" }
+
+                // Auto-select wallets if only one of each type
+                val solWallets = availableWallets.filter { it.solanaAddress.isNotEmpty() }
+                val zecWallets = availableWallets.filter { it.zcashAddress != null }
+
+                withContext(Dispatchers.Main) {
+                    if (solWallets.size == 1 && zecWallets.size == 1) {
+                        // Auto-select if only one of each
+                        fromWallet = solWallets.first()
+                        toWallet = zecWallets.first()
+                        fromToken = "SOL"
+                        toToken = "ZEC"
+                    } else if (availableWallets.isNotEmpty()) {
+                        // Select the most recently used wallet
+                        val defaultWallet = availableWallets.maxByOrNull { it.lastUsedAt }
+                        if (defaultWallet != null) {
+                            fromWallet = defaultWallet
+                            fromToken = if (defaultWallet.zcashAddress != null) "ZEC" else "SOL"
+                        }
+                    }
+
+                    updateDisplay()
+                }
             } catch (e: Exception) {
-                android.util.Log.e("SwapActivity", "Failed to load wallet balances", e)
+                Log.e("SwapActivity", "Failed to load wallet balances", e)
+                withContext(Dispatchers.Main) {
+                    updateDisplay()
+                }
+            }
+        }
+    }
+
+    private fun loadBalanceForWallet(wallet: Wallet, isFromWallet: Boolean) {
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                val keyManager = KeyManager.getInstance(this@SwapActivity)
+
+                val balance = if (wallet.zcashAddress != null) {
+                    // Zcash wallet
+                    val zcashService = ZcashService.getInstance(this@SwapActivity)
+                    val zcashBalanceResult = zcashService.getBalance()
+                    zcashBalanceResult.getOrDefault(0.0)
+                } else {
+                    // Solana wallet
+                    val solanaService = SolanaService(this@SwapActivity)
+                    val solBalanceResult = solanaService.getBalance(wallet.solanaAddress)
+                    solBalanceResult.getOrDefault(0.0)
+                }
+
+                withContext(Dispatchers.Main) {
+                    if (isFromWallet) {
+                        fromBalance = balance
+                    } else {
+                        toBalance = balance
+                    }
+                    updateDisplay()
+                }
+            } catch (e: Exception) {
+                Log.e("SwapActivity", "Failed to load balance for wallet ${wallet.name}", e)
             }
         }
     }
@@ -195,6 +279,33 @@ class SwapActivity : AppCompatActivity() {
         // Update token names
         fromTokenText.text = fromToken
         toTokenText.text = toToken
+
+        // Update wallet names and addresses
+        if (fromWallet != null) {
+            fromWalletNameText.text = fromWallet!!.name
+            val address = if (fromToken == "SOL") fromWallet!!.solanaAddress else fromWallet!!.zcashAddress
+            fromWalletAddressText.text = if (address != null && address.length > 10) {
+                "${address.take(5)}...${address.takeLast(5)}"
+            } else {
+                "----"
+            }
+        } else {
+            fromWalletNameText.text = "No Wallet"
+            fromWalletAddressText.text = "----"
+        }
+
+        if (toWallet != null) {
+            toWalletNameText.text = toWallet!!.name
+            val address = if (toToken == "SOL") toWallet!!.solanaAddress else toWallet!!.zcashAddress
+            toWalletAddressText.text = if (address != null && address.length > 10) {
+                "${address.take(5)}...${address.takeLast(5)}"
+            } else {
+                "----"
+            }
+        } else {
+            toWalletNameText.text = "No Wallet"
+            toWalletAddressText.text = "----"
+        }
 
         // Update balances
         if (showUSD) {
@@ -383,5 +494,65 @@ class SwapActivity : AppCompatActivity() {
         }
 
         bottomSheetDialog.show()
+    }
+
+    private fun showWalletSelector(isFromWallet: Boolean) {
+        val walletType = if (isFromWallet) fromToken else toToken
+
+        val filteredWallets = if (walletType == "SOL") {
+            availableWallets.filter { it.solanaAddress.isNotEmpty() }
+        } else {
+            availableWallets.filter { it.zcashAddress != null }
+        }
+
+        if (filteredWallets.isEmpty()) {
+            ThemedToast.show(this, "No $walletType wallets found")
+            return
+        }
+
+        // Create bottom sheet dialog
+        val bottomSheet = BottomSheetDialog(this)
+        val view = layoutInflater.inflate(R.layout.bottom_sheet_wallet_selector, null)
+        bottomSheet.setContentView(view)
+
+        // Add wallets to the selector
+        val walletContainer = view.findViewById<android.widget.LinearLayout>(R.id.walletListContainer)
+        if (walletContainer == null) {
+            bottomSheet.dismiss()
+            return
+        }
+
+        walletContainer.removeAllViews()
+
+        for (wallet in filteredWallets) {
+            val walletItem = layoutInflater.inflate(R.layout.item_wallet_selector, walletContainer, false)
+
+            walletItem.findViewById<TextView>(R.id.walletName)?.text = wallet.name
+            val address = if (walletType == "SOL") wallet.solanaAddress else wallet.zcashAddress ?: ""
+            val shortAddress = if (address.length > 15) {
+                "${address.take(5)}.....${address.takeLast(6)}"
+            } else {
+                address
+            }
+            walletItem.findViewById<TextView>(R.id.walletAddress)?.text = shortAddress
+
+            walletItem.setOnClickListener {
+                if (isFromWallet) {
+                    fromWallet = wallet
+                    fromToken = walletType
+                    loadBalanceForWallet(wallet, isFromWallet = true)
+                } else {
+                    toWallet = wallet
+                    toToken = walletType
+                    loadBalanceForWallet(wallet, isFromWallet = false)
+                }
+                bottomSheet.dismiss()
+                updateDisplay()
+            }
+
+            walletContainer.addView(walletItem)
+        }
+
+        bottomSheet.show()
     }
 }

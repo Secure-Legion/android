@@ -91,7 +91,7 @@
                 android:layout_height="wrap_content"
                 android:layout_marginTop="16dp"
                 android:layout_marginBottom="8dp"
-                app:cardBackgroundColor="#1A1A1A"
+                app:cardBackgroundColor="#0A0A0A"
                 app:cardCornerRadius="16dp"
                 app:cardElevation="0dp">
 
@@ -123,7 +123,30 @@
                                 android:text="SOL"
                                 android:textColor="@color/text_white"
                                 android:textSize="24sp"
+                                android:clickable="true"
+                                android:focusable="true"
+                                android:background="?attr/selectableItemBackgroundBorderless"
                                 app:drawableTint="@color/text_gray" />
+
+                            <TextView
+                                android:id="@+id/fromWalletNameText"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="4dp"
+                                android:fontFamily="@font/poppins_medium"
+                                android:text="Wallet"
+                                android:textColor="#AAAAAA"
+                                android:textSize="13sp" />
+
+                            <TextView
+                                android:id="@+id/fromWalletAddressText"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="2dp"
+                                android:fontFamily="monospace"
+                                android:text="----"
+                                android:textColor="#666666"
+                                android:textSize="11sp" />
 
                             <TextView
                                 android:id="@+id/fromBalanceText"
@@ -131,7 +154,7 @@
                                 android:layout_height="wrap_content"
                                 android:layout_marginTop="4dp"
                                 android:fontFamily="@font/poppins_regular"
-                                android:text="Balance $12,000.00"
+                                android:text="Balance: Loading..."
                                 android:textColor="#666666"
                                 android:textSize="14sp" />
                         </LinearLayout>
@@ -201,9 +224,7 @@
                     android:background="@drawable/settings_icon_bg"
                     android:contentDescription="Swap direction"
                     android:padding="12dp"
-                    android:src="@drawable/ic_arrow_up"
-                    android:rotation="180"
-                    app:tint="#666666" />
+                    android:src="@drawable/ic_swap_arrows" />
             </FrameLayout>
 
             <!-- To Card -->
@@ -211,7 +232,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="8dp"
-                app:cardBackgroundColor="#1A1A1A"
+                app:cardBackgroundColor="#0A0A0A"
                 app:cardCornerRadius="16dp"
                 app:cardElevation="0dp">
 
@@ -243,7 +264,30 @@
                                 android:text="ZEC"
                                 android:textColor="@color/text_white"
                                 android:textSize="24sp"
+                                android:clickable="true"
+                                android:focusable="true"
+                                android:background="?attr/selectableItemBackgroundBorderless"
                                 app:drawableTint="@color/text_gray" />
+
+                            <TextView
+                                android:id="@+id/toWalletNameText"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="4dp"
+                                android:fontFamily="@font/poppins_medium"
+                                android:text="Wallet"
+                                android:textColor="#AAAAAA"
+                                android:textSize="13sp" />
+
+                            <TextView
+                                android:id="@+id/toWalletAddressText"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="2dp"
+                                android:fontFamily="monospace"
+                                android:text="----"
+                                android:textColor="#666666"
+                                android:textSize="11sp" />
 
                             <TextView
                                 android:id="@+id/toBalanceText"
@@ -251,7 +295,7 @@
                                 android:layout_height="wrap_content"
                                 android:layout_marginTop="4dp"
                                 android:fontFamily="@font/poppins_regular"
-                                android:text="Balance $10,399.00"
+                                android:text="Balance: Loading..."
                                 android:textColor="#666666"
                                 android:textSize="14sp" />
                         </LinearLayout>

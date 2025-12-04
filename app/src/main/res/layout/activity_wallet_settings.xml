@@ -86,7 +86,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginBottom="24dp"
-                app:cardBackgroundColor="#141414"
+                app:cardBackgroundColor="#0A0A0A"
                 app:cardCornerRadius="12dp"
                 app:cardElevation="0dp"
                 app:strokeWidth="0dp">
@@ -121,7 +121,7 @@
                                 android:id="@+id/currentWalletName"
                                 android:layout_width="wrap_content"
                                 android:layout_height="wrap_content"
-                                android:text="Wallet 1"
+                                android:text="----"
                                 android:textSize="16sp"
                                 android:textStyle="bold"
                                 android:textColor="@color/text_white" />
@@ -130,7 +130,7 @@
                                 android:id="@+id/currentWalletType"
                                 android:layout_width="wrap_content"
                                 android:layout_height="wrap_content"
-                                android:text="Main Account Wallet"
+                                android:text="Primary Wallet"
                                 android:textSize="12sp"
                                 android:textColor="@color/text_gray"
                                 android:layout_marginTop="2dp" />
@@ -170,10 +170,41 @@
                 <ImageView
                     android:layout_width="24dp"
                     android:layout_height="24dp"
-                    android:src="@drawable/ic_add_friend"
+                    android:src="@drawable/ic_wallet"
                     app:tint="@color/text_white"
                     android:layout_marginEnd="16dp"
                     android:contentDescription="Create Wallet" />
+
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="Create New Wallet"
+                    android:textSize="16sp"
+                    android:textColor="@color/text_white" />
+
+            </LinearLayout>
+
+            <!-- Import Wallet -->
+            <LinearLayout
+                android:id="@+id/importWalletButton"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:background="@drawable/settings_item_bg"
+                android:padding="16dp"
+                android:layout_marginBottom="8dp"
+                android:gravity="center_vertical"
+                android:clickable="true"
+                android:focusable="true">
+
+                <ImageView
+                    android:layout_width="24dp"
+                    android:layout_height="24dp"
+                    android:src="@drawable/ic_import_wallet"
+                    app:tint="@color/text_white"
+                    android:layout_marginEnd="16dp"
+                    android:contentDescription="Import Wallet" />
 
                 <LinearLayout
                     android:layout_width="0dp"
@@ -184,14 +215,14 @@
                     <TextView
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="Create New Wallet"
+                        android:text="Import Wallet"
                         android:textSize="16sp"
                         android:textColor="@color/text_white" />
 
                     <TextView
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="Generate a new Solana wallet"
+                        android:text="Import existing SOL or ZEC wallet"
                         android:textSize="12sp"
                         android:textColor="@color/text_gray"
                         android:layout_marginTop="2dp" />
@@ -298,7 +329,7 @@
             <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="Your main account wallet is protected and cannot have its private key exported here."
+                android:text="Keep your wallet private keys secure. Never share them with anyone."
                 android:textSize="13sp"
                 android:textColor="@color/text_gray"
                 android:lineSpacingExtra="2dp"

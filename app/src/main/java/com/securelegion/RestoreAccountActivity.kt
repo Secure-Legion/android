@@ -3,6 +3,7 @@ package com.securelegion
 import android.content.Intent
 import android.os.Bundle
 import android.text.InputType
+import android.util.Log
 import android.view.View
 import android.view.WindowManager
 import android.widget.EditText
@@ -12,7 +13,13 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowCompat
+import androidx.lifecycle.lifecycleScope
+import com.securelegion.crypto.KeyManager
+import com.securelegion.services.ZcashService
 import com.securelegion.utils.ThemedToast
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class RestoreAccountActivity : AppCompatActivity() {
 
@@ -21,6 +28,7 @@ class RestoreAccountActivity : AppCompatActivity() {
     private lateinit var confirmPasswordInput: EditText
     private lateinit var togglePassword: ImageView
     private lateinit var toggleConfirmPassword: ImageView
+    private lateinit var zcashBirthdayInput: EditText
     private lateinit var importButton: TextView
 
     private var isPasswordVisible = false
@@ -95,6 +103,7 @@ class RestoreAccountActivity : AppCompatActivity() {
         confirmPasswordInput = findViewById(R.id.confirmPasswordInput)
         togglePassword = findViewById(R.id.togglePassword)
         toggleConfirmPassword = findViewById(R.id.toggleConfirmPassword)
+        zcashBirthdayInput = findViewById(R.id.zcashBirthdayInput)
         importButton = findViewById(R.id.importButton)
     }
 
@@ -172,7 +181,10 @@ class RestoreAccountActivity : AppCompatActivity() {
                 return@setOnClickListener
             }
 
-            restoreAccount(seedPhrase, newPassword)
+            // Parse optional Zcash birthday height
+            val birthdayHeight = zcashBirthdayInput.text.toString().toLongOrNull()
+
+            restoreAccount(seedPhrase, newPassword, birthdayHeight)
         }
     }
 
@@ -188,27 +200,81 @@ class RestoreAccountActivity : AppCompatActivity() {
         return words.joinToString(" ")
     }
 
-    private fun restoreAccount(seedPhrase: String, password: String) {
-        // TODO: Implement actual account restoration with seed phrase
-        // This should:
-        // 1. Validate the seed phrase using BIP39
-        // 2. Derive the private key from the seed phrase
-        // 3. Encrypt and store the private key with the new password
-        // 4. Import contacts and CID only (as per the UI text)
+    private fun restoreAccount(seedPhrase: String, password: String, zcashBirthdayHeight: Long? = null) {
+        // Disable button to prevent double-tap
+        importButton.isEnabled = false
+        importButton.alpha = 0.5f
 
-        ThemedToast.show(this, "Account restored successfully!")
+        lifecycleScope.launch {
+            try {
+                withContext(Dispatchers.IO) {
+                    Log.d("RestoreAccount", "Restoring account from seed phrase")
 
-        // Clear inputs
-        for (editText in seedWords) {
-            editText.text.clear()
+                    // Initialize KeyManager with the seed phrase
+                    val keyManager = KeyManager.getInstance(this@RestoreAccountActivity)
+                    keyManager.initializeFromSeed(seedPhrase)
+                    Log.i("RestoreAccount", "KeyManager initialized from seed")
+
+                    // Set device password
+                    keyManager.setDevicePassword(password)
+                    Log.i("RestoreAccount", "Device password set")
+
+                    // Store the seed phrase
+                    keyManager.storeSeedPhrase(seedPhrase)
+                    Log.i("RestoreAccount", "Seed phrase stored")
+
+                    // Get the Solana wallet address
+                    val walletAddress = keyManager.getSolanaAddress()
+                    Log.i("RestoreAccount", "Solana address: $walletAddress")
+
+                    // Initialize Zcash wallet with optional birthday height
+                    Log.i("RestoreAccount", "Initializing Zcash wallet...")
+                    if (zcashBirthdayHeight != null) {
+                        Log.i("RestoreAccount", "Using birthday height: $zcashBirthdayHeight")
+                    }
+                    try {
+                        val zcashService = ZcashService.getInstance(this@RestoreAccountActivity)
+                        val result = zcashService.initialize(
+                            seedPhrase = seedPhrase,
+                            useTestnet = false,
+                            birthdayHeight = zcashBirthdayHeight
+                        )
+                        if (result.isSuccess) {
+                            val zcashAddress = result.getOrNull()
+                            Log.i("RestoreAccount", "Zcash wallet initialized: $zcashAddress")
+                        } else {
+                            Log.e("RestoreAccount", "Failed to initialize Zcash wallet: ${result.exceptionOrNull()?.message}")
+                        }
+                    } catch (e: Exception) {
+                        Log.e("RestoreAccount", "Error initializing Zcash wallet", e)
+                        // Continue anyway - Solana will still work
+                    }
+                }
+
+                // Clear inputs
+                for (editText in seedWords) {
+                    editText.text.clear()
+                }
+                newPasswordInput.text.clear()
+                confirmPasswordInput.text.clear()
+                zcashBirthdayInput.text.clear()
+
+                ThemedToast.show(this@RestoreAccountActivity, "Account restored successfully!")
+
+                // Navigate to MainActivity
+                val intent = Intent(this@RestoreAccountActivity, MainActivity::class.java)
+                intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+                startActivity(intent)
+                finish()
+
+            } catch (e: Exception) {
+                Log.e("RestoreAccount", "Failed to restore account", e)
+                withContext(Dispatchers.Main) {
+                    importButton.isEnabled = true
+                    importButton.alpha = 1.0f
+                    ThemedToast.show(this@RestoreAccountActivity, "Failed to restore account: ${e.message}")
+                }
+            }
         }
-        newPasswordInput.text.clear()
-        confirmPasswordInput.text.clear()
-
-        // Navigate to MainActivity
-        val intent = Intent(this, MainActivity::class.java)
-        intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
-        startActivity(intent)
-        finish()
     }
 }

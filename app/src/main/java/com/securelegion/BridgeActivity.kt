@@ -15,6 +15,7 @@ class BridgeActivity : AppCompatActivity() {
 
     private lateinit var bridgeRadioGroup: RadioGroup
     private lateinit var customBridgeInput: EditText
+    private lateinit var testnetSwitch: androidx.appcompat.widget.SwitchCompat
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -22,10 +23,12 @@ class BridgeActivity : AppCompatActivity() {
 
         bridgeRadioGroup = findViewById(R.id.bridgeRadioGroup)
         customBridgeInput = findViewById(R.id.customBridgeInput)
+        testnetSwitch = findViewById(R.id.testnetSwitch)
 
         BottomNavigationHelper.setupBottomNavigation(this)
         setupClickListeners()
         loadSavedBridgeSettings()
+        loadTestnetSetting()
     }
 
     private fun setupClickListeners() {
@@ -99,6 +102,11 @@ class BridgeActivity : AppCompatActivity() {
             Log.i("BridgeActivity", "Saved bridge type: $selectedBridgeType")
         }
 
+        // Save testnet mode
+        val testnetEnabled = testnetSwitch.isChecked
+        editor.putBoolean("testnet_mode", testnetEnabled)
+        Log.i("BridgeActivity", "Testnet mode: ${if (testnetEnabled) "ENABLED" else "DISABLED"}")
+
         // Set flag to force Tor re-initialization on next start
         editor.putBoolean("bridge_config_changed", true)
         editor.apply()
@@ -117,5 +125,23 @@ class BridgeActivity : AppCompatActivity() {
         intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
         startActivity(intent)
         finish()
+    }
+
+    private fun loadTestnetSetting() {
+        val prefs = getSharedPreferences("tor_settings", MODE_PRIVATE)
+        val testnetEnabled = prefs.getBoolean("testnet_mode", false)
+        testnetSwitch.isChecked = testnetEnabled
+        Log.d("BridgeActivity", "Loaded testnet mode: ${if (testnetEnabled) "ENABLED" else "DISABLED"}")
+    }
+
+    companion object {
+        /**
+         * Check if testnet mode is enabled
+         * Call this from other activities to determine which network to use
+         */
+        fun isTestnetEnabled(context: android.content.Context): Boolean {
+            val prefs = context.getSharedPreferences("tor_settings", android.content.Context.MODE_PRIVATE)
+            return prefs.getBoolean("testnet_mode", false)
+        }
     }
 }

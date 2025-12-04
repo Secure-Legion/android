@@ -2,6 +2,7 @@ pub mod crypto;
 pub mod protocol;
 pub mod network;
 pub mod blockchain;
+pub mod nlx402;
 pub mod ffi;
 
 // Re-export main types
@@ -14,6 +15,7 @@ pub use crypto::{
 pub use protocol::{Message, ContactCard, SecurityMode, MessageType};
 pub use network::{PingToken, PongToken, PingPongManager, TorManager};
 pub use blockchain::{register_username, lookup_username, EncryptedContactCard};
+pub use nlx402::{PaymentQuote, create_quote, verify_payment, verify_payment_simple, extract_quote_hash_from_memo, VerificationResult};
 
 // Library version
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

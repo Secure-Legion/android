@@ -4,6 +4,7 @@ import android.content.Context
 import android.util.Base64
 import android.util.Log
 import com.securelegion.crypto.KeyManager
+import com.securelegion.crypto.NLx402Manager
 import com.securelegion.crypto.RustBridge
 import com.securelegion.database.SecureLegionDatabase
 import com.securelegion.database.entities.Message
@@ -450,6 +451,378 @@ class MessageService(private val context: Context) {
     }
 
     /**
+     * Send a payment request message (NLx402 quote) to a contact via Tor
+     * @param contactId Database ID of the recipient contact
+     * @param quote The NLx402 payment quote
+     * @param onMessageSaved Callback when message is saved to DB (before sending)
+     * @return Result with Message entity if successful
+     */
+    suspend fun sendPaymentRequest(
+        contactId: Long,
+        quote: NLx402Manager.PaymentQuote,
+        onMessageSaved: ((Message) -> Unit)? = null
+    ): Result<Message> = withContext(Dispatchers.IO) {
+        try {
+            Log.i(TAG, "╔════════════════════════════════════════")
+            Log.i(TAG, "║ MessageService.sendPaymentRequest()")
+            Log.i(TAG, "║ Contact ID: $contactId")
+            Log.i(TAG, "║ Quote ID: ${quote.quoteId}")
+            Log.i(TAG, "║ Amount: ${quote.formattedAmount}")
+            Log.i(TAG, "╚════════════════════════════════════════")
+
+            // Get database instance
+            val dbPassphrase = keyManager.getDatabasePassphrase()
+            val database = SecureLegionDatabase.getInstance(context, dbPassphrase)
+
+            // Get contact details
+            val contact = database.contactDao().getContactById(contactId)
+                ?: return@withContext Result.failure(Exception("Contact not found"))
+
+            Log.d(TAG, "Sending payment request to: ${contact.displayName} (${contact.torOnionAddress})")
+
+            // Generate unique message ID using quote ID
+            val messageId = "pay_req_${quote.quoteId}"
+
+            // Get our keypair for signing
+            val ourPrivateKey = keyManager.getSigningKeyBytes()
+
+            // Get recipient's X25519 public key (for encryption)
+            val recipientX25519PublicKey = Base64.decode(contact.x25519PublicKeyBase64, Base64.NO_WRAP)
+
+            // Create the payment request payload (JSON with quote)
+            val paymentRequestPayload = """{"type":"PAYMENT_REQUEST","quote":${quote.rawJson}}"""
+
+            // Encrypt the payment request
+            Log.d(TAG, "Encrypting payment request...")
+            val encryptedBytes = RustBridge.encryptMessage(paymentRequestPayload, recipientX25519PublicKey)
+
+            // Prepend metadata byte (0x0A = PAYMENT_REQUEST) so receiver can identify message type
+            // This is similar to how VOICE messages prepend 0x01 + duration
+            val payloadWithMetadata = ByteArray(1 + encryptedBytes.size)
+            payloadWithMetadata[0] = 0x0A.toByte() // PAYMENT_REQUEST type
+            System.arraycopy(encryptedBytes, 0, payloadWithMetadata, 1, encryptedBytes.size)
+            val encryptedBase64 = Base64.encodeToString(payloadWithMetadata, Base64.NO_WRAP)
+
+            Log.d(TAG, "Payment request encrypted: ${encryptedBytes.size} bytes")
+
+            // Generate nonce (first 24 bytes of encrypted data)
+            val nonce = encryptedBytes.take(24).toByteArray()
+            val nonceBase64 = Base64.encodeToString(nonce, Base64.NO_WRAP)
+
+            // Sign the message
+            Log.d(TAG, "Signing payment request...")
+            val messageData = (messageId + quote.rawJson + System.currentTimeMillis()).toByteArray()
+            val signature = RustBridge.signData(messageData, ourPrivateKey)
+            val signatureBase64 = Base64.encodeToString(signature, Base64.NO_WRAP)
+
+            val currentTime = System.currentTimeMillis()
+
+            // Generate Ping ID for persistent messaging
+            val pingId = UUID.randomUUID().toString()
+            Log.d(TAG, "Generated Ping ID for payment request: $pingId")
+
+            // Create message entity with PAYMENT_REQUEST type
+            val message = Message(
+                contactId = contactId,
+                messageId = messageId,
+                encryptedContent = "Payment Request: ${quote.formattedAmount}", // Display text
+                messageType = Message.MESSAGE_TYPE_PAYMENT_REQUEST,
+                isSentByMe = true,
+                timestamp = currentTime,
+                status = Message.STATUS_PING_SENT,
+                signatureBase64 = signatureBase64,
+                nonceBase64 = nonceBase64,
+                pingId = pingId,
+                encryptedPayload = encryptedBase64,
+                retryCount = 0,
+                lastRetryTimestamp = currentTime,
+                // Payment-specific fields
+                paymentQuoteJson = quote.rawJson,
+                paymentStatus = Message.PAYMENT_STATUS_PENDING,
+                paymentToken = quote.token,
+                paymentAmount = quote.amount
+            )
+
+            Log.d(TAG, "Payment request queued for persistent delivery (PING_SENT)")
+
+            // Save to database
+            Log.d(TAG, "Saving payment request to database...")
+            val savedMessageId = database.messageDao().insertMessage(message)
+            val savedMessage = message.copy(id = savedMessageId)
+
+            // Notify that message is saved (allows UI to update immediately)
+            onMessageSaved?.invoke(savedMessage)
+
+            // Broadcast to ChatActivity to refresh messages (so payment request shows immediately)
+            val chatIntent = android.content.Intent("com.securelegion.MESSAGE_RECEIVED")
+            chatIntent.setPackage(context.packageName)
+            chatIntent.putExtra("CONTACT_ID", contactId)
+            context.sendBroadcast(chatIntent)
+            Log.d(TAG, "Sent explicit MESSAGE_RECEIVED broadcast to refresh ChatActivity")
+
+            // Broadcast to MainActivity to refresh chat list preview
+            val intent = android.content.Intent("com.securelegion.NEW_PING")
+            intent.setPackage(context.packageName)
+            intent.putExtra("CONTACT_ID", contactId)
+            context.sendBroadcast(intent)
+            Log.d(TAG, "Sent explicit NEW_PING broadcast to refresh MainActivity chat list")
+
+            // Immediately attempt to send Ping
+            Log.i(TAG, "Payment request queued successfully: $messageId (Ping ID: $pingId)")
+            Log.d(TAG, "Attempting immediate Ping send...")
+
+            try {
+                sendPingForMessage(savedMessage)
+                Log.d(TAG, "Ping sent immediately, will poll for Pong later")
+            } catch (e: Exception) {
+                Log.w(TAG, "Immediate Ping send failed, retry worker will retry: ${e.message}")
+            }
+
+            // Schedule fast retry worker for this message (5s intervals)
+            ImmediateRetryWorker.scheduleForMessage(context, messageId)
+            Log.d(TAG, "Scheduled immediate retry worker for payment request $messageId")
+
+            Result.success(savedMessage)
+
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to send payment request", e)
+            Result.failure(e)
+        }
+    }
+
+    /**
+     * Send a payment confirmation message (after paying someone's request)
+     * @param contactId Database ID of the recipient contact
+     * @param originalQuote The original payment quote that was paid
+     * @param txSignature The transaction signature
+     * @param onMessageSaved Callback when message is saved to DB (before sending)
+     * @return Result with Message entity if successful
+     */
+    suspend fun sendPaymentConfirmation(
+        contactId: Long,
+        originalQuote: NLx402Manager.PaymentQuote,
+        txSignature: String,
+        onMessageSaved: ((Message) -> Unit)? = null
+    ): Result<Message> = withContext(Dispatchers.IO) {
+        try {
+            Log.d(TAG, "Sending payment confirmation to contact ID: $contactId")
+            Log.d(TAG, "Paid quote: ${originalQuote.quoteId} (${originalQuote.formattedAmount})")
+            Log.d(TAG, "TX: $txSignature")
+
+            // Get database instance
+            val dbPassphrase = keyManager.getDatabasePassphrase()
+            val database = SecureLegionDatabase.getInstance(context, dbPassphrase)
+
+            // Get contact details
+            val contact = database.contactDao().getContactById(contactId)
+                ?: return@withContext Result.failure(Exception("Contact not found"))
+
+            Log.d(TAG, "Sending payment confirmation to: ${contact.displayName}")
+
+            // Generate unique message ID using quote ID and tx signature
+            val messageId = "pay_sent_${originalQuote.quoteId}_${txSignature.take(8)}"
+
+            // Get our keypair for signing
+            val ourPrivateKey = keyManager.getSigningKeyBytes()
+
+            // Get recipient's X25519 public key (for encryption)
+            val recipientX25519PublicKey = Base64.decode(contact.x25519PublicKeyBase64, Base64.NO_WRAP)
+
+            // Create the payment confirmation payload
+            val paymentConfirmPayload = """{"type":"PAYMENT_SENT","quote_id":"${originalQuote.quoteId}","tx_signature":"$txSignature","amount":${originalQuote.amount},"token":"${originalQuote.token}"}"""
+
+            // Encrypt the payment confirmation
+            Log.d(TAG, "Encrypting payment confirmation...")
+            val encryptedBytes = RustBridge.encryptMessage(paymentConfirmPayload, recipientX25519PublicKey)
+
+            // Prepend metadata byte (0x0B = PAYMENT_SENT) so receiver can identify message type
+            val payloadWithMetadata = ByteArray(1 + encryptedBytes.size)
+            payloadWithMetadata[0] = 0x0B.toByte() // PAYMENT_SENT type
+            System.arraycopy(encryptedBytes, 0, payloadWithMetadata, 1, encryptedBytes.size)
+            val encryptedBase64 = Base64.encodeToString(payloadWithMetadata, Base64.NO_WRAP)
+
+            // Generate nonce
+            val nonce = encryptedBytes.take(24).toByteArray()
+            val nonceBase64 = Base64.encodeToString(nonce, Base64.NO_WRAP)
+
+            // Sign the message
+            val messageData = (messageId + txSignature + System.currentTimeMillis()).toByteArray()
+            val signature = RustBridge.signData(messageData, ourPrivateKey)
+            val signatureBase64 = Base64.encodeToString(signature, Base64.NO_WRAP)
+
+            val currentTime = System.currentTimeMillis()
+            val pingId = UUID.randomUUID().toString()
+
+            // Create message entity with PAYMENT_SENT type
+            val message = Message(
+                contactId = contactId,
+                messageId = messageId,
+                encryptedContent = "Paid: ${originalQuote.formattedAmount}", // Display text
+                messageType = Message.MESSAGE_TYPE_PAYMENT_SENT,
+                isSentByMe = true,
+                timestamp = currentTime,
+                status = Message.STATUS_PING_SENT,
+                signatureBase64 = signatureBase64,
+                nonceBase64 = nonceBase64,
+                pingId = pingId,
+                encryptedPayload = encryptedBase64,
+                retryCount = 0,
+                lastRetryTimestamp = currentTime,
+                // Payment-specific fields
+                paymentQuoteJson = originalQuote.rawJson,
+                paymentStatus = Message.PAYMENT_STATUS_PAID,
+                paymentToken = originalQuote.token,
+                paymentAmount = originalQuote.amount,
+                txSignature = txSignature
+            )
+
+            // Save to database
+            val savedMessageId = database.messageDao().insertMessage(message)
+            val savedMessage = message.copy(id = savedMessageId)
+
+            // Notify that message is saved
+            onMessageSaved?.invoke(savedMessage)
+
+            // Broadcast to ChatActivity to refresh messages
+            val chatIntent = android.content.Intent("com.securelegion.MESSAGE_RECEIVED")
+            chatIntent.setPackage(context.packageName)
+            chatIntent.putExtra("CONTACT_ID", contactId)
+            context.sendBroadcast(chatIntent)
+            Log.d(TAG, "Sent MESSAGE_RECEIVED broadcast for payment confirmation")
+
+            // Broadcast to MainActivity
+            val intent = android.content.Intent("com.securelegion.NEW_PING")
+            intent.setPackage(context.packageName)
+            intent.putExtra("CONTACT_ID", contactId)
+            context.sendBroadcast(intent)
+
+            // Attempt to send Ping
+            try {
+                sendPingForMessage(savedMessage)
+            } catch (e: Exception) {
+                Log.w(TAG, "Immediate Ping send failed for payment confirmation: ${e.message}")
+            }
+
+            // Schedule retry worker
+            ImmediateRetryWorker.scheduleForMessage(context, messageId)
+
+            Log.i(TAG, "Payment confirmation sent: $messageId")
+            Result.success(savedMessage)
+
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to send payment confirmation", e)
+            Result.failure(e)
+        }
+    }
+
+    /**
+     * Send a payment acceptance message
+     * When someone sends you money, you accept by providing your receive address
+     * This triggers the sender's app to execute the blockchain transfer
+     */
+    suspend fun sendPaymentAcceptance(
+        contactId: Long,
+        originalQuote: NLx402Manager.PaymentQuote,
+        receiveAddress: String,
+        onMessageSaved: ((Message) -> Unit)? = null
+    ): Result<Message> = withContext(Dispatchers.IO) {
+        try {
+            Log.d(TAG, "Sending payment acceptance to contact ID: $contactId")
+            Log.d(TAG, "Quote: ${originalQuote.quoteId}, receive to: $receiveAddress")
+
+            val dbPassphrase = keyManager.getDatabasePassphrase()
+            val database = SecureLegionDatabase.getInstance(context, dbPassphrase)
+
+            val contact = database.contactDao().getContactById(contactId)
+                ?: return@withContext Result.failure(Exception("Contact not found"))
+
+            Log.d(TAG, "Sending payment acceptance to: ${contact.displayName}")
+
+            val messageId = "pay_accept_${originalQuote.quoteId}_${System.currentTimeMillis()}"
+
+            val ourPrivateKey = keyManager.getSigningKeyBytes()
+            val recipientX25519PublicKey = Base64.decode(contact.x25519PublicKeyBase64, Base64.NO_WRAP)
+
+            // Create the payment acceptance payload with receive address
+            val paymentAcceptPayload = """{"type":"PAYMENT_ACCEPTED","quote_id":"${originalQuote.quoteId}","receive_address":"$receiveAddress","amount":${originalQuote.amount},"token":"${originalQuote.token}"}"""
+
+            Log.d(TAG, "Encrypting payment acceptance...")
+            val encryptedBytes = RustBridge.encryptMessage(paymentAcceptPayload, recipientX25519PublicKey)
+
+            // Prepend metadata byte (0x0C = PAYMENT_ACCEPTED) so receiver can identify message type
+            val payloadWithMetadata = ByteArray(1 + encryptedBytes.size)
+            payloadWithMetadata[0] = 0x0C.toByte() // PAYMENT_ACCEPTED type
+            System.arraycopy(encryptedBytes, 0, payloadWithMetadata, 1, encryptedBytes.size)
+            val encryptedBase64 = Base64.encodeToString(payloadWithMetadata, Base64.NO_WRAP)
+
+            val nonce = encryptedBytes.take(24).toByteArray()
+            val nonceBase64 = Base64.encodeToString(nonce, Base64.NO_WRAP)
+
+            val messageData = (messageId + receiveAddress + System.currentTimeMillis()).toByteArray()
+            val signature = RustBridge.signData(messageData, ourPrivateKey)
+            val signatureBase64 = Base64.encodeToString(signature, Base64.NO_WRAP)
+
+            val currentTime = System.currentTimeMillis()
+            val pingId = UUID.randomUUID().toString()
+
+            val message = Message(
+                contactId = contactId,
+                messageId = messageId,
+                encryptedContent = "Payment accepted: ${originalQuote.formattedAmount}",
+                messageType = Message.MESSAGE_TYPE_PAYMENT_ACCEPTED,
+                isSentByMe = true,
+                timestamp = currentTime,
+                status = Message.STATUS_PING_SENT,
+                signatureBase64 = signatureBase64,
+                nonceBase64 = nonceBase64,
+                pingId = pingId,
+                encryptedPayload = encryptedBase64,
+                retryCount = 0,
+                lastRetryTimestamp = currentTime,
+                paymentQuoteJson = originalQuote.rawJson,
+                paymentToken = originalQuote.token,
+                paymentAmount = originalQuote.amount,
+                paymentStatus = Message.PAYMENT_STATUS_PENDING
+            )
+
+            val savedMessageId = database.messageDao().insertMessage(message)
+            val savedMessage = message.copy(id = savedMessageId)
+
+            onMessageSaved?.invoke(savedMessage)
+
+            // Broadcast to ChatActivity to refresh messages
+            val chatIntent = android.content.Intent("com.securelegion.MESSAGE_RECEIVED")
+            chatIntent.setPackage(context.packageName)
+            chatIntent.putExtra("CONTACT_ID", contactId)
+            context.sendBroadcast(chatIntent)
+            Log.d(TAG, "Sent MESSAGE_RECEIVED broadcast for payment acceptance")
+
+            // Broadcast to MainActivity
+            val intent = android.content.Intent("com.securelegion.NEW_PING")
+            intent.setPackage(context.packageName)
+            intent.putExtra("CONTACT_ID", contactId)
+            context.sendBroadcast(intent)
+
+            // Try immediate send via Ping
+            try {
+                sendPingForMessage(savedMessage)
+                Log.d(TAG, "Sent Ping for payment acceptance")
+            } catch (e: Exception) {
+                Log.w(TAG, "Immediate Ping send failed for payment acceptance: ${e.message}")
+            }
+
+            ImmediateRetryWorker.scheduleForMessage(context, messageId)
+
+            Log.i(TAG, "Payment acceptance sent: $messageId")
+            Result.success(savedMessage)
+
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to send payment acceptance", e)
+            Result.failure(e)
+        }
+    }
+
+    /**
      * Receive and decrypt an incoming message
      * @param encryptedData The encrypted message data
      * @param senderPublicKey The sender's public key
@@ -622,7 +995,12 @@ class MessageService(private val context: Context) {
         try {
             val dbPassphrase = keyManager.getDatabasePassphrase()
             val database = SecureLegionDatabase.getInstance(context, dbPassphrase)
-            database.messageDao().getMessagesForContact(contactId)
+            val messages = database.messageDao().getMessagesForContact(contactId)
+            Log.d(TAG, "Loaded ${messages.size} messages for contact $contactId")
+            messages.forEach { msg ->
+                Log.d(TAG, "  - [${msg.messageType}] ${msg.encryptedContent.take(30)}... (id=${msg.id}, status=${msg.status})")
+            }
+            messages
         } catch (e: Exception) {
             Log.e(TAG, "Failed to load messages", e)
             emptyList()
@@ -718,9 +1096,12 @@ class MessageService(private val context: Context) {
 
             // Convert message type to wire protocol type byte
             val messageTypeByte: Byte = when (message.messageType) {
-                Message.MESSAGE_TYPE_VOICE -> 0x04.toByte()  // VOICE
-                Message.MESSAGE_TYPE_IMAGE -> 0x09.toByte()  // IMAGE
-                else -> 0x03.toByte()                         // TEXT (default)
+                Message.MESSAGE_TYPE_VOICE -> 0x04.toByte()           // VOICE
+                Message.MESSAGE_TYPE_IMAGE -> 0x09.toByte()           // IMAGE
+                Message.MESSAGE_TYPE_PAYMENT_REQUEST -> 0x0A.toByte() // PAYMENT_REQUEST
+                Message.MESSAGE_TYPE_PAYMENT_SENT -> 0x0B.toByte()    // PAYMENT_SENT
+                Message.MESSAGE_TYPE_PAYMENT_ACCEPTED -> 0x0C.toByte() // PAYMENT_ACCEPTED
+                else -> 0x03.toByte()                                  // TEXT (default)
             }
             Log.d(TAG, "Message type: ${message.messageType} → wire byte: 0x${messageTypeByte.toString(16).padStart(2, '0')}")
 
@@ -858,9 +1239,12 @@ class MessageService(private val context: Context) {
 
                     // Convert message type to wire protocol type byte
                     val messageTypeByte: Byte = when (message.messageType) {
-                        Message.MESSAGE_TYPE_VOICE -> 0x04.toByte()  // VOICE
-                        Message.MESSAGE_TYPE_IMAGE -> 0x09.toByte()  // IMAGE
-                        else -> 0x03.toByte()                         // TEXT (default)
+                        Message.MESSAGE_TYPE_VOICE -> 0x04.toByte()           // VOICE
+                        Message.MESSAGE_TYPE_IMAGE -> 0x09.toByte()           // IMAGE
+                        Message.MESSAGE_TYPE_PAYMENT_REQUEST -> 0x0A.toByte() // PAYMENT_REQUEST
+                        Message.MESSAGE_TYPE_PAYMENT_SENT -> 0x0B.toByte()    // PAYMENT_SENT
+                        Message.MESSAGE_TYPE_PAYMENT_ACCEPTED -> 0x0C.toByte() // PAYMENT_ACCEPTED
+                        else -> 0x03.toByte()                                  // TEXT (default)
                     }
 
                     // Send message blob

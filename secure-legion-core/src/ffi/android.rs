@@ -4586,3 +4586,276 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_cleanupExpiredSessions
     crate::network::cleanup_expired_pongs();
     crate::network::cleanup_expired_acks();
 }
+
+// ==================== NLx402 PAYMENT PROTOCOL ====================
+
+/// Create a payment quote for NLx402 protocol
+/// Returns JSON string containing the quote
+#[no_mangle]
+pub extern "C" fn Java_com_securelegion_crypto_RustBridge_createPaymentQuote(
+    mut env: JNIEnv,
+    _class: JClass,
+    recipient: JString,
+    amount: jlong,
+    token: JString,
+    description: JString,
+    sender_handle: JString,
+    recipient_handle: JString,
+    expiry_secs: jlong,
+) -> jstring {
+    catch_panic!(env, {
+        let recipient_str = match jstring_to_string(&mut env, recipient) {
+            Ok(s) => s,
+            Err(e) => {
+                let _ = env.throw_new("java/lang/IllegalArgumentException", e);
+                return std::ptr::null_mut();
+            }
+        };
+
+        let token_str = match jstring_to_string(&mut env, token) {
+            Ok(s) => s,
+            Err(e) => {
+                let _ = env.throw_new("java/lang/IllegalArgumentException", e);
+                return std::ptr::null_mut();
+            }
+        };
+
+        // Handle optional parameters (empty string = None)
+        let description_opt = match jstring_to_string(&mut env, description) {
+            Ok(s) if !s.is_empty() => Some(s),
+            _ => None,
+        };
+
+        let sender_handle_opt = match jstring_to_string(&mut env, sender_handle) {
+            Ok(s) if !s.is_empty() => Some(s),
+            _ => None,
+        };
+
+        let recipient_handle_opt = match jstring_to_string(&mut env, recipient_handle) {
+            Ok(s) if !s.is_empty() => Some(s),
+            _ => None,
+        };
+
+        // Create the quote with custom expiry
+        let quote = match crate::nlx402::create_quote_with_expiry(
+            &recipient_str,
+            amount as u64,
+            &token_str,
+            description_opt.as_deref(),
+            sender_handle_opt.as_deref(),
+            recipient_handle_opt.as_deref(),
+            expiry_secs as u64,
+        ) {
+            Ok(q) => q,
+            Err(e) => {
+                let _ = env.throw_new("java/lang/RuntimeException", format!("Failed to create quote: {}", e));
+                return std::ptr::null_mut();
+            }
+        };
+
+        // Serialize to JSON
+        let json = match quote.to_json() {
+            Ok(j) => j,
+            Err(e) => {
+                let _ = env.throw_new("java/lang/RuntimeException", format!("Failed to serialize quote: {}", e));
+                return std::ptr::null_mut();
+            }
+        };
+
+        log::info!("Created payment quote: {} for {} {}", quote.quote_id, amount, token_str);
+
+        match string_to_jstring(&mut env, &json) {
+            Ok(s) => s.into_raw(),
+            Err(e) => {
+                let _ = env.throw_new("java/lang/RuntimeException", e);
+                std::ptr::null_mut()
+            }
+        }
+    }, std::ptr::null_mut())
+}
+
+/// Get the memo string for a payment quote (for embedding in transaction)
+#[no_mangle]
+pub extern "C" fn Java_com_securelegion_crypto_RustBridge_getQuoteMemo(
+    mut env: JNIEnv,
+    _class: JClass,
+    quote_json: JString,
+) -> jstring {
+    catch_panic!(env, {
+        let json_str = match jstring_to_string(&mut env, quote_json) {
+            Ok(s) => s,
+            Err(e) => {
+                let _ = env.throw_new("java/lang/IllegalArgumentException", e);
+                return std::ptr::null_mut();
+            }
+        };
+
+        let quote = match crate::nlx402::PaymentQuote::from_json(&json_str) {
+            Ok(q) => q,
+            Err(e) => {
+                let _ = env.throw_new("java/lang/RuntimeException", format!("Failed to parse quote: {}", e));
+                return std::ptr::null_mut();
+            }
+        };
+
+        let memo = quote.to_memo();
+
+        match string_to_jstring(&mut env, &memo) {
+            Ok(s) => s.into_raw(),
+            Err(e) => {
+                let _ = env.throw_new("java/lang/RuntimeException", e);
+                std::ptr::null_mut()
+            }
+        }
+    }, std::ptr::null_mut())
+}
+
+/// Verify a payment against a quote
+/// Returns true if payment is valid (excluding replay check - that's done in Kotlin)
+#[no_mangle]
+pub extern "C" fn Java_com_securelegion_crypto_RustBridge_verifyPayment(
+    mut env: JNIEnv,
+    _class: JClass,
+    quote_json: JString,
+    tx_memo: JString,
+    tx_amount: jlong,
+    tx_recipient: JString,
+    tx_token: JString,
+) -> jboolean {
+    catch_panic!(env, {
+        let json_str = match jstring_to_string(&mut env, quote_json) {
+            Ok(s) => s,
+            Err(e) => {
+                log::error!("Failed to get quote_json: {}", e);
+                return 0;
+            }
+        };
+
+        let memo_str = match jstring_to_string(&mut env, tx_memo) {
+            Ok(s) => s,
+            Err(e) => {
+                log::error!("Failed to get tx_memo: {}", e);
+                return 0;
+            }
+        };
+
+        let recipient_str = match jstring_to_string(&mut env, tx_recipient) {
+            Ok(s) => s,
+            Err(e) => {
+                log::error!("Failed to get tx_recipient: {}", e);
+                return 0;
+            }
+        };
+
+        let token_str = match jstring_to_string(&mut env, tx_token) {
+            Ok(s) => s,
+            Err(e) => {
+                log::error!("Failed to get tx_token: {}", e);
+                return 0;
+            }
+        };
+
+        let quote = match crate::nlx402::PaymentQuote::from_json(&json_str) {
+            Ok(q) => q,
+            Err(e) => {
+                log::error!("Failed to parse quote: {}", e);
+                return 0;
+            }
+        };
+
+        // Use simple verification (replay check is done in Kotlin with local DB)
+        match crate::nlx402::verify_payment_simple(
+            &quote,
+            &memo_str,
+            tx_amount as u64,
+            &recipient_str,
+            &token_str,
+        ) {
+            Ok(_) => {
+                log::info!("Payment verified successfully for quote {}", quote.quote_id);
+                1
+            }
+            Err(e) => {
+                log::warn!("Payment verification failed: {}", e);
+                0
+            }
+        }
+    }, 0)
+}
+
+/// Check if a quote has expired
+#[no_mangle]
+pub extern "C" fn Java_com_securelegion_crypto_RustBridge_isQuoteExpired(
+    mut env: JNIEnv,
+    _class: JClass,
+    quote_json: JString,
+) -> jboolean {
+    catch_panic!(env, {
+        let json_str = match jstring_to_string(&mut env, quote_json) {
+            Ok(s) => s,
+            Err(e) => {
+                log::error!("Failed to get quote_json: {}", e);
+                return 1; // Treat as expired if we can't parse
+            }
+        };
+
+        let quote = match crate::nlx402::PaymentQuote::from_json(&json_str) {
+            Ok(q) => q,
+            Err(e) => {
+                log::error!("Failed to parse quote: {}", e);
+                return 1; // Treat as expired if we can't parse
+            }
+        };
+
+        if quote.is_expired() { 1 } else { 0 }
+    }, 1)
+}
+
+/// Extract quote hash from a transaction memo
+/// Returns empty string if memo is not valid NLx402 format
+#[no_mangle]
+pub extern "C" fn Java_com_securelegion_crypto_RustBridge_extractQuoteHashFromMemo(
+    mut env: JNIEnv,
+    _class: JClass,
+    memo: JString,
+) -> jstring {
+    catch_panic!(env, {
+        let memo_str = match jstring_to_string(&mut env, memo) {
+            Ok(s) => s,
+            Err(e) => {
+                let _ = env.throw_new("java/lang/IllegalArgumentException", e);
+                return std::ptr::null_mut();
+            }
+        };
+
+        let hash = match crate::nlx402::extract_quote_hash_from_memo(&memo_str) {
+            Ok(h) => h,
+            Err(_) => String::new(), // Return empty string for invalid memos
+        };
+
+        match string_to_jstring(&mut env, &hash) {
+            Ok(s) => s.into_raw(),
+            Err(e) => {
+                let _ = env.throw_new("java/lang/RuntimeException", e);
+                std::ptr::null_mut()
+            }
+        }
+    }, std::ptr::null_mut())
+}
+
+/// Get the NLx402 protocol version
+#[no_mangle]
+pub extern "C" fn Java_com_securelegion_crypto_RustBridge_getNLx402Version(
+    mut env: JNIEnv,
+    _class: JClass,
+) -> jstring {
+    catch_panic!(env, {
+        match string_to_jstring(&mut env, crate::nlx402::PROTOCOL_VERSION) {
+            Ok(s) => s.into_raw(),
+            Err(e) => {
+                let _ = env.throw_new("java/lang/RuntimeException", e);
+                std::ptr::null_mut()
+            }
+        }
+    }, std::ptr::null_mut())
+}

@@ -968,6 +968,12 @@ class TorService : Service() {
                         val updatedMessage = when (ackType) {
                             "PING_ACK" -> {
                                 Log.i(TAG, "✓ Received PING_ACK for message ${message.messageId} (pingId: $itemId) after $retryCount retries")
+                                // Broadcast to update sender's UI (show single checkmark)
+                                val intent = Intent("com.securelegion.MESSAGE_RECEIVED")
+                                intent.setPackage(packageName)
+                                intent.putExtra("CONTACT_ID", message.contactId)
+                                sendBroadcast(intent)
+                                Log.i(TAG, "✓ Broadcast MESSAGE_RECEIVED for PING_ACK (contact ${message.contactId})")
                                 message.copy(pingDelivered = true)
                             }
                             "MESSAGE_ACK" -> {
@@ -1018,6 +1024,13 @@ class TorService : Service() {
                             if (ackType == "MESSAGE_ACK") {
                                 ImmediateRetryWorker.cancelForMessage(this@TorService, message.messageId)
                                 Log.d(TAG, "Cancelled immediate retry worker for ${message.messageId}")
+
+                                // Broadcast to update sender's UI (show double checkmarks)
+                                val intent = Intent("com.securelegion.MESSAGE_RECEIVED")
+                                intent.setPackage(packageName)
+                                intent.putExtra("CONTACT_ID", message.contactId)
+                                sendBroadcast(intent)
+                                Log.i(TAG, "✓ Broadcast MESSAGE_RECEIVED to update sender UI for contact ${message.contactId}")
                             }
                         }
                     } else {
@@ -1426,9 +1439,8 @@ class TorService : Service() {
      */
     private fun handleIncomingMessageBlob(encryptedMessageWire: ByteArray) {
         try {
-            // Friend requests arrive here after being routed by Rust (wire type 0x07 already stripped)
-            // Wire format from Rust: [Sender X25519 - 32 bytes][Encrypted Friend Request]
-            // Note: Regular messages (TEXT/VOICE) go through a different channel
+            // Wire format: [Sender X25519 - 32 bytes][Encrypted Message]
+            // Note: Type byte was stripped by Rust listener during routing
 
             Log.i(TAG, "╔════════════════════════════════════════")
             Log.i(TAG, "║ INCOMING MESSAGE BLOB (${encryptedMessageWire.size} bytes)")
@@ -1510,9 +1522,9 @@ class TorService : Service() {
                 Log.d(TAG, "First byte: 0x${String.format("%02X", encryptedMessage[0])}")
             }
 
-            // Check for metadata byte (0x00 = TEXT, 0x01 = VOICE, 0x02 = IMAGE)
+            // Check for metadata byte (0x00 = TEXT, 0x01 = VOICE, 0x02 = IMAGE, 0x0A = PAYMENT_REQUEST, etc.)
             if (encryptedMessage.isNotEmpty()) {
-                when (encryptedMessage[0].toInt()) {
+                when (encryptedMessage[0].toInt() and 0xFF) {
                     0x00 -> {
                         // TEXT message - strip metadata byte
                         Log.d(TAG, "Message type: TEXT (v2)")
@@ -1541,6 +1553,27 @@ class TorService : Service() {
                         // IMAGE message - strip metadata byte
                         Log.d(TAG, "Message type: IMAGE (v2)")
                         messageType = com.securelegion.database.entities.Message.MESSAGE_TYPE_IMAGE
+                        actualEncryptedMessage = encryptedMessage.copyOfRange(1, encryptedMessage.size)
+                        Log.d(TAG, "  Stripped 1 byte metadata, encrypted payload: ${actualEncryptedMessage.size} bytes")
+                    }
+                    0x0A -> {
+                        // PAYMENT_REQUEST message
+                        Log.d(TAG, "Message type: PAYMENT_REQUEST")
+                        messageType = com.securelegion.database.entities.Message.MESSAGE_TYPE_PAYMENT_REQUEST
+                        actualEncryptedMessage = encryptedMessage.copyOfRange(1, encryptedMessage.size)
+                        Log.d(TAG, "  Stripped 1 byte metadata, encrypted payload: ${actualEncryptedMessage.size} bytes")
+                    }
+                    0x0B -> {
+                        // PAYMENT_SENT message
+                        Log.d(TAG, "Message type: PAYMENT_SENT")
+                        messageType = com.securelegion.database.entities.Message.MESSAGE_TYPE_PAYMENT_SENT
+                        actualEncryptedMessage = encryptedMessage.copyOfRange(1, encryptedMessage.size)
+                        Log.d(TAG, "  Stripped 1 byte metadata, encrypted payload: ${actualEncryptedMessage.size} bytes")
+                    }
+                    0x0C -> {
+                        // PAYMENT_ACCEPTED message
+                        Log.d(TAG, "Message type: PAYMENT_ACCEPTED")
+                        messageType = com.securelegion.database.entities.Message.MESSAGE_TYPE_PAYMENT_ACCEPTED
                         actualEncryptedMessage = encryptedMessage.copyOfRange(1, encryptedMessage.size)
                         Log.d(TAG, "  Stripped 1 byte metadata, encrypted payload: ${actualEncryptedMessage.size} bytes")
                     }
@@ -1634,11 +1667,104 @@ class TorService : Service() {
                         }
                     }
 
+                    // Parse payment message fields
+                    var paymentQuoteJson: String? = null
+                    var paymentToken: String? = null
+                    var paymentAmount: Long? = null
+                    var paymentStatus: String? = null
+                    var txSignature: String? = null
+                    var receiveAddress: String? = null
+                    var displayContent = plaintext
+
+                    if (messageType in listOf(
+                        com.securelegion.database.entities.Message.MESSAGE_TYPE_PAYMENT_REQUEST,
+                        com.securelegion.database.entities.Message.MESSAGE_TYPE_PAYMENT_SENT,
+                        com.securelegion.database.entities.Message.MESSAGE_TYPE_PAYMENT_ACCEPTED
+                    )) {
+                        try {
+                            val json = org.json.JSONObject(plaintext)
+                            Log.d(TAG, "Parsing payment JSON: $plaintext")
+
+                            when (messageType) {
+                                com.securelegion.database.entities.Message.MESSAGE_TYPE_PAYMENT_REQUEST -> {
+                                    // Format: {"type":"PAYMENT_REQUEST","quote":{...}}
+                                    val quoteObj = json.optJSONObject("quote")
+                                    if (quoteObj != null) {
+                                        paymentQuoteJson = quoteObj.toString()
+                                        paymentAmount = quoteObj.optLong("amount", 0)
+                                        paymentToken = quoteObj.optString("token", "SOL")
+                                        paymentStatus = com.securelegion.database.entities.Message.PAYMENT_STATUS_PENDING
+                                        val formattedAmount = formatPaymentAmount(paymentAmount!!, paymentToken!!)
+                                        displayContent = "Payment Request: $formattedAmount"
+                                        Log.d(TAG, "✓ Parsed PAYMENT_REQUEST: $formattedAmount")
+                                    }
+                                }
+                                com.securelegion.database.entities.Message.MESSAGE_TYPE_PAYMENT_SENT -> {
+                                    // Format: {"type":"PAYMENT_SENT","quote_id":"...","tx_signature":"...","amount":...,"token":"..."}
+                                    paymentAmount = json.optLong("amount", 0)
+                                    paymentToken = json.optString("token", "SOL")
+                                    txSignature = json.optString("tx_signature", null)
+                                    paymentStatus = com.securelegion.database.entities.Message.PAYMENT_STATUS_PAID
+                                    val formattedAmount = formatPaymentAmount(paymentAmount!!, paymentToken!!)
+                                    displayContent = "Payment Received: $formattedAmount"
+                                    Log.d(TAG, "✓ Parsed PAYMENT_SENT: $formattedAmount, tx=$txSignature")
+                                }
+                                com.securelegion.database.entities.Message.MESSAGE_TYPE_PAYMENT_ACCEPTED -> {
+                                    // Format: {"type":"PAYMENT_ACCEPTED","quote_id":"...","receive_address":"...","amount":...,"token":"..."}
+                                    paymentAmount = json.optLong("amount", 0)
+                                    paymentToken = json.optString("token", "SOL")
+                                    receiveAddress = json.optString("receive_address", null)
+                                    paymentStatus = com.securelegion.database.entities.Message.PAYMENT_STATUS_PENDING
+                                    val quoteId = json.optString("quote_id", "")
+                                    val formattedAmount = formatPaymentAmount(paymentAmount!!, paymentToken!!)
+                                    displayContent = "Payment Accepted: $formattedAmount"
+                                    Log.d(TAG, "✓ Parsed PAYMENT_ACCEPTED: $formattedAmount to $receiveAddress")
+
+                                    // Auto-execute the transfer!
+                                    if (receiveAddress != null && paymentAmount > 0) {
+                                        Log.i(TAG, "=== AUTO-EXECUTING PAYMENT TRANSFER ===")
+                                        Log.i(TAG, "  Amount: $formattedAmount")
+                                        Log.i(TAG, "  To: $receiveAddress")
+                                        Log.i(TAG, "  Token: $paymentToken")
+
+                                        // Find our original payment request using messageId pattern: pay_req_{quoteId}
+                                        val originalMessageId = "pay_req_$quoteId"
+                                        val originalRequest = database.messageDao().getMessageByMessageId(originalMessageId)
+
+                                        if (originalRequest != null && originalRequest.isSentByMe) {
+                                            Log.i(TAG, "  Found original request: ${originalRequest.messageId}")
+                                            // Execute the blockchain transfer
+                                            executePaymentTransfer(
+                                                contact = contact,
+                                                amount = paymentAmount!!,
+                                                token = paymentToken!!,
+                                                recipientAddress = receiveAddress,
+                                                quoteId = quoteId,
+                                                originalMessageId = originalRequest.messageId
+                                            )
+                                        } else {
+                                            Log.e(TAG, "  Could not find original payment request for quote: $quoteId (messageId: $originalMessageId)")
+                                        }
+                                    }
+                                }
+                            }
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Failed to parse payment JSON", e)
+                            displayContent = plaintext
+                        }
+                    }
+
                     // Create message entity (store plaintext in encryptedContent field for now)
                     val message = com.securelegion.database.entities.Message(
                         contactId = contact.id,
                         messageId = messageId,
-                        encryptedContent = if (messageType == com.securelegion.database.entities.Message.MESSAGE_TYPE_TEXT) plaintext else "", // Store plaintext for TEXT, empty for VOICE/IMAGE
+                        encryptedContent = when (messageType) {
+                            com.securelegion.database.entities.Message.MESSAGE_TYPE_TEXT -> plaintext
+                            com.securelegion.database.entities.Message.MESSAGE_TYPE_PAYMENT_REQUEST,
+                            com.securelegion.database.entities.Message.MESSAGE_TYPE_PAYMENT_SENT,
+                            com.securelegion.database.entities.Message.MESSAGE_TYPE_PAYMENT_ACCEPTED -> displayContent
+                            else -> ""
+                        },
                         messageType = messageType,
                         attachmentType = if (messageType == com.securelegion.database.entities.Message.MESSAGE_TYPE_IMAGE) "image" else null,
                         attachmentData = imageBase64, // Store Base64 image data for IMAGE messages
@@ -1648,7 +1774,12 @@ class TorService : Service() {
                         timestamp = System.currentTimeMillis(),
                         status = com.securelegion.database.entities.Message.STATUS_DELIVERED,
                         signatureBase64 = "", // TODO: Verify signature
-                        nonceBase64 = "" // Not needed for already-decrypted messages
+                        nonceBase64 = "", // Not needed for already-decrypted messages
+                        paymentQuoteJson = paymentQuoteJson,
+                        paymentToken = paymentToken,
+                        paymentAmount = paymentAmount,
+                        paymentStatus = paymentStatus,
+                        txSignature = txSignature
                     )
 
                     // Save to database
@@ -3406,5 +3537,141 @@ class TorService : Service() {
         Log.d(TAG, "onTaskRemoved - App swiped away, keeping service running")
         // Service continues running even when app is swiped away
         // This is intentional for Ping-Pong protocol
+    }
+
+    /**
+     * Format payment amount for display
+     * Converts lamports/zatoshis to human-readable format
+     */
+    private fun formatPaymentAmount(amount: Long, token: String): String {
+        val decimals = when (token.uppercase()) {
+            "SOL" -> 9
+            "ZEC" -> 8
+            "USDC", "USDT" -> 6
+            else -> 9
+        }
+        val divisor = Math.pow(10.0, decimals.toDouble())
+        val humanAmount = amount.toDouble() / divisor
+        return String.format("%.4f %s", humanAmount, token)
+    }
+
+    /**
+     * Execute blockchain transfer after payment acceptance
+     * Called when we receive PAYMENT_ACCEPTED from recipient
+     */
+    private fun executePaymentTransfer(
+        contact: com.securelegion.database.entities.Contact,
+        amount: Long,
+        token: String,
+        recipientAddress: String,
+        quoteId: String,
+        originalMessageId: String
+    ) {
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                Log.i(TAG, "╔════════════════════════════════════════")
+                Log.i(TAG, "║ EXECUTING PAYMENT TRANSFER")
+                Log.i(TAG, "║ Amount: ${formatPaymentAmount(amount, token)}")
+                Log.i(TAG, "║ To: $recipientAddress")
+                Log.i(TAG, "║ Token: $token")
+                Log.i(TAG, "╚════════════════════════════════════════")
+
+                val keyManager = com.securelegion.crypto.KeyManager.getInstance(this@TorService)
+                val solanaService = SolanaService(this@TorService)
+                val senderAddress = keyManager.getSolanaAddress()
+
+                // Execute the transfer based on token type
+                val result = when (token.uppercase()) {
+                    "SOL" -> {
+                        // Convert lamports to SOL (1 SOL = 1,000,000,000 lamports)
+                        val amountSOL = amount.toDouble() / 1_000_000_000.0
+                        solanaService.sendTransaction(
+                            fromPublicKey = senderAddress,
+                            toPublicKey = recipientAddress,
+                            amountSOL = amountSOL,
+                            keyManager = keyManager
+                        )
+                    }
+                    "ZEC" -> {
+                        // Convert zatoshis to ZEC (1 ZEC = 100,000,000 zatoshis)
+                        val amountZEC = amount.toDouble() / 100_000_000.0
+                        val zcashService = ZcashService.getInstance(this@TorService)
+                        // Include NLx402 quote hash in memo for verification
+                        val memo = "NLx402:$quoteId"
+                        zcashService.sendTransaction(recipientAddress, amountZEC, memo)
+                    }
+                    else -> {
+                        // TODO: Implement SPL token transfer
+                        Result.failure(Exception("$token transfers not yet implemented"))
+                    }
+                }
+
+                if (result.isSuccess) {
+                    val txSignature = result.getOrNull() ?: ""
+                    Log.i(TAG, "✓ Payment transfer successful! TX: $txSignature")
+
+                    // Update the original request message status
+                    val dbPassphrase = keyManager.getDatabasePassphrase()
+                    val database = com.securelegion.database.SecureLegionDatabase.getInstance(this@TorService, dbPassphrase)
+
+                    // Find and update original message
+                    val originalMessage = database.messageDao().getMessageByMessageId(originalMessageId)
+                    if (originalMessage != null) {
+                        val updatedMessage = originalMessage.copy(
+                            paymentStatus = com.securelegion.database.entities.Message.PAYMENT_STATUS_PAID,
+                            txSignature = txSignature
+                        )
+                        database.messageDao().updateMessage(updatedMessage)
+                        Log.i(TAG, "✓ Updated original request status to PAID")
+                    }
+
+                    // Send payment confirmation to recipient
+                    val messageService = MessageService(this@TorService)
+                    val currentTime = System.currentTimeMillis() / 1000
+                    val quote = com.securelegion.crypto.NLx402Manager.PaymentQuote(
+                        quoteId = quoteId,
+                        recipient = recipientAddress,
+                        amount = amount,
+                        token = token,
+                        description = null,
+                        createdAt = currentTime,
+                        expiresAt = currentTime + 86400, // 24 hours
+                        senderHandle = null,
+                        recipientHandle = null,
+                        rawJson = """{"quote_id":"$quoteId","recipient":"$recipientAddress","amount":$amount,"token":"$token","created_at":$currentTime,"expires_at":${currentTime + 86400}}"""
+                    )
+
+                    messageService.sendPaymentConfirmation(
+                        contactId = contact.id,
+                        originalQuote = quote,
+                        txSignature = txSignature
+                    )
+                    Log.i(TAG, "✓ Payment confirmation sent to ${contact.displayName}")
+
+                    // Broadcast payment success
+                    val intent = Intent("com.securelegion.PAYMENT_SUCCESS")
+                    intent.setPackage(packageName)
+                    intent.putExtra("CONTACT_ID", contact.id)
+                    intent.putExtra("TX_SIGNATURE", txSignature)
+                    intent.putExtra("AMOUNT", amount)
+                    intent.putExtra("TOKEN", token)
+                    sendBroadcast(intent)
+
+                } else {
+                    val error = result.exceptionOrNull()?.message ?: "Unknown error"
+                    Log.e(TAG, "✗ Payment transfer failed: $error")
+
+                    // Broadcast payment failure
+                    val intent = Intent("com.securelegion.PAYMENT_FAILED")
+                    intent.setPackage(packageName)
+                    intent.putExtra("CONTACT_ID", contact.id)
+                    intent.putExtra("ERROR", error)
+                    sendBroadcast(intent)
+                }
+
+            } catch (e: Exception) {
+                Log.e(TAG, "Error executing payment transfer", e)
+            }
+        }
     }
 }

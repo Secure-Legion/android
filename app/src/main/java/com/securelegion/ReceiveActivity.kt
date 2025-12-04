@@ -31,6 +31,7 @@ import com.securelegion.database.entities.Wallet
 
 class ReceiveActivity : BaseActivity() {
     private var selectedCurrency = "ZEC" // Default to Zcash
+    private var showTransparentAddress = false // For Zcash: false = unified, true = transparent
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -39,7 +40,8 @@ class ReceiveActivity : BaseActivity() {
         setupBottomNavigation()
         setupCurrencySelector()
         setupWalletSelector()
-        loadAddress()
+        setupAddressTypeToggle()
+        loadCurrentWalletName()
 
         // Back button
         findViewById<View>(R.id.backButton).setOnClickListener {
@@ -85,13 +87,92 @@ class ReceiveActivity : BaseActivity() {
         }
     }
 
+    private fun setupAddressTypeToggle() {
+        val unifiedButton = findViewById<Button>(R.id.unifiedAddressButton)
+        val transparentButton = findViewById<Button>(R.id.transparentAddressButton)
+        val addressTypeLabel = findViewById<TextView>(R.id.addressTypeLabel)
+
+        unifiedButton?.setOnClickListener {
+            showTransparentAddress = false
+            updateAddressTypeButtons()
+            addressTypeLabel?.text = "For private SecureLegion transfers"
+            loadAddress()
+        }
+
+        transparentButton?.setOnClickListener {
+            showTransparentAddress = true
+            updateAddressTypeButtons()
+            addressTypeLabel?.text = "For Kraken, Coinbase, and other exchanges"
+            loadAddress()
+        }
+    }
+
+    private fun updateAddressTypeButtons() {
+        val unifiedButton = findViewById<Button>(R.id.unifiedAddressButton)
+        val transparentButton = findViewById<Button>(R.id.transparentAddressButton)
+
+        if (showTransparentAddress) {
+            // Transparent selected
+            unifiedButton?.setBackgroundResource(android.R.color.transparent)
+            unifiedButton?.setTextColor(getColor(R.color.text_gray))
+            transparentButton?.setBackgroundResource(R.drawable.wallet_action_button_bg)
+            transparentButton?.setTextColor(getColor(android.R.color.white))
+        } else {
+            // Unified selected
+            unifiedButton?.setBackgroundResource(R.drawable.wallet_action_button_bg)
+            unifiedButton?.setTextColor(getColor(android.R.color.white))
+            transparentButton?.setBackgroundResource(android.R.color.transparent)
+            transparentButton?.setTextColor(getColor(R.color.text_gray))
+        }
+    }
+
+    private fun loadCurrentWalletName() {
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                val keyManager = KeyManager.getInstance(this@ReceiveActivity)
+                val dbPassphrase = keyManager.getDatabasePassphrase()
+                val database = SecureLegionDatabase.getInstance(this@ReceiveActivity, dbPassphrase)
+                val allWallets = database.walletDao().getAllWallets()
+
+                // Filter out "main" wallet - it's hidden (used only for encryption keys)
+                val wallets = allWallets.filter { it.walletId != "main" }
+
+                withContext(Dispatchers.Main) {
+                    val walletNameText = findViewById<TextView>(R.id.walletNameText)
+                    if (wallets.isNotEmpty()) {
+                        // Get the most recently used wallet
+                        val currentWallet = wallets.maxByOrNull { it.lastUsedAt }
+                        walletNameText?.text = currentWallet?.name ?: "Wallet"
+
+                        // Detect wallet type and update currency selector
+                        if (currentWallet != null) {
+                            val currency = if (currentWallet.zcashAddress != null) {
+                                "ZEC"
+                            } else {
+                                "SOL"
+                            }
+                            selectCurrency(currency)
+                        }
+                    } else {
+                        walletNameText?.text = "No Wallet"
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e("ReceiveActivity", "Failed to load current wallet name", e)
+            }
+        }
+    }
+
     private fun showWalletSelector() {
         lifecycleScope.launch(Dispatchers.IO) {
             try {
                 val keyManager = KeyManager.getInstance(this@ReceiveActivity)
                 val dbPassphrase = keyManager.getDatabasePassphrase()
                 val database = SecureLegionDatabase.getInstance(this@ReceiveActivity, dbPassphrase)
-                val wallets = database.walletDao().getAllWallets()
+                val allWallets = database.walletDao().getAllWallets()
+
+                // Filter out "main" wallet - it's hidden (used only for encryption keys)
+                val wallets = allWallets.filter { it.walletId != "main" }
 
                 withContext(Dispatchers.Main) {
                     if (wallets.isEmpty()) {
@@ -186,8 +267,13 @@ class ReceiveActivity : BaseActivity() {
                     val walletNameText = findViewById<TextView>(R.id.walletNameText)
                     walletNameText?.text = wallet.name
 
-                    // Reload address for the new wallet
-                    loadAddress()
+                    // Detect wallet type and update currency selector
+                    val currency = if (wallet.zcashAddress != null) {
+                        "ZEC"
+                    } else {
+                        "SOL"
+                    }
+                    selectCurrency(currency)
                 }
             } catch (e: Exception) {
                 Log.e("ReceiveActivity", "Failed to switch wallet", e)
@@ -236,56 +322,179 @@ class ReceiveActivity : BaseActivity() {
     }
 
     private fun loadSolanaAddress() {
-        try {
-            val keyManager = KeyManager.getInstance(this)
-            val solanaAddress = keyManager.getSolanaAddress()
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                val keyManager = KeyManager.getInstance(this@ReceiveActivity)
+                val dbPassphrase = keyManager.getDatabasePassphrase()
+                val database = SecureLegionDatabase.getInstance(this@ReceiveActivity, dbPassphrase)
+                val allWallets = database.walletDao().getAllWallets()
 
-            // Update address text
-            findViewById<TextView>(R.id.depositAddress).text = solanaAddress
+                // Filter out "main" wallet
+                val wallets = allWallets.filter { it.walletId != "main" }
 
-            // Generate QR code
-            generateQRCode(solanaAddress)
+                withContext(Dispatchers.Main) {
+                    // Hide address type toggle for Solana (only needed for Zcash)
+                    hideAddressTypeToggle()
+                }
 
-            Log.i("ReceiveActivity", "Loaded Solana address: $solanaAddress")
+                if (wallets.isEmpty()) {
+                    withContext(Dispatchers.Main) {
+                        findViewById<TextView>(R.id.depositAddress).text = "No Solana wallet found"
+                        ThemedToast.show(this@ReceiveActivity, "No Solana wallet found")
+                    }
+                    return@launch
+                }
 
-        } catch (e: Exception) {
-            Log.e("ReceiveActivity", "Failed to load Solana address", e)
-            ThemedToast.show(this, "Failed to load wallet address")
+                // Get the most recently used wallet
+                val currentWallet = wallets.maxByOrNull { it.lastUsedAt }
+                val solanaAddress = currentWallet?.solanaAddress
+
+                if (solanaAddress != null) {
+                    withContext(Dispatchers.Main) {
+                        // Update address text
+                        findViewById<TextView>(R.id.depositAddress).text = solanaAddress
+
+                        // Update short address
+                        val shortAddress = if (solanaAddress.length > 16) {
+                            "${solanaAddress.take(5)}...${solanaAddress.takeLast(6)}"
+                        } else {
+                            solanaAddress
+                        }
+                        findViewById<TextView>(R.id.walletAddressShort)?.text = shortAddress
+
+                        // Generate QR code
+                        generateQRCode(solanaAddress)
+
+                        Log.i("ReceiveActivity", "Loaded Solana address: $solanaAddress")
+                    }
+                } else {
+                    withContext(Dispatchers.Main) {
+                        findViewById<TextView>(R.id.depositAddress).text = "No Solana address available"
+                        ThemedToast.show(this@ReceiveActivity, "No Solana address available")
+                    }
+                }
+
+            } catch (e: Exception) {
+                Log.e("ReceiveActivity", "Failed to load Solana address", e)
+                withContext(Dispatchers.Main) {
+                    ThemedToast.show(this@ReceiveActivity, "Failed to load wallet address")
+                }
+            }
         }
     }
 
     private fun loadZcashAddress() {
-        lifecycleScope.launch {
+        lifecycleScope.launch(Dispatchers.IO) {
             try {
-                val keyManager = KeyManager.getInstance(this@ReceiveActivity)
-                var zcashAddress = keyManager.getZcashAddress()
+                Log.d("ReceiveActivity", "Loading Zcash address (showTransparentAddress: $showTransparentAddress)")
 
-                // If no address stored, try to get from ZcashService
-                if (zcashAddress == null) {
-                    Log.d("ReceiveActivity", "No Zcash address in KeyManager, fetching from service...")
-                    val zcashService = ZcashService.getInstance(this@ReceiveActivity)
-                    zcashAddress = zcashService.getUnifiedAddress()
+                val keyManager = KeyManager.getInstance(this@ReceiveActivity)
+                val dbPassphrase = keyManager.getDatabasePassphrase()
+                val database = SecureLegionDatabase.getInstance(this@ReceiveActivity, dbPassphrase)
+                val allWallets = database.walletDao().getAllWallets()
+
+                // Filter out "main" wallet
+                val wallets = allWallets.filter { it.walletId != "main" }
+
+                if (wallets.isEmpty()) {
+                    withContext(Dispatchers.Main) {
+                        findViewById<TextView>(R.id.depositAddress).text = "No Zcash wallet found"
+                        ThemedToast.show(this@ReceiveActivity, "No Zcash wallet found")
+                        hideAddressTypeToggle()
+                    }
+                    return@launch
                 }
 
-                if (zcashAddress != null) {
-                    // Update address text
-                    findViewById<TextView>(R.id.depositAddress).text = zcashAddress
+                // Get the most recently used wallet
+                val currentWallet = wallets.maxByOrNull { it.lastUsedAt }
 
-                    // Generate QR code
-                    generateQRCode(zcashAddress)
+                // Get unified address from wallet entity first, then fallback to KeyManager
+                var unifiedAddress = currentWallet?.zcashAddress ?: keyManager.getZcashAddress()
+                Log.d("ReceiveActivity", "Unified address from database: ${currentWallet?.zcashAddress}")
+                Log.d("ReceiveActivity", "Unified address from KeyManager: ${keyManager.getZcashAddress()}")
 
-                    Log.i("ReceiveActivity", "Loaded Zcash address: $zcashAddress")
+                if (unifiedAddress == null) {
+                    Log.d("ReceiveActivity", "No unified address found, fetching from service...")
+                    val zcashService = ZcashService.getInstance(this@ReceiveActivity)
+                    unifiedAddress = zcashService.getUnifiedAddress()
+                    Log.d("ReceiveActivity", "Unified address from Service: $unifiedAddress")
+                }
+
+                // Get transparent address (for exchanges)
+                val zcashService = ZcashService.getInstance(this@ReceiveActivity)
+                val transparentAddress = zcashService.getTransparentAddress()
+                Log.d("ReceiveActivity", "Transparent address from KeyManager: $transparentAddress")
+
+                // Show debug toast
+                withContext(Dispatchers.Main) {
+                    if (transparentAddress == null) {
+                        ThemedToast.show(this@ReceiveActivity, "DEBUG: No transparent address found! It was not generated.")
+                    } else {
+                        ThemedToast.show(this@ReceiveActivity, "DEBUG: Found transparent address: ${transparentAddress.take(10)}...")
+                    }
+                }
+
+                // Determine which address to display
+                val displayAddress = if (showTransparentAddress && transparentAddress != null) {
+                    Log.d("ReceiveActivity", "Showing transparent address")
+                    transparentAddress
+                } else if (unifiedAddress != null) {
+                    Log.d("ReceiveActivity", "Showing unified address")
+                    unifiedAddress
                 } else {
-                    findViewById<TextView>(R.id.depositAddress).text = "Zcash wallet not initialized"
-                    ThemedToast.show(this@ReceiveActivity, "Zcash wallet not initialized. Please create a new account.")
-                    Log.w("ReceiveActivity", "Zcash address not available")
+                    Log.w("ReceiveActivity", "No address available")
+                    null
+                }
+
+                if (displayAddress != null) {
+                    withContext(Dispatchers.Main) {
+                        // Show address type toggle
+                        showAddressTypeToggle()
+
+                        // Update address text
+                        findViewById<TextView>(R.id.depositAddress).text = displayAddress
+
+                        // Update short address
+                        val shortAddress = if (displayAddress.length > 16) {
+                            "${displayAddress.take(5)}...${displayAddress.takeLast(6)}"
+                        } else {
+                            displayAddress
+                        }
+                        findViewById<TextView>(R.id.walletAddressShort)?.text = shortAddress
+
+                        // Generate QR code
+                        generateQRCode(displayAddress)
+
+                        Log.i("ReceiveActivity", "Loaded Zcash address (${if (showTransparentAddress) "transparent" else "unified"}): $displayAddress")
+                    }
+                } else {
+                    withContext(Dispatchers.Main) {
+                        findViewById<TextView>(R.id.depositAddress).text = "Zcash wallet not initialized"
+                        ThemedToast.show(this@ReceiveActivity, "Zcash wallet not initialized")
+                        hideAddressTypeToggle()
+                        Log.w("ReceiveActivity", "Zcash address not available")
+                    }
                 }
 
             } catch (e: Exception) {
                 Log.e("ReceiveActivity", "Failed to load Zcash address", e)
-                ThemedToast.show(this@ReceiveActivity, "Failed to load Zcash address")
+                withContext(Dispatchers.Main) {
+                    ThemedToast.show(this@ReceiveActivity, "Failed to load Zcash address")
+                    hideAddressTypeToggle()
+                }
             }
         }
+    }
+
+    private fun showAddressTypeToggle() {
+        findViewById<View>(R.id.addressTypeSelector)?.visibility = View.VISIBLE
+        findViewById<TextView>(R.id.addressTypeLabel)?.visibility = View.VISIBLE
+        updateAddressTypeButtons()
+    }
+
+    private fun hideAddressTypeToggle() {
+        findViewById<View>(R.id.addressTypeSelector)?.visibility = View.GONE
+        findViewById<TextView>(R.id.addressTypeLabel)?.visibility = View.GONE
     }
 
     private fun generateQRCode(text: String) {
