@@ -1,16 +1,16 @@
 <?xml version="1.0" encoding="utf-8"?>
 <selector xmlns:android="http://schemas.android.com/apk/res/android">
-    <!-- Selected state (filled circle) -->
-    <item android:state_selected="true">
+    <!-- Checked state (filled white circle) -->
+    <item android:state_checked="true">
         <shape android:shape="oval">
             <solid android:color="#FFFFFF"/>
             <size android:width="20dp" android:height="20dp"/>
         </shape>
     </item>
-    <!-- Unselected state (empty circle) -->
+    <!-- Unchecked state (empty circle with white border) -->
     <item>
         <shape android:shape="oval">
-            <stroke android:width="2dp" android:color="#666666"/>
+            <stroke android:width="2dp" android:color="#FFFFFF"/>
             <solid android:color="@android:color/transparent"/>
             <size android:width="20dp" android:height="20dp"/>
         </shape>

@@ -1,0 +1,172 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:background="@drawable/bottom_sheet_bg"
+    android:paddingTop="8dp"
+    android:paddingBottom="0dp">
+
+    <!-- Handle Bar -->
+    <View
+        android:layout_width="60dp"
+        android:layout_height="5dp"
+        android:layout_gravity="center_horizontal"
+        android:background="#4A4A4A"
+        android:layout_marginBottom="16dp" />
+
+    <!-- Title -->
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Shield Zcash"
+        android:textSize="22sp"
+        android:textColor="@color/text_white"
+        android:fontFamily="@font/space_grotesk_bold"
+        android:gravity="center"
+        android:paddingBottom="20dp" />
+
+    <!-- Balance Breakdown -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:background="@drawable/wallet_token_bg"
+        android:padding="16dp"
+        android:layout_marginStart="24dp"
+        android:layout_marginEnd="24dp"
+        android:layout_marginBottom="20dp">
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Current Balance"
+            android:textSize="14sp"
+            android:textColor="@color/text_gray"
+            android:layout_marginBottom="12dp" />
+
+        <!-- Transparent Balance -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:layout_marginBottom="8dp">
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="Transparent:"
+                android:textSize="16sp"
+                android:textColor="@color/text_white" />
+
+            <TextView
+                android:id="@+id/transparentAmount"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="0.0000 ZEC"
+                android:textSize="16sp"
+                android:textStyle="bold"
+                android:textColor="@color/silver_gradient_start" />
+        </LinearLayout>
+
+        <!-- Shielded Balance -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal">
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="Shielded:"
+                android:textSize="16sp"
+                android:textColor="@color/text_white" />
+
+            <TextView
+                android:id="@+id/shieldedAmount"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="0.0000 ZEC"
+                android:textSize="16sp"
+                android:textStyle="bold"
+                android:textColor="@color/silver_gradient_start" />
+        </LinearLayout>
+    </LinearLayout>
+
+    <!-- Info Text -->
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Only shielded funds can be sent. Shield your transparent ZEC to enable payments."
+        android:textSize="13sp"
+        android:textColor="#999999"
+        android:gravity="center"
+        android:paddingStart="24dp"
+        android:paddingEnd="24dp"
+        android:layout_marginBottom="20dp" />
+
+    <!-- Amount Input Label -->
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Amount to Shield (ZEC)"
+        android:textSize="14sp"
+        android:textColor="@color/text_white"
+        android:paddingStart="24dp"
+        android:paddingEnd="24dp"
+        android:layout_marginBottom="8dp" />
+
+    <!-- Amount Input Container -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:background="@drawable/wallet_token_bg"
+        android:padding="12dp"
+        android:layout_marginStart="24dp"
+        android:layout_marginEnd="24dp"
+        android:layout_marginBottom="24dp"
+        android:gravity="center_vertical">
+
+        <EditText
+            android:id="@+id/shieldAmountInput"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:background="@android:color/transparent"
+            android:hint="Enter amount..."
+            android:textColorHint="#666666"
+            android:textColor="#FFFFFF"
+            android:textSize="16sp"
+            android:inputType="numberDecimal"
+            android:singleLine="true" />
+
+    </LinearLayout>
+
+    <!-- Shield Button -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:background="@color/black"
+        android:paddingTop="0dp"
+        android:paddingBottom="24dp"
+        android:paddingStart="24dp"
+        android:paddingEnd="24dp">
+
+        <Button
+            android:id="@+id/shieldButton"
+            android:layout_width="match_parent"
+            android:layout_height="56dp"
+            android:text="Shield"
+            android:textSize="16sp"
+            android:textStyle="bold"
+            android:textColor="@color/text_white"
+            android:background="@drawable/lock_button_bg"
+            android:backgroundTint="@null" />
+
+    </LinearLayout>
+
+</LinearLayout>

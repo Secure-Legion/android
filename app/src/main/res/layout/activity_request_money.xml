@@ -298,6 +298,17 @@
 
                 </LinearLayout>
 
+                <!-- USD Value -->
+                <TextView
+                    android:id="@+id/amountUsdValue"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="≈ $0.00 USD"
+                    android:textSize="14sp"
+                    android:textColor="#888888"
+                    android:fontFamily="@font/poppins_regular"
+                    android:layout_marginTop="4dp" />
+
             </LinearLayout>
 
             <!-- Expiry Time Picker -->

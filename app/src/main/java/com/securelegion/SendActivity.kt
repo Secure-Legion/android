@@ -42,12 +42,22 @@ class SendActivity : BaseActivity() {
         currentWalletName = intent.getStringExtra("WALLET_NAME") ?: "Wallet 1"
         currentWalletAddress = intent.getStringExtra("WALLET_ADDRESS") ?: ""
 
-        Log.d("SendActivity", "Sending from wallet: $currentWalletName ($currentWalletAddress)")
+        // Detect token type from address
+        selectedCurrency = if (currentWalletAddress.startsWith("t1") ||
+                               currentWalletAddress.startsWith("u1") ||
+                               currentWalletAddress.startsWith("utest")) {
+            "ZEC"
+        } else {
+            "SOL"
+        }
+
+        Log.d("SendActivity", "Sending from wallet: $currentWalletName ($currentWalletAddress), Token: $selectedCurrency")
 
         setupCurrencySelector()
         setupQRScanner()
         setupWalletSelector()
         setupAmountInput()
+        selectCurrency(selectedCurrency) // Set initial currency UI
         loadCurrentWallet()
         loadWalletBalance()
         setupPriceRefresh()

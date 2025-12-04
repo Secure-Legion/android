@@ -11,6 +11,7 @@ import com.securelegion.database.entities.Message
 import com.securelegion.workers.ImmediateRetryWorker
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import org.json.JSONObject
 import java.security.MessageDigest
 import java.util.UUID
 
@@ -924,6 +925,118 @@ class MessageService(private val context: Context) {
                         messageType = Message.MESSAGE_TYPE_IMAGE,
                         attachmentType = "image",
                         attachmentData = imageBase64, // Store Base64 for display
+                        isSentByMe = false,
+                        timestamp = System.currentTimeMillis(),
+                        status = Message.STATUS_DELIVERED,
+                        signatureBase64 = "",
+                        nonceBase64 = nonceBase64,
+                        selfDestructAt = selfDestructAt,
+                        requiresReadReceipt = requiresReadReceipt,
+                        pingId = pingId
+                    )
+                }
+                Message.MESSAGE_TYPE_PAYMENT_REQUEST -> {
+                    // Payment request: decryptedData is JSON {"type":"PAYMENT_REQUEST","quote":{...}}
+                    val payloadJson = org.json.JSONObject(decryptedData)
+                    val quoteJson = payloadJson.getJSONObject("quote").toString()
+
+                    // Parse quote to extract payment details
+                    val quote = NLx402Manager.PaymentQuote.fromJson(quoteJson)
+                        ?: return@withContext Result.failure(Exception("Failed to parse payment quote"))
+
+                    // Generate message ID from quote ID + sender
+                    val messageId = "pay_req_${quote.quoteId}"
+
+                    // Check for duplicate
+                    if (database.messageDao().messageExists(messageId)) {
+                        Log.w(TAG, "Duplicate payment request ignored: $messageId")
+                        return@withContext Result.failure(Exception("Duplicate message"))
+                    }
+
+                    Message(
+                        contactId = contact.id,
+                        messageId = messageId,
+                        encryptedContent = "", // Empty for payment messages
+                        messageType = Message.MESSAGE_TYPE_PAYMENT_REQUEST,
+                        paymentQuoteJson = quoteJson, // Store the raw quote JSON
+                        paymentStatus = Message.PAYMENT_STATUS_PENDING,
+                        paymentToken = quote.token,
+                        paymentAmount = quote.amount,
+                        isSentByMe = false,
+                        timestamp = System.currentTimeMillis(),
+                        status = Message.STATUS_DELIVERED,
+                        signatureBase64 = "",
+                        nonceBase64 = nonceBase64,
+                        selfDestructAt = selfDestructAt,
+                        requiresReadReceipt = requiresReadReceipt,
+                        pingId = pingId
+                    )
+                }
+                Message.MESSAGE_TYPE_PAYMENT_SENT -> {
+                    // Payment sent confirmation: {"type":"PAYMENT_SENT","quote_id":"...","tx_signature":"...","amount":...,"token":"..."}
+                    val payloadJson = org.json.JSONObject(decryptedData)
+                    val quoteId = payloadJson.getString("quote_id")
+                    val txSignature = payloadJson.getString("tx_signature")
+                    val amount = payloadJson.getLong("amount")
+                    val token = payloadJson.getString("token")
+
+                    // Generate message ID
+                    val messageId = "pay_sent_${quoteId}"
+
+                    // Check for duplicate
+                    if (database.messageDao().messageExists(messageId)) {
+                        Log.w(TAG, "Duplicate payment sent message ignored: $messageId")
+                        return@withContext Result.failure(Exception("Duplicate message"))
+                    }
+
+                    // Update the original payment request status to PAID
+                    val originalRequestId = "pay_req_${quoteId}"
+                    database.messageDao().updatePaymentStatus(originalRequestId, Message.PAYMENT_STATUS_PAID, txSignature)
+
+                    Message(
+                        contactId = contact.id,
+                        messageId = messageId,
+                        encryptedContent = "",
+                        messageType = Message.MESSAGE_TYPE_PAYMENT_SENT,
+                        paymentStatus = Message.PAYMENT_STATUS_PAID,
+                        txSignature = txSignature,
+                        paymentToken = token,
+                        paymentAmount = amount,
+                        isSentByMe = false,
+                        timestamp = System.currentTimeMillis(),
+                        status = Message.STATUS_DELIVERED,
+                        signatureBase64 = "",
+                        nonceBase64 = nonceBase64,
+                        selfDestructAt = selfDestructAt,
+                        requiresReadReceipt = requiresReadReceipt,
+                        pingId = pingId
+                    )
+                }
+                Message.MESSAGE_TYPE_PAYMENT_ACCEPTED -> {
+                    // Payment acceptance: {"type":"PAYMENT_ACCEPTED","quote_id":"...","receive_address":"...","amount":...,"token":"..."}
+                    val payloadJson = org.json.JSONObject(decryptedData)
+                    val quoteId = payloadJson.getString("quote_id")
+                    val receiveAddress = payloadJson.getString("receive_address")
+                    val amount = payloadJson.getLong("amount")
+                    val token = payloadJson.getString("token")
+
+                    // Generate message ID
+                    val messageId = "pay_accept_${quoteId}"
+
+                    // Check for duplicate
+                    if (database.messageDao().messageExists(messageId)) {
+                        Log.w(TAG, "Duplicate payment acceptance ignored: $messageId")
+                        return@withContext Result.failure(Exception("Duplicate message"))
+                    }
+
+                    Message(
+                        contactId = contact.id,
+                        messageId = messageId,
+                        encryptedContent = receiveAddress, // Store receive address in content field
+                        messageType = Message.MESSAGE_TYPE_PAYMENT_ACCEPTED,
+                        paymentStatus = Message.PAYMENT_STATUS_PENDING,
+                        paymentToken = token,
+                        paymentAmount = amount,
                         isSentByMe = false,
                         timestamp = System.currentTimeMillis(),
                         status = Message.STATUS_DELIVERED,

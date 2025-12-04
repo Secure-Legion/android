@@ -17,6 +17,7 @@ import com.securelegion.database.SecureLegionDatabase
 import com.securelegion.database.entities.Wallet
 import com.securelegion.services.MessageService
 import com.securelegion.services.SolanaService
+import com.securelegion.services.ZcashService
 import com.securelegion.utils.ThemedToast
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -50,6 +51,7 @@ class RequestMoneyActivity : AppCompatActivity() {
     private var selectedToken = "SOL"  // SOL or ZEC
     private var selectedExpirySecs = NLx402Manager.EXPIRY_24_HOURS
     private var currentSolPrice: Double = 0.0
+    private var currentZecPrice: Double = 0.0
 
     // Wallet selection
     private var currentWalletId: String = ""
@@ -76,9 +78,10 @@ class RequestMoneyActivity : AppCompatActivity() {
 
         initializeViews()
         setupClickListeners()
+        setupAmountInput()
         loadRecipientInfo()
         loadWalletInfo()
-        fetchSolPrice()
+        fetchTokenPrices()
     }
 
     private fun initializeViews() {
@@ -155,6 +158,8 @@ class RequestMoneyActivity : AppCompatActivity() {
                 currencyLabel.text = selectedToken
                 // Reload wallet list for SOL chain
                 loadWalletInfoForChain("SOL")
+                // Update USD value
+                updateAmountUsdValue()
             }
             bottomSheet.dismiss()
         }
@@ -164,6 +169,8 @@ class RequestMoneyActivity : AppCompatActivity() {
                 currencyLabel.text = selectedToken
                 // Reload wallet list for ZEC chain
                 loadWalletInfoForChain("ZEC")
+                // Update USD value
+                updateAmountUsdValue()
             }
             bottomSheet.dismiss()
         }
@@ -475,17 +482,60 @@ class RequestMoneyActivity : AppCompatActivity() {
         }
     }
 
-    private fun fetchSolPrice() {
+    private fun fetchTokenPrices() {
         lifecycleScope.launch {
             try {
-                val result = solanaService.getSolPrice()
-                if (result.isSuccess) {
-                    currentSolPrice = result.getOrNull() ?: 0.0
+                // Fetch SOL price
+                val solResult = solanaService.getSolPrice()
+                if (solResult.isSuccess) {
+                    currentSolPrice = solResult.getOrNull() ?: 0.0
                     Log.d(TAG, "SOL price: $currentSolPrice")
                 }
+
+                // Fetch ZEC price
+                val zcashService = ZcashService.getInstance(this@RequestMoneyActivity)
+                val zecResult = zcashService.getZecPrice()
+                if (zecResult.isSuccess) {
+                    currentZecPrice = zecResult.getOrNull() ?: 0.0
+                    Log.d(TAG, "ZEC price: $currentZecPrice")
+                }
+
+                // Update USD value
+                updateAmountUsdValue()
             } catch (e: Exception) {
-                Log.e(TAG, "Failed to fetch SOL price", e)
+                Log.e(TAG, "Failed to fetch token prices", e)
             }
+        }
+    }
+
+    private fun setupAmountInput() {
+        amountInput.addTextChangedListener(object : android.text.TextWatcher {
+            override fun afterTextChanged(s: android.text.Editable?) {
+                updateAmountUsdValue()
+            }
+
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+        })
+    }
+
+    private fun updateAmountUsdValue() {
+        val amountText = amountInput.text.toString()
+        val amount = amountText.toDoubleOrNull()
+
+        val amountUsdValue = findViewById<TextView>(R.id.amountUsdValue)
+
+        if (amount != null && amount > 0) {
+            val currentPrice = when (selectedToken) {
+                "SOL" -> currentSolPrice
+                "ZEC" -> currentZecPrice
+                else -> 0.0
+            }
+
+            val usdValue = amount * currentPrice
+            amountUsdValue.text = String.format("≈ $%,.2f USD", usdValue)
+        } else {
+            amountUsdValue.text = "≈ $0.00 USD"
         }
     }
 

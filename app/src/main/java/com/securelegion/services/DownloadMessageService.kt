@@ -766,6 +766,108 @@ class DownloadMessageService : Service() {
                     }
                 }
 
+                0x0A -> {
+                    // PAYMENT_REQUEST message (MSG_TYPE_PAYMENT_REQUEST = 0x0A)
+                    Log.d(TAG, "Processing PAYMENT_REQUEST message...")
+
+                    val messageService = MessageService(this@DownloadMessageService)
+                    val encryptedWire = senderX25519PublicKey + encryptedPayload
+                    val encryptedBase64 = android.util.Base64.encodeToString(encryptedWire, android.util.Base64.NO_WRAP)
+
+                    val result = messageService.receiveMessage(
+                        encryptedData = encryptedBase64,
+                        senderPublicKey = senderPublicKey,
+                        senderOnionAddress = contact.torOnionAddress,
+                        messageType = com.securelegion.database.entities.Message.MESSAGE_TYPE_PAYMENT_REQUEST,
+                        pingId = pingId
+                    )
+
+                    if (result.isSuccess) {
+                        Log.i(TAG, "✓ PAYMENT_REQUEST message saved to database")
+                        sendMessageAck(contactId, contactName, connectionId)
+                        val notificationManager = getSystemService(android.app.NotificationManager::class.java)
+                        notificationManager?.cancel(contactId.toInt() + 20000)
+                    } else {
+                        val errorMessage = result.exceptionOrNull()?.message
+                        if (errorMessage?.contains("Duplicate message") == true) {
+                            Log.w(TAG, "Message already downloaded - treating as success")
+                            sendMessageAck(contactId, contactName, connectionId)
+                            val notificationManager = getSystemService(android.app.NotificationManager::class.java)
+                            notificationManager?.cancel(contactId.toInt() + 20000)
+                        } else {
+                            Log.e(TAG, "Failed to save PAYMENT_REQUEST message: $errorMessage")
+                        }
+                    }
+                }
+
+                0x0B -> {
+                    // PAYMENT_SENT message (MSG_TYPE_PAYMENT_SENT = 0x0B)
+                    Log.d(TAG, "Processing PAYMENT_SENT message...")
+
+                    val messageService = MessageService(this@DownloadMessageService)
+                    val encryptedWire = senderX25519PublicKey + encryptedPayload
+                    val encryptedBase64 = android.util.Base64.encodeToString(encryptedWire, android.util.Base64.NO_WRAP)
+
+                    val result = messageService.receiveMessage(
+                        encryptedData = encryptedBase64,
+                        senderPublicKey = senderPublicKey,
+                        senderOnionAddress = contact.torOnionAddress,
+                        messageType = com.securelegion.database.entities.Message.MESSAGE_TYPE_PAYMENT_SENT,
+                        pingId = pingId
+                    )
+
+                    if (result.isSuccess) {
+                        Log.i(TAG, "✓ PAYMENT_SENT message saved to database")
+                        sendMessageAck(contactId, contactName, connectionId)
+                        val notificationManager = getSystemService(android.app.NotificationManager::class.java)
+                        notificationManager?.cancel(contactId.toInt() + 20000)
+                    } else {
+                        val errorMessage = result.exceptionOrNull()?.message
+                        if (errorMessage?.contains("Duplicate message") == true) {
+                            Log.w(TAG, "Message already downloaded - treating as success")
+                            sendMessageAck(contactId, contactName, connectionId)
+                            val notificationManager = getSystemService(android.app.NotificationManager::class.java)
+                            notificationManager?.cancel(contactId.toInt() + 20000)
+                        } else {
+                            Log.e(TAG, "Failed to save PAYMENT_SENT message: $errorMessage")
+                        }
+                    }
+                }
+
+                0x0C -> {
+                    // PAYMENT_ACCEPTED message (MSG_TYPE_PAYMENT_ACCEPTED = 0x0C)
+                    Log.d(TAG, "Processing PAYMENT_ACCEPTED message...")
+
+                    val messageService = MessageService(this@DownloadMessageService)
+                    val encryptedWire = senderX25519PublicKey + encryptedPayload
+                    val encryptedBase64 = android.util.Base64.encodeToString(encryptedWire, android.util.Base64.NO_WRAP)
+
+                    val result = messageService.receiveMessage(
+                        encryptedData = encryptedBase64,
+                        senderPublicKey = senderPublicKey,
+                        senderOnionAddress = contact.torOnionAddress,
+                        messageType = com.securelegion.database.entities.Message.MESSAGE_TYPE_PAYMENT_ACCEPTED,
+                        pingId = pingId
+                    )
+
+                    if (result.isSuccess) {
+                        Log.i(TAG, "✓ PAYMENT_ACCEPTED message saved to database")
+                        sendMessageAck(contactId, contactName, connectionId)
+                        val notificationManager = getSystemService(android.app.NotificationManager::class.java)
+                        notificationManager?.cancel(contactId.toInt() + 20000)
+                    } else {
+                        val errorMessage = result.exceptionOrNull()?.message
+                        if (errorMessage?.contains("Duplicate message") == true) {
+                            Log.w(TAG, "Message already downloaded - treating as success")
+                            sendMessageAck(contactId, contactName, connectionId)
+                            val notificationManager = getSystemService(android.app.NotificationManager::class.java)
+                            notificationManager?.cancel(contactId.toInt() + 20000)
+                        } else {
+                            Log.e(TAG, "Failed to save PAYMENT_ACCEPTED message: $errorMessage")
+                        }
+                    }
+                }
+
                 else -> {
                     Log.w(TAG, "Unknown message type: 0x${String.format("%02X", typeByte)}")
                 }

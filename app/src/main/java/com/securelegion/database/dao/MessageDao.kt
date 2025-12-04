@@ -173,4 +173,11 @@ interface MessageDao {
     @Query("DELETE FROM messages WHERE selfDestructAt IS NOT NULL AND selfDestructAt <= :currentTime")
     suspend fun deleteExpiredMessages(currentTime: Long = System.currentTimeMillis()): Int
 
+    /**
+     * Update payment status and transaction signature
+     * Used when receiving payment confirmation messages
+     */
+    @Query("UPDATE messages SET paymentStatus = :status, txSignature = :txSignature WHERE messageId = :messageId")
+    suspend fun updatePaymentStatus(messageId: String, status: String, txSignature: String)
+
 }

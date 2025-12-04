@@ -394,6 +394,54 @@ class ZcashService(private val context: Context) {
     }
 
     /**
+     * Balance breakdown data class
+     */
+    data class BalanceBreakdown(
+        val transparentZEC: Double,
+        val shieldedZEC: Double,
+        val totalZEC: Double
+    )
+
+    /**
+     * Get balance breakdown (transparent vs shielded)
+     * @return BalanceBreakdown with transparent, shielded, and total amounts
+     */
+    suspend fun getBalanceBreakdown(): Result<BalanceBreakdown> = withContext(Dispatchers.IO) {
+        try {
+            val sync = synchronizer
+            if (sync == null) {
+                return@withContext Result.success(BalanceBreakdown(0.0, 0.0, 0.0))
+            }
+
+            val account = zcashAccount
+            if (account == null) {
+                return@withContext Result.success(BalanceBreakdown(0.0, 0.0, 0.0))
+            }
+
+            val balances = sync.walletBalances.value
+            if (balances != null) {
+                val balance = balances[account.accountUuid]
+                if (balance != null) {
+                    val saplingAvailable = balance.sapling.available.convertZatoshiToZec(4).toDouble()
+                    val saplingPending = balance.sapling.pending.convertZatoshiToZec(4).toDouble()
+                    val orchardAvailable = balance.orchard.available.convertZatoshiToZec(4).toDouble()
+                    val orchardPending = balance.orchard.pending.convertZatoshiToZec(4).toDouble()
+                    val transparentZEC = balance.unshielded.convertZatoshiToZec(4).toDouble()
+                    val shieldedZEC = saplingAvailable + saplingPending + orchardAvailable + orchardPending
+                    val totalZEC = shieldedZEC + transparentZEC
+
+                    return@withContext Result.success(BalanceBreakdown(transparentZEC, shieldedZEC, totalZEC))
+                }
+            }
+
+            Result.success(BalanceBreakdown(0.0, 0.0, 0.0))
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to get balance breakdown", e)
+            Result.failure(e)
+        }
+    }
+
+    /**
      * Get Zcash unified address for receiving
      * @return Unified address (starts with 'u1' for mainnet, 'utest' for testnet)
      */
@@ -475,6 +523,49 @@ class ZcashService(private val context: Context) {
             }
             val account = accounts[DEFAULT_ACCOUNT_INDEX.toInt()]
 
+            // Check balance before attempting transaction
+            val balances = sync.walletBalances.value
+            val accountBalance = balances?.get(account.accountUuid)
+
+            if (accountBalance != null) {
+                val saplingAvailableZatoshis = accountBalance.sapling.available.value
+                val orchardAvailableZatoshis = accountBalance.orchard.available.value
+                val transparentZatoshis = accountBalance.unshielded.value
+                val totalShielded = saplingAvailableZatoshis + orchardAvailableZatoshis
+
+                Log.d(TAG, "Shielded balance (Sapling): $saplingAvailableZatoshis zatoshis (${saplingAvailableZatoshis.toDouble() / ZATOSHIS_PER_ZEC} ZEC)")
+                Log.d(TAG, "Shielded balance (Orchard): $orchardAvailableZatoshis zatoshis (${orchardAvailableZatoshis.toDouble() / ZATOSHIS_PER_ZEC} ZEC)")
+                Log.d(TAG, "Transparent balance: $transparentZatoshis zatoshis (${transparentZatoshis.toDouble() / ZATOSHIS_PER_ZEC} ZEC)")
+                Log.d(TAG, "Total shielded: $totalShielded zatoshis (${totalShielded.toDouble() / ZATOSHIS_PER_ZEC} ZEC)")
+
+                if (totalShielded < zatoshis.value) {
+                    val needed = zatoshis.value.toDouble() / ZATOSHIS_PER_ZEC
+                    val shielded = totalShielded.toDouble() / ZATOSHIS_PER_ZEC
+                    val transparent = transparentZatoshis.toDouble() / ZATOSHIS_PER_ZEC
+
+                    // Check if user has funds in transparent pool
+                    if (transparentZatoshis > zatoshis.value) {
+                        return@withContext Result.failure(
+                            IllegalStateException(
+                                "Insufficient shielded balance. Your ZEC is in transparent pool.\n\n" +
+                                "Shielded: $shielded ZEC\n" +
+                                "Transparent: $transparent ZEC\n\n" +
+                                "You need to shield your transparent funds first. Go to your ZEC wallet and tap the balance display to shield funds."
+                            )
+                        )
+                    } else {
+                        return@withContext Result.failure(
+                            IllegalStateException(
+                                "Insufficient balance.\n\n" +
+                                "Need: $needed ZEC\n" +
+                                "Shielded: $shielded ZEC\n" +
+                                "Transparent: $transparent ZEC"
+                            )
+                        )
+                    }
+                }
+            }
+
             // Get spending key from seed
             val seedBytes = keyManager.getWalletSeed()
                 ?: return@withContext Result.failure(
@@ -488,12 +579,20 @@ class ZcashService(private val context: Context) {
             )
 
             // Create transaction proposal
-            val proposal = sync.proposeTransfer(
-                account = account,
-                recipient = toAddress,
-                amount = zatoshis,
-                memo = memo
-            )
+            Log.d(TAG, "Creating transaction proposal: $zatoshis zatoshis to $toAddress")
+            val proposal = try {
+                sync.proposeTransfer(
+                    account = account,
+                    recipient = toAddress,
+                    amount = zatoshis,
+                    memo = memo
+                )
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to create transaction proposal", e)
+                return@withContext Result.failure(
+                    Exception("Failed to create transaction proposal: ${e.message}", e)
+                )
+            }
 
             // Create and submit transaction
             Log.d(TAG, "Creating and submitting transaction...")
@@ -526,6 +625,153 @@ class ZcashService(private val context: Context) {
 
         } catch (e: Exception) {
             Log.e(TAG, "Failed to send transaction", e)
+            Result.failure(e)
+        }
+    }
+
+    /**
+     * Shield transparent funds to shielded pool (Sapling/Orchard)
+     * Moves transparent funds to your shielded address
+     * @param amountZEC Optional amount to shield in ZEC. If null, shields all transparent funds.
+     * @return Transaction ID if successful
+     */
+    suspend fun shieldTransparentFunds(amountZEC: Double? = null): Result<String> = withContext(Dispatchers.IO) {
+        try {
+            Log.d(TAG, "Starting transparent funds shielding...")
+
+            val sync = synchronizer
+            if (sync == null) {
+                return@withContext Result.failure(
+                    IllegalStateException("Synchronizer not initialized. Call initialize() first.")
+                )
+            }
+
+            // Check sync status
+            val currentStatus = sync.status.first()
+            if (currentStatus != Synchronizer.Status.SYNCED) {
+                return@withContext Result.failure(
+                    IllegalStateException("Wallet is not synced. Current status: $currentStatus")
+                )
+            }
+
+            // Get account
+            val accounts = sync.getAccounts()
+            if (accounts.isEmpty()) {
+                return@withContext Result.failure(
+                    IllegalStateException("No accounts available")
+                )
+            }
+            val account = accounts[DEFAULT_ACCOUNT_INDEX.toInt()]
+
+            // Check transparent balance
+            val balances = sync.walletBalances.value
+            val accountBalance = balances?.get(account.accountUuid)
+
+            val transparentZatoshis: Long
+            val amountToShieldZatoshis: Long
+
+            if (accountBalance != null) {
+                transparentZatoshis = accountBalance.unshielded.value
+
+                if (transparentZatoshis <= 0) {
+                    return@withContext Result.failure(
+                        IllegalStateException("No transparent funds to shield. Transparent balance: 0 ZEC")
+                    )
+                }
+
+                val transparentZEC = transparentZatoshis.toDouble() / ZATOSHIS_PER_ZEC
+
+                // Determine amount to shield
+                amountToShieldZatoshis = if (amountZEC == null) {
+                    // Shield all
+                    transparentZatoshis
+                } else {
+                    // Shield custom amount
+                    val requestedZatoshis = (amountZEC * ZATOSHIS_PER_ZEC).toLong()
+                    if (requestedZatoshis > transparentZatoshis) {
+                        return@withContext Result.failure(
+                            IllegalStateException("Requested amount ($amountZEC ZEC) exceeds transparent balance ($transparentZEC ZEC)")
+                        )
+                    }
+                    requestedZatoshis
+                }
+
+                val amountZECFormatted = amountToShieldZatoshis.toDouble() / ZATOSHIS_PER_ZEC
+                Log.d(TAG, "Shielding $amountZECFormatted ZEC ($amountToShieldZatoshis zatoshis) from transparent pool")
+            } else {
+                return@withContext Result.failure(
+                    IllegalStateException("Could not retrieve balance information")
+                )
+            }
+
+            // Get spending key from seed
+            val seedBytes = keyManager.getWalletSeed()
+                ?: return@withContext Result.failure(
+                    IllegalStateException("Wallet seed not available")
+                )
+
+            val spendingKey = DerivationTool.getInstance().deriveUnifiedSpendingKey(
+                seed = seedBytes,
+                network = network,
+                accountIndex = Zip32AccountIndex.new(DEFAULT_ACCOUNT_INDEX)
+            )
+
+            // Create shielding proposal
+            // NOTE: Zcash SDK's proposeShielding always shields ALL transparent funds.
+            // Custom amount parameter is accepted for UI/logging but actual shielding is all-or-nothing.
+            // For true partial shielding, would need to use proposeTransfer instead (future enhancement).
+            Log.d(TAG, "Creating shielding proposal...")
+            val proposal = try {
+                sync.proposeShielding(
+                    account = account,
+                    shieldingThreshold = Zatoshi(10000L), // Minimum 0.0001 ZEC to shield
+                    memo = if (amountZEC != null) "Shielding $amountZEC ZEC" else "Shielding transparent funds",
+                    transparentReceiver = null // Shield to default address
+                )
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to create shielding proposal", e)
+                return@withContext Result.failure(
+                    Exception("Failed to create shielding proposal: ${e.message}", e)
+                )
+            }
+
+            if (proposal == null) {
+                return@withContext Result.failure(
+                    IllegalStateException("No shielding proposal created. Transparent balance may be below threshold.")
+                )
+            }
+
+            // Create and submit shielding transaction
+            Log.d(TAG, "Creating and submitting shielding transaction...")
+            val txResultFlow = sync.createProposedTransactions(
+                proposal = proposal,
+                usk = spendingKey
+            )
+
+            // Collect the first result from the flow
+            val firstResult = txResultFlow.first()
+
+            // Check if submission was successful
+            when (firstResult) {
+                is TransactionSubmitResult.Success -> {
+                    val txId = firstResult.txIdString()
+                    Log.i(TAG, "Shielding transaction submitted successfully: $txId")
+                    Result.success(txId)
+                }
+                is TransactionSubmitResult.Failure -> {
+                    val errorMsg = "Shielding failed (code ${firstResult.code}): ${firstResult.description ?: "Unknown error"}"
+                    Log.e(TAG, errorMsg)
+                    Result.failure(Exception(errorMsg))
+                }
+                is TransactionSubmitResult.NotAttempted -> {
+                    val txId = firstResult.txIdString()
+                    Log.w(TAG, "Shielding transaction created but not submitted: $txId")
+                    Result.failure(Exception("Transaction was not submitted to the network"))
+                }
+            }
+
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to shield transparent funds", e)
             Result.failure(e)
         }
     }

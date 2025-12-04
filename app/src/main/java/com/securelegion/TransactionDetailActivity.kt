@@ -26,8 +26,9 @@ class TransactionDetailActivity : AppCompatActivity() {
         val timestamp = intent.getLongExtra("TRANSACTION_TIMESTAMP", 0L)
         val status = intent.getStringExtra("TRANSACTION_STATUS") ?: "success"
         val otherPartyAddress = intent.getStringExtra("TRANSACTION_ADDRESS") ?: ""
+        val token = intent.getStringExtra("TRANSACTION_TOKEN") ?: "SOL"
 
-        setupTransactionDetails(signature, type, amount, timestamp, status, otherPartyAddress)
+        setupTransactionDetails(signature, type, amount, timestamp, status, otherPartyAddress, token)
         setupClickListeners(signature, otherPartyAddress)
         setupBottomNav()
     }
@@ -38,7 +39,8 @@ class TransactionDetailActivity : AppCompatActivity() {
         amount: Double,
         timestamp: Long,
         status: String,
-        otherPartyAddress: String
+        otherPartyAddress: String,
+        token: String
     ) {
         // Type
         val typeText = if (type == "send") "Sent" else "Received"
@@ -46,7 +48,7 @@ class TransactionDetailActivity : AppCompatActivity() {
 
         // Amount
         val prefix = if (type == "send") "-" else "+"
-        val formattedAmount = String.format("%.4f SOL", amount)
+        val formattedAmount = String.format("%.4f %s", amount, token)
         val amountView = findViewById<TextView>(R.id.transactionAmount)
         amountView.text = "$prefix$formattedAmount"
 

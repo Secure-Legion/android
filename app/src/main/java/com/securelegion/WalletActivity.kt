@@ -78,6 +78,11 @@ class WalletActivity : AppCompatActivity() {
             startActivity(intent)
         }
 
+        // Shield button
+        findViewById<View>(R.id.shieldButton)?.setOnClickListener {
+            shieldTransparentFunds()
+        }
+
         // Wallet settings button
         findViewById<View>(R.id.walletSettingsButton).setOnClickListener {
             openWalletSettings()
@@ -129,6 +134,12 @@ class WalletActivity : AppCompatActivity() {
             showZcashSyncStatus()
         }
 
+        // Balance text - long press to shield transparent funds
+        findViewById<TextView>(R.id.balanceAmount)?.setOnLongClickListener {
+            shieldTransparentFunds()
+            true
+        }
+
         // Tokens tab
         findViewById<TextView>(R.id.tokensTab)?.setOnClickListener {
             // Already on tokens view, just update tab colors
@@ -149,6 +160,131 @@ class WalletActivity : AppCompatActivity() {
     private var isBalanceVisible = true
     private var isShowingUSD = true
 
+    private fun shieldTransparentFunds() {
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                val zcashService = ZcashService.getInstance(this@WalletActivity)
+
+                // Get balance breakdown
+                val balanceResult = zcashService.getBalance()
+                if (balanceResult.isFailure) {
+                    withContext(Dispatchers.Main) {
+                        ThemedToast.show(this@WalletActivity, "Failed to get balance")
+                    }
+                    return@launch
+                }
+
+                // Get balance details (we'll need to add a method to get breakdown)
+                // For now, show a dialog with shield all option
+                withContext(Dispatchers.Main) {
+                    showShieldingDialog()
+                }
+            } catch (e: Exception) {
+                Log.e("WalletActivity", "Failed to show shielding dialog", e)
+                withContext(Dispatchers.Main) {
+                    ThemedToast.show(this@WalletActivity, "Error: ${e.message}")
+                }
+            }
+        }
+    }
+
+    private fun showShieldingDialog() {
+        val bottomSheet = com.google.android.material.bottomsheet.BottomSheetDialog(this)
+        val view = layoutInflater.inflate(R.layout.bottom_sheet_shield_funds, null)
+
+        // Get views
+        val transparentAmount = view.findViewById<android.widget.TextView>(R.id.transparentAmount)
+        val shieldedAmount = view.findViewById<android.widget.TextView>(R.id.shieldedAmount)
+        val amountInput = view.findViewById<android.widget.EditText>(R.id.shieldAmountInput)
+        val shieldButton = view.findViewById<android.widget.Button>(R.id.shieldButton)
+
+        // Get ZEC balance breakdown
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                val zcashService = ZcashService.getInstance(this@WalletActivity)
+                val balanceResult = zcashService.getBalanceBreakdown()
+
+                if (balanceResult.isSuccess) {
+                    val breakdown = balanceResult.getOrNull()
+                    if (breakdown != null) {
+                        val transparentZEC = breakdown.transparentZEC
+                        val shieldedZEC = breakdown.shieldedZEC
+
+                        withContext(Dispatchers.Main) {
+                            transparentAmount?.text = String.format("%.4f ZEC", transparentZEC)
+                            shieldedAmount?.text = String.format("%.4f ZEC", shieldedZEC)
+
+                            if (transparentZEC <= 0) {
+                                shieldButton?.isEnabled = false
+                                amountInput?.isEnabled = false
+                                ThemedToast.show(this@WalletActivity, "No transparent funds to shield")
+                            } else {
+                                // Shield button
+                                shieldButton?.setOnClickListener {
+                                    val customAmount = amountInput?.text.toString().toDoubleOrNull()
+
+                                    // If no amount entered, shield all
+                                    val amountToShield = customAmount ?: transparentZEC
+
+                                    if (customAmount != null && customAmount <= 0) {
+                                        ThemedToast.show(this@WalletActivity, "Please enter a valid amount")
+                                    } else if (customAmount != null && customAmount > transparentZEC) {
+                                        ThemedToast.show(this@WalletActivity, "Amount exceeds transparent balance")
+                                    } else {
+                                        bottomSheet.dismiss()
+                                        executeShielding(amountToShield)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e("WalletActivity", "Failed to get balance breakdown", e)
+            }
+        }
+
+        bottomSheet.setContentView(view)
+        bottomSheet.show()
+    }
+
+    private fun executeShielding(amountZEC: Double) {
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                withContext(Dispatchers.Main) {
+                    ThemedToast.show(this@WalletActivity, "Shielding $amountZEC ZEC...\n\nThis may take a moment")
+                }
+
+                val zcashService = ZcashService.getInstance(this@WalletActivity)
+                val result = zcashService.shieldTransparentFunds(amountZEC)
+
+                withContext(Dispatchers.Main) {
+                    if (result.isSuccess) {
+                        val txId = result.getOrNull()
+                        ThemedToast.show(
+                            this@WalletActivity,
+                            "Shielding Transaction Submitted!\n\nNote: All transparent ZEC will be shielded\nTx: ${txId?.take(16)}...\n\nWill complete in ~75 seconds"
+                        )
+                        // Reload balance after a delay
+                        kotlinx.coroutines.delay(5000)
+                        loadWalletBalance()
+                    } else {
+                        val error = result.exceptionOrNull()?.message ?: "Unknown error"
+                        ThemedToast.show(
+                            this@WalletActivity,
+                            "Shielding Failed\n\n$error"
+                        )
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e("WalletActivity", "Failed to shield funds", e)
+                withContext(Dispatchers.Main) {
+                    ThemedToast.show(this@WalletActivity, "Error shielding funds\n\n${e.message}")
+                }
+            }
+        }
+    }
+
     private fun showZcashSyncStatus() {
         lifecycleScope.launch(Dispatchers.IO) {
             try {
@@ -166,17 +302,9 @@ class WalletActivity : AppCompatActivity() {
                         val useTestnet = BridgeActivity.isTestnetEnabled(this@WalletActivity)
                         android.util.Log.d("WalletActivity", "Initializing ZcashService with seed phrase (testnet: $useTestnet)...")
 
-                        withContext(Dispatchers.Main) {
-                            ThemedToast.show(this@WalletActivity, "Initializing Zcash SDK${if (useTestnet) " (TESTNET)" else ""}...")
-                        }
-
                         val result = zcashService.initialize(seedPhrase, useTestnet = useTestnet)
                         if (result.isSuccess) {
                             android.util.Log.i("WalletActivity", "ZcashService initialized successfully: ${result.getOrNull()}")
-
-                            withContext(Dispatchers.Main) {
-                                ThemedToast.show(this@WalletActivity, "Zcash SDK initialized\nChecking sync status...")
-                            }
                         } else {
                             val error = result.exceptionOrNull()
                             android.util.Log.e("WalletActivity", "Failed to initialize ZcashService", error)
@@ -184,7 +312,7 @@ class WalletActivity : AppCompatActivity() {
                             withContext(Dispatchers.Main) {
                                 ThemedToast.show(
                                     this@WalletActivity,
-                                    "Failed to initialize Zcash SDK\n\nError: ${error?.message ?: "Unknown error"}\n\nTap again to retry"
+                                    "Failed to connect to Zcash network\n\nTap again to retry"
                                 )
                             }
                             return@launch
@@ -198,13 +326,10 @@ class WalletActivity : AppCompatActivity() {
                     }
                 } else {
                     android.util.Log.d("WalletActivity", "No Zcash address found, skipping initialization")
-                    withContext(Dispatchers.Main) {
-                        ThemedToast.show(this@WalletActivity, "No Zcash wallet configured")
-                    }
                     return@launch
                 }
 
-                // Check sync status
+                // Check sync status and balance breakdown
                 val syncStatusResult = zcashService.getSyncStatus()
                 val syncProgressResult = zcashService.getSyncProgress()
                 val balanceResult = zcashService.getBalance()
@@ -214,40 +339,20 @@ class WalletActivity : AppCompatActivity() {
                 val balanceZEC = balanceResult.getOrNull() ?: 0.0
 
                 withContext(Dispatchers.Main) {
-                    when (syncStatus) {
-                        "SYNCING" -> {
-                            ThemedToast.show(
-                                this@WalletActivity,
-                                "Syncing Zcash Blockchain\n\nProgress: $syncProgress%\nBalance: $balanceZEC ZEC\n\nTap again to refresh"
-                            )
-                        }
-                        "SYNCED" -> {
-                            ThemedToast.show(
-                                this@WalletActivity,
-                                "Fully Synced\n\nBalance: $balanceZEC ZEC\nNetwork: Connected\n\nTap again to refresh"
-                            )
-                        }
-                        "DISCONNECTED" -> {
-                            ThemedToast.show(
-                                this@WalletActivity,
-                                "Disconnected\n\nNot connected to Zcash network\nCheck internet connection\n\nTap again to retry"
-                            )
-                        }
-                        else -> {
-                            ThemedToast.show(
-                                this@WalletActivity,
-                                "Zcash Status\n\nStatus: $syncStatus\nProgress: $syncProgress%\nBalance: $balanceZEC ZEC\n\nTap again to refresh"
-                            )
-                        }
+                    // Only show error messages, not sync status
+                    if (syncStatus == "DISCONNECTED") {
+                        ThemedToast.show(
+                            this@WalletActivity,
+                            "No network connection"
+                        )
                     }
 
-                    // Also reload balance in background
+                    // Reload balance in background
                     loadWalletBalance()
                 }
             } catch (e: Exception) {
                 Log.e("WalletActivity", "Failed to get sync status", e)
                 withContext(Dispatchers.Main) {
-                    ThemedToast.show(this@WalletActivity, "Error checking sync status\n${e.message}\n\nTap again to retry")
                     loadWalletBalance()
                 }
             }
@@ -355,12 +460,14 @@ class WalletActivity : AppCompatActivity() {
                     Log.d("WalletActivity", "Loading ZEC wallet balance")
                     // Load Zcash balance as main balance
                     loadZcashBalanceAsMain()
+                    // Also load SOL balance for the side display
+                    loadSolanaBalance()
                 } else {
                     Log.d("WalletActivity", "Loading SOL wallet balance")
-                    // Get Solana wallet address
-                    val solanaAddress = keyManager.getSolanaAddress()
+                    // Get Solana wallet address from current wallet
+                    val solanaAddress = currentWallet?.solanaAddress ?: keyManager.getSolanaAddress()
 
-                Log.d("WalletActivity", "Fetching balance for address: $solanaAddress")
+                Log.d("WalletActivity", "Fetching balance for address: $solanaAddress (wallet: ${currentWallet?.name})")
 
                 // Fetch SOL balance
                 val solanaService = SolanaService(this@WalletActivity)
@@ -369,6 +476,7 @@ class WalletActivity : AppCompatActivity() {
                 withContext(Dispatchers.Main) {
                     if (result.isSuccess) {
                         val balanceSOL = result.getOrNull() ?: 0.0
+                        Log.d("WalletActivity", "SOL balance: $balanceSOL, solBalanceText view exists: ${solBalanceText != null}")
 
                         // Display based on currency preference
                         if (isShowingUSD) {
@@ -378,11 +486,14 @@ class WalletActivity : AppCompatActivity() {
                                 if (priceResult.isSuccess) {
                                     val priceUSD = priceResult.getOrNull() ?: 0.0
                                     val balanceUSDValue = balanceSOL * priceUSD
+                                    Log.d("WalletActivity", "Setting SOL USD: $balanceUSDValue (${balanceSOL} * ${priceUSD})")
                                     withContext(Dispatchers.Main) {
                                         balanceText?.text = String.format("$%,.2f", balanceUSDValue)
                                         solBalanceText?.text = String.format("$%.2f", balanceUSDValue)
+                                        Log.d("WalletActivity", "Set solBalanceText to: ${solBalanceText?.text}")
                                     }
                                 } else {
+                                    Log.e("WalletActivity", "Failed to get SOL price")
                                     withContext(Dispatchers.Main) {
                                         balanceText?.text = "$0.00"
                                         solBalanceText?.text = "$0.00"
@@ -391,8 +502,10 @@ class WalletActivity : AppCompatActivity() {
                             }
                         } else {
                             // Show SOL amount
+                            Log.d("WalletActivity", "Setting SOL amount: $balanceSOL SOL")
                             balanceText?.text = String.format("%.4f", balanceSOL)
                             solBalanceText?.text = String.format("%.4f SOL", balanceSOL)
+                            Log.d("WalletActivity", "Set solBalanceText to: ${solBalanceText?.text}")
                         }
 
                         Log.i("WalletActivity", "Balance loaded successfully")
@@ -471,17 +584,7 @@ class WalletActivity : AppCompatActivity() {
                 if (balanceResult.isSuccess) {
                     val balanceZEC = balanceResult.getOrNull() ?: 0.0
 
-                    if (balanceZEC == 0.0) {
-                        // Show actual sync status
-                        when (syncStatus) {
-                            "SYNCING" -> ThemedToast.show(this@WalletActivity, "Syncing blockchain: $syncProgress%\nBalance will update when sync completes\nPull down to refresh")
-                            "SYNCED" -> ThemedToast.show(this@WalletActivity, "ZEC Balance: 0.00\nSDK is fully synced - no funds yet\nPull down to refresh")
-                            "DISCONNECTED" -> ThemedToast.show(this@WalletActivity, "⚠️ Not connected to Zcash network\nCheck your internet connection")
-                            else -> ThemedToast.show(this@WalletActivity, "Status: $syncStatus ($syncProgress%)\nPull down to refresh")
-                        }
-                    } else {
-                        ThemedToast.show(this@WalletActivity, "ZEC Balance: $balanceZEC ZEC\nSync: $syncStatus ($syncProgress%)")
-                    }
+                    // Don't show any debug messages
                     Log.i("WalletActivity", "Successfully loaded ZEC balance: $balanceZEC ZEC")
 
                     // Fetch ZEC price and calculate USD value
@@ -595,6 +698,81 @@ class WalletActivity : AppCompatActivity() {
 
         } catch (e: Exception) {
             Log.e("WalletActivity", "Failed to load Zcash balance", e)
+        }
+    }
+
+    private suspend fun loadSolanaBalance() {
+        try {
+            Log.d("WalletActivity", "Loading Solana balance (side display)")
+
+            val keyManager = KeyManager.getInstance(this@WalletActivity)
+
+            // Get a SOL wallet from database
+            val dbPassphrase = keyManager.getDatabasePassphrase()
+            val database = SecureLegionDatabase.getInstance(this@WalletActivity, dbPassphrase)
+            val allWallets = database.walletDao().getAllWallets()
+            val wallets = allWallets.filter { it.walletId != "main" }
+
+            // Find a SOL wallet (one without ZEC address)
+            val solWallet = wallets.firstOrNull { wallet ->
+                wallet.zcashAddress.isNullOrEmpty() && wallet.solanaAddress.isNotEmpty()
+            }
+
+            val solanaAddress = solWallet?.solanaAddress ?: keyManager.getSolanaAddress()
+            Log.d("WalletActivity", "SOL address: $solanaAddress (wallet: ${solWallet?.name})")
+
+            if (solanaAddress.isEmpty()) {
+                Log.w("WalletActivity", "Solana address not available")
+                withContext(Dispatchers.Main) {
+                    val solBalanceText = findViewById<TextView>(R.id.solBalance)
+                    solBalanceText?.text = "$0.00"
+                }
+                return
+            }
+
+            val solanaService = SolanaService(this@WalletActivity)
+            val balanceResult = solanaService.getBalance(solanaAddress)
+
+            withContext(Dispatchers.Main) {
+                val solBalanceText = findViewById<TextView>(R.id.solBalance)
+                Log.d("WalletActivity", "solBalanceText view exists: ${solBalanceText != null}")
+
+                if (balanceResult.isSuccess) {
+                    val balanceSOL = balanceResult.getOrNull() ?: 0.0
+                    Log.d("WalletActivity", "SOL balance (side): $balanceSOL")
+
+                    // Fetch SOL price and calculate USD value
+                    lifecycleScope.launch {
+                        val priceResult = solanaService.getSolPrice()
+                        if (priceResult.isSuccess) {
+                            val priceUSD = priceResult.getOrNull() ?: 0.0
+                            if (priceUSD > 0) {
+                                val balanceUSDValue = balanceSOL * priceUSD
+                                Log.d("WalletActivity", "Setting SOL side display: $$balanceUSDValue")
+                                withContext(Dispatchers.Main) {
+                                    solBalanceText?.text = String.format("$%.2f", balanceUSDValue)
+                                    Log.d("WalletActivity", "Set solBalanceText (side) to: ${solBalanceText?.text}")
+                                }
+                            } else {
+                                withContext(Dispatchers.Main) {
+                                    solBalanceText?.text = "$0.00"
+                                }
+                            }
+                        } else {
+                            Log.e("WalletActivity", "Failed to get SOL price (side)")
+                            withContext(Dispatchers.Main) {
+                                solBalanceText?.text = "$0.00"
+                            }
+                        }
+                    }
+                } else {
+                    solBalanceText?.text = "$0.00"
+                    Log.e("WalletActivity", "Failed to load SOL balance (side): ${balanceResult.exceptionOrNull()?.message}")
+                }
+            }
+
+        } catch (e: Exception) {
+            Log.e("WalletActivity", "Failed to load Solana balance (side)", e)
         }
     }
 

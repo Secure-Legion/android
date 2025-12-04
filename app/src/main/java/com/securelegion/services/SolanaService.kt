@@ -31,7 +31,7 @@ import java.nio.ByteOrder
  * All traffic routed through Tor SOCKS proxy for privacy
  * Transaction signing happens locally in secure Rust enclave - private keys never exposed
  */
-class SolanaService(context: Context) {
+class SolanaService(private val context: Context) {
 
     private val keyManager = KeyManager.getInstance(context)
 
@@ -41,6 +41,9 @@ class SolanaService(context: Context) {
         // Helius fast mainnet RPC with hidden API key
         // Limited to 5 TPS per IP - ideal for frontend use
         private const val HELIUS_RPC_URL = "https://berget-7aodbg-fast-mainnet.helius-rpc.com"
+
+        // Solana devnet RPC for testnet mode
+        private const val DEVNET_RPC_URL = "https://api.devnet.solana.com"
 
         // Lamports per SOL (1 SOL = 1 billion lamports)
         private const val LAMPORTS_PER_SOL = 1_000_000_000L
@@ -53,6 +56,16 @@ class SolanaService(context: Context) {
 
         // CoinGecko price API (free, no key required)
         private const val COINGECKO_API = "https://api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies=usd"
+    }
+
+    /**
+     * Get the appropriate RPC URL based on testnet mode
+     */
+    private fun getRpcUrl(): String {
+        val isTestnet = com.securelegion.BridgeActivity.isTestnetEnabled(context)
+        val url = if (isTestnet) DEVNET_RPC_URL else HELIUS_RPC_URL
+        Log.d(TAG, "Using ${if (isTestnet) "DEVNET" else "MAINNET"} RPC: $url")
+        return url
     }
 
     // Configure OkHttpClient to use Tor SOCKS5 proxy for privacy
@@ -87,7 +100,7 @@ class SolanaService(context: Context) {
                 .toRequestBody("application/json".toMediaType())
 
             val request = Request.Builder()
-                .url(HELIUS_RPC_URL)
+                .url(getRpcUrl())
                 .post(requestBody)
                 .build()
 
@@ -217,7 +230,7 @@ class SolanaService(context: Context) {
                 .toRequestBody("application/json".toMediaType())
 
             val request = Request.Builder()
-                .url(HELIUS_RPC_URL)
+                .url(getRpcUrl())
                 .post(requestBody)
                 .build()
 
@@ -335,7 +348,7 @@ class SolanaService(context: Context) {
                 .toRequestBody("application/json".toMediaType())
 
             val request = Request.Builder()
-                .url(HELIUS_RPC_URL)
+                .url(getRpcUrl())
                 .post(requestBody)
                 .build()
 
@@ -441,7 +454,7 @@ class SolanaService(context: Context) {
                 .toRequestBody("application/json".toMediaType())
 
             val request = Request.Builder()
-                .url(HELIUS_RPC_URL)
+                .url(getRpcUrl())
                 .post(requestBody)
                 .build()
 
@@ -748,7 +761,7 @@ class SolanaService(context: Context) {
                 .toRequestBody("application/json".toMediaType())
 
             val request = Request.Builder()
-                .url(HELIUS_RPC_URL)
+                .url(getRpcUrl())
                 .post(requestBody)
                 .build()
 
@@ -800,7 +813,7 @@ class SolanaService(context: Context) {
                 .toRequestBody("application/json".toMediaType())
 
             val request = Request.Builder()
-                .url(HELIUS_RPC_URL)
+                .url(getRpcUrl())
                 .post(requestBody)
                 .build()
 

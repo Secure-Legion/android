@@ -720,15 +720,28 @@ class SendMoneyActivity : AppCompatActivity() {
 
                 Log.d(TAG, "Executing payment: $amount $selectedToken from $fromAddress to $recipientAddress")
 
-                // Execute blockchain transaction
-                val result = solanaService.sendTransaction(
-                    fromPublicKey = fromAddress,
-                    toPublicKey = recipientAddress,
-                    amountSOL = amount,
-                    keyManager = keyManager,
-                    walletId = currentWalletId.ifEmpty { "main" },
-                    memo = quote.memo
-                )
+                // Execute blockchain transaction based on token type
+                val result = when (selectedToken) {
+                    "ZEC" -> {
+                        val zcashService = ZcashService.getInstance(this@SendMoneyActivity)
+                        zcashService.sendTransaction(
+                            toAddress = recipientAddress,
+                            amountZEC = amount,
+                            memo = quote.memo
+                        )
+                    }
+                    else -> {
+                        // SOL, USDC, USDT, etc.
+                        solanaService.sendTransaction(
+                            fromPublicKey = fromAddress,
+                            toPublicKey = recipientAddress,
+                            amountSOL = amount,
+                            keyManager = keyManager,
+                            walletId = currentWalletId.ifEmpty { "main" },
+                            memo = quote.memo
+                        )
+                    }
+                }
 
                 withContext(Dispatchers.Main) {
                     if (result.isSuccess) {

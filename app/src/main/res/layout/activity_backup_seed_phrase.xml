@@ -287,7 +287,7 @@
             android:textSize="16sp"
             android:textStyle="bold"
             android:textColor="@color/text_white"
-            android:background="@drawable/neon_blue_button_bg"
+            android:background="@drawable/lock_button_bg"
             android:gravity="center"
             android:padding="16dp"
             android:clickable="true"

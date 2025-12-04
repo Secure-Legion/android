@@ -265,6 +265,36 @@
 
                 </LinearLayout>
 
+                <!-- Shield Button -->
+                <LinearLayout
+                    android:id="@+id/shieldButton"
+                    android:layout_width="85dp"
+                    android:layout_height="85dp"
+                    android:layout_marginStart="8dp"
+                    android:orientation="vertical"
+                    android:gravity="center"
+                    android:background="@drawable/wallet_action_button_bg"
+                    android:clickable="true"
+                    android:focusable="true">
+
+                    <ImageView
+                        android:layout_width="28dp"
+                        android:layout_height="28dp"
+                        android:src="@drawable/ic_shield"
+                        android:tint="#888888"
+                        android:layout_marginBottom="6dp"
+                        android:contentDescription="Shield" />
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Shield"
+                        android:textSize="12sp"
+                        android:textColor="#AAAAAA"
+                        android:fontFamily="@font/poppins_medium" />
+
+                </LinearLayout>
+
             </LinearLayout>
 
             <!-- Tokens Section -->

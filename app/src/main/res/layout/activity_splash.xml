@@ -73,7 +73,7 @@
         android:fontFamily="@font/space_grotesk_bold"
         android:textSize="16sp"
         android:textColor="#FFFFFF"
-        android:background="@drawable/neon_blue_button_bg"
+        android:background="@drawable/lock_button_bg"
         android:gravity="center"
         android:layout_marginTop="16dp"
         android:layout_marginEnd="20dp"

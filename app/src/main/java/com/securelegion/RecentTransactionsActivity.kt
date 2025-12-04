@@ -112,6 +112,7 @@ class RecentTransactionsActivity : AppCompatActivity() {
         intent.putExtra("TRANSACTION_TIMESTAMP", transaction.timestamp)
         intent.putExtra("TRANSACTION_STATUS", transaction.status)
         intent.putExtra("TRANSACTION_ADDRESS", transaction.otherPartyAddress)
+        intent.putExtra("TRANSACTION_TOKEN", "SOL")
         startActivity(intent)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
             overrideActivityTransition(Activity.OVERRIDE_TRANSITION_OPEN, 0, 0)
