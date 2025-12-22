@@ -322,8 +322,23 @@ class CreateAccountActivity : AppCompatActivity() {
 
                 // Update loading state
                 withContext(Dispatchers.Main) {
-                    showLoading("Uploading Contact Card...", "Connecting to IPFS network")
+                    showLoading("Creating account...", "")
                 }
+
+                // Generate random PIN first
+                val cardManager = ContactCardManager(this@CreateAccountActivity)
+                val contactCardPin = cardManager.generateRandomPin()
+
+                // Create friend request .onion address (v2.0)
+                Log.d("CreateAccount", "Creating friend request .onion address...")
+                val friendRequestOnion = keyManager.createFriendRequestOnion()
+                Log.i("CreateAccount", "Friend request .onion: $friendRequestOnion")
+
+                // Derive IPFS CID from seed (v2.0)
+                Log.d("CreateAccount", "Deriving IPFS CID from seed...")
+                val ipfsCid = keyManager.deriveIPFSCID(mnemonic)
+                keyManager.storeIPFSCID(ipfsCid)
+                Log.i("CreateAccount", "IPFS CID: $ipfsCid")
 
                 // Create and upload contact card
                 Log.d("CreateAccount", "Creating contact card...")
@@ -332,56 +347,42 @@ class CreateAccountActivity : AppCompatActivity() {
                     solanaPublicKey = keyManager.getSolanaPublicKey(),
                     x25519PublicKey = keyManager.getEncryptionPublicKey(),
                     solanaAddress = keyManager.getSolanaAddress(),
-                    torOnionAddress = onionAddress,
+                    friendRequestOnion = friendRequestOnion,
+                    messagingOnion = onionAddress,
+                    contactPin = contactCardPin,
+                    ipfsCid = ipfsCid,
                     timestamp = System.currentTimeMillis()
                 )
+                // Store contact card info in encrypted storage
+                keyManager.storeContactPin(contactCardPin)
+                keyManager.storeIPFSCID(ipfsCid)
+                // Note: friendRequestOnion already stored by createFriendRequestOnion()
+                keyManager.storeMessagingOnion(onionAddress)
 
-                // Generate random PIN
-                val cardManager = ContactCardManager(this@CreateAccountActivity)
-                val contactCardPin = cardManager.generateRandomPin()
-                val publicKey = keyManager.getSolanaAddress()
+                // Initialize internal wallet in database
+                val dbPassphrase = keyManager.getDatabasePassphrase()
+                val database = SecureLegionDatabase.getInstance(this@CreateAccountActivity, dbPassphrase)
+                val timestamp = System.currentTimeMillis()
+                val mainWallet = Wallet(
+                    walletId = "main",
+                    name = "Wallet 1",
+                    solanaAddress = keyManager.getSolanaAddress(),
+                    isMainWallet = true,
+                    createdAt = timestamp,
+                    lastUsedAt = timestamp
+                )
+                database.walletDao().insertWallet(mainWallet)
+                Log.i("CreateAccount", "Internal wallet initialized in database")
 
-                Log.d("CreateAccount", "Uploading contact card to IPFS...")
+                Log.i("CreateAccount", "Contact card created (local only, not uploaded)")
+                Log.i("CreateAccount", "CID: $ipfsCid (deterministic from seed)")
+                Log.i("CreateAccount", "PIN: $contactCardPin")
 
-                // Upload to IPFS with PIN encryption
-                val result = withContext(Dispatchers.IO) {
-                    cardManager.uploadContactCard(contactCard, contactCardPin, publicKey)
-                }
-
-                if (result.isSuccess) {
-                    val (cid, size) = result.getOrThrow()
-
-                    // Store CID and PIN in encrypted storage
-                    keyManager.storeContactCardInfo(cid, contactCardPin)
-
-                    // Initialize internal wallet in database
-                    val dbPassphrase = keyManager.getDatabasePassphrase()
-                    val database = SecureLegionDatabase.getInstance(this@CreateAccountActivity, dbPassphrase)
-                    val timestamp = System.currentTimeMillis()
-                    val mainWallet = Wallet(
-                        walletId = "main",
-                        name = "Wallet 1",
-                        solanaAddress = keyManager.getSolanaAddress(),
-                        isMainWallet = true,
-                        createdAt = timestamp,
-                        lastUsedAt = timestamp
-                    )
-                    database.walletDao().insertWallet(mainWallet)
-                    Log.i("CreateAccount", "Internal wallet initialized in database")
-
-                    Log.i("CreateAccount", "Contact card uploaded successfully")
-                    Log.i("CreateAccount", "CID: $cid")
-                    Log.i("CreateAccount", "PIN: $contactCardPin")
-                    Log.i("CreateAccount", "Size: $size bytes")
-
-                    // Navigate to Account Created screen to show CID, PIN, and seed phrase
-                    val intent = Intent(this@CreateAccountActivity, AccountCreatedActivity::class.java)
-                    intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
-                    startActivity(intent)
-                    finish()
-                } else {
-                    throw result.exceptionOrNull() ?: Exception("Unknown error uploading contact card")
-                }
+                // Navigate to Account Created screen to show CID, PIN, and seed phrase
+                val intent = Intent(this@CreateAccountActivity, AccountCreatedActivity::class.java)
+                intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+                startActivity(intent)
+                finish()
 
             } catch (e: Exception) {
                 Log.e("CreateAccount", "Failed to create account", e)

@@ -182,7 +182,7 @@ class MessageRetryWorker(
                         try {
                             com.securelegion.crypto.RustBridge.resendPingWithWireBytes(
                                 message.pingWireBytes!!,
-                                contact.torOnionAddress
+                                contact.messagingOnion ?: contact.torOnionAddress ?: ""
                             )
                         } catch (e: Exception) {
                             Log.e(TAG, "Failed to resend Ping with wire bytes", e)

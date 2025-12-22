@@ -17,8 +17,8 @@ import com.securelegion.database.entities.Message
 import com.securelegion.database.entities.ReceivedId
 import com.securelegion.database.entities.UsedSignature
 import com.securelegion.database.entities.Wallet
-import net.sqlcipher.database.SQLiteDatabase
-import net.sqlcipher.database.SupportFactory
+import net.zetetic.database.sqlcipher.SQLiteDatabase
+import net.zetetic.database.sqlcipher.SupportOpenHelperFactory
 
 /**
  * Encrypted SQLite database using SQLCipher + Room
@@ -34,7 +34,7 @@ import net.sqlcipher.database.SupportFactory
  */
 @Database(
     entities = [Contact::class, Message::class, Wallet::class, ReceivedId::class, UsedSignature::class],
-    version = 17,
+    version = 18,
     exportSchema = false
 )
 abstract class SecureLegionDatabase : RoomDatabase() {
@@ -294,6 +294,30 @@ abstract class SecureLegionDatabase : RoomDatabase() {
         }
 
         /**
+         * Migration from version 17 to 18: Add two .onion system fields for v2.0 contact system
+         */
+        private val MIGRATION_17_18 = object : Migration(17, 18) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                Log.i(TAG, "Migrating database from version 17 to 18")
+
+                // Add new fields for two .onion system
+                database.execSQL("ALTER TABLE contacts ADD COLUMN friendRequestOnion TEXT NOT NULL DEFAULT ''")
+                database.execSQL("ALTER TABLE contacts ADD COLUMN messagingOnion TEXT")
+                database.execSQL("ALTER TABLE contacts ADD COLUMN ipfsCid TEXT")
+                database.execSQL("ALTER TABLE contacts ADD COLUMN contactPin TEXT")
+
+                // Migrate existing data: torOnionAddress → messagingOnion
+                database.execSQL("UPDATE contacts SET messagingOnion = torOnionAddress WHERE torOnionAddress IS NOT NULL")
+
+                // Create new indices
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_contacts_friendRequestOnion ON contacts(friendRequestOnion)")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_contacts_messagingOnion ON contacts(messagingOnion)")
+
+                Log.i(TAG, "Migration completed: Added two .onion system (friendRequestOnion, messagingOnion, ipfsCid, contactPin)")
+            }
+        }
+
+        /**
          * Get database instance
          * @param context Application context
          * @param passphrase Encryption passphrase (should be derived from KeyManager)
@@ -346,11 +370,11 @@ abstract class SecureLegionDatabase : RoomDatabase() {
         private fun buildDatabase(context: Context, passphrase: ByteArray): SecureLegionDatabase {
             Log.i(TAG, "Building encrypted database with SQLCipher")
 
-            // Initialize SQLCipher
-            SQLiteDatabase.loadLibs(context)
+            // Initialize SQLCipher native library
+            System.loadLibrary("sqlcipher")
 
             // Create SQLCipher factory with passphrase
-            val factory = SupportFactory(passphrase)
+            val factory = SupportOpenHelperFactory(passphrase)
 
             return try {
                 Room.databaseBuilder(
@@ -359,7 +383,7 @@ abstract class SecureLegionDatabase : RoomDatabase() {
                     DATABASE_NAME
                 )
                     .openHelperFactory(factory)
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18)
                     .addCallback(object : RoomDatabase.Callback() {
                         override fun onCreate(db: SupportSQLiteDatabase) {
                             super.onCreate(db)
@@ -449,8 +473,8 @@ abstract class SecureLegionDatabase : RoomDatabase() {
                         SecureLegionDatabase::class.java,
                         DATABASE_NAME
                     )
-                        .openHelperFactory(SupportFactory(passphrase))
-                        .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17)
+                        .openHelperFactory(SupportOpenHelperFactory(passphrase))
+                        .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18)
                         .addCallback(object : RoomDatabase.Callback() {
                             override fun onCreate(db: SupportSQLiteDatabase) {
                                 super.onCreate(db)
@@ -489,12 +513,12 @@ abstract class SecureLegionDatabase : RoomDatabase() {
                 }
 
                 // Try to open database without passphrase (should fail if encrypted)
-                SQLiteDatabase.openDatabase(
-                    dbFile.absolutePath,
-                    "",
+                SQLiteDatabase.openOrCreateDatabase(
+                    dbFile,
+                    ByteArray(0),  // Empty passphrase - will fail if database is encrypted
                     null,
-                    SQLiteDatabase.OPEN_READONLY
-                )?.close()
+                    null
+                ).close()
 
                 Log.e(TAG, "WARNING: Database is NOT encrypted!")
                 return false

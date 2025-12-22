@@ -249,6 +249,29 @@ class RestoreAccountActivity : AppCompatActivity() {
                         Log.e("RestoreAccount", "Error initializing Zcash wallet", e)
                         // Continue anyway - Solana will still work
                     }
+
+                    // IPFS Contact List Recovery (v5 Architecture)
+                    // Attempt to recover contact list from IPFS mesh
+                    Log.i("RestoreAccount", "Attempting to recover contact list from IPFS mesh...")
+                    try {
+                        val contactListManager = com.securelegion.services.ContactListManager.getInstance(this@RestoreAccountActivity)
+                        val recoveryResult = contactListManager.recoverFromIPFS(seedPhrase)
+
+                        if (recoveryResult.isSuccess) {
+                            val contactsRecovered = recoveryResult.getOrNull()
+                            if (contactsRecovered != null && contactsRecovered > 0) {
+                                Log.i("RestoreAccount", "✓ Recovered $contactsRecovered contacts from IPFS mesh!")
+                            } else {
+                                Log.i("RestoreAccount", "No contacts found in IPFS mesh (this is normal for new accounts)")
+                            }
+                        } else {
+                            Log.w("RestoreAccount", "Failed to recover contacts from IPFS mesh: ${recoveryResult.exceptionOrNull()?.message}")
+                            // Non-critical error - continue with account restoration
+                        }
+                    } catch (e: Exception) {
+                        Log.w("RestoreAccount", "IPFS contact list recovery error (non-critical)", e)
+                        // Continue anyway - user can add friends manually
+                    }
                 }
 
                 // Clear inputs

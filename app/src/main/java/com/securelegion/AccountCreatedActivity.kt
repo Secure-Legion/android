@@ -33,19 +33,35 @@ class AccountCreatedActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContentView(R.layout.activity_account_created)
 
-        // Disable back button - user must click Continue
-        onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
-            override fun handleOnBackPressed() {
-                ThemedToast.show(this@AccountCreatedActivity, "Please write down your keys and tap the button")
-            }
-        })
+        try {
+            setContentView(R.layout.activity_account_created)
 
-        initializeWordViews()
-        setupStyledText()
-        loadAccountInfo()
-        setupClickListeners()
+            // Disable back button - user must click Continue
+            onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
+                override fun handleOnBackPressed() {
+                    ThemedToast.show(this@AccountCreatedActivity, "Please write down your keys and tap the button")
+                }
+            })
+
+            initializeWordViews()
+            setupStyledText()
+            loadAccountInfo()
+            setupClickListeners()
+        } catch (e: Exception) {
+            Log.e("AccountCreated", "FATAL: Failed to initialize AccountCreatedActivity", e)
+
+            // Show error dialog that won't disappear immediately
+            val dialog = androidx.appcompat.app.AlertDialog.Builder(this)
+                .setTitle("Error Loading Account Info")
+                .setMessage("Failed to display account information:\n\n${e.message}\n\n${e.stackTraceToString()}")
+                .setPositiveButton("OK") { _, _ ->
+                    finish()
+                }
+                .setCancelable(false)
+                .create()
+            dialog.show()
+        }
     }
 
     private fun setupStyledText() {
@@ -130,30 +146,38 @@ class AccountCreatedActivity : AppCompatActivity() {
         try {
             val keyManager = KeyManager.getInstance(this)
 
-            // Load contact card info
-            val cid = keyManager.getContactCardCid()
-            val pin = keyManager.getContactCardPin()
+            // Load account info
+            val friendRequestOnion = keyManager.getFriendRequestOnion()
+            val pin = keyManager.getContactPin()
 
-            if (cid != null && pin != null) {
-                findViewById<TextView>(R.id.contactCardCid).text = cid
+            // Display friend request .onion address (instead of CID)
+            if (friendRequestOnion != null) {
+                findViewById<TextView>(R.id.contactCardCid).text = friendRequestOnion
+                Log.i("AccountCreated", "Friend Request .onion: $friendRequestOnion")
+            } else {
+                Log.w("AccountCreated", "Friend request .onion not available")
+            }
 
-                // Populate 6 PIN digit boxes
-                if (pin.length == 6) {
+            // Display 10-digit PIN
+            if (pin != null) {
+                if (pin.length == 10) {
+                    // Display all 10 digits
                     findViewById<TextView>(R.id.pinDigit1).text = pin[0].toString()
                     findViewById<TextView>(R.id.pinDigit2).text = pin[1].toString()
                     findViewById<TextView>(R.id.pinDigit3).text = pin[2].toString()
                     findViewById<TextView>(R.id.pinDigit4).text = pin[3].toString()
                     findViewById<TextView>(R.id.pinDigit5).text = pin[4].toString()
                     findViewById<TextView>(R.id.pinDigit6).text = pin[5].toString()
+                    findViewById<TextView>(R.id.pinDigit7).text = pin[6].toString()
+                    findViewById<TextView>(R.id.pinDigit8).text = pin[7].toString()
+                    findViewById<TextView>(R.id.pinDigit9).text = pin[8].toString()
+                    findViewById<TextView>(R.id.pinDigit10).text = pin[9].toString()
+                    Log.i("AccountCreated", "10-digit PIN: $pin")
                 } else {
-                    Log.e("AccountCreated", "Invalid PIN length: ${pin.length}")
+                    Log.e("AccountCreated", "Invalid PIN length: ${pin.length} (expected 10)")
                 }
-
-                Log.i("AccountCreated", "Loaded contact card info")
-                Log.i("AccountCreated", "CID: $cid")
-                Log.i("AccountCreated", "PIN: $pin")
             } else {
-                Log.w("AccountCreated", "Contact card info not available")
+                Log.w("AccountCreated", "PIN not available")
             }
 
             // Load seed phrase
@@ -188,7 +212,7 @@ class AccountCreatedActivity : AppCompatActivity() {
         // Make PIN boxes clickable to copy the full PIN
         val pinClickListener = View.OnClickListener {
             val keyManager = KeyManager.getInstance(this)
-            val pin = keyManager.getContactCardPin()
+            val pin = keyManager.getContactPin()
             if (pin != null) {
                 copyToClipboard(pin, "PIN")
             }

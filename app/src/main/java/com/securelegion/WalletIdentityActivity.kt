@@ -50,11 +50,11 @@ class WalletIdentityActivity : AppCompatActivity() {
             showNewIdentityConfirmation()
         }
 
-        // Copy CID button
+        // Copy friend request address button
         findViewById<View>(R.id.copyCidButton).setOnClickListener {
-            val cid = findViewById<TextView>(R.id.contactCardCid).text.toString()
-            if (cid.isNotEmpty()) {
-                copyToClipboard(cid, "CID")
+            val friendRequestAddress = findViewById<TextView>(R.id.contactCardCid).text.toString()
+            if (friendRequestAddress.isNotEmpty()) {
+                copyToClipboard(friendRequestAddress, "Friend Request Address")
             }
         }
 
@@ -74,10 +74,10 @@ class WalletIdentityActivity : AppCompatActivity() {
 
     private fun showIdentityQrCode() {
         val keyManager = KeyManager.getInstance(this)
-        val cid = keyManager.getContactCardCid()
+        val friendRequestOnion = keyManager.getFriendRequestOnion()
 
-        if (cid == null) {
-            ThemedToast.show(this, "No CID available")
+        if (friendRequestOnion == null) {
+            ThemedToast.show(this, "No friend request address available")
             return
         }
 
@@ -109,17 +109,17 @@ class WalletIdentityActivity : AppCompatActivity() {
 
         // Generate QR code
         val qrCodeImage = view.findViewById<ImageView>(R.id.qrCodeImage)
-        val qrBitmap = generateQrCode(cid, 512)
+        val qrBitmap = generateQrCode(friendRequestOnion, 512)
         if (qrBitmap != null) {
             qrCodeImage.setImageBitmap(qrBitmap)
         }
 
-        // Set CID text
-        view.findViewById<TextView>(R.id.cidText).text = cid
+        // Set friend request address text
+        view.findViewById<TextView>(R.id.cidText).text = friendRequestOnion
 
         // Share button
         view.findViewById<View>(R.id.shareQrButton).setOnClickListener {
-            shareQrCode(qrBitmap, cid)
+            shareQrCode(qrBitmap, friendRequestOnion)
             bottomSheet.dismiss()
         }
 
@@ -172,7 +172,7 @@ class WalletIdentityActivity : AppCompatActivity() {
             val shareIntent = Intent(Intent.ACTION_SEND).apply {
                 type = "image/png"
                 putExtra(Intent.EXTRA_STREAM, contentUri)
-                putExtra(Intent.EXTRA_TEXT, "Add me on Secure!\nCID: $cid")
+                putExtra(Intent.EXTRA_TEXT, "Add me on Secure!\nFriend Request Address: $cid")
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             }
 
@@ -190,7 +190,11 @@ class WalletIdentityActivity : AppCompatActivity() {
         val digit4 = findViewById<TextView>(R.id.pinDigit4).text.toString()
         val digit5 = findViewById<TextView>(R.id.pinDigit5).text.toString()
         val digit6 = findViewById<TextView>(R.id.pinDigit6).text.toString()
-        return "$digit1$digit2$digit3$digit4$digit5$digit6"
+        val digit7 = findViewById<TextView>(R.id.pinDigit7).text.toString()
+        val digit8 = findViewById<TextView>(R.id.pinDigit8).text.toString()
+        val digit9 = findViewById<TextView>(R.id.pinDigit9).text.toString()
+        val digit10 = findViewById<TextView>(R.id.pinDigit10).text.toString()
+        return "$digit1$digit2$digit3$digit4$digit5$digit6$digit7$digit8$digit9$digit10"
     }
 
     private fun showNewIdentityConfirmation() {
@@ -271,50 +275,55 @@ class WalletIdentityActivity : AppCompatActivity() {
                     "User${System.currentTimeMillis().toString().takeLast(6)}"
                 }
 
-                // Step 4: Create and upload new contact card
+                // Step 4: Create friend request .onion and derive IPFS CID (v2.0)
+                Log.i("WalletIdentity", "Creating friend request .onion address...")
+                val friendRequestOnion = keyManager.createFriendRequestOnion()
+                Log.i("WalletIdentity", "Friend request .onion: $friendRequestOnion")
+
+                Log.i("WalletIdentity", "Deriving IPFS CID from seed...")
+                val ipfsCid = keyManager.deriveIPFSCID(mnemonic)
+                keyManager.storeIPFSCID(ipfsCid)
+                Log.i("WalletIdentity", "IPFS CID: $ipfsCid")
+
+                // Step 5: Create and upload new contact card
                 ThemedToast.show(this@WalletIdentityActivity, "Uploading contact card...")
+
+                val cardManager = ContactCardManager(this@WalletIdentityActivity)
+                val newPin = cardManager.generateRandomPin()
 
                 val contactCard = ContactCard(
                     displayName = username,
                     solanaPublicKey = keyManager.getSolanaPublicKey(),
                     x25519PublicKey = keyManager.getEncryptionPublicKey(),
                     solanaAddress = newWalletAddress,
-                    torOnionAddress = newOnionAddress,
+                    friendRequestOnion = friendRequestOnion,
+                    messagingOnion = newOnionAddress,
+                    contactPin = newPin,
+                    ipfsCid = ipfsCid,
                     timestamp = System.currentTimeMillis()
                 )
 
-                val cardManager = ContactCardManager(this@WalletIdentityActivity)
-                val newPin = cardManager.generateRandomPin()
-                val publicKey = keyManager.getSolanaAddress() // Get Base58 public key
+                // Store contact card info (CID is deterministic, not uploaded)
+                keyManager.storeContactPin(newPin)
+                keyManager.storeIPFSCID(ipfsCid)
+                // Note: friendRequestOnion already stored by createFriendRequestOnion()
+                keyManager.storeMessagingOnion(newOnionAddress)
+                keyManager.storeUsername(username)
 
-                val result = withContext(Dispatchers.IO) {
-                    cardManager.uploadContactCard(contactCard, newPin, publicKey)
-                }
+                Log.i("WalletIdentity", "New identity created successfully!")
+                Log.i("WalletIdentity", "CID: $ipfsCid (deterministic from seed)")
+                Log.i("WalletIdentity", "PIN: $newPin")
 
-                if (result.isSuccess) {
-                    val (cid, size) = result.getOrThrow()
+                // Refresh UI
+                loadUsername()
+                loadContactCardInfo()
 
-                    // Step 5: Store everything
-                    keyManager.storeContactCardInfo(cid, newPin)
-                    keyManager.storeUsername(username)
+                // Show seed phrase backup screen
+                ThemedToast.showLong(this@WalletIdentityActivity, "New identity created! Backup your seed phrase!")
 
-                    Log.i("WalletIdentity", "New identity created successfully!")
-                    Log.i("WalletIdentity", "CID: $cid")
-                    Log.i("WalletIdentity", "PIN: $newPin")
-
-                    // Refresh UI
-                    loadUsername()
-                    loadContactCardInfo()
-
-                    // Show seed phrase backup screen
-                    ThemedToast.showLong(this@WalletIdentityActivity, "New identity created! Backup your seed phrase!")
-
-                    val intent = Intent(this@WalletIdentityActivity, BackupSeedPhraseActivity::class.java)
-                    intent.putExtra(BackupSeedPhraseActivity.EXTRA_SEED_PHRASE, mnemonic)
-                    startActivity(intent)
-                } else {
-                    throw result.exceptionOrNull()!!
-                }
+                val intent = Intent(this@WalletIdentityActivity, BackupSeedPhraseActivity::class.java)
+                intent.putExtra(BackupSeedPhraseActivity.EXTRA_SEED_PHRASE, mnemonic)
+                startActivity(intent)
 
                 findViewById<View>(R.id.updateUsernameButton).isEnabled = true
 
@@ -372,21 +381,28 @@ class WalletIdentityActivity : AppCompatActivity() {
         try {
             val keyManager = KeyManager.getInstance(this)
             if (keyManager.hasContactCardInfo()) {
-                val cid = keyManager.getContactCardCid()
-                val pin = keyManager.getContactCardPin()
+                val friendRequestOnion = keyManager.getFriendRequestOnion()
+                val pin = keyManager.getContactPin()
 
-                if (cid != null && pin != null) {
-                    // Set CID
-                    findViewById<TextView>(R.id.contactCardCid).text = cid
+                if (friendRequestOnion != null && pin != null) {
+                    // Set friend request .onion address
+                    findViewById<TextView>(R.id.contactCardCid).text = friendRequestOnion
 
-                    // Set PIN digits
-                    if (pin.length == 6) {
+                    // Set PIN digits (10 digits)
+                    if (pin.length == 10) {
                         findViewById<TextView>(R.id.pinDigit1).text = pin[0].toString()
                         findViewById<TextView>(R.id.pinDigit2).text = pin[1].toString()
                         findViewById<TextView>(R.id.pinDigit3).text = pin[2].toString()
                         findViewById<TextView>(R.id.pinDigit4).text = pin[3].toString()
                         findViewById<TextView>(R.id.pinDigit5).text = pin[4].toString()
                         findViewById<TextView>(R.id.pinDigit6).text = pin[5].toString()
+                        findViewById<TextView>(R.id.pinDigit7).text = pin[6].toString()
+                        findViewById<TextView>(R.id.pinDigit8).text = pin[7].toString()
+                        findViewById<TextView>(R.id.pinDigit9).text = pin[8].toString()
+                        findViewById<TextView>(R.id.pinDigit10).text = pin[9].toString()
+                        Log.i("WalletIdentity", "Loaded 10-digit PIN")
+                    } else {
+                        Log.e("WalletIdentity", "Invalid PIN length: ${pin.length} (expected 10)")
                     }
 
                     Log.i("WalletIdentity", "Loaded contact card info")

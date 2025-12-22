@@ -55,10 +55,16 @@ class SplashActivity : AppCompatActivity() {
             if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
                 Log.i("SplashActivity", "Requesting notification permission")
                 ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.POST_NOTIFICATIONS), NOTIFICATION_PERMISSION_REQUEST_CODE)
-                // Continue with app initialization after permission request
+                // Wait for permission result before continuing - initialization will happen in onRequestPermissionsResult
+                return
             }
         }
 
+        // Permission already granted or not needed - continue with initialization
+        initializeApp()
+    }
+
+    private fun initializeApp() {
         // TorManager will start TorService internally when initialized
         Log.i("SplashActivity", "TorManager will handle Tor initialization...")
 
@@ -377,7 +383,9 @@ class SplashActivity : AppCompatActivity() {
             // Track progress to detect truly stuck state
             var lastProgressStatus = -999
             var stuckCounter = 0
-            val maxStuckAttempts = 80 // 20 seconds stuck at same status = reset
+            // Faster restart on slow devices: 12s for Android < 13, 15s for newer
+            val sdkInt = android.os.Build.VERSION.SDK_INT
+            val maxStuckAttempts = if (sdkInt < 33) 48 else 60 // 12s vs 15s at 250ms intervals
 
             // Check if this is first-time setup (no account/keys exist yet)
             val keyManager = KeyManager.getInstance(this@SplashActivity)
@@ -395,7 +403,8 @@ class SplashActivity : AppCompatActivity() {
                     if (status == lastProgressStatus && status > 0 && status < 100) {
                         stuckCounter++
                         if (stuckCounter >= maxStuckAttempts) {
-                            Log.w("SplashActivity", "Bootstrap stuck at $status% for 20 seconds - restarting Tor")
+                            val stuckSeconds = maxStuckAttempts / 4 // 250ms * 4 = 1 second
+                            Log.w("SplashActivity", "Bootstrap stuck at $status% for ${stuckSeconds}s - restarting Tor")
                             runOnUiThread {
                                 updateStatus("Connection stuck, restarting...")
                             }
@@ -606,6 +615,8 @@ class SplashActivity : AppCompatActivity() {
             } else {
                 Log.w("SplashActivity", "Notification permission denied - notifications won't be shown")
             }
+            // Continue with app initialization after permission is handled
+            initializeApp()
         }
     }
 

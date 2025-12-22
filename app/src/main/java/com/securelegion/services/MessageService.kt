@@ -1219,11 +1219,17 @@ class MessageService(private val context: Context) {
             Log.d(TAG, "Message type: ${message.messageType} → wire byte: 0x${messageTypeByte.toString(16).padStart(2, '0')}")
 
             // Send Ping via Rust bridge (with message for instant mode)
-            Log.d(TAG, "Calling RustBridge.sendPing to ${contact.torOnionAddress}...")
+            Log.d(TAG, "Contact ${contact.displayName} .onion addresses:")
+            Log.d(TAG, "  messagingOnion: ${contact.messagingOnion}")
+            Log.d(TAG, "  friendRequestOnion: ${contact.friendRequestOnion}")
+            Log.d(TAG, "  torOnionAddress (deprecated): ${contact.torOnionAddress}")
+            val onionAddress = contact.messagingOnion ?: contact.torOnionAddress ?: ""
+            Log.d(TAG, "  → Selected for messaging: $onionAddress")
+            Log.d(TAG, "Calling RustBridge.sendPing to $onionAddress...")
             val pingResponse = RustBridge.sendPing(
                 recipientEd25519PubKey,
                 recipientX25519PubKey,
-                contact.torOnionAddress,
+                onionAddress,
                 encryptedBytes,
                 messageTypeByte
             )
@@ -1362,7 +1368,7 @@ class MessageService(private val context: Context) {
 
                     // Send message blob
                     val success = RustBridge.sendMessageBlob(
-                        contact.torOnionAddress,
+                        contact.messagingOnion ?: contact.torOnionAddress ?: "",
                         encryptedBytes,
                         messageTypeByte
                     )

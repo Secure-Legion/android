@@ -154,6 +154,9 @@ class MainActivity : BaseActivity() {
         // Start Tor foreground service (shows notification and handles Ping-Pong protocol)
         startTorService()
 
+        // Start friend request HTTP server (v2.0)
+        startFriendRequestServer()
+
         // Load data asynchronously to avoid blocking UI
         setupChatList()
         setupContactsList()
@@ -275,6 +278,28 @@ class MainActivity : BaseActivity() {
             com.securelegion.services.TorService.start(this)
         } catch (e: Exception) {
             Log.e("MainActivity", "Failed to start Tor service", e)
+        }
+    }
+
+    /**
+     * Start the friend request HTTP server (v2.0)
+     * This listens for incoming friend requests on the friend request .onion address
+     */
+    private fun startFriendRequestServer() {
+        lifecycleScope.launch {
+            try {
+                Log.d("MainActivity", "Starting friend request HTTP server...")
+                val friendRequestService = com.securelegion.services.FriendRequestService.getInstance(this@MainActivity)
+                val result = friendRequestService.startServer()
+
+                if (result.isSuccess) {
+                    Log.i("MainActivity", "Friend request server started successfully")
+                } else {
+                    Log.w("MainActivity", "Failed to start friend request server: ${result.exceptionOrNull()?.message}")
+                }
+            } catch (e: Exception) {
+                Log.e("MainActivity", "Error starting friend request server", e)
+            }
         }
     }
 

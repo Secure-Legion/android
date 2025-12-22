@@ -112,6 +112,21 @@ class TorManager(private val context: Context) {
                 // Read bridge settings
                 val bridgeConfig = getBridgeConfiguration()
 
+                // Detect device performance to set appropriate initial timeouts
+                // Slower devices (Android < 13 or low-end) need more conservative timeouts
+                val sdkInt = android.os.Build.VERSION.SDK_INT
+                val isSlowerDevice = sdkInt < 33 // Android 13+
+
+                // Set initial CircuitBuildTimeout based on device
+                // Tor will learn and adapt from this starting point
+                val initialCircuitTimeout = if (isSlowerDevice) {
+                    "CircuitBuildTimeout 45" // Slower devices: start with 45s
+                } else {
+                    "CircuitBuildTimeout 30" // Faster devices: start with 30s
+                }
+
+                Log.i(TAG, "Device: Android $sdkInt, using initial timeout: ${if (isSlowerDevice) "45s (slower device)" else "30s (faster device)"}")
+
                 // ALWAYS write torrc configuration (even if Tor is running)
                 // This ensures bridge configuration changes are applied on restart
                 torrc.writeText("""
@@ -121,6 +136,9 @@ class TorManager(private val context: Context) {
                     CookieAuthentication 1
                     ClientOnly 1
                     AvoidDiskWrites 1
+                    DormantCanceledByStartup 1
+                    LearnCircuitBuildTimeout 1
+                    $initialCircuitTimeout
                     $bridgeConfig
                 """.trimIndent())
 
@@ -200,13 +218,24 @@ class TorManager(private val context: Context) {
                 val rustStatus = RustBridge.initializeTor()
                 Log.d(TAG, "Rust TorManager initialized: $rustStatus")
 
-                // Re-register hidden service with Tor (must be done on every Tor start)
+                // Re-register hidden services with Tor (must be done on every Tor start)
                 val keyManager = KeyManager.getInstance(context)
                 val onionAddress = if (keyManager.isInitialized()) {
-                    Log.d(TAG, "Re-registering hidden service with Tor...")
+                    Log.d(TAG, "Re-registering messaging hidden service with Tor...")
                     val address = RustBridge.createHiddenService(DEFAULT_SERVICE_PORT, DEFAULT_LOCAL_PORT)
                     saveOnionAddress(address)
-                    Log.d(TAG, "Hidden service re-registered: $address")
+                    keyManager.storeMessagingOnion(address)  // Store in KeyManager too
+                    Log.d(TAG, "Messaging hidden service re-registered: $address")
+
+                    // Also re-register friend-request hidden service (v2.0)
+                    Log.d(TAG, "Re-registering friend-request hidden service with Tor...")
+                    val friendRequestOnion = RustBridge.createFriendRequestHiddenService(
+                        servicePort = 9151,
+                        localPort = 9151,
+                        directory = "friend_requests"
+                    )
+                    Log.d(TAG, "Friend-request hidden service re-registered: $friendRequestOnion")
+
                     address
                 } else {
                     Log.d(TAG, "Skipping hidden service creation - no account yet")

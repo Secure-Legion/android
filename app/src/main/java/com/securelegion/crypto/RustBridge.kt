@@ -126,6 +126,71 @@ object RustBridge {
      */
     external fun getHiddenServiceAddress(): String?
 
+    // ==================== NEW v2.0: Friend Request System ====================
+
+    /**
+     * Create a second hidden service specifically for friend requests (v2.0)
+     * The existing createHiddenService() is for messaging
+     * @param servicePort The virtual port on the .onion address (default 9151)
+     * @param localPort The local port to forward connections to (default 8081)
+     * @param directory Subdirectory name (default "friend_requests")
+     * @return The friend request .onion address
+     */
+    external fun createFriendRequestHiddenService(
+        servicePort: Int = 9151,
+        localPort: Int = 8081,
+        directory: String = "friend_requests"
+    ): String
+
+    /**
+     * Start HTTP server for friend request handling (v2.0)
+     * Listens on localPort and serves:
+     * - GET /contact-card
+     * - POST /friend-request
+     * - POST /friend-response
+     * @param port The local port to listen on (default 8081)
+     * @return True if server started successfully
+     */
+    external fun startFriendRequestServer(port: Int = 8081): Boolean
+
+    /**
+     * Stop friend request HTTP server (v2.0)
+     */
+    external fun stopFriendRequestServer()
+
+    /**
+     * Serve encrypted contact card at GET /contact-card (v2.0)
+     * @param encryptedCard The encrypted contact card bytes
+     * @param cardLength The length of the encrypted card (for JNI)
+     * @param cid The IPFS CID for this card
+     */
+    external fun serveContactCard(encryptedCard: ByteArray, cardLength: Int, cid: String)
+
+    /**
+     * Serve contact list on friend request HTTP server (v5 architecture)
+     * @param cid The IPFS CID for this contact list
+     * @param encryptedList The encrypted contact list data
+     * @param listLength Length of the encrypted data
+     */
+    external fun serveContactList(cid: String, encryptedList: ByteArray, listLength: Int)
+
+    /**
+     * Make HTTP GET request via Tor SOCKS5 proxy (v2.0)
+     * @param url The URL to fetch
+     * @return Response body or null on error
+     */
+    external fun httpGetViaTor(url: String): String?
+
+    /**
+     * Make HTTP POST request via Tor SOCKS5 proxy (v2.0)
+     * @param url The URL to post to
+     * @param body The POST body (JSON string)
+     * @return Response body or null on error
+     */
+    external fun httpPostViaTor(url: String, body: String): String?
+
+    // ==================== END v2.0: Friend Request System ====================
+
     /**
      * Start the hidden service listener on the specified port
      * This enables receiving incoming Ping tokens
@@ -141,6 +206,13 @@ object RustBridge {
      * @return True if listener started successfully
      */
     external fun startTapListener(port: Int = 9151): Boolean
+
+    /**
+     * Start the friend request listener (separate from TAP to avoid interference)
+     * Initializes dedicated channel for 0x07/0x08 wire protocol messages
+     * @return True if listener started successfully
+     */
+    external fun startFriendRequestListener(): Boolean
 
     /**
      * Start the pong listener on the specified port
@@ -386,6 +458,14 @@ object RustBridge {
      * @return Tap wire message bytes, or null if no tap available
      */
     external fun pollIncomingTap(): ByteArray?
+
+    /**
+     * Poll for an incoming friend request (non-blocking)
+     * Wire protocol messages (0x07 FRIEND_REQUEST or 0x08 FRIEND_REQUEST_ACCEPTED)
+     * Returns raw encrypted bytes - Kotlin will decrypt based on message type
+     * @return Raw encrypted friend request bytes, or null if no request available
+     */
+    external fun pollFriendRequest(): ByteArray?
 
     /**
      * Decrypt an incoming tap and get sender's Ed25519 public key

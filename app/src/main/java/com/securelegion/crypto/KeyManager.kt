@@ -49,6 +49,13 @@ class KeyManager private constructor(context: Context) {
         private const val ZCASH_ADDRESS_ALIAS = "${KEYSTORE_ALIAS_PREFIX}zcash_address"
         private const val ZCASH_TRANSPARENT_ADDRESS_ALIAS = "${KEYSTORE_ALIAS_PREFIX}zcash_transparent_address"
 
+        // NEW v2.0 - Two .onion system keys
+        private const val FRIEND_REQUEST_ONION_ALIAS = "${KEYSTORE_ALIAS_PREFIX}friend_request_onion"
+        private const val MESSAGING_ONION_ALIAS = "${KEYSTORE_ALIAS_PREFIX}messaging_onion"
+        private const val CONTACT_PIN_ALIAS = "${KEYSTORE_ALIAS_PREFIX}contact_pin"
+        private const val IPFS_CID_ALIAS = "${KEYSTORE_ALIAS_PREFIX}ipfs_cid"
+        private const val SEED_PHRASE_ALIAS = "${KEYSTORE_ALIAS_PREFIX}wallet_main_seed"
+
         init {
             // Register BouncyCastle provider for SHA3-256 support
             Security.addProvider(BouncyCastleProvider())
@@ -119,6 +126,39 @@ class KeyManager private constructor(context: Context) {
     }
 
     /**
+     * Create friend request .onion address (v2.0)
+     * This creates the public .onion address for receiving friend requests
+     * Called during account creation
+     * @return The .onion address (56 characters + ".onion")
+     */
+    fun createFriendRequestOnion(): String {
+        try {
+            Log.d(TAG, "Creating friend request .onion address")
+
+            // Call Rust native function to create hidden service
+            // Friend request .onion uses wire protocol (0x07/0x08) on port 9151
+            val onionAddress = RustBridge.createFriendRequestHiddenService(
+                servicePort = 9151,  // Public port for friend requests
+                localPort = 9151,    // Local wire protocol listener (TorService tap listener)
+                directory = "friend_requests"
+            )
+
+            if (onionAddress.isEmpty()) {
+                throw KeyManagerException("Failed to create friend request .onion: empty address returned")
+            }
+
+            // Store the .onion address
+            storeFriendRequestOnion(onionAddress)
+
+            Log.i(TAG, "Friend request .onion created: $onionAddress")
+            return onionAddress
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to create friend request .onion", e)
+            throw KeyManagerException("Failed to create friend request .onion: ${e.message}", e)
+        }
+    }
+
+    /**
      * Get Ed25519 signing private key (32 bytes)
      * Used for: Solana transactions, Ping/Pong signatures, message authentication
      * Called via JNI from Rust code
@@ -182,6 +222,26 @@ class KeyManager private constructor(context: Context) {
     fun getHiddenServicePublicKey(): ByteArray {
         return getStoredKey("${HIDDEN_SERVICE_KEY_ALIAS}_public")
             ?: throw KeyManagerException("Hidden service public key not found")
+    }
+
+    /**
+     * Get friend request Ed25519 private key (32 bytes)
+     * Derives key on-the-fly from seed using domain separation (v2.0)
+     * Called via JNI from Rust code for friend request .onion creation
+     */
+    @Suppress("unused")
+    fun getFriendRequestKeyBytes(): ByteArray {
+        // Get seed phrase (stored as plain text, not hex)
+        val seedPhraseString = encryptedPrefs.getString(SEED_PHRASE_ALIAS, null)
+            ?: throw KeyManagerException("Seed phrase not found. Initialize wallet first.")
+
+        // Derive seed from mnemonic
+        val seed = mnemonicToSeed(seedPhraseString)
+
+        // Derive friend request keypair
+        val keyPair = deriveFriendRequestKeyPair(seed)
+
+        return keyPair.privateKey
     }
 
     /**
@@ -444,6 +504,79 @@ class KeyManager private constructor(context: Context) {
     }
 
     /**
+     * Derive Ed25519 keypair for friend request .onion from seed (v2.0)
+     * Uses domain separation: SHA-256(seed || "friend_req")
+     * This is DIFFERENT from the messaging .onion to enable two-onion architecture
+     */
+    private fun deriveFriendRequestKeyPair(seed: ByteArray): KeyPair {
+        // Domain separation: hash seed with "friend_req" to derive different key
+        val messageDigest = MessageDigest.getInstance("SHA-256")
+        messageDigest.update(seed)
+        messageDigest.update("friend_req".toByteArray())
+        val frSeed = messageDigest.digest()
+
+        // Generate Ed25519 keypair from seed using libsodium
+        val publicKey = ByteArray(Sign.ED25519_PUBLICKEYBYTES)
+        val privateKeyFull = ByteArray(Sign.ED25519_SECRETKEYBYTES) // 64 bytes
+
+        lazySodium.cryptoSignSeedKeypair(publicKey, privateKeyFull, frSeed)
+
+        // Extract 32-byte private key (libsodium returns 64 bytes: seed || public_key)
+        val privateKey = privateKeyFull.copyOfRange(0, 32)
+
+        Log.d(TAG, "Derived friend request Ed25519 keypair (private: ${privateKey.size} bytes, public: ${publicKey.size} bytes)")
+
+        return KeyPair(privateKey, publicKey)
+    }
+
+    /**
+     * Derive deterministic IPFS CID from seed phrase (v2.0)
+     * Uses domain separation: SHA-256(seed || "ipfs_cid")
+     * Returns CIDv1 format (base32-encoded multihash)
+     * Format: b{base32(0x01 || 0x55 || 0x12 || 0x20 || hash)}
+     */
+    fun deriveIPFSCID(seedPhrase: String): String {
+        try {
+            // Get BIP39 seed
+            val seed = mnemonicToSeed(seedPhrase)
+
+            // Domain separation: hash seed with "ipfs_cid" to derive unique hash
+            val messageDigest = MessageDigest.getInstance("SHA-256")
+            messageDigest.update(seed)
+            messageDigest.update("ipfs_cid".toByteArray())
+            val hash = messageDigest.digest()
+
+            // Build CIDv1 multihash structure:
+            // 0x01 = CIDv1
+            // 0x55 = raw codec
+            // 0x12 = SHA-256 multihash type
+            // 0x20 = hash length (32 bytes)
+            // + hash bytes
+            val cidBytes = ByteArray(1 + 1 + 1 + 1 + hash.size)
+            cidBytes[0] = 0x01.toByte() // CIDv1
+            cidBytes[1] = 0x55.toByte() // raw codec
+            cidBytes[2] = 0x12.toByte() // SHA-256
+            cidBytes[3] = 0x20.toByte() // 32 bytes
+            System.arraycopy(hash, 0, cidBytes, 4, hash.size)
+
+            // Encode to base32 (lowercase for CIDv1)
+            val base32 = android.util.Base64.encodeToString(cidBytes, android.util.Base64.NO_WRAP or android.util.Base64.NO_PADDING)
+                .lowercase()
+                .replace('+', '-')
+                .replace('/', '_')
+
+            // CIDv1 format: "b" + base32-encoded bytes
+            val cid = "b$base32"
+
+            Log.d(TAG, "Derived IPFS CID: $cid")
+            return cid
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to derive IPFS CID", e)
+            throw e
+        }
+    }
+
+    /**
      * Store keypair in encrypted preferences
      */
     private fun storeKeyPair(alias: String, keyPair: KeyPair) {
@@ -537,7 +670,7 @@ class KeyManager private constructor(context: Context) {
      * Check if contact card info is stored
      */
     fun hasContactCardInfo(): Boolean {
-        return getContactCardCid() != null && getContactCardPin() != null
+        return getIPFSCID() != null && getContactPin() != null
     }
 
     /**
@@ -567,6 +700,180 @@ class KeyManager private constructor(context: Context) {
     fun getUsername(): String? {
         return encryptedPrefs.getString("username", null)
     }
+
+    /**
+     * Store friend request .onion address (v2.0)
+     * This is the public .onion address for receiving friend requests
+     */
+    fun storeFriendRequestOnion(onion: String) {
+        encryptedPrefs.edit {
+            putString(FRIEND_REQUEST_ONION_ALIAS, onion)
+        }
+        Log.i(TAG, "Stored friend request .onion: $onion")
+    }
+
+    /**
+     * Get friend request .onion address (v2.0)
+     */
+    fun getFriendRequestOnion(): String? {
+        return encryptedPrefs.getString(FRIEND_REQUEST_ONION_ALIAS, null)
+    }
+
+    /**
+     * Store messaging .onion address (v2.0)
+     */
+    fun storeMessagingOnion(onion: String) {
+        encryptedPrefs.edit {
+            putString(MESSAGING_ONION_ALIAS, onion)
+        }
+        Log.i(TAG, "Stored messaging .onion: $onion")
+    }
+
+    /**
+     * Get messaging .onion address (v2.0)
+     */
+    fun getMessagingOnion(): String? {
+        return encryptedPrefs.getString(MESSAGING_ONION_ALIAS, null)
+    }
+
+    /**
+     * Store contact PIN (v2.0)
+     * 10-digit PIN formatted as XXX-XXX-XXXX
+     * Stored encrypted in EncryptedSharedPreferences
+     */
+    fun storeContactPin(pin: String) {
+        encryptedPrefs.edit {
+            putString(CONTACT_PIN_ALIAS, pin)
+        }
+        Log.i(TAG, "Stored contact PIN")
+    }
+
+    /**
+     * Get contact PIN (v2.0)
+     */
+    fun getContactPin(): String? {
+        return encryptedPrefs.getString(CONTACT_PIN_ALIAS, null)
+    }
+
+    /**
+     * Store IPFS CID (v2.0)
+     * Deterministic CID derived from seed phrase
+     */
+    fun storeIPFSCID(cid: String) {
+        encryptedPrefs.edit {
+            putString(IPFS_CID_ALIAS, cid)
+        }
+        Log.i(TAG, "Stored IPFS CID: $cid")
+    }
+
+    /**
+     * Get IPFS CID (v2.0)
+     */
+    fun getIPFSCID(): String? {
+        return encryptedPrefs.getString(IPFS_CID_ALIAS, null)
+    }
+
+    // ==================== CONTACT LIST BACKUP (v5 Architecture) ====================
+
+    /**
+     * Derive deterministic contact list CID from stored seed phrase (v5)
+     * Uses domain separation: SHA-256(seed || "contact_list_cid")
+     * Returns CIDv1 format for IPFS mesh backup
+     */
+    fun deriveContactListCID(): String {
+        val seedPhrase = getMainWalletSeedForZcash()
+            ?: throw KeyManagerException("Seed phrase not found. Initialize wallet first.")
+        return deriveContactListCIDFromSeed(seedPhrase)
+    }
+
+    /**
+     * Derive deterministic contact list CID from provided seed phrase (v5)
+     * Used during account recovery to locate user's contact list in IPFS mesh
+     *
+     * Domain separation ensures contact list CID is different from contact card CID
+     * Format: b{base32(0x01 || 0x55 || 0x12 || 0x20 || hash)}
+     */
+    fun deriveContactListCIDFromSeed(seedPhrase: String): String {
+        try {
+            // Get BIP39 seed
+            val seed = mnemonicToSeed(seedPhrase)
+
+            // Domain separation: hash seed with "contact_list_cid"
+            // This is DIFFERENT from contact card CID ("ipfs_cid")
+            val messageDigest = MessageDigest.getInstance("SHA-256")
+            messageDigest.update(seed)
+            messageDigest.update("contact_list_cid".toByteArray())
+            val hash = messageDigest.digest()
+
+            // Build CIDv1 multihash structure:
+            // 0x01 = CIDv1
+            // 0x55 = raw codec
+            // 0x12 = SHA-256 multihash type
+            // 0x20 = hash length (32 bytes)
+            val cidBytes = ByteArray(1 + 1 + 1 + 1 + hash.size)
+            cidBytes[0] = 0x01.toByte() // CIDv1
+            cidBytes[1] = 0x55.toByte() // raw codec
+            cidBytes[2] = 0x12.toByte() // SHA-256
+            cidBytes[3] = 0x20.toByte() // 32 bytes
+            System.arraycopy(hash, 0, cidBytes, 4, hash.size)
+
+            // Encode to base32 (lowercase for CIDv1)
+            val base32 = android.util.Base64.encodeToString(cidBytes, android.util.Base64.NO_WRAP or android.util.Base64.NO_PADDING)
+                .lowercase()
+                .replace('+', '-')
+                .replace('/', '_')
+
+            // CIDv1 format: "b" + base32-encoded bytes
+            val cid = "b$base32"
+
+            Log.d(TAG, "Derived contact list CID: $cid")
+            return cid
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to derive contact list CID", e)
+            throw e
+        }
+    }
+
+    /**
+     * Derive contact PIN from provided seed phrase (v5)
+     * Used during account recovery to decrypt contact list from IPFS mesh
+     *
+     * Derives a 10-digit PIN formatted as XXX-XXX-XXXX
+     * Domain separation: SHA-256(seed || "contact_list_pin")
+     */
+    fun deriveContactPinFromSeed(seedPhrase: String): String {
+        try {
+            // Get BIP39 seed
+            val seed = mnemonicToSeed(seedPhrase)
+
+            // Domain separation: hash seed with "contact_list_pin"
+            val messageDigest = MessageDigest.getInstance("SHA-256")
+            messageDigest.update(seed)
+            messageDigest.update("contact_list_pin".toByteArray())
+            val hash = messageDigest.digest()
+
+            // Convert first 4 bytes of hash to a 10-digit number
+            val num = (hash[0].toInt() and 0xFF shl 24) or
+                     (hash[1].toInt() and 0xFF shl 16) or
+                     (hash[2].toInt() and 0xFF shl 8) or
+                     (hash[3].toInt() and 0xFF)
+
+            // Take absolute value and mod by 10 billion to get 10 digits
+            val pinNumber = kotlin.math.abs(num.toLong()) % 10000000000L
+
+            // Format as XXX-XXX-XXXX
+            val pinString = pinNumber.toString().padStart(10, '0')
+            val pin = "${pinString.substring(0, 3)}-${pinString.substring(3, 6)}-${pinString.substring(6, 10)}"
+
+            Log.d(TAG, "Derived contact list PIN")
+            return pin
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to derive contact list PIN", e)
+            throw e
+        }
+    }
+
+    // ==================== SEED PHRASE STORAGE ====================
 
     /**
      * Store seed phrase (encrypted) for display on account created screen

@@ -95,26 +95,52 @@
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="CID (IPFS Contact ID)"
+                android:text="Friends Address"
                 android:textSize="14sp"
                 android:fontFamily="@font/poppins_medium"
                 android:textColor="#8C8C8C"
                 android:layout_marginBottom="8dp" />
 
-            <EditText
-                android:id="@+id/cidInput"
+            <FrameLayout
                 android:layout_width="match_parent"
                 android:layout_height="60dp"
-                android:background="@drawable/lock_password_input_bg"
-                android:hint=""
-                android:inputType="textPassword"
-                android:textColorHint="#666666"
-                android:textColor="#8C8C8C"
-                android:fontFamily="@font/poppins_regular"
-                android:textSize="16sp"
-                android:paddingStart="16dp"
-                android:paddingEnd="16dp"
-                android:layout_marginBottom="24dp" />
+                android:layout_marginBottom="24dp">
+
+                <EditText
+                    android:id="@+id/cidInput"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:background="@drawable/lock_password_input_bg"
+                    android:hint="friend.onion"
+                    android:inputType="textPassword"
+                    android:textColorHint="#666666"
+                    android:textColor="#8C8C8C"
+                    android:fontFamily="@font/poppins_regular"
+                    android:textSize="16sp"
+                    android:paddingStart="16dp"
+                    android:paddingEnd="56dp" />
+
+                <FrameLayout
+                    android:id="@+id/scanQrButton"
+                    android:layout_width="48dp"
+                    android:layout_height="48dp"
+                    android:layout_gravity="end|center_vertical"
+                    android:layout_marginEnd="6dp"
+                    android:background="@drawable/settings_icon_bg"
+                    android:clickable="true"
+                    android:focusable="true">
+
+                    <ImageView
+                        android:layout_width="24dp"
+                        android:layout_height="24dp"
+                        android:layout_gravity="center"
+                        android:src="@drawable/ic_qr_code"
+                        android:tint="#888888"
+                        android:contentDescription="Scan QR Code" />
+
+                </FrameLayout>
+
+            </FrameLayout>
 
             <TextView
                 android:layout_width="wrap_content"
@@ -125,7 +151,7 @@
                 android:textColor="#8C8C8C"
                 android:layout_marginBottom="8dp" />
 
-            <!-- PIN Input Boxes -->
+            <!-- PIN Input Boxes in phone format: XXX-XXX-XXXX -->
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
@@ -133,38 +159,39 @@
                 android:gravity="center"
                 android:layout_marginBottom="24dp">
 
+                <!-- First group: 3 digits -->
                 <EditText
                     android:id="@+id/pinBox1"
                     android:layout_width="0dp"
-                    android:layout_height="50dp"
+                    android:layout_height="36dp"
                     android:layout_weight="1"
-                    android:layout_marginEnd="8dp"
+                    android:layout_marginEnd="4dp"
                     android:background="@drawable/pin_box_bg"
                     android:gravity="center"
                     android:inputType="number"
                     android:maxLength="1"
                     android:textColor="#8C8C8C"
-                    android:textSize="20sp"
+                    android:textSize="16sp"
                     android:fontFamily="@font/poppins_medium" />
 
                 <EditText
                     android:id="@+id/pinBox2"
                     android:layout_width="0dp"
-                    android:layout_height="50dp"
+                    android:layout_height="36dp"
                     android:layout_weight="1"
-                    android:layout_marginEnd="8dp"
+                    android:layout_marginEnd="4dp"
                     android:background="@drawable/pin_box_bg"
                     android:gravity="center"
                     android:inputType="number"
                     android:maxLength="1"
                     android:textColor="#8C8C8C"
-                    android:textSize="20sp"
+                    android:textSize="16sp"
                     android:fontFamily="@font/poppins_medium" />
 
                 <EditText
                     android:id="@+id/pinBox3"
                     android:layout_width="0dp"
-                    android:layout_height="50dp"
+                    android:layout_height="36dp"
                     android:layout_weight="1"
                     android:layout_marginEnd="8dp"
                     android:background="@drawable/pin_box_bg"
@@ -172,27 +199,52 @@
                     android:inputType="number"
                     android:maxLength="1"
                     android:textColor="#8C8C8C"
-                    android:textSize="20sp"
+                    android:textSize="16sp"
                     android:fontFamily="@font/poppins_medium" />
 
+                <!-- Dash separator -->
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="36dp"
+                    android:text="-"
+                    android:textColor="#666666"
+                    android:textSize="20sp"
+                    android:gravity="center"
+                    android:layout_marginEnd="8dp" />
+
+                <!-- Second group: 3 digits -->
                 <EditText
                     android:id="@+id/pinBox4"
                     android:layout_width="0dp"
-                    android:layout_height="50dp"
+                    android:layout_height="36dp"
                     android:layout_weight="1"
-                    android:layout_marginEnd="8dp"
+                    android:layout_marginEnd="4dp"
                     android:background="@drawable/pin_box_bg"
                     android:gravity="center"
                     android:inputType="number"
                     android:maxLength="1"
                     android:textColor="#8C8C8C"
-                    android:textSize="20sp"
+                    android:textSize="16sp"
                     android:fontFamily="@font/poppins_medium" />
 
                 <EditText
                     android:id="@+id/pinBox5"
                     android:layout_width="0dp"
-                    android:layout_height="50dp"
+                    android:layout_height="36dp"
+                    android:layout_weight="1"
+                    android:layout_marginEnd="4dp"
+                    android:background="@drawable/pin_box_bg"
+                    android:gravity="center"
+                    android:inputType="number"
+                    android:maxLength="1"
+                    android:textColor="#8C8C8C"
+                    android:textSize="16sp"
+                    android:fontFamily="@font/poppins_medium" />
+
+                <EditText
+                    android:id="@+id/pinBox6"
+                    android:layout_width="0dp"
+                    android:layout_height="36dp"
                     android:layout_weight="1"
                     android:layout_marginEnd="8dp"
                     android:background="@drawable/pin_box_bg"
@@ -200,20 +252,73 @@
                     android:inputType="number"
                     android:maxLength="1"
                     android:textColor="#8C8C8C"
+                    android:textSize="16sp"
+                    android:fontFamily="@font/poppins_medium" />
+
+                <!-- Dash separator -->
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="36dp"
+                    android:text="-"
+                    android:textColor="#666666"
                     android:textSize="20sp"
+                    android:gravity="center"
+                    android:layout_marginEnd="8dp" />
+
+                <!-- Third group: 4 digits -->
+                <EditText
+                    android:id="@+id/pinBox7"
+                    android:layout_width="0dp"
+                    android:layout_height="36dp"
+                    android:layout_weight="1"
+                    android:layout_marginEnd="4dp"
+                    android:background="@drawable/pin_box_bg"
+                    android:gravity="center"
+                    android:inputType="number"
+                    android:maxLength="1"
+                    android:textColor="#8C8C8C"
+                    android:textSize="16sp"
                     android:fontFamily="@font/poppins_medium" />
 
                 <EditText
-                    android:id="@+id/pinBox6"
+                    android:id="@+id/pinBox8"
                     android:layout_width="0dp"
-                    android:layout_height="50dp"
+                    android:layout_height="36dp"
+                    android:layout_weight="1"
+                    android:layout_marginEnd="4dp"
+                    android:background="@drawable/pin_box_bg"
+                    android:gravity="center"
+                    android:inputType="number"
+                    android:maxLength="1"
+                    android:textColor="#8C8C8C"
+                    android:textSize="16sp"
+                    android:fontFamily="@font/poppins_medium" />
+
+                <EditText
+                    android:id="@+id/pinBox9"
+                    android:layout_width="0dp"
+                    android:layout_height="36dp"
+                    android:layout_weight="1"
+                    android:layout_marginEnd="4dp"
+                    android:background="@drawable/pin_box_bg"
+                    android:gravity="center"
+                    android:inputType="number"
+                    android:maxLength="1"
+                    android:textColor="#8C8C8C"
+                    android:textSize="16sp"
+                    android:fontFamily="@font/poppins_medium" />
+
+                <EditText
+                    android:id="@+id/pinBox10"
+                    android:layout_width="0dp"
+                    android:layout_height="36dp"
                     android:layout_weight="1"
                     android:background="@drawable/pin_box_bg"
                     android:gravity="center"
                     android:inputType="number"
                     android:maxLength="1"
                     android:textColor="#8C8C8C"
-                    android:textSize="20sp"
+                    android:textSize="16sp"
                     android:fontFamily="@font/poppins_medium" />
 
             </LinearLayout>

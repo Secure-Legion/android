@@ -11,6 +11,9 @@ import androidx.lifecycle.ProcessLifecycleOwner
 import com.securelegion.crypto.TorManager
 import IPtProxy.Controller
 import java.io.File
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 
 /**
  * Application class for Secure Legion
@@ -62,6 +65,22 @@ class SecureLegionApplication : Application() {
             Log.d(TAG, "Tor initialization started")
         } catch (e: Exception) {
             Log.e(TAG, "Failed to initialize Tor", e)
+        }
+
+        // Initialize IPFS Manager for auto-pinning mesh (v5 architecture)
+        try {
+            Log.d(TAG, "Initializing IPFS Manager...")
+            CoroutineScope(Dispatchers.IO).launch {
+                val ipfsManager = com.securelegion.services.IPFSManager.getInstance(this@SecureLegionApplication)
+                val result = ipfsManager.initialize()
+                if (result.isSuccess) {
+                    Log.i(TAG, "IPFS Manager initialized successfully")
+                } else {
+                    Log.e(TAG, "IPFS Manager initialization failed: ${result.exceptionOrNull()?.message}")
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to initialize IPFS Manager", e)
         }
     }
 
