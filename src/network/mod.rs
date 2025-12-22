@@ -1,5 +1,7 @@
 pub mod pingpong;
 pub mod tor;
+pub mod friend_request_server;
+pub mod socks5_client;
 
 pub use pingpong::{
     PingToken,
@@ -15,3 +17,5 @@ pub use pingpong::{
     cleanup_expired_acks,
 };
 pub use tor::{TorManager, PENDING_CONNECTIONS, PendingConnection};
+pub use friend_request_server::{FriendRequestServer, get_server};
+pub use socks5_client::Socks5Client;

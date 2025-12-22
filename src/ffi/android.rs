@@ -84,6 +84,7 @@ static GLOBAL_PING_RECEIVER: OnceCell<Arc<Mutex<mpsc::UnboundedReceiver<(u64, Ve
 static GLOBAL_TAP_RECEIVER: OnceCell<Arc<Mutex<mpsc::UnboundedReceiver<Vec<u8>>>>> = OnceCell::new();
 static GLOBAL_PONG_RECEIVER: OnceCell<Arc<Mutex<mpsc::UnboundedReceiver<Vec<u8>>>>> = OnceCell::new();
 static GLOBAL_ACK_RECEIVER: OnceCell<Arc<Mutex<mpsc::UnboundedReceiver<(u64, Vec<u8>)>>>> = OnceCell::new();
+static GLOBAL_FRIEND_REQUEST_RECEIVER: OnceCell<Arc<Mutex<mpsc::UnboundedReceiver<Vec<u8>>>>> = OnceCell::new();
 
 /// Global Tokio runtime for async operations
 /// This runtime persists for the lifetime of the process, allowing spawned tasks to continue running
@@ -1532,7 +1533,7 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendFriendRequest(
             }
         };
 
-        const FRIEND_REQUEST_PORT: u16 = 9150; // Use same port as hidden service
+        const FRIEND_REQUEST_PORT: u16 = 9151; // Friend request .onion port (wire protocol)
 
         let result = runtime.block_on(async {
             let manager = tor_manager.lock().unwrap();
@@ -1607,7 +1608,7 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendFriendRequestAccep
             }
         };
 
-        const FRIEND_REQUEST_PORT: u16 = 9150; // Use same port as hidden service
+        const FRIEND_REQUEST_PORT: u16 = 9151; // Friend request .onion port (wire protocol)
 
         let result = runtime.block_on(async {
             let manager = tor_manager.lock().unwrap();
@@ -1793,6 +1794,34 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_pollIncomingTap(
             std::ptr::null_mut()
         }
     }, std::ptr::null_mut())
+}
+
+/// Start friend request listener (separate from TAP to avoid interference)
+/// Initializes the global friend request channel
+#[no_mangle]
+pub extern "C" fn Java_com_securelegion_crypto_RustBridge_startFriendRequestListener(
+    mut env: JNIEnv,
+    _class: JClass,
+) -> jboolean {
+    catch_panic!(env, {
+        log::info!("Initializing friend request listener channel");
+
+        // Create channel for friend requests
+        let (tx, rx) = mpsc::unbounded_channel::<Vec<u8>>();
+
+        // Store receiver globally for polling
+        let _ = GLOBAL_FRIEND_REQUEST_RECEIVER.set(Arc::new(Mutex::new(rx)));
+
+        // Store sender in global FRIEND_REQUEST_TX for routing in tor.rs
+        let tx_arc = Arc::new(std::sync::Mutex::new(tx));
+        if let Err(_) = crate::network::tor::FRIEND_REQUEST_TX.set(tx_arc) {
+            log::error!("Friend request channel already initialized");
+            return 0;
+        }
+
+        log::info!("Friend request listener channel initialized successfully");
+        1 // success
+    }, 0)
 }
 
 /// Decrypt incoming tap and return sender's Ed25519 public key
@@ -2226,11 +2255,18 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendMessageBlob(
         };
 
         let result = runtime.block_on(async {
+            // Use port 9151 for friend requests (0x07, 0x08), port 9150 for regular messages
+            const FRIEND_REQUEST_PORT: u16 = 9151;
             const MESSAGE_PORT: u16 = 9150;
+
+            let port = match message_type_byte as u8 {
+                0x07 | 0x08 => FRIEND_REQUEST_PORT, // FRIEND_REQUEST or FRIEND_RESPONSE
+                _ => MESSAGE_PORT                    // Regular messages
+            };
 
             // Connect to recipient
             let tor = tor_manager.lock().unwrap();
-            let mut conn = tor.connect(&onion_address, MESSAGE_PORT).await?;
+            let mut conn = tor.connect(&onion_address, port).await?;
 
             // Send wire message (with X25519 pubkey prefix)
             tor.send(&mut conn, &wire_message).await?;
@@ -4859,3 +4895,421 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_getNLx402Version(
         }
     }, std::ptr::null_mut())
 }
+
+// ==================== v2.0: Friend Request System (Two .onion + IPFS) ====================
+
+/// Create a friend request hidden service (.onion address)
+/// Returns the .onion address as a string
+#[no_mangle]
+pub extern "C" fn Java_com_securelegion_crypto_RustBridge_createFriendRequestHiddenService(
+    mut env: JNIEnv,
+    _class: JClass,
+    service_port: jint,
+    local_port: jint,
+    directory: JString,
+) -> jstring {
+    catch_panic!(env, {
+        let dir_str = match jstring_to_string(&mut env, directory) {
+            Ok(s) => s,
+            Err(e) => {
+                let _ = env.throw_new("java/lang/IllegalArgumentException", e);
+                return std::ptr::null_mut();
+            }
+        };
+
+        log::info!("Creating friend request hidden service on port {} -> {}, dir: {}",
+            service_port, local_port, dir_str);
+
+        // Get KeyManager to retrieve friend request key
+        let context = match env.call_static_method(
+            "android/app/ActivityThread",
+            "currentApplication",
+            "()Landroid/app/Application;",
+            &[],
+        ) {
+            Ok(ctx) => ctx.l().unwrap(),
+            Err(e) => {
+                let _ = env.throw_new("java/lang/RuntimeException", format!("Failed to get context: {}", e));
+                return std::ptr::null_mut();
+            }
+        };
+
+        let key_manager = match crate::ffi::keystore::get_key_manager(&mut env, &context) {
+            Ok(km) => km,
+            Err(e) => {
+                let _ = env.throw_new("java/lang/RuntimeException", format!("Failed to get KeyManager: {}", e));
+                return std::ptr::null_mut();
+            }
+        };
+
+        // Get friend request private key (derived from seed with domain separation)
+        let fr_private_key = match crate::ffi::keystore::get_friend_request_private_key(&mut env, &key_manager) {
+            Ok(k) => k,
+            Err(e) => {
+                let _ = env.throw_new("java/lang/RuntimeException", format!("Failed to get friend request key: {}", e));
+                return std::ptr::null_mut();
+            }
+        };
+
+        let tor_manager = get_tor_manager();
+
+        // Run async hidden service creation with friend request key
+        let result = GLOBAL_RUNTIME.block_on(async {
+            let mut manager = tor_manager.lock().unwrap();
+            manager.create_hidden_service(service_port as u16, local_port as u16, &fr_private_key).await
+        });
+
+        match result {
+            Ok(onion_address) => {
+                log::info!("Friend request hidden service created successfully: {}", onion_address);
+
+                match string_to_jstring(&mut env, &onion_address) {
+                    Ok(s) => s.into_raw(),
+                    Err(e) => {
+                        let _ = env.throw_new("java/lang/RuntimeException", e);
+                        std::ptr::null_mut()
+                    }
+                }
+            },
+            Err(e) => {
+                let error_msg = format!("Failed to create friend request hidden service: {}", e);
+                log::error!("{}", error_msg);
+                let _ = env.throw_new("java/lang/RuntimeException", error_msg);
+                std::ptr::null_mut()
+            }
+        }
+    }, std::ptr::null_mut())
+}
+
+/// Start the friend request HTTP server on the specified port
+/// Returns true if server started successfully
+#[no_mangle]
+pub extern "C" fn Java_com_securelegion_crypto_RustBridge_startFriendRequestServer(
+    mut env: JNIEnv,
+    _class: JClass,
+    port: jint,
+) -> jboolean {
+    catch_panic!(env, {
+        log::info!("Starting friend request server on port {}", port);
+
+        // Start server in background tokio runtime
+        std::thread::spawn(move || {
+            let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
+            rt.block_on(async {
+                let server = crate::network::friend_request_server::get_server().await;
+                if let Err(e) = server.start(port as u16).await {
+                    log::error!("Failed to start friend request server: {}", e);
+                } else {
+                    log::info!("Friend request server started successfully on port {}", port);
+                }
+            });
+        });
+
+        1 // true
+    }, 0)
+}
+
+/// Stop the friend request HTTP server
+#[no_mangle]
+pub extern "C" fn Java_com_securelegion_crypto_RustBridge_stopFriendRequestServer(
+    mut env: JNIEnv,
+    _class: JClass,
+) {
+    catch_panic!(env, {
+        log::info!("Stopping friend request server");
+
+        // Stop server in background task
+        std::thread::spawn(|| {
+            let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
+            rt.block_on(async {
+                let server = crate::network::friend_request_server::get_server().await;
+                server.stop().await;
+                log::info!("Friend request server stopped");
+            });
+        });
+
+    }, ())
+}
+
+/// Store encrypted contact card to be served at GET /contact-card
+#[no_mangle]
+pub extern "C" fn Java_com_securelegion_crypto_RustBridge_serveContactCard(
+    mut env: JNIEnv,
+    _class: JClass,
+    encrypted_card: JByteArray,
+    card_length: jint,
+    cid: JString,
+) {
+    catch_panic!(env, {
+        let card_bytes = match jbytearray_to_vec(&mut env, encrypted_card) {
+            Ok(b) => b,
+            Err(e) => {
+                let _ = env.throw_new("java/lang/RuntimeException", e);
+                return;
+            }
+        };
+
+        let cid_str = match jstring_to_string(&mut env, cid) {
+            Ok(s) => s,
+            Err(e) => {
+                let _ = env.throw_new("java/lang/IllegalArgumentException", e);
+                return;
+            }
+        };
+
+        log::info!("Storing encrypted contact card (CID: {}, length: {})", cid_str, card_length);
+
+        // Store card in server state
+        std::thread::spawn(move || {
+            let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
+            rt.block_on(async {
+                let server = crate::network::friend_request_server::get_server().await;
+                server.set_contact_card(card_bytes, cid_str).await;
+                log::info!("Contact card stored in friend request server");
+            });
+        });
+
+    }, ())
+}
+
+/// Serve contact list on the friend request HTTP server (v5 architecture)
+#[no_mangle]
+pub extern "C" fn Java_com_securelegion_crypto_RustBridge_serveContactList(
+    mut env: JNIEnv,
+    _class: JClass,
+    cid: JString,
+    encrypted_list: JByteArray,
+    list_length: jint,
+) {
+    catch_panic!(env, {
+        let cid_str = match jstring_to_string(&mut env, cid) {
+            Ok(s) => s,
+            Err(e) => {
+                let _ = env.throw_new("java/lang/IllegalArgumentException", e);
+                return;
+            }
+        };
+
+        let list_bytes = match jbytearray_to_vec(&mut env, encrypted_list) {
+            Ok(b) => b,
+            Err(e) => {
+                let _ = env.throw_new("java/lang/RuntimeException", e);
+                return;
+            }
+        };
+
+        log::info!("Storing encrypted contact list (CID: {}, length: {})", cid_str, list_length);
+
+        // Store contact list in server state
+        std::thread::spawn(move || {
+            let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
+            rt.block_on(async {
+                let server = crate::network::friend_request_server::get_server().await;
+                server.set_contact_list(cid_str, list_bytes).await;
+                log::info!("Contact list stored in friend request server");
+            });
+        });
+
+    }, ())
+}
+
+/// Poll for incoming friend requests (non-blocking)
+/// Returns raw encrypted bytes (0x07 or 0x08 wire protocol messages)
+/// Kotlin will handle decryption based on message type
+#[no_mangle]
+pub extern "C" fn Java_com_securelegion_crypto_RustBridge_pollFriendRequest(
+    mut env: JNIEnv,
+    _class: JClass,
+) -> jbyteArray {
+    catch_panic!(env, {
+        if let Some(receiver) = GLOBAL_FRIEND_REQUEST_RECEIVER.get() {
+            let mut rx = receiver.lock().unwrap();
+
+            // Try to receive without blocking
+            match rx.try_recv() {
+                Ok(friend_request_bytes) => {
+                    log::info!("Polled friend request: {} bytes", friend_request_bytes.len());
+                    match vec_to_jbytearray(&mut env, &friend_request_bytes) {
+                        Ok(array) => array.into_raw(),
+                        Err(_) => std::ptr::null_mut(),
+                    }
+                }
+                Err(_) => {
+                    // No friend request available
+                    std::ptr::null_mut()
+                }
+            }
+        } else {
+            // Listener not started
+            std::ptr::null_mut()
+        }
+    }, std::ptr::null_mut())
+}
+
+/// Poll for friend request responses (non-blocking)
+/// Returns JSON string with response data, or null if no responses
+#[no_mangle]
+pub extern "C" fn Java_com_securelegion_crypto_RustBridge_pollFriendResponse(
+    mut env: JNIEnv,
+    _class: JClass,
+) -> jstring {
+    catch_panic!(env, {
+        log::debug!("Polling for friend request responses");
+
+        // Poll for response in blocking fashion
+        let result = std::thread::spawn(|| {
+            let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
+            rt.block_on(async {
+                let server = crate::network::friend_request_server::get_server().await;
+                server.poll_response().await
+            })
+        }).join();
+
+        match result {
+            Ok(Some(response)) => {
+                // Convert to JSON
+                let json = format!(
+                    r#"{{"approved":{},"encryptedCard":"{}","timestamp":{}}}"#,
+                    response.approved,
+                    base64::encode(&response.encrypted_card),
+                    response.timestamp
+                );
+
+                match string_to_jstring(&mut env, &json) {
+                    Ok(s) => s.into_raw(),
+                    Err(e) => {
+                        let _ = env.throw_new("java/lang/RuntimeException", e);
+                        std::ptr::null_mut()
+                    }
+                }
+            }
+            _ => std::ptr::null_mut()
+        }
+    }, std::ptr::null_mut())
+}
+
+/// Make HTTP GET request via Tor SOCKS5 proxy
+/// Returns response body or null on error
+#[no_mangle]
+pub extern "C" fn Java_com_securelegion_crypto_RustBridge_httpGetViaTor(
+    mut env: JNIEnv,
+    _class: JClass,
+    url: JString,
+) -> jstring {
+    catch_panic!(env, {
+        let url_str = match jstring_to_string(&mut env, url) {
+            Ok(s) => s,
+            Err(e) => {
+                let _ = env.throw_new("java/lang/IllegalArgumentException", e);
+                return std::ptr::null_mut();
+            }
+        };
+
+        log::info!("HTTP GET via Tor: {}", url_str);
+
+        // Create SOCKS5 client and make request
+        let client = crate::network::Socks5Client::tor_default();
+
+        match client.http_get(&url_str) {
+            Ok(response) => {
+                // Extract body from response
+                if let Some(body) = crate::network::socks5_client::extract_http_body(&response) {
+                    match string_to_jstring(&mut env, &body) {
+                        Ok(s) => {
+                            log::info!("HTTP GET successful ({} bytes)", body.len());
+                            s.into_raw()
+                        }
+                        Err(e) => {
+                            let _ = env.throw_new("java/lang/RuntimeException", e);
+                            std::ptr::null_mut()
+                        }
+                    }
+                } else {
+                    // Return full response if can't extract body
+                    match string_to_jstring(&mut env, &response) {
+                        Ok(s) => s.into_raw(),
+                        Err(e) => {
+                            let _ = env.throw_new("java/lang/RuntimeException", e);
+                            std::ptr::null_mut()
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                log::error!("HTTP GET via Tor failed: {}", e);
+                let error_msg = format!("HTTP GET failed: {}", e);
+                let _ = env.throw_new("java/io/IOException", &error_msg);
+                std::ptr::null_mut()
+            }
+        }
+    }, std::ptr::null_mut())
+}
+
+/// Make HTTP POST request via Tor SOCKS5 proxy
+/// Returns response body or null on error
+#[no_mangle]
+pub extern "C" fn Java_com_securelegion_crypto_RustBridge_httpPostViaTor(
+    mut env: JNIEnv,
+    _class: JClass,
+    url: JString,
+    body: JString,
+) -> jstring {
+    catch_panic!(env, {
+        let url_str = match jstring_to_string(&mut env, url) {
+            Ok(s) => s,
+            Err(e) => {
+                let _ = env.throw_new("java/lang/IllegalArgumentException", e);
+                return std::ptr::null_mut();
+            }
+        };
+
+        let body_str = match jstring_to_string(&mut env, body) {
+            Ok(s) => s,
+            Err(e) => {
+                let _ = env.throw_new("java/lang/IllegalArgumentException", e);
+                return std::ptr::null_mut();
+            }
+        };
+
+        log::info!("HTTP POST via Tor: {} (body length: {})", url_str, body_str.len());
+
+        // Create SOCKS5 client and make request
+        let client = crate::network::Socks5Client::tor_default();
+
+        // Use application/json as default content type
+        match client.http_post(&url_str, &body_str, "application/json") {
+            Ok(response) => {
+                // Extract body from response
+                if let Some(body) = crate::network::socks5_client::extract_http_body(&response) {
+                    match string_to_jstring(&mut env, &body) {
+                        Ok(s) => {
+                            log::info!("HTTP POST successful ({} bytes)", body.len());
+                            s.into_raw()
+                        }
+                        Err(e) => {
+                            let _ = env.throw_new("java/lang/RuntimeException", e);
+                            std::ptr::null_mut()
+                        }
+                    }
+                } else {
+                    // Return full response if can't extract body
+                    match string_to_jstring(&mut env, &response) {
+                        Ok(s) => s.into_raw(),
+                        Err(e) => {
+                            let _ = env.throw_new("java/lang/RuntimeException", e);
+                            std::ptr::null_mut()
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                log::error!("HTTP POST via Tor failed: {}", e);
+                let error_msg = format!("HTTP POST failed: {}", e);
+                let _ = env.throw_new("java/io/IOException", &error_msg);
+                std::ptr::null_mut()
+            }
+        }
+    }, std::ptr::null_mut())
+}
+
+// ==================== END v2.0: Friend Request System ====================

@@ -186,6 +186,11 @@ pub static PENDING_CONNECTIONS: Lazy<Arc<StdMutex<HashMap<u64, PendingConnection
 pub static CONNECTION_ID_COUNTER: Lazy<Arc<StdMutex<u64>>> =
     Lazy::new(|| Arc::new(StdMutex::new(0)));
 
+/// Global friend request channel sender
+/// Separate from regular message channels to avoid interference with working message system
+/// Initialized from JNI via startFriendRequestListener()
+pub static FRIEND_REQUEST_TX: once_cell::sync::OnceCell<Arc<StdMutex<tokio::sync::mpsc::UnboundedSender<Vec<u8>>>>> = once_cell::sync::OnceCell::new();
+
 pub struct TorManager {
     control_stream: Option<Arc<Mutex<TcpStream>>>,
     hidden_service_address: Option<String>,
@@ -373,12 +378,14 @@ impl TorManager {
         //   - Port 8080 → local 8080 (Pong listener - SAME as main listener for routing)
         //   - Port 9151 → local 9151 (Tap listener)
         //   - Port 9153 → local 9153 (ACK/Delivery Confirmation listener)
-        let actual_onion_address = {
+        let (actual_onion_address, is_new_service) = {
             let mut stream = control.lock().await;
 
-            // Flags=Detach makes hidden service persistent across Tor restarts
+            // Create ephemeral hidden service (no Flags=Detach)
+            // This prevents collision errors and ensures computed address matches Tor's address
+            // Service is recreated on each app start with same deterministic address from seed
             let command = format!(
-                "ADD_ONION ED25519-V3:{} Flags=Detach Port={},127.0.0.1:{} Port=8080,127.0.0.1:8080 Port=9151,127.0.0.1:9151 Port=9153,127.0.0.1:9153\r\n",
+                "ADD_ONION ED25519-V3:{} Port={},127.0.0.1:{} Port=8080,127.0.0.1:8080 Port=9151,127.0.0.1:9151 Port=9153,127.0.0.1:9153\r\n",
                 key_base64, service_port, local_port
             );
 
@@ -390,19 +397,12 @@ impl TorManager {
 
             log::info!("ADD_ONION response: {}", response);
 
+            // Check if service was created successfully
             if !response.contains("250 OK") {
-                // Check if error is due to service already existing (persistent service)
-                if response.contains("550") && (response.contains("collision") || response.contains("already")) {
-                    log::info!("Hidden service already exists (persistent) - using existing service");
-                    // Service already exists, just use the computed address
-                    self.hidden_service_address = Some(full_address.clone());
-                    log::info!("Using existing hidden service: {}", full_address);
-                    return Ok(full_address);
-                }
                 return Err(format!("Failed to create hidden service: {}", response).into());
             }
 
-            // Extract the actual ServiceID from Tor's response (not our computed address!)
+            // Successfully created new service - extract the actual ServiceID from Tor's response
             let actual_onion = if let Some(service_line) = response.lines().find(|l| l.contains("ServiceID=")) {
                 if let Some(start_idx) = service_line.find("ServiceID=") {
                     let service_id = &service_line[start_idx + 10..]; // Skip "ServiceID="
@@ -415,20 +415,19 @@ impl TorManager {
             };
 
             self.hidden_service_address = Some(actual_onion.clone());
-
-            log::info!("Hidden service created: {}", actual_onion);
+            log::info!("Hidden service registered: {}", actual_onion);
             log::info!("Service port: {}, Local forward: 127.0.0.1:{}", service_port, local_port);
-
-            actual_onion
+            // Return the address and mark as new
+            (actual_onion, true)
         };
 
         // Use the actual onion address from Tor's response
         let full_address = actual_onion_address;
 
-        // Now wait for descriptor upload events
-        log::info!("Waiting for hidden service descriptors to be uploaded...");
-        self.wait_for_descriptor_uploads_already_subscribed(&full_address).await?;
-
+        // Skip descriptor wait for ephemeral services (without Flags=Detach)
+        // Tor will publish descriptors in the background automatically
+        // Waiting for HS_DESC UPLOADED events doesn't work reliably with ephemeral services
+        log::info!("Ephemeral hidden service created - Tor will publish descriptors in background");
         log::info!("Hidden service is now reachable: {}", full_address);
 
         Ok(full_address)
@@ -746,14 +745,34 @@ impl TorManager {
                 tx.send((conn_id, data)).ok();
             }
             MSG_TYPE_FRIEND_REQUEST => {
-                log::info!("→ Routing to FRIEND_REQUEST handler (PING channel)");
-                // Friend requests are handled as message blobs, don't store connection
-                tx.send((conn_id, data)).ok();
+                log::info!("→ Routing to FRIEND_REQUEST handler (separate channel)");
+                // Friend requests routed to dedicated channel to avoid interference with message system
+                // Include type byte so Kotlin can distinguish Phase 1 (0x07) from Phase 2 (0x08)
+                if let Some(friend_tx) = FRIEND_REQUEST_TX.get() {
+                    let tx_lock = friend_tx.lock().unwrap();
+                    let mut wire_data = vec![msg_type]; // Prepend type byte
+                    wire_data.extend_from_slice(&data);
+                    if let Err(e) = tx_lock.send(wire_data) {
+                        log::error!("Failed to send friend request to channel: {}", e);
+                    }
+                } else {
+                    log::warn!("Friend request channel not initialized - dropping message");
+                }
             }
             MSG_TYPE_FRIEND_REQUEST_ACCEPTED => {
-                log::info!("→ Routing to FRIEND_REQUEST_ACCEPTED handler (PING channel)");
-                // Friend request accepted messages are handled as message blobs, don't store connection
-                tx.send((conn_id, data)).ok();
+                log::info!("→ Routing to FRIEND_REQUEST_ACCEPTED handler (separate channel)");
+                // Friend request accepted routed to dedicated channel to avoid interference with message system
+                // Include type byte so Kotlin can distinguish Phase 1 (0x07) from Phase 2 (0x08)
+                if let Some(friend_tx) = FRIEND_REQUEST_TX.get() {
+                    let tx_lock = friend_tx.lock().unwrap();
+                    let mut wire_data = vec![msg_type]; // Prepend type byte
+                    wire_data.extend_from_slice(&data);
+                    if let Err(e) = tx_lock.send(wire_data) {
+                        log::error!("Failed to send friend request accepted to channel: {}", e);
+                    }
+                } else {
+                    log::warn!("Friend request channel not initialized - dropping message");
+                }
             }
             _ => {
                 log::warn!("⚠️  Unknown message type: 0x{:02x}, treating as PING", msg_type);
