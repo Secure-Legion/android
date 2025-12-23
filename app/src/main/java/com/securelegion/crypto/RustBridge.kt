@@ -276,6 +276,64 @@ object RustBridge {
     external fun pollIncomingPing(): ByteArray?
 
     /**
+     * Poll for incoming MESSAGE (TEXT/VOICE/IMAGE/PAYMENT) from listener
+     * Returns encoded data: [connection_id (8 bytes)][encrypted message blob]
+     * @return Encoded data or null if no message available
+     */
+    external fun pollIncomingMessage(): ByteArray?
+
+    /**
+     * Poll for incoming VOICE call signaling (CALL_SIGNALING) from listener
+     * Returns encoded data: [connection_id (8 bytes)][encrypted call signaling blob]
+     * Completely separate from MESSAGE channel to allow simultaneous text messaging during voice calls
+     * @return Encoded data or null if no message available
+     */
+    external fun pollVoiceMessage(): ByteArray?
+
+    // ========== Opus Audio Codec (Voice Calling) ==========
+
+    /**
+     * Create Opus encoder for voice calling
+     * @param bitrate Bitrate in bits per second (e.g., 24000 for 24kbps)
+     * @return Encoder handle or -1 on error
+     */
+    external fun opusEncoderCreate(bitrate: Int): Long
+
+    /**
+     * Destroy Opus encoder
+     * @param handle Encoder handle from opusEncoderCreate
+     */
+    external fun opusEncoderDestroy(handle: Long)
+
+    /**
+     * Encode PCM audio to Opus
+     * @param handle Encoder handle
+     * @param pcmData 16-bit PCM audio samples (little-endian)
+     * @return Opus-encoded bytes or null on error
+     */
+    external fun opusEncode(handle: Long, pcmData: ByteArray): ByteArray?
+
+    /**
+     * Create Opus decoder for voice calling
+     * @return Decoder handle or -1 on error
+     */
+    external fun opusDecoderCreate(): Long
+
+    /**
+     * Destroy Opus decoder
+     * @param handle Decoder handle from opusDecoderCreate
+     */
+    external fun opusDecoderDestroy(handle: Long)
+
+    /**
+     * Decode Opus to PCM audio
+     * @param handle Decoder handle
+     * @param opusData Opus-encoded bytes
+     * @return 16-bit PCM audio samples (little-endian) or null on error
+     */
+    external fun opusDecode(handle: Long, opusData: ByteArray): ByteArray?
+
+    /**
      * Check if a connection is still alive and responsive
      * @param connectionId The connection ID to check
      * @return True if connection is alive and can send/receive data
@@ -340,9 +398,11 @@ object RustBridge {
      * @param recipientOnion The recipient's .onion address
      * @param encryptedMessage The encrypted message to send after Pong
      * @param messageTypeByte The message type (0x03 = TEXT, 0x04 = VOICE)
+     * @param pingId The ping ID (hex-encoded 24-byte nonce) - generated once in Kotlin, never changes
+     * @param pingTimestamp The timestamp when ping was created (epoch millis) - also from Kotlin
      * @return JSON string: {"pingId":"...","wireBytes":"..."} for tracking and retry
      */
-    external fun sendPing(recipientEd25519PublicKey: ByteArray, recipientX25519PublicKey: ByteArray, recipientOnion: String, encryptedMessage: ByteArray, messageTypeByte: Byte): String
+    external fun sendPing(recipientEd25519PublicKey: ByteArray, recipientX25519PublicKey: ByteArray, recipientOnion: String, encryptedMessage: ByteArray, messageTypeByte: Byte, pingId: String, pingTimestamp: Long): String
 
     /**
      * Resend a Ping using stored wire bytes (for retry without regenerating nonce)

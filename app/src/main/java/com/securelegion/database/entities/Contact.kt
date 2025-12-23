@@ -3,6 +3,7 @@ package com.securelegion.database.entities
 import androidx.room.Entity
 import androidx.room.Index
 import androidx.room.PrimaryKey
+import android.util.Base64
 
 /**
  * Contact entity stored in encrypted SQLCipher database
@@ -124,3 +125,15 @@ data class Contact(
         const val FRIENDSHIP_CONFIRMED = "CONFIRMED"
     }
 }
+
+/**
+ * Extension property to decode Ed25519 public key from Base64 to ByteArray
+ */
+val Contact.ed25519PublicKeyBytes: ByteArray
+    get() = Base64.decode(publicKeyBase64, Base64.NO_WRAP)
+
+/**
+ * Extension property to decode X25519 public key from Base64 to ByteArray
+ */
+val Contact.x25519PublicKeyBytes: ByteArray
+    get() = Base64.decode(x25519PublicKeyBase64, Base64.NO_WRAP)

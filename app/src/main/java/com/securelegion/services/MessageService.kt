@@ -1,6 +1,7 @@
 package com.securelegion.services
 
 import android.content.Context
+import android.content.Intent
 import android.util.Base64
 import android.util.Log
 import com.securelegion.crypto.KeyManager
@@ -8,6 +9,11 @@ import com.securelegion.crypto.NLx402Manager
 import com.securelegion.crypto.RustBridge
 import com.securelegion.database.SecureLegionDatabase
 import com.securelegion.database.entities.Message
+import com.securelegion.database.entities.ed25519PublicKeyBytes
+import com.securelegion.database.entities.x25519PublicKeyBytes
+import com.securelegion.voice.CallSignaling
+import com.securelegion.voice.VoiceCallManager
+import com.securelegion.IncomingCallActivity
 import com.securelegion.workers.ImmediateRetryWorker
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -30,6 +36,17 @@ class MessageService(private val context: Context) {
 
     companion object {
         private const val TAG = "MessageService"
+
+        /**
+         * Generate a cryptographically random 24-byte nonce for ping ID
+         * Returns hex-encoded string (48 characters)
+         * This matches the format Rust PingToken expects
+         */
+        fun generatePingId(): String {
+            val nonce = ByteArray(24)
+            java.security.SecureRandom().nextBytes(nonce)
+            return nonce.joinToString("") { "%02x".format(it) }
+        }
     }
 
     private val keyManager = KeyManager.getInstance(context)
@@ -114,9 +131,10 @@ class MessageService(private val context: Context) {
             val currentTime = System.currentTimeMillis()
             val selfDestructAt = selfDestructDurationMs?.let { currentTime + it }
 
-            // Generate Ping ID for persistent messaging
-            val pingId = UUID.randomUUID().toString()
-            Log.d(TAG, "Generated Ping ID: $pingId")
+            // Generate Ping ID and timestamp ONCE (never changes, prevents ghost pings)
+            val pingId = generatePingId()  // 24-byte nonce as hex string
+            val pingTimestamp = currentTime
+            Log.d(TAG, "Generated Ping ID: ${pingId.take(16)}... (timestamp: $pingTimestamp)")
 
             // Create message entity with VOICE type
             val message = Message(
@@ -134,6 +152,7 @@ class MessageService(private val context: Context) {
                 selfDestructAt = selfDestructAt,
                 requiresReadReceipt = false, // Voice messages don't need read receipts
                 pingId = pingId,
+                pingTimestamp = pingTimestamp,
                 encryptedPayload = encryptedBase64,
                 retryCount = 0,
                 lastRetryTimestamp = currentTime
@@ -252,7 +271,8 @@ class MessageService(private val context: Context) {
             val selfDestructAt = selfDestructDurationMs?.let { currentTime + it }
 
             // Generate Ping ID for persistent messaging
-            val pingId = UUID.randomUUID().toString()
+            val pingId = generatePingId()  // 24-byte nonce as hex string
+            val pingTimestamp = currentTime
             Log.d(TAG, "Generated Ping ID: $pingId")
 
             // Create message entity with IMAGE type
@@ -271,6 +291,7 @@ class MessageService(private val context: Context) {
                 selfDestructAt = selfDestructAt,
                 requiresReadReceipt = false, // Image messages don't need read receipts
                 pingId = pingId,
+                pingTimestamp = pingTimestamp,
                 encryptedPayload = encryptedBase64,
                 retryCount = 0,
                 lastRetryTimestamp = currentTime
@@ -377,9 +398,10 @@ class MessageService(private val context: Context) {
             val currentTime = System.currentTimeMillis()
             val selfDestructAt = selfDestructDurationMs?.let { currentTime + it }
 
-            // Generate Ping ID for persistent messaging
-            val pingId = UUID.randomUUID().toString()
-            Log.d(TAG, "Generated Ping ID: $pingId")
+            // Generate Ping ID and timestamp ONCE (never changes, prevents ghost pings)
+            val pingId = generatePingId()  // 24-byte nonce as hex string
+            val pingTimestamp = currentTime
+            Log.d(TAG, "Generated Ping ID: ${pingId.take(16)}... (timestamp: $pingTimestamp)")
 
             // Create message entity with PING_SENT status for persistent queue
             val message = Message(
@@ -393,7 +415,8 @@ class MessageService(private val context: Context) {
                 nonceBase64 = nonceBase64,
                 selfDestructAt = selfDestructAt,
                 requiresReadReceipt = enableReadReceipt,
-                pingId = pingId,                    // NEW: Store Ping ID for matching Pongs
+                pingId = pingId,                    // Generated ONCE, used for all retries
+                pingTimestamp = pingTimestamp,      // Generated ONCE with pingId
                 encryptedPayload = encryptedBase64, // NEW: Store encrypted payload to send after Pong
                 retryCount = 0,                     // NEW: Initialize retry counter
                 lastRetryTimestamp = currentTime   // NEW: Track when we last attempted
@@ -519,7 +542,8 @@ class MessageService(private val context: Context) {
             val currentTime = System.currentTimeMillis()
 
             // Generate Ping ID for persistent messaging
-            val pingId = UUID.randomUUID().toString()
+            val pingId = generatePingId()  // 24-byte nonce as hex string
+            val pingTimestamp = currentTime
             Log.d(TAG, "Generated Ping ID for payment request: $pingId")
 
             // Create message entity with PAYMENT_REQUEST type
@@ -534,6 +558,7 @@ class MessageService(private val context: Context) {
                 signatureBase64 = signatureBase64,
                 nonceBase64 = nonceBase64,
                 pingId = pingId,
+                pingTimestamp = pingTimestamp,
                 encryptedPayload = encryptedBase64,
                 retryCount = 0,
                 lastRetryTimestamp = currentTime,
@@ -652,7 +677,8 @@ class MessageService(private val context: Context) {
             val signatureBase64 = Base64.encodeToString(signature, Base64.NO_WRAP)
 
             val currentTime = System.currentTimeMillis()
-            val pingId = UUID.randomUUID().toString()
+            val pingId = generatePingId()  // 24-byte nonce as hex string
+            val pingTimestamp = currentTime
 
             // Create message entity with PAYMENT_SENT type
             val message = Message(
@@ -666,6 +692,7 @@ class MessageService(private val context: Context) {
                 signatureBase64 = signatureBase64,
                 nonceBase64 = nonceBase64,
                 pingId = pingId,
+                pingTimestamp = pingTimestamp,
                 encryptedPayload = encryptedBase64,
                 retryCount = 0,
                 lastRetryTimestamp = currentTime,
@@ -764,7 +791,8 @@ class MessageService(private val context: Context) {
             val signatureBase64 = Base64.encodeToString(signature, Base64.NO_WRAP)
 
             val currentTime = System.currentTimeMillis()
-            val pingId = UUID.randomUUID().toString()
+            val pingId = generatePingId()  // 24-byte nonce as hex string
+            val pingTimestamp = currentTime
 
             val message = Message(
                 contactId = contactId,
@@ -777,6 +805,7 @@ class MessageService(private val context: Context) {
                 signatureBase64 = signatureBase64,
                 nonceBase64 = nonceBase64,
                 pingId = pingId,
+                pingTimestamp = pingTimestamp,
                 encryptedPayload = encryptedBase64,
                 retryCount = 0,
                 lastRetryTimestamp = currentTime,
@@ -1102,6 +1131,126 @@ class MessageService(private val context: Context) {
     }
 
     /**
+     * Handle incoming call signaling messages (CALL_OFFER, CALL_ANSWER, etc.)
+     * This intercepts call-related messages before they go to the database
+     *
+     * @param encryptedData Base64 encrypted message data
+     * @param senderPublicKey Sender's Ed25519 public key
+     * @param senderOnionAddress Sender's .onion address
+     * @param contactId Optional contact ID (if already looked up)
+     * @return true if message was a call signaling message (handled), false otherwise
+     */
+    suspend fun handleCallSignaling(
+        encryptedData: String,
+        senderPublicKey: ByteArray,
+        senderOnionAddress: String,
+        contactId: Long? = null
+    ): Boolean = withContext(Dispatchers.IO) {
+        try {
+            Log.d(TAG, "🔍 handleCallSignaling: Checking if message is call signaling...")
+            // Decrypt message to check if it's call signaling
+            // Call signaling uses X25519 encryption keys (not Ed25519 signing keys)
+            val encryptedBytes = Base64.decode(encryptedData, Base64.NO_WRAP)
+            Log.d(TAG, "🔍 handleCallSignaling: Encrypted bytes size: ${encryptedBytes.size}")
+
+            val ourPrivateKey = keyManager.getEncryptionKeyBytes()
+            val decryptedData = RustBridge.decryptMessage(encryptedBytes, senderPublicKey, ourPrivateKey)
+
+            if (decryptedData == null) {
+                Log.w(TAG, "🔍 handleCallSignaling: Decryption FAILED - not call signaling")
+                return@withContext false
+            }
+
+            Log.d(TAG, "🔍 handleCallSignaling: Decryption successful, data: ${decryptedData.take(100)}...")
+
+            // Try to parse as call signaling message
+            val callMessage = CallSignaling.parseCallMessage(decryptedData)
+
+            if (callMessage == null) {
+                Log.w(TAG, "🔍 handleCallSignaling: Parse FAILED - not call signaling JSON")
+                return@withContext false
+            }
+
+            Log.i(TAG, "✅ handleCallSignaling: Received call signaling message: ${callMessage.javaClass.simpleName}")
+
+            // Get database instance to lookup contact
+            val dbPassphrase = keyManager.getDatabasePassphrase()
+            val database = SecureLegionDatabase.getInstance(context, dbPassphrase)
+
+            // Find contact (use provided contactId if available, otherwise lookup by onion address)
+            val contact = if (contactId != null) {
+                database.contactDao().getContactById(contactId)
+            } else {
+                database.contactDao().getContactByOnionAddress(senderOnionAddress)
+            } ?: run {
+                Log.e(TAG, "Unknown sender for call: $senderOnionAddress")
+                return@withContext true // Still handled (don't store in DB)
+            }
+
+            // Handle based on message type
+            when (callMessage) {
+                is CallSignaling.CallSignalingMessage.CallOffer -> {
+                    Log.i(TAG, "Incoming call from ${contact.displayName}")
+
+                    // Get call manager
+                    val callManager = VoiceCallManager.getInstance(context)
+
+                    // Register incoming call
+                    callManager.handleIncomingCallOffer(
+                        callId = callMessage.callId,
+                        contactOnion = senderOnionAddress,
+                        contactEd25519PublicKey = contact.ed25519PublicKeyBytes,
+                        contactName = contact.displayName,
+                        ephemeralPublicKey = callMessage.ephemeralPublicKey
+                    )
+
+                    // Launch IncomingCallActivity
+                    val intent = Intent(context, IncomingCallActivity::class.java)
+                    intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    intent.putExtra(IncomingCallActivity.EXTRA_CALL_ID, callMessage.callId)
+                    intent.putExtra(IncomingCallActivity.EXTRA_CONTACT_ID, contact.id)
+                    intent.putExtra(IncomingCallActivity.EXTRA_CONTACT_NAME, contact.displayName)
+                    intent.putExtra(IncomingCallActivity.EXTRA_CONTACT_ONION, senderOnionAddress)
+                    intent.putExtra(IncomingCallActivity.EXTRA_CONTACT_ED25519_PUBLIC_KEY, contact.ed25519PublicKeyBytes)
+                    intent.putExtra(IncomingCallActivity.EXTRA_CONTACT_X25519_PUBLIC_KEY, contact.x25519PublicKeyBytes)
+                    intent.putExtra(IncomingCallActivity.EXTRA_EPHEMERAL_PUBLIC_KEY, callMessage.ephemeralPublicKey)
+                    context.startActivity(intent)
+                }
+
+                is CallSignaling.CallSignalingMessage.CallAnswer -> {
+                    Log.i(TAG, "Call answered by ${contact.displayName}")
+                    val callManager = VoiceCallManager.getInstance(context)
+                    callManager.handleCallAnswer(callMessage.callId, callMessage.ephemeralPublicKey)
+                }
+
+                is CallSignaling.CallSignalingMessage.CallReject -> {
+                    Log.i(TAG, "Call rejected by ${contact.displayName}: ${callMessage.reason}")
+                    val callManager = VoiceCallManager.getInstance(context)
+                    callManager.handleCallReject(callMessage.callId, callMessage.reason)
+                }
+
+                is CallSignaling.CallSignalingMessage.CallEnd -> {
+                    Log.i(TAG, "Call ended by ${contact.displayName}: ${callMessage.reason}")
+                    val callManager = VoiceCallManager.getInstance(context)
+                    callManager.endCall(callMessage.reason)
+                }
+
+                is CallSignaling.CallSignalingMessage.CallBusy -> {
+                    Log.i(TAG, "Contact ${contact.displayName} is busy")
+                    val callManager = VoiceCallManager.getInstance(context)
+                    callManager.handleCallBusy(callMessage.callId)
+                }
+            }
+
+            true // Message was handled, don't store in database
+
+        } catch (e: Exception) {
+            Log.e(TAG, "Error handling call signaling", e)
+            false // Not a call signaling message (or error occurred)
+        }
+    }
+
+    /**
      * Load all messages for a contact
      */
     suspend fun getMessagesForContact(contactId: Long): List<Message> = withContext(Dispatchers.IO) {
@@ -1225,14 +1374,29 @@ class MessageService(private val context: Context) {
             Log.d(TAG, "  torOnionAddress (deprecated): ${contact.torOnionAddress}")
             val onionAddress = contact.messagingOnion ?: contact.torOnionAddress ?: ""
             Log.d(TAG, "  → Selected for messaging: $onionAddress")
-            Log.d(TAG, "Calling RustBridge.sendPing to $onionAddress...")
-            val pingResponse = RustBridge.sendPing(
-                recipientEd25519PubKey,
-                recipientX25519PubKey,
-                onionAddress,
-                encryptedBytes,
-                messageTypeByte
-            )
+
+            // Validate message has pingId and timestamp (should be generated when message created)
+            if (message.pingId == null || message.pingTimestamp == null) {
+                return@withContext Result.failure(Exception("Message missing pingId or pingTimestamp - should be set at creation"))
+            }
+
+            Log.i(TAG, "Sending Ping with ID: ${message.pingId.take(8)}... (timestamp: ${message.pingTimestamp}, retries use SAME ID)")
+
+            // Send Ping with provided pingId and timestamp (first send and ALL retries use same values)
+            val pingResponse = try {
+                RustBridge.sendPing(
+                    recipientEd25519PubKey,
+                    recipientX25519PubKey,
+                    onionAddress,
+                    encryptedBytes,
+                    messageTypeByte,
+                    message.pingId!!,  // Generated once when message created
+                    message.pingTimestamp!!  // Generated once when message created
+                )
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to send Ping", e)
+                return@withContext Result.failure(e)
+            }
 
             // Parse JSON response: {"pingId":"...","wireBytes":"..."}
             val pingId: String
@@ -1241,29 +1405,18 @@ class MessageService(private val context: Context) {
                 val json = org.json.JSONObject(pingResponse)
                 pingId = json.getString("pingId")
                 wireBytes = json.getString("wireBytes")
-                Log.i(TAG, "✓ RustBridge.sendPing returned Ping ID: $pingId (wire bytes stored for retry)")
+                Log.i(TAG, "✓ Ping sent successfully (ID: ${pingId.take(8)}...)")
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to parse sendPing response JSON", e)
                 return@withContext Result.failure(e)
             }
 
-            Log.d(TAG, "Original message Ping ID (UUID): ${message.pingId}")
-            Log.d(TAG, "Rust-returned Ping ID (hex nonce): $pingId")
-
-            // Update message with the ACTUAL Ping ID and wire bytes from Rust
-            // CRITICAL: Use NonCancellable to ensure database update completes even if job is cancelled
-            if (pingId != message.pingId || message.pingWireBytes == null) {
-                if (pingId != message.pingId) {
-                    Log.w(TAG, "⚠️  PING ID MISMATCH DETECTED!")
-                    Log.w(TAG, "   Database has: ${message.pingId}")
-                    Log.w(TAG, "   Rust returned: $pingId")
-                }
-                Log.i(TAG, "Updating database with Ping ID and wire bytes from Rust...")
-
+            // Store wire bytes for resendPingWithWireBytes (backup retry method)
+            if (message.pingWireBytes == null) {
                 withContext(kotlinx.coroutines.NonCancellable) {
-                    val updatedMessage = message.copy(pingId = pingId, pingWireBytes = wireBytes)
+                    val updatedMessage = message.copy(pingWireBytes = wireBytes)
                     database.messageDao().updateMessage(updatedMessage)
-                    Log.i(TAG, "✓ Database updated with Ping ID: $pingId and wire bytes (waiting for PING_ACK)")
+                    Log.d(TAG, "✓ Stored wire bytes for backup retry")
                 }
             }
 

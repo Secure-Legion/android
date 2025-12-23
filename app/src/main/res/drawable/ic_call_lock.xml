@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="180dp"
+    android:height="180dp"
+    android:viewportWidth="180"
+    android:viewportHeight="180">
+
+    <!-- Outer circle (white effect) -->
+    <path
+        android:name="outer_ring"
+        android:pathData="M 90,25 A 65,65 0 1 1 89.99,25"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="1"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:fillColor="#00000000"/>
+
+    <!-- Large circle (blue effect) -->
+    <path
+        android:name="large_ring"
+        android:pathData="M 90,4 A 86,86 0 1 1 89.99,4"
+        android:strokeColor="#4A9EFF"
+        android:strokeWidth="2"
+        android:fillColor="#00000000"/>
+
+    <!-- Middle circle border -->
+    <path
+        android:name="middle_circle_border"
+        android:pathData="M 91,45.5 A 44.5,44.5 0 1 1 90.99,45.5"
+        android:strokeColor="#252525"
+        android:strokeWidth="1"
+        android:strokeAlpha="0.4"
+        android:fillColor="#00000000"/>
+
+    <!-- Inner dark circle background -->
+    <path
+        android:name="inner_circle"
+        android:pathData="M 91,50 A 40,40 0 1 1 90.99,50"
+        android:fillColor="#1C1C1C"/>
+
+    <!-- Lock icon -->
+    <path
+        android:name="lock"
+        android:pathData="M88,89 L88,85 C88,83.6739 88.5268,82.4021 89.4645,81.4645 C90.4021,80.5268 91.6739,80 93,80 C94.3261,80 95.5979,80.5268 96.5355,81.4645 C97.4732,82.4021 98,83.6739 98,85 L98,89 M86,89 L100,89 C101.105,89 102,89.8954 102,91 L102,98 C102,99.1046 101.105,100 100,100 L86,100 C84.8954,100 84,99.1046 84,98 L84,91 C84,89.8954 84.8954,89 86,89 Z"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="2.5"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:fillColor="#00000000"/>
+</vector>

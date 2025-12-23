@@ -34,7 +34,7 @@ import net.zetetic.database.sqlcipher.SupportOpenHelperFactory
  */
 @Database(
     entities = [Contact::class, Message::class, Wallet::class, ReceivedId::class, UsedSignature::class],
-    version = 18,
+    version = 19,
     exportSchema = false
 )
 abstract class SecureLegionDatabase : RoomDatabase() {

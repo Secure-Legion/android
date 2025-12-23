@@ -376,9 +376,11 @@ class TorManager(private val context: Context) {
         contactX25519PublicKey: ByteArray,
         contactOnionAddress: String,
         encryptedMessage: ByteArray,
-        messageTypeByte: Byte
+        messageTypeByte: Byte,
+        pingId: String,
+        pingTimestamp: Long
     ): String {
-        return RustBridge.sendPing(contactEd25519PublicKey, contactX25519PublicKey, contactOnionAddress, encryptedMessage, messageTypeByte)
+        return RustBridge.sendPing(contactEd25519PublicKey, contactX25519PublicKey, contactOnionAddress, encryptedMessage, messageTypeByte, pingId, pingTimestamp)
     }
 
     /**

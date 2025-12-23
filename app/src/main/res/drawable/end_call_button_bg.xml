@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="utf-8"?>
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Shadow -->
+    <item android:bottom="4dp" android:right="2dp">
+        <shape android:shape="oval">
+            <solid android:color="#40000000" />
+        </shape>
+    </item>
+
+    <!-- Main button -->
+    <item android:bottom="4dp" android:right="2dp">
+        <layer-list>
+            <!-- Base gradient -->
+            <item>
+                <shape android:shape="oval">
+                    <gradient
+                        android:angle="135"
+                        android:startColor="#EF4444"
+                        android:endColor="#B91C1C"
+                        android:type="linear" />
+                </shape>
+            </item>
+
+            <!-- Top shine -->
+            <item android:top="0dp" android:bottom="40dp">
+                <shape android:shape="oval">
+                    <gradient
+                        android:angle="90"
+                        android:startColor="#40FFFFFF"
+                        android:endColor="#00FFFFFF"
+                        android:type="linear" />
+                </shape>
+            </item>
+
+            <!-- Bottom shadow -->
+            <item android:top="40dp">
+                <shape android:shape="oval">
+                    <gradient
+                        android:angle="90"
+                        android:startColor="#00000000"
+                        android:endColor="#4D000000"
+                        android:type="linear" />
+                </shape>
+            </item>
+
+            <!-- Border -->
+            <item>
+                <shape android:shape="oval">
+                    <stroke
+                        android:width="1dp"
+                        android:color="#26FFFFFF" />
+                </shape>
+            </item>
+        </layer-list>
+    </item>
+</layer-list>

@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="utf-8"?>
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Outer blue ring - will fade from transparent to bright -->
+    <item>
+        <shape android:shape="ring"
+            android:innerRadiusRatio="2.0"
+            android:thicknessRatio="18"
+            android:useLevel="false">
+            <stroke
+                android:width="2dp"
+                android:color="#4A9EFF" />
+        </shape>
+    </item>
+
+    <!-- Middle blue ring - will fade from transparent to bright -->
+    <item>
+        <shape android:shape="ring"
+            android:innerRadiusRatio="2.8"
+            android:thicknessRatio="25"
+            android:useLevel="false">
+            <stroke
+                android:width="2dp"
+                android:color="#4A9EFF" />
+        </shape>
+    </item>
+
+    <!-- Inner blue ring - will fade from transparent to bright -->
+    <item>
+        <shape android:shape="ring"
+            android:innerRadiusRatio="3.5"
+            android:thicknessRatio="32"
+            android:useLevel="false">
+            <stroke
+                android:width="2dp"
+                android:color="#4A9EFF" />
+        </shape>
+    </item>
+
+    <!-- Single white accent ring with fewer dashes -->
+    <item>
+        <shape android:shape="ring"
+            android:innerRadiusRatio="4.2"
+            android:thicknessRatio="40"
+            android:useLevel="false">
+            <stroke
+                android:width="1dp"
+                android:color="#FFFFFF"
+                android:dashWidth="8dp"
+                android:dashGap="20dp" />
+        </shape>
+    </item>
+</layer-list>

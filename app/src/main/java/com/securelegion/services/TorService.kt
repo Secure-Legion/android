@@ -52,6 +52,8 @@ class TorService : Service() {
     private var isServiceRunning = false
     private var isPingPollerRunning = false
     private var isTapPollerRunning = false
+    private var isMessagePollerRunning = false
+    private var isVoicePollerRunning = false
     private var isFriendRequestPollerRunning = false
     private var isPongPollerRunning = false
     private var isSessionCleanupRunning = false
@@ -92,6 +94,20 @@ class TorService : Service() {
     // When receiving 10 Pings at once, ACKs are queued and sent one-at-a-time
     private val ackDispatcher = kotlinx.coroutines.newSingleThreadContext("ACK-Sender")
 
+    // Bandwidth monitoring
+    private var lastRxBytes = 0L
+    private var lastTxBytes = 0L
+    private var lastBandwidthUpdate = 0L
+    private var currentDownloadSpeed = 0L  // bytes per second
+    private var currentUploadSpeed = 0L    // bytes per second
+    private val bandwidthHandler = Handler(Looper.getMainLooper())
+    private var bandwidthUpdateRunnable: Runnable? = null
+    private var torConnected = false
+    private var listenersReady = false
+    private var isAppInForeground = false
+    private val BANDWIDTH_UPDATE_FAST = 2000L      // 2 seconds when app open
+    private val BANDWIDTH_UPDATE_SLOW = 10000L     // 10 seconds when app closed (saves battery)
+
     companion object {
         private const val TAG = "TorService"
         private const val NOTIFICATION_ID = 1001
@@ -120,9 +136,20 @@ class TorService : Service() {
         @Volatile
         private var listenersReady = false
 
+        @Volatile
+        private var instance: TorService? = null
+
         fun isRunning(): Boolean = running
 
         fun isTorConnected(): Boolean = torConnected
+
+        /**
+         * Notify service when app goes to foreground/background
+         * Adjusts bandwidth monitoring frequency (fast when open, slow when closed)
+         */
+        fun setForegroundState(inForeground: Boolean) {
+            instance?.setAppInForeground(inForeground)
+        }
 
         /**
          * Check if all listeners and pollers are ready for messaging
@@ -179,6 +206,9 @@ class TorService : Service() {
     override fun onCreate() {
         super.onCreate()
         Log.d(TAG, "TorService created")
+
+        // Set instance for static access
+        instance = this
 
         // Initialize TorManager
         torManager = TorManager.getInstance(this)
@@ -447,6 +477,8 @@ class TorService : Service() {
             if (isListenerRunning) {
                 Log.d(TAG, "Listener already running, skipping restart")
                 startPingPoller()
+                startMessagePoller()
+                startVoicePoller()
                 startTapPoller()
                 startSessionCleanup()
                 return
@@ -462,8 +494,10 @@ class TorService : Service() {
                 isListenerRunning = true
             }
 
-            // Start polling for incoming Pings (whether we started the listener or it's already running)
+            // Start polling for incoming Pings, MESSAGEs, and VOICE (whether we started the listener or it's already running)
             startPingPoller()
+            startMessagePoller()
+            startVoicePoller()
 
             // PHASE 7: Start tap listener on port 9151
             Log.d(TAG, "Starting tap listener on port 9151...")
@@ -516,9 +550,15 @@ class TorService : Service() {
                 // All listeners, pollers, and SOCKS proxy ready - mark as ready for messaging
                 listenersReady = true
                 Log.i(TAG, "✓ All listeners, pollers, and SOCKS proxy (9050) ready - messaging enabled")
+
+                // Start bandwidth monitoring now that Tor is fully operational
+                startBandwidthMonitoring()
             } else {
                 Log.w(TAG, "SOCKS proxy not running - messaging may not work for outgoing messages")
                 listenersReady = true // Still mark as ready since incoming works
+
+                // Start bandwidth monitoring anyway
+                startBandwidthMonitoring()
             }
         } catch (e: Exception) {
             Log.e(TAG, "Error starting listener", e)
@@ -581,6 +621,92 @@ class TorService : Service() {
                 }
             }
             Log.d(TAG, "Ping poller thread stopped")
+        }.start()
+    }
+
+    /**
+     * Start MESSAGE poller for direct routing of TEXT/VOICE/IMAGE/PAYMENT messages
+     * Polls MESSAGE channel instead of trying trial decryption on PING channel
+     */
+    private fun startMessagePoller() {
+        if (isMessagePollerRunning) {
+            Log.d(TAG, "MESSAGE poller already running, skipping")
+            return
+        }
+
+        isMessagePollerRunning = true
+
+        // Poll for incoming MESSAGES in background thread
+        Thread {
+            Log.d(TAG, "MESSAGE poller thread started")
+            var pollCount = 0
+            while (isServiceRunning) {
+                try {
+                    val messageBytes = RustBridge.pollIncomingMessage()
+                    if (messageBytes != null) {
+                        Log.i(TAG, "Received incoming MESSAGE: ${messageBytes.size} bytes")
+                        handleIncomingMessage(messageBytes)
+                    } else {
+                        // Log every 10 seconds to confirm poller is running
+                        pollCount++
+                        if (pollCount % 10 == 0) {
+                            Log.d(TAG, "MESSAGE poller alive (poll #$pollCount, no message)")
+                        }
+                    }
+
+                    // Poll every second (same as PING)
+                    Thread.sleep(1000)
+                } catch (e: InterruptedException) {
+                    Log.d(TAG, "MESSAGE poller interrupted")
+                    break
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error polling for messages", e)
+                }
+            }
+            Log.d(TAG, "MESSAGE poller thread stopped")
+        }.start()
+    }
+
+    /**
+     * Start VOICE poller for call signaling (CALL_OFFER/ANSWER/REJECT/END/BUSY)
+     * Completely separate from MESSAGE channel to allow simultaneous text messaging during voice calls
+     */
+    private fun startVoicePoller() {
+        if (isVoicePollerRunning) {
+            Log.d(TAG, "VOICE poller already running, skipping")
+            return
+        }
+
+        isVoicePollerRunning = true
+
+        // Poll for incoming VOICE call signaling in background thread
+        Thread {
+            Log.d(TAG, "VOICE poller thread started")
+            var pollCount = 0
+            while (isServiceRunning) {
+                try {
+                    val voiceBytes = RustBridge.pollVoiceMessage()
+                    if (voiceBytes != null) {
+                        Log.i(TAG, "Received incoming VOICE call signaling: ${voiceBytes.size} bytes")
+                        handleIncomingVoiceMessage(voiceBytes)
+                    } else {
+                        // Log every 10 seconds to confirm poller is running
+                        pollCount++
+                        if (pollCount % 10 == 0) {
+                            Log.d(TAG, "VOICE poller alive (poll #$pollCount, no call signaling)")
+                        }
+                    }
+
+                    // Poll every second (same as MESSAGE)
+                    Thread.sleep(1000)
+                } catch (e: InterruptedException) {
+                    Log.d(TAG, "VOICE poller interrupted")
+                    break
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error polling for voice call signaling", e)
+                }
+            }
+            Log.d(TAG, "VOICE poller thread stopped")
         }.start()
     }
 
@@ -802,8 +928,21 @@ class TorService : Service() {
                             continue
                         }
 
-                        // PHASE 1: No PING_ACK → Retry sending Ping (contact just came online)
-                        Log.i(TAG, "→ ${message.messageId}: No PING_ACK yet - retrying Ping (contact online now)")
+                        // PHASE 1: No PING_ACK → Check if we should retry
+                        // Don't retry too aggressively - wait 30s between attempts (adaptive backoff)
+                        val currentTime = System.currentTimeMillis()
+                        val timeSinceLastRetry = if (message.lastRetryTimestamp != null) {
+                            currentTime - message.lastRetryTimestamp!!
+                        } else {
+                            currentTime - (message.timestamp ?: 0)
+                        }
+
+                        if (timeSinceLastRetry < 30000) {
+                            Log.d(TAG, "→ ${message.messageId}: Ping sent ${timeSinceLastRetry/1000}s ago - waiting for PING_ACK (adaptive backoff)")
+                            continue  // Don't retry yet, give receiver time to ACK
+                        }
+
+                        Log.i(TAG, "→ ${message.messageId}: No PING_ACK after ${timeSinceLastRetry/1000}s - retrying Ping (contact online now)")
                         try {
                             val result = messageService.sendPingForMessage(message)
                             if (result.isSuccess) {
@@ -813,7 +952,7 @@ class TorService : Service() {
                                     lastRetryTimestamp = System.currentTimeMillis()
                                 )
                                 database.messageDao().updateMessage(updatedMessage)
-                                Log.i(TAG, "✓ Retried Ping for ${message.messageId} after TAP")
+                                Log.i(TAG, "✓ Retried Ping for ${message.messageId} after TAP (adaptive timeout)")
                             }
                         } catch (e: Exception) {
                             Log.e(TAG, "Failed to retry Ping for ${message.messageId}", e)
@@ -1462,6 +1601,28 @@ class TorService : Service() {
                                     } catch (e: Exception) {
                                         Log.w(TAG, "Failed to clean up ReceivedId entries (non-critical)", e)
                                     }
+
+                                    // Clean up SharedPreferences ping tracking (prevents memory bloat)
+                                    // After MESSAGE_ACK, we'll never need this ping data again
+                                    try {
+                                        val prefs = getSharedPreferences("pending_pings", MODE_PRIVATE)
+                                        prefs.edit().apply {
+                                            // Remove ping-indexed entries (for Pong lookup)
+                                            remove("ping_${pingId}_contact_id")
+                                            remove("ping_${pingId}_name")
+                                            remove("ping_${pingId}_timestamp")
+                                            remove("ping_${pingId}_onion")
+                                            // Remove contact-indexed entries (for outgoing tracking)
+                                            remove("outgoing_ping_${message.contactId}_id")
+                                            remove("outgoing_ping_${message.contactId}_name")
+                                            remove("outgoing_ping_${message.contactId}_timestamp")
+                                            remove("outgoing_ping_${message.contactId}_onion")
+                                            apply()
+                                        }
+                                        Log.d(TAG, "✓ Cleaned up SharedPreferences ping tracking for ${pingId.take(8)}...")
+                                    } catch (e: Exception) {
+                                        Log.w(TAG, "Failed to clean up SharedPreferences (non-critical)", e)
+                                    }
                                 }
 
                                 message.copy(
@@ -1509,6 +1670,105 @@ class TorService : Service() {
             }
         } catch (e: Exception) {
             Log.e(TAG, "Error handling incoming $ackType", e)
+        }
+    }
+
+    /**
+     * Handle incoming MESSAGE from MESSAGE channel (direct routing, no trial decryption needed)
+     * Wire format: [connection_id (8 bytes LE)][encrypted_message_blob]
+     */
+    private fun handleIncomingMessage(encodedData: ByteArray) {
+        try {
+            // Wire format: [connection_id (8 bytes LE)][encrypted_message_blob]
+            if (encodedData.size < 8) {
+                Log.e(TAG, "Invalid MESSAGE data: too short")
+                return
+            }
+
+            // Extract connection_id (first 8 bytes, little-endian)
+            val connectionId = java.nio.ByteBuffer.wrap(encodedData, 0, 8)
+                .order(java.nio.ByteOrder.LITTLE_ENDIAN)
+                .long
+
+            // Extract encrypted message blob (rest of bytes)
+            val encryptedMessageBlob = encodedData.copyOfRange(8, encodedData.size)
+
+            Log.i(TAG, "✓ Received MESSAGE on connection $connectionId via direct routing: ${encryptedMessageBlob.size} bytes")
+
+            // Process message blob directly (no trial decryption needed!)
+            handleIncomingMessageBlob(encryptedMessageBlob)
+        } catch (e: Exception) {
+            Log.e(TAG, "Error handling incoming MESSAGE", e)
+        }
+    }
+
+    /**
+     * Handle incoming VOICE call signaling from VOICE channel
+     * Wire format: [connection_id (8 bytes LE)][Sender X25519 Public Key (32 bytes)][Encrypted Payload]
+     * Completely separate from MESSAGE to allow simultaneous text messaging during voice calls
+     */
+    private fun handleIncomingVoiceMessage(encodedData: ByteArray) {
+        try {
+            // Wire format: [connection_id (8 bytes LE)][Sender X25519 key (32 bytes)][Encrypted payload]
+            if (encodedData.size < 40) {  // 8 + 32 minimum
+                Log.e(TAG, "Invalid VOICE data: too short (${encodedData.size} bytes)")
+                return
+            }
+
+            // Extract connection_id (first 8 bytes, little-endian)
+            val connectionId = java.nio.ByteBuffer.wrap(encodedData, 0, 8)
+                .order(java.nio.ByteOrder.LITTLE_ENDIAN)
+                .long
+
+            // Extract sender X25519 public key (next 32 bytes)
+            val senderX25519PublicKey = encodedData.copyOfRange(8, 40)
+
+            // Extract encrypted payload (rest of bytes)
+            val encryptedPayload = encodedData.copyOfRange(40, encodedData.size)
+
+            Log.i(TAG, "✓ Received VOICE call signaling on connection $connectionId: ${encryptedPayload.size} bytes")
+
+            // Look up contact by X25519 public key to get onion address
+            val keyManager = com.securelegion.crypto.KeyManager.getInstance(this)
+            val dbPassphrase = keyManager.getDatabasePassphrase()
+            val database = com.securelegion.database.SecureLegionDatabase.getInstance(this, dbPassphrase)
+
+            val contact = kotlinx.coroutines.runBlocking {
+                database.contactDao().getContactByX25519PublicKey(
+                    android.util.Base64.encodeToString(senderX25519PublicKey, android.util.Base64.NO_WRAP)
+                )
+            }
+
+            if (contact == null) {
+                Log.w(TAG, "⚠️  Cannot process VOICE call signaling - contact not found for X25519 key")
+                return
+            }
+
+            val senderOnion = contact.messagingOnion ?: contact.torOnionAddress ?: ""
+            if (senderOnion.isEmpty()) {
+                Log.w(TAG, "⚠️  Cannot process VOICE call signaling - no onion address for contact ${contact.id}")
+                return
+            }
+
+            // Process call signaling through MessageService
+            kotlinx.coroutines.GlobalScope.launch(Dispatchers.IO) {
+                try {
+                    val messageService = MessageService(this@TorService)
+                    val encryptedPayloadBase64 = android.util.Base64.encodeToString(encryptedPayload, android.util.Base64.NO_WRAP)
+
+                    // Call existing handler (it will decrypt, parse, and route to IncomingCallActivity)
+                    messageService.handleCallSignaling(
+                        encryptedData = encryptedPayloadBase64,
+                        senderPublicKey = senderX25519PublicKey,
+                        senderOnionAddress = senderOnion,
+                        contactId = contact.id  // Pass contact ID to avoid redundant lookup
+                    )
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error processing VOICE call signaling", e)
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error handling incoming VOICE call signaling", e)
         }
     }
 
@@ -1974,6 +2234,9 @@ class TorService : Service() {
 
             Log.i(TAG, "Processing message from: ${contact.displayName}")
 
+            // CALL_SIGNALING now arrives via dedicated VOICE channel (separate from MESSAGE)
+            // This MESSAGE handler only processes: TEXT, VOICE clips, IMAGES, PAYMENTS
+
             // Decrypt message using OUR OWN public key (message was encrypted with our public key)
             // MVP encryption: sender encrypts with recipient's public key, recipient decrypts with their own public key
             val ourEd25519PublicKey = keyManager.getSigningPublicKey()
@@ -2222,6 +2485,13 @@ class TorService : Service() {
                         }
                     }
 
+                    // Check if this message is for an active download (associate with pingId)
+                    val downloadPrefs = getSharedPreferences("active_downloads", MODE_PRIVATE)
+                    val downloadPingId = downloadPrefs.getString("download_${contact.id}", null)
+                    if (downloadPingId != null) {
+                        Log.i(TAG, "⚡ Message associated with active download pingId: ${downloadPingId.take(8)}")
+                    }
+
                     // Create message entity (store plaintext in encryptedContent field for now)
                     val message = com.securelegion.database.entities.Message(
                         contactId = contact.id,
@@ -2247,12 +2517,30 @@ class TorService : Service() {
                         paymentToken = paymentToken,
                         paymentAmount = paymentAmount,
                         paymentStatus = paymentStatus,
-                        txSignature = txSignature
+                        txSignature = txSignature,
+                        pingId = downloadPingId  // ← Associate with download ping
                     )
 
                     // Save to database
                     val savedMessageId = database.messageDao().insertMessage(message)
                     Log.i(TAG, "✓ Message saved to database: $savedMessageId")
+
+                    // If this was an active download, update ping state to READY for atomic swap
+                    if (downloadPingId != null) {
+                        val pingPrefs = getSharedPreferences("pending_pings", MODE_PRIVATE)
+                        Log.i(TAG, "⚡ Setting ping ${downloadPingId.take(8)} to READY state (listener path)")
+                        com.securelegion.models.PendingPing.updateState(
+                            pingPrefs,
+                            contact.id,
+                            downloadPingId,
+                            com.securelegion.models.PingState.READY,
+                            synchronous = true
+                        )
+
+                        // Clear active download tracking
+                        downloadPrefs.edit().remove("download_${contact.id}").commit()
+                        Log.d(TAG, "  ✓ Cleared active download tracking for contact ${contact.id}")
+                    }
 
                     // Send MESSAGE_ACK to sender to confirm receipt (with retry logic)
                     CoroutineScope(ackDispatcher).launch {
@@ -2264,20 +2552,7 @@ class TorService : Service() {
                         )
                     }
 
-                    // Clear pending Ping from SharedPreferences (message has been downloaded)
-                    val prefs = getSharedPreferences("pending_pings", Context.MODE_PRIVATE)
-                    prefs.edit().apply {
-                        remove("ping_${contact.id}_id")
-                        remove("ping_${contact.id}_connection")
-                        remove("ping_${contact.id}_name")
-                        remove("ping_${contact.id}_timestamp")
-                        remove("ping_${contact.id}_data")
-                        remove("ping_${contact.id}_onion")
-                        apply()
-                    }
-                    Log.i(TAG, "✓ Cleared pending Ping for contact ${contact.id}")
-
-                    // Broadcast to ChatActivity so it can refresh (explicit broadcast)
+                    // Broadcast to ChatActivity so it can refresh and perform atomic swap (explicit broadcast)
                     val intentChat = Intent("com.securelegion.MESSAGE_RECEIVED")
                     intentChat.setPackage(packageName) // Make it explicit
                     intentChat.putExtra("CONTACT_ID", contact.id)
@@ -3341,6 +3616,9 @@ class TorService : Service() {
         listenersReady = false
         torConnected = false
 
+        // Stop bandwidth monitoring
+        stopBandwidthMonitoring()
+
         // Stop all listeners
         try {
             RustBridge.stopListeners()
@@ -3452,15 +3730,18 @@ class TorService : Service() {
             .setCategory(NotificationCompat.CATEGORY_SERVICE)
 
         // Only show notification text for problem states
-        // Normal "Connected" state shows only the app logo in status bar
+        // Normal "Connected" state shows bandwidth stats
         if (isProblemState) {
             builder.setContentTitle("Secure Legion")
                    .setContentText(status)
                    .setPriority(NotificationCompat.PRIORITY_DEFAULT)
         } else {
-            // Connected state - completely silent notification (just icon)
-            builder.setContentTitle("")
-                   .setContentText("")
+            // Connected state - show bandwidth stats like Orbot
+            val downloadSpeed = formatBytes(currentDownloadSpeed)
+            val uploadSpeed = formatBytes(currentUploadSpeed)
+
+            builder.setContentTitle("Connected to the Tor Network")
+                   .setContentText("↓ $downloadSpeed / ↑ $uploadSpeed")
                    .setPriority(NotificationCompat.PRIORITY_MIN)
                    .setShowWhen(false)  // Don't show timestamp
                    .setSilent(true)      // Silent notification
@@ -3478,6 +3759,105 @@ class TorService : Service() {
         val notification = createNotification(status)
         val notificationManager = getSystemService(NotificationManager::class.java)
         notificationManager.notify(NOTIFICATION_ID, notification)
+    }
+
+    // ==================== BANDWIDTH MONITORING ====================
+
+    /**
+     * Start monitoring network bandwidth and updating notification
+     * Updates every 2s when app open, 10s when app closed (saves battery)
+     */
+    private fun startBandwidthMonitoring() {
+        // Initialize baseline
+        lastRxBytes = android.net.TrafficStats.getTotalRxBytes()
+        lastTxBytes = android.net.TrafficStats.getTotalTxBytes()
+        lastBandwidthUpdate = System.currentTimeMillis()
+
+        // Create update runnable
+        bandwidthUpdateRunnable = object : Runnable {
+            override fun run() {
+                updateBandwidthStats()
+                // Update notification with current speeds
+                updateNotification("Connected to the Tor Network")
+
+                // Adaptive update interval: fast when app open, slow when closed
+                val updateInterval = if (isAppInForeground) {
+                    BANDWIDTH_UPDATE_FAST  // 2 seconds
+                } else {
+                    BANDWIDTH_UPDATE_SLOW  // 10 seconds (saves battery)
+                }
+
+                // Schedule next update
+                bandwidthHandler.postDelayed(this, updateInterval)
+            }
+        }
+
+        // Start monitoring
+        bandwidthHandler.post(bandwidthUpdateRunnable!!)
+        Log.d(TAG, "Bandwidth monitoring started")
+    }
+
+    /**
+     * Update foreground state (called by activities)
+     * Adjusts bandwidth update frequency
+     */
+    fun setAppInForeground(inForeground: Boolean) {
+        if (isAppInForeground != inForeground) {
+            isAppInForeground = inForeground
+            Log.d(TAG, "App foreground state changed: $inForeground (bandwidth updates: ${if (inForeground) "fast (2s)" else "slow (10s)"})")
+        }
+    }
+
+    /**
+     * Stop bandwidth monitoring
+     */
+    private fun stopBandwidthMonitoring() {
+        bandwidthUpdateRunnable?.let {
+            bandwidthHandler.removeCallbacks(it)
+        }
+        bandwidthUpdateRunnable = null
+        currentDownloadSpeed = 0
+        currentUploadSpeed = 0
+        Log.d(TAG, "Bandwidth monitoring stopped")
+    }
+
+    /**
+     * Update bandwidth statistics
+     * Calculates download/upload speeds based on traffic since last update
+     */
+    private fun updateBandwidthStats() {
+        val now = System.currentTimeMillis()
+        val currentRxBytes = android.net.TrafficStats.getTotalRxBytes()
+        val currentTxBytes = android.net.TrafficStats.getTotalTxBytes()
+
+        // Calculate time delta (in seconds)
+        val timeDelta = (now - lastBandwidthUpdate) / 1000.0
+        if (timeDelta <= 0) return  // Avoid division by zero
+
+        // Calculate bytes transferred since last update
+        val rxDelta = currentRxBytes - lastRxBytes
+        val txDelta = currentTxBytes - lastTxBytes
+
+        // Calculate speeds (bytes per second)
+        currentDownloadSpeed = (rxDelta / timeDelta).toLong()
+        currentUploadSpeed = (txDelta / timeDelta).toLong()
+
+        // Update for next iteration
+        lastRxBytes = currentRxBytes
+        lastTxBytes = currentTxBytes
+        lastBandwidthUpdate = now
+    }
+
+    /**
+     * Format bytes into human-readable speed string
+     * Examples: "1.2 MiB/s", "456 KiB/s", "12 B/s"
+     */
+    private fun formatBytes(bytes: Long): String {
+        return when {
+            bytes >= 1024 * 1024 -> String.format("%.1f MiB/s", bytes / (1024.0 * 1024.0))
+            bytes >= 1024 -> String.format("%.0f KiB/s", bytes / 1024.0)
+            else -> "$bytes B/s"
+        }
     }
 
     override fun onBind(intent: Intent?): IBinder? {
@@ -3984,11 +4364,15 @@ class TorService : Service() {
         listenersReady = false
         isServiceRunning = false
 
+        // Clear instance
+        instance = null
+
         // Cancel AlarmManager restart checks
         cancelServiceRestart()
 
         // Clean up handlers
         reconnectHandler.removeCallbacksAndMessages(null)
+        bandwidthHandler.removeCallbacksAndMessages(null)
 
         // Unregister network callback
         try {

@@ -15,6 +15,7 @@ import android.view.ViewGroup
 import android.widget.CheckBox
 import android.widget.ImageView
 import android.widget.LinearLayout
+import android.widget.PopupMenu
 import android.widget.TextView
 import androidx.cardview.widget.CardView
 import androidx.recyclerview.widget.RecyclerView
@@ -39,7 +40,8 @@ class MessageAdapter(
     private val onImageClick: ((String) -> Unit)? = null,  // Base64 image data
     private val onPaymentRequestClick: ((Message) -> Unit)? = null,  // Click on payment request (to pay)
     private val onPaymentDetailsClick: ((Message) -> Unit)? = null,  // Click on completed payment (for details)
-    private val onPriceRefreshClick: ((Message, TextView, TextView) -> Unit)? = null  // Refresh price callback
+    private val onPriceRefreshClick: ((Message, TextView, TextView) -> Unit)? = null,  // Refresh price callback
+    private val onDeleteMessage: ((Message) -> Unit)? = null  // Delete single message callback
 ) : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
 
     companion object {
@@ -365,13 +367,9 @@ class MessageAdapter(
             holder.messageCheckbox.setOnCheckedChangeListener(null)
             holder.messageBubble.setOnClickListener(null)
 
-            // Add long-press listener to copy text
+            // Add long-press listener to show popup menu with Copy and Delete options
             holder.messageBubble.setOnLongClickListener {
-                val context = holder.itemView.context
-                val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                val clip = ClipData.newPlainText("Message", message.encryptedContent)
-                clipboard.setPrimaryClip(clip)
-                ThemedToast.show(context, "Message copied")
+                showMessagePopupMenu(it, message)
                 true
             }
         }
@@ -426,13 +424,9 @@ class MessageAdapter(
             holder.messageCheckbox.setOnCheckedChangeListener(null)
             holder.messageBubble.setOnClickListener(null)
 
-            // Add long-press listener to copy text
+            // Add long-press listener to show popup menu with Copy and Delete options
             holder.messageBubble.setOnLongClickListener {
-                val context = holder.itemView.context
-                val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                val clip = ClipData.newPlainText("Message", message.encryptedContent)
-                clipboard.setPrimaryClip(clip)
-                ThemedToast.show(context, "Message copied")
+                showMessagePopupMenu(it, message)
                 true
             }
         }
@@ -449,15 +443,32 @@ class MessageAdapter(
         val pendingPing = pendingPings[pendingIndex]
         val timestamp = pendingPing.timestamp
 
-        // Reset visibility states for recycled views
-        // Check if this ping is currently being downloaded
-        val isDownloading = pendingPing.pingId in downloadingPingIds
-        if (isDownloading) {
-            holder.downloadButton.visibility = View.GONE
-            holder.downloadingText.visibility = View.VISIBLE
-        } else {
-            holder.downloadButton.visibility = View.VISIBLE
-            holder.downloadingText.visibility = View.GONE
+        // Update UI based on ping state
+        when (pendingPing.state) {
+            com.securelegion.models.PingState.PENDING -> {
+                // Show "Download" button
+                holder.downloadButton.visibility = View.VISIBLE
+                holder.downloadingText.visibility = View.GONE
+            }
+            com.securelegion.models.PingState.DOWNLOADING -> {
+                // Show "Downloading..." text
+                holder.downloadButton.visibility = View.GONE
+                holder.downloadingText.visibility = View.VISIBLE
+                holder.downloadingText.text = "Downloading..."
+            }
+            com.securelegion.models.PingState.DECRYPTING -> {
+                // Show "Decrypting..." text
+                holder.downloadButton.visibility = View.GONE
+                holder.downloadingText.visibility = View.VISIBLE
+                holder.downloadingText.text = "Decrypting..."
+            }
+            com.securelegion.models.PingState.READY -> {
+                // Message is ready to show - this ping should be removed atomically
+                // Hide this pending ping entirely (ChatActivity will remove it next refresh)
+                holder.itemView.visibility = View.GONE
+                holder.itemView.layoutParams?.height = 0
+                return
+            }
         }
 
         // Show timestamp header if this is the first message or date changed
@@ -1334,5 +1345,34 @@ class MessageAdapter(
                 notifyItemRangeChanged(0, newTotalCount)
             }
         }
+    }
+
+    /**
+     * Show popup menu on message long-press with Copy and Delete options
+     */
+    private fun showMessagePopupMenu(view: View, message: Message) {
+        val popup = PopupMenu(view.context, view)
+        popup.inflate(R.menu.message_actions_menu)
+
+        popup.setOnMenuItemClickListener { menuItem ->
+            when (menuItem.itemId) {
+                R.id.action_copy -> {
+                    // Copy message text
+                    val clipboard = view.context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                    val clip = ClipData.newPlainText("Message", message.encryptedContent)
+                    clipboard.setPrimaryClip(clip)
+                    ThemedToast.show(view.context, "Message copied")
+                    true
+                }
+                R.id.action_delete -> {
+                    // Delete message
+                    onDeleteMessage?.invoke(message)
+                    true
+                }
+                else -> false
+            }
+        }
+
+        popup.show()
     }
 }

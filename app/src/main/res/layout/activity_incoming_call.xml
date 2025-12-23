@@ -1,0 +1,136 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.constraintlayout.widget.ConstraintLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#000000">
+
+    <!-- Title: Secure Call -->
+    <TextView
+        android:id="@+id/titleText"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="60dp"
+        android:text="Secure Call"
+        android:textSize="24sp"
+        android:textColor="#FFFFFF"
+        android:fontFamily="@font/space_grotesk_bold"
+        android:textStyle="bold"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent" />
+
+    <!-- Animated Ring Container (centered) -->
+    <FrameLayout
+        android:id="@+id/callIconContainer"
+        android:layout_width="240dp"
+        android:layout_height="240dp"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintVertical_bias="0.35">
+
+        <!-- Animated ring overlay -->
+        <ImageView
+            android:id="@+id/animatedRing"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:src="@drawable/incoming_call_ring_anim"
+            android:contentDescription="Animated call ring" />
+
+        <!-- Lock icon centered -->
+        <ImageView
+            android:id="@+id/lockIcon"
+            android:layout_width="180dp"
+            android:layout_height="180dp"
+            android:layout_gravity="center"
+            android:src="@drawable/ic_call_lock"
+            android:contentDescription="Secure call lock icon" />
+    </FrameLayout>
+
+    <!-- Incoming Call Text -->
+    <TextView
+        android:id="@+id/callStatus"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="32dp"
+        android:text="Incoming Call"
+        android:textSize="18sp"
+        android:textColor="#CCCCCC"
+        android:fontFamily="@font/poppins_regular"
+        app:layout_constraintTop_toBottomOf="@id/callIconContainer"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent" />
+
+    <!-- Contact Name -->
+    <TextView
+        android:id="@+id/contactName"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:text="@Contact"
+        android:textSize="28sp"
+        android:textColor="#FFFFFF"
+        android:fontFamily="@font/space_grotesk_bold"
+        android:textStyle="bold"
+        app:layout_constraintTop_toBottomOf="@id/callStatus"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent" />
+
+    <!-- Button Container -->
+    <LinearLayout
+        android:id="@+id/buttonContainer"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="100dp"
+        android:orientation="horizontal"
+        android:gravity="center"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent">
+
+        <!-- Decline Button (Circular) -->
+        <com.google.android.material.floatingactionbutton.FloatingActionButton
+            android:id="@+id/declineButton"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginEnd="60dp"
+            android:src="@drawable/ic_call_end"
+            app:fabSize="normal"
+            app:fabCustomSize="72dp"
+            app:maxImageSize="32dp"
+            app:tint="#FFFFFF"
+            app:backgroundTint="#FF6B6B"
+            app:elevation="6dp"
+            app:borderWidth="0dp"
+            android:contentDescription="Decline call" />
+
+        <!-- Answer Button (Circular) -->
+        <com.google.android.material.floatingactionbutton.FloatingActionButton
+            android:id="@+id/answerButton"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:src="@drawable/ic_call"
+            app:fabSize="normal"
+            app:fabCustomSize="72dp"
+            app:maxImageSize="32dp"
+            app:tint="#FFFFFF"
+            app:backgroundTint="#4A9EFF"
+            app:elevation="6dp"
+            app:borderWidth="0dp"
+            android:contentDescription="Answer call" />
+
+    </LinearLayout>
+
+    <!-- Hidden contact avatar for compatibility -->
+    <ImageView
+        android:id="@+id/contactAvatar"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:visibility="gone"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintStart_toStartOf="parent" />
+
+</androidx.constraintlayout.widget.ConstraintLayout>

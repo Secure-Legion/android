@@ -43,9 +43,17 @@ import com.securelegion.services.ZcashService
 import com.securelegion.utils.startActivityWithSlideAnimation
 import com.securelegion.utils.BadgeUtils
 import com.securelegion.utils.ThemedToast
+import com.securelegion.voice.CallSignaling
+import com.securelegion.voice.VoiceCallManager
+import com.securelegion.voice.crypto.VoiceCallCrypto
 import com.securelegion.workers.SelfDestructWorker
 import com.securelegion.workers.MessageRetryWorker
+import com.securelegion.database.entities.ed25519PublicKeyBytes
+import com.securelegion.database.entities.x25519PublicKeyBytes
+import java.util.UUID
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.concurrent.TimeUnit
@@ -53,6 +61,7 @@ import java.util.concurrent.TimeUnit
 class MainActivity : BaseActivity() {
     private var currentTab = "messages" // Track current tab: "messages", "contacts", or "wallet"
     private var currentWallet: Wallet? = null // Track currently selected wallet
+    private var isCallMode = false // Track if we're in call mode (Phone icon clicked)
 
     // BroadcastReceiver to listen for incoming Pings and refresh UI
     private val pingReceiver = object : BroadcastReceiver() {
@@ -335,6 +344,9 @@ class MainActivity : BaseActivity() {
         super.onResume()
         Log.d("MainActivity", "onResume called - current tab: $currentTab")
 
+        // Notify TorService that app is in foreground (fast bandwidth updates)
+        com.securelegion.services.TorService.setForegroundState(true)
+
         // Reload data when returning to MainActivity (receiver stays registered)
         if (currentTab == "messages") {
             setupChatList()
@@ -348,6 +360,14 @@ class MainActivity : BaseActivity() {
 
         // Update friend request badge count
         updateFriendRequestBadge()
+    }
+
+    override fun onPause() {
+        super.onPause()
+        Log.d("MainActivity", "onPause called")
+
+        // Notify TorService that app is in background (slow bandwidth updates to save battery)
+        com.securelegion.services.TorService.setForegroundState(false)
     }
 
     override fun onDestroy() {
@@ -584,12 +604,17 @@ class MainActivity : BaseActivity() {
                     contactsList.visibility = View.VISIBLE
                     contactsList.layoutManager = LinearLayoutManager(this@MainActivity)
                     contactsList.adapter = ContactAdapter(contacts) { contact ->
-                        // Open contact options screen
-                        val intent = android.content.Intent(this@MainActivity, ContactOptionsActivity::class.java)
-                        intent.putExtra("CONTACT_ID", contact.id.toLong())
-                        intent.putExtra("CONTACT_NAME", contact.name)
-                        intent.putExtra("CONTACT_ADDRESS", contact.address)
-                        startActivityWithSlideAnimation(intent)
+                        if (isCallMode) {
+                            // Start voice call
+                            startVoiceCallWithContact(contact)
+                        } else {
+                            // Open contact options screen
+                            val intent = android.content.Intent(this@MainActivity, ContactOptionsActivity::class.java)
+                            intent.putExtra("CONTACT_ID", contact.id.toLong())
+                            intent.putExtra("CONTACT_NAME", contact.name)
+                            intent.putExtra("CONTACT_ADDRESS", contact.address)
+                            startActivityWithSlideAnimation(intent)
+                        }
                     }
                     Log.i("MainActivity", "RecyclerView adapter set with ${contacts.size} items")
 
@@ -667,11 +692,11 @@ class MainActivity : BaseActivity() {
             }
         }
 
-        findViewById<View>(R.id.navLock)?.setOnClickListener {
-            Log.d("MainActivity", "Lock nav clicked")
-            val intent = android.content.Intent(this, LockActivity::class.java)
-            startActivity(intent)
-            finish()
+        findViewById<View>(R.id.navPhone)?.setOnClickListener {
+            Log.d("MainActivity", "Phone nav clicked")
+            // Show contacts view in call mode
+            isCallMode = true
+            showContactsTab()
         }
 
         // Profile Icon (navigate to user profile)
@@ -692,6 +717,7 @@ class MainActivity : BaseActivity() {
         }
 
         findViewById<View>(R.id.tabContacts).setOnClickListener {
+            isCallMode = false  // Regular contacts mode
             showContactsTab()
         }
     }
@@ -1017,6 +1043,148 @@ class MainActivity : BaseActivity() {
                 withContext(Dispatchers.Main) {
                     ThemedToast.show(this@MainActivity, "Download failed: ${e.message}")
                 }
+            }
+        }
+    }
+
+    /**
+     * Start a voice call with the selected contact
+     */
+    private fun startVoiceCallWithContact(contact: Contact) {
+        lifecycleScope.launch {
+            try {
+                // Check RECORD_AUDIO permission
+                if (ContextCompat.checkSelfPermission(
+                        this@MainActivity,
+                        Manifest.permission.RECORD_AUDIO
+                    ) != PackageManager.PERMISSION_GRANTED
+                ) {
+                    ActivityCompat.requestPermissions(
+                        this@MainActivity,
+                        arrayOf(Manifest.permission.RECORD_AUDIO),
+                        100
+                    )
+                    return@launch
+                }
+
+                // Get full contact details from database
+                val keyManager = KeyManager.getInstance(this@MainActivity)
+                val dbPassphrase = keyManager.getDatabasePassphrase()
+                val database = SecureLegionDatabase.getInstance(this@MainActivity, dbPassphrase)
+
+                val fullContact = withContext(Dispatchers.IO) {
+                    database.contactDao().getContactById(contact.id.toLong())
+                }
+
+                if (fullContact == null) {
+                    ThemedToast.show(this@MainActivity, "Contact not found")
+                    return@launch
+                }
+
+                if (fullContact.messagingOnion == null) {
+                    ThemedToast.show(this@MainActivity, "Contact has no messaging address")
+                    return@launch
+                }
+
+                // Show calling dialog
+                val callingDialog = androidx.appcompat.app.AlertDialog.Builder(this@MainActivity, R.style.CustomAlertDialog)
+                    .setTitle("Calling")
+                    .setMessage("Calling ${fullContact.displayName}...")
+                    .setCancelable(false)
+                    .create()
+                callingDialog.show()
+
+                // Generate call ID
+                val callId = UUID.randomUUID().toString().replace("-", "").take(16)
+
+                // Generate ephemeral keypair
+                val crypto = VoiceCallCrypto()
+                val ephemeralKeypair = crypto.generateEphemeralKeypair()
+
+                // Send CALL_OFFER
+                val success = withContext(Dispatchers.IO) {
+                    CallSignaling.sendCallOffer(
+                        recipientX25519PublicKey = fullContact.x25519PublicKeyBytes,
+                        recipientOnion = fullContact.messagingOnion!!,
+                        callId = callId,
+                        ephemeralPublicKey = ephemeralKeypair.publicKey.asBytes,
+                        numCircuits = 1
+                    )
+                }
+
+                if (!success) {
+                    callingDialog.dismiss()
+                    ThemedToast.show(this@MainActivity, "Failed to send call offer")
+                    return@launch
+                }
+
+                // Register pending call
+                val callManager = VoiceCallManager.getInstance(this@MainActivity)
+
+                // Create timeout checker
+                val timeoutJob = lifecycleScope.launch {
+                    while (isActive) {
+                        delay(1000)
+                        callManager.checkPendingCallTimeouts()
+                    }
+                }
+
+                callManager.registerPendingOutgoingCall(
+                    callId = callId,
+                    contactOnion = fullContact.messagingOnion!!,
+                    contactEd25519PublicKey = fullContact.ed25519PublicKeyBytes,
+                    contactName = fullContact.displayName,
+                    ourEphemeralPublicKey = ephemeralKeypair.publicKey.asBytes,
+                    onAnswered = { theirEphemeralKey ->
+                        lifecycleScope.launch(Dispatchers.Main) {
+                            timeoutJob.cancel()
+                            callingDialog.dismiss()
+
+                            // Launch VoiceCallActivity
+                            val intent = Intent(this@MainActivity, VoiceCallActivity::class.java)
+                            intent.putExtra(VoiceCallActivity.EXTRA_CONTACT_ID, fullContact.id)
+                            intent.putExtra(VoiceCallActivity.EXTRA_CONTACT_NAME, fullContact.displayName)
+                            intent.putExtra(VoiceCallActivity.EXTRA_CALL_ID, callId)
+                            intent.putExtra(VoiceCallActivity.EXTRA_IS_OUTGOING, true)
+                            intent.putExtra(VoiceCallActivity.EXTRA_THEIR_EPHEMERAL_KEY, theirEphemeralKey)
+                            startActivity(intent)
+
+                            // Reset call mode
+                            isCallMode = false
+                        }
+                    },
+                    onTimeout = {
+                        lifecycleScope.launch(Dispatchers.Main) {
+                            timeoutJob.cancel()
+                            callingDialog.dismiss()
+                            ThemedToast.show(this@MainActivity, "Call timeout - no answer")
+                            isCallMode = false
+                        }
+                    },
+                    onRejected = {
+                        lifecycleScope.launch(Dispatchers.Main) {
+                            timeoutJob.cancel()
+                            callingDialog.dismiss()
+                            ThemedToast.show(this@MainActivity, "Call rejected")
+                            isCallMode = false
+                        }
+                    },
+                    onBusy = {
+                        lifecycleScope.launch(Dispatchers.Main) {
+                            timeoutJob.cancel()
+                            callingDialog.dismiss()
+                            ThemedToast.show(this@MainActivity, "Contact is busy")
+                            isCallMode = false
+                        }
+                    }
+                )
+
+                Log.i("MainActivity", "Voice call initiated to ${fullContact.displayName} with call ID: $callId")
+
+            } catch (e: Exception) {
+                Log.e("MainActivity", "Failed to start voice call", e)
+                ThemedToast.show(this@MainActivity, "Failed to start call: ${e.message}")
+                isCallMode = false
             }
         }
     }

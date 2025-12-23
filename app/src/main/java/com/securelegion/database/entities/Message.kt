@@ -120,8 +120,16 @@ data class Message(
     /**
      * Ping ID for Ping-Pong protocol
      * Used to match Pongs with Pings and track message delivery
+     * Generated once when message is created, never changes (prevents ghost pings)
      */
     val pingId: String? = null,
+
+    /**
+     * Ping timestamp (epoch milliseconds)
+     * Generated once when message is created, used with pingId to recreate same PingToken
+     * This ensures retries use identical encrypted bytes (same nonce + same timestamp = safe)
+     */
+    val pingTimestamp: Long? = null,
 
     /**
      * Encrypted payload for sender-side storage

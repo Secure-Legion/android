@@ -40,38 +40,15 @@ relay-server/
 # Misc
 nul
 *.log
-TODO.md
-OWASP_MASTG_Assessment.md
-*ACK.md
+*.md
 payment_request_fixes_backup.txt
 SECURITY_ROADMAP.txt
-
-# Exploration notes (auto-generated, not tracked)
-*_exploration_*.md
-*_analysis_*.md
-SecureLegion_Payment_System_Analysis*.md
 
 # Signing keys (NEVER commit these!)
 *.jks
 *.keystore
 keystore.properties
 release-keystore.jks
-
-# Files to keep locally but not in git
-ANDROID_BUILD_SUCCESS.md
-QUICKSTART.md
-PING_PONG_IMPLEMENTATION.md
-PING_PONG_PROTOCOL_SIMPLE.md
-PING_PONG_PROTOCOL_SIMPLE.txt
-PING_PONG_PROTOCOL_TECHNICAL.md
-IP_ROTATION_METHODS.md
-VPNSERVICE_IMPLEMENTATION_GUIDE.md
-docs/IPFS_P2P_BACKUP_SYSTEM.md
-docs/MULTI_IDENTITY_SYSTEM.md
-docs/SECUREPAY.md
-docs/TWO_ONION_IPFS_MESH_SYSTEM.md
-docs/DETAILED_IMPLEMENTATION_PLAN.md
-DEAD_CODE_TO_DELETE.md
 gradlew.bat
 *.png
 notification_*.png

@@ -57,6 +57,21 @@
             android:exported="false"
             android:windowSoftInputMode="adjustPan" />
 
+        <!-- Voice Calling Activities -->
+        <activity
+            android:name=".VoiceCallActivity"
+            android:exported="false"
+            android:screenOrientation="portrait"
+            android:launchMode="singleTop" />
+
+        <activity
+            android:name=".IncomingCallActivity"
+            android:exported="false"
+            android:screenOrientation="portrait"
+            android:showWhenLocked="true"
+            android:turnScreenOn="true"
+            android:excludeFromRecents="true" />
+
         <activity
             android:name=".ComposeActivity"
             android:exported="false"

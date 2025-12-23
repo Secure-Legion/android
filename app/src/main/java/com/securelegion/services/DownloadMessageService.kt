@@ -233,22 +233,41 @@ class DownloadMessageService : Service() {
         Log.i(TAG, "========== STAGE 1/4: PREPARING ==========")
 
         // Restore Ping from PendingPing object
-        try {
+        // This is CRITICAL - if restoration fails, the Ping session is unrecoverable
+        val restoredPingId = try {
             Log.d(TAG, "Restoring Ping from queue")
             val encryptedPingWire = android.util.Base64.decode(pendingPing.encryptedPingData, android.util.Base64.NO_WRAP)
 
-            val restoredPingId = withContext(Dispatchers.IO) {
+            withContext(Dispatchers.IO) {
                 com.securelegion.crypto.RustBridge.decryptIncomingPing(encryptedPingWire)
             }
-
-            if (restoredPingId != null && restoredPingId == pingId) {
-                Log.i(TAG, "Successfully restored Ping: $pingId")
-            } else {
-                Log.w(TAG, "Restored Ping ID mismatch or failed: expected=$pingId, got=$restoredPingId")
-            }
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to restore Ping from queue", e)
+            Log.e(TAG, "Failed to restore Ping from queue - Ping session is unrecoverable", e)
+            downloadCompleted = true
+            watchdogJob.cancel()
+
+            // Remove this unrecoverable ping from queue
+            com.securelegion.models.PendingPing.removeFromQueue(prefs, contactId, pingId, synchronous = true)
+            Log.w(TAG, "Removed unrecoverable ping from queue: $pingId")
+
+            showFailureNotification(contactName, "Message expired. Ask sender to resend.")
+            return
         }
+
+        if (restoredPingId == null || restoredPingId != pingId) {
+            Log.e(TAG, "Ping restoration failed or ID mismatch: expected=$pingId, got=$restoredPingId")
+            downloadCompleted = true
+            watchdogJob.cancel()
+
+            // Remove this corrupted ping from queue
+            com.securelegion.models.PendingPing.removeFromQueue(prefs, contactId, pingId, synchronous = true)
+            Log.w(TAG, "Removed corrupted ping from queue: $pingId")
+
+            showFailureNotification(contactName, "Message corrupted. Ask sender to resend.")
+            return
+        }
+
+        Log.i(TAG, "Successfully restored Ping: $pingId")
 
         // Get sender's .onion address from PendingPing
         val senderOnion = pendingPing.senderOnionAddress
@@ -280,6 +299,10 @@ class DownloadMessageService : Service() {
 
         // STAGE 3: Sending response and waiting for message
         Log.i(TAG, "========== STAGE 3/4: DOWNLOADING MESSAGE ==========")
+
+        // Update ping state to DOWNLOADING
+        com.securelegion.models.PendingPing.updateState(prefs, contactId, pingId, com.securelegion.models.PingState.DOWNLOADING, synchronous = true)
+        broadcastStateUpdate(contactId)
 
         // DUAL-PATH APPROACH: Try instant reply first, then fall back to listener
         var pongSent = false
@@ -377,6 +400,11 @@ class DownloadMessageService : Service() {
         } else {
             Log.i(TAG, "✓ Pong sent! Now waiting for message payload...")
 
+            // Track this active download so TorService can associate incoming message with pingId
+            val downloadPrefs = getSharedPreferences("active_downloads", MODE_PRIVATE)
+            downloadPrefs.edit().putString("download_$contactId", pingId).commit()
+            Log.d(TAG, "⚡ Tracked active download: contactId=$contactId, pingId=${pingId.take(8)}")
+
             // Update notification
             updateNotification(contactName, "Waiting for message...")
 
@@ -433,9 +461,14 @@ class DownloadMessageService : Service() {
         notificationManager?.cancel(notificationId)
         Log.i(TAG, "Dismissed pending message notification (ID: $notificationId)")
 
-        // Remove this specific ping from the queue (synchronous for immediate consistency)
-        com.securelegion.models.PendingPing.removeFromQueue(prefs, contactId, pingId, synchronous = true)
-        Log.i(TAG, "Removed ping $pingId from queue (synchronous write)")
+        // Mark ping as READY - ChatActivity will perform atomic swap
+        Log.i(TAG, "⚡ Setting ping ${pingId.take(8)} to READY state (listener path)")
+        com.securelegion.models.PendingPing.updateState(prefs, contactId, pingId, com.securelegion.models.PingState.READY, synchronous = true)
+
+        // Verify state was set
+        val queue = com.securelegion.models.PendingPing.loadQueueForContact(prefs, contactId)
+        val ping = queue.find { it.pingId == pingId }
+        Log.d(TAG, "  Verification: ping state is now ${ping?.state}")
 
         // Broadcast to ChatActivity to refresh (ChatActivity will notify MainActivity if needed)
         val intent = Intent("com.securelegion.MESSAGE_RECEIVED")
@@ -443,7 +476,7 @@ class DownloadMessageService : Service() {
         intent.putExtra("CONTACT_ID", contactId)
         sendBroadcast(intent)
 
-        Log.i(TAG, "✓ Broadcast sent to refresh UI")
+        Log.i(TAG, "✓ Broadcast sent to refresh UI (atomic swap)")
 
         // Show success notification
         showSuccessNotification(contactName)
@@ -557,6 +590,16 @@ class DownloadMessageService : Service() {
     }
 
     /**
+     * Broadcast state update to ChatActivity to refresh UI
+     */
+    private fun broadcastStateUpdate(contactId: Long) {
+        val intent = Intent("com.securelegion.MESSAGE_RECEIVED")
+        intent.setPackage(packageName)
+        intent.putExtra("CONTACT_ID", contactId)
+        sendBroadcast(intent)
+    }
+
+    /**
      * Handle message blob that arrived immediately via instant path (sendPongBytes)
      */
     private suspend fun handleInstantMessageBlob(messageBytes: ByteArray, contactId: Long, contactName: String, pingId: String, connectionId: Long) {
@@ -637,6 +680,11 @@ class DownloadMessageService : Service() {
             // Decrypt message using Ed25519 key
             val ourPrivateKey = keyManager.getSigningKeyBytes()
 
+            // Update ping state to DECRYPTING
+            val prefs = getSharedPreferences("pending_pings", MODE_PRIVATE)
+            com.securelegion.models.PendingPing.updateState(prefs, contactId, pingId, com.securelegion.models.PingState.DECRYPTING, synchronous = true)
+            broadcastStateUpdate(contactId)
+
             when (typeByte.toInt()) {
                 0x03 -> {
                     // TEXT message (MSG_TYPE_TEXT = 0x03)
@@ -659,10 +707,24 @@ class DownloadMessageService : Service() {
                     if (result.isSuccess) {
                         Log.i(TAG, "✓ TEXT message saved to database")
 
-                        // Dismiss notification immediately - message is already saved
+                        // Mark ping as READY - ChatActivity will perform atomic swap
+                        val prefs = getSharedPreferences("pending_pings", MODE_PRIVATE)
+                        Log.i(TAG, "⚡ Setting ping ${pingId.take(8)} to READY state")
+                        com.securelegion.models.PendingPing.updateState(prefs, contactId, pingId, com.securelegion.models.PingState.READY, synchronous = true)
+
+                        // Verify state was set
+                        val queue = com.securelegion.models.PendingPing.loadQueueForContact(prefs, contactId)
+                        val ping = queue.find { it.pingId == pingId }
+                        Log.d(TAG, "  Verification: ping state is now ${ping?.state}")
+
+                        // Broadcast to trigger ChatActivity atomic swap
+                        val intent = Intent("com.securelegion.MESSAGE_RECEIVED")
+                        intent.setPackage(packageName)
+                        intent.putExtra("CONTACT_ID", contactId)
+                        sendBroadcast(intent)
+                        Log.i(TAG, "✓ Broadcast sent to refresh UI (atomic swap)")
 
                         // Send MESSAGE_ACK in background (fire-and-forget, don't block UI)
-
                         CoroutineScope(Dispatchers.IO).launch {
                             try {
                                 sendMessageAck(contactId, contactName, connectionId)
@@ -707,6 +769,18 @@ class DownloadMessageService : Service() {
 
                     if (result.isSuccess) {
                         Log.i(TAG, "✓ VOICE message saved to database")
+
+                        // Mark ping as READY - ChatActivity will perform atomic swap
+                        val prefs = getSharedPreferences("pending_pings", MODE_PRIVATE)
+                        com.securelegion.models.PendingPing.updateState(prefs, contactId, pingId, com.securelegion.models.PingState.READY, synchronous = true)
+
+                        // Broadcast to trigger ChatActivity atomic swap
+                        val intent = Intent("com.securelegion.MESSAGE_RECEIVED")
+                        intent.setPackage(packageName)
+                        intent.putExtra("CONTACT_ID", contactId)
+                        sendBroadcast(intent)
+                        Log.i(TAG, "✓ Broadcast sent to refresh UI (atomic swap)")
+
                         // Send MESSAGE_ACK to sender
                         sendMessageAck(contactId, contactName, connectionId)
                         // Dismiss the pending message notification
@@ -747,6 +821,18 @@ class DownloadMessageService : Service() {
 
                     if (result.isSuccess) {
                         Log.i(TAG, "✓ IMAGE message saved to database")
+
+                        // Mark ping as READY - ChatActivity will perform atomic swap
+                        val prefs = getSharedPreferences("pending_pings", MODE_PRIVATE)
+                        com.securelegion.models.PendingPing.updateState(prefs, contactId, pingId, com.securelegion.models.PingState.READY, synchronous = true)
+
+                        // Broadcast to trigger ChatActivity atomic swap
+                        val intent = Intent("com.securelegion.MESSAGE_RECEIVED")
+                        intent.setPackage(packageName)
+                        intent.putExtra("CONTACT_ID", contactId)
+                        sendBroadcast(intent)
+                        Log.i(TAG, "✓ Broadcast sent to refresh UI (atomic swap)")
+
                         // Send MESSAGE_ACK to sender
                         sendMessageAck(contactId, contactName, connectionId)
                         // Dismiss the pending message notification
@@ -784,6 +870,18 @@ class DownloadMessageService : Service() {
 
                     if (result.isSuccess) {
                         Log.i(TAG, "✓ PAYMENT_REQUEST message saved to database")
+
+                        // Remove ping from queue
+                        val prefs = getSharedPreferences("pending_pings", MODE_PRIVATE)
+                        com.securelegion.models.PendingPing.removeFromQueue(prefs, contactId, pingId, synchronous = true)
+
+                        // Broadcast to trigger ChatActivity refresh
+                        val intent = Intent("com.securelegion.MESSAGE_RECEIVED")
+                        intent.setPackage(packageName)
+                        intent.putExtra("CONTACT_ID", contactId)
+                        sendBroadcast(intent)
+                        Log.i(TAG, "✓ Broadcast sent to refresh UI")
+
                         sendMessageAck(contactId, contactName, connectionId)
                         val notificationManager = getSystemService(android.app.NotificationManager::class.java)
                         notificationManager?.cancel(contactId.toInt() + 20000)
@@ -818,6 +916,18 @@ class DownloadMessageService : Service() {
 
                     if (result.isSuccess) {
                         Log.i(TAG, "✓ PAYMENT_SENT message saved to database")
+
+                        // Remove ping from queue
+                        val prefs = getSharedPreferences("pending_pings", MODE_PRIVATE)
+                        com.securelegion.models.PendingPing.removeFromQueue(prefs, contactId, pingId, synchronous = true)
+
+                        // Broadcast to trigger ChatActivity refresh
+                        val intent = Intent("com.securelegion.MESSAGE_RECEIVED")
+                        intent.setPackage(packageName)
+                        intent.putExtra("CONTACT_ID", contactId)
+                        sendBroadcast(intent)
+                        Log.i(TAG, "✓ Broadcast sent to refresh UI")
+
                         sendMessageAck(contactId, contactName, connectionId)
                         val notificationManager = getSystemService(android.app.NotificationManager::class.java)
                         notificationManager?.cancel(contactId.toInt() + 20000)
@@ -852,6 +962,18 @@ class DownloadMessageService : Service() {
 
                     if (result.isSuccess) {
                         Log.i(TAG, "✓ PAYMENT_ACCEPTED message saved to database")
+
+                        // Remove ping from queue
+                        val prefs = getSharedPreferences("pending_pings", MODE_PRIVATE)
+                        com.securelegion.models.PendingPing.removeFromQueue(prefs, contactId, pingId, synchronous = true)
+
+                        // Broadcast to trigger ChatActivity refresh
+                        val intent = Intent("com.securelegion.MESSAGE_RECEIVED")
+                        intent.setPackage(packageName)
+                        intent.putExtra("CONTACT_ID", contactId)
+                        sendBroadcast(intent)
+                        Log.i(TAG, "✓ Broadcast sent to refresh UI")
+
                         sendMessageAck(contactId, contactName, connectionId)
                         val notificationManager = getSystemService(android.app.NotificationManager::class.java)
                         notificationManager?.cancel(contactId.toInt() + 20000)

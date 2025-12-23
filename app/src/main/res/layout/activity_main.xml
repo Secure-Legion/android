@@ -345,9 +345,9 @@
 
         </LinearLayout>
 
-        <!-- Lock Nav Item -->
+        <!-- Phone Nav Item -->
         <LinearLayout
-            android:id="@+id/navLock"
+            android:id="@+id/navPhone"
             android:layout_width="0dp"
             android:layout_height="match_parent"
             android:layout_weight="1"
@@ -360,15 +360,15 @@
             <ImageView
                 android:layout_width="24dp"
                 android:layout_height="24dp"
-                android:src="@drawable/ic_lock"
+                android:src="@drawable/ic_call"
                 android:layout_marginBottom="4dp"
                 android:tint="@color/text_gray"
-                android:contentDescription="Lock" />
+                android:contentDescription="Phone" />
 
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="Lock"
+                android:text="Phone"
                 android:textSize="11sp"
                 android:textColor="@color/text_gray"
                 android:fontFamily="@font/poppins_medium" />

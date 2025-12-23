@@ -172,6 +172,12 @@ dependencies {
     // IPtProxy includes obfs4proxy, snowflake, and meek_lite pluggable transports
     implementation("com.netzarchitekten:IPtProxy:4.2.2")
 
+    // Voice Calling - Opus codec for audio compression
+    // Using native Rust implementation via RustBridge (libopus built from source)
+
+    // Coroutines for async voice call handling (if not already included via core-ktx)
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
+
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
