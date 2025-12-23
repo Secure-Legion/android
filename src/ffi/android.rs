@@ -84,6 +84,8 @@ static GLOBAL_PING_RECEIVER: OnceCell<Arc<Mutex<mpsc::UnboundedReceiver<(u64, Ve
 static GLOBAL_TAP_RECEIVER: OnceCell<Arc<Mutex<mpsc::UnboundedReceiver<Vec<u8>>>>> = OnceCell::new();
 static GLOBAL_PONG_RECEIVER: OnceCell<Arc<Mutex<mpsc::UnboundedReceiver<Vec<u8>>>>> = OnceCell::new();
 static GLOBAL_ACK_RECEIVER: OnceCell<Arc<Mutex<mpsc::UnboundedReceiver<(u64, Vec<u8>)>>>> = OnceCell::new();
+static GLOBAL_MESSAGE_RECEIVER: OnceCell<Arc<Mutex<mpsc::UnboundedReceiver<(u64, Vec<u8>)>>>> = OnceCell::new();
+static GLOBAL_VOICE_RECEIVER: OnceCell<Arc<Mutex<mpsc::UnboundedReceiver<(u64, Vec<u8>)>>>> = OnceCell::new();
 static GLOBAL_FRIEND_REQUEST_RECEIVER: OnceCell<Arc<Mutex<mpsc::UnboundedReceiver<Vec<u8>>>>> = OnceCell::new();
 
 /// Global Tokio runtime for async operations
@@ -650,8 +652,27 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_startHiddenServiceList
 
         match result {
             Ok(receiver) => {
-                // Store the receiver globally
+                // Store the PING receiver globally
                 let _ = GLOBAL_PING_RECEIVER.set(Arc::new(Mutex::new(receiver)));
+
+                // Initialize MESSAGE channel for TEXT/VOICE/IMAGE/PAYMENT routing
+                let (message_tx, message_rx) = mpsc::unbounded_channel::<(u64, Vec<u8>)>();
+                let _ = GLOBAL_MESSAGE_RECEIVER.set(Arc::new(Mutex::new(message_rx)));
+                let tx_arc = Arc::new(std::sync::Mutex::new(message_tx));
+                if let Err(_) = crate::network::tor::MESSAGE_TX.set(tx_arc) {
+                    log::warn!("MESSAGE channel already initialized");
+                }
+                log::info!("MESSAGE channel initialized for direct routing");
+
+                // Initialize VOICE channel for CALL_SIGNALING routing
+                let (voice_tx, voice_rx) = mpsc::unbounded_channel::<(u64, Vec<u8>)>();
+                let _ = GLOBAL_VOICE_RECEIVER.set(Arc::new(Mutex::new(voice_rx)));
+                let voice_tx_arc = Arc::new(std::sync::Mutex::new(voice_tx));
+                if let Err(_) = crate::network::tor::VOICE_TX.set(voice_tx_arc) {
+                    log::warn!("VOICE channel already initialized");
+                }
+                log::info!("VOICE channel initialized for call signaling (separate from MESSAGE)");
+
                 1 as jboolean
             }
             Err(e) => {
@@ -813,6 +834,81 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_pollIncomingPing(
             }
         } else {
             // Listener not started
+            std::ptr::null_mut()
+        }
+    }, std::ptr::null_mut())
+}
+
+/// Poll for incoming MESSAGE (TEXT/VOICE/IMAGE/PAYMENT) from the listener
+/// Returns encoded data: [connection_id (8 bytes)][encrypted message blob]
+/// Returns null if no message is available
+#[no_mangle]
+pub extern "C" fn Java_com_securelegion_crypto_RustBridge_pollIncomingMessage(
+    mut env: JNIEnv,
+    _class: JClass,
+) -> jbyteArray {
+    catch_panic!(env, {
+        if let Some(receiver) = GLOBAL_MESSAGE_RECEIVER.get() {
+            let mut rx = receiver.lock().unwrap();
+
+            // Try to receive without blocking
+            match rx.try_recv() {
+                Ok((connection_id, message_bytes)) => {
+                    // Encode: [connection_id as 8 bytes little-endian][message_bytes]
+                    let mut encoded = Vec::new();
+                    encoded.extend_from_slice(&connection_id.to_le_bytes());
+                    encoded.extend_from_slice(&message_bytes);
+
+                    match vec_to_jbytearray(&mut env, &encoded) {
+                        Ok(array) => array.into_raw(),
+                        Err(_) => std::ptr::null_mut(),
+                    }
+                }
+                Err(_) => {
+                    // No message available
+                    std::ptr::null_mut()
+                }
+            }
+        } else {
+            // Listener not started
+            std::ptr::null_mut()
+        }
+    }, std::ptr::null_mut())
+}
+
+/// Poll for incoming VOICE call signaling (CALL_SIGNALING) from the listener
+/// Returns encoded data: [connection_id (8 bytes)][encrypted call signaling blob]
+/// Returns null if no message is available
+/// Completely separate from MESSAGE channel to allow simultaneous text messaging during voice calls
+#[no_mangle]
+pub extern "C" fn Java_com_securelegion_crypto_RustBridge_pollVoiceMessage(
+    mut env: JNIEnv,
+    _class: JClass,
+) -> jbyteArray {
+    catch_panic!(env, {
+        if let Some(receiver) = GLOBAL_VOICE_RECEIVER.get() {
+            let mut rx = receiver.lock().unwrap();
+
+            // Try to receive without blocking
+            match rx.try_recv() {
+                Ok((connection_id, message_bytes)) => {
+                    // Encode: [connection_id as 8 bytes little-endian][message_bytes]
+                    let mut encoded = Vec::new();
+                    encoded.extend_from_slice(&connection_id.to_le_bytes());
+                    encoded.extend_from_slice(&message_bytes);
+
+                    match vec_to_jbytearray(&mut env, &encoded) {
+                        Ok(array) => array.into_raw(),
+                        Err(_) => std::ptr::null_mut(),
+                    }
+                }
+                Err(_) => {
+                    // No voice message available
+                    std::ptr::null_mut()
+                }
+            }
+        } else {
+            // VOICE listener not started
             std::ptr::null_mut()
         }
     }, std::ptr::null_mut())
@@ -1056,6 +1152,8 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendPing(
     recipient_onion: JString,
     encrypted_message: JByteArray,
     message_type_byte: jbyte,
+    ping_id: JString,  // Ping ID (hex-encoded nonce) - generated in Kotlin, never changes
+    ping_timestamp: jlong,  // Timestamp when ping was created - also from Kotlin
 ) -> jstring {
     catch_panic!(env, {
         // Convert inputs
@@ -1161,21 +1259,54 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendPing(
             }
         };
 
-        // Create PingToken (signed) with both Ed25519 and X25519 keys
-        let ping_token = match crate::network::PingToken::new(
-            &sender_keypair,
-            &recipient_ed25519_verifying,
-            &sender_x25519_pubkey,
-            &recipient_x25519_pubkey,
-        ) {
-            Ok(token) => token,
+        // Parse ping_id from Kotlin (hex-encoded nonce, generated once, never changes)
+        let ping_id_str = match jstring_to_string(&mut env, ping_id) {
+            Ok(s) => s,
             Err(e) => {
-                let _ = env.throw_new("java/lang/RuntimeException", format!("Failed to create Ping: {}", e));
+                let _ = env.throw_new("java/lang/IllegalArgumentException", e);
                 return std::ptr::null_mut();
             }
         };
 
-        let ping_id = hex::encode(&ping_token.nonce);
+        // Decode hex ping_id to nonce bytes
+        let nonce_bytes = match hex::decode(&ping_id_str) {
+            Ok(bytes) => bytes,
+            Err(e) => {
+                let _ = env.throw_new("java/lang/IllegalArgumentException", format!("Invalid ping_id hex: {}", e));
+                return std::ptr::null_mut();
+            }
+        };
+
+        if nonce_bytes.len() != 24 {
+            let _ = env.throw_new("java/lang/IllegalArgumentException", format!("Invalid ping_id length: expected 24 bytes, got {}", nonce_bytes.len()));
+            return std::ptr::null_mut();
+        }
+
+        let mut nonce = [0u8; 24];
+        nonce.copy_from_slice(&nonce_bytes);
+
+        // Convert timestamp from milliseconds (Java/Kotlin) to seconds (Unix timestamp)
+        let timestamp_secs = (ping_timestamp / 1000) as i64;
+
+        log::info!("Creating PingToken with provided ID: {} (timestamp: {})", &ping_id_str[..8.min(ping_id_str.len())], timestamp_secs);
+
+        // Create PingToken with provided nonce and timestamp (ensures retries use identical bytes)
+        let ping_token = match crate::network::PingToken::with_nonce(
+            &sender_keypair,
+            &recipient_ed25519_verifying,
+            &sender_x25519_pubkey,
+            &recipient_x25519_pubkey,
+            nonce,
+            timestamp_secs,
+        ) {
+            Ok(token) => token,
+            Err(e) => {
+                let _ = env.throw_new("java/lang/RuntimeException", format!("Failed to create Ping with nonce: {}", e));
+                return std::ptr::null_mut();
+            }
+        };
+
+        let ping_id = ping_id_str;  // Use the provided ping_id (not regenerated)
 
         // Serialize PingToken
         let ping_bytes = match ping_token.to_bytes() {
@@ -4514,13 +4645,15 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_decryptAndStoreAckFrom
         log::info!("╚════════════════════════════════════════");
 
         let item_id = ack_token.item_id.clone();
+        let ack_type = ack_token.ack_type.clone();
 
         // Store in GLOBAL_ACK_SESSIONS
         crate::network::pingpong::store_ack_session(&item_id, ack_token);
         log::info!("Stored ACK in GLOBAL_ACK_SESSIONS");
 
-        // Return item_id to caller
-        match string_to_jstring(&mut env, &item_id) {
+        // Return JSON with item_id and ack_type
+        let ack_json = format!(r#"{{"item_id":"{}","ack_type":"{}"}}"#, item_id, ack_type);
+        match string_to_jstring(&mut env, &ack_json) {
             Ok(s) => s.into_raw(),
             Err(_) => std::ptr::null_mut(),
         }

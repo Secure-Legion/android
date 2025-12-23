@@ -171,6 +171,7 @@ pub const MSG_TYPE_IMAGE: u8 = 0x09;
 pub const MSG_TYPE_PAYMENT_REQUEST: u8 = 0x0A;
 pub const MSG_TYPE_PAYMENT_SENT: u8 = 0x0B;
 pub const MSG_TYPE_PAYMENT_ACCEPTED: u8 = 0x0C;
+pub const MSG_TYPE_CALL_SIGNALING: u8 = 0x0D;  // Voice call signaling (OFFER/ANSWER/REJECT/END/BUSY)
 
 /// Structure representing a pending connection waiting for Pong response
 pub struct PendingConnection {
@@ -190,6 +191,16 @@ pub static CONNECTION_ID_COUNTER: Lazy<Arc<StdMutex<u64>>> =
 /// Separate from regular message channels to avoid interference with working message system
 /// Initialized from JNI via startFriendRequestListener()
 pub static FRIEND_REQUEST_TX: once_cell::sync::OnceCell<Arc<StdMutex<tokio::sync::mpsc::UnboundedSender<Vec<u8>>>>> = once_cell::sync::OnceCell::new();
+
+/// Global channel for MESSAGE types (TEXT/VOICE/IMAGE/PAYMENT)
+/// Separate from PING channel to enable direct routing without trial decryption
+/// Initialized when listener starts
+pub static MESSAGE_TX: once_cell::sync::OnceCell<Arc<StdMutex<tokio::sync::mpsc::UnboundedSender<(u64, Vec<u8>)>>>> = once_cell::sync::OnceCell::new();
+
+/// Global channel for VOICE CALL types (CALL_SIGNALING)
+/// Completely separate from MESSAGE to allow simultaneous text messaging during voice calls
+/// Initialized when voice listener starts
+pub static VOICE_TX: once_cell::sync::OnceCell<Arc<StdMutex<tokio::sync::mpsc::UnboundedSender<(u64, Vec<u8>)>>>> = once_cell::sync::OnceCell::new();
 
 pub struct TorManager {
     control_stream: Option<Arc<Mutex<TcpStream>>>,
@@ -714,7 +725,7 @@ impl TorManager {
                 tx.send((conn_id, data)).ok();
             }
             MSG_TYPE_TEXT | MSG_TYPE_VOICE | MSG_TYPE_IMAGE | MSG_TYPE_PAYMENT_REQUEST | MSG_TYPE_PAYMENT_SENT | MSG_TYPE_PAYMENT_ACCEPTED => {
-                log::info!("→ Routing to MESSAGE handler (type={})",
+                log::info!("→ Routing to MESSAGE handler (separate channel, type={})",
                     match msg_type {
                         MSG_TYPE_TEXT => "TEXT",
                         MSG_TYPE_VOICE => "VOICE",
@@ -734,7 +745,37 @@ impl TorManager {
                     });
                 }
 
-                tx.send((conn_id, data)).ok();
+                // Route to MESSAGE channel (not PING channel)
+                if let Some(message_tx) = MESSAGE_TX.get() {
+                    let tx_lock = message_tx.lock().unwrap();
+                    if let Err(e) = tx_lock.send((conn_id, data)) {
+                        log::error!("Failed to send message to MESSAGE channel: {}", e);
+                    }
+                } else {
+                    log::warn!("MESSAGE channel not initialized - dropping message");
+                }
+            }
+            MSG_TYPE_CALL_SIGNALING => {
+                log::info!("→ Routing to VOICE handler (dedicated channel for call signaling)");
+
+                // Store connection for delivery confirmation
+                {
+                    let mut pending = PENDING_CONNECTIONS.lock().unwrap();
+                    pending.insert(conn_id, PendingConnection {
+                        socket,
+                        encrypted_ping: data.clone(),
+                    });
+                }
+
+                // Route to VOICE channel (separate from MESSAGE to allow simultaneous messaging during calls)
+                if let Some(voice_tx) = VOICE_TX.get() {
+                    let tx_lock = voice_tx.lock().unwrap();
+                    if let Err(e) = tx_lock.send((conn_id, data)) {
+                        log::error!("Failed to send call signaling to VOICE channel: {}", e);
+                    }
+                } else {
+                    log::warn!("VOICE channel not initialized - dropping call signaling");
+                }
             }
             MSG_TYPE_TAP => {
                 log::info!("→ Routing to TAP handler");

@@ -3,6 +3,7 @@ pub mod protocol;
 pub mod network;
 pub mod blockchain;
 pub mod nlx402;
+pub mod audio;
 pub mod ffi;
 
 // Re-export main types

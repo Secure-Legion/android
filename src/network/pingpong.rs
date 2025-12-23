@@ -370,6 +370,35 @@ impl PingToken {
         Ok(ping)
     }
 
+    /// Create a Ping token with a specific nonce and timestamp (for consistent retries)
+    /// This ensures retries use identical encrypted bytes (same nonce + same timestamp = safe)
+    pub fn with_nonce(
+        sender_keypair: &SigningKey,
+        recipient_pubkey: &VerifyingKey,
+        sender_x25519_pubkey: &[u8; 32],
+        recipient_x25519_pubkey: &[u8; 32],
+        nonce: [u8; 24],
+        timestamp: i64,  // Use provided timestamp instead of generating
+    ) -> Result<Self, Box<dyn std::error::Error>> {
+
+        // Create the Ping token (without signature first)
+        let mut ping = PingToken {
+            sender_pubkey: sender_keypair.verifying_key().to_bytes(),
+            recipient_pubkey: recipient_pubkey.to_bytes(),
+            sender_x25519_pubkey: *sender_x25519_pubkey,
+            recipient_x25519_pubkey: *recipient_x25519_pubkey,
+            nonce,
+            timestamp,
+            signature: [0u8; 64],
+        };
+
+        // Sign the Ping
+        let signature = ping.sign(sender_keypair)?;
+        ping.signature = signature.to_bytes();
+
+        Ok(ping)
+    }
+
     /// Sign the Ping token
     fn sign(&self, keypair: &SigningKey) -> Result<Signature, Box<dyn std::error::Error>> {
         let message = self.serialize_for_signing();

@@ -36,6 +36,9 @@ base32 = "0.5"
 # JNI (Android)
 jni = "0.21"
 
+# Audio codec - Opus for voice calling
+opus = "0.3"
+
 # Error handling
 thiserror = "1.0"
 anyhow = "1.0"
