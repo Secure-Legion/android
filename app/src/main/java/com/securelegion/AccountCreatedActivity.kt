@@ -232,6 +232,10 @@ class AccountCreatedActivity : AppCompatActivity() {
         findViewById<View>(R.id.continueButton).setOnClickListener {
             Log.i("AccountCreated", "User confirmed they have written down the keys")
 
+            // Mark seed phrase as confirmed
+            val prefs = getSharedPreferences("account_setup", MODE_PRIVATE)
+            prefs.edit().putBoolean("seed_phrase_confirmed", true).apply()
+
             // Clear the seed phrase backup from storage (security)
             val keyManager = KeyManager.getInstance(this)
             keyManager.clearSeedPhraseBackup()

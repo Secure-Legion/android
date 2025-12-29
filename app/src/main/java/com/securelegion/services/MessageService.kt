@@ -1190,13 +1190,20 @@ class MessageService(private val context: Context) {
             // Handle based on message type
             when (callMessage) {
                 is CallSignaling.CallSignalingMessage.CallOffer -> {
-                    Log.i(TAG, "Incoming call from ${contact.displayName}")
+                    Log.i(TAG, "Incoming call from ${contact.displayName} (voiceOnion: ${callMessage.voiceOnion})")
+
+                    // CRITICAL: Update contact's voiceOnion if we don't have it
+                    if (contact.voiceOnion.isNullOrEmpty() && callMessage.voiceOnion.isNotEmpty()) {
+                        Log.i(TAG, "Updating contact ${contact.displayName} voiceOnion: ${callMessage.voiceOnion}")
+                        val updatedContact = contact.copy(voiceOnion = callMessage.voiceOnion)
+                        database.contactDao().updateContact(updatedContact)
+                    }
 
                     // Get call manager
                     val callManager = VoiceCallManager.getInstance(context)
 
-                    // Register incoming call
-                    callManager.handleIncomingCallOffer(
+                    // Register incoming call (returns true if new, false if duplicate)
+                    val isNewCall = callManager.handleIncomingCallOffer(
                         callId = callMessage.callId,
                         contactOnion = senderOnionAddress,
                         contactEd25519PublicKey = contact.ed25519PublicKeyBytes,
@@ -1204,21 +1211,34 @@ class MessageService(private val context: Context) {
                         ephemeralPublicKey = callMessage.ephemeralPublicKey
                     )
 
-                    // Launch IncomingCallActivity
-                    val intent = Intent(context, IncomingCallActivity::class.java)
-                    intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                    intent.putExtra(IncomingCallActivity.EXTRA_CALL_ID, callMessage.callId)
-                    intent.putExtra(IncomingCallActivity.EXTRA_CONTACT_ID, contact.id)
-                    intent.putExtra(IncomingCallActivity.EXTRA_CONTACT_NAME, contact.displayName)
-                    intent.putExtra(IncomingCallActivity.EXTRA_CONTACT_ONION, senderOnionAddress)
-                    intent.putExtra(IncomingCallActivity.EXTRA_CONTACT_ED25519_PUBLIC_KEY, contact.ed25519PublicKeyBytes)
-                    intent.putExtra(IncomingCallActivity.EXTRA_CONTACT_X25519_PUBLIC_KEY, contact.x25519PublicKeyBytes)
-                    intent.putExtra(IncomingCallActivity.EXTRA_EPHEMERAL_PUBLIC_KEY, callMessage.ephemeralPublicKey)
-                    context.startActivity(intent)
+                    // Only launch IncomingCallActivity for NEW calls (not duplicates)
+                    if (isNewCall) {
+                        Log.i(TAG, "New incoming call - launching IncomingCallActivity")
+                        val intent = Intent(context, IncomingCallActivity::class.java)
+                        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        intent.putExtra(IncomingCallActivity.EXTRA_CALL_ID, callMessage.callId)
+                        intent.putExtra(IncomingCallActivity.EXTRA_CONTACT_ID, contact.id)
+                        intent.putExtra(IncomingCallActivity.EXTRA_CONTACT_NAME, contact.displayName)
+                        intent.putExtra(IncomingCallActivity.EXTRA_CONTACT_ONION, senderOnionAddress)
+                        intent.putExtra(IncomingCallActivity.EXTRA_CONTACT_ED25519_PUBLIC_KEY, contact.ed25519PublicKeyBytes)
+                        intent.putExtra(IncomingCallActivity.EXTRA_CONTACT_X25519_PUBLIC_KEY, contact.x25519PublicKeyBytes)
+                        intent.putExtra(IncomingCallActivity.EXTRA_EPHEMERAL_PUBLIC_KEY, callMessage.ephemeralPublicKey)
+                        context.startActivity(intent)
+                    } else {
+                        Log.d(TAG, "Duplicate CALL_OFFER - not launching IncomingCallActivity again")
+                    }
                 }
 
                 is CallSignaling.CallSignalingMessage.CallAnswer -> {
-                    Log.i(TAG, "Call answered by ${contact.displayName}")
+                    Log.i(TAG, "Call answered by ${contact.displayName} (voiceOnion: ${callMessage.voiceOnion})")
+
+                    // CRITICAL: Update contact's voiceOnion if we don't have it
+                    if (contact.voiceOnion.isNullOrEmpty() && callMessage.voiceOnion.isNotEmpty()) {
+                        Log.i(TAG, "Updating contact ${contact.displayName} voiceOnion: ${callMessage.voiceOnion}")
+                        val updatedContact = contact.copy(voiceOnion = callMessage.voiceOnion)
+                        database.contactDao().updateContact(updatedContact)
+                    }
+
                     val callManager = VoiceCallManager.getInstance(context)
                     callManager.handleCallAnswer(callMessage.callId, callMessage.ephemeralPublicKey)
                 }

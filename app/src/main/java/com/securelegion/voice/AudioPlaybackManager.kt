@@ -52,6 +52,8 @@ class AudioPlaybackManager(
     private var audioTrack: AudioTrack? = null
     private var playbackJob: Job? = null
     private var isSpeakerEnabled = false
+    private var audioManager: AudioManager? = null
+    private var previousAudioMode: Int = AudioManager.MODE_NORMAL
 
     @Volatile
     private var isPlaying = false
@@ -83,6 +85,14 @@ class AudioPlaybackManager(
      */
     fun initialize() {
         try {
+            // Set up AudioManager for voice communication mode
+            audioManager = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+            audioManager?.let { am ->
+                previousAudioMode = am.mode
+                am.mode = AudioManager.MODE_IN_COMMUNICATION
+                Log.d(TAG, "AudioManager mode set to MODE_IN_COMMUNICATION (previous: $previousAudioMode)")
+            }
+
             // Calculate buffer size
             val minBufferSize = AudioTrack.getMinBufferSize(
                 SAMPLE_RATE,
@@ -349,11 +359,8 @@ class AudioPlaybackManager(
      */
     fun setSpeakerEnabled(enabled: Boolean) {
         isSpeakerEnabled = enabled
-
-        val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
         audioManager?.isSpeakerphoneOn = enabled
-
-        Log.d(TAG, "Speaker enabled: $enabled")
+        Log.d(TAG, "Speaker enabled: $enabled (AudioManager mode: ${audioManager?.mode})")
     }
 
     /**
@@ -392,6 +399,14 @@ class AudioPlaybackManager(
         } catch (e: Exception) {
             Log.e(TAG, "Error releasing AudioTrack", e)
         }
+
+        // Restore previous audio mode
+        audioManager?.let { am ->
+            am.mode = previousAudioMode
+            am.isSpeakerphoneOn = false
+            Log.d(TAG, "AudioManager mode restored to $previousAudioMode, speakerphone disabled")
+        }
+        audioManager = null
     }
 
     /**

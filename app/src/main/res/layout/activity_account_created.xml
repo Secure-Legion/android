@@ -560,9 +560,8 @@
                 android:textSize="14sp"
                 android:textColor="#FFFFFF"
                 android:fontFamily="@font/poppins_regular"
-                android:button="@drawable/custom_checkbox"
-                android:buttonTint="@null"
-                android:paddingStart="8dp"
+                android:buttonTint="#FFFFFF"
+                android:padding="16dp"
                 android:layout_marginTop="16dp"
                 app:layout_constraintTop_toBottomOf="@id/warningText"
                 app:layout_constraintStart_toStartOf="parent" />

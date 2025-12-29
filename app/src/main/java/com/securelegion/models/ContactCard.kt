@@ -19,9 +19,10 @@ data class ContactCard(
     val x25519PublicKey: ByteArray,     // X25519 public key for encryption (32 bytes)
     val solanaAddress: String,          // Base58-encoded Solana address
 
-    // NEW - Two .onion addresses (v2.0)
-    val friendRequestOnion: String,     // Public .onion for friend requests
-    val messagingOnion: String,         // Private .onion for messaging
+    // NEW - Three .onion addresses (v2.0)
+    val friendRequestOnion: String,     // Public .onion for friend requests (port 9151)
+    val messagingOnion: String,         // Private .onion for messaging (port 8080)
+    val voiceOnion: String? = null,     // Voice calling .onion (port 9152) - nullable if not initialized yet
 
     // NEW - Additional fields
     val contactPin: String,             // 10-digit PIN (formatted XXX-XXX-XXXX)
@@ -56,6 +57,7 @@ data class ContactCard(
         // NEW fields (v2.0)
         json.put("friend_request_onion", friendRequestOnion)
         json.put("messaging_onion", messagingOnion)
+        json.put("voice_onion", voiceOnion)
         json.put("contact_pin", contactPin)
         if (ipfsCid != null) {
             json.put("ipfs_cid", ipfsCid)
@@ -108,6 +110,8 @@ data class ContactCard(
                 json.optString("onion_address", "")
             }
 
+            val voiceOnion = json.optString("voice_onion", "")
+
             val contactPin = json.optString("contact_pin", "000-000-0000")
 
             val ipfsCid = if (json.has("ipfs_cid")) {
@@ -121,6 +125,7 @@ data class ContactCard(
                 solanaAddress = json.getString("solana_address"),
                 friendRequestOnion = friendRequestOnion,
                 messagingOnion = messagingOnion,
+                voiceOnion = voiceOnion,
                 contactPin = contactPin,
                 ipfsCid = ipfsCid,
                 timestamp = json.getLong("timestamp")
@@ -140,6 +145,7 @@ data class ContactCard(
         if (solanaAddress != other.solanaAddress) return false
         if (friendRequestOnion != other.friendRequestOnion) return false
         if (messagingOnion != other.messagingOnion) return false
+        if (voiceOnion != other.voiceOnion) return false
         if (contactPin != other.contactPin) return false
         if (timestamp != other.timestamp) return false
 
@@ -153,6 +159,7 @@ data class ContactCard(
         result = 31 * result + solanaAddress.hashCode()
         result = 31 * result + friendRequestOnion.hashCode()
         result = 31 * result + messagingOnion.hashCode()
+        result = 31 * result + voiceOnion.hashCode()
         result = 31 * result + contactPin.hashCode()
         result = 31 * result + timestamp.hashCode()
         return result

@@ -130,7 +130,7 @@
 
     </androidx.constraintlayout.widget.ConstraintLayout>
 
-    <!-- Messages/Contacts Tabs -->
+    <!-- Messages/Groups/Contacts Tabs -->
     <LinearLayout
         android:id="@+id/tabsContainer"
         android:layout_width="match_parent"
@@ -149,6 +149,19 @@
             android:text="Messages"
             android:textSize="18sp"
             android:textColor="@color/text_white"
+            android:fontFamily="@font/space_grotesk_bold"
+            android:clickable="true"
+            android:focusable="true"
+            android:paddingEnd="24dp"
+            android:background="?attr/selectableItemBackgroundBorderless" />
+
+        <TextView
+            android:id="@+id/tabGroups"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Groups"
+            android:textSize="18sp"
+            android:textColor="@color/text_gray"
             android:fontFamily="@font/space_grotesk_bold"
             android:clickable="true"
             android:focusable="true"
@@ -199,6 +212,14 @@
                 android:background="#000000" />
 
         </LinearLayout>
+
+        <!-- Groups List Container -->
+        <include
+            android:id="@+id/groupsView"
+            layout="@layout/fragment_groups"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:visibility="gone" />
 
         <!-- Contacts View -->
         <include

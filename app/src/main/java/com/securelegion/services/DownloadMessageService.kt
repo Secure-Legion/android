@@ -88,9 +88,12 @@ class DownloadMessageService : Service() {
                 sendBroadcast(failureIntent)
                 Log.d(TAG, "Sent DOWNLOAD_FAILED broadcast")
             } finally {
-                // Clear download-in-progress flag
-                downloadStatusPrefs.edit().putBoolean("downloading_$contactId", false).apply()
-                Log.d(TAG, "Cleared download-in-progress flag for contact $contactId")
+                // Clear download-in-progress flag and timestamp
+                downloadStatusPrefs.edit()
+                    .putBoolean("downloading_$contactId", false)
+                    .remove("download_start_time_$contactId")
+                    .apply()
+                Log.d(TAG, "Cleared download-in-progress flag and timestamp for contact $contactId")
                 stopSelf()
             }
         }
@@ -521,6 +524,7 @@ class DownloadMessageService : Service() {
     private fun createNotification(contactName: String, message: String): Notification {
         // Launch via LockActivity to prevent showing chat before authentication
         // Open ChatActivity if we have a valid contactId, otherwise MainActivity
+        // Use SINGLE_TOP to prevent restarting LockActivity if it's already running
         val intent = Intent(this, LockActivity::class.java).apply {
             if (currentContactId != -1L) {
                 putExtra("TARGET_ACTIVITY", "ChatActivity")
@@ -529,7 +533,8 @@ class DownloadMessageService : Service() {
             } else {
                 putExtra("TARGET_ACTIVITY", "MainActivity")
             }
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            // Use SINGLE_TOP instead of CLEAR_TOP to avoid restarting the activity
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
         }
         val pendingIntent = PendingIntent.getActivity(
             this, currentContactId.toInt(), intent,
@@ -552,6 +557,7 @@ class DownloadMessageService : Service() {
     private fun showSuccessNotification(contactName: String) {
         // Launch via LockActivity to prevent showing chat before authentication
         // Open ChatActivity with the contactId
+        // Use SINGLE_TOP to prevent restarting LockActivity if it's already running
         val intent = Intent(this, LockActivity::class.java).apply {
             if (currentContactId != -1L) {
                 putExtra("TARGET_ACTIVITY", "ChatActivity")
@@ -560,7 +566,8 @@ class DownloadMessageService : Service() {
             } else {
                 putExtra("TARGET_ACTIVITY", "MainActivity")
             }
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            // Use SINGLE_TOP instead of CLEAR_TOP to avoid restarting the activity
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
         }
         val pendingIntent = PendingIntent.getActivity(
             this, currentContactId.toInt(), intent,

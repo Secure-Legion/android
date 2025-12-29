@@ -52,6 +52,7 @@ class KeyManager private constructor(context: Context) {
         // NEW v2.0 - Two .onion system keys
         private const val FRIEND_REQUEST_ONION_ALIAS = "${KEYSTORE_ALIAS_PREFIX}friend_request_onion"
         private const val MESSAGING_ONION_ALIAS = "${KEYSTORE_ALIAS_PREFIX}messaging_onion"
+        private const val VOICE_ONION_ALIAS = "${KEYSTORE_ALIAS_PREFIX}voice_onion"
         private const val CONTACT_PIN_ALIAS = "${KEYSTORE_ALIAS_PREFIX}contact_pin"
         private const val IPFS_CID_ALIAS = "${KEYSTORE_ALIAS_PREFIX}ipfs_cid"
         private const val SEED_PHRASE_ALIAS = "${KEYSTORE_ALIAS_PREFIX}wallet_main_seed"
@@ -108,10 +109,14 @@ class KeyManager private constructor(context: Context) {
             // Generate Ed25519 hidden service key (for deterministic .onion address)
             val hiddenServiceKeyPair = deriveHiddenServiceKeyPair(seed)
 
+            // Generate Ed25519 voice service key (for voice calling .onion address)
+            val voiceServiceKeyPair = deriveVoiceServiceKeyPair(seed)
+
             // Store keys securely in encrypted preferences
             storeKeyPair(ED25519_SIGNING_KEY_ALIAS, ed25519KeyPair)
             storeKeyPair(X25519_ENCRYPTION_KEY_ALIAS, x25519KeyPair)
             storeKeyPair(HIDDEN_SERVICE_KEY_ALIAS, hiddenServiceKeyPair)
+            storeKeyPair(VOICE_ONION_ALIAS, voiceServiceKeyPair)
 
             // Store seed (encrypted by EncryptedSharedPreferences)
             encryptedPrefs.edit {
@@ -242,6 +247,17 @@ class KeyManager private constructor(context: Context) {
         val keyPair = deriveFriendRequestKeyPair(seed)
 
         return keyPair.privateKey
+    }
+
+    /**
+     * Get voice service Ed25519 private key (32 bytes)
+     * Used for voice calling .onion address creation (v2.0)
+     * Called via JNI from Rust code for voice hidden service creation
+     */
+    @Suppress("unused")
+    fun getVoiceServicePrivateKey(): ByteArray {
+        return getStoredKey("${VOICE_ONION_ALIAS}_private")
+            ?: throw KeyManagerException("Voice service key not found. Initialize wallet first.")
     }
 
     /**
@@ -525,6 +541,32 @@ class KeyManager private constructor(context: Context) {
         val privateKey = privateKeyFull.copyOfRange(0, 32)
 
         Log.d(TAG, "Derived friend request Ed25519 keypair (private: ${privateKey.size} bytes, public: ${publicKey.size} bytes)")
+
+        return KeyPair(privateKey, publicKey)
+    }
+
+    /**
+     * Derive Ed25519 keypair for voice .onion from seed (v2.0)
+     * Uses domain separation: SHA-256(seed || "tor_voice")
+     * Third .onion address dedicated to voice calling (port 9152)
+     */
+    private fun deriveVoiceServiceKeyPair(seed: ByteArray): KeyPair {
+        // Domain separation: hash seed with "tor_voice" to derive different key
+        val messageDigest = MessageDigest.getInstance("SHA-256")
+        messageDigest.update(seed)
+        messageDigest.update("tor_voice".toByteArray())
+        val voiceSeed = messageDigest.digest()
+
+        // Generate Ed25519 keypair from seed using libsodium
+        val publicKey = ByteArray(Sign.ED25519_PUBLICKEYBYTES)
+        val privateKeyFull = ByteArray(Sign.ED25519_SECRETKEYBYTES) // 64 bytes
+
+        lazySodium.cryptoSignSeedKeypair(publicKey, privateKeyFull, voiceSeed)
+
+        // Extract 32-byte private key (libsodium returns 64 bytes: seed || public_key)
+        val privateKey = privateKeyFull.copyOfRange(0, 32)
+
+        Log.d(TAG, "Derived voice service Ed25519 keypair (private: ${privateKey.size} bytes, public: ${publicKey.size} bytes)")
 
         return KeyPair(privateKey, publicKey)
     }

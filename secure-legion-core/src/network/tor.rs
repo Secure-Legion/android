@@ -444,6 +444,93 @@ impl TorManager {
         Ok(full_address)
     }
 
+    /// Create voice hidden service for voice calling (port 9152 only)
+    /// This is a dedicated hidden service separate from messaging
+    pub async fn create_voice_hidden_service(
+        &mut self,
+        voice_private_key: &[u8],
+    ) -> Result<String, Box<dyn Error>> {
+        // Validate key length
+        if voice_private_key.len() != 32 {
+            return Err("Voice service private key must be 32 bytes".into());
+        }
+
+        // Create Ed25519 signing key from provided seed-derived key
+        let mut key_bytes = [0u8; 32];
+        key_bytes.copy_from_slice(voice_private_key);
+        let signing_key = SigningKey::from_bytes(&key_bytes);
+
+        // Get public key
+        let verifying_key: VerifyingKey = signing_key.verifying_key();
+
+        // Generate .onion address from public key
+        let mut onion_bytes = Vec::new();
+        onion_bytes.extend_from_slice(&verifying_key.to_bytes());
+
+        // Add checksum
+        let mut hasher = Sha3_256::new();
+        hasher.update(b".onion checksum");
+        hasher.update(&verifying_key.to_bytes());
+        hasher.update(&[0x03]); // version 3
+        let checksum = hasher.finalize();
+        onion_bytes.extend_from_slice(&checksum[..2]);
+
+        // Add version
+        onion_bytes.push(0x03);
+
+        // Encode to base32
+        let onion_addr = base32::encode(base32::Alphabet::Rfc4648Lower { padding: false }, &onion_bytes);
+        let full_address = format!("{}.onion", onion_addr);
+
+        // Format private key for ADD_ONION command (base64 of 64-byte expanded key)
+        let expanded_key = signing_key.to_keypair_bytes();
+        let key_base64 = base64::encode(&expanded_key);
+
+        // Create voice hidden service on port 9152
+        let control = self.control_stream.as_ref()
+            .ok_or("Control port not connected")?;
+
+        let actual_onion_address = {
+            let mut stream = control.lock().await;
+
+            // Create ephemeral voice hidden service with only port 9152
+            let command = format!(
+                "ADD_ONION ED25519-V3:{} Port=9152,127.0.0.1:9152\r\n",
+                key_base64
+            );
+
+            stream.write_all(command.as_bytes()).await?;
+
+            let mut buf = vec![0u8; 2048];
+            let n = stream.read(&mut buf).await?;
+            let response = String::from_utf8_lossy(&buf[..n]);
+
+            log::info!("ADD_ONION (voice) response: {}", response);
+
+            // Check if service was created successfully
+            if !response.contains("250 OK") {
+                return Err(format!("Failed to create voice hidden service: {}", response).into());
+            }
+
+            // Extract the actual ServiceID from Tor's response
+            if let Some(service_line) = response.lines().find(|l| l.contains("ServiceID=")) {
+                if let Some(start_idx) = service_line.find("ServiceID=") {
+                    let service_id = &service_line[start_idx + 10..]; // Skip "ServiceID="
+                    format!("{}.onion", service_id.trim())
+                } else {
+                    full_address.clone()
+                }
+            } else {
+                full_address.clone()
+            }
+        };
+
+        log::info!("Voice hidden service registered: {}", actual_onion_address);
+        log::info!("Voice service port: 9152 → local 9152 (voice streaming)");
+
+        Ok(actual_onion_address)
+    }
+
     /// Wait for HS_DESC UPLOADED events (assumes events are already subscribed)
     async fn wait_for_descriptor_uploads_already_subscribed(&self, onion_address: &str) -> Result<(), Box<dyn Error>> {
         log::info!("Waiting for UPLOADED events for {}", onion_address);

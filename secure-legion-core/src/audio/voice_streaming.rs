@@ -1,0 +1,606 @@
+/// Voice Streaming Server for SecureLegion (v2.0)
+///
+/// Handles bidirectional voice streaming over Tor hidden services
+/// - Runs on port 9152 (voice .onion address)
+/// - Uses Opus codec for audio compression
+/// - Server-based architecture: each device runs a server, peer connects as client
+/// - Real-time audio packet streaming with encryption
+/// - VOICE_HELLO/OK handshake ensures both sides ready before audio starts
+
+use std::collections::HashMap;
+use std::error::Error;
+use std::net::SocketAddr;
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::{TcpListener, TcpStream};
+use tokio::sync::mpsc;
+use tokio::time::timeout;
+
+// SOCKS5 constants
+const SOCKS5_VERSION: u8 = 0x05;
+const AUTH_NO_AUTH: u8 = 0x00;
+const CMD_CONNECT: u8 = 0x01;
+const ATYP_DOMAIN: u8 = 0x03;
+const RESERVED: u8 = 0x00;
+
+// Voice protocol handshake constants
+const VOICE_HELLO: &[u8] = b"HELLO";
+const VOICE_OK: &[u8] = b"OK";
+const VOICE_PROTOCOL_VERSION: u8 = 0x01;
+const HANDSHAKE_TIMEOUT_SECS: u64 = 10;
+
+/// Voice packet structure
+/// Contains compressed audio data + metadata
+#[derive(Debug, Clone)]
+pub struct VoicePacket {
+    /// Sequence number for packet ordering
+    pub sequence: u32,
+    /// Opus-encoded audio data
+    pub audio_data: Vec<u8>,
+    /// Timestamp (milliseconds since call start)
+    pub timestamp: u64,
+}
+
+/// Voice streaming session
+/// Represents an active voice call connection
+pub struct VoiceSession {
+    /// Remote peer address
+    peer_addr: SocketAddr,
+    /// Sender for outgoing audio packets
+    audio_tx: mpsc::UnboundedSender<VoicePacket>,
+    /// Connection status
+    is_active: Arc<Mutex<bool>>,
+}
+
+impl VoiceSession {
+    /// Create new voice session
+    pub fn new(peer_addr: SocketAddr, audio_tx: mpsc::UnboundedSender<VoicePacket>) -> Self {
+        VoiceSession {
+            peer_addr,
+            audio_tx,
+            is_active: Arc::new(Mutex::new(true)),
+        }
+    }
+
+    /// Send audio packet to peer
+    pub fn send_audio(&self, packet: VoicePacket) -> Result<(), Box<dyn Error>> {
+        if *self.is_active.lock().unwrap() {
+            self.audio_tx.send(packet)?;
+            Ok(())
+        } else {
+            Err("Session not active".into())
+        }
+    }
+
+    /// Check if session is active
+    pub fn is_active(&self) -> bool {
+        *self.is_active.lock().unwrap()
+    }
+
+    /// Close session
+    pub fn close(&self) {
+        *self.is_active.lock().unwrap() = false;
+    }
+}
+
+/// Voice Streaming Server
+/// Listens on port 9152 for incoming voice connections
+pub struct VoiceStreamingServer {
+    /// TCP listener
+    pub listener: Option<TcpListener>,
+    /// Active sessions (keyed by call ID, vector contains one session per circuit)
+    pub sessions: Arc<Mutex<HashMap<String, Vec<VoiceSession>>>>,
+    /// Callback for incoming audio packets
+    pub audio_callback: Option<Arc<dyn Fn(String, VoicePacket) + Send + Sync>>,
+}
+
+impl VoiceStreamingServer {
+    /// Create new voice streaming server
+    pub fn new() -> Self {
+        VoiceStreamingServer {
+            listener: None,
+            sessions: Arc::new(Mutex::new(HashMap::new())),
+            audio_callback: None,
+        }
+    }
+
+    /// Start server on port 9152
+    /// This also spawns a background task to accept incoming connections
+    pub async fn start(&mut self) -> Result<(), Box<dyn Error>> {
+        let listener = TcpListener::bind("127.0.0.1:9152").await?;
+        log::info!("Voice streaming server started on 127.0.0.1:9152");
+
+        // Store listener temporarily
+        self.listener = Some(listener);
+
+        // Take listener out (we'll move it into the background task)
+        let listener = self.listener.take().unwrap();
+
+        // Clone shared state so task doesn't need to hold server lock
+        let sessions = self.sessions.clone();
+        let audio_callback = self.audio_callback.clone();
+
+        // Spawn background task to accept connections
+        // This task doesn't need the server lock - it has its own copies
+        tokio::spawn(async move {
+            loop {
+                match listener.accept().await {
+                    Ok((mut socket, addr)) => {
+                        log::info!("Voice connection from: {}", addr);
+
+                        // Disable Nagle's algorithm for real-time audio
+                        if let Err(e) = socket.set_nodelay(true) {
+                            log::warn!("Failed to set TCP_NODELAY: {}", e);
+                        }
+
+                        let sessions_clone = sessions.clone();
+                        let callback_clone = audio_callback.clone();
+
+                        // Spawn handler for this connection
+                        tokio::spawn(async move {
+                            if let Err(e) = handle_voice_connection(socket, addr, sessions_clone, callback_clone).await {
+                                log::error!("Voice connection error: {}", e);
+                            }
+                        });
+                    }
+                    Err(e) => {
+                        log::error!("Failed to accept voice connection: {}", e);
+                        break;
+                    }
+                }
+            }
+        });
+
+        Ok(())
+    }
+
+    /// Set callback for incoming audio packets
+    pub fn set_audio_callback<F>(&mut self, callback: F)
+    where
+        F: Fn(String, VoicePacket) + Send + Sync + 'static,
+    {
+        self.audio_callback = Some(Arc::new(callback));
+    }
+
+    /// Accept incoming connections (run in loop)
+    pub async fn accept_connections(&mut self) -> Result<(), Box<dyn Error>> {
+        let listener = self.listener.as_ref()
+            .ok_or("Server not started")?;
+
+        loop {
+            let (mut socket, addr) = listener.accept().await?;
+            log::info!("Voice connection from: {}", addr);
+
+            // Disable Nagle's algorithm for real-time audio
+            if let Err(e) = socket.set_nodelay(true) {
+                log::warn!("Failed to set TCP_NODELAY: {}", e);
+            }
+
+            let sessions = self.sessions.clone();
+            let audio_callback = self.audio_callback.clone();
+
+            // Spawn handler for this connection
+            tokio::spawn(async move {
+                if let Err(e) = handle_voice_connection(socket, addr, sessions, audio_callback).await {
+                    log::error!("Voice connection error: {}", e);
+                }
+            });
+        }
+    }
+
+    /// Create outgoing voice session with multiple circuits
+    /// @param num_circuits Number of parallel Tor circuits to establish (typically 3)
+    pub async fn create_session(
+        &mut self,
+        call_id: String,
+        peer_onion: &str,
+        num_circuits: usize,
+    ) -> Result<(), Box<dyn Error>> {
+        log::info!("[VOICE_DEBUG] create_session called with num_circuits={}, peer_onion={}, call_id={}",
+                   num_circuits, peer_onion, call_id);
+
+        if num_circuits == 0 || num_circuits > 10 {
+            log::error!("[VOICE_DEBUG] Invalid num_circuits: {}", num_circuits);
+            return Err("num_circuits must be between 1 and 10".into());
+        }
+
+        log::info!("Creating {} circuit(s) to {} for call {}", num_circuits, peer_onion, call_id);
+        log::info!("[VOICE_DEBUG] Starting circuit creation loop...");
+
+        let mut circuit_sessions = Vec::with_capacity(num_circuits);
+
+        // Create each circuit in parallel
+        for circuit_index in 0..num_circuits {
+            log::info!("[VOICE_DEBUG] Loop iteration {}/{}", circuit_index, num_circuits);
+            // Connect to peer's voice hidden service via SOCKS5 proxy (Tor)
+            log::info!("Establishing circuit {} to {} via SOCKS5 proxy", circuit_index, peer_onion);
+            log::info!("[VOICE_DEBUG] About to call connect_via_socks5({}:9152)", peer_onion);
+            let mut stream = connect_via_socks5(peer_onion, 9152).await?;
+            log::info!("[VOICE_DEBUG] connect_via_socks5 returned successfully for circuit {}", circuit_index);
+
+            // Disable Nagle's algorithm for real-time audio
+            if let Err(e) = stream.set_nodelay(true) {
+                log::warn!("Failed to set TCP_NODELAY on circuit {}: {}", circuit_index, e);
+            }
+
+            let peer_socket_addr = stream.peer_addr()?;
+
+            let (audio_tx, audio_rx) = mpsc::unbounded_channel();
+            let session = VoiceSession::new(peer_socket_addr, audio_tx);
+
+            circuit_sessions.push(session);
+
+            // Spawn sender task for this circuit
+            let sessions = self.sessions.clone();
+            let call_id_clone = call_id.clone();
+            tokio::spawn(async move {
+                if let Err(e) = handle_voice_sender(stream, audio_rx, call_id_clone, sessions, circuit_index).await {
+                    log::error!("Voice sender error on circuit {}: {}", circuit_index, e);
+                }
+            });
+
+            log::info!("Circuit {} established for call {}", circuit_index, call_id);
+        }
+
+        // Store all circuit sessions
+        self.sessions.lock().unwrap().insert(call_id.clone(), circuit_sessions);
+
+        log::info!("All {} outgoing voice circuits created for call: {}", num_circuits, call_id);
+        Ok(())
+    }
+
+    /// Send audio packet to peer on specific circuit
+    /// @param circuit_index Which circuit to use (0 to num_circuits-1)
+    pub fn send_audio(&self, call_id: &str, circuit_index: usize, packet: VoicePacket) -> Result<(), Box<dyn Error>> {
+        let sessions = self.sessions.lock().unwrap();
+        if let Some(circuit_sessions) = sessions.get(call_id) {
+            if circuit_index >= circuit_sessions.len() {
+                return Err(format!("Circuit index {} out of range (max: {})", circuit_index, circuit_sessions.len() - 1).into());
+            }
+            circuit_sessions[circuit_index].send_audio(packet)?;
+            Ok(())
+        } else {
+            Err(format!("Session not found: {}", call_id).into())
+        }
+    }
+
+    /// End voice session (closes all circuits)
+    pub fn end_session(&self, call_id: &str) {
+        let mut sessions = self.sessions.lock().unwrap();
+        if let Some(circuit_sessions) = sessions.remove(call_id) {
+            for (i, session) in circuit_sessions.into_iter().enumerate() {
+                session.close();
+                log::debug!("Circuit {} closed for call: {}", i, call_id);
+            }
+            log::info!("Voice session ended (all circuits closed): {}", call_id);
+        }
+    }
+
+    /// Get active session count
+    pub fn active_sessions(&self) -> usize {
+        self.sessions.lock().unwrap().len()
+    }
+}
+
+/// Handle incoming voice connection
+pub async fn handle_voice_connection(
+    mut socket: TcpStream,
+    addr: SocketAddr,
+    sessions: Arc<Mutex<HashMap<String, Vec<VoiceSession>>>>,
+    audio_callback: Option<Arc<dyn Fn(String, VoicePacket) + Send + Sync>>,
+) -> Result<(), Box<dyn Error>> {
+    // Read call ID (first 36 bytes = UUID)
+    let mut call_id_bytes = [0u8; 36];
+    socket.read_exact(&mut call_id_bytes).await?;
+    let call_id = String::from_utf8(call_id_bytes.to_vec())?;
+
+    log::info!("Voice connection for call: {} from {}", call_id, addr);
+
+    // ========== VOICE_HELLO/OK HANDSHAKE ==========
+    // Read VOICE_HELLO message (with timeout)
+    log::debug!("Waiting for VOICE_HELLO from peer...");
+    let handshake_result = timeout(Duration::from_secs(HANDSHAKE_TIMEOUT_SECS), async {
+        // Read "HELLO" (5 bytes)
+        let mut hello_bytes = [0u8; 5];
+        socket.read_exact(&mut hello_bytes).await
+            .map_err(|e| format!("Failed to read VOICE_HELLO: {}", e))?;
+
+        if &hello_bytes != VOICE_HELLO {
+            return Err(format!("Expected VOICE_HELLO, got: {:?}", hello_bytes));
+        }
+
+        // Read version (1 byte)
+        let mut version = [0u8; 1];
+        socket.read_exact(&mut version).await
+            .map_err(|e| format!("Failed to read version: {}", e))?;
+
+        // Read flags (1 byte)
+        let mut flags = [0u8; 1];
+        socket.read_exact(&mut flags).await
+            .map_err(|e| format!("Failed to read flags: {}", e))?;
+
+        log::info!("✓ Received VOICE_HELLO (version: {}, flags: {}) for call: {}",
+                   version[0], flags[0], call_id);
+
+        // Send VOICE_OK response
+        socket.write_all(VOICE_OK).await
+            .map_err(|e| format!("Failed to write VOICE_OK: {}", e))?;
+        socket.write_all(&[VOICE_PROTOCOL_VERSION]).await
+            .map_err(|e| format!("Failed to write version: {}", e))?;
+        socket.write_all(&[0x00]).await
+            .map_err(|e| format!("Failed to write flags: {}", e))?;
+        socket.flush().await
+            .map_err(|e| format!("Failed to flush: {}", e))?;
+
+        log::info!("✓ Sent VOICE_OK for call: {}", call_id);
+        Ok::<(), String>(())
+    }).await;
+
+    match handshake_result {
+        Ok(Ok(())) => {
+            log::info!("✓ Voice handshake complete for call: {}", call_id);
+        }
+        Ok(Err(e)) => {
+            log::error!("✗ Voice handshake failed for call {}: {}", call_id, e);
+            return Err(e.into());
+        }
+        Err(_) => {
+            log::error!("✗ Voice handshake timeout for call: {}", call_id);
+            return Err(format!("Handshake timeout after {} seconds", HANDSHAKE_TIMEOUT_SECS).into());
+        }
+    }
+
+    // Read audio packets in loop
+    loop {
+        // Read packet header (12 bytes: sequence + timestamp + data_len)
+        let mut header = [0u8; 12];
+        match socket.read_exact(&mut header).await {
+            Ok(_) => {},
+            Err(_) => {
+                log::info!("Voice connection closed: {}", call_id);
+                break;
+            }
+        }
+
+        let sequence = u32::from_be_bytes([header[0], header[1], header[2], header[3]]);
+        let timestamp = u64::from_be_bytes([
+            header[4], header[5], header[6], header[7],
+            header[8], header[9], header[10], header[11],
+        ]);
+
+        // Read data length (2 bytes)
+        let mut len_bytes = [0u8; 2];
+        socket.read_exact(&mut len_bytes).await?;
+        let data_len = u16::from_be_bytes(len_bytes) as usize;
+
+        // Read audio data
+        let mut audio_data = vec![0u8; data_len];
+        socket.read_exact(&mut audio_data).await?;
+
+        let packet = VoicePacket {
+            sequence,
+            audio_data,
+            timestamp,
+        };
+
+        // Call callback with received packet
+        if let Some(ref callback) = audio_callback {
+            callback(call_id.clone(), packet);
+        }
+    }
+
+    Ok(())
+}
+
+/// Handle outgoing voice stream (sender)
+async fn handle_voice_sender(
+    mut socket: TcpStream,
+    mut audio_rx: mpsc::UnboundedReceiver<VoicePacket>,
+    call_id: String,
+    sessions: Arc<Mutex<HashMap<String, Vec<VoiceSession>>>>,
+    circuit_index: usize,
+) -> Result<(), Box<dyn Error>> {
+    // Send call ID first
+    socket.write_all(call_id.as_bytes()).await?;
+    socket.flush().await?;
+
+    // ========== VOICE_HELLO/OK HANDSHAKE ==========
+    // Send VOICE_HELLO message
+    log::debug!("Sending VOICE_HELLO for call: {} circuit: {}", call_id, circuit_index);
+    socket.write_all(VOICE_HELLO).await?;
+    socket.write_all(&[VOICE_PROTOCOL_VERSION]).await?;
+    socket.write_all(&[0x00]).await?; // flags
+    socket.flush().await?;
+
+    log::info!("✓ Sent VOICE_HELLO for call: {} circuit: {}", call_id, circuit_index);
+
+    // Wait for VOICE_OK response (with timeout)
+    log::debug!("Waiting for VOICE_OK from peer...");
+    let handshake_result = timeout(Duration::from_secs(HANDSHAKE_TIMEOUT_SECS), async {
+        // Read "OK" (2 bytes)
+        let mut ok_bytes = [0u8; 2];
+        socket.read_exact(&mut ok_bytes).await
+            .map_err(|e| format!("Failed to read VOICE_OK: {}", e))?;
+
+        if &ok_bytes != VOICE_OK {
+            return Err(format!("Expected VOICE_OK, got: {:?}", ok_bytes));
+        }
+
+        // Read version (1 byte)
+        let mut version = [0u8; 1];
+        socket.read_exact(&mut version).await
+            .map_err(|e| format!("Failed to read version: {}", e))?;
+
+        // Read flags (1 byte)
+        let mut flags = [0u8; 1];
+        socket.read_exact(&mut flags).await
+            .map_err(|e| format!("Failed to read flags: {}", e))?;
+
+        log::info!("✓ Received VOICE_OK (version: {}, flags: {}) for call: {} circuit: {}",
+                   version[0], flags[0], call_id, circuit_index);
+
+        Ok::<(), String>(())
+    }).await;
+
+    match handshake_result {
+        Ok(Ok(())) => {
+            log::info!("✓ Voice handshake complete for call: {} circuit: {}", call_id, circuit_index);
+        }
+        Ok(Err(e)) => {
+            log::error!("✗ Voice handshake failed for call {} circuit {}: {}", call_id, circuit_index, e);
+            return Err(e.into());
+        }
+        Err(_) => {
+            log::error!("✗ Voice handshake timeout for call: {} circuit: {}", call_id, circuit_index);
+            return Err(format!("Handshake timeout after {} seconds", HANDSHAKE_TIMEOUT_SECS).into());
+        }
+    }
+
+    // Send audio packets from queue
+    while let Some(packet) = audio_rx.recv().await {
+        // Write packet header
+        let sequence_bytes = packet.sequence.to_be_bytes();
+        let timestamp_bytes = packet.timestamp.to_be_bytes();
+        socket.write_all(&sequence_bytes).await?;
+        socket.write_all(&timestamp_bytes).await?;
+
+        // Write data length
+        let data_len = packet.audio_data.len() as u16;
+        socket.write_all(&data_len.to_be_bytes()).await?;
+
+        // Write audio data
+        socket.write_all(&packet.audio_data).await?;
+        socket.flush().await?;
+    }
+
+    // Note: Don't remove session here - end_session() handles cleanup for all circuits
+    log::info!("Voice sender task ended for call: {} circuit: {}", call_id, circuit_index);
+
+    Ok(())
+}
+
+/// Connect to target via SOCKS5 proxy (Tor)
+/// This allows connecting to .onion addresses
+async fn connect_via_socks5(target_host: &str, target_port: u16) -> Result<TcpStream, Box<dyn Error>> {
+    // Connect to SOCKS5 proxy (Tor)
+    let proxy_addr = "127.0.0.1:9050";
+    log::debug!("Connecting to SOCKS5 proxy at {}", proxy_addr);
+    let mut stream = TcpStream::connect(proxy_addr).await?;
+
+    // Disable Nagle's algorithm for real-time audio
+    stream.set_nodelay(true)?;
+
+    // SOCKS5 handshake: Client greeting
+    let greeting = [SOCKS5_VERSION, 0x01, AUTH_NO_AUTH];
+    stream.write_all(&greeting).await?;
+    stream.flush().await?;
+
+    // Read server response
+    let mut response = [0u8; 2];
+    stream.read_exact(&mut response).await?;
+
+    if response[0] != SOCKS5_VERSION {
+        return Err(format!("Invalid SOCKS version: {}", response[0]).into());
+    }
+
+    if response[1] != AUTH_NO_AUTH {
+        return Err("SOCKS5 authentication required but not supported".into());
+    }
+
+    // SOCKS5 connection request
+    let host_bytes = target_host.as_bytes();
+    let host_len = host_bytes.len();
+
+    if host_len > 255 {
+        return Err("Hostname too long".into());
+    }
+
+    let mut request = Vec::with_capacity(7 + host_len);
+    request.push(SOCKS5_VERSION);
+    request.push(CMD_CONNECT);
+    request.push(RESERVED);
+    request.push(ATYP_DOMAIN);
+    request.push(host_len as u8);
+    request.extend_from_slice(host_bytes);
+    request.push((target_port >> 8) as u8);
+    request.push((target_port & 0xFF) as u8);
+
+    stream.write_all(&request).await?;
+    stream.flush().await?;
+
+    // Read connection response
+    let mut response = [0u8; 4];
+    stream.read_exact(&mut response).await?;
+
+    if response[0] != SOCKS5_VERSION {
+        return Err(format!("Invalid SOCKS version in response: {}", response[0]).into());
+    }
+
+    if response[1] != 0x00 {
+        let error_msg = match response[1] {
+            0x01 => "General SOCKS server failure",
+            0x02 => "Connection not allowed by ruleset",
+            0x03 => "Network unreachable",
+            0x04 => "Host unreachable",
+            0x05 => "Connection refused",
+            0x06 => "TTL expired",
+            0x07 => "Command not supported",
+            0x08 => "Address type not supported",
+            _ => "Unknown SOCKS error",
+        };
+        return Err(format!("SOCKS5 connection failed: {}", error_msg).into());
+    }
+
+    // Read bound address (we don't need it, but must read it)
+    let atyp = response[3];
+    match atyp {
+        0x01 => {
+            // IPv4: 4 bytes + 2 bytes port
+            let mut addr = [0u8; 6];
+            stream.read_exact(&mut addr).await?;
+        }
+        0x03 => {
+            // Domain: 1 byte length + domain + 2 bytes port
+            let mut len_byte = [0u8; 1];
+            stream.read_exact(&mut len_byte).await?;
+            let len = len_byte[0] as usize;
+            let mut addr = vec![0u8; len + 2];
+            stream.read_exact(&mut addr).await?;
+        }
+        0x04 => {
+            // IPv6: 16 bytes + 2 bytes port
+            let mut addr = [0u8; 18];
+            stream.read_exact(&mut addr).await?;
+        }
+        _ => {
+            return Err(format!("Unknown address type: {}", atyp).into());
+        }
+    }
+
+    log::info!("SOCKS5 connection established to {}:{}", target_host, target_port);
+    Ok(stream)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_voice_packet_creation() {
+        let packet = VoicePacket {
+            sequence: 1,
+            audio_data: vec![1, 2, 3, 4],
+            timestamp: 12345,
+        };
+        assert_eq!(packet.sequence, 1);
+        assert_eq!(packet.audio_data.len(), 4);
+        assert_eq!(packet.timestamp, 12345);
+    }
+
+    #[tokio::test]
+    async fn test_server_creation() {
+        let server = VoiceStreamingServer::new();
+        assert_eq!(server.active_sessions(), 0);
+    }
+}

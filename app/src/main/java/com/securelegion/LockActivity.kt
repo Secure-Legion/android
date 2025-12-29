@@ -279,6 +279,15 @@ class LockActivity : AppCompatActivity() {
         )
 
         forgotPasswordTextView.text = spannableString
+
+        // Make it clickable and open RestoreAccountActivity
+        forgotPasswordTextView.setOnClickListener {
+            Log.d("LockActivity", "Import Recovery clicked - opening RestoreAccountActivity")
+            val intent = Intent(this, RestoreAccountActivity::class.java)
+            intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+            startActivity(intent)
+            finish()
+        }
     }
 
     /**
@@ -367,6 +376,20 @@ class LockActivity : AppCompatActivity() {
      * Unlock the app and navigate to MainActivity
      */
     private fun unlockApp() {
+        // Check if user has confirmed their seed phrase backup
+        val setupPrefs = getSharedPreferences("account_setup", MODE_PRIVATE)
+        val seedPhraseConfirmed = setupPrefs.getBoolean("seed_phrase_confirmed", true) // Default true for existing users
+
+        if (!seedPhraseConfirmed) {
+            // User has not confirmed seed phrase backup yet - redirect to AccountCreatedActivity
+            Log.w("LockActivity", "User has not confirmed seed phrase backup - redirecting to AccountCreatedActivity")
+            val intent = Intent(this, AccountCreatedActivity::class.java)
+            intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+            startActivity(intent)
+            finish()
+            return
+        }
+
         // Check if we were launched from a notification with a target activity
         val targetActivity = intent.getStringExtra("TARGET_ACTIVITY")
 

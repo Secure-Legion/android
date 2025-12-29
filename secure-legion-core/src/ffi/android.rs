@@ -1,4 +1,4 @@
-use jni::objects::{JByteArray, JClass, JObject, JString};
+use jni::objects::{JByteArray, JClass, JObject, JString, GlobalRef};
 use jni::sys::{jboolean, jbyte, jbyteArray, jint, jlong, jstring, jobjectArray};
 use jni::JNIEnv;
 use std::panic;
@@ -14,6 +14,7 @@ use crate::crypto::{
 use crate::network::{TorManager, PENDING_CONNECTIONS};
 use crate::protocol::ContactCard;
 use crate::blockchain::{register_username, lookup_username};
+use crate::audio::voice_streaming::{VoiceStreamingServer, VoicePacket};
 use tokio::sync::{mpsc, oneshot};
 use tokio::io::AsyncReadExt;
 
@@ -88,6 +89,13 @@ static GLOBAL_MESSAGE_RECEIVER: OnceCell<Arc<Mutex<mpsc::UnboundedReceiver<(u64,
 static GLOBAL_VOICE_RECEIVER: OnceCell<Arc<Mutex<mpsc::UnboundedReceiver<(u64, Vec<u8>)>>>> = OnceCell::new();
 static GLOBAL_FRIEND_REQUEST_RECEIVER: OnceCell<Arc<Mutex<mpsc::UnboundedReceiver<Vec<u8>>>>> = OnceCell::new();
 
+/// Global Voice Streaming Server (v2.0)
+static GLOBAL_VOICE_STREAMING_SERVER: OnceCell<Arc<tokio::sync::Mutex<VoiceStreamingServer>>> = OnceCell::new();
+
+/// Global Voice Packet Callback (v2.0)
+/// Stores a global reference to the Kotlin callback object
+static GLOBAL_VOICE_CALLBACK: OnceCell<Mutex<Option<GlobalRef>>> = OnceCell::new();
+
 /// Global Tokio runtime for async operations
 /// This runtime persists for the lifetime of the process, allowing spawned tasks to continue running
 static GLOBAL_RUNTIME: Lazy<tokio::runtime::Runtime> = Lazy::new(|| {
@@ -110,6 +118,16 @@ fn get_tor_manager() -> Arc<Mutex<TorManager>> {
         .get_or_init(|| {
             let tor_manager = TorManager::new().expect("Failed to create TorManager");
             Arc::new(Mutex::new(tor_manager))
+        })
+        .clone()
+}
+
+/// Get or initialize the global Voice Streaming Server
+fn get_voice_streaming_server() -> Arc<tokio::sync::Mutex<VoiceStreamingServer>> {
+    GLOBAL_VOICE_STREAMING_SERVER
+        .get_or_init(|| {
+            let voice_server = VoiceStreamingServer::new();
+            Arc::new(tokio::sync::Mutex::new(voice_server))
         })
         .clone()
 }
@@ -604,6 +622,71 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_createHiddenService(
             },
             Err(e) => {
                 let error_msg = format!("Hidden service creation failed: {}", e);
+                let _ = env.throw_new("java/lang/RuntimeException", error_msg);
+                std::ptr::null_mut()
+            }
+        }
+    }, std::ptr::null_mut())
+}
+
+/// Create voice hidden service for voice calling (v2.0)
+/// Uses seed-derived voice service Ed25519 key from KeyManager
+/// Returns the .onion address (port 9152)
+#[no_mangle]
+pub extern "C" fn Java_com_securelegion_crypto_RustBridge_createVoiceHiddenService(
+    mut env: JNIEnv,
+    _class: JClass,
+) -> jstring {
+    catch_panic!(env, {
+        // Get KeyManager to retrieve seed-derived voice service key
+        let context = match env.call_static_method(
+            "android/app/ActivityThread",
+            "currentApplication",
+            "()Landroid/app/Application;",
+            &[],
+        ) {
+            Ok(ctx) => ctx.l().unwrap(),
+            Err(e) => {
+                let _ = env.throw_new("java/lang/RuntimeException", format!("Failed to get context: {}", e));
+                return std::ptr::null_mut();
+            }
+        };
+
+        let key_manager = match crate::ffi::keystore::get_key_manager(&mut env, &context) {
+            Ok(km) => km,
+            Err(e) => {
+                let _ = env.throw_new("java/lang/RuntimeException", format!("Failed to get KeyManager: {}", e));
+                return std::ptr::null_mut();
+            }
+        };
+
+        // Get voice service private key (deterministic from seed with domain separation)
+        let voice_private_key = match crate::ffi::keystore::get_voice_service_private_key(&mut env, &key_manager) {
+            Ok(k) => k,
+            Err(e) => {
+                let _ = env.throw_new("java/lang/RuntimeException", format!("Failed to get voice service key: {}", e));
+                return std::ptr::null_mut();
+            }
+        };
+
+        let tor_manager = get_tor_manager();
+
+        // Run async voice hidden service creation using global runtime
+        let result = GLOBAL_RUNTIME.block_on(async {
+            let mut manager = tor_manager.lock().unwrap();
+            manager.create_voice_hidden_service(&voice_private_key).await
+        });
+
+        match result {
+            Ok(onion_address) => match string_to_jstring(&mut env, &onion_address) {
+                Ok(s) => s.into_raw(),
+                Err(_) => {
+                    let _ = env.throw_new("java/lang/RuntimeException", "Failed to create voice onion address string");
+                    std::ptr::null_mut()
+                }
+            },
+            Err(e) => {
+                let error_msg = format!("Voice hidden service creation failed: {}", e);
                 let _ = env.throw_new("java/lang/RuntimeException", error_msg);
                 std::ptr::null_mut()
             }
@@ -1471,6 +1554,130 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendPing(
             }
         }
     }, std::ptr::null_mut())
+}
+
+#[no_mangle]
+pub extern "C" fn Java_com_securelegion_crypto_RustBridge_resendPingWithWireBytes(
+    mut env: JNIEnv,
+    _class: JClass,
+    wire_bytes_base64: JString,
+    recipient_onion: JString,
+) -> jboolean {
+    catch_panic!(env, {
+        // Convert inputs
+        let wire_bytes_b64_str = match jstring_to_string(&mut env, wire_bytes_base64) {
+            Ok(s) => s,
+            Err(e) => {
+                log::error!("Failed to convert wire bytes Base64 string: {}", e);
+                return 0;
+            }
+        };
+
+        let recipient_onion_str = match jstring_to_string(&mut env, recipient_onion) {
+            Ok(s) => s,
+            Err(e) => {
+                log::error!("Failed to convert onion address: {}", e);
+                return 0;
+            }
+        };
+
+        // Decode Base64 wire bytes
+        let wire_message = match base64::decode(&wire_bytes_b64_str) {
+            Ok(bytes) => bytes,
+            Err(e) => {
+                log::error!("Failed to decode Base64 wire bytes: {}", e);
+                return 0;
+            }
+        };
+
+        log::info!("Resending Ping with stored wire bytes ({} bytes) to {}", wire_message.len(), recipient_onion_str);
+
+        // Send encrypted Ping via Tor
+        // HYBRID MODE: Try instant Pong (30s timeout), fall back to delayed mode
+        let tor_manager = get_tor_manager();
+        let runtime = tokio::runtime::Runtime::new().expect("Failed to create Tokio runtime");
+
+        const PING_PONG_PORT: u16 = 9150;
+        const INSTANT_PONG_TIMEOUT_SECS: u64 = 30;
+
+        let result: Result<(), Box<dyn std::error::Error>> = runtime.block_on(async {
+            // Connect and send Ping (lock only during operations)
+            let mut conn = {
+                let manager = tor_manager.lock().unwrap();
+                manager.connect(&recipient_onion_str, PING_PONG_PORT).await?
+            }; // Lock released
+
+            {
+                let manager = tor_manager.lock().unwrap();
+                manager.send(&mut conn, &wire_message).await?;
+            } // Lock released
+
+            log::info!("Ping resent successfully, waiting for instant Pong ({}s timeout)...", INSTANT_PONG_TIMEOUT_SECS);
+
+            // Try to receive instant Pong response (recipient online and accepts immediately)
+            // Note: This retry doesn't include the message payload - that's already been sent before
+            // We're just resending the Ping to get acknowledgment
+            let pong_result = tokio::time::timeout(
+                std::time::Duration::from_secs(INSTANT_PONG_TIMEOUT_SECS),
+                async {
+                    // Read length prefix
+                    let mut len_buf = [0u8; 4];
+                    conn.stream.read_exact(&mut len_buf).await?;
+                    let total_len = u32::from_be_bytes(len_buf) as usize;
+
+                    if total_len > 10_000 {
+                        return Err("Pong response too large".into());
+                    }
+
+                    // Read type byte
+                    let mut type_byte = [0u8; 1];
+                    conn.stream.read_exact(&mut type_byte).await?;
+
+                    if type_byte[0] != crate::network::tor::MSG_TYPE_PONG {
+                        log::warn!("Expected PONG (0x02) but got type 0x{:02x}", type_byte[0]);
+                        return Err(format!("Wrong message type: expected PONG, got 0x{:02x}", type_byte[0]).into());
+                    }
+
+                    // Read the pong data
+                    let data_len = total_len.saturating_sub(1);
+                    let mut pong_data = vec![0u8; data_len];
+                    conn.stream.read_exact(&mut pong_data).await?;
+
+                    log::info!("✓ Received instant Pong response ({} bytes) for retry", data_len);
+
+                    Ok::<Vec<u8>, Box<dyn std::error::Error>>(pong_data)
+                }
+            ).await;
+
+            match pong_result {
+                Ok(Ok(_pong_data)) => {
+                    log::info!("✓ INSTANT MODE: Pong received for resent Ping");
+                    Ok(())
+                }
+                Ok(Err(e)) => {
+                    log::warn!("Failed to receive instant Pong for retry: {}", e);
+                    log::info!("→ DELAYED MODE: Pong will arrive later via port 8080 main listener");
+                    Ok(())
+                }
+                Err(_) => {
+                    log::info!("→ DELAYED MODE: Instant Pong timeout ({}s) for retry - recipient may be offline or busy", INSTANT_PONG_TIMEOUT_SECS);
+                    log::info!("   Pong will arrive later via port 8080 main listener when recipient comes online");
+                    Ok(())
+                }
+            }
+        });
+
+        match result {
+            Ok(_) => {
+                log::info!("✓ Ping resent successfully to {}", recipient_onion_str);
+                1 // success
+            }
+            Err(e) => {
+                log::error!("Failed to resend Ping: {}", e);
+                0 // failure
+            }
+        }
+    }, 0)
 }
 
 #[no_mangle]
@@ -2395,15 +2602,24 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendMessageBlob(
                 _ => MESSAGE_PORT                    // Regular messages
             };
 
-            // Connect to recipient
-            let tor = tor_manager.lock().unwrap();
-            let mut conn = tor.connect(&onion_address, port).await?;
+            // Add 15-second timeout for Tor connection and send
+            // This prevents blocking indefinitely when Tor circuits are slow
+            let timeout_duration = std::time::Duration::from_secs(15);
 
-            // Send wire message (with X25519 pubkey prefix)
-            tor.send(&mut conn, &wire_message).await?;
+            tokio::time::timeout(timeout_duration, async {
+                // Connect to recipient
+                let tor = tor_manager.lock().unwrap();
+                let mut conn = tor.connect(&onion_address, port).await?;
 
-            log::info!("Message blob sent successfully to {}", onion_address);
-            Ok::<(), Box<dyn std::error::Error>>(())
+                // Send wire message (with X25519 pubkey prefix)
+                tor.send(&mut conn, &wire_message).await?;
+
+                log::info!("Message blob sent successfully to {}", onion_address);
+                Ok::<(), Box<dyn std::error::Error>>(())
+            }).await.map_err(|_| {
+                log::warn!("Send message blob timed out after 15 seconds to {}", onion_address);
+                Box::new(std::io::Error::new(std::io::ErrorKind::TimedOut, "Operation timed out")) as Box<dyn std::error::Error>
+            })?
         });
 
         match result {
@@ -5446,3 +5662,256 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_httpPostViaTor(
 }
 
 // ==================== END v2.0: Friend Request System ====================
+
+// ==================== v2.0: Voice Streaming ====================
+
+/// Register voice packet callback handler (v2.0)
+/// Must be called before startVoiceStreamingServer
+#[no_mangle]
+pub extern "C" fn Java_com_securelegion_crypto_RustBridge_setVoicePacketCallback(
+    mut env: JNIEnv,
+    _class: JClass,
+    callback: JObject,
+) {
+    catch_panic!(env, {
+        // Create global reference to callback object
+        let global_callback = env.new_global_ref(callback)
+            .expect("Failed to create global reference to voice callback");
+
+        // Store in global
+        let callback_storage = GLOBAL_VOICE_CALLBACK.get_or_init(|| Mutex::new(None));
+        *callback_storage.lock().unwrap() = Some(global_callback);
+
+        log::info!("Voice packet callback registered");
+    }, ())
+}
+
+/// Start voice streaming server on port 9152 (v2.0)
+/// Must be called before accepting or creating voice sessions
+#[no_mangle]
+pub extern "C" fn Java_com_securelegion_crypto_RustBridge_startVoiceStreamingServer(
+    mut env: JNIEnv,
+    _class: JClass,
+) {
+    catch_panic!(env, {
+        let voice_server = get_voice_streaming_server();
+
+        // Get JavaVM for callback invocations
+        let jvm = env.get_java_vm().expect("Failed to get JavaVM");
+
+        // Start server in background task
+        GLOBAL_RUNTIME.spawn(async move {
+            // Set audio callback (must be done before starting server)
+            {
+                let mut server = voice_server.lock().await;
+                server.set_audio_callback(move |call_id: String, packet: crate::audio::voice_streaming::VoicePacket| {
+                // Get JNI environment (attach thread if needed)
+                let mut env = match jvm.attach_current_thread() {
+                    Ok(env) => env,
+                    Err(e) => {
+                        log::error!("Failed to attach thread for voice callback: {}", e);
+                        return;
+                    }
+                };
+
+                // Get callback object
+                let callback_storage = GLOBAL_VOICE_CALLBACK.get().unwrap();
+                let callback_lock = callback_storage.lock().unwrap();
+
+                if let Some(ref callback_ref) = *callback_lock {
+                    let callback_obj = callback_ref.as_obj();
+
+                    // Convert call_id to JString
+                    let call_id_jstring = match env.new_string(&call_id) {
+                        Ok(s) => s,
+                        Err(e) => {
+                            log::error!("Failed to create call_id JString: {}", e);
+                            return;
+                        }
+                    };
+
+                    // Convert audio_data to JByteArray
+                    let audio_data_array = match env.byte_array_from_slice(&packet.audio_data) {
+                        Ok(arr) => arr,
+                        Err(e) => {
+                            log::error!("Failed to create audio data byte array: {}", e);
+                            return;
+                        }
+                    };
+
+                    // Call onVoicePacket(callId: String, sequence: Int, timestamp: Long, audioData: ByteArray)
+                    let result = env.call_method(
+                        callback_obj,
+                        "onVoicePacket",
+                        "(Ljava/lang/String;IJ[B)V",
+                        &[
+                            (&call_id_jstring).into(),
+                            (packet.sequence as i32).into(),
+                            (packet.timestamp as i64).into(),
+                            (&audio_data_array).into(),
+                        ],
+                    );
+
+                    if let Err(e) = result {
+                        log::error!("Failed to invoke voice packet callback: {}", e);
+                    }
+                } else {
+                    log::warn!("Voice packet received but no callback registered");
+                }
+                });
+            } // Drop MutexGuard here
+
+            // Start server
+            if let Err(e) = voice_server.lock().await.start().await {
+                log::error!("Failed to start voice streaming server: {}", e);
+                return;
+            }
+
+            log::info!("Voice streaming server started on port 9152");
+
+            // Note: start() now spawns its own accept task internally,
+            // so we don't need to do anything else here
+        });
+    }, ())
+}
+
+/// Create outgoing voice session to peer's voice .onion (v2.0)
+/// Connects to peer's voice hidden service on port 9152 with multiple circuits
+/// @param num_circuits Number of parallel Tor circuits to create (typically 3)
+#[no_mangle]
+pub extern "C" fn Java_com_securelegion_crypto_RustBridge_createVoiceSession(
+    mut env: JNIEnv,
+    _class: JClass,
+    call_id: JString,
+    peer_voice_onion: JString,
+    num_circuits: jint,
+) -> jboolean {
+    catch_panic!(env, {
+        let call_id_str = match jstring_to_string(&mut env, call_id) {
+            Ok(s) => s,
+            Err(e) => {
+                let _ = env.throw_new("java/lang/IllegalArgumentException", e);
+                return 0;
+            }
+        };
+
+        let peer_onion_str = match jstring_to_string(&mut env, peer_voice_onion) {
+            Ok(s) => s,
+            Err(e) => {
+                let _ = env.throw_new("java/lang/IllegalArgumentException", e);
+                return 0;
+            }
+        };
+
+        let num_circuits_usize = num_circuits as usize;
+        log::info!("Creating voice session with {} circuits for call: {} to {}",
+                   num_circuits_usize, call_id_str, peer_onion_str);
+
+        let voice_server = get_voice_streaming_server();
+
+        // Create session using global runtime
+        let result = GLOBAL_RUNTIME.block_on(async {
+            let mut server = voice_server.lock().await;
+            server.create_session(call_id_str.clone(), &peer_onion_str, num_circuits_usize).await
+        });
+
+        match result {
+            Ok(_) => {
+                log::info!("Voice session with {} circuits created for call: {}", num_circuits_usize, call_id_str);
+                1
+            }
+            Err(e) => {
+                log::error!("Failed to create voice session: {}", e);
+                let error_msg = format!("Voice session creation failed: {}", e);
+                let _ = env.throw_new("java/io/IOException", &error_msg);
+                0
+            }
+        }
+    }, 0)
+}
+
+/// Send audio packet to peer in active voice session on specific circuit (v2.0)
+/// Audio data should be Opus-encoded
+/// @param circuit_index Which circuit to use (0 to num_circuits-1)
+#[no_mangle]
+pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendAudioPacket(
+    mut env: JNIEnv,
+    _class: JClass,
+    call_id: JString,
+    sequence: jint,
+    timestamp: jlong,
+    audio_data: JByteArray,
+    circuit_index: jint,
+) -> jboolean {
+    catch_panic!(env, {
+        let call_id_str = match jstring_to_string(&mut env, call_id) {
+            Ok(s) => s,
+            Err(e) => {
+                let _ = env.throw_new("java/lang/IllegalArgumentException", e);
+                return 0;
+            }
+        };
+
+        let audio_bytes = match jbytearray_to_vec(&mut env, audio_data) {
+            Ok(v) => v,
+            Err(e) => {
+                let _ = env.throw_new("java/lang/IllegalArgumentException", e);
+                return 0;
+            }
+        };
+
+        let packet = VoicePacket {
+            sequence: sequence as u32,
+            timestamp: timestamp as u64,
+            audio_data: audio_bytes,
+        };
+
+        let voice_server = get_voice_streaming_server();
+        let server = voice_server.blocking_lock();
+
+        match server.send_audio(&call_id_str, circuit_index as usize, packet) {
+            Ok(_) => 1,
+            Err(e) => {
+                log::warn!("Failed to send audio packet for call {} on circuit {}: {}", call_id_str, circuit_index, e);
+                0
+            }
+        }
+    }, 0)
+}
+
+/// End voice session and close connection (v2.0)
+#[no_mangle]
+pub extern "C" fn Java_com_securelegion_crypto_RustBridge_endVoiceSession(
+    mut env: JNIEnv,
+    _class: JClass,
+    call_id: JString,
+) {
+    catch_panic!(env, {
+        let call_id_str = match jstring_to_string(&mut env, call_id) {
+            Ok(s) => s,
+            Err(e) => {
+                let _ = env.throw_new("java/lang/IllegalArgumentException", e);
+                return;
+            }
+        };
+
+        log::info!("Ending voice session for call: {}", call_id_str);
+
+        let voice_server = get_voice_streaming_server();
+        let server = voice_server.blocking_lock();
+        server.end_session(&call_id_str);
+    }, ())
+}
+
+/// Get number of active voice sessions (v2.0)
+#[no_mangle]
+pub extern "C" fn Java_com_securelegion_crypto_RustBridge_getActiveVoiceSessions(
+    _env: JNIEnv,
+    _class: JClass,
+) -> jint {
+    let voice_server = get_voice_streaming_server();
+    let server = voice_server.blocking_lock();
+    server.active_sessions() as jint
+}
+
+// ==================== END v2.0: Voice Streaming ====================

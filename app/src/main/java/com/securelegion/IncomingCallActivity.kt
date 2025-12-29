@@ -18,11 +18,14 @@ import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import com.google.android.material.floatingactionbutton.FloatingActionButton
+import com.securelegion.services.TorService
 import com.securelegion.voice.CallSignaling
 import com.securelegion.voice.VoiceCallManager
 import com.securelegion.voice.crypto.VoiceCallCrypto
 import com.securelegion.utils.ThemedToast
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.Dispatchers
 
 /**
  * IncomingCallActivity - Full-screen incoming call notification
@@ -73,6 +76,9 @@ class IncomingCallActivity : AppCompatActivity() {
     // Ringtone
     private var ringtone: Ringtone? = null
 
+    // Track if call was answered (to prevent rejecting in onDestroy)
+    private var callWasAnswered = false
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
@@ -106,9 +112,15 @@ class IncomingCallActivity : AppCompatActivity() {
         contactNameText.text = contactName
         callStatusText.text = "Incoming Call"
 
-        // Start ring animation
-        val pulseAnimation = AnimationUtils.loadAnimation(this, R.anim.pulse_ring)
-        animatedRing.startAnimation(pulseAnimation)
+        // Start ring rotation animation
+        val rotateAnimation = AnimationUtils.loadAnimation(this, R.anim.rotate_ring)
+        animatedRing.startAnimation(rotateAnimation)
+
+        // Check RECORD_AUDIO permission early (while activity window is valid)
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            // Request permission immediately when activity starts
+            ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.RECORD_AUDIO), PERMISSION_REQUEST_CODE)
+        }
 
         // Play ringtone
         startRingtone()
@@ -121,6 +133,14 @@ class IncomingCallActivity : AppCompatActivity() {
         callStatusText = findViewById(R.id.callStatus)
         declineButton = findViewById(R.id.declineButton)
         answerButton = findViewById(R.id.answerButton)
+
+        // Apply 3D press effect to buttons
+        val pressAnimator = android.animation.AnimatorInflater.loadStateListAnimator(
+            this,
+            R.animator.button_press_effect
+        )
+        declineButton.stateListAnimator = pressAnimator
+        answerButton.stateListAnimator = pressAnimator
     }
 
     private fun setupClickListeners() {
@@ -161,18 +181,11 @@ class IncomingCallActivity : AppCompatActivity() {
         answerButton.isEnabled = false
         declineButton.isEnabled = false
 
-        // Check microphone permission first
-        if (ContextCompat.checkSelfPermission(
-                this,
-                Manifest.permission.RECORD_AUDIO
-            ) != PackageManager.PERMISSION_GRANTED
-        ) {
-            // Request permission
-            ActivityCompat.requestPermissions(
-                this,
-                arrayOf(Manifest.permission.RECORD_AUDIO),
-                PERMISSION_REQUEST_CODE
-            )
+        // Check microphone permission (should have been granted in onCreate)
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            ThemedToast.show(this, "Microphone permission required for voice calls")
+            answerButton.isEnabled = true
+            declineButton.isEnabled = true
             return
         }
 
@@ -203,92 +216,39 @@ class IncomingCallActivity : AppCompatActivity() {
         // Stop ringtone immediately when answering
         stopRingtone()
 
-        lifecycleScope.launch {
-            try {
-                // First check if we can answer (no active call)
-                if (callManager.hasActiveCall()) {
-                    Log.e(TAG, "Cannot answer - call already in progress")
-                    // Send rejection to caller
-                    CallSignaling.sendCallReject(
-                        contactX25519PublicKey,
-                        contactOnion,
-                        callId,
-                        "Call already in progress"
-                    )
-                    ThemedToast.show(this@IncomingCallActivity, "Call already in progress")
-                    finish()
-                    return@launch
-                }
-
-                // Generate our ephemeral keypair
-                val ourEphemeralKeypair = crypto.generateEphemeralKeypair()
-
-                // Answer call in call manager FIRST (before sending CALL_ANSWER)
-                val result = callManager.answerCall(callId)
-
-                if (result.isFailure) {
-                    // Failed to create call session - send rejection to caller
-                    Log.e(TAG, "Failed to answer call: ${result.exceptionOrNull()?.message}")
-                    CallSignaling.sendCallReject(
-                        contactX25519PublicKey,
-                        contactOnion,
-                        callId,
-                        "Failed to establish call"
-                    )
-                    ThemedToast.show(this@IncomingCallActivity, "Failed to answer call: ${result.exceptionOrNull()?.message}")
-                    finish()
-                    return@launch
-                }
-
-                // Now send CALL_ANSWER with our ephemeral public key
-                val success = CallSignaling.sendCallAnswer(
+        // Check if there's already an active call
+        if (callManager.hasActiveCall()) {
+            Log.e(TAG, "Cannot answer - call already in progress")
+            ThemedToast.show(this, "Call already in progress")
+            // Send rejection to caller
+            lifecycleScope.launch {
+                CallSignaling.sendCallReject(
                     contactX25519PublicKey,
                     contactOnion,
                     callId,
-                    ourEphemeralKeypair.publicKey.asBytes
+                    "Call already in progress"
                 )
-
-                if (!success) {
-                    // Failed to send answer - end the call we just created
-                    callManager.endCall("Failed to send answer")
-                    ThemedToast.show(this@IncomingCallActivity, "Failed to send call answer")
-                    finish()
-                    return@launch
-                }
-
-                // Success! Launch VoiceCallActivity
-                val intent = Intent(this@IncomingCallActivity, VoiceCallActivity::class.java)
-                intent.putExtra(VoiceCallActivity.EXTRA_CONTACT_ID, contactId)
-                intent.putExtra(VoiceCallActivity.EXTRA_CONTACT_NAME, contactName)
-                intent.putExtra(VoiceCallActivity.EXTRA_CALL_ID, callId)
-                intent.putExtra(VoiceCallActivity.EXTRA_IS_OUTGOING, false)
-                intent.putExtra(VoiceCallActivity.EXTRA_THEIR_EPHEMERAL_KEY, theirEphemeralPublicKey)
-                startActivity(intent)
-
-                // Close this activity
-                finish()
-
-            } catch (e: Exception) {
-                Log.e(TAG, "Error answering call", e)
-                // Try to send rejection
-                try {
-                    CallSignaling.sendCallReject(
-                        contactX25519PublicKey,
-                        contactOnion,
-                        callId,
-                        "Error: ${e.message}"
-                    )
-                } catch (e2: Exception) {
-                    Log.e(TAG, "Failed to send rejection", e2)
-                }
-                // Clean up any call state
-                if (callManager.hasActiveCall()) {
-                    callManager.endCall("Error answering")
-                }
-                ThemedToast.show(this@IncomingCallActivity, "Error answering call: ${e.message}")
-                finish()
             }
+            finish()
+            return
         }
+
+        // Mark call as answered BEFORE launching VoiceCallActivity
+        // This prevents onDestroy from rejecting the call
+        callWasAnswered = true
+
+        // IMMEDIATELY launch VoiceCallActivity (shows "Connecting" screen)
+        // VoiceCallActivity will handle all the connection logic
+        val intent = Intent(this, VoiceCallActivity::class.java)
+        intent.putExtra(VoiceCallActivity.EXTRA_CONTACT_ID, contactId)
+        intent.putExtra(VoiceCallActivity.EXTRA_CONTACT_NAME, contactName)
+        intent.putExtra(VoiceCallActivity.EXTRA_CALL_ID, callId)
+        intent.putExtra(VoiceCallActivity.EXTRA_IS_OUTGOING, false)
+        intent.putExtra(VoiceCallActivity.EXTRA_THEIR_EPHEMERAL_KEY, theirEphemeralPublicKey)
+        intent.putExtra(VoiceCallActivity.EXTRA_CONTACT_ONION, contactOnion)
+        intent.putExtra(VoiceCallActivity.EXTRA_CONTACT_X25519_PUBLIC_KEY, contactX25519PublicKey)
+        startActivity(intent)
+        finish() // Close incoming call screen immediately
     }
 
     override fun onBackPressed() {
@@ -304,9 +264,14 @@ class IncomingCallActivity : AppCompatActivity() {
         // Stop ringtone
         stopRingtone()
 
-        // Clean up call state if activity destroyed without proper answer/decline
-        // This handles cases like system killing the activity
-        callManager.rejectCall(callId)
+        // Only reject call if it wasn't answered
+        // If callWasAnswered is true, VoiceCallActivity is handling it
+        if (!callWasAnswered) {
+            Log.d(TAG, "IncomingCallActivity destroyed without answer - rejecting call")
+            callManager.rejectCall(callId)
+        } else {
+            Log.d(TAG, "IncomingCallActivity destroyed after answer - VoiceCallActivity handling call")
+        }
     }
 
     /**

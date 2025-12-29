@@ -291,6 +291,8 @@ class WalletIdentityActivity : AppCompatActivity() {
                 val cardManager = ContactCardManager(this@WalletIdentityActivity)
                 val newPin = cardManager.generateRandomPin()
 
+                val torManager = com.securelegion.crypto.TorManager.getInstance(this@WalletIdentityActivity)
+                val voiceOnion = torManager.getVoiceOnionAddress() ?: ""
                 val contactCard = ContactCard(
                     displayName = username,
                     solanaPublicKey = keyManager.getSolanaPublicKey(),
@@ -298,6 +300,7 @@ class WalletIdentityActivity : AppCompatActivity() {
                     solanaAddress = newWalletAddress,
                     friendRequestOnion = friendRequestOnion,
                     messagingOnion = newOnionAddress,
+                    voiceOnion = voiceOnion,
                     contactPin = newPin,
                     ipfsCid = ipfsCid,
                     timestamp = System.currentTimeMillis()
