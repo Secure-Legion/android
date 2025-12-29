@@ -63,6 +63,12 @@ data class Contact(
     val messagingOnion: String? = null,
 
     /**
+     * NEW (v2.0) - Private .onion address for voice calls (port 9152)
+     * Separate from messaging onion for dedicated voice streaming
+     */
+    val voiceOnion: String? = null,
+
+    /**
      * NEW (v2.0) - IPFS CID for their contact card (deterministic)
      */
     val ipfsCid: String? = null,

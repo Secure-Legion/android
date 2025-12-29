@@ -175,6 +175,14 @@ object RustBridge {
     external fun serveContactList(cid: String, encryptedList: ByteArray, listLength: Int)
 
     /**
+     * Create voice hidden service for voice calling (v2.0)
+     * Uses seed-derived voice service Ed25519 key from KeyManager
+     * Returns the .onion address (port 9152)
+     * @return The voice .onion address for receiving voice calls
+     */
+    external fun createVoiceHiddenService(): String
+
+    /**
      * Make HTTP GET request via Tor SOCKS5 proxy (v2.0)
      * @param url The URL to fetch
      * @return Response body or null on error
@@ -332,6 +340,76 @@ object RustBridge {
      * @return 16-bit PCM audio samples (little-endian) or null on error
      */
     external fun opusDecode(handle: Long, opusData: ByteArray): ByteArray?
+
+    // ========== Voice Streaming (v2.0) ==========
+
+    /**
+     * Callback interface for receiving voice packets from Rust
+     */
+    interface VoicePacketCallback {
+        /**
+         * Called when a voice packet is received from the network
+         * @param callId The call ID for this packet
+         * @param sequence Packet sequence number
+         * @param timestamp Packet timestamp in milliseconds
+         * @param audioData Opus-encoded audio data
+         */
+        fun onVoicePacket(callId: String, sequence: Int, timestamp: Long, audioData: ByteArray)
+    }
+
+    /**
+     * Set callback handler for incoming voice packets (v2.0)
+     * Must be called before startVoiceStreamingServer
+     * @param callback The callback that will receive packets
+     */
+    external fun setVoicePacketCallback(callback: VoicePacketCallback)
+
+    /**
+     * Start voice streaming server on port 9152 (v2.0)
+     * Must be called before accepting or creating voice sessions
+     * Runs in background and accepts incoming voice connections
+     */
+    external fun startVoiceStreamingServer()
+
+    /**
+     * Create outgoing voice session to peer's voice .onion with multiple circuits (v2.0)
+     * Connects to peer's voice hidden service on port 9152
+     * @param callId Unique call ID (UUID string)
+     * @param peerVoiceOnion Peer's voice .onion address
+     * @param numCircuits Number of parallel Tor circuits to create (typically 3)
+     * @return True if session created successfully
+     */
+    external fun createVoiceSession(callId: String, peerVoiceOnion: String, numCircuits: Int): Boolean
+
+    /**
+     * Send audio packet to peer in active voice session on specific circuit (v2.0)
+     * Audio data should be Opus-encoded
+     * @param callId Call ID for this session
+     * @param sequence Packet sequence number
+     * @param timestamp Timestamp in milliseconds since call start
+     * @param audioData Opus-encoded audio bytes
+     * @param circuitIndex Which circuit to use (0 to numCircuits-1)
+     * @return True if packet sent successfully
+     */
+    external fun sendAudioPacket(
+        callId: String,
+        sequence: Int,
+        timestamp: Long,
+        audioData: ByteArray,
+        circuitIndex: Int
+    ): Boolean
+
+    /**
+     * End voice session and close connection (v2.0)
+     * @param callId Call ID to end
+     */
+    external fun endVoiceSession(callId: String)
+
+    /**
+     * Get number of active voice sessions (v2.0)
+     * @return Count of active voice streaming sessions
+     */
+    external fun getActiveVoiceSessions(): Int
 
     /**
      * Check if a connection is still alive and responsive

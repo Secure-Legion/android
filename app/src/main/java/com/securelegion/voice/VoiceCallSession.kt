@@ -2,6 +2,7 @@ package com.securelegion.voice
 
 import android.content.Context
 import android.util.Log
+import com.securelegion.crypto.RustBridge
 import com.securelegion.voice.crypto.VoiceCallCrypto
 import kotlinx.coroutines.*
 import java.util.UUID
@@ -23,9 +24,11 @@ import java.util.UUID
 class VoiceCallSession(
     private val context: Context,
     private val contactOnion: String,
+    private val contactVoiceOnion: String,
     private val contactEd25519PublicKey: ByteArray,
-    private val isOutgoing: Boolean
-) {
+    private val isOutgoing: Boolean,
+    private val callId: String = UUID.randomUUID().toString() // Generate new ID for outgoing, pass from CALL_OFFER for incoming
+) : RustBridge.VoicePacketCallback {
     companion object {
         private const val TAG = "VoiceCallSession"
 
@@ -47,8 +50,15 @@ class VoiceCallSession(
     @Volatile
     private var callState = CallState.IDLE
 
-    // Call ID (unique for this call session)
-    private val callId = UUID.randomUUID().toString().replace("-", "").take(16).toByteArray()
+    // Call ID getter (needed for logging and signaling)
+    fun getCallId(): String = callId
+
+    init {
+        Log.d(TAG, "VoiceCallSession created with callId=$callId (length=${callId.length})")
+    }
+
+    // Call ID as bytes for local crypto operations
+    private val callIdBytes = callId.replace("-", "").take(16).toByteArray()
 
     // Crypto components
     private val crypto = VoiceCallCrypto()
@@ -60,9 +70,8 @@ class VoiceCallSession(
     private lateinit var audioCaptureManager: AudioCaptureManager
     private lateinit var audioPlaybackManager: AudioPlaybackManager
 
-    // Network components
-    private val circuits = mutableListOf<TorVoiceSocket>()
-    private val numCircuits = 1 // Phase 1: single circuit, Phase 2: 3-5 circuits
+    // Network components (Rust handles transport, Kotlin handles encryption)
+    private val numCircuits = 3 // Multi-circuit for resilience against TCP head-of-line blocking
 
     // Sequence tracking
     private var sendSeqNum: Long = 0
@@ -71,48 +80,41 @@ class VoiceCallSession(
     // Coroutine scope for call session
     private val callScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
-    // Jobs
-    private var sendJob: Job? = null
-    private var receiveJob: Job? = null
-
     // Callbacks
     var onCallStateChanged: ((CallState) -> Unit)? = null
     var onCallEnded: ((reason: String) -> Unit)? = null
 
     /**
      * Start outgoing call
-     * 1. Generate ephemeral keys
-     * 2. Exchange keys with recipient (via existing Ping-Pong protocol)
-     * 3. Derive encryption keys
-     * 4. Establish Tor circuits
-     * 5. Start audio capture and transmission
+     * @param theirEphemeralPublicKey Their ephemeral public key from CALL_ANSWER
+     * @param ourEphemeralSecretKey Our ephemeral secret key (generated before calling this, matches CALL_OFFER)
+     * 1. Exchange keys with recipient (via existing Ping-Pong protocol)
+     * 2. Derive encryption keys
+     * 3. Establish Tor circuits
+     * 4. Start audio capture and transmission
      */
-    suspend fun startOutgoingCall(theirEphemeralPublicKey: ByteArray) {
+    suspend fun startOutgoingCall(theirEphemeralPublicKey: ByteArray, ourEphemeralSecretKey: ByteArray) {
         try {
             setState(CallState.CONNECTING)
 
             Log.i(TAG, "Starting outgoing call to $contactOnion")
 
-            // Initialize Opus codec
-            opusCodec.initEncoder()
-            opusCodec.initDecoder()
+            // Initialize Opus codec (blocking native calls - run on IO thread)
+            withContext(Dispatchers.IO) {
+                opusCodec.initEncoder()
+                opusCodec.initDecoder()
+            }
 
-            // Generate our ephemeral keypair
-            val ourEphemeralKeypair = crypto.generateEphemeralKeypair()
+            Log.d(TAG, "Using provided ephemeral keypair for outgoing call")
 
-            Log.d(TAG, "Generated ephemeral keypair for call")
-
-            // TODO: Send call offer with our ephemeral public key via Ping-Pong protocol
-            // For now, assume keys are exchanged
-
-            // Compute shared secret
+            // Compute shared secret using our secret key
             val sharedSecret = crypto.computeSharedSecret(
-                ourEphemeralKeypair.secretKey.asBytes,
+                ourEphemeralSecretKey,
                 theirEphemeralPublicKey
             )
 
             // Derive master call key
-            masterKey = crypto.deriveMasterKey(sharedSecret, callId)
+            masterKey = crypto.deriveMasterKey(sharedSecret, callIdBytes)
 
             // Derive per-circuit keys
             for (i in 0 until numCircuits) {
@@ -121,20 +123,28 @@ class VoiceCallSession(
 
             Log.d(TAG, "Derived encryption keys: master + $numCircuits circuit keys")
 
-            // Establish Tor circuits
-            for (i in 0 until numCircuits) {
-                val socket = TorVoiceSocket(i)
-                socket.connect(contactOnion, VOICE_PORT)
-                circuits.add(socket)
-                Log.d(TAG, "Established circuit $i to $contactOnion")
+            // Create voice session via Rust streaming with multiple circuits
+            // IMPORTANT: This is a blocking JNI call that creates multiple Tor circuits (~5 seconds)
+            // Must run on IO dispatcher to avoid blocking UI thread
+            Log.i(TAG, "Creating Rust voice session to $contactVoiceOnion with $numCircuits circuits...")
+            Log.d(TAG, "This will establish $numCircuits Tor circuits - may take 5-15 seconds")
+            val sessionCreated = withContext(Dispatchers.IO) {
+                RustBridge.createVoiceSession(callId, contactVoiceOnion, numCircuits)
             }
+            if (!sessionCreated) {
+                Log.e(TAG, "RustBridge.createVoiceSession returned false")
+                throw Exception("Failed to create voice session to $contactVoiceOnion")
+            }
+            Log.i(TAG, "✓ Created Rust voice session with $numCircuits circuits to $contactVoiceOnion")
 
-            // Initialize audio managers
-            audioCaptureManager = AudioCaptureManager(context, opusCodec)
-            audioPlaybackManager = AudioPlaybackManager(context, opusCodec)
+            // Initialize audio managers (blocking native calls - run on IO thread)
+            withContext(Dispatchers.IO) {
+                audioCaptureManager = AudioCaptureManager(context, opusCodec)
+                audioPlaybackManager = AudioPlaybackManager(context, opusCodec)
 
-            audioCaptureManager.initialize()
-            audioPlaybackManager.initialize()
+                audioCaptureManager.initialize()
+                audioPlaybackManager.initialize()
+            }
 
             // Set capture callback
             audioCaptureManager.onFrameEncoded = { opusFrame ->
@@ -145,8 +155,7 @@ class VoiceCallSession(
             audioCaptureManager.startCapture(callScope)
             audioPlaybackManager.startPlayback(callScope)
 
-            // Start receiving frames
-            startReceiving()
+            // Note: Receiving is now handled via onVoicePacket callback (no startReceiving needed)
 
             setState(CallState.ACTIVE)
 
@@ -160,8 +169,10 @@ class VoiceCallSession(
 
     /**
      * Answer incoming call
+     * @param theirEphemeralPublicKey Their ephemeral public key from CALL_OFFER
+     * @param ourEphemeralSecretKey Our ephemeral secret key (generated before calling this)
      */
-    suspend fun answerIncomingCall(theirEphemeralPublicKey: ByteArray) {
+    suspend fun answerIncomingCall(theirEphemeralPublicKey: ByteArray, ourEphemeralSecretKey: ByteArray) {
         try {
             Log.i(TAG, "Answering incoming call from $contactOnion")
             setState(CallState.CONNECTING)
@@ -169,23 +180,22 @@ class VoiceCallSession(
             // Direction = 1 for incoming calls
             direction = 1
 
-            // Initialize Opus codec
-            opusCodec.initEncoder()
-            opusCodec.initDecoder()
+            // Initialize Opus codec (blocking native calls - run on IO thread)
+            withContext(Dispatchers.IO) {
+                opusCodec.initEncoder()
+                opusCodec.initDecoder()
+            }
 
-            // Generate our ephemeral keypair
-            val ourEphemeralKeypair = crypto.generateEphemeralKeypair()
+            Log.d(TAG, "Using provided ephemeral keypair for answering call")
 
-            Log.d(TAG, "Generated ephemeral keypair for answering call")
-
-            // Compute shared secret
+            // Compute shared secret using our secret key
             val sharedSecret = crypto.computeSharedSecret(
-                ourEphemeralKeypair.secretKey.asBytes,
+                ourEphemeralSecretKey,
                 theirEphemeralPublicKey
             )
 
             // Derive master call key
-            masterKey = crypto.deriveMasterKey(sharedSecret, callId)
+            masterKey = crypto.deriveMasterKey(sharedSecret, callIdBytes)
 
             // Derive per-circuit keys
             for (i in 0 until numCircuits) {
@@ -194,20 +204,28 @@ class VoiceCallSession(
 
             Log.d(TAG, "Derived encryption keys: master + $numCircuits circuit keys")
 
-            // Establish Tor circuits
-            for (i in 0 until numCircuits) {
-                val socket = TorVoiceSocket(i)
-                socket.connect(contactOnion, VOICE_PORT)
-                circuits.add(socket)
-                Log.d(TAG, "Established circuit $i to $contactOnion")
+            // Create voice session via Rust streaming with multiple circuits
+            // IMPORTANT: This is a blocking JNI call that creates multiple Tor circuits (~5 seconds)
+            // Must run on IO dispatcher to avoid blocking UI thread
+            Log.i(TAG, "Creating Rust voice session to $contactVoiceOnion with $numCircuits circuits...")
+            Log.d(TAG, "This will establish $numCircuits Tor circuits - may take 5-15 seconds")
+            val sessionCreated = withContext(Dispatchers.IO) {
+                RustBridge.createVoiceSession(callId, contactVoiceOnion, numCircuits)
             }
+            if (!sessionCreated) {
+                Log.e(TAG, "RustBridge.createVoiceSession returned false")
+                throw Exception("Failed to create voice session to $contactVoiceOnion")
+            }
+            Log.i(TAG, "✓ Created Rust voice session with $numCircuits circuits to $contactVoiceOnion")
 
-            // Initialize audio managers
-            audioCaptureManager = AudioCaptureManager(context, opusCodec)
-            audioPlaybackManager = AudioPlaybackManager(context, opusCodec)
+            // Initialize audio managers (blocking native calls - run on IO thread)
+            withContext(Dispatchers.IO) {
+                audioCaptureManager = AudioCaptureManager(context, opusCodec)
+                audioPlaybackManager = AudioPlaybackManager(context, opusCodec)
 
-            audioCaptureManager.initialize()
-            audioPlaybackManager.initialize()
+                audioCaptureManager.initialize()
+                audioPlaybackManager.initialize()
+            }
 
             // Set capture callback
             audioCaptureManager.onFrameEncoded = { opusFrame ->
@@ -218,8 +236,7 @@ class VoiceCallSession(
             audioCaptureManager.startCapture(callScope)
             audioPlaybackManager.startPlayback(callScope)
 
-            // Start receiving frames
-            startReceiving()
+            // Note: Receiving is now handled via onVoicePacket callback (no startReceiving needed)
 
             setState(CallState.ACTIVE)
 
@@ -243,27 +260,29 @@ class VoiceCallSession(
 
         callScope.launch {
             try {
-                // Select circuit (Phase 1: always circuit 0)
-                val circuitIndex = 0 // TODO Phase 2: (sendSeqNum % numCircuits).toInt()
-                val socket = circuits.getOrNull(circuitIndex)
+                // Select circuit using round-robin distribution
+                val circuitIndex = (sendSeqNum % numCircuits).toInt()
                 val circuitKey = circuitKeys[circuitIndex]
 
-                if (socket == null || circuitKey == null) {
+                if (circuitKey == null) {
                     Log.e(TAG, "Circuit $circuitIndex not available")
                     return@launch
                 }
 
-                // Create VoiceFrame
+                // Get current sequence number and increment
+                val currentSeq = sendSeqNum++
+
+                // Create VoiceFrame for AAD encoding
                 val frame = VoiceFrame(
-                    callId = callId,
-                    sequenceNumber = sendSeqNum++,
+                    callId = callIdBytes,
+                    sequenceNumber = currentSeq,
                     direction = direction,
                     circuitIndex = circuitIndex,
                     encryptedPayload = ByteArray(0) // Placeholder, will encrypt below
                 )
 
                 // Derive nonce
-                val nonce = crypto.deriveNonce(callId, frame.sequenceNumber)
+                val nonce = crypto.deriveNonce(callIdBytes, currentSeq)
 
                 // Encode AAD
                 val aad = frame.encodeAAD()
@@ -276,14 +295,20 @@ class VoiceCallSession(
                     aad
                 )
 
-                // Create final encrypted frame
-                val encryptedFrame = frame.copy(encryptedPayload = encryptedPayload)
+                // Send encrypted payload via Rust voice streaming
+                // Timestamp is currentSeq * 20ms (assuming 20ms Opus frames)
+                val timestamp = currentSeq * 20
 
-                // Send over Tor
-                val success = socket.sendFrame(encryptedFrame)
+                val success = RustBridge.sendAudioPacket(
+                    callId,
+                    currentSeq.toInt(),
+                    timestamp,
+                    encryptedPayload,
+                    circuitIndex
+                )
 
                 if (!success) {
-                    Log.w(TAG, "Failed to send frame seq=${frame.sequenceNumber}")
+                    Log.w(TAG, "Failed to send voice packet seq=$currentSeq")
                 }
 
             } catch (e: Exception) {
@@ -292,73 +317,10 @@ class VoiceCallSession(
         }
     }
 
-    /**
-     * Start receiving voice frames from all circuits
-     */
-    private fun startReceiving() {
-        for ((index, socket) in circuits.withIndex()) {
-            receiveJob = callScope.launch {
-                receiveLoop(socket, index)
-            }
-        }
-    }
-
-    /**
-     * Receive loop for one circuit
-     */
-    private suspend fun receiveLoop(socket: TorVoiceSocket, circuitIndex: Int) {
-        Log.d(TAG, "Starting receive loop for circuit $circuitIndex")
-
-        try {
-            while (callState == CallState.ACTIVE && socket.isConnected()) {
-                // Receive encrypted frame
-                val encryptedFrame = socket.receiveFrame()
-
-                if (encryptedFrame == null) {
-                    Log.w(TAG, "Circuit $circuitIndex closed")
-                    break
-                }
-
-                // Decrypt frame
-                val circuitKey = circuitKeys[encryptedFrame.circuitIndex]
-
-                if (circuitKey == null) {
-                    Log.e(TAG, "No key for circuit ${encryptedFrame.circuitIndex}")
-                    continue
-                }
-
-                try {
-                    // Derive nonce
-                    val nonce = crypto.deriveNonce(encryptedFrame.callId, encryptedFrame.sequenceNumber)
-
-                    // Encode AAD
-                    val aad = encryptedFrame.encodeAAD()
-
-                    // Decrypt payload
-                    val opusFrame = crypto.decryptFrame(
-                        encryptedFrame.encryptedPayload,
-                        circuitKey,
-                        nonce,
-                        aad
-                    )
-
-                    // Add to jitter buffer for playback
-                    audioPlaybackManager.addFrame(encryptedFrame.sequenceNumber, opusFrame)
-
-                } catch (e: Exception) {
-                    Log.e(TAG, "Failed to decrypt frame seq=${encryptedFrame.sequenceNumber}", e)
-                }
-            }
-
-        } catch (e: Exception) {
-            Log.e(TAG, "Receive loop error on circuit $circuitIndex", e)
-        } finally {
-            Log.d(TAG, "Receive loop ended for circuit $circuitIndex")
-        }
-    }
 
     /**
      * End the call
+     * Can be called from any thread - cleanup runs on background thread
      */
     fun endCall(reason: String = "User ended call") {
         if (callState == CallState.ENDED || callState == CallState.ENDING) {
@@ -369,36 +331,67 @@ class VoiceCallSession(
 
         Log.i(TAG, "Ending call: $reason")
 
-        // Stop audio
-        audioCaptureManager.stopCapture()
-        audioPlaybackManager.stopPlayback()
+        // Create a new scope for cleanup (independent of callScope which might be hung)
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                // Wrap cleanup in timeout to prevent hanging forever
+                withTimeout(5000L) {  // 5 second timeout for cleanup
+                    // Stop audio (blocking operations)
+                    if (::audioCaptureManager.isInitialized) {
+                        audioCaptureManager.stopCapture()
+                    }
+                    if (::audioPlaybackManager.isInitialized) {
+                        audioPlaybackManager.stopPlayback()
+                    }
 
-        // Close circuits
-        for (socket in circuits) {
-            socket.close()
+                    // End voice session via Rust (blocking JNI call)
+                    try {
+                        RustBridge.endVoiceSession(callId)
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Error ending Rust voice session (might not have been created yet)", e)
+                    }
+
+                    // Wipe keys
+                    masterKey?.let { crypto.wipeKey(it) }
+                    for (key in circuitKeys.values) {
+                        crypto.wipeKey(key)
+                    }
+                    circuitKeys.clear()
+
+                    // Release resources (blocking native calls)
+                    if (::audioCaptureManager.isInitialized) {
+                        audioCaptureManager.release()
+                    }
+                    if (::audioPlaybackManager.isInitialized) {
+                        audioPlaybackManager.release()
+                    }
+
+                    // Only release codec if it was initialized
+                    try {
+                        opusCodec.release()
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Error releasing Opus codec (might not have been initialized)", e)
+                    }
+                }
+
+            } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
+                Log.w(TAG, "Cleanup timed out after 5 seconds - forcing end")
+            } catch (e: Exception) {
+                Log.e(TAG, "Error during call cleanup", e)
+            } finally {
+                // Always set state to ENDED and notify
+                setState(CallState.ENDED)
+                onCallEnded?.invoke(reason)
+                Log.i(TAG, "Call ended")
+
+                // Cancel original call scope (will terminate any hung operations)
+                try {
+                    callScope.cancel()
+                } catch (e: Exception) {
+                    Log.w(TAG, "Error cancelling call scope", e)
+                }
+            }
         }
-        circuits.clear()
-
-        // Wipe keys
-        masterKey?.let { crypto.wipeKey(it) }
-        for (key in circuitKeys.values) {
-            crypto.wipeKey(key)
-        }
-        circuitKeys.clear()
-
-        // Release resources
-        audioCaptureManager.release()
-        audioPlaybackManager.release()
-        opusCodec.release()
-
-        // Cancel coroutines
-        callScope.cancel()
-
-        setState(CallState.ENDED)
-
-        onCallEnded?.invoke(reason)
-
-        Log.i(TAG, "Call ended")
     }
 
     /**
@@ -434,4 +427,59 @@ class VoiceCallSession(
      * Get current call state
      */
     fun getState(): CallState = callState
+
+    /**
+     * VoicePacketCallback implementation
+     * Receives encrypted voice packets from Rust and decrypts them
+     */
+    override fun onVoicePacket(callId: String, sequence: Int, timestamp: Long, audioData: ByteArray) {
+        // Verify this packet is for our call
+        if (callId != this.callId) {
+            Log.w(TAG, "Received packet for wrong call: received='$callId' (len=${callId.length}), expected='${this.callId}' (len=${this.callId.length})")
+            return
+        }
+
+        // Only process packets when call is active
+        if (callState != CallState.ACTIVE) {
+            return
+        }
+
+        callScope.launch {
+            try {
+                // Derive circuit index from sequence (must match sender's round-robin logic)
+                val circuitIndex = (sequence % numCircuits)
+                val circuitKey = circuitKeys[circuitIndex]
+
+                if (circuitKey == null) {
+                    Log.e(TAG, "No key for circuit $circuitIndex")
+                    return@launch
+                }
+
+                // Derive nonce from callId and sequence
+                val nonce = crypto.deriveNonce(callIdBytes, sequence.toLong())
+
+                // Reconstruct AAD (Additional Authenticated Data)
+                // AAD format: callId (16) || sequenceNumber (8) || direction (1) || circuitIndex (1) = 26 bytes
+                val aad = java.nio.ByteBuffer.allocate(26)
+                aad.put(callIdBytes)                                    // 16 bytes
+                aad.putLong(sequence.toLong())                          // 8 bytes
+                aad.put(if (direction == 0.toByte()) 1.toByte() else 0.toByte()) // 1 byte - opposite direction
+                aad.put(circuitIndex.toByte())                          // 1 byte
+
+                // Decrypt the encrypted Opus frame
+                val opusFrame = crypto.decryptFrame(
+                    audioData,
+                    circuitKey,
+                    nonce,
+                    aad.array()
+                )
+
+                // Add to jitter buffer for playback
+                audioPlaybackManager.addFrame(sequence.toLong(), opusFrame)
+
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to decrypt voice packet seq=$sequence", e)
+            }
+        }
+    }
 }

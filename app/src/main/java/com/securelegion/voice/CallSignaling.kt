@@ -44,94 +44,195 @@ object CallSignaling {
      * @param recipientOnion Recipient's .onion address
      * @param callId Unique call ID
      * @param ephemeralPublicKey Our ephemeral X25519 public key for this call
+     * @param voiceOnion Our voice .onion address (for voice streaming connection)
      * @param numCircuits Number of Tor circuits to use (1 for Phase 1, 3-5 for Phase 2)
      * @return True if offer sent successfully
      */
-    fun sendCallOffer(
+    suspend fun sendCallOffer(
         recipientX25519PublicKey: ByteArray,
         recipientOnion: String,
         callId: String,
         ephemeralPublicKey: ByteArray,
+        voiceOnion: String,
         numCircuits: Int = 1
     ): Boolean {
-        try {
+        return try {
+            Log.d(TAG, "sendCallOffer called:")
+            Log.d(TAG, "  recipientOnion: $recipientOnion")
+            Log.d(TAG, "  callId: $callId")
+
             // Create call offer JSON
             val offerJson = JSONObject().apply {
                 put("type", TYPE_CALL_OFFER)
                 put("callId", callId)
                 put("ephemeralPublicKey", Base64.encodeToString(ephemeralPublicKey, Base64.NO_WRAP))
+                put("voiceOnion", voiceOnion)
                 put("numCircuits", numCircuits)
                 put("timestamp", System.currentTimeMillis())
             }
 
             val message = offerJson.toString()
+            Log.d(TAG, "Message JSON created: ${message.length} bytes")
 
             // Encrypt message
             val encryptedMessage = RustBridge.encryptMessage(message, recipientX25519PublicKey)
+            Log.d(TAG, "Message encrypted: ${encryptedMessage.size} bytes")
 
-            // Send via MESSAGE protocol with CALL_SIGNALING type
-            val success = RustBridge.sendMessageBlob(
-                recipientOnion,
-                encryptedMessage,
-                MSG_TYPE_CALL_SIGNALING
-            )
+            Log.d(TAG, "Calling RustBridge.sendMessageBlob to $recipientOnion...")
+            Log.w(TAG, "WARNING: sendMessageBlob is a blocking JNI call - may hang if Tor circuit not ready")
 
-            if (success) {
-                Log.i(TAG, "Call offer sent: $callId")
-            } else {
-                Log.e(TAG, "Failed to send call offer: $callId")
+            // Call the blocking JNI function on IO thread
+            // NOTE: withTimeout() cannot interrupt native calls - this will still block if circuit not ready
+            val success = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                try {
+                    val result = RustBridge.sendMessageBlob(
+                        recipientOnion,
+                        encryptedMessage,
+                        MSG_TYPE_CALL_SIGNALING
+                    )
+                    Log.d(TAG, "RustBridge.sendMessageBlob returned: $result")
+                    result
+                } catch (e: Exception) {
+                    Log.e(TAG, "Exception in sendMessageBlob", e)
+                    false
+                }
             }
 
-            return success
+            if (success) {
+                Log.i(TAG, "✓ Call offer sent successfully: $callId")
+            } else {
+                Log.e(TAG, "✗ RustBridge.sendMessageBlob failed for call: $callId")
+                Log.e(TAG, "  This usually means Tor circuit is not ready or onion address is invalid")
+            }
 
+            success
+
+        } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
+            Log.e(TAG, "⏱ Timeout sending call offer for call $callId - Tor circuit not ready")
+            Log.e(TAG, "  sendMessageBlob took longer than 10 seconds - circuit establishment failed")
+            false
         } catch (e: Exception) {
-            Log.e(TAG, "Error sending call offer", e)
-            return false
+            Log.e(TAG, "Exception in sendCallOffer for call $callId", e)
+            false
         }
     }
 
     /**
-     * Send call answer (accept call)
+     * Send call answer (accept call) with timeout and retry logic
      * @param recipientX25519PublicKey Recipient's X25519 public key
      * @param recipientOnion Recipient's .onion address
      * @param callId Call ID from the offer
      * @param ephemeralPublicKey Our ephemeral X25519 public key for this call
+     * @param voiceOnion Our voice .onion address (for voice streaming connection)
      * @return True if answer sent successfully
      */
-    fun sendCallAnswer(
+    suspend fun sendCallAnswer(
         recipientX25519PublicKey: ByteArray,
         recipientOnion: String,
         callId: String,
-        ephemeralPublicKey: ByteArray
+        ephemeralPublicKey: ByteArray,
+        voiceOnion: String
     ): Boolean {
-        try {
+        return try {
+            Log.d(TAG, "sendCallAnswer called:")
+            Log.d(TAG, "  recipientOnion: $recipientOnion")
+            Log.d(TAG, "  callId: $callId")
+            Log.d(TAG, "  voiceOnion: $voiceOnion")
+            Log.d(TAG, "  recipientX25519PublicKey size: ${recipientX25519PublicKey.size}")
+            Log.d(TAG, "  ephemeralPublicKey size: ${ephemeralPublicKey.size}")
+
             val answerJson = JSONObject().apply {
                 put("type", TYPE_CALL_ANSWER)
                 put("callId", callId)
                 put("ephemeralPublicKey", Base64.encodeToString(ephemeralPublicKey, Base64.NO_WRAP))
+                put("voiceOnion", voiceOnion)
                 put("timestamp", System.currentTimeMillis())
             }
 
             val message = answerJson.toString()
+            Log.d(TAG, "Message JSON created: ${message.length} bytes")
+
             val encryptedMessage = RustBridge.encryptMessage(message, recipientX25519PublicKey)
+            Log.d(TAG, "Message encrypted: ${encryptedMessage.size} bytes")
 
-            val success = RustBridge.sendMessageBlob(
-                recipientOnion,
-                encryptedMessage,
-                MSG_TYPE_CALL_SIGNALING
-            )
+            // Retry logic for CALL_ANSWER over Tor
+            // Balance between reliability and UX
+            // Most Tor connections complete in <10s, but some take longer
+            // 5 attempts with 15-second timeout = max 75 seconds worst case
+            // But successful attempts will complete much faster (typically 2-10 seconds)
+            val maxRetries = 5
+            val timeoutMs = 15000L  // 15 seconds per attempt
+            val baseBackoffMs = 500L
+            val maxBackoffMs = 2000L
+            val totalStartTime = System.currentTimeMillis()
 
-            if (success) {
-                Log.i(TAG, "Call answer sent: $callId")
-            } else {
-                Log.e(TAG, "Failed to send call answer: $callId")
+            repeat(maxRetries) { attempt ->
+                val attemptNum = attempt + 1
+                val attemptStartTime = System.currentTimeMillis()
+
+                try {
+                    Log.i(TAG, "CALL_ANSWER_SEND_ATTEMPT $attemptNum start (timeout=${timeoutMs}ms)")
+
+                    // Try to send with timeout
+                    val success = kotlinx.coroutines.withTimeout(timeoutMs) {
+                        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                            try {
+                                val result = RustBridge.sendMessageBlob(
+                                    recipientOnion,
+                                    encryptedMessage,
+                                    MSG_TYPE_CALL_SIGNALING
+                                )
+                                result
+                            } catch (e: Exception) {
+                                Log.e(TAG, "CALL_ANSWER_SEND_FAIL $attemptNum error_code=EXCEPTION elapsed_ms=${System.currentTimeMillis() - attemptStartTime}", e)
+                                false
+                            }
+                        }
+                    }
+
+                    val elapsedMs = System.currentTimeMillis() - attemptStartTime
+
+                    if (success) {
+                        Log.i(TAG, "CALL_ANSWER_SEND_SUCCESS $attemptNum elapsed_ms=$elapsedMs")
+                        return true
+                    } else {
+                        Log.w(TAG, "CALL_ANSWER_SEND_FAIL $attemptNum error_code=FALSE_RETURN elapsed_ms=$elapsedMs")
+                        if (attemptNum < maxRetries) {
+                            // Exponential backoff: 200ms * 2^(i-1), capped at 2000ms
+                            val backoffMs = kotlin.math.min(baseBackoffMs * (1 shl (attemptNum - 1)), maxBackoffMs)
+                            Log.i(TAG, "Backoff ${backoffMs}ms before retry...")
+                            kotlinx.coroutines.delay(backoffMs)
+                        }
+                    }
+
+                } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
+                    val elapsedMs = System.currentTimeMillis() - attemptStartTime
+                    Log.w(TAG, "CALL_ANSWER_SEND_TIMEOUT $attemptNum elapsed_ms=$elapsedMs")
+                    if (attemptNum < maxRetries) {
+                        // Exponential backoff
+                        val backoffMs = kotlin.math.min(baseBackoffMs * (1 shl (attemptNum - 1)), maxBackoffMs)
+                        Log.i(TAG, "Backoff ${backoffMs}ms before retry...")
+                        kotlinx.coroutines.delay(backoffMs)
+                    }
+                } catch (e: Exception) {
+                    val elapsedMs = System.currentTimeMillis() - attemptStartTime
+                    Log.e(TAG, "CALL_ANSWER_SEND_FAIL $attemptNum error_code=EXCEPTION elapsed_ms=$elapsedMs", e)
+                    if (attemptNum < maxRetries) {
+                        val backoffMs = kotlin.math.min(baseBackoffMs * (1 shl (attemptNum - 1)), maxBackoffMs)
+                        Log.i(TAG, "Backoff ${backoffMs}ms before retry...")
+                        kotlinx.coroutines.delay(backoffMs)
+                    }
+                }
             }
 
-            return success
+            // All retries exhausted
+            val totalElapsedMs = System.currentTimeMillis() - totalStartTime
+            Log.e(TAG, "CALL_ANSWER_SEND_GIVEUP attempts=$maxRetries total_elapsed_ms=$totalElapsedMs")
+            false
 
         } catch (e: Exception) {
-            Log.e(TAG, "Error sending call answer", e)
-            return false
+            Log.e(TAG, "Unexpected exception in sendCallAnswer for call $callId", e)
+            false
         }
     }
 
@@ -268,11 +369,13 @@ object CallSignaling {
                 TYPE_CALL_OFFER -> {
                     val ephemeralKeyBase64 = json.getString("ephemeralPublicKey")
                     val ephemeralKey = Base64.decode(ephemeralKeyBase64, Base64.NO_WRAP)
+                    val voiceOnion = json.getString("voiceOnion")
                     val numCircuits = json.getInt("numCircuits")
 
                     CallSignalingMessage.CallOffer(
                         callId = callId,
                         ephemeralPublicKey = ephemeralKey,
+                        voiceOnion = voiceOnion,
                         numCircuits = numCircuits,
                         timestamp = timestamp
                     )
@@ -281,10 +384,12 @@ object CallSignaling {
                 TYPE_CALL_ANSWER -> {
                     val ephemeralKeyBase64 = json.getString("ephemeralPublicKey")
                     val ephemeralKey = Base64.decode(ephemeralKeyBase64, Base64.NO_WRAP)
+                    val voiceOnion = json.getString("voiceOnion")
 
                     CallSignalingMessage.CallAnswer(
                         callId = callId,
                         ephemeralPublicKey = ephemeralKey,
+                        voiceOnion = voiceOnion,
                         timestamp = timestamp
                     )
                 }
@@ -332,6 +437,7 @@ object CallSignaling {
         data class CallOffer(
             val callId: String,
             val ephemeralPublicKey: ByteArray,
+            val voiceOnion: String,
             val numCircuits: Int,
             val timestamp: Long
         ) : CallSignalingMessage() {
@@ -343,6 +449,7 @@ object CallSignaling {
 
                 if (callId != other.callId) return false
                 if (!ephemeralPublicKey.contentEquals(other.ephemeralPublicKey)) return false
+                if (voiceOnion != other.voiceOnion) return false
                 if (numCircuits != other.numCircuits) return false
                 if (timestamp != other.timestamp) return false
 
@@ -352,6 +459,7 @@ object CallSignaling {
             override fun hashCode(): Int {
                 var result = callId.hashCode()
                 result = 31 * result + ephemeralPublicKey.contentHashCode()
+                result = 31 * result + voiceOnion.hashCode()
                 result = 31 * result + numCircuits
                 result = 31 * result + timestamp.hashCode()
                 return result
@@ -361,6 +469,7 @@ object CallSignaling {
         data class CallAnswer(
             val callId: String,
             val ephemeralPublicKey: ByteArray,
+            val voiceOnion: String,
             val timestamp: Long
         ) : CallSignalingMessage() {
             override fun equals(other: Any?): Boolean {
@@ -371,6 +480,7 @@ object CallSignaling {
 
                 if (callId != other.callId) return false
                 if (!ephemeralPublicKey.contentEquals(other.ephemeralPublicKey)) return false
+                if (voiceOnion != other.voiceOnion) return false
                 if (timestamp != other.timestamp) return false
 
                 return true
@@ -379,6 +489,7 @@ object CallSignaling {
             override fun hashCode(): Int {
                 var result = callId.hashCode()
                 result = 31 * result + ephemeralPublicKey.contentHashCode()
+                result = 31 * result + voiceOnion.hashCode()
                 result = 31 * result + timestamp.hashCode()
                 return result
             }

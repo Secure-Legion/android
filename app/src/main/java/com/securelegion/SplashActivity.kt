@@ -117,6 +117,30 @@ class SplashActivity : AppCompatActivity() {
         try {
             val torManager = TorManager.getInstance(this)
 
+            // Watchdog timer: if checks take >5 seconds and TorService is running, just proceed
+            var checksComplete = false
+            val watchdogThread = Thread {
+                Thread.sleep(5000)  // 5 second timeout
+                if (!checksComplete) {
+                    Log.w("SplashActivity", "Tor checks taking too long - checking if we can skip...")
+                    if (TorService.isRunning()) {
+                        Log.i("SplashActivity", "✓ TorService is running - proceeding despite slow checks")
+                        runOnUiThread {
+                            val progressBar = findViewById<ProgressBar>(R.id.torProgressBar)
+                            progressBar?.progress = 100
+                            updateStatus("Connected!")
+                            Handler(Looper.getMainLooper()).postDelayed({
+                                checksComplete = true  // Prevent double navigation
+                                navigateToLock()
+                            }, 300)
+                        }
+                    } else {
+                        Log.w("SplashActivity", "Checks timed out and TorService not running - waiting longer")
+                    }
+                }
+            }
+            watchdogThread.start()
+
             // Test actual SOCKS connectivity instead of checking persistent flag
             Thread {
                 try {
@@ -136,6 +160,7 @@ class SplashActivity : AppCompatActivity() {
                     if (!controlPortAlive) {
                         // Tor process is not running - need fresh initialization
                         Log.i("SplashActivity", "Tor control port not responding - starting fresh initialization")
+                        checksComplete = true  // Stop watchdog
                         runOnUiThread {
                             updateStatus("Starting Tor...")
                         }
@@ -163,6 +188,7 @@ class SplashActivity : AppCompatActivity() {
                             if (TorService.isRunning() && TorService.isMessagingReady()) {
                                 // Everything is ready - skip checks and go straight to app
                                 Log.i("SplashActivity", "✓ TorService already running and ready - proceeding immediately")
+                                checksComplete = true  // Stop watchdog
                                 runOnUiThread {
                                     val progressBar = findViewById<ProgressBar>(R.id.torProgressBar)
                                     progressBar?.progress = 100
@@ -174,6 +200,7 @@ class SplashActivity : AppCompatActivity() {
                             } else {
                                 // Services not ready, run health checks
                                 Log.i("SplashActivity", "Services not ready, running health checks...")
+                                checksComplete = true  // Stop watchdog (checkTorStatus will handle from here)
                                 runOnUiThread {
                                     val progressBar = findViewById<ProgressBar>(R.id.torProgressBar)
                                     progressBar?.progress = 75
@@ -187,6 +214,7 @@ class SplashActivity : AppCompatActivity() {
                             // Tor is bootstrapping - but this could be stale from previous session
                             // Give it a brief chance to make progress, then restart if stuck
                             Log.i("SplashActivity", "Tor bootstrapping at $bootstrapStatus% - verifying progress...")
+                            checksComplete = true  // Stop watchdog (we're handling it)
 
                             val initialStatus = bootstrapStatus
                             Thread.sleep(5000)  // Wait 5 seconds to see if it makes progress
@@ -211,15 +239,18 @@ class SplashActivity : AppCompatActivity() {
                         } else {
                             // Bootstrap status is 0 or negative - likely stale state
                             Log.w("SplashActivity", "Bootstrap status is $bootstrapStatus - reinitializing")
+                            checksComplete = true  // Stop watchdog
                             startFreshTorInitialization(torManager)
                         }
                     } else {
                         // Tor not functional - need to initialize
                         Log.i("SplashActivity", "Tor not connected - initializing...")
+                        checksComplete = true  // Stop watchdog
                         startFreshTorInitialization(torManager)
                     }
                 } catch (e: Exception) {
                     Log.e("SplashActivity", "Error testing Tor connectivity", e)
+                    checksComplete = true  // Stop watchdog
                     // On error, try initializing Tor
                     startFreshTorInitialization(torManager)
                 }
@@ -503,16 +534,28 @@ class SplashActivity : AppCompatActivity() {
                                 }
                                 return@Thread
                             } else {
-                                // Still waiting for listeners - increment from 80% to 90% over time
-                                val waitProgress = 80 + ((attempts % 40) / 4) // Slowly increment from 80 to 90
+                                // Still waiting for listeners - increment from 80% to 89% smoothly (don't loop back)
+                                val waitProgress = kotlin.math.min(80 + (attempts / 4), 89) // Cap at 89% to avoid loop
                                 runOnUiThread {
                                     val progressBar = findViewById<ProgressBar>(R.id.torProgressBar)
-                                    if (waitProgress < 90) {
-                                        progressBar?.progress = waitProgress
-                                        updateStatus("Starting services... ($waitProgress%)")
-                                    }
+                                    progressBar?.progress = waitProgress
+                                    updateStatus("Starting services... ($waitProgress%)")
                                 }
                                 Log.d("SplashActivity", "Waiting for listeners... (attempt $attempts, progress $waitProgress%)")
+
+                                // If we've been waiting too long (20 seconds), just proceed anyway
+                                if (attempts > 80) { // 80 attempts * 250ms = 20 seconds
+                                    Log.w("SplashActivity", "Listener wait timeout after 20s - proceeding anyway")
+                                    runOnUiThread {
+                                        val progressBar = findViewById<ProgressBar>(R.id.torProgressBar)
+                                        progressBar?.progress = 90
+                                        updateStatus("Verifying services... (90%)")
+                                        Handler(Looper.getMainLooper()).postDelayed({
+                                            checkTorStatus()
+                                        }, 200)
+                                    }
+                                    return@Thread
+                                }
                             }
                         }
                     }

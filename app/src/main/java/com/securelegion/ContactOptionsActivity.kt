@@ -183,10 +183,13 @@ class ContactOptionsActivity : BaseActivity() {
             finish()
         }
 
-        // Compose button (edit) - currently just a placeholder
+        // Compose button - opens chat with this contact
         findViewById<View>(R.id.composeButton)?.setOnClickListener {
-            // Could open a menu or perform an action
-            ThemedToast.show(this, "Edit contact")
+            val intent = Intent(this, ChatActivity::class.java)
+            intent.putExtra(ChatActivity.EXTRA_CONTACT_ID, contactId)
+            intent.putExtra(ChatActivity.EXTRA_CONTACT_NAME, name)
+            intent.putExtra(ChatActivity.EXTRA_CONTACT_ADDRESS, fullAddress)
+            startActivity(intent)
         }
 
         // Change Username button

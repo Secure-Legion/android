@@ -2,6 +2,12 @@ package com.securelegion.voice
 
 import android.content.Context
 import android.util.Log
+import com.securelegion.crypto.RustBridge
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.cancel
 
 /**
  * VoiceCallManager is the high-level API for voice calling
@@ -30,7 +36,7 @@ import android.util.Log
  * callManager.endCall()
  * ```
  */
-class VoiceCallManager private constructor(private val context: Context) {
+class VoiceCallManager private constructor(private val context: Context) : RustBridge.VoicePacketCallback {
 
     companion object {
         private const val TAG = "VoiceCallManager"
@@ -45,6 +51,9 @@ class VoiceCallManager private constructor(private val context: Context) {
         }
     }
 
+    // Application-scoped coroutine scope tied to the lifecycle of this singleton
+    private val managerScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
     // Current active call (only one call at a time for now)
     private var activeCall: VoiceCallSession? = null
 
@@ -54,10 +63,22 @@ class VoiceCallManager private constructor(private val context: Context) {
     // Pending outgoing calls (waiting for CALL_ANSWER)
     private val pendingOutgoingCalls = mutableMapOf<String, PendingOutgoingCallInfo>()
 
+    // Answered calls (for idempotency - re-send CALL_ANSWER on duplicate offers)
+    private val answeredCalls = mutableMapOf<String, AnsweredCallInfo>()
+
     // Callbacks
     var onIncomingCall: ((callId: String, contactOnion: String, contactName: String?) -> Unit)? = null
     var onCallStateChanged: ((VoiceCallSession.Companion.CallState) -> Unit)? = null
     var onCallEnded: ((reason: String) -> Unit)? = null
+
+    /**
+     * Call state for idempotency
+     */
+    enum class CallState {
+        RINGING,      // Received CALL_OFFER, showing incoming call UI
+        ANSWER_SENT,  // User pressed Answer, sent CALL_ANSWER
+        ACTIVE        // Voice call connected
+    }
 
     /**
      * Data class for incoming call information
@@ -68,7 +89,19 @@ class VoiceCallManager private constructor(private val context: Context) {
         val contactEd25519PublicKey: ByteArray,
         val contactName: String?,
         val ephemeralPublicKey: ByteArray,
-        val timestamp: Long = System.currentTimeMillis()
+        val timestamp: Long = System.currentTimeMillis(),
+        var state: CallState = CallState.RINGING
+    )
+
+    /**
+     * Data class for answered call info (for re-sending CALL_ANSWER on duplicate offers)
+     */
+    data class AnsweredCallInfo(
+        val callId: String,
+        val contactOnion: String,
+        val contactX25519PublicKey: ByteArray,
+        val ourEphemeralPublicKey: ByteArray,
+        val myVoiceOnion: String
     )
 
     /**
@@ -90,28 +123,36 @@ class VoiceCallManager private constructor(private val context: Context) {
     /**
      * Start outgoing voice call to a contact
      * @param contactOnion Contact's .onion address
+     * @param contactVoiceOnion Contact's voice .onion address
      * @param contactEd25519PublicKey Contact's Ed25519 public key
      * @param contactName Contact's display name (optional)
-     * @param theirEphemeralPublicKey Ephemeral key received from call offer/answer
+     * @param theirEphemeralPublicKey Ephemeral key received from CALL_ANSWER
+     * @param ourEphemeralSecretKey Our ephemeral secret key (to match public key sent in CALL_OFFER)
+     * @param callId Call ID from CALL_OFFER (must match the ID used in signaling)
      */
     suspend fun startCall(
         contactOnion: String,
+        contactVoiceOnion: String,
         contactEd25519PublicKey: ByteArray,
         contactName: String?,
-        theirEphemeralPublicKey: ByteArray
+        theirEphemeralPublicKey: ByteArray,
+        ourEphemeralSecretKey: ByteArray,
+        callId: String
     ): Result<VoiceCallSession> {
         if (activeCall != null) {
             return Result.failure(IllegalStateException("Call already in progress"))
         }
 
         try {
-            Log.i(TAG, "Starting call to $contactName ($contactOnion)")
+            Log.i(TAG, "Starting call to $contactName ($contactOnion) with callId=$callId")
 
             val callSession = VoiceCallSession(
                 context = context,
                 contactOnion = contactOnion,
+                contactVoiceOnion = contactVoiceOnion,
                 contactEd25519PublicKey = contactEd25519PublicKey,
-                isOutgoing = true
+                isOutgoing = true,
+                callId = callId
             )
 
             // Set callbacks
@@ -126,8 +167,8 @@ class VoiceCallManager private constructor(private val context: Context) {
 
             activeCall = callSession
 
-            // Start the call
-            callSession.startOutgoingCall(theirEphemeralPublicKey)
+            // Start the call with our ephemeral secret key
+            callSession.startOutgoingCall(theirEphemeralPublicKey, ourEphemeralSecretKey)
 
             return Result.success(callSession)
 
@@ -145,6 +186,7 @@ class VoiceCallManager private constructor(private val context: Context) {
      * @param contactEd25519PublicKey Caller's Ed25519 public key
      * @param contactName Caller's display name (optional)
      * @param ephemeralPublicKey Caller's ephemeral public key
+     * @return true if this is a new call (should show UI), false if duplicate (ignore)
      */
     fun handleIncomingCallOffer(
         callId: String,
@@ -152,33 +194,107 @@ class VoiceCallManager private constructor(private val context: Context) {
         contactEd25519PublicKey: ByteArray,
         contactName: String?,
         ephemeralPublicKey: ByteArray
-    ) {
-        Log.i(TAG, "Incoming call from $contactName ($contactOnion)")
+    ): Boolean {
+        Log.i(TAG, "Incoming CALL_OFFER from $contactName ($contactOnion), callId=$callId")
 
-        // Store incoming call info
+        // Idempotency: Check if this call already exists
+        val existingCall = incomingCalls[callId]
+        if (existingCall != null) {
+            when (existingCall.state) {
+                CallState.RINGING -> {
+                    Log.i(TAG, "Duplicate CALL_OFFER for call $callId while RINGING - ignoring (idempotent)")
+                    return false  // Duplicate - don't show UI again
+                }
+                CallState.ANSWER_SENT, CallState.ACTIVE -> {
+                    Log.w(TAG, "Duplicate CALL_OFFER for call $callId after answering - this shouldn't happen")
+                    return false  // Duplicate - don't show UI
+                }
+            }
+        }
+
+        // Idempotency: Check if we already answered this call
+        val answeredCall = answeredCalls[callId]
+        if (answeredCall != null) {
+            Log.i(TAG, "Duplicate CALL_OFFER for answered call $callId - re-sending CALL_ANSWER (idempotent)")
+            managerScope.launch(Dispatchers.IO) {
+                // Re-send CALL_ANSWER
+                val success = CallSignaling.sendCallAnswer(
+                    recipientX25519PublicKey = answeredCall.contactX25519PublicKey,
+                    recipientOnion = answeredCall.contactOnion,
+                    callId = callId,
+                    ephemeralPublicKey = answeredCall.ourEphemeralPublicKey,
+                    voiceOnion = answeredCall.myVoiceOnion
+                )
+                if (success) {
+                    Log.i(TAG, "✓ Re-sent CALL_ANSWER for duplicate offer")
+                } else {
+                    Log.w(TAG, "✗ Failed to re-send CALL_ANSWER for duplicate offer")
+                }
+            }
+            return false  // Duplicate - don't show UI again
+        }
+
+        // New call - store it
+        Log.d(TAG, "New incoming call - storing with state=RINGING")
         incomingCalls[callId] = IncomingCallInfo(
             callId = callId,
             contactOnion = contactOnion,
             contactEd25519PublicKey = contactEd25519PublicKey,
             contactName = contactName,
-            ephemeralPublicKey = ephemeralPublicKey
+            ephemeralPublicKey = ephemeralPublicKey,
+            state = CallState.RINGING
         )
 
-        // Notify UI
+        Log.d(TAG, "Incoming call stored. Total incoming calls: ${incomingCalls.size}")
+
+        // Notify UI (this will trigger the ringtone)
         onIncomingCall?.invoke(callId, contactOnion, contactName)
+
+        return true  // New call - show UI
     }
 
     /**
      * Answer incoming call
      * @param callId The incoming call ID
+     * @param contactVoiceOnion Contact's voice .onion address
+     * @param ourEphemeralSecretKey Our ephemeral secret key (to match the public key we'll send in CALL_ANSWER)
+     * @param contactX25519PublicKey Contact's X25519 public key (for re-sending CALL_ANSWER if needed)
+     * @param contactMessagingOnion Contact's messaging .onion address (for re-sending CALL_ANSWER if needed)
+     * @param ourEphemeralPublicKey Our ephemeral public key (for re-sending CALL_ANSWER if needed)
+     * @param myVoiceOnion Our voice .onion address (for re-sending CALL_ANSWER if needed)
      */
-    suspend fun answerCall(callId: String): Result<VoiceCallSession> {
+    suspend fun answerCall(
+        callId: String,
+        contactVoiceOnion: String,
+        ourEphemeralSecretKey: ByteArray,
+        contactX25519PublicKey: ByteArray,
+        contactMessagingOnion: String,
+        ourEphemeralPublicKey: ByteArray,
+        myVoiceOnion: String
+    ): Result<VoiceCallSession> {
         if (activeCall != null) {
             return Result.failure(IllegalStateException("Call already in progress"))
         }
 
+        Log.d(TAG, "answerCall called with callId: $callId")
+        Log.d(TAG, "Current incoming calls: ${incomingCalls.keys.joinToString(", ")}")
+
         val callInfo = incomingCalls.remove(callId)
-            ?: return Result.failure(IllegalArgumentException("Unknown call ID"))
+        if (callInfo == null) {
+            Log.e(TAG, "Cannot answer call - unknown call ID: $callId")
+            Log.e(TAG, "Available call IDs: ${incomingCalls.keys.joinToString(", ")}")
+            return Result.failure(IllegalArgumentException("Unknown call ID: $callId"))
+        }
+
+        // Store answered call info for idempotency (re-send CALL_ANSWER on duplicate offers)
+        answeredCalls[callId] = AnsweredCallInfo(
+            callId = callId,
+            contactOnion = contactMessagingOnion,
+            contactX25519PublicKey = contactX25519PublicKey,
+            ourEphemeralPublicKey = ourEphemeralPublicKey,
+            myVoiceOnion = myVoiceOnion
+        )
+        Log.d(TAG, "Stored answered call info for idempotency")
 
         try {
             Log.i(TAG, "Answering call from ${callInfo.contactName}")
@@ -186,8 +302,10 @@ class VoiceCallManager private constructor(private val context: Context) {
             val callSession = VoiceCallSession(
                 context = context,
                 contactOnion = callInfo.contactOnion,
+                contactVoiceOnion = contactVoiceOnion,
                 contactEd25519PublicKey = callInfo.contactEd25519PublicKey,
-                isOutgoing = false
+                isOutgoing = false,
+                callId = callInfo.callId // Use call ID from CALL_OFFER (critical for audio routing!)
             )
 
             // Set callbacks
@@ -202,8 +320,8 @@ class VoiceCallManager private constructor(private val context: Context) {
 
             activeCall = callSession
 
-            // Answer the call
-            callSession.answerIncomingCall(callInfo.ephemeralPublicKey)
+            // Answer the call with our ephemeral secret key
+            callSession.answerIncomingCall(callInfo.ephemeralPublicKey, ourEphemeralSecretKey)
 
             return Result.success(callSession)
 
@@ -257,6 +375,13 @@ class VoiceCallManager private constructor(private val context: Context) {
      * Check if there's an active call
      */
     fun hasActiveCall(): Boolean = activeCall != null
+
+    /**
+     * Get current call state (or IDLE if no active call)
+     */
+    fun getCurrentCallState(): VoiceCallSession.Companion.CallState {
+        return activeCall?.getState() ?: VoiceCallSession.Companion.CallState.IDLE
+    }
 
     /**
      * Get call quality stats for active call
@@ -367,7 +492,7 @@ class VoiceCallManager private constructor(private val context: Context) {
      */
     fun checkPendingCallTimeouts() {
         val now = System.currentTimeMillis()
-        val timeout = 30000L // 30 seconds
+        val timeout = 60000L // 60 seconds (increased from 30 to account for Tor circuit creation)
 
         val iterator = pendingOutgoingCalls.iterator()
         while (iterator.hasNext()) {
@@ -378,6 +503,21 @@ class VoiceCallManager private constructor(private val context: Context) {
                 iterator.remove()
                 pendingCall.onTimeout()
             }
+        }
+    }
+
+    /**
+     * VoicePacketCallback implementation
+     * Routes incoming voice packets from Rust to the active call session
+     */
+    override fun onVoicePacket(callId: String, sequence: Int, timestamp: Long, audioData: ByteArray) {
+        // Route packet to the active call session
+        val session = activeCall
+        if (session != null) {
+            // Forward packet to the active session's callback
+            session.onVoicePacket(callId, sequence, timestamp, audioData)
+        } else {
+            Log.w(TAG, "Received voice packet for callId=$callId but no active call session")
         }
     }
 }

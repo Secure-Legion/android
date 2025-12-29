@@ -121,6 +121,23 @@ class AddFriendActivity : BaseActivity() {
         val pinBox9 = findViewById<EditText>(R.id.pinBox9)
         val pinBox10 = findViewById<EditText>(R.id.pinBox10)
 
+        // Add key listener to handle backspace (moves to previous box and deletes)
+        val boxes = listOf(pinBox1, pinBox2, pinBox3, pinBox4, pinBox5, pinBox6, pinBox7, pinBox8, pinBox9, pinBox10)
+
+        boxes.forEachIndexed { index, box ->
+            box.setOnKeyListener { _, keyCode, event ->
+                if (keyCode == android.view.KeyEvent.KEYCODE_DEL && event.action == android.view.KeyEvent.ACTION_DOWN) {
+                    if (box.text.isEmpty() && index > 0) {
+                        // If current box is empty and backspace pressed, move to previous box and clear it
+                        boxes[index - 1].text.clear()
+                        boxes[index - 1].requestFocus()
+                        return@setOnKeyListener true
+                    }
+                }
+                false
+            }
+        }
+
         // Auto-advance to next box when digit is entered
         pinBox1.addTextChangedListener(object : android.text.TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
@@ -135,7 +152,6 @@ class AddFriendActivity : BaseActivity() {
             override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
             override fun afterTextChanged(s: android.text.Editable?) {
                 if (s?.length == 1) pinBox3.requestFocus()
-                else if (s?.isEmpty() == true) pinBox1.requestFocus()
             }
         })
 
@@ -144,7 +160,6 @@ class AddFriendActivity : BaseActivity() {
             override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
             override fun afterTextChanged(s: android.text.Editable?) {
                 if (s?.length == 1) pinBox4.requestFocus()
-                else if (s?.isEmpty() == true) pinBox2.requestFocus()
             }
         })
 
@@ -153,7 +168,6 @@ class AddFriendActivity : BaseActivity() {
             override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
             override fun afterTextChanged(s: android.text.Editable?) {
                 if (s?.length == 1) pinBox5.requestFocus()
-                else if (s?.isEmpty() == true) pinBox3.requestFocus()
             }
         })
 
@@ -162,7 +176,6 @@ class AddFriendActivity : BaseActivity() {
             override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
             override fun afterTextChanged(s: android.text.Editable?) {
                 if (s?.length == 1) pinBox6.requestFocus()
-                else if (s?.isEmpty() == true) pinBox4.requestFocus()
             }
         })
 
@@ -171,7 +184,6 @@ class AddFriendActivity : BaseActivity() {
             override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
             override fun afterTextChanged(s: android.text.Editable?) {
                 if (s?.length == 1) pinBox7.requestFocus()
-                else if (s?.isEmpty() == true) pinBox5.requestFocus()
             }
         })
 
@@ -180,7 +192,6 @@ class AddFriendActivity : BaseActivity() {
             override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
             override fun afterTextChanged(s: android.text.Editable?) {
                 if (s?.length == 1) pinBox8.requestFocus()
-                else if (s?.isEmpty() == true) pinBox6.requestFocus()
             }
         })
 
@@ -189,7 +200,6 @@ class AddFriendActivity : BaseActivity() {
             override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
             override fun afterTextChanged(s: android.text.Editable?) {
                 if (s?.length == 1) pinBox9.requestFocus()
-                else if (s?.isEmpty() == true) pinBox7.requestFocus()
             }
         })
 
@@ -198,7 +208,6 @@ class AddFriendActivity : BaseActivity() {
             override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
             override fun afterTextChanged(s: android.text.Editable?) {
                 if (s?.length == 1) pinBox10.requestFocus()
-                else if (s?.isEmpty() == true) pinBox8.requestFocus()
             }
         })
 
@@ -206,7 +215,7 @@ class AddFriendActivity : BaseActivity() {
             override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
             override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
             override fun afterTextChanged(s: android.text.Editable?) {
-                if (s?.isEmpty() == true) pinBox9.requestFocus()
+                // Last box - no auto-advance
             }
         })
     }
@@ -393,7 +402,7 @@ class AddFriendActivity : BaseActivity() {
                     val inputMethodManager = getSystemService(android.view.inputmethod.InputMethodManager::class.java)
                     inputMethodManager.showSoftInput(pinBox1, android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT)
 
-                    ThemedToast.show(this, "CID auto-filled. Enter their PIN to accept friend request")
+                    ThemedToast.show(this, "Friend request from ${friendRequest.displayName}. Enter PIN to accept")
                 }
             }
 
@@ -684,17 +693,24 @@ class AddFriendActivity : BaseActivity() {
                     val contactListManager = com.securelegion.services.ContactListManager.getInstance(this@AddFriendActivity)
 
                     // Backup our own contact list (now includes this new friend)
+                    Log.d(TAG, "⬆ Starting OUR contact list backup...")
                     val backupResult = contactListManager.backupToIPFS()
                     if (backupResult.isSuccess) {
                         val ourCID = backupResult.getOrThrow()
-                        Log.i(TAG, "✓ Contact list backed up to IPFS: $ourCID")
+                        Log.i(TAG, "✓✓✓ SUCCESS: OUR contact list backed up to IPFS: $ourCID")
+                        Log.i(TAG, "  Friends can now fetch it via: http://[our-onion]/contact-list/$ourCID")
                     } else {
-                        Log.w(TAG, "Failed to backup contact list: ${backupResult.exceptionOrNull()?.message}")
+                        Log.e(TAG, "❌ FAILED to backup OUR contact list: ${backupResult.exceptionOrNull()?.message}")
+                        backupResult.exceptionOrNull()?.printStackTrace()
                     }
 
                     // Pin friend's contact list for redundancy (v5 architecture)
                     // Fetch friend's contact list via their .onion HTTP and pin it locally
                     if (contactCard.ipfsCid != null) {
+                        Log.d(TAG, "⬇ Starting contact list pinning for ${contactCard.displayName}")
+                        Log.d(TAG, "  Friend's contact list CID: ${contactCard.ipfsCid}")
+                        Log.d(TAG, "  Friend's .onion: ${contactCard.friendRequestOnion}")
+
                         val ipfsManager = com.securelegion.services.IPFSManager.getInstance(this@AddFriendActivity)
                         val pinResult = ipfsManager.pinFriendContactList(
                             friendCID = contactCard.ipfsCid,
@@ -702,10 +718,12 @@ class AddFriendActivity : BaseActivity() {
                             friendOnion = contactCard.friendRequestOnion // Fetch via friend's .onion
                         )
                         if (pinResult.isSuccess) {
-                            Log.i(TAG, "✓ Pinned ${contactCard.displayName}'s contact list")
+                            Log.i(TAG, "✓✓✓ SUCCESS: Pinned ${contactCard.displayName}'s contact list")
                         } else {
-                            Log.w(TAG, "Could not pin ${contactCard.displayName}'s contact list (will retry later)")
+                            Log.e(TAG, "❌ FAILED to pin ${contactCard.displayName}'s contact list: ${pinResult.exceptionOrNull()?.message}")
                         }
+                    } else {
+                        Log.w(TAG, "⚠ Friend's contact list CID is NULL - cannot pin (they may be using old version)")
                     }
                 } catch (e: Exception) {
                     Log.w(TAG, "Non-critical error during contact list backup", e)
@@ -758,6 +776,7 @@ class AddFriendActivity : BaseActivity() {
                             Base64.NO_WRAP
                         ),
                         torOnionAddress = contactCard.torOnionAddress,
+                        voiceOnion = contactCard.voiceOnion,
                         addedTimestamp = System.currentTimeMillis(),
                         lastContactTimestamp = System.currentTimeMillis(),
                         trustLevel = Contact.TRUST_UNTRUSTED,
@@ -901,6 +920,7 @@ class AddFriendActivity : BaseActivity() {
 
                 // Build YOUR full contact card
                 val keyManager = KeyManager.getInstance(this@AddFriendActivity)
+                val torManager = com.securelegion.crypto.TorManager.getInstance(applicationContext)
                 val ownContactCard = ContactCard(
                     displayName = keyManager.getUsername() ?: throw Exception("Username not set"),
                     solanaPublicKey = keyManager.getSolanaPublicKey(),
@@ -908,8 +928,9 @@ class AddFriendActivity : BaseActivity() {
                     solanaAddress = keyManager.getSolanaAddress(),
                     friendRequestOnion = keyManager.getFriendRequestOnion() ?: throw Exception("Friend request .onion not set"),
                     messagingOnion = keyManager.getMessagingOnion() ?: throw Exception("Messaging .onion not set"),
+                    voiceOnion = torManager.getVoiceOnionAddress() ?: throw Exception("Voice .onion not set"),
                     contactPin = keyManager.getContactPin() ?: throw Exception("Contact PIN not set"),
-                    ipfsCid = keyManager.getIPFSCID(),
+                    ipfsCid = keyManager.deriveContactListCID(), // v5: Send contact LIST CID for backup mesh
                     timestamp = System.currentTimeMillis() / 1000
                 )
 
@@ -960,7 +981,7 @@ class AddFriendActivity : BaseActivity() {
                     savePendingFriendRequest(pendingContact)
 
                     hideLoading()
-                    ThemedToast.show(this@AddFriendActivity, "Accepted! Waiting for ${senderUsername}'s response...")
+                    ThemedToast.show(this@AddFriendActivity, "Friend request accepted! ${senderUsername} will be added to your contacts shortly.")
 
                     // Clear form
                     findViewById<EditText>(R.id.cidInput).setText("")
@@ -1053,7 +1074,7 @@ class AddFriendActivity : BaseActivity() {
                     // Save as outgoing pending request (awaiting Phase 2)
                     val pendingRequest = com.securelegion.models.PendingFriendRequest(
                         displayName = "Pending Friend",
-                        ipfsCid = "", // Not using IPFS in v2.0
+                        ipfsCid = friendOnion, // Store recipient's .onion address for retry
                         direction = com.securelegion.models.PendingFriendRequest.DIRECTION_OUTGOING,
                         status = com.securelegion.models.PendingFriendRequest.STATUS_PENDING,
                         timestamp = System.currentTimeMillis(),
@@ -1081,7 +1102,22 @@ class AddFriendActivity : BaseActivity() {
                     loadPendingFriendRequests()
                 } else {
                     hideLoading()
-                    ThemedToast.show(this@AddFriendActivity, "Failed to send friend request")
+
+                    // Save as failed pending request so user can retry
+                    val pendingRequest = com.securelegion.models.PendingFriendRequest(
+                        displayName = "Pending Friend",
+                        ipfsCid = friendOnion, // Store recipient's .onion address for retry
+                        direction = com.securelegion.models.PendingFriendRequest.DIRECTION_OUTGOING,
+                        status = com.securelegion.models.PendingFriendRequest.STATUS_FAILED,
+                        timestamp = System.currentTimeMillis(),
+                        contactCardJson = phase1Payload // Store Phase 1 for retry
+                    )
+                    savePendingFriendRequest(pendingRequest)
+
+                    ThemedToast.show(this@AddFriendActivity, "Failed to send friend request - saved to retry later")
+
+                    // Reload pending requests to show the failed request
+                    loadPendingFriendRequests()
                 }
 
             } catch (e: Exception) {
@@ -1182,7 +1218,7 @@ class AddFriendActivity : BaseActivity() {
 
     /**
      * Resend friend request from pending request (retry functionality)
-     * Uses saved ContactCard data - no PIN needed, no re-download
+     * Handles both v2.0 Phase 1 requests and old v1.0 full ContactCard requests
      */
     private fun resendFriendRequest(pendingRequest: com.securelegion.models.PendingFriendRequest) {
         CoroutineScope(Dispatchers.Main).launch {
@@ -1214,60 +1250,98 @@ class AddFriendActivity : BaseActivity() {
                     kotlinx.coroutines.delay(1000)
                 }
 
-                // Check if we have saved ContactCard data
+                // Check if we have saved data
                 if (pendingRequest.contactCardJson == null) {
-                    ThemedToast.showLong(this@AddFriendActivity, "Cannot resend: Contact card data missing")
-                    Log.e(TAG, "No ContactCard data saved with pending request")
+                    ThemedToast.showLong(this@AddFriendActivity, "Cannot resend: Request data missing")
+                    Log.e(TAG, "No data saved with pending request")
                     return@launch
                 }
 
-                // Parse saved ContactCard
-                val recipientContactCard = try {
-                    com.securelegion.models.ContactCard.fromJson(pendingRequest.contactCardJson)
+                // Detect if this is Phase 1 data (v2.0) or full ContactCard (v1.0)
+                val jsonData = pendingRequest.contactCardJson
+                val isPhase1 = try {
+                    val obj = org.json.JSONObject(jsonData)
+                    obj.has("phase") || (obj.has("username") && obj.has("friend_request_onion") && !obj.has("solanaAddress"))
                 } catch (e: Exception) {
-                    ThemedToast.showLong(this@AddFriendActivity, "Cannot resend: Invalid contact card data")
-                    Log.e(TAG, "Failed to parse saved ContactCard", e)
+                    false
+                }
+
+                if (isPhase1) {
+                    // v2.0 Phase 1 resend - just resend the saved Phase 1 payload
+                    Log.d(TAG, "Resending as Phase 1 request (v2.0)")
+
+                    // The saved contactCardJson IS the Phase 1 payload - just re-encrypt and resend
+                    val phase1Payload = jsonData
+
+                    // Need to get the recipient's onion from the ipfsCid field (where we stored it)
+                    val recipientOnion = pendingRequest.ipfsCid
+                    if (recipientOnion.isEmpty()) {
+                        ThemedToast.showLong(this@AddFriendActivity, "Cannot resend: Recipient address missing")
+                        return@launch
+                    }
+
+                    // Get the PIN - we need to prompt the user since we don't store it
+                    ThemedToast.show(this@AddFriendActivity, "Please re-enter their friend request info to retry")
+
+                    // Auto-fill the onion field
+                    findViewById<EditText>(R.id.cidInput).setText(recipientOnion)
+
+                    // Focus on first PIN box
+                    val pinBox1 = findViewById<EditText>(R.id.pinBox1)
+                    pinBox1.requestFocus()
+
                     return@launch
-                }
-
-                // Get own account information
-                val keyManager = KeyManager.getInstance(this@AddFriendActivity)
-                val ownDisplayName = keyManager.getUsername()
-                    ?: throw Exception("Username not set")
-                val ownCid = keyManager.getIPFSCID()
-                    ?: throw Exception("IPFS CID not found")
-
-                // Create friend request object
-                val friendRequest = com.securelegion.models.FriendRequest(
-                    displayName = ownDisplayName,
-                    ipfsCid = ownCid
-                )
-
-                // Serialize to JSON
-                val friendRequestJson = friendRequest.toJson()
-
-                // Encrypt the friend request using recipient's X25519 public key
-                val encryptedFriendRequest = withContext(Dispatchers.IO) {
-                    com.securelegion.crypto.RustBridge.encryptMessage(
-                        plaintext = friendRequestJson,
-                        recipientX25519PublicKey = recipientContactCard.x25519PublicKey
-                    )
-                }
-
-                // Send via Tor
-                val success = withContext(Dispatchers.IO) {
-                    com.securelegion.crypto.RustBridge.sendFriendRequest(
-                        recipientOnion = recipientContactCard.friendRequestOnion,
-                        encryptedFriendRequest = encryptedFriendRequest
-                    )
-                }
-
-                if (success) {
-                    Log.i(TAG, "Friend request resent successfully to ${recipientContactCard.displayName}")
-                    ThemedToast.show(this@AddFriendActivity, "Friend request resent to ${pendingRequest.displayName}")
                 } else {
-                    Log.w(TAG, "Failed to resend friend request to ${recipientContactCard.displayName} (recipient may be offline)")
-                    ThemedToast.showLong(this@AddFriendActivity, "Send failed - recipient may be offline. Try again later.")
+                    // v1.0 full ContactCard resend (old format)
+                    Log.d(TAG, "Resending as full ContactCard request (v1.0)")
+
+                    val recipientContactCard = try {
+                        com.securelegion.models.ContactCard.fromJson(jsonData)
+                    } catch (e: Exception) {
+                        ThemedToast.showLong(this@AddFriendActivity, "Cannot resend: Invalid contact card data")
+                        Log.e(TAG, "Failed to parse saved ContactCard", e)
+                        return@launch
+                    }
+
+                    // Get own account information
+                    val keyManager = KeyManager.getInstance(this@AddFriendActivity)
+                    val ownDisplayName = keyManager.getUsername()
+                        ?: throw Exception("Username not set")
+                    val ownCid = keyManager.getIPFSCID()
+                        ?: throw Exception("IPFS CID not found")
+
+                    // Create friend request object
+                    val friendRequest = com.securelegion.models.FriendRequest(
+                        displayName = ownDisplayName,
+                        ipfsCid = ownCid
+                    )
+
+                    // Serialize to JSON
+                    val friendRequestJson = friendRequest.toJson()
+
+                    // Encrypt the friend request using recipient's X25519 public key
+                    val encryptedFriendRequest = withContext(Dispatchers.IO) {
+                        com.securelegion.crypto.RustBridge.encryptMessage(
+                            plaintext = friendRequestJson,
+                            recipientX25519PublicKey = recipientContactCard.x25519PublicKey
+                        )
+                    }
+
+                    // Send via Tor
+                    val success = withContext(Dispatchers.IO) {
+                        com.securelegion.crypto.RustBridge.sendFriendRequest(
+                            recipientOnion = recipientContactCard.friendRequestOnion,
+                            encryptedFriendRequest = encryptedFriendRequest
+                        )
+                    }
+
+                    if (success) {
+                        Log.i(TAG, "Friend request resent successfully to ${recipientContactCard.displayName}")
+                        ThemedToast.show(this@AddFriendActivity, "Friend request resent to ${pendingRequest.displayName}")
+                    } else {
+                        Log.w(TAG, "Failed to resend friend request to ${recipientContactCard.displayName} (recipient may be offline)")
+                        ThemedToast.showLong(this@AddFriendActivity, "Send failed - recipient may be offline. Try again later.")
+                    }
                 }
 
             } catch (e: Exception) {

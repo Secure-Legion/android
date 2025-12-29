@@ -8,11 +8,17 @@ import androidx.room.RoomDatabase
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 import com.securelegion.database.dao.ContactDao
+import com.securelegion.database.dao.GroupDao
+import com.securelegion.database.dao.GroupMemberDao
+import com.securelegion.database.dao.GroupMessageDao
 import com.securelegion.database.dao.MessageDao
 import com.securelegion.database.dao.ReceivedIdDao
 import com.securelegion.database.dao.UsedSignatureDao
 import com.securelegion.database.dao.WalletDao
 import com.securelegion.database.entities.Contact
+import com.securelegion.database.entities.Group
+import com.securelegion.database.entities.GroupMember
+import com.securelegion.database.entities.GroupMessage
 import com.securelegion.database.entities.Message
 import com.securelegion.database.entities.ReceivedId
 import com.securelegion.database.entities.UsedSignature
@@ -33,8 +39,8 @@ import net.zetetic.database.sqlcipher.SupportOpenHelperFactory
  * Database file location: /data/data/com.securelegion/databases/secure_legion.db
  */
 @Database(
-    entities = [Contact::class, Message::class, Wallet::class, ReceivedId::class, UsedSignature::class],
-    version = 19,
+    entities = [Contact::class, Message::class, Wallet::class, ReceivedId::class, UsedSignature::class, Group::class, GroupMember::class, GroupMessage::class],
+    version = 21,
     exportSchema = false
 )
 abstract class SecureLegionDatabase : RoomDatabase() {
@@ -44,6 +50,9 @@ abstract class SecureLegionDatabase : RoomDatabase() {
     abstract fun walletDao(): WalletDao
     abstract fun receivedIdDao(): ReceivedIdDao
     abstract fun usedSignatureDao(): UsedSignatureDao
+    abstract fun groupDao(): GroupDao
+    abstract fun groupMemberDao(): GroupMemberDao
+    abstract fun groupMessageDao(): GroupMessageDao
 
     companion object {
         private const val TAG = "SecureLegionDatabase"
@@ -318,6 +327,91 @@ abstract class SecureLegionDatabase : RoomDatabase() {
         }
 
         /**
+         * Migration from version 19 to 20: Add voiceOnion field for voice calling
+         */
+        private val MIGRATION_19_20 = object : Migration(19, 20) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                Log.i(TAG, "Migrating database from version 19 to 20")
+                database.execSQL("ALTER TABLE contacts ADD COLUMN voiceOnion TEXT")
+                Log.i(TAG, "Migration completed: Added voiceOnion column for voice calling")
+            }
+        }
+
+        /**
+         * Migration from version 20 to 21: Add group messaging tables
+         */
+        private val MIGRATION_20_21 = object : Migration(20, 21) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                Log.i(TAG, "Migrating database from version 20 to 21")
+
+                // Create groups table
+                database.execSQL("""
+                    CREATE TABLE IF NOT EXISTS groups (
+                        groupId TEXT PRIMARY KEY NOT NULL,
+                        name TEXT NOT NULL,
+                        encryptedGroupKeyBase64 TEXT NOT NULL,
+                        groupPin TEXT NOT NULL,
+                        groupIcon TEXT,
+                        createdAt INTEGER NOT NULL,
+                        lastActivityTimestamp INTEGER NOT NULL,
+                        isAdmin INTEGER NOT NULL DEFAULT 1,
+                        isMuted INTEGER NOT NULL DEFAULT 0,
+                        description TEXT
+                    )
+                """.trimIndent())
+                database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_groups_groupId ON groups(groupId)")
+
+                // Create group_members table
+                database.execSQL("""
+                    CREATE TABLE IF NOT EXISTS group_members (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        groupId TEXT NOT NULL,
+                        contactId INTEGER NOT NULL,
+                        isAdmin INTEGER NOT NULL DEFAULT 0,
+                        addedAt INTEGER NOT NULL,
+                        addedBy INTEGER,
+                        FOREIGN KEY(groupId) REFERENCES groups(groupId) ON DELETE CASCADE,
+                        FOREIGN KEY(contactId) REFERENCES contacts(id) ON DELETE CASCADE
+                    )
+                """.trimIndent())
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_group_members_groupId ON group_members(groupId)")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_group_members_contactId ON group_members(contactId)")
+                database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_group_members_groupId_contactId ON group_members(groupId, contactId)")
+
+                // Create group_messages table
+                database.execSQL("""
+                    CREATE TABLE IF NOT EXISTS group_messages (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        groupId TEXT NOT NULL,
+                        senderContactId INTEGER,
+                        senderName TEXT NOT NULL,
+                        messageId TEXT NOT NULL,
+                        encryptedContent TEXT NOT NULL,
+                        isSentByMe INTEGER NOT NULL,
+                        timestamp INTEGER NOT NULL,
+                        status INTEGER NOT NULL DEFAULT 0,
+                        signatureBase64 TEXT NOT NULL,
+                        nonceBase64 TEXT NOT NULL,
+                        messageType TEXT NOT NULL DEFAULT 'TEXT',
+                        voiceDuration INTEGER,
+                        voiceFilePath TEXT,
+                        attachmentType TEXT,
+                        encryptedAttachment TEXT,
+                        selfDestructSeconds INTEGER,
+                        FOREIGN KEY(groupId) REFERENCES groups(groupId) ON DELETE CASCADE,
+                        FOREIGN KEY(senderContactId) REFERENCES contacts(id) ON DELETE CASCADE
+                    )
+                """.trimIndent())
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_group_messages_groupId ON group_messages(groupId)")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_group_messages_senderContactId ON group_messages(senderContactId)")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_group_messages_timestamp ON group_messages(timestamp)")
+                database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_group_messages_messageId ON group_messages(messageId)")
+
+                Log.i(TAG, "Migration completed: Added groups, group_members, and group_messages tables for group messaging")
+            }
+        }
+
+        /**
          * Get database instance
          * @param context Application context
          * @param passphrase Encryption passphrase (should be derived from KeyManager)
@@ -383,7 +477,7 @@ abstract class SecureLegionDatabase : RoomDatabase() {
                     DATABASE_NAME
                 )
                     .openHelperFactory(factory)
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_19_20, MIGRATION_20_21)
                     .addCallback(object : RoomDatabase.Callback() {
                         override fun onCreate(db: SupportSQLiteDatabase) {
                             super.onCreate(db)
@@ -474,7 +568,7 @@ abstract class SecureLegionDatabase : RoomDatabase() {
                         DATABASE_NAME
                     )
                         .openHelperFactory(SupportOpenHelperFactory(passphrase))
-                        .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18)
+                        .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_19_20, MIGRATION_20_21)
                         .addCallback(object : RoomDatabase.Callback() {
                             override fun onCreate(db: SupportSQLiteDatabase) {
                                 super.onCreate(db)

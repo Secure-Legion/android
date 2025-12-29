@@ -117,6 +117,9 @@ class ChatActivity : BaseActivity() {
     private var cameraPhotoFile: File? = null
     private var isWaitingForMediaResult = false  // Prevent auto-lock during camera/gallery
 
+    // Voice call
+    private var isInitiatingCall = false  // Prevent duplicate call initiations
+
     // Activity result launchers for image picking
     private val galleryLauncher = registerForActivityResult(
         ActivityResultContracts.GetContent()
@@ -146,14 +149,29 @@ class ChatActivity : BaseActivity() {
 
                         // Launch coroutine immediately to avoid blocking broadcast receiver
                         lifecycleScope.launch(Dispatchers.Main) {
-                            // Check if download complete
+                            // Check if download complete by checking both pending pings and download service flag
                             val prefs = getSharedPreferences("pending_pings", MODE_PRIVATE)
+                            val downloadStatusPrefs = getSharedPreferences("download_status", MODE_PRIVATE)
+
                             val pendingPings = withContext(Dispatchers.IO) {
                                 com.securelegion.models.PendingPing.loadQueueForContact(prefs, contactId)
                             }
+                            val isDownloadFlagSet = downloadStatusPrefs.getBoolean("downloading_$contactId", false)
+                            val downloadStartTime = downloadStatusPrefs.getLong("download_start_time_$contactId", 0L)
 
-                            if (pendingPings.isEmpty()) {
+                            // Check if download is stale (started more than 2 minutes ago)
+                            val DOWNLOAD_TIMEOUT_MS = 120_000L // 2 minutes
+                            val isStale = if (downloadStartTime > 0) {
+                                System.currentTimeMillis() - downloadStartTime > DOWNLOAD_TIMEOUT_MS
+                            } else {
+                                false
+                            }
+
+                            val isDownloadServiceRunning = isDownloadFlagSet && !isStale
+
+                            if (pendingPings.isEmpty() && !isDownloadServiceRunning) {
                                 isDownloadInProgress = false  // Download complete, pings cleared
+                                Log.d(TAG, "Download completed - clearing download flag")
                             }
 
                             // Reload messages - state machine handles atomic swap automatically
@@ -284,6 +302,30 @@ class ChatActivity : BaseActivity() {
 
         Log.d(TAG, "Opening chat with: $contactName (ID: $contactId)")
 
+        // Check if there's an active download for this contact (set by DownloadMessageService)
+        val downloadStatusPrefs = getSharedPreferences("download_status", MODE_PRIVATE)
+        val isDownloadFlagSet = downloadStatusPrefs.getBoolean("downloading_$contactId", false)
+        val downloadStartTime = downloadStatusPrefs.getLong("download_start_time_$contactId", 0L)
+
+        // Check if download is stale (started more than 2 minutes ago)
+        val DOWNLOAD_TIMEOUT_MS = 120_000L // 2 minutes
+        val isStale = if (downloadStartTime > 0) {
+            System.currentTimeMillis() - downloadStartTime > DOWNLOAD_TIMEOUT_MS
+        } else {
+            false
+        }
+
+        isDownloadInProgress = isDownloadFlagSet && !isStale
+        if (isDownloadInProgress) {
+            Log.d(TAG, "Active download detected for contact $contactId - preserving download state")
+        } else if (isStale) {
+            Log.w(TAG, "Stale download flag detected on onCreate - clearing it")
+            downloadStatusPrefs.edit()
+                .putBoolean("downloading_$contactId", false)
+                .remove("download_start_time_$contactId")
+                .apply()
+        }
+
         // Migrate old pending ping format to queue format (one-time)
         com.securelegion.utils.PendingPingMigration.migrateIfNeeded(this)
 
@@ -337,8 +379,40 @@ class ChatActivity : BaseActivity() {
             Log.d(TAG, "Cleared pause timestamp to prevent auto-lock after camera/gallery")
         }
 
+        // Reset call initiation flag when returning from VoiceCallActivity
+        // This allows subsequent call attempts after previous call ends/fails
+        if (isInitiatingCall) {
+            Log.d(TAG, "Resetting isInitiatingCall flag on resume")
+            isInitiatingCall = false
+        }
+
         super.onResume()
         Log.d(TAG, "onResume called (isWaitingForMediaResult=$isWaitingForMediaResult)")
+
+        // Check if download is still in progress (in case user tapped notification multiple times)
+        val downloadStatusPrefs = getSharedPreferences("download_status", MODE_PRIVATE)
+        val isDownloadFlagSet = downloadStatusPrefs.getBoolean("downloading_$contactId", false)
+        val downloadStartTime = downloadStatusPrefs.getLong("download_start_time_$contactId", 0L)
+
+        // Check if download is stale (started more than 2 minutes ago)
+        val DOWNLOAD_TIMEOUT_MS = 120_000L // 2 minutes
+        val isStale = if (downloadStartTime > 0) {
+            System.currentTimeMillis() - downloadStartTime > DOWNLOAD_TIMEOUT_MS
+        } else {
+            false
+        }
+
+        val isDownloadServiceRunning = isDownloadFlagSet && !isStale
+        if (isDownloadServiceRunning && !isDownloadInProgress) {
+            isDownloadInProgress = true
+            Log.d(TAG, "Download service detected on resume - updating download flag")
+        } else if (isStale && isDownloadFlagSet) {
+            Log.w(TAG, "Stale download flag detected on resume - clearing it")
+            downloadStatusPrefs.edit()
+                .putBoolean("downloading_$contactId", false)
+                .remove("download_start_time_$contactId")
+                .apply()
+        }
 
         // Notify TorService that app is in foreground (fast bandwidth updates)
         com.securelegion.services.TorService.setForegroundState(true)
@@ -1125,8 +1199,8 @@ class ChatActivity : BaseActivity() {
 
                 val unreadMessages = messages.filter { !it.isSentByMe && !it.isRead }
                 unreadMessages.forEach { message ->
-                    val updatedMessage = message.copy(isRead = true)
-                    database.messageDao().updateMessage(updatedMessage)
+                    // Use markAsRead() to only update isRead field - prevents timestamp changes
+                    database.messageDao().markAsRead(message.id)
                 }
                 unreadMessages.size
             }
@@ -1145,24 +1219,49 @@ class ChatActivity : BaseActivity() {
 
             // Reset stale DOWNLOADING/DECRYPTING states back to PENDING
             // This handles cases where the download service was killed (device shutdown, force stop, etc.)
-            val staleStates = allPendingPings.filter {
-                it.state == com.securelegion.models.PingState.DOWNLOADING ||
-                it.state == com.securelegion.models.PingState.DECRYPTING
+            // BUT: Don't reset if there's an active download service running!
+            val downloadStatusPrefs = getSharedPreferences("download_status", MODE_PRIVATE)
+            val isDownloadServiceRunning = downloadStatusPrefs.getBoolean("downloading_$contactId", false)
+            val downloadStartTime = downloadStatusPrefs.getLong("download_start_time_$contactId", 0L)
+
+            // Check if download is stale (started more than 2 minutes ago)
+            val DOWNLOAD_TIMEOUT_MS = 120_000L // 2 minutes
+            val isStale = if (downloadStartTime > 0) {
+                System.currentTimeMillis() - downloadStartTime > DOWNLOAD_TIMEOUT_MS
+            } else {
+                false
             }
-            if (staleStates.isNotEmpty()) {
-                Log.i(TAG, "Found ${staleStates.size} pings with stale download states - resetting to PENDING")
-                staleStates.forEach { ping ->
-                    com.securelegion.models.PendingPing.updateState(
-                        prefs,
-                        contactId.toLong(),
-                        ping.pingId,
-                        com.securelegion.models.PingState.PENDING,
-                        synchronous = true
-                    )
-                    Log.d(TAG, "  Reset ping ${ping.pingId.take(8)} from ${ping.state} to PENDING")
+
+            if (isStale) {
+                Log.w(TAG, "Download timeout detected (started ${(System.currentTimeMillis() - downloadStartTime) / 1000}s ago) - clearing stale flag")
+                downloadStatusPrefs.edit()
+                    .putBoolean("downloading_$contactId", false)
+                    .remove("download_start_time_$contactId")
+                    .apply()
+            }
+
+            if (!isDownloadServiceRunning || isStale) {
+                val staleStates = allPendingPings.filter {
+                    it.state == com.securelegion.models.PingState.DOWNLOADING ||
+                    it.state == com.securelegion.models.PingState.DECRYPTING
                 }
-                // Reload pings after reset
-                allPendingPings = com.securelegion.models.PendingPing.loadQueueForContact(prefs, contactId.toLong())
+                if (staleStates.isNotEmpty()) {
+                    Log.i(TAG, "Found ${staleStates.size} pings with stale download states - resetting to PENDING")
+                    staleStates.forEach { ping ->
+                        com.securelegion.models.PendingPing.updateState(
+                            prefs,
+                            contactId.toLong(),
+                            ping.pingId,
+                            com.securelegion.models.PingState.PENDING,
+                            synchronous = true
+                        )
+                        Log.d(TAG, "  Reset ping ${ping.pingId.take(8)} from ${ping.state} to PENDING")
+                    }
+                    // Reload pings after reset
+                    allPendingPings = com.securelegion.models.PendingPing.loadQueueForContact(prefs, contactId.toLong())
+                }
+            } else {
+                Log.d(TAG, "Download service is running - preserving DOWNLOADING/DECRYPTING states")
             }
 
             // Clean up pings that match existing messages (ghost pings from completed downloads)
@@ -1303,15 +1402,47 @@ class ChatActivity : BaseActivity() {
     private fun handleDownloadClick(pingId: String) {
         Log.i(TAG, "Download button clicked for contact $contactId, ping $pingId")
 
+        // Check if already downloading this specific ping
+        if (downloadingPingIds.contains(pingId)) {
+            Log.d(TAG, "Ping $pingId is already being downloaded, ignoring duplicate click")
+            return
+        }
+
+        // Mark this specific ping as downloading
+        downloadingPingIds.add(pingId)
+        Log.d(TAG, "Added pingId ${pingId.take(8)} to downloadingPingIds - now tracking ${downloadingPingIds.size} downloads")
+
         // Set flag to prevent showing pending message again during download
         isDownloadInProgress = true
+
+        // CRITICAL FIX: Update ping state to DOWNLOADING in SharedPreferences IMMEDIATELY
+        // This ensures loadMessages() will show "Downloading..." instead of the lock icon
+        val prefs = getSharedPreferences("pending_pings", MODE_PRIVATE)
+        com.securelegion.models.PendingPing.updateState(
+            prefs,
+            contactId,
+            pingId,
+            com.securelegion.models.PingState.DOWNLOADING,
+            synchronous = true  // Synchronous to ensure it's written before loadMessages()
+        )
+        Log.d(TAG, "Updated ping state to DOWNLOADING in SharedPreferences before UI refresh")
+
+        // Set download-in-progress flag to prevent duplicate service starts
+        val downloadStatusPrefs = getSharedPreferences("download_status", MODE_PRIVATE)
+        downloadStatusPrefs.edit()
+            .putBoolean("downloading_$contactId", true)
+            .putLong("download_start_time_$contactId", System.currentTimeMillis())
+            .apply()
+        Log.d(TAG, "Set download flag with timestamp")
+
+        // Immediately update UI to show "Downloading..." status
+        lifecycleScope.launch {
+            loadMessages()
+        }
 
         // Start the download service with specific ping ID
         // The service will update the ping state (PENDING → DOWNLOADING → DECRYPTING → READY)
         com.securelegion.services.DownloadMessageService.start(this, contactId, contactName, pingId)
-
-        // DON'T reload here - the MessageAdapter already shows state-based UI
-        // The service will broadcast MESSAGE_RECEIVED when state changes, which will trigger a reload
     }
 
     private fun toggleSelectionMode() {
@@ -1755,6 +1886,13 @@ class ChatActivity : BaseActivity() {
      * Start voice call with this contact
      */
     private fun startVoiceCall() {
+        // Prevent duplicate call initiations
+        if (isInitiatingCall) {
+            Log.w(TAG, "⚠️ Call initiation already in progress - ignoring duplicate request")
+            return
+        }
+        isInitiatingCall = true
+
         lifecycleScope.launch {
             try {
                 // Check RECORD_AUDIO permission
@@ -1768,6 +1906,7 @@ class ChatActivity : BaseActivity() {
                         arrayOf(Manifest.permission.RECORD_AUDIO),
                         PERMISSION_REQUEST_CODE
                     )
+                    isInitiatingCall = false
                     return@launch
                 }
 
@@ -1781,43 +1920,59 @@ class ChatActivity : BaseActivity() {
 
                 if (contact == null) {
                     ThemedToast.show(this@ChatActivity, "Contact not found")
+                    isInitiatingCall = false
+                    return@launch
+                }
+
+                if (contact.voiceOnion == null) {
+                    ThemedToast.show(this@ChatActivity, "Contact has no voice address")
+                    isInitiatingCall = false
                     return@launch
                 }
 
                 if (contact.messagingOnion == null) {
                     ThemedToast.show(this@ChatActivity, "Contact has no messaging address")
+                    isInitiatingCall = false
                     return@launch
                 }
 
-                // Show "Calling..." dialog
-                val callingDialog = AlertDialog.Builder(this@ChatActivity)
-                    .setTitle("Calling")
-                    .setMessage("Calling $contactName...")
-                    .setCancelable(false)
-                    .create()
-                callingDialog.show()
-
-                // Generate call ID
-                val callId = UUID.randomUUID().toString().replace("-", "").take(16)
+                // Generate call ID (use full UUID for proper matching)
+                val callId = UUID.randomUUID().toString()
 
                 // Generate ephemeral keypair
                 val crypto = VoiceCallCrypto()
                 val ephemeralKeypair = crypto.generateEphemeralKeypair()
 
-                // Send CALL_OFFER
+                // Launch VoiceCallActivity immediately (shows "Calling..." screen)
+                val intent = Intent(this@ChatActivity, VoiceCallActivity::class.java)
+                intent.putExtra(VoiceCallActivity.EXTRA_CONTACT_ID, contactId)
+                intent.putExtra(VoiceCallActivity.EXTRA_CONTACT_NAME, contactName)
+                intent.putExtra(VoiceCallActivity.EXTRA_CALL_ID, callId)
+                intent.putExtra(VoiceCallActivity.EXTRA_IS_OUTGOING, true)
+                intent.putExtra(VoiceCallActivity.EXTRA_OUR_EPHEMERAL_SECRET_KEY, ephemeralKeypair.secretKey.asBytes)
+                startActivity(intent)
+
+                // Get voice onion once for reuse in retries
+                val torManager = com.securelegion.crypto.TorManager.getInstance(this@ChatActivity)
+                val myVoiceOnion = torManager.getVoiceOnionAddress() ?: ""
+
+                // Send CALL_OFFER (first attempt)
+                Log.i(TAG, "CALL_OFFER_SEND attempt=1 call_id=$callId")
                 val success = withContext(Dispatchers.IO) {
                     CallSignaling.sendCallOffer(
                         recipientX25519PublicKey = contact.x25519PublicKeyBytes,
                         recipientOnion = contact.messagingOnion!!,
                         callId = callId,
                         ephemeralPublicKey = ephemeralKeypair.publicKey.asBytes,
-                        numCircuits = 1 // Phase 1: single circuit
+                        voiceOnion = myVoiceOnion,
+                        numCircuits = 1
                     )
                 }
 
                 if (!success) {
-                    callingDialog.dismiss()
                     ThemedToast.show(this@ChatActivity, "Failed to send call offer")
+                    // VoiceCallActivity will handle timeout
+                    isInitiatingCall = false
                     return@launch
                 }
 
@@ -1827,8 +1982,41 @@ class ChatActivity : BaseActivity() {
                 // Create a countdown timer to check for timeout
                 val timeoutJob = lifecycleScope.launch {
                     while (isActive) {
-                        delay(1000) // Check every second
+                        delay(1000)
                         callManager.checkPendingCallTimeouts()
+                    }
+                }
+
+                // CALL_OFFER retry timer per spec
+                // Resend every 2 seconds until answered or 25-second deadline
+                val offerRetryInterval = 2000L
+                val callSetupDeadline = 25000L
+                val setupStartTime = System.currentTimeMillis()
+                var offerAttemptNum = 1
+
+                val offerRetryJob = lifecycleScope.launch {
+                    while (isActive) {
+                        delay(offerRetryInterval)
+
+                        val elapsed = System.currentTimeMillis() - setupStartTime
+                        if (elapsed >= callSetupDeadline) {
+                            Log.e(TAG, "CALL_SETUP_TIMEOUT call_id=$callId elapsed_ms=$elapsed")
+                            break
+                        }
+
+                        offerAttemptNum++
+                        Log.i(TAG, "CALL_OFFER_SEND attempt=$offerAttemptNum call_id=$callId (retry)")
+
+                        withContext(Dispatchers.IO) {
+                            CallSignaling.sendCallOffer(
+                                recipientX25519PublicKey = contact.x25519PublicKeyBytes,
+                                recipientOnion = contact.messagingOnion!!,
+                                callId = callId,
+                                ephemeralPublicKey = ephemeralKeypair.publicKey.asBytes,
+                                voiceOnion = myVoiceOnion,
+                                numCircuits = 1
+                            )
+                        }
                     }
                 }
 
@@ -1839,54 +2027,49 @@ class ChatActivity : BaseActivity() {
                     contactName = contactName,
                     ourEphemeralPublicKey = ephemeralKeypair.publicKey.asBytes,
                     onAnswered = { theirEphemeralKey ->
-                        // Call answered! Launch VoiceCallActivity
                         lifecycleScope.launch(Dispatchers.Main) {
+                            val elapsed = System.currentTimeMillis() - setupStartTime
+                            Log.i(TAG, "CALL_ANSWER_RECEIVED call_id=$callId elapsed_ms=$elapsed")
                             timeoutJob.cancel()
-                            callingDialog.dismiss()
-
-                            Log.i(TAG, "Call answered by $contactName - launching VoiceCallActivity")
-
-                            val intent = Intent(this@ChatActivity, VoiceCallActivity::class.java)
-                            intent.putExtra(VoiceCallActivity.EXTRA_CONTACT_ID, contactId)
-                            intent.putExtra(VoiceCallActivity.EXTRA_CONTACT_NAME, contactName)
-                            intent.putExtra(VoiceCallActivity.EXTRA_CALL_ID, callId)
-                            intent.putExtra(VoiceCallActivity.EXTRA_IS_OUTGOING, true)
-                            intent.putExtra(VoiceCallActivity.EXTRA_THEIR_EPHEMERAL_KEY, theirEphemeralKey)
-                            startActivity(intent)
+                            offerRetryJob.cancel()
+                            // Notify the active VoiceCallActivity that CALL_ANSWER was received
+                            VoiceCallActivity.onCallAnswered(callId, theirEphemeralKey)
+                            Log.i(TAG, "Call answered, notified VoiceCallActivity")
+                            isInitiatingCall = false
                         }
                     },
                     onRejected = { reason ->
-                        // Call rejected
                         lifecycleScope.launch(Dispatchers.Main) {
                             timeoutJob.cancel()
-                            callingDialog.dismiss()
-                            ThemedToast.show(this@ChatActivity, "$contactName declined the call")
-                            Log.i(TAG, "Call rejected by $contactName: $reason")
+                            offerRetryJob.cancel()
+                            VoiceCallActivity.onCallRejected(callId, reason)
+                            isInitiatingCall = false
                         }
                     },
                     onBusy = {
-                        // Contact is busy
                         lifecycleScope.launch(Dispatchers.Main) {
                             timeoutJob.cancel()
-                            callingDialog.dismiss()
-                            ThemedToast.show(this@ChatActivity, "$contactName is on another call")
-                            Log.i(TAG, "Call to $contactName - busy")
+                            offerRetryJob.cancel()
+                            VoiceCallActivity.onCallBusy(callId)
+                            isInitiatingCall = false
                         }
                     },
                     onTimeout = {
-                        // Call timed out (30 seconds, no response)
                         lifecycleScope.launch(Dispatchers.Main) {
                             timeoutJob.cancel()
-                            callingDialog.dismiss()
-                            ThemedToast.show(this@ChatActivity, "No response from $contactName")
-                            Log.w(TAG, "Call to $contactName timed out")
+                            offerRetryJob.cancel()
+                            VoiceCallActivity.onCallTimeout(callId)
+                            isInitiatingCall = false
                         }
                     }
                 )
 
+                Log.i(TAG, "Voice call initiated to $contactName with call ID: $callId")
+
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to start voice call", e)
                 ThemedToast.show(this@ChatActivity, "Failed to start call: ${e.message}")
+                isInitiatingCall = false
             }
         }
     }

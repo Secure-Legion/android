@@ -26,18 +26,22 @@
         android:id="@+id/callIconContainer"
         android:layout_width="240dp"
         android:layout_height="240dp"
+        android:clipChildren="false"
+        android:clipToPadding="false"
         app:layout_constraintTop_toTopOf="parent"
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintVertical_bias="0.35">
 
-        <!-- Animated ring overlay -->
+        <!-- Glowing rotating ring -->
         <ImageView
             android:id="@+id/animatedRing"
             android:layout_width="match_parent"
             android:layout_height="match_parent"
-            android:src="@drawable/incoming_call_ring_anim"
+            android:scaleType="fitCenter"
+            android:background="@android:color/transparent"
+            android:src="@drawable/glowing_ring_animation"
             android:contentDescription="Animated call ring" />
 
         <!-- Lock icon centered -->
@@ -91,7 +95,7 @@
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent">
 
-        <!-- Decline Button (Circular) -->
+        <!-- Decline Button (Circular) - White with gray icon -->
         <com.google.android.material.floatingactionbutton.FloatingActionButton
             android:id="@+id/declineButton"
             android:layout_width="wrap_content"
@@ -101,13 +105,13 @@
             app:fabSize="normal"
             app:fabCustomSize="72dp"
             app:maxImageSize="32dp"
-            app:tint="#FFFFFF"
-            app:backgroundTint="#FF6B6B"
+            app:tint="#666666"
+            app:backgroundTint="#FFFFFF"
             app:elevation="6dp"
             app:borderWidth="0dp"
             android:contentDescription="Decline call" />
 
-        <!-- Answer Button (Circular) -->
+        <!-- Answer Button (Circular) - Dark gray with white icon -->
         <com.google.android.material.floatingactionbutton.FloatingActionButton
             android:id="@+id/answerButton"
             android:layout_width="wrap_content"
@@ -117,7 +121,7 @@
             app:fabCustomSize="72dp"
             app:maxImageSize="32dp"
             app:tint="#FFFFFF"
-            app:backgroundTint="#4A9EFF"
+            app:backgroundTint="#1C1C1C"
             app:elevation="6dp"
             app:borderWidth="0dp"
             android:contentDescription="Answer call" />

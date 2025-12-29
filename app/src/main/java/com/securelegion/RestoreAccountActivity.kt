@@ -24,11 +24,11 @@ import kotlinx.coroutines.withContext
 class RestoreAccountActivity : AppCompatActivity() {
 
     private val seedWords = mutableListOf<EditText>()
+    private lateinit var usernameInput: EditText
     private lateinit var newPasswordInput: EditText
     private lateinit var confirmPasswordInput: EditText
     private lateinit var togglePassword: ImageView
     private lateinit var toggleConfirmPassword: ImageView
-    private lateinit var zcashBirthdayInput: EditText
     private lateinit var importButton: TextView
 
     private var isPasswordVisible = false
@@ -99,11 +99,11 @@ class RestoreAccountActivity : AppCompatActivity() {
         seedWords.add(findViewById(R.id.word11))
         seedWords.add(findViewById(R.id.word12))
 
+        usernameInput = findViewById(R.id.usernameInput)
         newPasswordInput = findViewById(R.id.newPasswordInput)
         confirmPasswordInput = findViewById(R.id.confirmPasswordInput)
         togglePassword = findViewById(R.id.togglePassword)
         toggleConfirmPassword = findViewById(R.id.toggleConfirmPassword)
-        zcashBirthdayInput = findViewById(R.id.zcashBirthdayInput)
         importButton = findViewById(R.id.importButton)
     }
 
@@ -136,9 +136,15 @@ class RestoreAccountActivity : AppCompatActivity() {
 
         // Import button
         importButton.setOnClickListener {
+            val username = usernameInput.text.toString().trim()
             val seedPhrase = collectSeedPhrase()
             val newPassword = newPasswordInput.text.toString()
             val confirmPassword = confirmPasswordInput.text.toString()
+
+            if (username.isEmpty()) {
+                ThemedToast.show(this, "Please enter your username")
+                return@setOnClickListener
+            }
 
             if (seedPhrase.isEmpty()) {
                 ThemedToast.show(this, "Please enter all 12 seed words")
@@ -181,10 +187,7 @@ class RestoreAccountActivity : AppCompatActivity() {
                 return@setOnClickListener
             }
 
-            // Parse optional Zcash birthday height
-            val birthdayHeight = zcashBirthdayInput.text.toString().toLongOrNull()
-
-            restoreAccount(seedPhrase, newPassword, birthdayHeight)
+            restoreAccount(username, seedPhrase, newPassword)
         }
     }
 
@@ -200,7 +203,7 @@ class RestoreAccountActivity : AppCompatActivity() {
         return words.joinToString(" ")
     }
 
-    private fun restoreAccount(seedPhrase: String, password: String, zcashBirthdayHeight: Long? = null) {
+    private fun restoreAccount(username: String, seedPhrase: String, password: String) {
         // Disable button to prevent double-tap
         importButton.isEnabled = false
         importButton.alpha = 0.5f
@@ -210,34 +213,38 @@ class RestoreAccountActivity : AppCompatActivity() {
                 withContext(Dispatchers.IO) {
                     Log.d("RestoreAccount", "Restoring account from seed phrase")
 
-                    // Initialize KeyManager with the seed phrase
+                    // Step 1: Initialize KeyManager with the seed phrase
                     val keyManager = KeyManager.getInstance(this@RestoreAccountActivity)
                     keyManager.initializeFromSeed(seedPhrase)
                     Log.i("RestoreAccount", "KeyManager initialized from seed")
 
-                    // Set device password
+                    // Step 2: Set device password
                     keyManager.setDevicePassword(password)
                     Log.i("RestoreAccount", "Device password set")
 
-                    // Store the seed phrase
-                    keyManager.storeSeedPhrase(seedPhrase)
-                    Log.i("RestoreAccount", "Seed phrase stored")
+                    // Step 3: Store username
+                    keyManager.storeUsername(username)
+                    Log.i("RestoreAccount", "Username stored: $username")
 
-                    // Get the Solana wallet address
+                    // Step 4: Store the seed phrase
+                    keyManager.storeSeedPhrase(seedPhrase)
+                    Log.i("RestoreAccount", "Seed phrase stored for display")
+
+                    // Step 5: Store permanently for main wallet (needed for Zcash)
+                    keyManager.storeMainWalletSeed(seedPhrase)
+                    Log.i("RestoreAccount", "Seed phrase stored permanently for main wallet")
+
+                    // Step 6: Get the Solana wallet address
                     val walletAddress = keyManager.getSolanaAddress()
                     Log.i("RestoreAccount", "Solana address: $walletAddress")
 
-                    // Initialize Zcash wallet with optional birthday height
+                    // Step 7: Initialize Zcash wallet (async)
                     Log.i("RestoreAccount", "Initializing Zcash wallet...")
-                    if (zcashBirthdayHeight != null) {
-                        Log.i("RestoreAccount", "Using birthday height: $zcashBirthdayHeight")
-                    }
                     try {
                         val zcashService = ZcashService.getInstance(this@RestoreAccountActivity)
                         val result = zcashService.initialize(
                             seedPhrase = seedPhrase,
-                            useTestnet = false,
-                            birthdayHeight = zcashBirthdayHeight
+                            useTestnet = false
                         )
                         if (result.isSuccess) {
                             val zcashAddress = result.getOrNull()
@@ -250,7 +257,69 @@ class RestoreAccountActivity : AppCompatActivity() {
                         // Continue anyway - Solana will still work
                     }
 
-                    // IPFS Contact List Recovery (v5 Architecture)
+                    // Step 8: Create messaging .onion address (old v1.0 hidden service)
+                    Log.i("RestoreAccount", "Creating messaging hidden service...")
+                    val torManager = com.securelegion.crypto.TorManager.getInstance(this@RestoreAccountActivity)
+                    val messagingOnion = withContext(Dispatchers.IO) {
+                        // Wait for Tor to be ready
+                        var attempts = 0
+                        val maxAttempts = 30
+                        while (attempts < maxAttempts) {
+                            val status = com.securelegion.crypto.RustBridge.getBootstrapStatus()
+                            if (status >= 100) break
+                            Log.d("RestoreAccount", "Waiting for Tor bootstrap: $status%")
+                            Thread.sleep(1000)
+                            attempts++
+                        }
+
+                        if (attempts >= maxAttempts) {
+                            throw Exception("Tor bootstrap timeout")
+                        }
+
+                        Log.d("RestoreAccount", "Creating messaging hidden service...")
+                        val address = com.securelegion.crypto.RustBridge.createHiddenService(9150, 8080)
+                        torManager.saveOnionAddress(address)
+                        Log.i("RestoreAccount", "Messaging hidden service created: $address")
+                        address
+                    }
+
+                    // Step 9: Derive and store deterministic contact PIN
+                    Log.d("RestoreAccount", "Deriving contact PIN from seed...")
+                    val contactPin = keyManager.deriveContactPinFromSeed(seedPhrase)
+                    keyManager.storeContactPin(contactPin)
+                    Log.i("RestoreAccount", "Contact PIN derived and stored: $contactPin")
+
+                    // Step 10: Create friend request .onion address (v2.0)
+                    Log.d("RestoreAccount", "Creating friend request .onion address...")
+                    val friendRequestOnion = keyManager.createFriendRequestOnion()
+                    Log.i("RestoreAccount", "Friend request .onion: $friendRequestOnion")
+
+                    // Step 11: Derive and store IPFS contact list CID (v5 architecture)
+                    Log.d("RestoreAccount", "Deriving contact list CID from seed...")
+                    val contactListCID = keyManager.deriveContactListCIDFromSeed(seedPhrase)
+                    // Note: In v5, we don't store the old card CID, only list CID
+                    Log.i("RestoreAccount", "Contact list CID: $contactListCID")
+
+                    // Step 12: Store messaging .onion
+                    keyManager.storeMessagingOnion(messagingOnion)
+                    Log.i("RestoreAccount", "Messaging .onion stored")
+
+                    // Step 13: Initialize internal wallet in database
+                    val dbPassphrase = keyManager.getDatabasePassphrase()
+                    val database = com.securelegion.database.SecureLegionDatabase.getInstance(this@RestoreAccountActivity, dbPassphrase)
+                    val timestamp = System.currentTimeMillis()
+                    val mainWallet = com.securelegion.database.entities.Wallet(
+                        walletId = "main",
+                        name = "Wallet 1",
+                        solanaAddress = keyManager.getSolanaAddress(),
+                        isMainWallet = true,
+                        createdAt = timestamp,
+                        lastUsedAt = timestamp
+                    )
+                    database.walletDao().insertWallet(mainWallet)
+                    Log.i("RestoreAccount", "Internal wallet initialized in database")
+
+                    // Step 14: IPFS Contact List Recovery (v5 Architecture)
                     // Attempt to recover contact list from IPFS mesh
                     Log.i("RestoreAccount", "Attempting to recover contact list from IPFS mesh...")
                     try {
@@ -275,14 +344,18 @@ class RestoreAccountActivity : AppCompatActivity() {
                 }
 
                 // Clear inputs
+                usernameInput.text.clear()
                 for (editText in seedWords) {
                     editText.text.clear()
                 }
                 newPasswordInput.text.clear()
                 confirmPasswordInput.text.clear()
-                zcashBirthdayInput.text.clear()
 
                 ThemedToast.show(this@RestoreAccountActivity, "Account restored successfully!")
+
+                // Mark seed phrase as confirmed (user restored with it, so they have it)
+                val setupPrefs = getSharedPreferences("account_setup", MODE_PRIVATE)
+                setupPrefs.edit().putBoolean("seed_phrase_confirmed", true).apply()
 
                 // Navigate to MainActivity
                 val intent = Intent(this@RestoreAccountActivity, MainActivity::class.java)

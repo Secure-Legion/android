@@ -201,6 +201,24 @@
             android:exported="false" />
 
         <activity
+            android:name=".CreateGroupActivity"
+            android:exported="false"
+            android:windowSoftInputMode="adjustPan" />
+
+        <activity
+            android:name=".GroupProfileActivity"
+            android:exported="false" />
+
+        <activity
+            android:name=".GroupMembersActivity"
+            android:exported="false" />
+
+        <activity
+            android:name=".GroupChatActivity"
+            android:exported="false"
+            android:windowSoftInputMode="adjustResize" />
+
+        <activity
             android:name=".ManageTokensActivity"
             android:exported="false" />
 

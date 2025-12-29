@@ -47,6 +47,7 @@ class TorManager(private val context: Context) {
         private const val TAG = "TorManager"
         private const val PREFS_NAME = "tor_prefs"
         private const val KEY_ONION_ADDRESS = "onion_address"
+        private const val KEY_VOICE_ONION_ADDRESS = "voice_onion_address"
         private const val KEY_TOR_INITIALIZED = "tor_initialized"
         private const val DEFAULT_SERVICE_PORT = 9150 // Virtual port on .onion address
         private const val DEFAULT_LOCAL_PORT = 8080 // Local port where app listens
@@ -236,6 +237,10 @@ class TorManager(private val context: Context) {
                     )
                     Log.d(TAG, "Friend-request hidden service re-registered: $friendRequestOnion")
 
+                    // Note: Voice hidden service is created later by TorService.startVoiceService()
+                    // after the voice streaming server is started on localhost:9152
+                    Log.d(TAG, "Voice hidden service will be registered by TorService after voice server starts")
+
                     address
                 } else {
                     Log.d(TAG, "Skipping hidden service creation - no account yet")
@@ -281,6 +286,21 @@ class TorManager(private val context: Context) {
      */
     fun saveOnionAddress(address: String) {
         prefs.edit().putString(KEY_ONION_ADDRESS, address).apply()
+    }
+
+    /**
+     * Get the device's voice .onion address for receiving voice calls
+     * @return voice .onion address or null if not initialized
+     */
+    fun getVoiceOnionAddress(): String? {
+        return prefs.getString(KEY_VOICE_ONION_ADDRESS, null)
+    }
+
+    /**
+     * Save the voice .onion address
+     */
+    fun saveVoiceOnionAddress(address: String) {
+        prefs.edit().putString(KEY_VOICE_ONION_ADDRESS, address).apply()
     }
 
     /**

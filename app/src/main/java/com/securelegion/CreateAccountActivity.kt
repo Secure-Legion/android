@@ -342,6 +342,7 @@ class CreateAccountActivity : AppCompatActivity() {
 
                 // Create and upload contact card
                 Log.d("CreateAccount", "Creating contact card...")
+                val voiceOnion = torManager.getVoiceOnionAddress() ?: ""
                 val contactCard = ContactCard(
                     displayName = username,
                     solanaPublicKey = keyManager.getSolanaPublicKey(),
@@ -349,6 +350,7 @@ class CreateAccountActivity : AppCompatActivity() {
                     solanaAddress = keyManager.getSolanaAddress(),
                     friendRequestOnion = friendRequestOnion,
                     messagingOnion = onionAddress,
+                    voiceOnion = voiceOnion,
                     contactPin = contactCardPin,
                     ipfsCid = ipfsCid,
                     timestamp = System.currentTimeMillis()
@@ -377,6 +379,11 @@ class CreateAccountActivity : AppCompatActivity() {
                 Log.i("CreateAccount", "Contact card created (local only, not uploaded)")
                 Log.i("CreateAccount", "CID: $ipfsCid (deterministic from seed)")
                 Log.i("CreateAccount", "PIN: $contactCardPin")
+
+                // Mark that seed phrase has NOT been confirmed yet
+                val setupPrefs = getSharedPreferences("account_setup", MODE_PRIVATE)
+                setupPrefs.edit().putBoolean("seed_phrase_confirmed", false).apply()
+                Log.i("CreateAccount", "Set seed_phrase_confirmed = false (user must confirm backup)")
 
                 // Navigate to Account Created screen to show CID, PIN, and seed phrase
                 val intent = Intent(this@CreateAccountActivity, AccountCreatedActivity::class.java)
