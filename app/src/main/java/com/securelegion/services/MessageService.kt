@@ -1199,6 +1199,45 @@ class MessageService(private val context: Context) {
                         database.contactDao().updateContact(updatedContact)
                     }
 
+                    // Check if incoming calls are allowed when app is closed
+                    val prefs = context.getSharedPreferences("security", android.content.Context.MODE_PRIVATE)
+                    val allowIncomingCallsWhenClosed = prefs.getBoolean(
+                        com.securelegion.SecurityModeActivity.PREF_ALLOW_INCOMING_CALLS_WHEN_CLOSED,
+                        true // default: allow calls
+                    )
+
+                    if (!allowIncomingCallsWhenClosed) {
+                        // Setting disabled - save as missed call and send rejection
+                        Log.i(TAG, "Incoming calls when app closed is disabled - saving as missed call")
+
+                        // Save missed call to database
+                        val callHistory = com.securelegion.database.entities.CallHistory(
+                            contactId = contact.id,
+                            contactName = contact.displayName,
+                            callId = callMessage.callId,
+                            timestamp = System.currentTimeMillis(),
+                            type = com.securelegion.database.entities.CallType.MISSED,
+                            duration = 0,
+                            missedReason = "Incoming calls disabled when app closed"
+                        )
+                        database.callHistoryDao().insert(callHistory)
+                        Log.i(TAG, "Saved missed call to database: ${contact.displayName}")
+
+                        // Send CALL_REJECT to caller
+                        val keyManager = KeyManager.getInstance(context)
+                        val ourX25519PublicKey = keyManager.getEncryptionPublicKey()
+                        CallSignaling.sendCallReject(
+                            contact.x25519PublicKeyBytes,
+                            callMessage.voiceOnion,
+                            callMessage.callId,
+                            "Call privacy settings: incoming calls disabled",
+                            ourX25519PublicKey
+                        )
+                        Log.i(TAG, "Sent CALL_REJECT due to privacy settings")
+
+                        return@withContext true // Message handled
+                    }
+
                     // Get call manager
                     val callManager = VoiceCallManager.getInstance(context)
 

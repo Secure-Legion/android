@@ -74,6 +74,42 @@ class VoiceCallSession(
     // Network components (Rust handles transport, Kotlin handles encryption)
     private val numCircuits = 3 // Multi-circuit for resilience against TCP head-of-line blocking
 
+    // Call quality telemetry (v2)
+    private val telemetry = CallQualityTelemetry()
+
+    // Adaptive circuit scheduler (replaces round-robin in v2)
+    private val circuitScheduler = CircuitScheduler(numCircuits, telemetry)
+
+    init {
+        // Set up circuit rebuild callback
+        circuitScheduler.onCircuitRebuildRequested = { circuitIndex, rebuildEpoch ->
+            Log.w(TAG, "REBUILD_REQUESTED circuit=$circuitIndex epoch=$rebuildEpoch")
+            callScope.launch(Dispatchers.IO) {
+                try {
+                    val success = RustBridge.rebuildVoiceCircuit(
+                        callId = callId,
+                        circuitIndex = circuitIndex,
+                        rebuildEpoch = rebuildEpoch
+                    )
+
+                    if (success) {
+                        Log.i(TAG, "✓ Circuit $circuitIndex rebuild SUCCESS (epoch=$rebuildEpoch)")
+                        circuitScheduler.onCircuitRebuilt(circuitIndex, rebuildEpoch)
+                    } else {
+                        Log.e(TAG, "✗ Circuit $circuitIndex rebuild FAILED (epoch=$rebuildEpoch)")
+                        circuitScheduler.onCircuitRebuildFailed(circuitIndex)
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "Exception during circuit rebuild: ${e.message}", e)
+                    circuitScheduler.onCircuitRebuildFailed(circuitIndex)
+                }
+            }
+        }
+    }
+
+    // Call start time for duration tracking
+    private var callStartTime: Long = 0
+
     // Sequence tracking
     private var sendSeqNum: Long = 0
     private var direction: Byte = if (isOutgoing) 0 else 1
@@ -81,9 +117,13 @@ class VoiceCallSession(
     // Coroutine scope for call session
     private val callScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
+    // Periodic stats feedback job
+    private var statsFeedbackJob: Job? = null
+
     // Callbacks
     var onCallStateChanged: ((CallState) -> Unit)? = null
     var onCallEnded: ((reason: String) -> Unit)? = null
+    var onTelemetryUpdate: ((CallQualityTelemetry.TelemetrySnapshot) -> Unit)? = null
 
     /**
      * Start outgoing call
@@ -143,8 +183,13 @@ class VoiceCallSession(
                 audioCaptureManager = AudioCaptureManager(context, opusCodec)
                 audioPlaybackManager = AudioPlaybackManager(context, opusCodec)
 
+                // Initialize capture first to get audio session ID
                 audioCaptureManager.initialize()
-                audioPlaybackManager.initialize()
+
+                // Pass audio session ID to playback for AEC to work
+                val sessionId = audioCaptureManager.getAudioSessionId()
+                audioPlaybackManager.initialize(sessionId)
+                Log.d(TAG, "Audio managers initialized with shared session ID: $sessionId")
             }
 
             // Set capture callback
@@ -157,6 +202,16 @@ class VoiceCallSession(
             audioPlaybackManager.startPlayback(callScope)
 
             // Note: Receiving is now handled via onVoicePacket callback (no startReceiving needed)
+
+            // Start telemetry monitoring
+            telemetry.start(callScope)
+            audioPlaybackManager.setTelemetry(telemetry)
+
+            // Start periodic stats feedback (every 500ms as per spec)
+            startStatsFeedback()
+
+            // Mark call start time for duration tracking
+            callStartTime = System.currentTimeMillis()
 
             setState(CallState.ACTIVE)
 
@@ -224,8 +279,13 @@ class VoiceCallSession(
                 audioCaptureManager = AudioCaptureManager(context, opusCodec)
                 audioPlaybackManager = AudioPlaybackManager(context, opusCodec)
 
+                // Initialize capture first to get audio session ID
                 audioCaptureManager.initialize()
-                audioPlaybackManager.initialize()
+
+                // Pass audio session ID to playback for AEC to work
+                val sessionId = audioCaptureManager.getAudioSessionId()
+                audioPlaybackManager.initialize(sessionId)
+                Log.d(TAG, "Audio managers initialized with shared session ID: $sessionId")
             }
 
             // Set capture callback
@@ -238,6 +298,16 @@ class VoiceCallSession(
             audioPlaybackManager.startPlayback(callScope)
 
             // Note: Receiving is now handled via onVoicePacket callback (no startReceiving needed)
+
+            // Start telemetry monitoring
+            telemetry.start(callScope)
+            audioPlaybackManager.setTelemetry(telemetry)
+
+            // Start periodic stats feedback (every 500ms as per spec)
+            startStatsFeedback()
+
+            // Mark call start time for duration tracking
+            callStartTime = System.currentTimeMillis()
 
             setState(CallState.ACTIVE)
 
@@ -261,12 +331,13 @@ class VoiceCallSession(
 
         callScope.launch {
             try {
-                // Select circuit using round-robin distribution
-                val circuitIndex = (sendSeqNum % numCircuits).toInt()
+                // Select circuit using adaptive scheduler (v2 - replaces round-robin)
+                val circuitIndex = circuitScheduler.selectCircuit()
                 val circuitKey = circuitKeys[circuitIndex]
 
                 if (circuitKey == null) {
                     Log.e(TAG, "Circuit $circuitIndex not available")
+                    circuitScheduler.reportSendFailure(circuitIndex)
                     return@launch
                 }
 
@@ -305,11 +376,17 @@ class VoiceCallSession(
                     currentSeq.toInt(),
                     timestamp,
                     encryptedPayload,
-                    circuitIndex
+                    circuitIndex,
+                    0x01 // ptype = AUDIO
                 )
 
-                if (!success) {
-                    Log.w(TAG, "Failed to send voice packet seq=$currentSeq")
+                // Report send result to scheduler for health tracking
+                if (success) {
+                    circuitScheduler.reportSendSuccess(circuitIndex)
+                    telemetry.reportFrameSent(circuitIndex)
+                } else {
+                    Log.w(TAG, "Failed to send voice packet seq=$currentSeq on circuit $circuitIndex")
+                    circuitScheduler.reportSendFailure(circuitIndex)
                 }
 
             } catch (e: Exception) {
@@ -332,22 +409,29 @@ class VoiceCallSession(
 
         Log.i(TAG, "Ending call: $reason")
 
-        // Send CALL_END notification to the other person
+        // Send CALL_END notification to the other person via HTTP POST to voice onion
         contactX25519PublicKey?.let { x25519Key ->
-            try {
-                val sent = CallSignaling.sendCallEnd(
-                    recipientX25519PublicKey = x25519Key,
-                    recipientOnion = contactOnion,
-                    callId = callId,
-                    reason = reason
-                )
-                if (sent) {
-                    Log.i(TAG, "✓ Sent CALL_END notification to $contactOnion")
-                } else {
-                    Log.w(TAG, "✗ Failed to send CALL_END notification")
+            CoroutineScope(Dispatchers.IO).launch {
+                try {
+                    // Get our X25519 public key for HTTP wire format
+                    val keyManager = com.securelegion.crypto.KeyManager.getInstance(context)
+                    val ourX25519PublicKey = keyManager.getEncryptionPublicKey()
+
+                    val sent = CallSignaling.sendCallEnd(
+                        recipientX25519PublicKey = x25519Key,
+                        recipientOnion = contactVoiceOnion,  // Use voice onion for HTTP POST
+                        callId = callId,
+                        reason = reason,
+                        ourX25519PublicKey = ourX25519PublicKey
+                    )
+                    if (sent) {
+                        Log.i(TAG, "✓ Sent CALL_END notification via HTTP POST to voice onion")
+                    } else {
+                        Log.w(TAG, "✗ Failed to send CALL_END notification")
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error sending CALL_END notification", e)
                 }
-            } catch (e: Exception) {
-                Log.e(TAG, "Error sending CALL_END notification", e)
             }
         } ?: Log.w(TAG, "Cannot send CALL_END - no X25519 public key available")
 
@@ -391,6 +475,18 @@ class VoiceCallSession(
                         opusCodec.release()
                     } catch (e: Exception) {
                         Log.w(TAG, "Error releasing Opus codec (might not have been initialized)", e)
+                    }
+
+                    // Stop telemetry and save to database
+                    telemetry.stop()
+                    if (callStartTime > 0) {
+                        val durationSeconds = ((System.currentTimeMillis() - callStartTime) / 1000).toInt()
+                        telemetry.saveToDatabase(
+                            context = context,
+                            callId = callId,
+                            contactName = contactOnion.take(16), // Use truncated onion as name for now
+                            durationSeconds = durationSeconds
+                        )
                     }
                 }
 
@@ -436,6 +532,21 @@ class VoiceCallSession(
     }
 
     /**
+     * Get telemetry snapshot (v2 - comprehensive quality metrics)
+     */
+    fun getTelemetrySnapshot(): CallQualityTelemetry.TelemetrySnapshot {
+        return telemetry.getSnapshot()
+    }
+
+    /**
+     * Get call quality score (0-5 bars)
+     * Used for real-time signal quality display in UI
+     */
+    fun getCallQualityScore(): Int {
+        return telemetry.getQualityScore()
+    }
+
+    /**
      * Update call state and notify
      */
     private fun setState(newState: CallState) {
@@ -452,7 +563,7 @@ class VoiceCallSession(
      * VoicePacketCallback implementation
      * Receives encrypted voice packets from Rust and decrypts them
      */
-    override fun onVoicePacket(callId: String, sequence: Int, timestamp: Long, audioData: ByteArray) {
+    override fun onVoicePacket(callId: String, sequence: Int, timestamp: Long, circuitIndex: Byte, ptype: Byte, audioData: ByteArray) {
         // Verify this packet is for our call
         if (callId != this.callId) {
             Log.w(TAG, "Received packet for wrong call: received='$callId' (len=${callId.length}), expected='${this.callId}' (len=${this.callId.length})")
@@ -466,9 +577,8 @@ class VoiceCallSession(
 
         callScope.launch {
             try {
-                // Derive circuit index from sequence (must match sender's round-robin logic)
-                val circuitIndex = (sequence % numCircuits)
-                val circuitKey = circuitKeys[circuitIndex]
+                // Use circuit index from packet header (v2) - NO LONGER DERIVE FROM SEQUENCE
+                val circuitKey = circuitKeys[circuitIndex.toInt()]
 
                 if (circuitKey == null) {
                     Log.e(TAG, "No key for circuit $circuitIndex")
@@ -480,26 +590,238 @@ class VoiceCallSession(
 
                 // Reconstruct AAD (Additional Authenticated Data)
                 // AAD format: callId (16) || sequenceNumber (8) || direction (1) || circuitIndex (1) = 26 bytes
+                // CRITICAL: Use circuitIndex from header, not derived from sequence!
                 val aad = java.nio.ByteBuffer.allocate(26)
                 aad.put(callIdBytes)                                    // 16 bytes
                 aad.putLong(sequence.toLong())                          // 8 bytes
                 aad.put(if (direction == 0.toByte()) 1.toByte() else 0.toByte()) // 1 byte - opposite direction
-                aad.put(circuitIndex.toByte())                          // 1 byte
+                aad.put(circuitIndex)                                   // 1 byte - FROM HEADER, NOT seq % numCircuits
 
-                // Decrypt the encrypted Opus frame
-                val opusFrame = crypto.decryptFrame(
+                // Decrypt the payload
+                val decryptedPayload = crypto.decryptFrame(
                     audioData,
                     circuitKey,
                     nonce,
                     aad.array()
                 )
 
-                // Add to jitter buffer for playback
-                audioPlaybackManager.addFrame(sequence.toLong(), opusFrame)
+                // Report frame received to telemetry
+                telemetry.reportFrameReceived(sequence.toLong(), circuitIndex.toInt())
+
+                // Handle based on packet type
+                when (ptype.toInt()) {
+                    0x01 -> {
+                        // AUDIO packet - add to playback buffer
+                        audioPlaybackManager.addFrame(sequence.toLong(), decryptedPayload, circuitIndex.toInt())
+                    }
+                    0x02 -> {
+                        // CONTROL packet - parse stats and update scheduler
+                        handleControlPacket(decryptedPayload)
+                    }
+                    else -> {
+                        Log.w(TAG, "Unknown packet type: $ptype")
+                    }
+                }
 
             } catch (e: Exception) {
-                Log.e(TAG, "Failed to decrypt voice packet seq=$sequence", e)
+                Log.e(TAG, "Failed to process packet seq=$sequence circuit=$circuitIndex ptype=$ptype", e)
             }
+        }
+    }
+
+    /**
+     * Start periodic stats feedback to peer
+     * Sends CONTROL packets every 500ms with per-circuit late frame stats
+     */
+    private fun startStatsFeedback() {
+        statsFeedbackJob = callScope.launch {
+            while (isActive && callState == CallState.ACTIVE) {
+                delay(500) // Send every 500ms as per spec
+                sendStatsPacket()
+            }
+        }
+        Log.d(TAG, "Started periodic stats feedback (500ms interval)")
+    }
+
+    /**
+     * Stop periodic stats feedback
+     */
+    private fun stopStatsFeedback() {
+        statsFeedbackJob?.cancel()
+        statsFeedbackJob = null
+    }
+
+    /**
+     * Send receiver stats feedback to sender (v2)
+     * Called periodically to update sender's circuit scheduler
+     */
+    private fun sendStatsPacket() {
+        if (callState != CallState.ACTIVE) return
+
+        callScope.launch {
+            try {
+                // Get per-circuit late frame stats from playback manager
+                val circuitLatePercent = audioPlaybackManager.getPerCircuitLatePercent()
+
+                if (circuitLatePercent.isEmpty()) {
+                    return@launch // No stats yet
+                }
+
+                // Update our own scheduler with received stats (for debugging/monitoring)
+                circuitScheduler.updateFromReceiverFeedback(circuitLatePercent)
+
+                // Build CONTROL packet payload (simple binary format)
+                val payload = buildStatsPayload(circuitLatePercent)
+
+                // Select circuit for CONTROL packet (use scheduler)
+                val circuitIndex = circuitScheduler.selectCircuit()
+                val circuitKey = circuitKeys[circuitIndex] ?: return@launch
+
+                // Get current sequence and increment
+                val currentSeq = sendSeqNum++
+
+                // Derive nonce
+                val nonce = crypto.deriveNonce(callIdBytes, currentSeq)
+
+                // Build AAD for CONTROL packet
+                val frame = VoiceFrame(
+                    callId = callIdBytes,
+                    sequenceNumber = currentSeq,
+                    direction = direction,
+                    circuitIndex = circuitIndex,
+                    encryptedPayload = ByteArray(0)
+                )
+                val aad = frame.encodeAAD()
+
+                // Encrypt CONTROL payload
+                val encryptedPayload = crypto.encryptFrame(payload, circuitKey, nonce, aad)
+
+                // Send CONTROL packet
+                val timestamp = currentSeq * 20
+                val success = RustBridge.sendAudioPacket(
+                    callId,
+                    currentSeq.toInt(),
+                    timestamp,
+                    encryptedPayload,
+                    circuitIndex,
+                    0x02 // ptype = CONTROL
+                )
+
+                if (success) {
+                    circuitScheduler.reportSendSuccess(circuitIndex)
+                    Log.d(TAG, "Sent stats feedback: $circuitLatePercent")
+                } else {
+                    circuitScheduler.reportSendFailure(circuitIndex)
+                }
+
+                // Reset stats after sending
+                audioPlaybackManager.resetCircuitStats()
+
+            } catch (e: Exception) {
+                Log.e(TAG, "Error sending stats packet", e)
+            }
+        }
+    }
+
+    /**
+     * Build binary stats payload for CONTROL packet (v3 - enhanced with missing%, PLC%, received count)
+     * Format per circuit:
+     * [circuit_idx: u8][late_permille: u16][missing_permille: u16][plc_permille: u16][frames_received: u32]
+     *
+     * Total per circuit: 1 + 2 + 2 + 2 + 4 = 11 bytes
+     * Header: [num_circuits: u8] = 1 byte
+     * Total: 1 + (N * 11) bytes
+     */
+    private fun buildStatsPayload(circuitLatePercent: Map<Int, Double>): ByteArray {
+        // Get telemetry snapshot for full circuit stats
+        val snapshot = telemetry.getSnapshot()
+
+        // Create map of circuit index to full stats
+        val circuitStats = snapshot.perCircuitStats.associateBy { it.circuitIndex }
+
+        // Size: 1 byte (num_circuits) + N * 11 bytes per circuit
+        val buffer = java.nio.ByteBuffer.allocate(1 + (circuitStats.size * 11))
+        buffer.put(circuitStats.size.toByte())
+
+        for ((circuitIdx, stats) in circuitStats.entries.sortedBy { it.key }) {
+            buffer.put(circuitIdx.toByte())
+
+            // Late% as permille (0-1000)
+            val latePermille = (stats.latePercent * 10.0).toInt().coerceIn(0, 1000).toShort()
+            buffer.putShort(latePermille)
+
+            // FIX #4: Missing% is NOT sent by receiver (receiver doesn't know sender's framesSent)
+            // Sender will calculate missing% locally using: (framesSent - framesReceived) / framesSent
+            // Send 0 as placeholder (receiver cannot calculate this metric correctly)
+            val missingPermille = 0.toShort()  // Receiver sends 0 (sender calculates locally)
+            buffer.putShort(missingPermille)
+
+            // FIX #4: PLC% as permille (0-1000)
+            val plcPermille = (stats.plcPercent * 10.0).toInt().coerceIn(0, 1000).toShort()
+            buffer.putShort(plcPermille)
+
+            // FIX #4: Frames received count (u32)
+            buffer.putInt(stats.framesReceived.toInt())
+        }
+
+        return buffer.array().copyOf(buffer.position())
+    }
+
+    /**
+     * Parse received CONTROL packet and update scheduler (v3 - enhanced with missing%, PLC%)
+     */
+    private fun handleControlPacket(payload: ByteArray) {
+        try {
+            val buffer = java.nio.ByteBuffer.wrap(payload)
+            val numCircuits = buffer.get().toInt()
+
+            // Check packet format version by size
+            val bytesPerCircuit = (payload.size - 1) / numCircuits
+            val isEnhancedFormat = bytesPerCircuit >= 11 // v3 format with all metrics
+
+            val feedback = mutableMapOf<Int, CircuitScheduler.CircuitFeedback>()
+
+            for (i in 0 until numCircuits) {
+                val circuitIdx = buffer.get().toInt()
+                val latePermille = buffer.short.toInt()
+                val latePct = latePermille / 10.0
+
+                if (isEnhancedFormat) {
+                    // FIX #4: Parse enhanced format with missing%, PLC%, received count
+                    val missingPermille = buffer.short.toInt()
+                    val plcPermille = buffer.short.toInt()
+                    val framesReceived = buffer.int.toLong()
+
+                    val missingPct = missingPermille / 10.0
+                    val plcPct = plcPermille / 10.0
+
+                    feedback[circuitIdx] = CircuitScheduler.CircuitFeedback(
+                        latePercent = latePct,
+                        missingPercent = missingPct,
+                        plcPercent = plcPct,
+                        framesReceived = framesReceived
+                    )
+
+                    // CRITICAL FIX: Update telemetry with peer's received count
+                    // This allows correct missing% calculation: (sent - peerReceived) / sent
+                    telemetry.updatePeerReceivedCount(circuitIdx, framesReceived)
+                } else {
+                    // Legacy format (v2) - only late%
+                    feedback[circuitIdx] = CircuitScheduler.CircuitFeedback(
+                        latePercent = latePct,
+                        missingPercent = 0.0,
+                        plcPercent = 0.0,
+                        framesReceived = 0L
+                    )
+                }
+            }
+
+            // Update scheduler with enhanced feedback
+            circuitScheduler.updateFromReceiverFeedback(feedback)
+            Log.d(TAG, "Updated scheduler from peer feedback (enhanced): $feedback")
+
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to parse CONTROL packet", e)
         }
     }
 }

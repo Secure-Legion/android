@@ -64,6 +64,11 @@ class SettingsActivity : BaseActivity() {
             startActivity(Intent(this, BridgeActivity::class.java))
         }
 
+        // Developer
+        findViewById<View>(R.id.developerItem).setOnClickListener {
+            startActivity(Intent(this, DeveloperActivity::class.java))
+        }
+
         // Security Mode (includes auto-lock timer)
         findViewById<View>(R.id.securityModeItem).setOnClickListener {
             startActivity(Intent(this, SecurityModeActivity::class.java))

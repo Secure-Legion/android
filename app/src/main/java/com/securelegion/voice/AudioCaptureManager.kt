@@ -302,6 +302,14 @@ class AudioCaptureManager(
     fun isMuted(): Boolean = isMuted
 
     /**
+     * Get the audio session ID for this AudioRecord
+     * This should be used by AudioTrack to enable acoustic echo cancellation
+     */
+    fun getAudioSessionId(): Int {
+        return audioRecord?.audioSessionId ?: 0
+    }
+
+    /**
      * Release resources
      */
     fun release() {

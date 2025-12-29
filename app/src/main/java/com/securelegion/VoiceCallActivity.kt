@@ -1,18 +1,20 @@
 package com.securelegion
 
+import android.content.Context
 import android.media.AudioManager
 import android.media.ToneGenerator
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.PowerManager
+import android.util.Log
 import android.view.View
 import android.view.WindowManager
 import android.view.animation.AnimationUtils
 import android.widget.ImageView
 import android.widget.ProgressBar
 import android.widget.TextView
-import androidx.appcompat.app.AlertDialog
 import androidx.lifecycle.lifecycleScope
 import com.google.android.material.floatingactionbutton.FloatingActionButton
 import com.securelegion.ui.WaveformView
@@ -95,6 +97,13 @@ class VoiceCallActivity : BaseActivity() {
     private lateinit var speakerButton: FloatingActionButton
     private lateinit var endCallButton: FloatingActionButton
 
+    // Signal quality bars
+    private lateinit var signalBar1: View
+    private lateinit var signalBar2: View
+    private lateinit var signalBar3: View
+    private lateinit var signalBar4: View
+    private lateinit var signalBar5: View
+
     // Hidden compatibility views
     private lateinit var contactAvatar: ImageView
     private lateinit var muteIcon: ImageView
@@ -118,9 +127,16 @@ class VoiceCallActivity : BaseActivity() {
     private var timerRunnable: Runnable? = null
     private var waitingForAnswer = false
 
+    // Signal quality monitoring
+    private val signalQualityHandler = Handler(Looper.getMainLooper())
+    private var signalQualityRunnable: Runnable? = null
+
     // Ringback tone (plays while waiting for answer on outgoing calls)
     private var toneGenerator: ToneGenerator? = null
     private var isPlayingRingback = false
+
+    // Proximity sensor wake lock (turns screen off when near ear)
+    private var proximityWakeLock: PowerManager.WakeLock? = null
 
     // Call manager
     private lateinit var callManager: VoiceCallManager
@@ -149,6 +165,9 @@ class VoiceCallActivity : BaseActivity() {
             setTurnScreenOn(true)
         }
 
+        // Set up proximity sensor to turn off screen when phone is near ear
+        setupProximitySensor()
+
         // Get data from intent
         contactId = intent.getLongExtra(EXTRA_CONTACT_ID, -1)
         contactName = intent.getStringExtra(EXTRA_CONTACT_NAME) ?: "@Contact"
@@ -173,6 +192,13 @@ class VoiceCallActivity : BaseActivity() {
 
         callManager.onCallEnded = { reason ->
             handleCallEnded(reason)
+        }
+
+        // Set up audio amplitude observer for waveform visualization
+        callManager.onAudioAmplitude = { amplitude ->
+            runOnUiThread {
+                waveformView.updateAmplitude(amplitude)
+            }
         }
 
         // Start call timer
@@ -308,6 +334,13 @@ class VoiceCallActivity : BaseActivity() {
         speakerButton = findViewById(R.id.speakerButton)
         endCallButton = findViewById(R.id.endCallButton)
 
+        // Signal quality bars
+        signalBar1 = findViewById(R.id.signalBar1)
+        signalBar2 = findViewById(R.id.signalBar2)
+        signalBar3 = findViewById(R.id.signalBar3)
+        signalBar4 = findViewById(R.id.signalBar4)
+        signalBar5 = findViewById(R.id.signalBar5)
+
         // Hidden compatibility views
         contactAvatar = findViewById(R.id.contactAvatar)
         muteIcon = findViewById(R.id.muteIcon)
@@ -377,29 +410,9 @@ class VoiceCallActivity : BaseActivity() {
 
 
     private fun confirmEndCall() {
-        // If waiting for answer or no active call, just end immediately
-        if (waitingForAnswer || !callManager.hasActiveCall()) {
-            endCall()
-            return
-        }
-
-        // If call is still connecting/ringing, just end immediately without confirmation
-        val currentState = callManager.getCurrentCallState()
-        if (currentState == VoiceCallSession.Companion.CallState.CONNECTING ||
-            currentState == VoiceCallSession.Companion.CallState.RINGING) {
-            endCall()
-            return
-        }
-
-        // For active calls, show confirmation dialog
-        AlertDialog.Builder(this)
-            .setTitle("End Call")
-            .setMessage("Are you sure you want to end this call?")
-            .setPositiveButton("End Call") { _, _ ->
-                endCall()
-            }
-            .setNegativeButton("Cancel", null)
-            .show()
+        // End call immediately without confirmation (like normal phones)
+        updateCallStatus("Call ended")
+        endCall()
     }
 
     private fun endCall() {
@@ -408,6 +421,9 @@ class VoiceCallActivity : BaseActivity() {
 
         // Stop ringback tone
         stopRingbackTone()
+
+        // Stop monitoring
+        stopSignalQualityMonitoring()
 
         // Always try to end the call, even if it's not fully active
         try {
@@ -433,6 +449,7 @@ class VoiceCallActivity : BaseActivity() {
                 }
                 VoiceCallSession.Companion.CallState.ACTIVE -> {
                     showConnectedState()
+                    startSignalQualityMonitoring()
                 }
                 VoiceCallSession.Companion.CallState.ENDING -> {
                     updateCallStatus("Ending call...")
@@ -497,7 +514,7 @@ class VoiceCallActivity : BaseActivity() {
     }
 
     private fun handleCallEnded(reason: String) {
-        // Don't show dialog if activity is already finishing (user pressed End)
+        // Don't show notification if activity is already finishing (user pressed End)
         if (isFinishing) {
             return
         }
@@ -509,17 +526,10 @@ class VoiceCallActivity : BaseActivity() {
             updateCallStatus(reason)
             stopCallTimer()
 
-            // Show dialog only if activity is still active
-            if (!isFinishing) {
-                AlertDialog.Builder(this)
-                    .setTitle("Call Ended")
-                    .setMessage(reason)
-                    .setPositiveButton("OK") { _, _ ->
-                        finish()
-                    }
-                    .setCancelable(false)
-                    .show()
-            }
+            // Close activity after short delay to show the status message
+            Handler(Looper.getMainLooper()).postDelayed({
+                finish()
+            }, 1500)
         }
     }
 
@@ -581,6 +591,81 @@ class VoiceCallActivity : BaseActivity() {
         timerRunnable?.let {
             timerHandler.removeCallbacks(it)
         }
+    }
+
+    /**
+     * Update signal quality bars based on telemetry
+     * 0 bars = terrible, 5 bars = excellent
+     */
+    private fun updateSignalQualityBars(qualityScore: Int) {
+        runOnUiThread {
+            // Reset all bars to dim
+            signalBar1.alpha = 0.3f
+            signalBar2.alpha = 0.3f
+            signalBar3.alpha = 0.3f
+            signalBar4.alpha = 0.3f
+            signalBar5.alpha = 0.3f
+
+            // Light up bars based on quality score
+            when (qualityScore) {
+                5 -> {
+                    signalBar1.alpha = 1.0f
+                    signalBar2.alpha = 1.0f
+                    signalBar3.alpha = 1.0f
+                    signalBar4.alpha = 1.0f
+                    signalBar5.alpha = 1.0f
+                }
+                4 -> {
+                    signalBar1.alpha = 1.0f
+                    signalBar2.alpha = 1.0f
+                    signalBar3.alpha = 1.0f
+                    signalBar4.alpha = 1.0f
+                }
+                3 -> {
+                    signalBar1.alpha = 1.0f
+                    signalBar2.alpha = 1.0f
+                    signalBar3.alpha = 1.0f
+                }
+                2 -> {
+                    signalBar1.alpha = 1.0f
+                    signalBar2.alpha = 1.0f
+                }
+                1 -> {
+                    signalBar1.alpha = 1.0f
+                }
+                // 0 = all bars dim (already set above)
+            }
+        }
+    }
+
+    /**
+     * Start periodic signal quality monitoring
+     * Updates signal bars every 2 seconds based on call telemetry
+     */
+    private fun startSignalQualityMonitoring() {
+        signalQualityRunnable = object : Runnable {
+            override fun run() {
+                // Get quality score from active call
+                val qualityScore = callManager.getActiveCall()?.getCallQualityScore() ?: 0
+                updateSignalQualityBars(qualityScore)
+
+                // Update every 2 seconds
+                signalQualityHandler.postDelayed(this, 2000)
+            }
+        }
+        signalQualityHandler.post(signalQualityRunnable!!)
+        Log.d(TAG, "Started signal quality monitoring")
+    }
+
+    /**
+     * Stop signal quality monitoring
+     */
+    private fun stopSignalQualityMonitoring() {
+        signalQualityRunnable?.let {
+            signalQualityHandler.removeCallbacks(it)
+        }
+        signalQualityRunnable = null
+        Log.d(TAG, "Stopped signal quality monitoring")
     }
 
     /**
@@ -673,14 +758,19 @@ class VoiceCallActivity : BaseActivity() {
                         android.util.Log.e(TAG, "   OR the auto-population failed")
 
                         // Get contact info from intent for rejection
-                        val contactOnion = intent.getStringExtra(EXTRA_CONTACT_ONION) ?: ""
+                        val contactVoiceOnionFromIntent = intent.getStringExtra(EXTRA_CONTACT_ONION) ?: "" // This is the voice onion from CALL_OFFER
                         val contactX25519PublicKey = intent.getByteArrayExtra(EXTRA_CONTACT_X25519_PUBLIC_KEY) ?: ByteArray(0)
+
+                        // Get our X25519 public key for HTTP wire format
+                        val keyManager = com.securelegion.crypto.KeyManager.getInstance(this@VoiceCallActivity)
+                        val ourX25519PublicKey = keyManager.getEncryptionPublicKey()
 
                         com.securelegion.voice.CallSignaling.sendCallReject(
                             contactX25519PublicKey,
-                            contactOnion,
+                            contactVoiceOnionFromIntent,
                             callId,
-                            "Voice onion not available"
+                            "Voice onion not available",
+                            ourX25519PublicKey
                         )
                         handleCallEnded("Contact's voice address missing - please try calling again")
                         return@launch
@@ -702,11 +792,11 @@ class VoiceCallActivity : BaseActivity() {
                         android.util.Log.w(TAG, "Voice onion address not yet created - call may fail")
                     }
 
-                    val contactOnion = intent.getStringExtra(EXTRA_CONTACT_ONION) ?: ""
+                    val contactCallerVoiceOnion = intent.getStringExtra(EXTRA_CONTACT_ONION) ?: "" // This is the voice onion from CALL_OFFER
                     val contactX25519PublicKey = intent.getByteArrayExtra(EXTRA_CONTACT_X25519_PUBLIC_KEY) ?: ByteArray(0)
 
                     android.util.Log.i(TAG, "Sending CALL_ANSWER via HTTP POST immediately (before creating Tor circuits)...")
-                    android.util.Log.d(TAG, "  contactOnion: $contactOnion")
+                    android.util.Log.d(TAG, "  contactCallerVoiceOnion: $contactCallerVoiceOnion")
                     android.util.Log.d(TAG, "  contactX25519PublicKey size: ${contactX25519PublicKey.size}")
                     android.util.Log.d(TAG, "  callId: $callId")
                     android.util.Log.d(TAG, "  myVoiceOnion: $myVoiceOnion")
@@ -719,12 +809,12 @@ class VoiceCallActivity : BaseActivity() {
                     // Update UI to show we're sending the answer
                     updateCallStatus("Sending call response...")
 
-                    // Send CALL_ANSWER on IO thread via HTTP POST to voice .onion
+                    // Send CALL_ANSWER on IO thread via HTTP POST to caller's voice .onion
                     // This will retry up to 5 times with 15-second timeout each
                     val success = withContext(kotlinx.coroutines.Dispatchers.IO) {
                         com.securelegion.voice.CallSignaling.sendCallAnswer(
                             contactX25519PublicKey,
-                            contactOnion,
+                            contactCallerVoiceOnion,  // Caller's voice onion from CALL_OFFER
                             callId,
                             ourEphemeralKeypair.publicKey.asBytes,
                             myVoiceOnion,
@@ -746,7 +836,7 @@ class VoiceCallActivity : BaseActivity() {
                         contactVoiceOnion = contactVoiceOnion,
                         ourEphemeralSecretKey = ourEphemeralKeypair.secretKey.asBytes,
                         contactX25519PublicKey = contactX25519PublicKey,
-                        contactMessagingOnion = contactOnion,
+                        contactMessagingOnion = contact.messagingOnion!!,  // Use contact's messaging onion
                         ourEphemeralPublicKey = ourEphemeralKeypair.publicKey.asBytes,
                         myVoiceOnion = myVoiceOnion
                     )
@@ -757,9 +847,10 @@ class VoiceCallActivity : BaseActivity() {
 
                         com.securelegion.voice.CallSignaling.sendCallReject(
                             contactX25519PublicKey,
-                            contactOnion,
+                            contactCallerVoiceOnion,  // Caller's voice onion
                             callId,
-                            "Failed to establish call"
+                            "Failed to establish call",
+                            ourX25519PublicKey
                         )
                         handleCallEnded("Failed to answer call: ${result.exceptionOrNull()?.message}")
                         return@launch
@@ -780,14 +871,22 @@ class VoiceCallActivity : BaseActivity() {
                 // Try to send rejection if this was an incoming call
                 if (!isOutgoing) {
                     try {
-                        val contactOnion = intent.getStringExtra(EXTRA_CONTACT_ONION) ?: ""
+                        val contactVoiceOnionFromIntent = intent.getStringExtra(EXTRA_CONTACT_ONION) ?: "" // This is the voice onion from CALL_OFFER
                         val contactX25519PublicKey = intent.getByteArrayExtra(EXTRA_CONTACT_X25519_PUBLIC_KEY) ?: ByteArray(0)
-                        com.securelegion.voice.CallSignaling.sendCallReject(
-                            contactX25519PublicKey,
-                            contactOnion,
-                            callId,
-                            "Error: ${e.message}"
-                        )
+
+                        // Get our X25519 public key for HTTP wire format
+                        val keyManager = com.securelegion.crypto.KeyManager.getInstance(this@VoiceCallActivity)
+                        val ourX25519PublicKey = keyManager.getEncryptionPublicKey()
+
+                        lifecycleScope.launch {
+                            com.securelegion.voice.CallSignaling.sendCallReject(
+                                contactX25519PublicKey,
+                                contactVoiceOnionFromIntent,
+                                callId,
+                                "Error: ${e.message}",
+                                ourX25519PublicKey
+                            )
+                        }
                     } catch (e2: Exception) {
                         android.util.Log.e(TAG, "Failed to send rejection", e2)
                     }
@@ -811,14 +910,62 @@ class VoiceCallActivity : BaseActivity() {
             activeInstance = null
         }
 
+        // Clear callbacks to prevent memory leaks
+        callManager.onCallStateChanged = null
+        callManager.onCallEnded = null
+        callManager.onAudioAmplitude = null
+
         stopCallTimer()
         stopRingbackTone() // Stop ringback tone if still playing
         animatedRing.clearAnimation()
         window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
 
+        // Release proximity sensor wake lock
+        releaseProximitySensor()
+
         // Clean up active call if still exists
         if (callManager.hasActiveCall()) {
             callManager.endCall("Activity destroyed")
+        }
+    }
+
+    /**
+     * Set up proximity sensor to automatically turn screen off when phone is near ear
+     */
+    private fun setupProximitySensor() {
+        try {
+            val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
+
+            // PROXIMITY_SCREEN_OFF_WAKE_LOCK turns screen off when proximity sensor is triggered
+            // This prevents accidental touches with your ear during calls
+            @Suppress("DEPRECATION")
+            proximityWakeLock = powerManager.newWakeLock(
+                PowerManager.PROXIMITY_SCREEN_OFF_WAKE_LOCK,
+                "SecureLegion:ProximityWakeLock"
+            )
+
+            proximityWakeLock?.acquire(10 * 60 * 1000L) // 10 minute timeout (max call duration)
+            Log.i(TAG, "Proximity sensor wake lock acquired - screen will turn off when near ear")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to set up proximity sensor", e)
+            // Not critical - call will still work, just won't turn off screen automatically
+        }
+    }
+
+    /**
+     * Release proximity sensor wake lock
+     */
+    private fun releaseProximitySensor() {
+        try {
+            proximityWakeLock?.let {
+                if (it.isHeld) {
+                    it.release()
+                    Log.i(TAG, "Proximity sensor wake lock released")
+                }
+            }
+            proximityWakeLock = null
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to release proximity sensor wake lock", e)
         }
     }
 }

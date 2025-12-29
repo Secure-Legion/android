@@ -350,6 +350,13 @@ object RustBridge {
      */
     external fun opusDecodeFEC(handle: Long, opusData: ByteArray): ByteArray?
 
+    /**
+     * Get Opus library version string
+     * Returns version like "libopus 1.4" or "libopus 1.6"
+     * @return Opus version string
+     */
+    external fun getOpusVersion(): String
+
     // ========== Voice Streaming (v2.0) ==========
 
     /**
@@ -361,9 +368,11 @@ object RustBridge {
          * @param callId The call ID for this packet
          * @param sequence Packet sequence number
          * @param timestamp Packet timestamp in milliseconds
+         * @param circuitIndex Which circuit this packet came from (v2)
+         * @param ptype Packet type: 0x01=AUDIO, 0x02=CONTROL (v2)
          * @param audioData Opus-encoded audio data
          */
-        fun onVoicePacket(callId: String, sequence: Int, timestamp: Long, audioData: ByteArray)
+        fun onVoicePacket(callId: String, sequence: Int, timestamp: Long, circuitIndex: Byte, ptype: Byte, audioData: ByteArray)
     }
 
     /**
@@ -419,6 +428,7 @@ object RustBridge {
      * @param timestamp Timestamp in milliseconds since call start
      * @param audioData Opus-encoded audio bytes
      * @param circuitIndex Which circuit to use (0 to numCircuits-1)
+     * @param ptype Packet type: 0x01=AUDIO, 0x02=CONTROL
      * @return True if packet sent successfully
      */
     external fun sendAudioPacket(
@@ -426,7 +436,8 @@ object RustBridge {
         sequence: Int,
         timestamp: Long,
         audioData: ByteArray,
-        circuitIndex: Int
+        circuitIndex: Int,
+        ptype: Int
     ): Boolean
 
     /**
@@ -440,6 +451,21 @@ object RustBridge {
      * @return Count of active voice streaming sessions
      */
     external fun getActiveVoiceSessions(): Int
+
+    /**
+     * Rebuild a specific voice circuit (close and reconnect with fresh Tor path)
+     * When a circuit has persistent packet loss, this closes it and creates a new one
+     * with incremented rebuild_epoch, forcing Tor to select a different relay path
+     * @param callId Active call session ID
+     * @param circuitIndex Circuit to rebuild (0-2)
+     * @param rebuildEpoch Incremented counter (forces fresh SOCKS5 isolation)
+     * @return True if rebuild succeeded, false if failed
+     */
+    external fun rebuildVoiceCircuit(
+        callId: String,
+        circuitIndex: Int,
+        rebuildEpoch: Int
+    ): Boolean
 
     /**
      * Check if a connection is still alive and responsive

@@ -28,6 +28,64 @@
 
     </FrameLayout>
 
+    <!-- Signal Quality Bars (top-right) -->
+    <LinearLayout
+        android:id="@+id/signalBarsContainer"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginEnd="20dp"
+        android:orientation="horizontal"
+        android:gravity="bottom"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintTop_toTopOf="@id/backButton"
+        app:layout_constraintBottom_toBottomOf="@id/backButton">
+
+        <!-- Bar 1 (shortest) -->
+        <View
+            android:id="@+id/signalBar1"
+            android:layout_width="4dp"
+            android:layout_height="8dp"
+            android:layout_marginEnd="3dp"
+            android:background="#4A9EFF"
+            android:alpha="0.3" />
+
+        <!-- Bar 2 -->
+        <View
+            android:id="@+id/signalBar2"
+            android:layout_width="4dp"
+            android:layout_height="12dp"
+            android:layout_marginEnd="3dp"
+            android:background="#4A9EFF"
+            android:alpha="0.3" />
+
+        <!-- Bar 3 -->
+        <View
+            android:id="@+id/signalBar3"
+            android:layout_width="4dp"
+            android:layout_height="16dp"
+            android:layout_marginEnd="3dp"
+            android:background="#4A9EFF"
+            android:alpha="0.3" />
+
+        <!-- Bar 4 -->
+        <View
+            android:id="@+id/signalBar4"
+            android:layout_width="4dp"
+            android:layout_height="20dp"
+            android:layout_marginEnd="3dp"
+            android:background="#4A9EFF"
+            android:alpha="0.3" />
+
+        <!-- Bar 5 (tallest) -->
+        <View
+            android:id="@+id/signalBar5"
+            android:layout_width="4dp"
+            android:layout_height="24dp"
+            android:background="#4A9EFF"
+            android:alpha="0.3" />
+
+    </LinearLayout>
+
     <!-- Title: Secure Call -->
     <TextView
         android:id="@+id/titleText"

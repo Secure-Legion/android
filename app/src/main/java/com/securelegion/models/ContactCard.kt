@@ -28,6 +28,9 @@ data class ContactCard(
     val contactPin: String,             // 10-digit PIN (formatted XXX-XXX-XXXX)
     val ipfsCid: String? = null,        // IPFS CID for this card (deterministic)
 
+    // Profile picture (v2.1)
+    val profilePictureBase64: String? = null, // Base64-encoded JPEG (max 256KB compressed)
+
     val timestamp: Long,                // Creation timestamp (Unix seconds)
 
     // DEPRECATED - Keep for backward compatibility
@@ -61,6 +64,11 @@ data class ContactCard(
         json.put("contact_pin", contactPin)
         if (ipfsCid != null) {
             json.put("ipfs_cid", ipfsCid)
+        }
+
+        // Profile picture (v2.1)
+        if (profilePictureBase64 != null) {
+            json.put("profile_picture", profilePictureBase64)
         }
 
         json.put("timestamp", timestamp)
@@ -118,6 +126,10 @@ data class ContactCard(
                 json.getString("ipfs_cid")
             } else null
 
+            val profilePictureBase64 = if (json.has("profile_picture")) {
+                json.getString("profile_picture")
+            } else null
+
             return ContactCard(
                 displayName = json.getString("handle"),
                 solanaPublicKey = publicKey,
@@ -128,6 +140,7 @@ data class ContactCard(
                 voiceOnion = voiceOnion,
                 contactPin = contactPin,
                 ipfsCid = ipfsCid,
+                profilePictureBase64 = profilePictureBase64,
                 timestamp = json.getLong("timestamp")
             )
         }

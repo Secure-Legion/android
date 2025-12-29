@@ -115,10 +115,13 @@ class ChatActivity : BaseActivity() {
     // Image capture
     private var cameraPhotoUri: Uri? = null
     private var cameraPhotoFile: File? = null
-    private var isWaitingForMediaResult = false  // Prevent auto-lock during camera/gallery
+    private var isWaitingForCameraGallery = false  // Prevent auto-lock during external camera/gallery
 
     // Voice call
     private var isInitiatingCall = false  // Prevent duplicate call initiations
+
+    // Media picking
+    private var isWaitingForMediaResult = false  // Track if waiting for media picker result
 
     // Activity result launchers for image picking
     private val galleryLauncher = registerForActivityResult(
@@ -372,11 +375,13 @@ class ChatActivity : BaseActivity() {
     }
 
     override fun onResume() {
-        // Reset pause timestamp if returning from camera/gallery to prevent auto-lock
-        if (isWaitingForMediaResult) {
+        // Clear pause timestamp if returning from camera/gallery to prevent auto-lock
+        // Camera/gallery are EXTERNAL apps, so they're not detected by BaseActivity
+        if (isWaitingForCameraGallery) {
             val lifecyclePrefs = getSharedPreferences("app_lifecycle", MODE_PRIVATE)
             lifecyclePrefs.edit().putLong("last_pause_timestamp", 0L).apply()
-            Log.d(TAG, "Cleared pause timestamp to prevent auto-lock after camera/gallery")
+            Log.d(TAG, "Cleared pause timestamp after camera/gallery - preventing auto-lock")
+            isWaitingForCameraGallery = false
         }
 
         // Reset call initiation flag when returning from VoiceCallActivity
@@ -387,7 +392,7 @@ class ChatActivity : BaseActivity() {
         }
 
         super.onResume()
-        Log.d(TAG, "onResume called (isWaitingForMediaResult=$isWaitingForMediaResult)")
+        Log.d(TAG, "onResume called")
 
         // Check if download is still in progress (in case user tapped notification multiple times)
         val downloadStatusPrefs = getSharedPreferences("download_status", MODE_PRIVATE)
@@ -714,7 +719,8 @@ class ChatActivity : BaseActivity() {
                 cameraPhotoFile!!
             )
 
-            isWaitingForMediaResult = true  // Prevent auto-lock during camera
+            // Set flag to prevent auto-lock when returning from external camera app
+            isWaitingForCameraGallery = true
             cameraLauncher.launch(cameraPhotoUri)
         } catch (e: Exception) {
             Log.e(TAG, "Failed to open camera", e)
@@ -735,7 +741,9 @@ class ChatActivity : BaseActivity() {
                 return
             }
         }
-        isWaitingForMediaResult = true  // Prevent auto-lock during gallery
+
+        // Set flag to prevent auto-lock when returning from external gallery app
+        isWaitingForCameraGallery = true
         galleryLauncher.launch("image/*")
     }
 

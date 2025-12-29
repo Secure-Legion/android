@@ -3,8 +3,14 @@ package com.securelegion
 import android.content.Intent
 import android.os.Bundle
 import android.view.View
+import androidx.appcompat.widget.SwitchCompat
 
 class SecurityModeActivity : BaseActivity() {
+
+    companion object {
+        const val PREF_ALLOW_INCOMING_CALLS_WHEN_CLOSED = "allow_incoming_calls_when_closed"
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_security_mode)
@@ -12,6 +18,7 @@ class SecurityModeActivity : BaseActivity() {
         setupClickListeners()
         setupBottomNavigation()
         setupAutoLock()
+        setupIncomingCallsToggle()
     }
 
     private fun setupClickListeners() {
@@ -48,6 +55,19 @@ class SecurityModeActivity : BaseActivity() {
         }
 
         findViewById<android.widget.TextView>(R.id.autoLockStatus).text = timeoutText
+    }
+
+    private fun setupIncomingCallsToggle() {
+        val switch = findViewById<SwitchCompat>(R.id.allowIncomingCallsSwitch)
+        val prefs = getSharedPreferences("security", MODE_PRIVATE)
+
+        // Load saved state (default true - allow calls when app closed)
+        switch.isChecked = prefs.getBoolean(PREF_ALLOW_INCOMING_CALLS_WHEN_CLOSED, true)
+
+        // Save state when toggled
+        switch.setOnCheckedChangeListener { _, isChecked ->
+            prefs.edit().putBoolean(PREF_ALLOW_INCOMING_CALLS_WHEN_CLOSED, isChecked).apply()
+        }
     }
 
     private fun setupBottomNavigation() {

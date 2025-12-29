@@ -73,6 +73,14 @@
             android:excludeFromRecents="true" />
 
         <activity
+            android:name=".CallLogActivity"
+            android:exported="false" />
+
+        <activity
+            android:name=".DeveloperActivity"
+            android:exported="false" />
+
+        <activity
             android:name=".ComposeActivity"
             android:exported="false"
             android:windowSoftInputMode="adjustPan" />

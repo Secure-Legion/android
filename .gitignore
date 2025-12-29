@@ -44,6 +44,12 @@ nul
 payment_request_fixes_backup.txt
 SECURITY_ROADMAP.txt
 
+# Implementation documentation (sensitive/internal)
+WALLET_DATABASE_SECURITY_AUDIT.md
+VOICE_MESSAGES_IMPLEMENTATION.md
+PING_PONG_IMPLEMENTATION.md
+PROTOCOL_README.md
+
 # Signing keys (NEVER commit these!)
 *.jks
 *.keystore

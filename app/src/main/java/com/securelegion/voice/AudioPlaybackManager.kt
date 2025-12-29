@@ -46,6 +46,13 @@ class AudioPlaybackManager(
         private const val FRAME_DURATION_MS = 20     // 20ms per frame
         private const val MAX_OUT_OF_ORDER = 10      // Max frames to buffer before considering lost
 
+        // FEC grace window (v2 - wait for next packet before PLCing)
+        private const val FEC_GRACE_WINDOW_MS = 30L  // Wait 30ms for next packet (1.5 frames)
+        private const val FEC_MAX_RETRIES = 2        // Check for next frame 2 times during grace window
+
+        // Reorder grace window (v3 - wait for out-of-order frames before missing)
+        private const val REORDER_GRACE_MS = 40L     // Wait 40ms for out-of-order frames (2 frames)
+
         // Adaptive buffer tuning (more tolerant for Tor jitter)
         private const val LATE_FRAME_THRESHOLD = 0.10f  // If >10% frames late, increase buffer (was 5%)
         private const val EARLY_FRAME_THRESHOLD = 0.95f // If >95% frames early, decrease buffer (was 90%)
@@ -72,11 +79,26 @@ class AudioPlaybackManager(
     private var framesReceived: Long = 0
     private var framesLate: Long = 0
     private var framesLost: Long = 0
+    private var framesLateToBuffer: Long = 0  // Arrived after playout deadline (v3)
 
     // FEC statistics
     private var fecAttempts: Long = 0
     private var fecSuccess: Long = 0
     private var plcFrames: Long = 0
+
+    // Seq → Circuit mapping for PLC attribution (v3)
+    // Ring buffer of last 500 sequence numbers to their circuit index
+    private val seqToCircuit = LinkedHashMap<Long, Int>(500, 0.75f, false)
+
+    // Per-circuit statistics (v2) for adaptive routing feedback
+    private data class CircuitStats(
+        var framesReceived: Long = 0,
+        var framesLate: Long = 0
+    )
+    private val circuitStats = mutableMapOf<Int, CircuitStats>()
+
+    // Telemetry integration (v2)
+    private var telemetry: CallQualityTelemetry? = null
 
     /**
      * Buffered frame with timestamp for jitter adaptation
@@ -89,15 +111,21 @@ class AudioPlaybackManager(
 
     /**
      * Initialize AudioTrack for speaker playback
+     * @param audioSessionId Optional session ID from AudioRecord for AEC (0 = generate new)
      */
-    fun initialize() {
+    fun initialize(audioSessionId: Int = 0) {
         try {
             // Set up AudioManager for voice communication mode
             audioManager = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
             audioManager?.let { am ->
                 previousAudioMode = am.mode
                 am.mode = AudioManager.MODE_IN_COMMUNICATION
-                Log.d(TAG, "AudioManager mode set to MODE_IN_COMMUNICATION (previous: $previousAudioMode)")
+
+                // Start with earpiece (speaker OFF) by default
+                @Suppress("DEPRECATION")
+                am.isSpeakerphoneOn = false
+
+                Log.d(TAG, "AudioManager initialized: mode=MODE_IN_COMMUNICATION (prev: $previousAudioMode), speaker=OFF (earpiece)")
             }
 
             // Calculate buffer size
@@ -114,7 +142,7 @@ class AudioPlaybackManager(
             // Use larger buffer to accommodate jitter buffer delay
             val bufferSize = maxOf(minBufferSize, FRAME_SIZE_SAMPLES * 2 * 10) // 10 frames
 
-            audioTrack = AudioTrack.Builder()
+            val builder = AudioTrack.Builder()
                 .setAudioAttributes(
                     AudioAttributes.Builder()
                         .setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
@@ -130,13 +158,20 @@ class AudioPlaybackManager(
                 )
                 .setBufferSizeInBytes(bufferSize)
                 .setTransferMode(AudioTrack.MODE_STREAM)
-                .build()
+
+            // CRITICAL: Use same session ID as AudioRecord for AEC to work
+            if (audioSessionId != 0) {
+                builder.setSessionId(audioSessionId)
+                Log.d(TAG, "Using shared audio session ID: $audioSessionId (enables AEC)")
+            }
+
+            audioTrack = builder.build()
 
             if (audioTrack?.state != AudioTrack.STATE_INITIALIZED) {
                 throw RuntimeException("AudioTrack failed to initialize")
             }
 
-            Log.d(TAG, "AudioTrack initialized: $SAMPLE_RATE Hz, buffer=$bufferSize bytes")
+            Log.d(TAG, "AudioTrack initialized: $SAMPLE_RATE Hz, buffer=$bufferSize bytes, sessionId=${audioTrack?.audioSessionId}")
 
         } catch (e: Exception) {
             Log.e(TAG, "Failed to initialize AudioTrack", e)
@@ -163,6 +198,7 @@ class AudioPlaybackManager(
             // Reset sequence tracking
             nextExpectedSeq = 0
             jitterBuffer.clear()
+            seqToCircuit.clear()
 
             // Launch playback loop
             playbackJob = scope.launch(Dispatchers.IO) {
@@ -179,20 +215,56 @@ class AudioPlaybackManager(
     }
 
     /**
+     * Set telemetry for quality monitoring
+     */
+    fun setTelemetry(telemetry: CallQualityTelemetry) {
+        this.telemetry = telemetry
+    }
+
+    /**
      * Add received Opus frame to jitter buffer
      * Called from network receiver (potentially from multiple circuits)
+     * @param sequenceNumber Packet sequence number
+     * @param opusFrame Decoded Opus frame bytes
+     * @param circuitIndex Which circuit this frame arrived on (for per-circuit stats)
      */
-    fun addFrame(sequenceNumber: Long, opusFrame: ByteArray) {
+    fun addFrame(sequenceNumber: Long, opusFrame: ByteArray, circuitIndex: Int = 0) {
         if (!isPlaying) {
             return
         }
 
         framesReceived++
 
+        // Track per-circuit stats
+        val stats = circuitStats.getOrPut(circuitIndex) { CircuitStats() }
+        stats.framesReceived++
+
+        // Track which circuit this sequence came from (v3 - for PLC attribution)
+        seqToCircuit[sequenceNumber] = circuitIndex
+
+        // Trim old entries (keep last 500 seqs)
+        while (seqToCircuit.size > 500) {
+            val oldestKey = seqToCircuit.keys.firstOrNull() ?: break
+            seqToCircuit.remove(oldestKey)
+        }
+
         // Check if frame is late (already played)
         if (sequenceNumber < nextExpectedSeq) {
             framesLate++
-            Log.d(TAG, "Late frame: seq=$sequenceNumber, expected=$nextExpectedSeq")
+            stats.framesLate++
+
+            // Check if this frame arrived after its playout deadline (v3 - deadline miss detection)
+            // This distinguishes between network delay vs CPU/processing delay
+            val framePlayoutTimeMs = (sequenceNumber - nextExpectedSeq) * FRAME_DURATION_MS
+            if (framePlayoutTimeMs < -REORDER_GRACE_MS) {
+                // Frame missed its deadline by more than reorder grace window
+                framesLateToBuffer++
+                Log.d(TAG, "Frame missed playout deadline: seq=$sequenceNumber, expected=$nextExpectedSeq, late by ${-framePlayoutTimeMs}ms, circuit=$circuitIndex")
+            } else {
+                Log.d(TAG, "Late frame (within grace): seq=$sequenceNumber, expected=$nextExpectedSeq, circuit=$circuitIndex")
+            }
+
+            telemetry?.reportLateFrame(circuitIndex)
             return
         }
 
@@ -202,6 +274,7 @@ class AudioPlaybackManager(
         // Adapt jitter buffer based on arrival patterns
         if (framesReceived % 100 == 0L) {
             adaptJitterBuffer()
+            telemetry?.updateJitterBuffer(jitterBufferMs)
         }
     }
 
@@ -218,7 +291,7 @@ class AudioPlaybackManager(
 
         try {
             while (isPlaying && coroutineContext.isActive) {
-                val frame = getNextFrame()
+                var frame = getNextFrame()
 
                 if (frame != null) {
                     // Case A: Perfect in-order packet
@@ -236,76 +309,66 @@ class AudioPlaybackManager(
                         Log.e(TAG, "Opus decode error, using PLC", e)
                         playPLC(audioTrack)
                         plcFrames++
+
+                        // Attribution: decode failed for a frame we had (v3)
+                        val expectedCircuit = seqToCircuit[frame.sequenceNumber] ?: 0
+                        telemetry?.reportPLCForCircuit(expectedCircuit)
                     }
 
                     nextExpectedSeq = frame.sequenceNumber + 1
 
                 } else {
-                    // Missing frame - check if next frame is available for FEC recovery
-                    val nextFrame = findFrame(nextExpectedSeq + 1)
+                    // Frame not in buffer - apply reorder grace window (v3)
+                    delay(REORDER_GRACE_MS)
+                    frame = getNextFrame()
 
-                    if (nextFrame != null) {
-                        // Case B: Exactly 1 frame missing and next frame available - try FEC
-                        fecAttempts++
-                        Log.d(TAG, "Attempting FEC recovery for seq=$nextExpectedSeq using seq=${nextFrame.sequenceNumber}")
+                    if (frame != null) {
+                        Log.d(TAG, "Frame arrived during reorder grace: seq=${frame.sequenceNumber} (expected=$nextExpectedSeq)")
 
+                        // Decode and play the reordered frame
                         try {
-                            val fecSamples = opusCodec.decodeFEC(nextFrame.opusFrame)
+                            val pcmSamples = opusCodec.decode(frame.opusFrame)
 
-                            if (fecSamples != null && fecSamples.size == FRAME_SIZE_SAMPLES) {
-                                // FEC success! Play recovered frame
-                                fecSuccess++
-                                audioTrack.write(
-                                    fecSamples,
-                                    0,
-                                    FRAME_SIZE_SAMPLES,
-                                    AudioTrack.WRITE_BLOCKING
-                                )
-                                Log.d(TAG, "✓ FEC recovered seq=$nextExpectedSeq (success rate: ${(fecSuccess*100/fecAttempts)}%)")
-                            } else {
-                                // FEC failed - fallback to PLC
-                                Log.d(TAG, "✗ FEC failed for seq=$nextExpectedSeq, using PLC")
-                                playPLC(audioTrack)
-                                plcFrames++
-                                framesLost++
-                            }
-                        } catch (e: Exception) {
-                            Log.e(TAG, "FEC decode error, using PLC", e)
-                            playPLC(audioTrack)
-                            plcFrames++
-                            framesLost++
-                        }
-
-                        nextExpectedSeq++
-
-                        // Now play the next frame (N+1) normally
-                        try {
-                            val pcmSamples = opusCodec.decode(nextFrame.opusFrame)
                             audioTrack.write(
                                 pcmSamples,
                                 0,
                                 FRAME_SIZE_SAMPLES,
                                 AudioTrack.WRITE_BLOCKING
                             )
+
                         } catch (e: Exception) {
-                            Log.e(TAG, "Opus decode error on seq=${nextFrame.sequenceNumber}, using PLC", e)
+                            Log.e(TAG, "Opus decode error on reordered frame, using PLC", e)
                             playPLC(audioTrack)
                             plcFrames++
+
+                            val expectedCircuit = seqToCircuit[frame.sequenceNumber] ?: 0
+                            telemetry?.reportPLCForCircuit(expectedCircuit)
                         }
 
-                        nextExpectedSeq++
-                        removeFrame(nextFrame.sequenceNumber) // Remove from jitter buffer
+                        nextExpectedSeq = frame.sequenceNumber + 1
 
-                        // We played 2 frames - delay for 2x frame duration
-                        delay((FRAME_DURATION_MS * 2).toLong())
-                        continue  // Skip the regular delay at bottom
                     } else {
-                        // Case C: No next frame available - use PLC
-                        framesLost++
-                        plcFrames++
-                        Log.d(TAG, "Packet loss at seq=$nextExpectedSeq, using PLC (next frame not available)")
-                        playPLC(audioTrack)
-                        nextExpectedSeq++
+                        // Still missing after reorder grace - try FEC recovery (v2)
+                        val recovered = attemptFECRecovery(audioTrack, nextExpectedSeq)
+
+                        if (!recovered) {
+                            // FEC failed after grace window - fallback to PLC
+                            framesLost++
+                            plcFrames++
+
+                            // Attribution: which circuit should have delivered this seq? (v3)
+                            val expectedCircuit = seqToCircuit[nextExpectedSeq] ?: 0
+                            telemetry?.reportPLCForCircuit(expectedCircuit)
+
+                            Log.d(TAG, "Packet loss at seq=$nextExpectedSeq (circuit=$expectedCircuit), using PLC")
+                            playPLC(audioTrack)
+                            nextExpectedSeq++
+                        } else {
+                            // FEC recovered and played frame(s)
+                            // nextExpectedSeq already advanced in attemptFECRecovery
+                            // Skip regular delay since we handled timing in attemptFECRecovery
+                            continue
+                        }
                     }
                 }
 
@@ -317,6 +380,113 @@ class AudioPlaybackManager(
             Log.e(TAG, "Playback loop error", e)
         } finally {
             Log.d(TAG, "Playback loop ended")
+        }
+    }
+
+    /**
+     * Attempt FEC recovery with grace window (v2)
+     *
+     * CRITICAL BEHAVIOR (per spec § 6.1-6.2):
+     * - If frame N is missing and frame N+1 is available:
+     *   1. Decode N using FEC data from packet N+1
+     *   2. Then decode N+1 normally
+     * - If N+1 is NOT available:
+     *   1. Wait up to FEC_GRACE_WINDOW_MS (30ms) for it to arrive
+     *   2. If it arrives → use FEC recovery
+     *   3. If timeout → return false (caller will use PLC)
+     *
+     * GUARANTEES:
+     * - Only attempts FEC for EXACTLY one-frame gaps (N missing, N+1 present)
+     * - Capped total wait time (30ms) - won't block forever on reordering
+     * - Won't attempt FEC for multi-frame loss (requires consecutive packets)
+     *
+     * @param audioTrack AudioTrack for playback
+     * @param missingSeq Sequence number of missing frame (N)
+     * @return True if FEC recovered and played frames, false if should use PLC
+     */
+    private suspend fun attemptFECRecovery(audioTrack: AudioTrack, missingSeq: Long): Boolean {
+        // Check if next frame (N+1) is immediately available
+        var nextFrame = findFrame(missingSeq + 1)
+
+        if (nextFrame == null) {
+            // Next frame not available - implement grace window
+            // Wait up to FEC_GRACE_WINDOW_MS, checking FEC_MAX_RETRIES times
+            val delayPerRetry = FEC_GRACE_WINDOW_MS / FEC_MAX_RETRIES
+
+            for (retry in 1..FEC_MAX_RETRIES) {
+                delay(delayPerRetry)
+                nextFrame = findFrame(missingSeq + 1)
+                if (nextFrame != null) {
+                    Log.d(TAG, "Next frame arrived during grace window (retry $retry/$FEC_MAX_RETRIES)")
+                    break
+                }
+            }
+        }
+
+        if (nextFrame == null) {
+            // Next frame still not available after grace window - FEC not possible
+            Log.d(TAG, "Next frame not available after ${FEC_GRACE_WINDOW_MS}ms grace window")
+            return false
+        }
+
+        // Next frame available - attempt FEC recovery
+        fecAttempts++
+        Log.d(TAG, "Attempting FEC recovery for seq=$missingSeq using seq=${nextFrame.sequenceNumber}")
+
+        try {
+            val fecSamples = opusCodec.decodeFEC(nextFrame.opusFrame)
+
+            if (fecSamples != null && fecSamples.size == FRAME_SIZE_SAMPLES) {
+                // FEC success! Play recovered frame
+                fecSuccess++
+                telemetry?.reportFECAttempt(success = true)
+                audioTrack.write(
+                    fecSamples,
+                    0,
+                    FRAME_SIZE_SAMPLES,
+                    AudioTrack.WRITE_BLOCKING
+                )
+                Log.d(TAG, "✓ FEC recovered seq=$missingSeq (success rate: ${(fecSuccess*100/fecAttempts)}%)")
+
+                nextExpectedSeq = missingSeq + 1
+
+                // Now play the next frame (N+1) normally
+                try {
+                    val pcmSamples = opusCodec.decode(nextFrame.opusFrame)
+                    audioTrack.write(
+                        pcmSamples,
+                        0,
+                        FRAME_SIZE_SAMPLES,
+                        AudioTrack.WRITE_BLOCKING
+                    )
+                } catch (e: Exception) {
+                    Log.e(TAG, "Opus decode error on seq=${nextFrame.sequenceNumber}, using PLC", e)
+                    playPLC(audioTrack)
+                    plcFrames++
+
+                    // Attribution: decode failed for frame N+1 during FEC recovery (v3)
+                    val expectedCircuit = seqToCircuit[nextFrame.sequenceNumber] ?: 0
+                    telemetry?.reportPLCForCircuit(expectedCircuit)
+                }
+
+                nextExpectedSeq++
+                removeFrame(nextFrame.sequenceNumber) // Remove from jitter buffer
+
+                // We played 2 frames - delay for 2x frame duration
+                delay((FRAME_DURATION_MS * 2).toLong())
+                return true
+
+            } else {
+                // FEC decode returned null or wrong size - not enough redundancy in packet
+                telemetry?.reportFECAttempt(success = false)
+                Log.d(TAG, "✗ FEC failed for seq=$missingSeq (no redundancy data)")
+                return false
+            }
+
+        } catch (e: Exception) {
+            telemetry?.reportFECAttempt(success = false)
+            Log.e(TAG, "FEC decode error for seq=$missingSeq", e)
+            return false
         }
     }
 
@@ -438,6 +608,14 @@ class AudioPlaybackManager(
             audioTrack?.stop()
             audioTrack?.flush()
             jitterBuffer.clear()
+            seqToCircuit.clear()
+
+            // Log final stats (v3)
+            if (framesReceived > 0) {
+                val lateToBufferRate = (framesLateToBuffer.toFloat() / framesReceived * 100)
+                Log.d(TAG, "Final stats: framesLateToBuffer=$framesLateToBuffer (${String.format("%.1f", lateToBufferRate)}%)")
+            }
+
             Log.d(TAG, "Audio playback stopped")
         } catch (e: Exception) {
             Log.e(TAG, "Error stopping AudioTrack", e)
@@ -445,12 +623,35 @@ class AudioPlaybackManager(
     }
 
     /**
-     * Enable/disable speaker
+     * Enable/disable speakerphone
+     *
+     * Routes audio output to either:
+     * - Earpiece (small speaker at top for holding phone to ear) when OFF
+     * - Loudspeaker (external loud speaker) when ON
      */
     fun setSpeakerEnabled(enabled: Boolean) {
         isSpeakerEnabled = enabled
-        audioManager?.isSpeakerphoneOn = enabled
-        Log.d(TAG, "Speaker enabled: $enabled (AudioManager mode: ${audioManager?.mode})")
+
+        audioManager?.let { am ->
+            try {
+                // CRITICAL: For MODE_IN_COMMUNICATION, we must:
+                // 1. Set speakerphone mode (routes audio to loudspeaker vs earpiece)
+                // 2. DO NOT restart AudioTrack (causes audio gaps and issues)
+
+                @Suppress("DEPRECATION")
+                am.isSpeakerphoneOn = enabled
+
+                if (enabled) {
+                    Log.i(TAG, "✓ Speaker ON - audio routed to LOUDSPEAKER")
+                } else {
+                    Log.i(TAG, "✓ Speaker OFF - audio routed to EARPIECE")
+                }
+
+                Log.d(TAG, "AudioManager state: mode=${am.mode}, speakerphone=${am.isSpeakerphoneOn}")
+            } catch (e: Exception) {
+                Log.e(TAG, "Error setting speaker mode", e)
+            }
+        }
     }
 
     /**
@@ -474,6 +675,12 @@ class AudioPlaybackManager(
             0f
         }
 
+        val lateToBufferRate = if (framesReceived > 0) {
+            (framesLateToBuffer.toFloat() / framesReceived * 100)
+        } else {
+            0f
+        }
+
         return CallQualityStats(
             jitterBufferMs = jitterBufferMs,
             framesReceived = framesReceived,
@@ -482,7 +689,9 @@ class AudioPlaybackManager(
             fecAttempts = fecAttempts,
             fecSuccess = fecSuccess,
             fecSuccessRate = fecSuccessRate,
-            plcFrames = plcFrames
+            plcFrames = plcFrames,
+            framesLateToBuffer = framesLateToBuffer,
+            lateToBufferRate = lateToBufferRate
         )
     }
 
@@ -510,6 +719,27 @@ class AudioPlaybackManager(
     }
 
     /**
+     * Get per-circuit late frame percentages for scheduler feedback
+     * Returns map of circuit index → late frame percentage
+     */
+    fun getPerCircuitLatePercent(): Map<Int, Double> {
+        return circuitStats.mapValues { (_, stats) ->
+            if (stats.framesReceived > 0) {
+                (stats.framesLate.toDouble() / stats.framesReceived * 100.0)
+            } else {
+                0.0
+            }
+        }
+    }
+
+    /**
+     * Reset per-circuit statistics (call periodically after feedback sent)
+     */
+    fun resetCircuitStats() {
+        circuitStats.clear()
+    }
+
+    /**
      * Call quality statistics
      */
     data class CallQualityStats(
@@ -520,6 +750,8 @@ class AudioPlaybackManager(
         val fecAttempts: Long,
         val fecSuccess: Long,
         val fecSuccessRate: Float,
-        val plcFrames: Long
+        val plcFrames: Long,
+        val framesLateToBuffer: Long = 0,      // v3: Frames that missed playout deadline
+        val lateToBufferRate: Float = 0f       // v3: Percentage of deadline misses
     )
 }

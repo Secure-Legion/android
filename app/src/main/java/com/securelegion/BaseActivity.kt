@@ -21,10 +21,15 @@ abstract class BaseActivity : AppCompatActivity() {
         private const val PREF_LAST_PAUSE_TIME = "last_pause_timestamp"
         private const val PREFS_NAME = "app_lifecycle"
         private const val TAG = "BaseActivity"
+
+        // Shared flag to track if we're navigating within the app
+        @Volatile
+        private var isNavigatingWithinApp = false
     }
 
     private val autoLockHandler = Handler(Looper.getMainLooper())
     private var autoLockRunnable: Runnable? = null
+    private var isLaunchingActivity = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -38,6 +43,10 @@ abstract class BaseActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
+
+        // Clear the within-app navigation flag
+        isNavigatingWithinApp = false
+
         checkAutoLock()
         startAutoLockTimer()
         updateFriendRequestBadge()
@@ -46,12 +55,33 @@ abstract class BaseActivity : AppCompatActivity() {
     override fun onPause() {
         super.onPause()
         cancelAutoLockTimer()
-        recordPauseTime()
+
+        // Only record pause time if we're actually going to background
+        // Not when just switching activities within the app
+        if (!isLaunchingActivity && !isNavigatingWithinApp) {
+            recordPauseTime()
+        } else {
+            Log.d(TAG, "Skipping pause time recording - navigating within app")
+        }
+
+        // Reset flag
+        isLaunchingActivity = false
     }
 
     override fun onDestroy() {
         super.onDestroy()
         cancelAutoLockTimer()
+    }
+
+    /**
+     * Reset auto-lock timer on any user interaction (touch, scroll, type, etc.)
+     * This ensures the timer only expires after X minutes of INACTIVITY
+     */
+    override fun onUserInteraction() {
+        super.onUserInteraction()
+
+        // Reset the timer whenever user interacts with the app
+        startAutoLockTimer()
     }
 
     /**
@@ -80,16 +110,22 @@ abstract class BaseActivity : AppCompatActivity() {
         }
 
         // Cancel any existing timer
+        val wasTimerRunning = autoLockRunnable != null
         cancelAutoLockTimer()
 
         // Create and schedule new timer
         autoLockRunnable = Runnable {
-            Log.i(TAG, "Auto-lock timer expired - locking app")
+            Log.i(TAG, "Auto-lock timer expired after inactivity - locking app")
             lockApp()
         }
 
         autoLockHandler.postDelayed(autoLockRunnable!!, autoLockTimeout)
-        Log.d(TAG, "Auto-lock timer started: ${autoLockTimeout}ms")
+
+        if (wasTimerRunning) {
+            Log.d(TAG, "Auto-lock timer RESET due to user activity: ${autoLockTimeout}ms")
+        } else {
+            Log.d(TAG, "Auto-lock timer started: ${autoLockTimeout}ms")
+        }
     }
 
     /**
@@ -180,5 +216,33 @@ abstract class BaseActivity : AppCompatActivity() {
     private fun updateFriendRequestBadge() {
         val rootView = findViewById<View>(android.R.id.content)
         BadgeUtils.updateFriendRequestBadge(this, rootView)
+    }
+
+    /**
+     * Override startActivity to mark that we're launching an activity within the app
+     * This prevents auto-lock from triggering when returning from payment/photo activities
+     */
+    override fun startActivity(intent: Intent?) {
+        intent?.let {
+            // Check if this is an intent to another activity in our app
+            if (it.component?.packageName == packageName) {
+                isLaunchingActivity = true
+                isNavigatingWithinApp = true
+                Log.d(TAG, "Launching activity within app - pause time will not be recorded")
+            }
+        }
+        super.startActivity(intent)
+    }
+
+    override fun startActivity(intent: Intent?, options: Bundle?) {
+        intent?.let {
+            // Check if this is an intent to another activity in our app
+            if (it.component?.packageName == packageName) {
+                isLaunchingActivity = true
+                isNavigatingWithinApp = true
+                Log.d(TAG, "Launching activity within app - pause time will not be recorded")
+            }
+        }
+        super.startActivity(intent, options)
     }
 }

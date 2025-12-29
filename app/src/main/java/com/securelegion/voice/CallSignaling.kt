@@ -241,13 +241,19 @@ object CallSignaling {
     }
 
     /**
-     * Send call rejection
+     * Send call rejection via HTTP POST to voice .onion
+     * @param recipientX25519PublicKey Recipient's X25519 public key (for message encryption)
+     * @param recipientOnion Recipient's VOICE .onion address (for HTTP POST delivery)
+     * @param callId Call ID to reject
+     * @param reason Rejection reason
+     * @param ourX25519PublicKey Our X25519 public key (for wire message format)
      */
-    fun sendCallReject(
+    suspend fun sendCallReject(
         recipientX25519PublicKey: ByteArray,
         recipientOnion: String,
         callId: String,
-        reason: String = "User declined"
+        reason: String = "User declined",
+        ourX25519PublicKey: ByteArray
     ): Boolean {
         try {
             val rejectJson = JSONObject().apply {
@@ -260,14 +266,25 @@ object CallSignaling {
             val message = rejectJson.toString()
             val encryptedMessage = RustBridge.encryptMessage(message, recipientX25519PublicKey)
 
-            val success = RustBridge.sendMessageBlob(
-                recipientOnion,
-                encryptedMessage,
-                MSG_TYPE_CALL_SIGNALING
-            )
+            Log.i(TAG, "Sending CALL_REJECT via HTTP POST to voice .onion")
+
+            val success = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                try {
+                    RustBridge.sendHttpToVoiceOnion(
+                        recipientOnion,
+                        ourX25519PublicKey,
+                        encryptedMessage
+                    )
+                } catch (e: Exception) {
+                    Log.e(TAG, "Exception in sendHttpToVoiceOnion for CALL_REJECT", e)
+                    false
+                }
+            }
 
             if (success) {
-                Log.i(TAG, "Call reject sent: $callId")
+                Log.i(TAG, "✓ Call reject sent via HTTP POST: $callId")
+            } else {
+                Log.e(TAG, "✗ Failed to send call reject via HTTP POST: $callId")
             }
 
             return success
@@ -279,13 +296,19 @@ object CallSignaling {
     }
 
     /**
-     * Send call end notification
+     * Send call end notification via HTTP POST to voice .onion
+     * @param recipientX25519PublicKey Recipient's X25519 public key (for message encryption)
+     * @param recipientOnion Recipient's VOICE .onion address (for HTTP POST delivery)
+     * @param callId Call ID to end
+     * @param reason End reason
+     * @param ourX25519PublicKey Our X25519 public key (for wire message format)
      */
-    fun sendCallEnd(
+    suspend fun sendCallEnd(
         recipientX25519PublicKey: ByteArray,
         recipientOnion: String,
         callId: String,
-        reason: String = "Call ended"
+        reason: String = "Call ended",
+        ourX25519PublicKey: ByteArray
     ): Boolean {
         try {
             val endJson = JSONObject().apply {
@@ -298,14 +321,25 @@ object CallSignaling {
             val message = endJson.toString()
             val encryptedMessage = RustBridge.encryptMessage(message, recipientX25519PublicKey)
 
-            val success = RustBridge.sendMessageBlob(
-                recipientOnion,
-                encryptedMessage,
-                MSG_TYPE_CALL_SIGNALING
-            )
+            Log.i(TAG, "Sending CALL_END via HTTP POST to voice .onion")
+
+            val success = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                try {
+                    RustBridge.sendHttpToVoiceOnion(
+                        recipientOnion,
+                        ourX25519PublicKey,
+                        encryptedMessage
+                    )
+                } catch (e: Exception) {
+                    Log.e(TAG, "Exception in sendHttpToVoiceOnion for CALL_END", e)
+                    false
+                }
+            }
 
             if (success) {
-                Log.i(TAG, "Call end sent: $callId")
+                Log.i(TAG, "✓ Call end sent via HTTP POST: $callId")
+            } else {
+                Log.e(TAG, "✗ Failed to send call end via HTTP POST: $callId")
             }
 
             return success
@@ -317,12 +351,17 @@ object CallSignaling {
     }
 
     /**
-     * Send "busy" response (already on another call)
+     * Send "busy" response (already on another call) via HTTP POST to voice .onion
+     * @param recipientX25519PublicKey Recipient's X25519 public key (for message encryption)
+     * @param recipientOnion Recipient's VOICE .onion address (for HTTP POST delivery)
+     * @param callId Call ID to mark as busy
+     * @param ourX25519PublicKey Our X25519 public key (for wire message format)
      */
-    fun sendCallBusy(
+    suspend fun sendCallBusy(
         recipientX25519PublicKey: ByteArray,
         recipientOnion: String,
-        callId: String
+        callId: String,
+        ourX25519PublicKey: ByteArray
     ): Boolean {
         try {
             val busyJson = JSONObject().apply {
@@ -334,14 +373,25 @@ object CallSignaling {
             val message = busyJson.toString()
             val encryptedMessage = RustBridge.encryptMessage(message, recipientX25519PublicKey)
 
-            val success = RustBridge.sendMessageBlob(
-                recipientOnion,
-                encryptedMessage,
-                MSG_TYPE_CALL_SIGNALING
-            )
+            Log.i(TAG, "Sending CALL_BUSY via HTTP POST to voice .onion")
+
+            val success = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                try {
+                    RustBridge.sendHttpToVoiceOnion(
+                        recipientOnion,
+                        ourX25519PublicKey,
+                        encryptedMessage
+                    )
+                } catch (e: Exception) {
+                    Log.e(TAG, "Exception in sendHttpToVoiceOnion for CALL_BUSY", e)
+                    false
+                }
+            }
 
             if (success) {
-                Log.i(TAG, "Call busy sent: $callId")
+                Log.i(TAG, "✓ Call busy sent via HTTP POST: $callId")
+            } else {
+                Log.e(TAG, "✗ Failed to send call busy via HTTP POST: $callId")
             }
 
             return success

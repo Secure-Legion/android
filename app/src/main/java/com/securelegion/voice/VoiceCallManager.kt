@@ -70,6 +70,7 @@ class VoiceCallManager private constructor(private val context: Context) : RustB
     var onIncomingCall: ((callId: String, contactOnion: String, contactName: String?) -> Unit)? = null
     var onCallStateChanged: ((VoiceCallSession.Companion.CallState) -> Unit)? = null
     var onCallEnded: ((reason: String) -> Unit)? = null
+    var onAudioAmplitude: ((amplitude: Float) -> Unit)? = null  // Audio amplitude for waveform visualization
 
     /**
      * Call state for idempotency
@@ -520,14 +521,50 @@ class VoiceCallManager private constructor(private val context: Context) : RustB
      * VoicePacketCallback implementation
      * Routes incoming voice packets from Rust to the active call session
      */
-    override fun onVoicePacket(callId: String, sequence: Int, timestamp: Long, audioData: ByteArray) {
+    override fun onVoicePacket(callId: String, sequence: Int, timestamp: Long, circuitIndex: Byte, ptype: Byte, audioData: ByteArray) {
         // Route packet to the active call session
         val session = activeCall
         if (session != null) {
             // Forward packet to the active session's callback
-            session.onVoicePacket(callId, sequence, timestamp, audioData)
+            session.onVoicePacket(callId, sequence, timestamp, circuitIndex, ptype, audioData)
+
+            // Calculate audio amplitude for waveform visualization (only for audio packets, not FEC)
+            if (ptype.toInt() == 0 && audioData.isNotEmpty()) {
+                val amplitude = calculateAudioAmplitude(audioData)
+                onAudioAmplitude?.invoke(amplitude)
+            }
         } else {
             Log.w(TAG, "Received voice packet for callId=$callId but no active call session")
         }
+    }
+
+    /**
+     * Calculate audio amplitude from PCM audio data
+     * Returns normalized amplitude (0.0 to 1.0)
+     */
+    private fun calculateAudioAmplitude(audioData: ByteArray): Float {
+        if (audioData.isEmpty()) return 0f
+
+        // Calculate RMS (Root Mean Square) of audio samples
+        // Audio is 16-bit PCM, so 2 bytes per sample
+        var sum = 0L
+        var sampleCount = 0
+
+        var i = 0
+        while (i < audioData.size - 1) {
+            // Combine two bytes into a 16-bit signed sample (little-endian)
+            val sample = ((audioData[i + 1].toInt() shl 8) or (audioData[i].toInt() and 0xFF)).toShort()
+            sum += (sample * sample).toLong()
+            sampleCount++
+            i += 2
+        }
+
+        if (sampleCount == 0) return 0f
+
+        // Calculate RMS
+        val rms = kotlin.math.sqrt((sum.toDouble() / sampleCount))
+
+        // Normalize to 0.0-1.0 range (assuming 16-bit PCM max value is 32767)
+        return (rms / 32767.0).toFloat().coerceIn(0f, 1f)
     }
 }

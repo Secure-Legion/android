@@ -30,6 +30,12 @@ class OpusCodec {
         // PCM format
         const val PCM_BIT_DEPTH = 16           // 16-bit signed PCM
         const val PCM_FRAME_SIZE_BYTES = FRAME_SIZE_SAMPLES * CHANNELS * (PCM_BIT_DEPTH / 8) // 1920 bytes
+
+        // FIX #3: FEC (Forward Error Correction) configuration for Tor voice calls
+        // These values improve recovery from burst packet loss common on Tor
+        const val ENABLE_FEC = true            // Enable in-band FEC
+        const val PACKET_LOSS_PERC = 20        // Expected packet loss % (hint to encoder: 20-25%)
+        // Note: Consider FRAME_SIZE_MS = 10 for shorter frames if CPU allows (better burst recovery)
     }
 
     private var encoderHandle: Long = 0

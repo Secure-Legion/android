@@ -80,6 +80,13 @@ data class Contact(
     val contactPin: String? = null,
 
     /**
+     * NEW (v2.1) - Profile picture as Base64-encoded JPEG
+     * Max 256KB, 512x512px, EXIF stripped for privacy
+     * Synced from ContactCard via IPFS
+     */
+    val profilePictureBase64: String? = null,
+
+    /**
      * Unix timestamp when contact was added (milliseconds)
      */
     val addedTimestamp: Long,

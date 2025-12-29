@@ -24,8 +24,11 @@ class WaveformView @JvmOverloads constructor(
     }
 
     private val barCount = 60  // Number of bars around the circle
-    private val barHeights = FloatArray(barCount) { 0.2f }  // Height of each bar (0.0 to 1.0)
+    private val barHeights = FloatArray(barCount) { 0.0f }  // Height of each bar (0.0 to 1.0)
     private var animationPhase = 0f
+    private var currentAmplitude = 0f  // Current audio amplitude
+    private var targetAmplitude = 0f   // Target amplitude to animate towards
+    private var lastAmplitudeUpdate = 0L  // Last time amplitude was updated
 
     // Colors for the waveform (gradient from blue to green)
     private val barColors = intArrayOf(
@@ -37,17 +40,35 @@ class WaveformView @JvmOverloads constructor(
 
     private val animationRunnable = object : Runnable {
         override fun run() {
-            // Update animation phase
-            animationPhase += 0.1f
-            if (animationPhase > 2 * Math.PI) {
-                animationPhase -= (2 * Math.PI).toFloat()
+            val now = System.currentTimeMillis()
+
+            // Auto-decay amplitude if no updates received for 200ms (silence)
+            if (now - lastAmplitudeUpdate > 200) {
+                targetAmplitude = 0f
             }
 
-            // Update bar heights with wave pattern
+            // Smoothly transition current amplitude towards target
+            val smoothing = 0.3f
+            currentAmplitude += (targetAmplitude - currentAmplitude) * smoothing
+
+            // Only animate phase when there's audio activity
+            if (currentAmplitude > 0.01f) {
+                animationPhase += 0.15f * currentAmplitude  // Animation speed based on amplitude
+                if (animationPhase > 2 * Math.PI) {
+                    animationPhase -= (2 * Math.PI).toFloat()
+                }
+            }
+
+            // Update bar heights with wave pattern scaled by amplitude
             for (i in barHeights.indices) {
-                val angle = (i.toFloat() / barCount) * 2 * Math.PI
-                val wave = sin(angle + animationPhase).toFloat()
-                barHeights[i] = 0.3f + (wave * 0.4f)  // Range: 0.3 to 0.7
+                if (currentAmplitude > 0.01f) {
+                    val angle = (i.toFloat() / barCount) * 2 * Math.PI
+                    val wave = sin(angle + animationPhase).toFloat()
+                    barHeights[i] = (0.2f + (wave * 0.5f)) * currentAmplitude
+                } else {
+                    // Decay to zero when silent
+                    barHeights[i] *= 0.8f
+                }
             }
 
             invalidate()
@@ -56,21 +77,17 @@ class WaveformView @JvmOverloads constructor(
     }
 
     init {
-        // Start animation
+        // Start animation loop
         post(animationRunnable)
     }
 
     /**
      * Update waveform with audio amplitude (0.0 to 1.0)
+     * Call this periodically with audio levels to make waveform reactive
      */
     fun updateAmplitude(amplitude: Float) {
-        // Scale all bars based on audio amplitude
-        val scaledAmplitude = amplitude.coerceIn(0f, 1f)
-        for (i in barHeights.indices) {
-            val angle = (i.toFloat() / barCount) * 2 * Math.PI
-            val wave = sin(angle + animationPhase).toFloat()
-            barHeights[i] = (0.2f + (wave * 0.3f)) * (0.5f + scaledAmplitude * 0.5f)
-        }
+        targetAmplitude = amplitude.coerceIn(0f, 1f)
+        lastAmplitudeUpdate = System.currentTimeMillis()
     }
 
     override fun onDraw(canvas: Canvas) {
