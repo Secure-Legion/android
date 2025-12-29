@@ -37,16 +37,18 @@ class AudioPlaybackManager(
         private const val AUDIO_FORMAT = AudioFormat.ENCODING_PCM_16BIT
         private const val FRAME_SIZE_SAMPLES = OpusCodec.FRAME_SIZE_SAMPLES
 
-        // Jitter buffer configuration
-        private const val MIN_BUFFER_MS = 200        // Minimum 200ms delay
-        private const val MAX_BUFFER_MS = 500        // Maximum 500ms delay
-        private const val INITIAL_BUFFER_MS = 300    // Start with 300ms
+        // Jitter buffer configuration (optimized for Tor network conditions)
+        // Tor circuits typically have 250-600ms latency with occasional spikes
+        // Larger buffers prevent dropouts at the cost of ~100-200ms additional latency
+        private const val MIN_BUFFER_MS = 300        // Minimum 300ms delay (was 200ms)
+        private const val MAX_BUFFER_MS = 800        // Maximum 800ms delay (was 500ms)
+        private const val INITIAL_BUFFER_MS = 400    // Start with 400ms (was 300ms)
         private const val FRAME_DURATION_MS = 20     // 20ms per frame
         private const val MAX_OUT_OF_ORDER = 10      // Max frames to buffer before considering lost
 
-        // Adaptive buffer tuning
-        private const val LATE_FRAME_THRESHOLD = 0.05f  // If >5% frames late, increase buffer
-        private const val EARLY_FRAME_THRESHOLD = 0.90f // If >90% frames early, decrease buffer
+        // Adaptive buffer tuning (more tolerant for Tor jitter)
+        private const val LATE_FRAME_THRESHOLD = 0.10f  // If >10% frames late, increase buffer (was 5%)
+        private const val EARLY_FRAME_THRESHOLD = 0.95f // If >95% frames early, decrease buffer (was 90%)
     }
 
     private var audioTrack: AudioTrack? = null
@@ -70,6 +72,11 @@ class AudioPlaybackManager(
     private var framesReceived: Long = 0
     private var framesLate: Long = 0
     private var framesLost: Long = 0
+
+    // FEC statistics
+    private var fecAttempts: Long = 0
+    private var fecSuccess: Long = 0
+    private var plcFrames: Long = 0
 
     /**
      * Buffered frame with timestamp for jitter adaptation
@@ -214,39 +221,95 @@ class AudioPlaybackManager(
                 val frame = getNextFrame()
 
                 if (frame != null) {
-                    // Decode Opus to PCM
+                    // Case A: Perfect in-order packet
                     try {
                         val pcmSamples = opusCodec.decode(frame.opusFrame)
 
-                        // Write PCM to speaker
-                        val samplesWritten = audioTrack.write(
+                        audioTrack.write(
                             pcmSamples,
                             0,
                             FRAME_SIZE_SAMPLES,
                             AudioTrack.WRITE_BLOCKING
                         )
 
-                        if (samplesWritten < 0) {
-                            Log.e(TAG, "AudioTrack write error: $samplesWritten")
-                        }
-
                     } catch (e: Exception) {
                         Log.e(TAG, "Opus decode error, using PLC", e)
                         playPLC(audioTrack)
+                        plcFrames++
                     }
 
                     nextExpectedSeq = frame.sequenceNumber + 1
 
                 } else {
-                    // No frame available - packet lost, use PLC
-                    framesLost++
-                    Log.d(TAG, "Packet loss at seq=$nextExpectedSeq, using PLC")
-                    playPLC(audioTrack)
-                    nextExpectedSeq++
+                    // Missing frame - check if next frame is available for FEC recovery
+                    val nextFrame = findFrame(nextExpectedSeq + 1)
+
+                    if (nextFrame != null) {
+                        // Case B: Exactly 1 frame missing and next frame available - try FEC
+                        fecAttempts++
+                        Log.d(TAG, "Attempting FEC recovery for seq=$nextExpectedSeq using seq=${nextFrame.sequenceNumber}")
+
+                        try {
+                            val fecSamples = opusCodec.decodeFEC(nextFrame.opusFrame)
+
+                            if (fecSamples != null && fecSamples.size == FRAME_SIZE_SAMPLES) {
+                                // FEC success! Play recovered frame
+                                fecSuccess++
+                                audioTrack.write(
+                                    fecSamples,
+                                    0,
+                                    FRAME_SIZE_SAMPLES,
+                                    AudioTrack.WRITE_BLOCKING
+                                )
+                                Log.d(TAG, "✓ FEC recovered seq=$nextExpectedSeq (success rate: ${(fecSuccess*100/fecAttempts)}%)")
+                            } else {
+                                // FEC failed - fallback to PLC
+                                Log.d(TAG, "✗ FEC failed for seq=$nextExpectedSeq, using PLC")
+                                playPLC(audioTrack)
+                                plcFrames++
+                                framesLost++
+                            }
+                        } catch (e: Exception) {
+                            Log.e(TAG, "FEC decode error, using PLC", e)
+                            playPLC(audioTrack)
+                            plcFrames++
+                            framesLost++
+                        }
+
+                        nextExpectedSeq++
+
+                        // Now play the next frame (N+1) normally
+                        try {
+                            val pcmSamples = opusCodec.decode(nextFrame.opusFrame)
+                            audioTrack.write(
+                                pcmSamples,
+                                0,
+                                FRAME_SIZE_SAMPLES,
+                                AudioTrack.WRITE_BLOCKING
+                            )
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Opus decode error on seq=${nextFrame.sequenceNumber}, using PLC", e)
+                            playPLC(audioTrack)
+                            plcFrames++
+                        }
+
+                        nextExpectedSeq++
+                        removeFrame(nextFrame.sequenceNumber) // Remove from jitter buffer
+
+                        // We played 2 frames - delay for 2x frame duration
+                        delay((FRAME_DURATION_MS * 2).toLong())
+                        continue  // Skip the regular delay at bottom
+                    } else {
+                        // Case C: No next frame available - use PLC
+                        framesLost++
+                        plcFrames++
+                        Log.d(TAG, "Packet loss at seq=$nextExpectedSeq, using PLC (next frame not available)")
+                        playPLC(audioTrack)
+                        nextExpectedSeq++
+                    }
                 }
 
                 // Frame duration is 20ms, sleep to maintain real-time playback
-                // (AudioTrack blocks automatically, but this ensures timing)
                 delay(FRAME_DURATION_MS.toLong())
             }
 
@@ -277,6 +340,33 @@ class AudioPlaybackManager(
 
         // Frame not in buffer yet
         return null
+    }
+
+    /**
+     * Find a specific frame in jitter buffer without removing it
+     * Used for FEC: check if next frame is available before attempting recovery
+     */
+    private fun findFrame(sequenceNumber: Long): BufferedFrame? {
+        jitterBuffer.forEach { frame ->
+            if (frame.sequenceNumber == sequenceNumber) {
+                return frame
+            }
+        }
+        return null
+    }
+
+    /**
+     * Remove a specific frame from jitter buffer
+     * Used after FEC: remove the next frame after we've decoded it
+     */
+    private fun removeFrame(sequenceNumber: Long) {
+        val iterator = jitterBuffer.iterator()
+        while (iterator.hasNext()) {
+            if (iterator.next().sequenceNumber == sequenceNumber) {
+                iterator.remove()
+                return
+            }
+        }
     }
 
     /**
@@ -312,14 +402,14 @@ class AudioPlaybackManager(
         val lateRate = framesLate.toFloat() / framesReceived
 
         if (lateRate > LATE_FRAME_THRESHOLD) {
-            // Too many late frames, increase buffer
-            jitterBufferMs = (jitterBufferMs + 50).coerceIn(MIN_BUFFER_MS, MAX_BUFFER_MS)
-            Log.d(TAG, "Increased jitter buffer to ${jitterBufferMs}ms (late rate: $lateRate)")
+            // Too many late frames, increase buffer (bigger steps for Tor)
+            jitterBufferMs = (jitterBufferMs + 100).coerceIn(MIN_BUFFER_MS, MAX_BUFFER_MS)
+            Log.d(TAG, "Increased jitter buffer to ${jitterBufferMs}ms (late rate: ${String.format("%.1f", lateRate * 100)}%)")
 
         } else if (lateRate < EARLY_FRAME_THRESHOLD * 0.1f && jitterBufferMs > MIN_BUFFER_MS) {
-            // Very few late frames, decrease buffer
-            jitterBufferMs = max(MIN_BUFFER_MS, jitterBufferMs - 25)
-            Log.d(TAG, "Decreased jitter buffer to ${jitterBufferMs}ms (late rate: $lateRate)")
+            // Very few late frames, decrease buffer (slower steps to avoid oscillation)
+            jitterBufferMs = max(MIN_BUFFER_MS, jitterBufferMs - 50)
+            Log.d(TAG, "Decreased jitter buffer to ${jitterBufferMs}ms (late rate: ${String.format("%.1f", lateRate * 100)}%)")
         }
 
         // Reset stats periodically
@@ -378,11 +468,21 @@ class AudioPlaybackManager(
             0f
         }
 
+        val fecSuccessRate = if (fecAttempts > 0) {
+            (fecSuccess.toFloat() / fecAttempts * 100)
+        } else {
+            0f
+        }
+
         return CallQualityStats(
             jitterBufferMs = jitterBufferMs,
             framesReceived = framesReceived,
             framesLost = framesLost,
-            packetLossRate = lossRate
+            packetLossRate = lossRate,
+            fecAttempts = fecAttempts,
+            fecSuccess = fecSuccess,
+            fecSuccessRate = fecSuccessRate,
+            plcFrames = plcFrames
         )
     }
 
@@ -416,6 +516,10 @@ class AudioPlaybackManager(
         val jitterBufferMs: Int,
         val framesReceived: Long,
         val framesLost: Long,
-        val packetLossRate: Float
+        val packetLossRate: Float,
+        val fecAttempts: Long,
+        val fecSuccess: Long,
+        val fecSuccessRate: Float,
+        val plcFrames: Long
     )
 }

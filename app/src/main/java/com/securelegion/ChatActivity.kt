@@ -1924,7 +1924,7 @@ class ChatActivity : BaseActivity() {
                     return@launch
                 }
 
-                if (contact.voiceOnion == null) {
+                if (contact.voiceOnion.isNullOrEmpty()) {
                     ThemedToast.show(this@ChatActivity, "Contact has no voice address")
                     isInitiatingCall = false
                     return@launch
@@ -1956,15 +1956,19 @@ class ChatActivity : BaseActivity() {
                 val torManager = com.securelegion.crypto.TorManager.getInstance(this@ChatActivity)
                 val myVoiceOnion = torManager.getVoiceOnionAddress() ?: ""
 
-                // Send CALL_OFFER (first attempt)
-                Log.i(TAG, "CALL_OFFER_SEND attempt=1 call_id=$callId")
+                // Get our X25519 public key for HTTP wire format (reuse existing keyManager from earlier)
+                val ourX25519PublicKey = keyManager.getEncryptionPublicKey()
+
+                // Send CALL_OFFER (first attempt) to voice onion via HTTP POST
+                Log.i(TAG, "CALL_OFFER_SEND attempt=1 call_id=$callId to voice onion via HTTP POST")
                 val success = withContext(Dispatchers.IO) {
                     CallSignaling.sendCallOffer(
                         recipientX25519PublicKey = contact.x25519PublicKeyBytes,
-                        recipientOnion = contact.messagingOnion!!,
+                        recipientOnion = contact.voiceOnion!!,
                         callId = callId,
                         ephemeralPublicKey = ephemeralKeypair.publicKey.asBytes,
                         voiceOnion = myVoiceOnion,
+                        ourX25519PublicKey = ourX25519PublicKey,
                         numCircuits = 1
                     )
                 }
@@ -2005,15 +2009,16 @@ class ChatActivity : BaseActivity() {
                         }
 
                         offerAttemptNum++
-                        Log.i(TAG, "CALL_OFFER_SEND attempt=$offerAttemptNum call_id=$callId (retry)")
+                        Log.i(TAG, "CALL_OFFER_SEND attempt=$offerAttemptNum call_id=$callId (retry to voice onion via HTTP POST)")
 
                         withContext(Dispatchers.IO) {
                             CallSignaling.sendCallOffer(
                                 recipientX25519PublicKey = contact.x25519PublicKeyBytes,
-                                recipientOnion = contact.messagingOnion!!,
+                                recipientOnion = contact.voiceOnion!!,
                                 callId = callId,
                                 ephemeralPublicKey = ephemeralKeypair.publicKey.asBytes,
                                 voiceOnion = myVoiceOnion,
+                                ourX25519PublicKey = ourX25519PublicKey,
                                 numCircuits = 1
                             )
                         }
@@ -2022,7 +2027,7 @@ class ChatActivity : BaseActivity() {
 
                 callManager.registerPendingOutgoingCall(
                     callId = callId,
-                    contactOnion = contact.messagingOnion!!,
+                    contactOnion = contact.voiceOnion!!,
                     contactEd25519PublicKey = contact.ed25519PublicKeyBytes,
                     contactName = contactName,
                     ourEphemeralPublicKey = ephemeralKeypair.publicKey.asBytes,

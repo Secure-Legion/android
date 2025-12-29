@@ -483,15 +483,10 @@ class TorService : Service() {
                 startTapPoller()
                 startSessionCleanup()
 
-                // CRITICAL: Even if listener is running, initialize voice service if not done
-                Log.i(TAG, "Listener already running - checking voice service...")
-                val torManager = com.securelegion.crypto.TorManager.getInstance(applicationContext)
-                if (torManager.getVoiceOnionAddress() == null) {
-                    Log.w(TAG, "Voice onion not created yet - calling startVoiceService() now")
-                    startVoiceService()
-                } else {
-                    Log.i(TAG, "Voice onion already exists: ${torManager.getVoiceOnionAddress()}")
-                }
+                // CRITICAL: Always initialize voice service when listener is running
+                // Voice streaming server needs to be started on every app launch
+                Log.i(TAG, "Listener already running - initializing voice service...")
+                startVoiceService()
                 return
             }
 
@@ -1337,6 +1332,7 @@ class TorService : Service() {
                 x25519PublicKeyBase64 = android.util.Base64.encodeToString(contactCard.x25519PublicKey, android.util.Base64.NO_WRAP),
                 friendRequestOnion = contactCard.friendRequestOnion,
                 messagingOnion = contactCard.messagingOnion,
+                voiceOnion = contactCard.voiceOnion,
                 contactPin = contactCard.contactPin,
                 ipfsCid = contactCard.ipfsCid,
                 addedTimestamp = System.currentTimeMillis(),
@@ -2842,6 +2838,7 @@ class TorService : Service() {
                         torOnionAddress = contactCard.messagingOnion,  // DEPRECATED - for backward compatibility
                         friendRequestOnion = contactCard.friendRequestOnion,  // NEW - public .onion for friend requests (port 9151)
                         messagingOnion = contactCard.messagingOnion,  // NEW - private .onion for messaging (port 8080)
+                        voiceOnion = contactCard.voiceOnion,  // NEW - voice calling .onion (port 9152)
                         ipfsCid = contactCard.ipfsCid,
                         contactPin = contactCard.contactPin,
                         addedTimestamp = System.currentTimeMillis(),
@@ -2987,7 +2984,12 @@ class TorService : Service() {
                         contactCard.x25519PublicKey,
                         android.util.Base64.NO_WRAP
                     ),
-                    torOnionAddress = contactCard.torOnionAddress,
+                    torOnionAddress = contactCard.messagingOnion,  // DEPRECATED - for backward compatibility
+                    friendRequestOnion = contactCard.friendRequestOnion,
+                    messagingOnion = contactCard.messagingOnion,
+                    voiceOnion = contactCard.voiceOnion,
+                    ipfsCid = contactCard.ipfsCid,
+                    contactPin = contactCard.contactPin,
                     addedTimestamp = System.currentTimeMillis(),
                     lastContactTimestamp = System.currentTimeMillis(),
                     trustLevel = com.securelegion.database.entities.Contact.TRUST_UNTRUSTED,
@@ -3967,6 +3969,62 @@ class TorService : Service() {
             Log.d(TAG, "Setting voice packet callback...")
             RustBridge.setVoicePacketCallback(voiceCallManager)
 
+            // Register signaling callback for CALL_OFFER/CALL_ANSWER messages over voice onion
+            Log.d(TAG, "Setting voice signaling callback...")
+            RustBridge.setVoiceSignalingCallback(object : RustBridge.VoiceSignalingCallback {
+                override fun onSignalingMessage(senderPubkey: ByteArray, wireMessage: ByteArray) {
+                    Log.i(TAG, "Voice signaling message received via HTTP: ${wireMessage.size} bytes")
+
+                    // Wire format: [Type][Sender X25519 Pubkey - 32 bytes][Encrypted Message]
+                    if (wireMessage.size < 33) {
+                        Log.e(TAG, "Invalid signaling message: too short (${wireMessage.size} bytes)")
+                        return
+                    }
+
+                    // Extract encrypted payload (skip type byte + 32 byte pubkey)
+                    val encryptedPayload = wireMessage.copyOfRange(33, wireMessage.size)
+
+                    // Lookup contact by X25519 public key
+                    kotlinx.coroutines.GlobalScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                        try {
+                            val keyManager = com.securelegion.crypto.KeyManager.getInstance(applicationContext)
+                            val dbPassphrase = keyManager.getDatabasePassphrase()
+                            val database = com.securelegion.database.SecureLegionDatabase.getInstance(applicationContext, dbPassphrase)
+
+                            val contact = database.contactDao().getContactByX25519PublicKey(
+                                android.util.Base64.encodeToString(senderPubkey, android.util.Base64.NO_WRAP)
+                            )
+
+                            if (contact == null) {
+                                Log.w(TAG, "⚠️  Cannot process signaling - contact not found for X25519 key")
+                                return@launch
+                            }
+
+                            val senderOnion = contact.voiceOnion ?: contact.messagingOnion ?: contact.torOnionAddress ?: ""
+                            if (senderOnion.isEmpty()) {
+                                Log.w(TAG, "⚠️  Cannot process signaling - no onion address for contact ${contact.id}")
+                                return@launch
+                            }
+
+                            // Process call signaling through MessageService
+                            val messageService = MessageService(applicationContext)
+                            val encryptedPayloadBase64 = android.util.Base64.encodeToString(encryptedPayload, android.util.Base64.NO_WRAP)
+
+                            messageService.handleCallSignaling(
+                                encryptedData = encryptedPayloadBase64,
+                                senderPublicKey = senderPubkey,
+                                senderOnionAddress = senderOnion,
+                                contactId = contact.id
+                            )
+                            Log.i(TAG, "✓ Voice signaling message processed via HTTP")
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Error processing voice signaling message", e)
+                        }
+                    }
+                }
+            })
+            Log.i(TAG, "✓ Voice signaling callback registered")
+
             // IMPORTANT: Start voice streaming server FIRST (bind to localhost:9152)
             // This must happen BEFORE creating the hidden service, otherwise Tor will try
             // to route traffic to a port that isn't listening yet
@@ -3974,18 +4032,26 @@ class TorService : Service() {
             RustBridge.startVoiceStreamingServer()
             Log.i(TAG, "✓ Voice streaming server started on localhost:9152")
 
-            // Now create voice hidden service (tells Tor to route .onion:9152 → localhost:9152)
-            // IMPORTANT: Always re-register with Tor even if we have the address stored,
-            // because Tor's ephemeral hidden services don't persist across restarts
+            // Check if voice onion already exists (created during account setup)
             val torManager = com.securelegion.crypto.TorManager.getInstance(applicationContext)
-            Log.d(TAG, "Got TorManager instance")
+            val existingVoiceOnion = torManager.getVoiceOnionAddress()
 
-            Log.i(TAG, "Registering voice hidden service with Tor...")
-            val voiceOnion = RustBridge.createVoiceHiddenService()
-            Log.i(TAG, "Rust returned voice onion: $voiceOnion")
-
-            torManager.saveVoiceOnionAddress(voiceOnion)
-            Log.i(TAG, "✓ Voice hidden service registered with Tor: $voiceOnion")
+            if (!existingVoiceOnion.isNullOrEmpty()) {
+                Log.i(TAG, "Voice onion already exists (created during account setup): $existingVoiceOnion")
+                Log.i(TAG, "Re-registering with Tor to ensure ephemeral service is active...")
+                try {
+                    val voiceOnion = RustBridge.createVoiceHiddenService()
+                    Log.i(TAG, "✓ Voice hidden service re-registered with Tor: $voiceOnion")
+                } catch (e: Exception) {
+                    Log.w(TAG, "Failed to re-register voice service (non-fatal): ${e.message}")
+                }
+            } else {
+                Log.i(TAG, "No existing voice onion - creating new one...")
+                val voiceOnion = RustBridge.createVoiceHiddenService()
+                Log.i(TAG, "Rust returned voice onion: $voiceOnion")
+                torManager.saveVoiceOnionAddress(voiceOnion)
+                Log.i(TAG, "✓ Voice hidden service registered with Tor: $voiceOnion")
+            }
 
             Log.i(TAG, "✓ Voice streaming service fully initialized")
         } catch (e: Exception) {

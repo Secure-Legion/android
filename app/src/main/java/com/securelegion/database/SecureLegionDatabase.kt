@@ -7,6 +7,7 @@ import androidx.room.Room
 import androidx.room.RoomDatabase
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
+import com.securelegion.database.dao.CallHistoryDao
 import com.securelegion.database.dao.ContactDao
 import com.securelegion.database.dao.GroupDao
 import com.securelegion.database.dao.GroupMemberDao
@@ -15,6 +16,7 @@ import com.securelegion.database.dao.MessageDao
 import com.securelegion.database.dao.ReceivedIdDao
 import com.securelegion.database.dao.UsedSignatureDao
 import com.securelegion.database.dao.WalletDao
+import com.securelegion.database.entities.CallHistory
 import com.securelegion.database.entities.Contact
 import com.securelegion.database.entities.Group
 import com.securelegion.database.entities.GroupMember
@@ -39,8 +41,8 @@ import net.zetetic.database.sqlcipher.SupportOpenHelperFactory
  * Database file location: /data/data/com.securelegion/databases/secure_legion.db
  */
 @Database(
-    entities = [Contact::class, Message::class, Wallet::class, ReceivedId::class, UsedSignature::class, Group::class, GroupMember::class, GroupMessage::class],
-    version = 21,
+    entities = [Contact::class, Message::class, Wallet::class, ReceivedId::class, UsedSignature::class, Group::class, GroupMember::class, GroupMessage::class, CallHistory::class],
+    version = 22,
     exportSchema = false
 )
 abstract class SecureLegionDatabase : RoomDatabase() {
@@ -53,6 +55,7 @@ abstract class SecureLegionDatabase : RoomDatabase() {
     abstract fun groupDao(): GroupDao
     abstract fun groupMemberDao(): GroupMemberDao
     abstract fun groupMessageDao(): GroupMessageDao
+    abstract fun callHistoryDao(): CallHistoryDao
 
     companion object {
         private const val TAG = "SecureLegionDatabase"
@@ -338,6 +341,37 @@ abstract class SecureLegionDatabase : RoomDatabase() {
         }
 
         /**
+         * Migration from version 21 to 22: Add call history table
+         */
+        private val MIGRATION_21_22 = object : Migration(21, 22) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                Log.i(TAG, "Migrating database from version 21 to 22")
+
+                // Create call_history table
+                database.execSQL("""
+                    CREATE TABLE IF NOT EXISTS call_history (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        contactId INTEGER NOT NULL,
+                        contactName TEXT NOT NULL,
+                        callId TEXT NOT NULL,
+                        timestamp INTEGER NOT NULL,
+                        type TEXT NOT NULL,
+                        duration INTEGER NOT NULL DEFAULT 0,
+                        missedReason TEXT
+                    )
+                """.trimIndent())
+
+                // Create index on timestamp for fast recent call queries
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_call_history_timestamp ON call_history(timestamp)")
+
+                // Create index on contactId for fast contact-specific queries
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_call_history_contactId ON call_history(contactId)")
+
+                Log.i(TAG, "Migration completed: Added call_history table")
+            }
+        }
+
+        /**
          * Migration from version 20 to 21: Add group messaging tables
          */
         private val MIGRATION_20_21 = object : Migration(20, 21) {
@@ -477,7 +511,7 @@ abstract class SecureLegionDatabase : RoomDatabase() {
                     DATABASE_NAME
                 )
                     .openHelperFactory(factory)
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_19_20, MIGRATION_20_21)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22)
                     .addCallback(object : RoomDatabase.Callback() {
                         override fun onCreate(db: SupportSQLiteDatabase) {
                             super.onCreate(db)
@@ -568,7 +602,7 @@ abstract class SecureLegionDatabase : RoomDatabase() {
                         DATABASE_NAME
                     )
                         .openHelperFactory(SupportOpenHelperFactory(passphrase))
-                        .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_19_20, MIGRATION_20_21)
+                        .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22)
                         .addCallback(object : RoomDatabase.Callback() {
                             override fun onCreate(db: SupportSQLiteDatabase) {
                                 super.onCreate(db)

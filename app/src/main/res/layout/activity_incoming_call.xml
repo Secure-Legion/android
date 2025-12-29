@@ -83,50 +83,74 @@
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent" />
 
-    <!-- Button Container -->
-    <LinearLayout
-        android:id="@+id/buttonContainer"
+    <!-- Decline Button (Circular) - Top center -->
+    <com.google.android.material.floatingactionbutton.FloatingActionButton
+        android:id="@+id/declineButton"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:layout_marginBottom="100dp"
-        android:orientation="horizontal"
-        android:gravity="center"
+        android:layout_marginBottom="200dp"
+        android:src="@drawable/ic_call_end"
+        app:fabSize="normal"
+        app:fabCustomSize="72dp"
+        app:maxImageSize="32dp"
+        app:tint="#666666"
+        app:backgroundTint="#FFFFFF"
+        app:elevation="6dp"
+        app:borderWidth="0dp"
+        android:contentDescription="Decline call"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent" />
+
+    <!-- Slide to Answer Container -->
+    <FrameLayout
+        android:id="@+id/slideToAnswerContainer"
+        android:layout_width="0dp"
+        android:layout_height="80dp"
+        android:layout_marginStart="32dp"
+        android:layout_marginEnd="32dp"
+        android:layout_marginBottom="80dp"
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent">
 
-        <!-- Decline Button (Circular) - White with gray icon -->
-        <com.google.android.material.floatingactionbutton.FloatingActionButton
-            android:id="@+id/declineButton"
+        <!-- Track/Rail (background) -->
+        <View
+            android:id="@+id/slideTrack"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:background="@drawable/slide_track_background" />
+
+        <!-- "Slide to answer" text -->
+        <TextView
+            android:id="@+id/slideHintText"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_marginEnd="60dp"
-            android:src="@drawable/ic_call_end"
-            app:fabSize="normal"
-            app:fabCustomSize="72dp"
-            app:maxImageSize="32dp"
-            app:tint="#666666"
-            app:backgroundTint="#FFFFFF"
-            app:elevation="6dp"
-            app:borderWidth="0dp"
-            android:contentDescription="Decline call" />
+            android:layout_gravity="center"
+            android:text="Slide to answer"
+            android:textSize="16sp"
+            android:textColor="#999999"
+            android:fontFamily="@font/poppins_medium"
+            android:alpha="0.7" />
 
-        <!-- Answer Button (Circular) - Dark gray with white icon -->
+        <!-- Slidable Answer Button -->
         <com.google.android.material.floatingactionbutton.FloatingActionButton
             android:id="@+id/answerButton"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
+            android:layout_gravity="start|center_vertical"
+            android:layout_marginStart="4dp"
             android:src="@drawable/ic_call"
             app:fabSize="normal"
             app:fabCustomSize="72dp"
             app:maxImageSize="32dp"
             app:tint="#FFFFFF"
-            app:backgroundTint="#1C1C1C"
-            app:elevation="6dp"
+            app:backgroundTint="#00C853"
+            app:elevation="8dp"
             app:borderWidth="0dp"
-            android:contentDescription="Answer call" />
+            android:contentDescription="Slide to answer call" />
 
-    </LinearLayout>
+    </FrameLayout>
 
     <!-- Hidden contact avatar for compatibility -->
     <ImageView
@@ -136,5 +160,125 @@
         android:visibility="gone"
         app:layout_constraintTop_toTopOf="parent"
         app:layout_constraintStart_toStartOf="parent" />
+
+    <!-- Quick Unlock Overlay (shown when app is locked) -->
+    <FrameLayout
+        android:id="@+id/unlockOverlay"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="#CC000000"
+        android:visibility="gone"
+        android:clickable="true"
+        android:focusable="true">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:orientation="vertical"
+            android:gravity="center"
+            android:padding="32dp">
+
+            <!-- Lock icon -->
+            <ImageView
+                android:layout_width="80dp"
+                android:layout_height="80dp"
+                android:src="@drawable/ic_lock"
+                android:tint="#FFFFFF"
+                android:contentDescription="App locked" />
+
+            <!-- Title -->
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="24dp"
+                android:text="App Locked"
+                android:textSize="24sp"
+                android:textColor="#FFFFFF"
+                android:fontFamily="@font/space_grotesk_bold"
+                android:textStyle="bold" />
+
+            <!-- Instructions -->
+            <TextView
+                android:id="@+id/unlockInstructions"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:text="Unlock to answer this call"
+                android:textSize="16sp"
+                android:textColor="#CCCCCC"
+                android:fontFamily="@font/poppins_regular"
+                android:textAlignment="center" />
+
+            <!-- Timeout countdown -->
+            <TextView
+                android:id="@+id/timeoutCountdown"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:text="Call will be missed in 30s"
+                android:textSize="14sp"
+                android:textColor="#FF6B6B"
+                android:fontFamily="@font/poppins_medium" />
+
+            <!-- Password Entry (hidden by default, shown if biometric fails/not available) -->
+            <LinearLayout
+                android:id="@+id/passwordEntryContainer"
+                android:layout_width="280dp"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="24dp"
+                android:orientation="vertical"
+                android:visibility="gone">
+
+                <EditText
+                    android:id="@+id/quickPasswordInput"
+                    android:layout_width="match_parent"
+                    android:layout_height="56dp"
+                    android:hint="Enter password"
+                    android:inputType="textPassword"
+                    android:textColor="#FFFFFF"
+                    android:textColorHint="#888888"
+                    android:fontFamily="@font/poppins_regular"
+                    android:textSize="16sp"
+                    android:paddingStart="16dp"
+                    android:paddingEnd="16dp" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/submitPasswordButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="56dp"
+                    android:layout_marginTop="12dp"
+                    android:text="Unlock"
+                    android:textSize="16sp"
+                    android:textColor="#FFFFFF"
+                    android:fontFamily="@font/poppins_semibold"
+                    app:backgroundTint="#00C853"
+                    app:cornerRadius="28dp" />
+
+            </LinearLayout>
+
+            <!-- Unlock button (biometric or show password field) -->
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/quickUnlockButton"
+                android:layout_width="wrap_content"
+                android:layout_height="64dp"
+                android:layout_marginTop="32dp"
+                android:paddingStart="32dp"
+                android:paddingEnd="32dp"
+                android:text="Unlock"
+                android:textSize="18sp"
+                android:textColor="#FFFFFF"
+                android:fontFamily="@font/poppins_semibold"
+                app:icon="@drawable/ic_fingerprint"
+                app:iconGravity="textStart"
+                app:iconTint="#FFFFFF"
+                app:iconSize="28dp"
+                app:backgroundTint="#00C853"
+                app:cornerRadius="32dp"
+                app:elevation="8dp" />
+
+        </LinearLayout>
+
+    </FrameLayout>
 
 </androidx.constraintlayout.widget.ConstraintLayout>

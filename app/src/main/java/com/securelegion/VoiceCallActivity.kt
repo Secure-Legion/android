@@ -1,5 +1,8 @@
 package com.securelegion
 
+import android.media.AudioManager
+import android.media.ToneGenerator
+import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -20,6 +23,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import com.securelegion.database.entities.ed25519PublicKeyBytes
+import com.securelegion.database.entities.x25519PublicKeyBytes
 import java.util.Locale
 
 /**
@@ -114,6 +118,10 @@ class VoiceCallActivity : BaseActivity() {
     private var timerRunnable: Runnable? = null
     private var waitingForAnswer = false
 
+    // Ringback tone (plays while waiting for answer on outgoing calls)
+    private var toneGenerator: ToneGenerator? = null
+    private var isPlayingRingback = false
+
     // Call manager
     private lateinit var callManager: VoiceCallManager
 
@@ -124,8 +132,22 @@ class VoiceCallActivity : BaseActivity() {
         // Register as active instance
         activeInstance = this
 
-        // Keep screen on during call
+        // Keep screen on during call and show on lock screen
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+
+        // Show activity on lock screen (deprecated but still works on most devices)
+        @Suppress("DEPRECATION")
+        window.addFlags(WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED)
+        @Suppress("DEPRECATION")
+        window.addFlags(WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD)
+        @Suppress("DEPRECATION")
+        window.addFlags(WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON)
+
+        // Use modern APIs for Android O and above
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+            setShowWhenLocked(true)
+            setTurnScreenOn(true)
+        }
 
         // Get data from intent
         contactId = intent.getLongExtra(EXTRA_CONTACT_ID, -1)
@@ -181,6 +203,8 @@ class VoiceCallActivity : BaseActivity() {
             connectionProgressBar.visibility = View.GONE
             updateCallStatus("Calling...")
             android.util.Log.i(TAG, "Waiting for CALL_ANSWER from $contactName")
+            // Start ringback tone for outgoing calls
+            startRingbackTone()
         } else {
             // Incoming call or outgoing call with answer already received
             connectionProgressBar.visibility = View.GONE
@@ -207,6 +231,9 @@ class VoiceCallActivity : BaseActivity() {
         android.util.Log.i(TAG, "Received CALL_ANSWER for our outgoing call")
         waitingForAnswer = false
         theirEphemeralKey = receivedTheirEphemeralKey
+
+        // Stop ringback tone
+        stopRingbackTone()
 
         // Now start the actual call
         runOnUiThread {
@@ -379,6 +406,9 @@ class VoiceCallActivity : BaseActivity() {
         // Stop waiting if we're in waiting state
         waitingForAnswer = false
 
+        // Stop ringback tone
+        stopRingbackTone()
+
         // Always try to end the call, even if it's not fully active
         try {
             if (callManager.hasActiveCall()) {
@@ -472,6 +502,9 @@ class VoiceCallActivity : BaseActivity() {
             return
         }
 
+        // Stop ringback tone if it's playing
+        stopRingbackTone()
+
         runOnUiThread {
             updateCallStatus(reason)
             stopCallTimer()
@@ -492,6 +525,40 @@ class VoiceCallActivity : BaseActivity() {
 
     private fun updateCallStatus(status: String) {
         callStatusText.text = status
+    }
+
+    private fun startRingbackTone() {
+        if (isPlayingRingback) return
+
+        try {
+            // Create ToneGenerator for ringback tone
+            // Use STREAM_VOICE_CALL for proper audio routing during calls
+            toneGenerator = ToneGenerator(AudioManager.STREAM_VOICE_CALL, 80) // 80% volume
+
+            // Play standard DTMF ringback tone in a loop
+            // This sounds like the standard "ringing" tone during outgoing calls
+            toneGenerator?.startTone(ToneGenerator.TONE_SUP_RINGTONE, -1) // -1 = continuous
+            isPlayingRingback = true
+
+            android.util.Log.d(TAG, "Started ringback tone")
+        } catch (e: Exception) {
+            android.util.Log.e(TAG, "Failed to start ringback tone", e)
+        }
+    }
+
+    private fun stopRingbackTone() {
+        if (!isPlayingRingback) return
+
+        try {
+            toneGenerator?.stopTone()
+            toneGenerator?.release()
+            toneGenerator = null
+            isPlayingRingback = false
+
+            android.util.Log.d(TAG, "Stopped ringback tone")
+        } catch (e: Exception) {
+            android.util.Log.e(TAG, "Failed to stop ringback tone", e)
+        }
     }
 
     private fun startCallTimer() {
@@ -581,7 +648,8 @@ class VoiceCallActivity : BaseActivity() {
                         contactName = contact.displayName,
                         theirEphemeralPublicKey = theirEphKey,
                         ourEphemeralSecretKey = ourEphemeralSecretKey,
-                        callId = callId
+                        callId = callId,
+                        contactX25519PublicKey = contact.x25519PublicKeyBytes
                     )
 
                     if (result.isFailure) {
@@ -637,25 +705,30 @@ class VoiceCallActivity : BaseActivity() {
                     val contactOnion = intent.getStringExtra(EXTRA_CONTACT_ONION) ?: ""
                     val contactX25519PublicKey = intent.getByteArrayExtra(EXTRA_CONTACT_X25519_PUBLIC_KEY) ?: ByteArray(0)
 
-                    android.util.Log.i(TAG, "Sending CALL_ANSWER immediately (before creating Tor circuits)...")
+                    android.util.Log.i(TAG, "Sending CALL_ANSWER via HTTP POST immediately (before creating Tor circuits)...")
                     android.util.Log.d(TAG, "  contactOnion: $contactOnion")
                     android.util.Log.d(TAG, "  contactX25519PublicKey size: ${contactX25519PublicKey.size}")
                     android.util.Log.d(TAG, "  callId: $callId")
                     android.util.Log.d(TAG, "  myVoiceOnion: $myVoiceOnion")
                     android.util.Log.d(TAG, "  ourEphemeralKeypair.publicKey size: ${ourEphemeralKeypair.publicKey.asBytes.size}")
 
+                    // Get our X25519 public key for HTTP wire format
+                    val keyManager = com.securelegion.crypto.KeyManager.getInstance(this@VoiceCallActivity)
+                    val ourX25519PublicKey = keyManager.getEncryptionPublicKey()
+
                     // Update UI to show we're sending the answer
                     updateCallStatus("Sending call response...")
 
-                    // Send CALL_ANSWER on IO thread (blocking network call over Tor)
-                    // This will retry up to 3 times with 15-second timeout each
+                    // Send CALL_ANSWER on IO thread via HTTP POST to voice .onion
+                    // This will retry up to 5 times with 15-second timeout each
                     val success = withContext(kotlinx.coroutines.Dispatchers.IO) {
                         com.securelegion.voice.CallSignaling.sendCallAnswer(
                             contactX25519PublicKey,
                             contactOnion,
                             callId,
                             ourEphemeralKeypair.publicKey.asBytes,
-                            myVoiceOnion
+                            myVoiceOnion,
+                            ourX25519PublicKey
                         )
                     }
 
@@ -739,6 +812,7 @@ class VoiceCallActivity : BaseActivity() {
         }
 
         stopCallTimer()
+        stopRingbackTone() // Stop ringback tone if still playing
         animatedRing.clearAnimation()
         window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
 

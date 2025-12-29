@@ -2,6 +2,7 @@ package com.securelegion.voice
 
 import android.util.Base64
 import android.util.Log
+import com.securelegion.crypto.KeyManager
 import com.securelegion.crypto.RustBridge
 import org.json.JSONObject
 
@@ -39,12 +40,13 @@ object CallSignaling {
     const val TYPE_CALL_BUSY = "CALL_BUSY"
 
     /**
-     * Send call offer to recipient
+     * Send call offer to recipient via HTTP POST to voice .onion
      * @param recipientX25519PublicKey Recipient's X25519 public key (for message encryption)
-     * @param recipientOnion Recipient's .onion address
+     * @param recipientOnion Recipient's VOICE .onion address (for HTTP POST delivery)
      * @param callId Unique call ID
      * @param ephemeralPublicKey Our ephemeral X25519 public key for this call
      * @param voiceOnion Our voice .onion address (for voice streaming connection)
+     * @param ourX25519PublicKey Our X25519 public key (for wire message format)
      * @param numCircuits Number of Tor circuits to use (1 for Phase 1, 3-5 for Phase 2)
      * @return True if offer sent successfully
      */
@@ -54,6 +56,7 @@ object CallSignaling {
         callId: String,
         ephemeralPublicKey: ByteArray,
         voiceOnion: String,
+        ourX25519PublicKey: ByteArray,
         numCircuits: Int = 1
     ): Boolean {
         return try {
@@ -78,31 +81,30 @@ object CallSignaling {
             val encryptedMessage = RustBridge.encryptMessage(message, recipientX25519PublicKey)
             Log.d(TAG, "Message encrypted: ${encryptedMessage.size} bytes")
 
-            Log.d(TAG, "Calling RustBridge.sendMessageBlob to $recipientOnion...")
-            Log.w(TAG, "WARNING: sendMessageBlob is a blocking JNI call - may hang if Tor circuit not ready")
+            Log.d(TAG, "Calling RustBridge.sendHttpToVoiceOnion to $recipientOnion...")
+            Log.i(TAG, "Sending CALL_OFFER via HTTP POST to voice .onion (port 9152)")
 
-            // Call the blocking JNI function on IO thread
-            // NOTE: withTimeout() cannot interrupt native calls - this will still block if circuit not ready
+            // Send via HTTP POST to voice .onion on IO thread
             val success = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
                 try {
-                    val result = RustBridge.sendMessageBlob(
+                    val result = RustBridge.sendHttpToVoiceOnion(
                         recipientOnion,
-                        encryptedMessage,
-                        MSG_TYPE_CALL_SIGNALING
+                        ourX25519PublicKey,
+                        encryptedMessage
                     )
-                    Log.d(TAG, "RustBridge.sendMessageBlob returned: $result")
+                    Log.d(TAG, "RustBridge.sendHttpToVoiceOnion returned: $result")
                     result
                 } catch (e: Exception) {
-                    Log.e(TAG, "Exception in sendMessageBlob", e)
+                    Log.e(TAG, "Exception in sendHttpToVoiceOnion", e)
                     false
                 }
             }
 
             if (success) {
-                Log.i(TAG, "✓ Call offer sent successfully: $callId")
+                Log.i(TAG, "✓ Call offer sent via HTTP POST successfully: $callId")
             } else {
-                Log.e(TAG, "✗ RustBridge.sendMessageBlob failed for call: $callId")
-                Log.e(TAG, "  This usually means Tor circuit is not ready or onion address is invalid")
+                Log.e(TAG, "✗ RustBridge.sendHttpToVoiceOnion failed for call: $callId")
+                Log.e(TAG, "  HTTP POST to voice .onion failed - check Tor connection and voice service")
             }
 
             success
@@ -118,12 +120,13 @@ object CallSignaling {
     }
 
     /**
-     * Send call answer (accept call) with timeout and retry logic
+     * Send call answer (accept call) via HTTP POST to voice .onion with timeout and retry logic
      * @param recipientX25519PublicKey Recipient's X25519 public key
-     * @param recipientOnion Recipient's .onion address
+     * @param recipientOnion Recipient's VOICE .onion address (for HTTP POST delivery)
      * @param callId Call ID from the offer
      * @param ephemeralPublicKey Our ephemeral X25519 public key for this call
      * @param voiceOnion Our voice .onion address (for voice streaming connection)
+     * @param ourX25519PublicKey Our X25519 public key (for wire message format)
      * @return True if answer sent successfully
      */
     suspend fun sendCallAnswer(
@@ -131,7 +134,8 @@ object CallSignaling {
         recipientOnion: String,
         callId: String,
         ephemeralPublicKey: ByteArray,
-        voiceOnion: String
+        voiceOnion: String,
+        ourX25519PublicKey: ByteArray
     ): Boolean {
         return try {
             Log.d(TAG, "sendCallAnswer called:")
@@ -171,16 +175,16 @@ object CallSignaling {
                 val attemptStartTime = System.currentTimeMillis()
 
                 try {
-                    Log.i(TAG, "CALL_ANSWER_SEND_ATTEMPT $attemptNum start (timeout=${timeoutMs}ms)")
+                    Log.i(TAG, "CALL_ANSWER_SEND_ATTEMPT $attemptNum start (timeout=${timeoutMs}ms) via HTTP POST")
 
-                    // Try to send with timeout
+                    // Try to send with timeout via HTTP POST to voice .onion
                     val success = kotlinx.coroutines.withTimeout(timeoutMs) {
                         kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
                             try {
-                                val result = RustBridge.sendMessageBlob(
+                                val result = RustBridge.sendHttpToVoiceOnion(
                                     recipientOnion,
-                                    encryptedMessage,
-                                    MSG_TYPE_CALL_SIGNALING
+                                    ourX25519PublicKey,
+                                    encryptedMessage
                                 )
                                 result
                             } catch (e: Exception) {

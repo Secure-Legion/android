@@ -6,6 +6,9 @@ import android.content.pm.PackageManager
 import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
+import android.media.audiofx.AcousticEchoCanceler
+import android.media.audiofx.AutomaticGainControl
+import android.media.audiofx.NoiseSuppressor
 import android.util.Log
 import androidx.core.content.ContextCompat
 import kotlinx.coroutines.*
@@ -47,6 +50,11 @@ class AudioCaptureManager(
 
     @Volatile
     private var isCapturing = false
+
+    // Audio effects for quality improvement
+    private var acousticEchoCanceler: AcousticEchoCanceler? = null
+    private var noiseSuppressor: NoiseSuppressor? = null
+    private var automaticGainControl: AutomaticGainControl? = null
 
     // Callback for emitting encoded Opus frames
     var onFrameEncoded: ((ByteArray) -> Unit)? = null
@@ -97,9 +105,75 @@ class AudioCaptureManager(
 
             Log.d(TAG, "AudioRecord initialized: $SAMPLE_RATE Hz, buffer=$bufferSize bytes")
 
+            // Initialize audio effects for better call quality
+            initializeAudioEffects(audioRecord!!.audioSessionId)
+
         } catch (e: Exception) {
             Log.e(TAG, "Failed to initialize AudioRecord", e)
             throw e
+        }
+    }
+
+    /**
+     * Initialize audio effects (AEC, NS, AGC) if supported by device
+     * These greatly improve call quality by removing echo, background noise, and normalizing volume
+     */
+    private fun initializeAudioEffects(audioSessionId: Int) {
+        try {
+            // Acoustic Echo Canceler (AEC) - Removes echo from speaker playback
+            if (AcousticEchoCanceler.isAvailable()) {
+                acousticEchoCanceler = AcousticEchoCanceler.create(audioSessionId)
+                if (acousticEchoCanceler != null) {
+                    acousticEchoCanceler?.enabled = true
+                    Log.i(TAG, "✓ Acoustic Echo Canceler enabled")
+                } else {
+                    Log.w(TAG, "✗ AcousticEchoCanceler.create returned null")
+                }
+            } else {
+                Log.w(TAG, "✗ Acoustic Echo Canceler not available on this device")
+            }
+
+            // Noise Suppressor (NS) - Removes background noise (traffic, keyboard, etc)
+            if (NoiseSuppressor.isAvailable()) {
+                noiseSuppressor = NoiseSuppressor.create(audioSessionId)
+                if (noiseSuppressor != null) {
+                    noiseSuppressor?.enabled = true
+                    Log.i(TAG, "✓ Noise Suppressor enabled")
+                } else {
+                    Log.w(TAG, "✗ NoiseSuppressor.create returned null")
+                }
+            } else {
+                Log.w(TAG, "✗ Noise Suppressor not available on this device")
+            }
+
+            // Automatic Gain Control (AGC) - Normalizes audio volume
+            if (AutomaticGainControl.isAvailable()) {
+                automaticGainControl = AutomaticGainControl.create(audioSessionId)
+                if (automaticGainControl != null) {
+                    automaticGainControl?.enabled = true
+                    Log.i(TAG, "✓ Automatic Gain Control enabled")
+                } else {
+                    Log.w(TAG, "✗ AutomaticGainControl.create returned null")
+                }
+            } else {
+                Log.w(TAG, "✗ Automatic Gain Control not available on this device")
+            }
+
+            val enabledEffects = listOfNotNull(
+                if (acousticEchoCanceler?.enabled == true) "AEC" else null,
+                if (noiseSuppressor?.enabled == true) "NS" else null,
+                if (automaticGainControl?.enabled == true) "AGC" else null
+            )
+
+            if (enabledEffects.isNotEmpty()) {
+                Log.i(TAG, "Audio effects enabled: ${enabledEffects.joinToString(", ")}")
+            } else {
+                Log.w(TAG, "No audio effects available - call quality may be reduced")
+            }
+
+        } catch (e: Exception) {
+            Log.e(TAG, "Error initializing audio effects (continuing without them)", e)
+            // Don't throw - we can continue without effects, just with lower quality
         }
     }
 
@@ -233,6 +307,23 @@ class AudioCaptureManager(
     fun release() {
         stopCapture()
 
+        // Release audio effects
+        try {
+            acousticEchoCanceler?.release()
+            acousticEchoCanceler = null
+
+            noiseSuppressor?.release()
+            noiseSuppressor = null
+
+            automaticGainControl?.release()
+            automaticGainControl = null
+
+            Log.d(TAG, "Audio effects released")
+        } catch (e: Exception) {
+            Log.e(TAG, "Error releasing audio effects", e)
+        }
+
+        // Release AudioRecord
         try {
             audioRecord?.release()
             audioRecord = null

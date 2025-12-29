@@ -341,6 +341,15 @@ object RustBridge {
      */
     external fun opusDecode(handle: Long, opusData: ByteArray): ByteArray?
 
+    /**
+     * Decode Opus with FEC to recover missing frame
+     * Uses in-band Forward Error Correction data from packet N+1 to recover frame N
+     * @param handle Decoder handle
+     * @param opusData Opus-encoded bytes of packet N+1 (contains FEC data for frame N)
+     * @return 16-bit PCM audio samples for the PREVIOUS frame (N) or null if FEC failed
+     */
+    external fun opusDecodeFEC(handle: Long, opusData: ByteArray): ByteArray?
+
     // ========== Voice Streaming (v2.0) ==========
 
     /**
@@ -358,11 +367,32 @@ object RustBridge {
     }
 
     /**
+     * Callback interface for incoming signaling messages over voice onion (v2.0)
+     * Handles CALL_OFFER, CALL_ANSWER, etc received via HTTP POST
+     */
+    interface VoiceSignalingCallback {
+        /**
+         * Called when a signaling message is received
+         * @param senderPubkey Sender's X25519 public key (32 bytes)
+         * @param wireMessage Full wire message including type byte
+         */
+        fun onSignalingMessage(senderPubkey: ByteArray, wireMessage: ByteArray)
+    }
+
+    /**
      * Set callback handler for incoming voice packets (v2.0)
      * Must be called before startVoiceStreamingServer
      * @param callback The callback that will receive packets
      */
     external fun setVoicePacketCallback(callback: VoicePacketCallback)
+
+    /**
+     * Set callback handler for incoming signaling messages (v2.0)
+     * Handles CALL_OFFER, CALL_ANSWER, etc received via HTTP POST to voice onion
+     * Must be called before startVoiceStreamingServer
+     * @param callback The callback that will receive signaling messages
+     */
+    external fun setVoiceSignalingCallback(callback: VoiceSignalingCallback)
 
     /**
      * Start voice streaming server on port 9152 (v2.0)
@@ -542,6 +572,16 @@ object RustBridge {
      * @return True if message sent successfully
      */
     external fun sendMessageBlob(recipientOnion: String, encryptedMessage: ByteArray, messageTypeByte: Byte): Boolean
+
+    /**
+     * Send call signaling message via HTTP POST to voice .onion
+     * This bypasses the VOICE channel routing and sends directly to the voice streaming server
+     * @param voiceOnion Recipient's voice .onion address
+     * @param senderX25519Pubkey Our X25519 public key (32 bytes) - included in wire format
+     * @param encryptedMessage The encrypted call signaling message
+     * @return True if HTTP POST successful (200 OK received)
+     */
+    external fun sendHttpToVoiceOnion(voiceOnion: String, senderX25519Pubkey: ByteArray, encryptedMessage: ByteArray): Boolean
 
     /**
      * Respond to an incoming Ping with a Pong

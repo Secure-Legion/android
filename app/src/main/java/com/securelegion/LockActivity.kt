@@ -59,6 +59,10 @@ class LockActivity : AppCompatActivity() {
 
         super.onCreate(savedInstanceState)
 
+        // Mark app as locked (user needs to authenticate)
+        com.securelegion.utils.SessionManager.setLocked(this)
+        Log.d("LockActivity", "App locked - user on lock screen")
+
         // Security: Prevent screenshots and screen recording on lock screen
         window.setFlags(
             WindowManager.LayoutParams.FLAG_SECURE,
@@ -425,6 +429,10 @@ class LockActivity : AppCompatActivity() {
         val lifecyclePrefs = getSharedPreferences("app_lifecycle", MODE_PRIVATE)
         lifecyclePrefs.edit().remove("last_pause_timestamp").apply()
         Log.d("LockActivity", "Cleared auto-lock pause time")
+
+        // Mark app as unlocked (user successfully authenticated)
+        com.securelegion.utils.SessionManager.setUnlocked(this)
+        Log.d("LockActivity", "App unlocked - session active")
 
         startActivity(nextIntent)
         finish()

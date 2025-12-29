@@ -27,7 +27,8 @@ class VoiceCallSession(
     private val contactVoiceOnion: String,
     private val contactEd25519PublicKey: ByteArray,
     private val isOutgoing: Boolean,
-    private val callId: String = UUID.randomUUID().toString() // Generate new ID for outgoing, pass from CALL_OFFER for incoming
+    private val callId: String = UUID.randomUUID().toString(), // Generate new ID for outgoing, pass from CALL_OFFER for incoming
+    private val contactX25519PublicKey: ByteArray? = null // For sending CALL_END notifications
 ) : RustBridge.VoicePacketCallback {
     companion object {
         private const val TAG = "VoiceCallSession"
@@ -330,6 +331,25 @@ class VoiceCallSession(
         setState(CallState.ENDING)
 
         Log.i(TAG, "Ending call: $reason")
+
+        // Send CALL_END notification to the other person
+        contactX25519PublicKey?.let { x25519Key ->
+            try {
+                val sent = CallSignaling.sendCallEnd(
+                    recipientX25519PublicKey = x25519Key,
+                    recipientOnion = contactOnion,
+                    callId = callId,
+                    reason = reason
+                )
+                if (sent) {
+                    Log.i(TAG, "✓ Sent CALL_END notification to $contactOnion")
+                } else {
+                    Log.w(TAG, "✗ Failed to send CALL_END notification")
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error sending CALL_END notification", e)
+            }
+        } ?: Log.w(TAG, "Cannot send CALL_END - no X25519 public key available")
 
         // Create a new scope for cleanup (independent of callScope which might be hung)
         CoroutineScope(Dispatchers.IO).launch {

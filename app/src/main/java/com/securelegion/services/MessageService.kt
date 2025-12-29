@@ -1203,9 +1203,10 @@ class MessageService(private val context: Context) {
                     val callManager = VoiceCallManager.getInstance(context)
 
                     // Register incoming call (returns true if new, false if duplicate)
+                    // Use voiceOnion from CALL_OFFER (this is where CALL_ANSWER will be sent)
                     val isNewCall = callManager.handleIncomingCallOffer(
                         callId = callMessage.callId,
-                        contactOnion = senderOnionAddress,
+                        contactOnion = callMessage.voiceOnion,
                         contactEd25519PublicKey = contact.ed25519PublicKeyBytes,
                         contactName = contact.displayName,
                         ephemeralPublicKey = callMessage.ephemeralPublicKey
@@ -1219,7 +1220,8 @@ class MessageService(private val context: Context) {
                         intent.putExtra(IncomingCallActivity.EXTRA_CALL_ID, callMessage.callId)
                         intent.putExtra(IncomingCallActivity.EXTRA_CONTACT_ID, contact.id)
                         intent.putExtra(IncomingCallActivity.EXTRA_CONTACT_NAME, contact.displayName)
-                        intent.putExtra(IncomingCallActivity.EXTRA_CONTACT_ONION, senderOnionAddress)
+                        // Use voiceOnion from CALL_OFFER for sending CALL_ANSWER back
+                        intent.putExtra(IncomingCallActivity.EXTRA_CONTACT_ONION, callMessage.voiceOnion)
                         intent.putExtra(IncomingCallActivity.EXTRA_CONTACT_ED25519_PUBLIC_KEY, contact.ed25519PublicKeyBytes)
                         intent.putExtra(IncomingCallActivity.EXTRA_CONTACT_X25519_PUBLIC_KEY, contact.x25519PublicKeyBytes)
                         intent.putExtra(IncomingCallActivity.EXTRA_EPHEMERAL_PUBLIC_KEY, callMessage.ephemeralPublicKey)

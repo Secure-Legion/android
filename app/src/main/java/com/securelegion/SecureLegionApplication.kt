@@ -2,7 +2,10 @@ package com.securelegion
 
 import android.app.Activity
 import android.app.Application
+import android.app.NotificationChannel
+import android.app.NotificationManager
 import android.content.Intent
+import android.os.Build
 import android.os.Bundle
 import android.util.Log
 import androidx.lifecycle.DefaultLifecycleObserver
@@ -28,6 +31,9 @@ class SecureLegionApplication : Application() {
     companion object {
         private const val TAG = "SecureLegionApp"
 
+        // Notification channel IDs
+        const val CHANNEL_ID_CALLS = "voice_calls"
+
         // Track if app is in background
         private var isInBackground = false
 
@@ -43,6 +49,9 @@ class SecureLegionApplication : Application() {
         super.onCreate()
 
         Log.d(TAG, "Application starting...")
+
+        // Create notification channels
+        createNotificationChannels()
 
         // Initialize IPtProxy controller for pluggable transports
         // This MUST be done before any bridge configuration
@@ -141,6 +150,29 @@ class SecureLegionApplication : Application() {
         })
 
         Log.d(TAG, "Lifecycle observer registered for auto-lock")
+    }
+
+    /**
+     * Create notification channels for Android 8.0+
+     */
+    private fun createNotificationChannels() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val notificationManager = getSystemService(NotificationManager::class.java)
+
+            // Voice calls notification channel
+            val callsChannel = NotificationChannel(
+                CHANNEL_ID_CALLS,
+                "Voice Calls",
+                NotificationManager.IMPORTANCE_HIGH
+            ).apply {
+                description = "Notifications for incoming calls and missed calls"
+                enableVibration(true)
+                setShowBadge(true)
+            }
+
+            notificationManager.createNotificationChannel(callsChannel)
+            Log.d(TAG, "Notification channels created")
+        }
     }
 
     private fun initializeTor() {

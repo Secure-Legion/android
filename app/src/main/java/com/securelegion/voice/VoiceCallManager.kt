@@ -101,7 +101,8 @@ class VoiceCallManager private constructor(private val context: Context) : RustB
         val contactOnion: String,
         val contactX25519PublicKey: ByteArray,
         val ourEphemeralPublicKey: ByteArray,
-        val myVoiceOnion: String
+        val myVoiceOnion: String,
+        val ourX25519PublicKey: ByteArray
     )
 
     /**
@@ -137,7 +138,8 @@ class VoiceCallManager private constructor(private val context: Context) : RustB
         contactName: String?,
         theirEphemeralPublicKey: ByteArray,
         ourEphemeralSecretKey: ByteArray,
-        callId: String
+        callId: String,
+        contactX25519PublicKey: ByteArray
     ): Result<VoiceCallSession> {
         if (activeCall != null) {
             return Result.failure(IllegalStateException("Call already in progress"))
@@ -152,7 +154,8 @@ class VoiceCallManager private constructor(private val context: Context) : RustB
                 contactVoiceOnion = contactVoiceOnion,
                 contactEd25519PublicKey = contactEd25519PublicKey,
                 isOutgoing = true,
-                callId = callId
+                callId = callId,
+                contactX25519PublicKey = contactX25519PublicKey
             )
 
             // Set callbacks
@@ -215,15 +218,16 @@ class VoiceCallManager private constructor(private val context: Context) : RustB
         // Idempotency: Check if we already answered this call
         val answeredCall = answeredCalls[callId]
         if (answeredCall != null) {
-            Log.i(TAG, "Duplicate CALL_OFFER for answered call $callId - re-sending CALL_ANSWER (idempotent)")
+            Log.i(TAG, "Duplicate CALL_OFFER for answered call $callId - re-sending CALL_ANSWER via HTTP POST (idempotent)")
             managerScope.launch(Dispatchers.IO) {
-                // Re-send CALL_ANSWER
+                // Re-send CALL_ANSWER via HTTP POST to voice .onion
                 val success = CallSignaling.sendCallAnswer(
                     recipientX25519PublicKey = answeredCall.contactX25519PublicKey,
                     recipientOnion = answeredCall.contactOnion,
                     callId = callId,
                     ephemeralPublicKey = answeredCall.ourEphemeralPublicKey,
-                    voiceOnion = answeredCall.myVoiceOnion
+                    voiceOnion = answeredCall.myVoiceOnion,
+                    ourX25519PublicKey = answeredCall.ourX25519PublicKey
                 )
                 if (success) {
                     Log.i(TAG, "✓ Re-sent CALL_ANSWER for duplicate offer")
@@ -286,13 +290,18 @@ class VoiceCallManager private constructor(private val context: Context) : RustB
             return Result.failure(IllegalArgumentException("Unknown call ID: $callId"))
         }
 
+        // Get our X25519 public key for HTTP wire format
+        val keyManager = com.securelegion.crypto.KeyManager.getInstance(context)
+        val ourX25519PublicKey = keyManager.getEncryptionPublicKey()
+
         // Store answered call info for idempotency (re-send CALL_ANSWER on duplicate offers)
         answeredCalls[callId] = AnsweredCallInfo(
             callId = callId,
             contactOnion = contactMessagingOnion,
             contactX25519PublicKey = contactX25519PublicKey,
             ourEphemeralPublicKey = ourEphemeralPublicKey,
-            myVoiceOnion = myVoiceOnion
+            myVoiceOnion = myVoiceOnion,
+            ourX25519PublicKey = ourX25519PublicKey
         )
         Log.d(TAG, "Stored answered call info for idempotency")
 
@@ -305,7 +314,8 @@ class VoiceCallManager private constructor(private val context: Context) : RustB
                 contactVoiceOnion = contactVoiceOnion,
                 contactEd25519PublicKey = callInfo.contactEd25519PublicKey,
                 isOutgoing = false,
-                callId = callInfo.callId // Use call ID from CALL_OFFER (critical for audio routing!)
+                callId = callInfo.callId, // Use call ID from CALL_OFFER (critical for audio routing!)
+                contactX25519PublicKey = contactX25519PublicKey // For sending CALL_END notification
             )
 
             // Set callbacks

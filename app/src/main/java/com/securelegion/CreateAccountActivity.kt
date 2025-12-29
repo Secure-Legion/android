@@ -320,29 +320,86 @@ class CreateAccountActivity : AppCompatActivity() {
                     }
                 }
 
-                // Update loading state
-                withContext(Dispatchers.Main) {
-                    showLoading("Creating account...", "")
+                // Create voice hidden service - retry until success
+                var voiceOnionAddress = ""
+                var voiceAttempt = 0
+                while (voiceOnionAddress.isEmpty()) {
+                    try {
+                        voiceAttempt++
+                        withContext(Dispatchers.Main) {
+                            showLoading("Creating account...", "Setting up voice calling service" + if (voiceAttempt > 1) " (attempt $voiceAttempt)" else "")
+                        }
+                        Log.d("CreateAccount", "Creating voice hidden service (attempt $voiceAttempt)...")
+
+                        // Ensure voice streaming server is started first
+                        com.securelegion.crypto.RustBridge.startVoiceStreamingServer()
+                        Log.d("CreateAccount", "Voice streaming server started on localhost:9152")
+
+                        // Create voice hidden service
+                        voiceOnionAddress = com.securelegion.crypto.RustBridge.createVoiceHiddenService()
+                        torManager.saveVoiceOnionAddress(voiceOnionAddress)
+                        Log.i("CreateAccount", "Voice hidden service created: $voiceOnionAddress")
+                    } catch (e: Exception) {
+                        Log.e("CreateAccount", "Failed to create voice hidden service (attempt $voiceAttempt): ${e.message}", e)
+                        if (voiceAttempt < 5) {
+                            Thread.sleep(2000) // Wait 2 seconds before retry
+                        } else {
+                            throw Exception("Failed to create voice hidden service after $voiceAttempt attempts: ${e.message}")
+                        }
+                    }
                 }
 
                 // Generate random PIN first
                 val cardManager = ContactCardManager(this@CreateAccountActivity)
                 val contactCardPin = cardManager.generateRandomPin()
 
-                // Create friend request .onion address (v2.0)
-                Log.d("CreateAccount", "Creating friend request .onion address...")
-                val friendRequestOnion = keyManager.createFriendRequestOnion()
-                Log.i("CreateAccount", "Friend request .onion: $friendRequestOnion")
+                // Create friend request .onion address (v2.0) - retry until success
+                var friendRequestOnion = ""
+                var friendRequestAttempt = 0
+                while (friendRequestOnion.isEmpty()) {
+                    try {
+                        friendRequestAttempt++
+                        withContext(Dispatchers.Main) {
+                            showLoading("Creating account...", "Setting up friend request service" + if (friendRequestAttempt > 1) " (attempt $friendRequestAttempt)" else "")
+                        }
+                        Log.d("CreateAccount", "Creating friend request .onion address (attempt $friendRequestAttempt)...")
+                        friendRequestOnion = keyManager.createFriendRequestOnion()
+                        Log.i("CreateAccount", "Friend request .onion: $friendRequestOnion")
+                    } catch (e: Exception) {
+                        Log.e("CreateAccount", "Failed to create friend request .onion (attempt $friendRequestAttempt): ${e.message}", e)
+                        if (friendRequestAttempt < 5) {
+                            Thread.sleep(2000) // Wait 2 seconds before retry
+                        } else {
+                            throw Exception("Failed to create friend request .onion after $friendRequestAttempt attempts: ${e.message}")
+                        }
+                    }
+                }
 
-                // Derive IPFS CID from seed (v2.0)
-                Log.d("CreateAccount", "Deriving IPFS CID from seed...")
-                val ipfsCid = keyManager.deriveIPFSCID(mnemonic)
-                keyManager.storeIPFSCID(ipfsCid)
-                Log.i("CreateAccount", "IPFS CID: $ipfsCid")
+                // Derive IPFS CID from seed (v2.0) - retry until success
+                var ipfsCid = ""
+                var ipfsCidAttempt = 0
+                while (ipfsCid.isEmpty()) {
+                    try {
+                        ipfsCidAttempt++
+                        withContext(Dispatchers.Main) {
+                            showLoading("Creating account...", "Generating identity CID" + if (ipfsCidAttempt > 1) " (attempt $ipfsCidAttempt)" else "")
+                        }
+                        Log.d("CreateAccount", "Deriving IPFS CID from seed (attempt $ipfsCidAttempt)...")
+                        ipfsCid = keyManager.deriveIPFSCID(mnemonic)
+                        keyManager.storeIPFSCID(ipfsCid)
+                        Log.i("CreateAccount", "IPFS CID: $ipfsCid")
+                    } catch (e: Exception) {
+                        Log.e("CreateAccount", "Failed to derive IPFS CID (attempt $ipfsCidAttempt): ${e.message}", e)
+                        if (ipfsCidAttempt < 5) {
+                            Thread.sleep(2000) // Wait 2 seconds before retry
+                        } else {
+                            throw Exception("Failed to derive IPFS CID after $ipfsCidAttempt attempts: ${e.message}")
+                        }
+                    }
+                }
 
                 // Create and upload contact card
                 Log.d("CreateAccount", "Creating contact card...")
-                val voiceOnion = torManager.getVoiceOnionAddress() ?: ""
                 val contactCard = ContactCard(
                     displayName = username,
                     solanaPublicKey = keyManager.getSolanaPublicKey(),
@@ -350,7 +407,7 @@ class CreateAccountActivity : AppCompatActivity() {
                     solanaAddress = keyManager.getSolanaAddress(),
                     friendRequestOnion = friendRequestOnion,
                     messagingOnion = onionAddress,
-                    voiceOnion = voiceOnion,
+                    voiceOnion = voiceOnionAddress,
                     contactPin = contactCardPin,
                     ipfsCid = ipfsCid,
                     timestamp = System.currentTimeMillis()

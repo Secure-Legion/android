@@ -152,6 +152,10 @@ abstract class BaseActivity : AppCompatActivity() {
      * Lock the app by navigating to LockActivity
      */
     private fun lockApp() {
+        // Mark app as locked
+        com.securelegion.utils.SessionManager.setLocked(this)
+        Log.i(TAG, "App locked - session ended")
+
         val intent = Intent(this, LockActivity::class.java)
         intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
         startActivity(intent)

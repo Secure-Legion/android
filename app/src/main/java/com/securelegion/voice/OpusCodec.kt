@@ -123,6 +123,35 @@ class OpusCodec {
     }
 
     /**
+     * Decode Opus packet using FEC to recover missing frame
+     * Uses in-band Forward Error Correction data from packet N+1 to recover frame N
+     * @param nextPacket Compressed Opus packet (N+1) containing FEC data for missing frame N
+     * @return 16-bit signed PCM samples for the PREVIOUS frame (N), or null if FEC failed
+     */
+    fun decodeFEC(nextPacket: ByteArray): ShortArray? {
+        if (decoderHandle == 0L) {
+            throw IllegalStateException("Decoder not initialized - call initDecoder() first")
+        }
+
+        val pcmBytes = RustBridge.opusDecodeFEC(decoderHandle, nextPacket)
+            ?: return null // FEC failed - encoder might not have FEC enabled or no redundancy available
+
+        // Convert ByteArray (little-endian i16) to ShortArray
+        val buffer = ByteBuffer.wrap(pcmBytes).order(ByteOrder.LITTLE_ENDIAN)
+        val pcmData = ShortArray(pcmBytes.size / 2)
+        for (i in pcmData.indices) {
+            pcmData[i] = buffer.getShort()
+        }
+
+        if (pcmData.size != FRAME_SIZE_SAMPLES) {
+            // FEC recovered partial frame or wrong size - treat as failure
+            return null
+        }
+
+        return pcmData
+    }
+
+    /**
      * Decode packet loss concealment (PLC) frame
      * When a packet is lost, generate a synthetic frame to smooth the gap
      * @return 16-bit signed PCM samples (FRAME_SIZE_SAMPLES = 960 samples)
