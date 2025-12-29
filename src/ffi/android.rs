@@ -96,6 +96,10 @@ static GLOBAL_VOICE_STREAMING_SERVER: OnceCell<Arc<tokio::sync::Mutex<VoiceStrea
 /// Stores a global reference to the Kotlin callback object
 static GLOBAL_VOICE_CALLBACK: OnceCell<Mutex<Option<GlobalRef>>> = OnceCell::new();
 
+/// Global Voice Signaling Callback (v2.0)
+/// Stores a global reference to the Kotlin callback object for signaling messages (CALL_OFFER, CALL_ANSWER, etc)
+static GLOBAL_VOICE_SIGNALING_CALLBACK: OnceCell<Mutex<Option<GlobalRef>>> = OnceCell::new();
+
 /// Global Tokio runtime for async operations
 /// This runtime persists for the lifetime of the process, allowing spawned tasks to continue running
 static GLOBAL_RUNTIME: Lazy<tokio::runtime::Runtime> = Lazy::new(|| {
@@ -2626,6 +2630,105 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendMessageBlob(
             Ok(_) => 1, // success
             Err(e) => {
                 log::error!("Failed to send message blob: {}", e);
+                0 // failure
+            }
+        }
+    }, 0)
+}
+
+/// Send call signaling message via HTTP POST to voice .onion
+/// This bypasses VOICE channel routing and sends directly to voice streaming server
+#[no_mangle]
+pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendHttpToVoiceOnion(
+    mut env: JNIEnv,
+    _class: JClass,
+    voice_onion: JString,
+    sender_x25519_pubkey: JByteArray,
+    encrypted_message: JByteArray,
+) -> jboolean {
+    catch_panic!(env, {
+        // Convert parameters
+        let onion_address = match jstring_to_string(&mut env, voice_onion) {
+            Ok(s) => s,
+            Err(e) => {
+                log::error!("Failed to convert voice onion address: {}", e);
+                return 0;
+            }
+        };
+
+        let sender_pubkey = match jbytearray_to_vec(&mut env, sender_x25519_pubkey) {
+            Ok(v) => v,
+            Err(e) => {
+                log::error!("Failed to convert sender pubkey: {}", e);
+                return 0;
+            }
+        };
+
+        let message_bytes = match jbytearray_to_vec(&mut env, encrypted_message) {
+            Ok(v) => v,
+            Err(e) => {
+                log::error!("Failed to convert encrypted message: {}", e);
+                return 0;
+            }
+        };
+
+        log::info!("Sending call signaling via HTTP POST to voice onion {} ({} bytes encrypted)", onion_address, message_bytes.len());
+
+        // Create wire message: [Type Byte 0x0D][Sender X25519 Public Key - 32 bytes][Encrypted Message]
+        const MSG_TYPE_CALL_SIGNALING: u8 = 0x0D;
+        let mut wire_message = Vec::with_capacity(1 + 32 + message_bytes.len());
+        wire_message.push(MSG_TYPE_CALL_SIGNALING);
+        wire_message.extend_from_slice(&sender_pubkey);
+        wire_message.extend_from_slice(&message_bytes);
+
+        log::info!("Wire message: {} bytes total", wire_message.len());
+
+        // Send HTTP POST via SOCKS5 to voice server on port 9152
+        let result = GLOBAL_RUNTIME.block_on(async {
+            use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+            // Connect to voice .onion via SOCKS5 (port 9152)
+            let mut stream = match crate::audio::voice_streaming::connect_via_socks5(&onion_address, 9152).await {
+                Ok(s) => s,
+                Err(e) => {
+                    log::error!("Failed to connect to voice onion via SOCKS5: {}", e);
+                    return Err(e);
+                }
+            };
+
+            // Craft HTTP POST request
+            let http_request = format!(
+                "POST / HTTP/1.1\r\nHost: {}.onion\r\nContent-Length: {}\r\n\r\n",
+                onion_address.trim_end_matches(".onion"),
+                wire_message.len()
+            );
+
+            // Send HTTP headers
+            stream.write_all(http_request.as_bytes()).await?;
+            // Send body (wire message)
+            stream.write_all(&wire_message).await?;
+            stream.flush().await?;
+
+            log::info!("HTTP POST request sent, waiting for response...");
+
+            // Read HTTP response (just check for 200 OK)
+            let mut response_buf = vec![0u8; 1024];
+            let n = stream.read(&mut response_buf).await?;
+            let response_str = String::from_utf8_lossy(&response_buf[..n]);
+
+            if response_str.contains("200 OK") {
+                log::info!("✓ HTTP 200 OK received from voice server");
+                Ok(())
+            } else {
+                log::error!("✗ Unexpected HTTP response: {}", response_str.lines().next().unwrap_or(""));
+                Err("HTTP request failed".into())
+            }
+        });
+
+        match result {
+            Ok(_) => 1, // success
+            Err(e) => {
+                log::error!("Failed to send HTTP POST to voice onion: {}", e);
                 0 // failure
             }
         }
@@ -5686,6 +5789,28 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_setVoicePacketCallback
     }, ())
 }
 
+/// Register voice signaling callback handler (v2.0)
+/// Handles incoming signaling messages (CALL_OFFER, CALL_ANSWER, etc) over voice onion HTTP
+/// Must be called before startVoiceStreamingServer
+#[no_mangle]
+pub extern "C" fn Java_com_securelegion_crypto_RustBridge_setVoiceSignalingCallback(
+    mut env: JNIEnv,
+    _class: JClass,
+    callback: JObject,
+) {
+    catch_panic!(env, {
+        // Create global reference to callback object
+        let global_callback = env.new_global_ref(callback)
+            .expect("Failed to create global reference to voice signaling callback");
+
+        // Store in global
+        let callback_storage = GLOBAL_VOICE_SIGNALING_CALLBACK.get_or_init(|| Mutex::new(None));
+        *callback_storage.lock().unwrap() = Some(global_callback);
+
+        log::info!("Voice signaling callback registered");
+    }, ())
+}
+
 /// Start voice streaming server on port 9152 (v2.0)
 /// Must be called before accepting or creating voice sessions
 #[no_mangle]
@@ -5696,8 +5821,9 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_startVoiceStreamingSer
     catch_panic!(env, {
         let voice_server = get_voice_streaming_server();
 
-        // Get JavaVM for callback invocations
-        let jvm = env.get_java_vm().expect("Failed to get JavaVM");
+        // Get JavaVM for callback invocations (get twice since JavaVM doesn't implement Clone)
+        let jvm_audio = env.get_java_vm().expect("Failed to get JavaVM");
+        let jvm_signaling = env.get_java_vm().expect("Failed to get JavaVM");
 
         // Start server in background task
         GLOBAL_RUNTIME.spawn(async move {
@@ -5706,7 +5832,7 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_startVoiceStreamingSer
                 let mut server = voice_server.lock().await;
                 server.set_audio_callback(move |call_id: String, packet: crate::audio::voice_streaming::VoicePacket| {
                 // Get JNI environment (attach thread if needed)
-                let mut env = match jvm.attach_current_thread() {
+                let mut env = match jvm_audio.attach_current_thread() {
                     Ok(env) => env,
                     Err(e) => {
                         log::error!("Failed to attach thread for voice callback: {}", e);
@@ -5722,7 +5848,7 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_startVoiceStreamingSer
                     let callback_obj = callback_ref.as_obj();
 
                     // Convert call_id to JString
-                    let call_id_jstring = match env.new_string(&call_id) {
+                    let call_id_jstring: JString = match env.new_string(&call_id) {
                         Ok(s) => s,
                         Err(e) => {
                             log::error!("Failed to create call_id JString: {}", e);
@@ -5731,7 +5857,7 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_startVoiceStreamingSer
                     };
 
                     // Convert audio_data to JByteArray
-                    let audio_data_array = match env.byte_array_from_slice(&packet.audio_data) {
+                    let audio_data_array: JByteArray = match env.byte_array_from_slice(&packet.audio_data) {
                         Ok(arr) => arr,
                         Err(e) => {
                             log::error!("Failed to create audio data byte array: {}", e);
@@ -5758,6 +5884,63 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_startVoiceStreamingSer
                 } else {
                     log::warn!("Voice packet received but no callback registered");
                 }
+                });
+
+                // Set signaling callback for HTTP POST messages (CALL_OFFER, CALL_ANSWER, etc)
+                server.set_signaling_callback(move |sender_pubkey: Vec<u8>, wire_message: Vec<u8>| {
+                    // Get JNI environment (attach thread if needed)
+                    let mut env = match jvm_signaling.attach_current_thread() {
+                        Ok(env) => env,
+                        Err(e) => {
+                            log::error!("Failed to attach thread for signaling callback: {}", e);
+                            return;
+                        }
+                    };
+
+                    // Get callback object
+                    let callback_storage = GLOBAL_VOICE_SIGNALING_CALLBACK.get().unwrap();
+                    let callback_lock = callback_storage.lock().unwrap();
+
+                    if let Some(ref callback_ref) = *callback_lock {
+                        let callback_obj = callback_ref.as_obj();
+
+                        // Convert sender_pubkey to JByteArray
+                        let sender_pubkey_array: JByteArray = match env.byte_array_from_slice(&sender_pubkey) {
+                            Ok(arr) => arr,
+                            Err(e) => {
+                                log::error!("Failed to create sender pubkey byte array: {}", e);
+                                return;
+                            }
+                        };
+
+                        // Convert wire_message to JByteArray
+                        let wire_message_array: JByteArray = match env.byte_array_from_slice(&wire_message) {
+                            Ok(arr) => arr,
+                            Err(e) => {
+                                log::error!("Failed to create wire message byte array: {}", e);
+                                return;
+                            }
+                        };
+
+                        // Call onSignalingMessage(senderPubkey: ByteArray, wireMessage: ByteArray)
+                        let result = env.call_method(
+                            callback_obj,
+                            "onSignalingMessage",
+                            "([B[B)V",
+                            &[
+                                (&sender_pubkey_array).into(),
+                                (&wire_message_array).into(),
+                            ],
+                        );
+
+                        if let Err(e) = result {
+                            log::error!("Failed to invoke voice signaling callback: {}", e);
+                        } else {
+                            log::info!("Voice signaling callback invoked successfully");
+                        }
+                    } else {
+                        log::warn!("Voice signaling message received but no callback registered");
+                    }
                 });
             } // Drop MutexGuard here
 

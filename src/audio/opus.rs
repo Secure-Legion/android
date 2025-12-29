@@ -15,17 +15,20 @@ const CHANNELS: Channels = Channels::Mono;
 /// Returns encoder handle (pointer) or -1 on error
 #[no_mangle]
 pub extern "C" fn Java_com_securelegion_crypto_RustBridge_opusEncoderCreate(
-    mut env: JNIEnv,
+    _env: JNIEnv,
     _class: JClass,
     bitrate: jint,
 ) -> jlong {
     match OpusEncoder::new(SAMPLE_RATE, CHANNELS, Application::Voip) {
         Ok(mut encoder) => {
-            // Set bitrate
-            if let Err(e) = encoder.set_bitrate(opus::Bitrate::Bits(bitrate)) {
+            // Set bitrate (default: 24kbps for voice)
+            let target_bitrate = if bitrate > 0 { bitrate } else { 24000 };
+            if let Err(e) = encoder.set_bitrate(opus::Bitrate::Bits(target_bitrate)) {
                 log::error!("Failed to set Opus bitrate: {:?}", e);
                 return -1;
             }
+
+            log::info!("Opus encoder initialized: {}kbps (VOIP mode)", target_bitrate / 1000);
 
             // Convert to raw pointer and return as jlong
             let boxed = Box::new(Mutex::new(encoder));
@@ -181,6 +184,58 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_opusDecode(
         }
         Err(e) => {
             log::error!("Opus decode error: {:?}", e);
+            std::ptr::null_mut()
+        }
+    }
+}
+
+/// Decode Opus with FEC to recover missing frame
+/// @param opusData - Opus-encoded bytes of packet N+1
+/// @return 16-bit PCM audio samples for the PREVIOUS frame (N) recovered via FEC, or null on error
+#[no_mangle]
+pub extern "C" fn Java_com_securelegion_crypto_RustBridge_opusDecodeFEC(
+    mut env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+    opus_data: JByteArray,
+) -> jbyteArray {
+    if handle == 0 {
+        return std::ptr::null_mut();
+    }
+
+    // Get decoder
+    let decoder_mutex = unsafe { &*(handle as *const Mutex<OpusDecoder>) };
+    let mut decoder = match decoder_mutex.lock() {
+        Ok(d) => d,
+        Err(_) => return std::ptr::null_mut(),
+    };
+
+    // Convert JByteArray to Vec<u8>
+    let opus_bytes = match env.convert_byte_array(opus_data) {
+        Ok(bytes) => bytes,
+        Err(_) => return std::ptr::null_mut(),
+    };
+
+    // Decode with FEC flag = true
+    // This extracts the redundant copy of frame N from packet N+1
+    let mut pcm_samples = vec![0i16; FRAME_SIZE * 6]; // Max size for potential FEC
+    match decoder.decode(&opus_bytes, &mut pcm_samples, true) {
+        Ok(size) => {
+            pcm_samples.truncate(size);
+
+            // Convert i16 samples to bytes
+            let mut pcm_bytes = Vec::with_capacity(pcm_samples.len() * 2);
+            for sample in pcm_samples {
+                pcm_bytes.extend_from_slice(&sample.to_le_bytes());
+            }
+
+            match env.byte_array_from_slice(&pcm_bytes) {
+                Ok(arr) => arr.into_raw(),
+                Err(_) => std::ptr::null_mut(),
+            }
+        }
+        Err(e) => {
+            log::error!("Opus FEC decode error: {:?}", e);
             std::ptr::null_mut()
         }
     }

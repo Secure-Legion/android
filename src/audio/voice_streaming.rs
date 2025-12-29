@@ -86,6 +86,7 @@ impl VoiceSession {
 
 /// Voice Streaming Server
 /// Listens on port 9152 for incoming voice connections
+/// Handles BOTH call signaling (HTTP POST) and audio streaming (raw TCP)
 pub struct VoiceStreamingServer {
     /// TCP listener
     pub listener: Option<TcpListener>,
@@ -93,6 +94,9 @@ pub struct VoiceStreamingServer {
     pub sessions: Arc<Mutex<HashMap<String, Vec<VoiceSession>>>>,
     /// Callback for incoming audio packets
     pub audio_callback: Option<Arc<dyn Fn(String, VoicePacket) + Send + Sync>>,
+    /// Callback for incoming signaling messages (CALL_OFFER, CALL_ANSWER, etc)
+    /// Parameters: (sender_x25519_pubkey, message_wire_bytes)
+    pub signaling_callback: Option<Arc<dyn Fn(Vec<u8>, Vec<u8>) + Send + Sync>>,
 }
 
 impl VoiceStreamingServer {
@@ -102,6 +106,7 @@ impl VoiceStreamingServer {
             listener: None,
             sessions: Arc::new(Mutex::new(HashMap::new())),
             audio_callback: None,
+            signaling_callback: None,
         }
     }
 
@@ -120,6 +125,7 @@ impl VoiceStreamingServer {
         // Clone shared state so task doesn't need to hold server lock
         let sessions = self.sessions.clone();
         let audio_callback = self.audio_callback.clone();
+        let signaling_callback = self.signaling_callback.clone();
 
         // Spawn background task to accept connections
         // This task doesn't need the server lock - it has its own copies
@@ -135,11 +141,12 @@ impl VoiceStreamingServer {
                         }
 
                         let sessions_clone = sessions.clone();
-                        let callback_clone = audio_callback.clone();
+                        let audio_callback_clone = audio_callback.clone();
+                        let signaling_callback_clone = signaling_callback.clone();
 
                         // Spawn handler for this connection
                         tokio::spawn(async move {
-                            if let Err(e) = handle_voice_connection(socket, addr, sessions_clone, callback_clone).await {
+                            if let Err(e) = handle_voice_connection(socket, addr, sessions_clone, audio_callback_clone, signaling_callback_clone).await {
                                 log::error!("Voice connection error: {}", e);
                             }
                         });
@@ -163,6 +170,15 @@ impl VoiceStreamingServer {
         self.audio_callback = Some(Arc::new(callback));
     }
 
+    /// Set callback for incoming signaling messages (CALL_OFFER, CALL_ANSWER, etc)
+    /// Callback receives: (sender_x25519_pubkey, message_wire_bytes)
+    pub fn set_signaling_callback<F>(&mut self, callback: F)
+    where
+        F: Fn(Vec<u8>, Vec<u8>) + Send + Sync + 'static,
+    {
+        self.signaling_callback = Some(Arc::new(callback));
+    }
+
     /// Accept incoming connections (run in loop)
     pub async fn accept_connections(&mut self) -> Result<(), Box<dyn Error>> {
         let listener = self.listener.as_ref()
@@ -179,10 +195,11 @@ impl VoiceStreamingServer {
 
             let sessions = self.sessions.clone();
             let audio_callback = self.audio_callback.clone();
+            let signaling_callback = self.signaling_callback.clone();
 
             // Spawn handler for this connection
             tokio::spawn(async move {
-                if let Err(e) = handle_voice_connection(socket, addr, sessions, audio_callback).await {
+                if let Err(e) = handle_voice_connection(socket, addr, sessions, audio_callback, signaling_callback).await {
                     log::error!("Voice connection error: {}", e);
                 }
             });
@@ -283,8 +300,119 @@ impl VoiceStreamingServer {
     }
 }
 
-/// Handle incoming voice connection
+/// Handle incoming voice connection (HTTP signaling or audio streaming)
+/// Detects connection type by peeking at first bytes:
+/// - HTTP POST: starts with "POST"
+/// - Audio: starts with UUID (36 bytes)
 pub async fn handle_voice_connection(
+    mut socket: TcpStream,
+    addr: SocketAddr,
+    sessions: Arc<Mutex<HashMap<String, Vec<VoiceSession>>>>,
+    audio_callback: Option<Arc<dyn Fn(String, VoicePacket) + Send + Sync>>,
+    signaling_callback: Option<Arc<dyn Fn(Vec<u8>, Vec<u8>) + Send + Sync>>,
+) -> Result<(), Box<dyn Error>> {
+    // Peek at first 4 bytes to detect connection type
+    let mut peek_buf = [0u8; 4];
+    socket.peek(&mut peek_buf).await?;
+
+    // Check if it's an HTTP POST request
+    if &peek_buf == b"POST" {
+        log::info!("Detected HTTP signaling connection from {}", addr);
+        return handle_http_signaling(socket, addr, signaling_callback).await;
+    } else {
+        log::info!("Detected audio connection from {}", addr);
+        return handle_audio_connection(socket, addr, sessions, audio_callback).await;
+    }
+}
+
+/// Handle HTTP POST request for call signaling (CALL_OFFER, CALL_ANSWER, etc)
+async fn handle_http_signaling(
+    mut socket: TcpStream,
+    addr: SocketAddr,
+    signaling_callback: Option<Arc<dyn Fn(Vec<u8>, Vec<u8>) + Send + Sync>>,
+) -> Result<(), Box<dyn Error>> {
+    // Read HTTP request line
+    let mut request_line = Vec::new();
+    loop {
+        let mut byte = [0u8; 1];
+        socket.read_exact(&mut byte).await?;
+        request_line.push(byte[0]);
+        if request_line.len() >= 2 && &request_line[request_line.len()-2..] == b"\r\n" {
+            break;
+        }
+        if request_line.len() > 8192 {
+            return Err("HTTP request line too long".into());
+        }
+    }
+
+    let request_str = String::from_utf8_lossy(&request_line);
+    log::debug!("HTTP request: {}", request_str.trim());
+
+    // Read headers until we find Content-Length
+    let mut content_length: Option<usize> = None;
+    loop {
+        let mut header_line = Vec::new();
+        loop {
+            let mut byte = [0u8; 1];
+            socket.read_exact(&mut byte).await?;
+            header_line.push(byte[0]);
+            if header_line.len() >= 2 && &header_line[header_line.len()-2..] == b"\r\n" {
+                break;
+            }
+            if header_line.len() > 8192 {
+                return Err("HTTP header line too long".into());
+            }
+        }
+
+        // Empty line signals end of headers
+        if header_line == b"\r\n" {
+            break;
+        }
+
+        let header_str = String::from_utf8_lossy(&header_line);
+        if header_str.to_lowercase().starts_with("content-length:") {
+            let len_str = header_str.trim().split(':').nth(1)
+                .ok_or("Invalid Content-Length header")?
+                .trim();
+            content_length = Some(len_str.parse()?);
+        }
+    }
+
+    let body_len = content_length.ok_or("Missing Content-Length header")?;
+
+    // Read body (wire message format: [Type][Sender X25519 Pubkey - 32 bytes][Encrypted Message])
+    let mut body = vec![0u8; body_len];
+    socket.read_exact(&mut body).await?;
+
+    log::info!("Received HTTP signaling message: {} bytes from {}", body.len(), addr);
+
+    // Extract sender X25519 public key (bytes 1-32) and wire message
+    if body.len() < 33 {
+        return Err("HTTP body too short for wire message format".into());
+    }
+
+    let sender_pubkey = body[1..33].to_vec();
+    let wire_message = body; // Full wire message including type byte
+
+    // Call signaling callback
+    if let Some(callback) = signaling_callback {
+        callback(sender_pubkey, wire_message);
+        log::info!("Signaling callback invoked for HTTP message");
+    } else {
+        log::warn!("Signaling callback not set - message dropped");
+    }
+
+    // Send HTTP 200 OK response
+    let response = b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n";
+    socket.write_all(response).await?;
+    socket.flush().await?;
+
+    log::info!("HTTP signaling request handled successfully");
+    Ok(())
+}
+
+/// Handle audio streaming connection (existing VOICE_HELLO/OK protocol)
+async fn handle_audio_connection(
     mut socket: TcpStream,
     addr: SocketAddr,
     sessions: Arc<Mutex<HashMap<String, Vec<VoiceSession>>>>,
@@ -295,7 +423,7 @@ pub async fn handle_voice_connection(
     socket.read_exact(&mut call_id_bytes).await?;
     let call_id = String::from_utf8(call_id_bytes.to_vec())?;
 
-    log::info!("Voice connection for call: {} from {}", call_id, addr);
+    log::info!("Voice audio connection for call: {} from {}", call_id, addr);
 
     // ========== VOICE_HELLO/OK HANDSHAKE ==========
     // Read VOICE_HELLO message (with timeout)
@@ -358,7 +486,7 @@ pub async fn handle_voice_connection(
         match socket.read_exact(&mut header).await {
             Ok(_) => {},
             Err(_) => {
-                log::info!("Voice connection closed: {}", call_id);
+                log::info!("Voice audio connection closed: {}", call_id);
                 break;
             }
         }
@@ -482,7 +610,7 @@ async fn handle_voice_sender(
 
 /// Connect to target via SOCKS5 proxy (Tor)
 /// This allows connecting to .onion addresses
-async fn connect_via_socks5(target_host: &str, target_port: u16) -> Result<TcpStream, Box<dyn Error>> {
+pub async fn connect_via_socks5(target_host: &str, target_port: u16) -> Result<TcpStream, Box<dyn Error>> {
     // Connect to SOCKS5 proxy (Tor)
     let proxy_addr = "127.0.0.1:9050";
     log::debug!("Connecting to SOCKS5 proxy at {}", proxy_addr);
