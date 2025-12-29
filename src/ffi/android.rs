@@ -2688,7 +2688,8 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendHttpToVoiceOnion(
             use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
             // Connect to voice .onion via SOCKS5 (port 9152)
-            let mut stream = match crate::audio::voice_streaming::connect_via_socks5(&onion_address, 9152).await {
+            // For signaling, use generic isolation params (not part of multi-circuit)
+            let mut stream = match crate::audio::voice_streaming::connect_via_socks5(&onion_address, 9152, 0, "signaling", 0).await {
                 Ok(s) => s,
                 Err(e) => {
                     log::error!("Failed to connect to voice onion via SOCKS5: {}", e);
@@ -5865,15 +5866,17 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_startVoiceStreamingSer
                         }
                     };
 
-                    // Call onVoicePacket(callId: String, sequence: Int, timestamp: Long, audioData: ByteArray)
+                    // Call onVoicePacket(callId: String, sequence: Int, timestamp: Long, circuitIndex: Byte, ptype: Byte, audioData: ByteArray)
                     let result = env.call_method(
                         callback_obj,
                         "onVoicePacket",
-                        "(Ljava/lang/String;IJ[B)V",
+                        "(Ljava/lang/String;IJBB[B)V",
                         &[
                             (&call_id_jstring).into(),
                             (packet.sequence as i32).into(),
                             (packet.timestamp as i64).into(),
+                            (packet.circuit_index as i8).into(),
+                            (packet.ptype as i8).into(),
                             (&audio_data_array).into(),
                         ],
                     );
@@ -6016,6 +6019,7 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_createVoiceSession(
 /// Send audio packet to peer in active voice session on specific circuit (v2.0)
 /// Audio data should be Opus-encoded
 /// @param circuit_index Which circuit to use (0 to num_circuits-1)
+/// @param ptype Packet type (0x01=AUDIO, 0x02=CONTROL)
 #[no_mangle]
 pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendAudioPacket(
     mut env: JNIEnv,
@@ -6025,6 +6029,7 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendAudioPacket(
     timestamp: jlong,
     audio_data: JByteArray,
     circuit_index: jint,
+    ptype: jint,
 ) -> jboolean {
     catch_panic!(env, {
         let call_id_str = match jstring_to_string(&mut env, call_id) {
@@ -6047,6 +6052,8 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendAudioPacket(
             sequence: sequence as u32,
             timestamp: timestamp as u64,
             audio_data: audio_bytes,
+            circuit_index: circuit_index as u8,
+            ptype: ptype as u8,
         };
 
         let voice_server = get_voice_streaming_server();
@@ -6095,6 +6102,52 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_getActiveVoiceSessions
     let voice_server = get_voice_streaming_server();
     let server = voice_server.blocking_lock();
     server.active_sessions() as jint
+}
+
+/// Rebuild a specific voice circuit (close and reconnect with fresh Tor path)
+/// Tor daemon will automatically pick a different relay path via SOCKS5 isolation
+/// @param call_id Active call session ID
+/// @param circuit_index Circuit to rebuild (0-2)
+/// @param rebuild_epoch Incremented counter (forces fresh SOCKS5 isolation)
+/// @return true if rebuild succeeded, false if failed
+#[no_mangle]
+pub extern "C" fn Java_com_securelegion_crypto_RustBridge_rebuildVoiceCircuit(
+    mut env: JNIEnv,
+    _class: JClass,
+    call_id: JString,
+    circuit_index: jint,
+    rebuild_epoch: jint,
+) -> jboolean {
+    catch_panic!(env, {
+        let call_id_str = match jstring_to_string(&mut env, call_id) {
+            Ok(s) => s,
+            Err(e) => {
+                log::error!("Failed to convert call_id: {}", e);
+                return 0;
+            }
+        };
+
+        log::warn!("Rebuilding voice circuit {} for call {} (rebuild_epoch={})", circuit_index, call_id_str, rebuild_epoch);
+
+        // Rebuild circuit via async runtime
+        let result = GLOBAL_RUNTIME.block_on(async {
+            let voice_server = get_voice_streaming_server();
+            let mut server = voice_server.lock().await;
+
+            server.rebuild_circuit(&call_id_str, circuit_index as usize, rebuild_epoch as u32).await
+        });
+
+        match result {
+            Ok(_) => {
+                log::info!("✓ Circuit {} rebuild SUCCESS for call {}", circuit_index, call_id_str);
+                1 // success
+            }
+            Err(e) => {
+                log::error!("✗ Circuit {} rebuild FAILED for call {}: {}", circuit_index, call_id_str, e);
+                0 // failure
+            }
+        }
+    }, 0)
 }
 
 // ==================== END v2.0: Voice Streaming ====================
