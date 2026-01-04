@@ -264,7 +264,10 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_opusDecode(
     let mut pcm_samples = vec![0i16; FRAME_SIZE];
     match decoder.decode(&opus_bytes, &mut pcm_samples, false) {
         Ok(size) => {
-            pcm_samples.truncate(size);
+            // CRITICAL FIX: PLC can return multiple frames (e.g., 5760 samples = 6 frames)
+            // if decoder is trying to catch up. Always limit to FRAME_SIZE (960) for consistent timing.
+            let actual_size = size.min(FRAME_SIZE);
+            pcm_samples.truncate(actual_size);
 
             // Convert i16 samples to bytes
             let mut pcm_bytes = Vec::with_capacity(pcm_samples.len() * 2);
@@ -316,7 +319,9 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_opusDecodeFEC(
     let mut pcm_samples = vec![0i16; FRAME_SIZE];
     match decoder.decode(&opus_bytes, &mut pcm_samples, true) {
         Ok(size) => {
-            pcm_samples.truncate(size);
+            // CRITICAL FIX: Limit to FRAME_SIZE for consistent timing (same as regular decode)
+            let actual_size = size.min(FRAME_SIZE);
+            pcm_samples.truncate(actual_size);
 
             // Convert i16 samples to bytes
             let mut pcm_bytes = Vec::with_capacity(pcm_samples.len() * 2);

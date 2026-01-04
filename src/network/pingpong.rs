@@ -371,7 +371,8 @@ impl PingToken {
     }
 
     /// Create a Ping token with a specific nonce and timestamp (for consistent retries)
-    /// This ensures retries use identical encrypted bytes (same nonce + same timestamp = safe)
+    /// Retries re-send the EXACT SAME ciphertext bytes (no re-encryption on retry)
+    /// This makes message identity stable and prevents nonce reuse vulnerabilities
     pub fn with_nonce(
         sender_keypair: &SigningKey,
         recipient_pubkey: &VerifyingKey,

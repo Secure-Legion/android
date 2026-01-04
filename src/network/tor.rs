@@ -204,6 +204,7 @@ pub static VOICE_TX: once_cell::sync::OnceCell<Arc<StdMutex<tokio::sync::mpsc::U
 
 pub struct TorManager {
     control_stream: Option<Arc<Mutex<TcpStream>>>,
+    voice_control_stream: Option<Arc<Mutex<TcpStream>>>,  // VOICE TOR: port 9052 (Single Onion)
     hidden_service_address: Option<String>,
     listener_handle: Option<tokio::task::JoinHandle<()>>,
     incoming_ping_tx: Option<tokio::sync::mpsc::UnboundedSender<(u64, Vec<u8>)>>,
@@ -217,6 +218,7 @@ impl TorManager {
     pub fn new() -> Result<Self, Box<dyn Error>> {
         Ok(TorManager {
             control_stream: None,
+            voice_control_stream: None,  // VOICE TOR initialized separately
             hidden_service_address: None,
             listener_handle: None,
             incoming_ping_tx: None,
@@ -255,6 +257,49 @@ impl TorManager {
 
         log::info!("Tor fully bootstrapped and ready");
         Ok("Tor client ready (managed by OnionProxyManager)".to_string())
+    }
+
+    /// Connect to VOICE Tor control port (port 9052 - Single Onion Service instance)
+    /// This is a separate Tor daemon specifically for voice hidden service
+    /// Must be called AFTER voice Tor daemon is started by TorManager.kt
+    pub async fn initialize_voice_control(&mut self) -> Result<String, Box<dyn Error>> {
+        log::info!("Connecting to VOICE Tor control port (9052)...");
+
+        // Connect to voice Tor control port
+        let mut control = TcpStream::connect("127.0.0.1:9052").await?;
+
+        // Read voice Tor cookie file
+        let cookie_path = "/data/data/com.securelegion/files/voice_tor/control_auth_cookie";
+        let cookie = match std::fs::read(cookie_path) {
+            Ok(c) => c,
+            Err(e) => {
+                log::warn!("Failed to read voice Tor cookie at {}: {}", cookie_path, e);
+                log::warn!("Trying alternate path...");
+                // Try alternate path
+                let alt_path = "/data/user/0/com.securelegion/files/voice_tor/control_auth_cookie";
+                std::fs::read(alt_path)?
+            }
+        };
+
+        // Hex-encode the cookie
+        let cookie_hex = hex::encode(&cookie);
+
+        // Authenticate with cookie
+        let auth_cmd = format!("AUTHENTICATE {}\r\n", cookie_hex);
+        control.write_all(auth_cmd.as_bytes()).await?;
+
+        let mut buf = vec![0u8; 1024];
+        let n = control.read(&mut buf).await?;
+        let response = String::from_utf8_lossy(&buf[..n]);
+
+        if !response.contains("250 OK") {
+            return Err(format!("Voice Tor control port authentication failed: {}", response).into());
+        }
+
+        self.voice_control_stream = Some(Arc::new(Mutex::new(control)));
+
+        log::info!("Connected to VOICE Tor control port (9052) successfully");
+        Ok("Voice Tor control ready (Single Onion Service mode)".to_string())
     }
 
     /// Wait for Tor to finish bootstrapping (100%)
@@ -486,14 +531,17 @@ impl TorManager {
         let expanded_key = signing_key.to_keypair_bytes();
         let key_base64 = base64::encode(&expanded_key);
 
-        // Create voice hidden service on port 9152
-        let control = self.control_stream.as_ref()
-            .ok_or("Control port not connected")?;
+        // Create voice hidden service on port 9152 using VOICE TOR (port 9052)
+        // Voice Tor is configured with HiddenServiceNonAnonymousMode 1 and HiddenServiceSingleHopMode 1
+        // This creates a Single Onion Service (3-hop instead of 6-hop)
+        let control = self.voice_control_stream.as_ref()
+            .ok_or("Voice Tor control port not connected - did you call initialize_voice_control()?")?;
 
         let actual_onion_address = {
             let mut stream = control.lock().await;
 
             // Create ephemeral voice hidden service with only port 9152
+            // Single Onion mode is configured in voice torrc (HiddenServiceNonAnonymousMode 1)
             let command = format!(
                 "ADD_ONION ED25519-V3:{} Port=9152,127.0.0.1:9152\r\n",
                 key_base64
@@ -525,8 +573,9 @@ impl TorManager {
             }
         };
 
-        log::info!("Voice hidden service registered: {}", actual_onion_address);
-        log::info!("Voice service port: 9152 → local 9152 (voice streaming)");
+        log::info!("✓ VOICE SINGLE ONION SERVICE registered: {}", actual_onion_address);
+        log::info!("✓ Voice service port: 9152 → local 9152 (voice streaming)");
+        log::info!("✓ Service mode: Single Onion (3-hop latency, service location visible)");
 
         Ok(actual_onion_address)
     }

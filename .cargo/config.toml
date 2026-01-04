@@ -1,8 +1,11 @@
 [target.aarch64-linux-android]
+linker = "C:/Users/Eddie/AppData/Local/Android/Sdk/ndk/27.2.12479018/toolchains/llvm/prebuilt/windows-x86_64/bin/aarch64-linux-android35-clang.cmd"
 rustflags = ["-L", "C:/Users/Eddie/AndroidStudioProjects/SecureLegion/opus-official/build/arm64-v8a"]
 
 [target.armv7-linux-androideabi]
+linker = "C:/Users/Eddie/AppData/Local/Android/Sdk/ndk/27.2.12479018/toolchains/llvm/prebuilt/windows-x86_64/bin/armv7a-linux-androideabi35-clang.cmd"
 rustflags = ["-L", "C:/Users/Eddie/AndroidStudioProjects/SecureLegion/opus-official/build/armeabi-v7a"]
 
 [target.x86_64-linux-android]
+linker = "C:/Users/Eddie/AppData/Local/Android/Sdk/ndk/27.2.12479018/toolchains/llvm/prebuilt/windows-x86_64/bin/x86_64-linux-android35-clang.cmd"
 rustflags = ["-L", "C:/Users/Eddie/AndroidStudioProjects/SecureLegion/opus-official/build/x86_64"]

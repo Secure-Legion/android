@@ -563,6 +563,44 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_initializeTor(
     }, std::ptr::null_mut())
 }
 
+/// Initialize VOICE Tor control connection (port 9052)
+/// This must be called AFTER voice Tor daemon is started by TorManager.kt
+/// Voice Tor runs with Single Onion Service configuration (HiddenServiceNonAnonymousMode 1)
+#[no_mangle]
+pub extern "C" fn Java_com_securelegion_crypto_RustBridge_initializeVoiceTorControl(
+    mut env: JNIEnv,
+    _class: JClass,
+) -> jstring {
+    catch_panic!(env, {
+        let tor_manager = get_tor_manager();
+
+        // Connect to voice Tor control port (9052)
+        let result = GLOBAL_RUNTIME.block_on(async {
+            let mut manager = tor_manager.lock().unwrap();
+            manager.initialize_voice_control().await
+        });
+
+        match result {
+            Ok(status) => {
+                log::info!("Voice Tor control initialized successfully");
+
+                match string_to_jstring(&mut env, &status) {
+                    Ok(s) => s.into_raw(),
+                    Err(_) => {
+                        let _ = env.throw_new("java/lang/RuntimeException", "Failed to create status string");
+                        std::ptr::null_mut()
+                    }
+                }
+            },
+            Err(e) => {
+                let error_msg = format!("Voice Tor control initialization failed: {}", e);
+                let _ = env.throw_new("java/lang/RuntimeException", error_msg);
+                std::ptr::null_mut()
+            }
+        }
+    }, std::ptr::null_mut())
+}
+
 /// Create a deterministic hidden service from seed-derived key
 /// Returns the .onion address for receiving connections
 ///
@@ -6054,6 +6092,8 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendAudioPacket(
             audio_data: audio_bytes,
             circuit_index: circuit_index as u8,
             ptype: ptype as u8,
+            redundant_audio_data: Vec::new(),  // Phase 3: Will be populated by sender task
+            redundant_sequence: 0,              // Phase 3: Will be populated by sender task
         };
 
         let voice_server = get_voice_streaming_server();

@@ -38,11 +38,12 @@ const PTYPE_CONTROL: u8 = 0x02;
 
 /// Voice packet structure
 /// Contains compressed audio data + metadata
+/// Phase 3: FREE redundancy via Tor cell padding (514 bytes total, ~172 bytes used, 342 bytes FREE!)
 #[derive(Debug, Clone)]
 pub struct VoicePacket {
     /// Sequence number for packet ordering
     pub sequence: u32,
-    /// Opus-encoded audio data
+    /// Opus-encoded audio data (PRIMARY frame)
     pub audio_data: Vec<u8>,
     /// Timestamp (milliseconds since call start)
     pub timestamp: u64,
@@ -50,6 +51,10 @@ pub struct VoicePacket {
     pub circuit_index: u8,
     /// Packet type (v2 only - AUDIO or CONTROL)
     pub ptype: u8,
+    /// Phase 3: Redundant copy of PREVIOUS frame (uses FREE Tor padding)
+    pub redundant_audio_data: Vec<u8>,
+    /// Sequence number of redundant frame
+    pub redundant_sequence: u32,
 }
 
 /// Voice streaming session
@@ -613,9 +618,12 @@ async fn handle_audio_connection(
                 timestamp,
                 circuit_index: 0, // v1 doesn't have circuit_index
                 ptype: PTYPE_AUDIO, // v1 only has audio packets
+                redundant_audio_data: Vec::new(), // v1 doesn't have redundancy
+                redundant_sequence: 0,
             }
         } else {
-            // V2 packet format: seq(4) + timestamp(8) + circuit_index(1) + ptype(1) + data_len(2) + payload
+            // V2 packet format (Phase 3): seq(4) + timestamp(8) + circuit_index(1) + ptype(1) +
+            //                             data_len(2) + payload + redundant_seq(4) + redundant_len(2) + redundant_payload
             let mut header = [0u8; 14];
             match socket.read_exact(&mut header).await {
                 Ok(_) => {},
@@ -633,14 +641,39 @@ async fn handle_audio_connection(
             let circuit_index = header[12];
             let ptype = header[13];
 
-            // Read data length (2 bytes)
+            // Read primary data length (2 bytes)
             let mut len_bytes = [0u8; 2];
             socket.read_exact(&mut len_bytes).await?;
             let data_len = u16::from_be_bytes(len_bytes) as usize;
 
-            // Read payload data
+            // Read primary payload data
             let mut audio_data = vec![0u8; data_len];
             socket.read_exact(&mut audio_data).await?;
+
+            // Phase 3: Read redundant frame (backwards compatible - may not be present)
+            let (redundant_audio_data, redundant_sequence) = match async {
+                // Read redundant sequence number (4 bytes)
+                let mut redundant_seq_bytes = [0u8; 4];
+                socket.read_exact(&mut redundant_seq_bytes).await?;
+                let redundant_seq = u32::from_be_bytes(redundant_seq_bytes);
+
+                // Read redundant data length (2 bytes)
+                let mut redundant_len_bytes = [0u8; 2];
+                socket.read_exact(&mut redundant_len_bytes).await?;
+                let redundant_len = u16::from_be_bytes(redundant_len_bytes) as usize;
+
+                // Read redundant payload
+                let mut redundant_data = vec![0u8; redundant_len];
+                socket.read_exact(&mut redundant_data).await?;
+
+                Ok::<_, std::io::Error>((redundant_data, redundant_seq))
+            }.await {
+                Ok((data, seq)) => (data, seq),
+                Err(_) => {
+                    // No redundant data (old client or end of stream) - that's OK
+                    (Vec::new(), 0)
+                }
+            };
 
             VoicePacket {
                 sequence,
@@ -648,6 +681,8 @@ async fn handle_audio_connection(
                 timestamp,
                 circuit_index,
                 ptype,
+                redundant_audio_data,
+                redundant_sequence,
             }
         };
 
@@ -736,13 +771,19 @@ async fn handle_voice_sender(
             socket.write_all(&(packet.audio_data.len() as u16).to_be_bytes()).await?;
             socket.write_all(&packet.audio_data).await?;
         } else {
-            // V2 packet format: seq(4) + timestamp(8) + circuit_index(1) + ptype(1) + data_len(2) + payload
+            // V2 packet format (Phase 3): seq(4) + timestamp(8) + circuit_index(1) + ptype(1) +
+            //                             data_len(2) + payload + redundant_seq(4) + redundant_len(2) + redundant_payload
             socket.write_all(&packet.sequence.to_be_bytes()).await?;
             socket.write_all(&packet.timestamp.to_be_bytes()).await?;
             socket.write_all(&[packet.circuit_index]).await?;
             socket.write_all(&[packet.ptype]).await?;
             socket.write_all(&(packet.audio_data.len() as u16).to_be_bytes()).await?;
             socket.write_all(&packet.audio_data).await?;
+
+            // Phase 3: Write redundant frame (FREE via Tor cell padding - no bandwidth cost!)
+            socket.write_all(&packet.redundant_sequence.to_be_bytes()).await?;
+            socket.write_all(&(packet.redundant_audio_data.len() as u16).to_be_bytes()).await?;
+            socket.write_all(&packet.redundant_audio_data).await?;
         }
         socket.flush().await?;
     }
@@ -928,12 +969,16 @@ mod tests {
             timestamp: 12345,
             circuit_index: 0,
             ptype: PTYPE_AUDIO,
+            redundant_audio_data: vec![5, 6, 7, 8],  // Phase 3: Previous frame
+            redundant_sequence: 0,                    // Phase 3: Previous sequence
         };
         assert_eq!(packet.sequence, 1);
         assert_eq!(packet.audio_data.len(), 4);
         assert_eq!(packet.timestamp, 12345);
         assert_eq!(packet.circuit_index, 0);
         assert_eq!(packet.ptype, PTYPE_AUDIO);
+        assert_eq!(packet.redundant_audio_data.len(), 4);
+        assert_eq!(packet.redundant_sequence, 0);
     }
 
     #[tokio::test]
