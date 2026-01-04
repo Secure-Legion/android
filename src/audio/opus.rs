@@ -8,8 +8,8 @@ use std::os::raw::{c_void, c_int};
 
 // Sample rate: 48kHz (Opus native rate)
 const SAMPLE_RATE: i32 = 48000;
-// Frame size: 20ms frames = sample_rate / 50 = 48000 / 50 = 960 samples
-const FRAME_SIZE: usize = 960;
+// Frame size: 40ms frames (MVP) = sample_rate / 25 = 48000 / 25 = 1920 samples
+const FRAME_SIZE: usize = 1920;
 // Channels: Mono
 const CHANNELS: i32 = 1;
 
@@ -68,8 +68,8 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_opusEncoderCreate(
             return -1;
         }
 
-        // Set bitrate (default: 32kbps for voice over Tor)
-        let target_bitrate = if bitrate > 0 { bitrate } else { 32000 };
+        // Set bitrate (MVP: 16kbps CBR for reduced latency/jitter)
+        let target_bitrate = if bitrate > 0 { bitrate } else { 16000 };
         if let Err(e) = crate::audio::opus_ctl::opus_set_bitrate(encoder_ptr, target_bitrate) {
             log::error!("Failed to set bitrate: error={}", e);
             opus_encoder_destroy(encoder_ptr);
