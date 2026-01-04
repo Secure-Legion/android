@@ -66,8 +66,7 @@
                 android:layout_width="20dp"
                 android:layout_height="20dp"
                 android:layout_gravity="center"
-                android:src="@android:drawable/ic_menu_delete"
-                android:tint="#888888"
+                android:src="@drawable/ic_delete"
                 android:contentDescription="Delete" />
 
         </FrameLayout>
@@ -112,7 +111,7 @@
                     android:layout_height="match_parent"
                     android:background="@drawable/lock_password_input_bg"
                     android:hint="friend.onion"
-                    android:inputType="textPassword"
+                    android:inputType="text"
                     android:textColorHint="#666666"
                     android:textColor="#8C8C8C"
                     android:fontFamily="@font/poppins_regular"

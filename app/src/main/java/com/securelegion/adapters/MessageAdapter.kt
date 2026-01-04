@@ -6,7 +6,10 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.graphics.BitmapFactory
+import android.os.Handler
+import android.os.Looper
 import android.util.Base64
+import android.util.Log
 import android.view.GestureDetector
 import android.view.LayoutInflater
 import android.view.MotionEvent
@@ -33,6 +36,7 @@ class MessageAdapter(
     private var messages: List<Message> = emptyList(),
     private var pendingPings: List<com.securelegion.models.PendingPing> = emptyList(),
     private var downloadingPingIds: Set<String> = emptySet(),  // Track which pings are being downloaded
+    private var autoPongPingIds: Set<String> = emptySet(),  // Track auto-downloading pings (show typing indicator)
     private val onDownloadClick: ((String) -> Unit)? = null,  // Now passes ping ID
     private val onVoicePlayClick: ((Message) -> Unit)? = null,
     private var currentlyPlayingMessageId: String? = null,
@@ -45,6 +49,7 @@ class MessageAdapter(
 ) : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
 
     companion object {
+        private const val TAG = "MessageAdapter"
         private const val VIEW_TYPE_SENT = 1
         private const val VIEW_TYPE_RECEIVED = 2
         private const val VIEW_TYPE_PENDING = 3
@@ -69,6 +74,10 @@ class MessageAdapter(
     private var isSelectionMode = false
     private val selectedMessages = mutableSetOf<String>()  // Use String to support both message IDs and ping IDs
 
+    // Track animated ellipsis for downloading/decrypting states
+    private val ellipsisAnimations = mutableMapOf<TextView, Runnable>()
+    private val ellipsisHandler = Handler(Looper.getMainLooper())
+
     fun setSelectionMode(enabled: Boolean) {
         isSelectionMode = enabled
         if (!enabled) {
@@ -82,6 +91,113 @@ class MessageAdapter(
     fun clearSelection() {
         selectedMessages.clear()
         notifyDataSetChanged()
+    }
+
+    /**
+     * Start animated ellipsis for loading states (Downloading, Decrypting, etc.)
+     * Cycles through: "Text", "Text.", "Text..", "Text..."
+     */
+    private fun startEllipsisAnimation(textView: TextView, baseText: String) {
+        // Stop any existing animation on this view
+        stopEllipsisAnimation(textView)
+
+        var dotCount = 0
+        val runnable = object : Runnable {
+            override fun run() {
+                val dots = ".".repeat(dotCount)
+                textView.text = "$baseText$dots"
+                dotCount = (dotCount + 1) % 4  // Cycle 0, 1, 2, 3
+                ellipsisHandler.postDelayed(this, 500)  // Update every 500ms
+            }
+        }
+
+        ellipsisAnimations[textView] = runnable
+        ellipsisHandler.post(runnable)
+    }
+
+    /**
+     * Stop ellipsis animation for a TextView
+     */
+    private fun stopEllipsisAnimation(textView: TextView) {
+        ellipsisAnimations[textView]?.let { runnable ->
+            ellipsisHandler.removeCallbacks(runnable)
+            ellipsisAnimations.remove(textView)
+        }
+    }
+
+    /**
+     * Animate typing indicator dots (bouncing effect like iMessage/WhatsApp)
+     * Each dot fades up and down in sequence
+     */
+    private fun startTypingAnimation(dot1: TextView, dot2: TextView, dot3: TextView) {
+        Log.d(TAG, "🔵 startTypingAnimation() called - starting bounce animation")
+
+        // Stop any existing animation on these views first (important for RecyclerView recycling)
+        stopTypingAnimation(dot1, dot2, dot3)
+
+        val dots = listOf(dot1, dot2, dot3)
+
+        // Set initial state - all dots at normal size
+        dots.forEach {
+            it.scaleX = 1.0f
+            it.scaleY = 1.0f
+        }
+
+        var currentDot = 0
+        val runnable = object : Runnable {
+            override fun run() {
+                // Safety check: make sure views are still attached before animating
+                if (dot1.parent == null) {
+                    Log.d(TAG, "🔵 Typing animation stopped - views detached")
+                    stopTypingAnimation(dot1, dot2, dot3)
+                    return
+                }
+
+                Log.d(TAG, "🔵 Typing animation tick - bouncing dot $currentDot")
+
+                // Reset all dots to normal size
+                dots.forEach {
+                    it.animate()
+                        .scaleX(1.0f)
+                        .scaleY(1.0f)
+                        .setDuration(200)
+                        .start()
+                }
+
+                // Bounce current dot (scale up)
+                dots[currentDot].animate()
+                    .scaleX(1.4f)
+                    .scaleY(1.4f)
+                    .setDuration(200)
+                    .start()
+
+                // Move to next dot
+                currentDot = (currentDot + 1) % 3
+
+                ellipsisHandler.postDelayed(this, 400)  // Update every 400ms
+            }
+        }
+
+        // Store runnable using first dot as key (representative)
+        ellipsisAnimations[dot1] = runnable
+        ellipsisHandler.post(runnable)
+        Log.d(TAG, "🔵 Typing animation runnable posted to handler")
+    }
+
+    /**
+     * Stop typing indicator animation
+     */
+    private fun stopTypingAnimation(dot1: TextView, dot2: TextView? = null, dot3: TextView? = null) {
+        ellipsisAnimations[dot1]?.let { runnable ->
+            ellipsisHandler.removeCallbacks(runnable)
+            ellipsisAnimations.remove(dot1)
+
+            // Reset all dots to normal size
+            listOf(dot1, dot2, dot3).forEach { dot ->
+                dot?.scaleX = 1.0f
+                dot?.scaleY = 1.0f
+            }
+        }
     }
 
     class SentMessageViewHolder(view: View) : RecyclerView.ViewHolder(view) {
@@ -108,6 +224,10 @@ class MessageAdapter(
         val downloadingText: TextView = view.findViewById(R.id.downloadingText)
         val swipeRevealedTime: TextView = view.findViewById(R.id.swipeRevealedTime)
         val messageCheckbox: CheckBox = view.findViewById(R.id.messageCheckbox)
+        val typingIndicator: LinearLayout = view.findViewById(R.id.typingIndicator)
+        val typingDot1: TextView = view.findViewById(R.id.typingDot1)
+        val typingDot2: TextView = view.findViewById(R.id.typingDot2)
+        val typingDot3: TextView = view.findViewById(R.id.typingDot3)
     }
 
     class VoiceSentMessageViewHolder(view: View) : RecyclerView.ViewHolder(view) {
@@ -443,31 +563,40 @@ class MessageAdapter(
         val pendingPing = pendingPings[pendingIndex]
         val timestamp = pendingPing.timestamp
 
+        // Check if this is an auto-downloading ping (show typing indicator)
+        val isAutoPong = pendingPing.pingId in autoPongPingIds
+        if (isAutoPong) {
+            android.util.Log.i("MessageAdapter", "🔵 Ping ${pendingPing.pingId.take(8)} is AUTO-PONG - showing typing indicator")
+        }
+
         // Update UI based on ping state
         when (pendingPing.state) {
             com.securelegion.models.PingState.PENDING -> {
-                // Show "Download" button
+                // Show "Download" button (lock icon)
                 holder.downloadButton.visibility = View.VISIBLE
                 holder.downloadingText.visibility = View.GONE
+                holder.typingIndicator.visibility = View.GONE
+                stopEllipsisAnimation(holder.downloadingText)
+                stopTypingAnimation(holder.typingDot1, holder.typingDot2, holder.typingDot3)
             }
-            com.securelegion.models.PingState.DOWNLOADING -> {
-                // Show "Downloading..." text
-                holder.downloadButton.visibility = View.GONE
-                holder.downloadingText.visibility = View.VISIBLE
-                holder.downloadingText.text = "Downloading..."
-            }
-            com.securelegion.models.PingState.DECRYPTING -> {
-                // Show "Decrypting..." text
-                holder.downloadButton.visibility = View.GONE
-                holder.downloadingText.visibility = View.VISIBLE
-                holder.downloadingText.text = "Decrypting..."
-            }
+            com.securelegion.models.PingState.DOWNLOADING,
+            com.securelegion.models.PingState.DECRYPTING,
             com.securelegion.models.PingState.READY -> {
-                // Message is ready to show - this ping should be removed atomically
-                // Hide this pending ping entirely (ChatActivity will remove it next refresh)
-                holder.itemView.visibility = View.GONE
-                holder.itemView.layoutParams?.height = 0
-                return
+                holder.downloadButton.visibility = View.GONE
+
+                if (isAutoPong) {
+                    // Auto-PONG: Show typing indicator with animated dots (like real messaging apps)
+                    holder.downloadingText.visibility = View.GONE
+                    holder.typingIndicator.visibility = View.VISIBLE
+                    stopEllipsisAnimation(holder.downloadingText)
+                    startTypingAnimation(holder.typingDot1, holder.typingDot2, holder.typingDot3)
+                } else {
+                    // Manual download: Show "Downloading..." text with ellipsis
+                    holder.downloadingText.visibility = View.VISIBLE
+                    holder.typingIndicator.visibility = View.GONE
+                    stopTypingAnimation(holder.typingDot1, holder.typingDot2, holder.typingDot3)
+                    startEllipsisAnimation(holder.downloadingText, "Downloading")
+                }
             }
         }
 
@@ -715,7 +844,12 @@ class MessageAdapter(
             holder.messageBubble.setOnClickListener {
                 onImageClick?.invoke(message.attachmentData ?: "")
             }
-            holder.messageBubble.setOnLongClickListener(null)
+
+            // Add long-press listener to show popup menu with Delete option
+            holder.messageBubble.setOnLongClickListener {
+                showMessagePopupMenu(it, message)
+                true
+            }
         }
 
         // Setup swipe gesture (disabled in selection mode)
@@ -779,7 +913,12 @@ class MessageAdapter(
             holder.messageBubble.setOnClickListener {
                 onImageClick?.invoke(message.attachmentData ?: "")
             }
-            holder.messageBubble.setOnLongClickListener(null)
+
+            // Add long-press listener to show popup menu with Delete option
+            holder.messageBubble.setOnLongClickListener {
+                showMessagePopupMenu(it, message)
+                true
+            }
         }
 
         // Setup swipe gesture (disabled in selection mode)
@@ -1264,9 +1403,38 @@ class MessageAdapter(
         return messages.size + pendingPings.size
     }
 
+    override fun onViewRecycled(holder: RecyclerView.ViewHolder) {
+        super.onViewRecycled(holder)
+
+        // Stop any running animations when view is recycled to prevent crashes
+        if (holder is PendingMessageViewHolder) {
+            Log.d(TAG, "🔴 View recycled - stopping typing animation")
+            stopTypingAnimation(holder.typingDot1, holder.typingDot2, holder.typingDot3)
+            stopEllipsisAnimation(holder.downloadingText)
+        }
+    }
+
     fun setCurrentlyPlayingMessageId(messageId: String?) {
         currentlyPlayingMessageId = messageId
         notifyDataSetChanged() // Update all voice message icons
+    }
+
+    /**
+     * Stop all running animations (call this in onDestroy to prevent memory leaks)
+     */
+    fun stopAllAnimations() {
+        Log.d(TAG, "🛑 Stopping all animations in adapter")
+        // Stop all ellipsis animations
+        ellipsisAnimations.keys.toList().forEach { textView ->
+            ellipsisAnimations[textView]?.let { runnable ->
+                ellipsisHandler.removeCallbacks(runnable)
+            }
+        }
+        ellipsisAnimations.clear()
+
+        // Remove all pending messages from handler
+        ellipsisHandler.removeCallbacksAndMessages(null)
+        Log.d(TAG, "🛑 All animations stopped")
     }
 
     fun resetSwipeState() {
@@ -1280,8 +1448,14 @@ class MessageAdapter(
     fun updateMessages(
         newMessages: List<Message>,
         newPendingPings: List<com.securelegion.models.PendingPing> = emptyList(),
-        newDownloadingPingIds: Set<String> = emptySet()
+        newDownloadingPingIds: Set<String> = emptySet(),
+        newAutoPongPingIds: Set<String> = emptySet()
     ) {
+        // Stop all running ellipsis animations (views will be recycled)
+        ellipsisAnimations.keys.toList().forEach { textView ->
+            stopEllipsisAnimation(textView)
+        }
+
         // Track old state
         val oldMessageCount = messages.size
         val oldPendingCount = pendingPings.size
@@ -1291,6 +1465,7 @@ class MessageAdapter(
         messages = newMessages
         pendingPings = newPendingPings
         downloadingPingIds = newDownloadingPingIds
+        autoPongPingIds = newAutoPongPingIds
 
         // Track new state
         val newMessageCount = newMessages.size
@@ -1304,12 +1479,18 @@ class MessageAdapter(
         when {
             // Pending pings removed (after downloads or deletions)
             oldPendingCount > 0 && newPendingCount == 0 -> {
-                // Notify about message changes if any
-                if (newMessageCount != oldMessageCount) {
-                    notifyItemRangeChanged(0, newMessageCount)
+                // ATOMIC SWAP case: Total count stayed the same (ping became message)
+                // Use notifyDataSetChanged to avoid animation gap
+                if (newTotalCount == oldTotalCount) {
+                    notifyDataSetChanged()
+                } else {
+                    // Normal case: notify about changes
+                    if (newMessageCount != oldMessageCount) {
+                        notifyItemRangeChanged(0, newMessageCount)
+                    }
+                    // Remove all pending items
+                    notifyItemRangeRemoved(oldMessageCount, oldPendingCount)
                 }
-                // Remove all pending items
-                notifyItemRangeRemoved(oldMessageCount, oldPendingCount)
             }
             // Pending pings added
             oldPendingCount == 0 && newPendingCount > 0 -> {
@@ -1353,6 +1534,11 @@ class MessageAdapter(
     private fun showMessagePopupMenu(view: View, message: Message) {
         val popup = PopupMenu(view.context, view)
         popup.inflate(R.menu.message_actions_menu)
+
+        // Hide "Copy" option for image messages (copying base64 string isn't useful)
+        if (message.messageType == Message.MESSAGE_TYPE_IMAGE) {
+            popup.menu.findItem(R.id.action_copy)?.isVisible = false
+        }
 
         popup.setOnMenuItemClickListener { menuItem ->
             when (menuItem.itemId) {

@@ -304,6 +304,102 @@ class TorManager(private val context: Context) {
     }
 
     /**
+     * Start VOICE Tor instance (port 9052) with Single Onion Service configuration
+     * This is a separate Tor daemon specifically for voice hidden service
+     * Runs with HiddenServiceNonAnonymousMode 1 for reduced latency (3-hop instead of 6-hop)
+     * Should be called from TorService.startVoiceService() before creating voice hidden service
+     */
+    fun startVoiceTor(): Boolean {
+        return try {
+            Log.i(TAG, "Starting VOICE Tor instance (Single Onion Service mode)...")
+
+            // Check if voice Tor control port is already accessible
+            val alreadyRunning = try {
+                val testSocket = java.net.Socket()
+                testSocket.connect(java.net.InetSocketAddress("127.0.0.1", 9052), 500)
+                testSocket.close()
+                true
+            } catch (e: Exception) {
+                false
+            }
+
+            if (alreadyRunning) {
+                Log.i(TAG, "Voice Tor already running on port 9052")
+                // Initialize Rust voice control connection
+                val status = RustBridge.initializeVoiceTorControl()
+                Log.i(TAG, "Voice Tor control initialized: $status")
+                return true
+            }
+
+            // Create voice Tor data directory (separate from main Tor)
+            val voiceTorDataDir = File(context.filesDir, "voice_tor")
+            voiceTorDataDir.mkdirs()
+
+            // Create voice hidden service directory
+            val voiceHiddenServiceDir = File(voiceTorDataDir, "voice_hidden_service")
+            voiceHiddenServiceDir.mkdirs()
+
+            // Create voice torrc file with HiddenServiceDir configuration
+            val voiceTorrc = File(context.filesDir, "voice_torrc")
+            voiceTorrc.writeText("""
+                DataDirectory ${voiceTorDataDir.absolutePath}
+                ControlPort 127.0.0.1:9052
+                CookieAuthentication 1
+                SOCKSPort 0
+                AvoidDiskWrites 1
+                HiddenServiceNonAnonymousMode 1
+                HiddenServiceSingleHopMode 1
+                LearnCircuitBuildTimeout 1
+                CircuitBuildTimeout 30
+                HiddenServiceDir ${voiceHiddenServiceDir.absolutePath}
+                HiddenServicePort 9152 127.0.0.1:9152
+            """.trimIndent())
+
+            Log.i(TAG, "Voice torrc written to: ${voiceTorrc.absolutePath}")
+            Log.i(TAG, "Voice Tor config: Single Onion Service (3-hop, service location visible)")
+
+            // Start VoiceTorService (separate service for voice Tor)
+            val voiceIntent = Intent(context, com.securelegion.services.VoiceTorService::class.java)
+            voiceIntent.action = com.securelegion.services.VoiceTorService.ACTION_START
+            context.startService(voiceIntent)
+
+            Log.i(TAG, "VoiceTorService started, waiting for control port 9052...")
+
+            // Wait for voice Tor control port to be ready
+            var attempts = 0
+            val maxAttempts = 60 // 60 seconds max
+            var controlPortReady = false
+
+            while (attempts < maxAttempts && !controlPortReady) {
+                try {
+                    val testSocket = java.net.Socket()
+                    testSocket.connect(java.net.InetSocketAddress("127.0.0.1", 9052), 1000)
+                    testSocket.close()
+                    controlPortReady = true
+                    Log.i(TAG, "Voice Tor control port 9052 ready after ${attempts + 1} attempts")
+                } catch (e: Exception) {
+                    Thread.sleep(1000)
+                    attempts++
+                }
+            }
+
+            if (!controlPortReady) {
+                Log.e(TAG, "Voice Tor control port 9052 failed to become ready")
+                return false
+            }
+
+            // Initialize Rust voice control connection
+            val status = RustBridge.initializeVoiceTorControl()
+            Log.i(TAG, "✓ Voice Tor initialized successfully: $status")
+            true
+
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to start voice Tor: ${e.message}", e)
+            false
+        }
+    }
+
+    /**
      * Check if Tor has been initialized
      */
     fun isInitialized(): Boolean {

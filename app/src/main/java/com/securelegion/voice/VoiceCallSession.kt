@@ -72,13 +72,16 @@ class VoiceCallSession(
     private lateinit var audioPlaybackManager: AudioPlaybackManager
 
     // Network components (Rust handles transport, Kotlin handles encryption)
-    private val numCircuits = 3 // Multi-circuit for resilience against TCP head-of-line blocking
+    private val numCircuits = 6 // Phase 1: Increased from 3 to 6 circuits
 
     // Call quality telemetry (v2)
     private val telemetry = CallQualityTelemetry()
 
     // Adaptive circuit scheduler (replaces round-robin in v2)
     private val circuitScheduler = CircuitScheduler(numCircuits, telemetry)
+
+    // Pending speaker state (for setting speaker before AudioPlaybackManager is initialized)
+    private var pendingSpeakerEnabled: Boolean? = null
 
     init {
         // Set up circuit rebuild callback
@@ -190,6 +193,13 @@ class VoiceCallSession(
                 val sessionId = audioCaptureManager.getAudioSessionId()
                 audioPlaybackManager.initialize(sessionId)
                 Log.d(TAG, "Audio managers initialized with shared session ID: $sessionId")
+
+                // Apply pending speaker state if user pressed speaker button during "Calling..." phase
+                pendingSpeakerEnabled?.let { enabled ->
+                    audioPlaybackManager.setSpeakerEnabled(enabled)
+                    Log.d(TAG, "Applied pending speaker state: $enabled")
+                    pendingSpeakerEnabled = null  // Clear pending state
+                }
             }
 
             // Set capture callback
@@ -286,6 +296,13 @@ class VoiceCallSession(
                 val sessionId = audioCaptureManager.getAudioSessionId()
                 audioPlaybackManager.initialize(sessionId)
                 Log.d(TAG, "Audio managers initialized with shared session ID: $sessionId")
+
+                // Apply pending speaker state if user pressed speaker button during ringing
+                pendingSpeakerEnabled?.let { enabled ->
+                    audioPlaybackManager.setSpeakerEnabled(enabled)
+                    Log.d(TAG, "Applied pending speaker state: $enabled")
+                    pendingSpeakerEnabled = null  // Clear pending state
+                }
             }
 
             // Set capture callback
@@ -331,62 +348,82 @@ class VoiceCallSession(
 
         callScope.launch {
             try {
-                // Select circuit using adaptive scheduler (v2 - replaces round-robin)
-                val circuitIndex = circuitScheduler.selectCircuit()
-                val circuitKey = circuitKeys[circuitIndex]
-
-                if (circuitKey == null) {
-                    Log.e(TAG, "Circuit $circuitIndex not available")
-                    circuitScheduler.reportSendFailure(circuitIndex)
-                    return@launch
-                }
+                // Phase 4: DOUBLE-SEND - Select TWO different circuits for maximum reliability
+                val (primaryCircuit, secondaryCircuit) = circuitScheduler.selectTwoCircuits()
 
                 // Get current sequence number and increment
                 val currentSeq = sendSeqNum++
 
-                // Create VoiceFrame for AAD encoding
-                val frame = VoiceFrame(
-                    callId = callIdBytes,
-                    sequenceNumber = currentSeq,
-                    direction = direction,
-                    circuitIndex = circuitIndex,
-                    encryptedPayload = ByteArray(0) // Placeholder, will encrypt below
-                )
-
-                // Derive nonce
-                val nonce = crypto.deriveNonce(callIdBytes, currentSeq)
-
-                // Encode AAD
-                val aad = frame.encodeAAD()
-
-                // Encrypt Opus frame
-                val encryptedPayload = crypto.encryptFrame(
-                    opusFrame,
-                    circuitKey,
-                    nonce,
-                    aad
-                )
-
-                // Send encrypted payload via Rust voice streaming
                 // Timestamp is currentSeq * 20ms (assuming 20ms Opus frames)
                 val timestamp = currentSeq * 20
 
-                val success = RustBridge.sendAudioPacket(
-                    callId,
-                    currentSeq.toInt(),
-                    timestamp,
-                    encryptedPayload,
-                    circuitIndex,
-                    0x01 // ptype = AUDIO
-                )
+                // Encrypt and send on BOTH circuits (path diversity!)
+                var primarySuccess = false
+                var secondarySuccess = false
 
-                // Report send result to scheduler for health tracking
-                if (success) {
-                    circuitScheduler.reportSendSuccess(circuitIndex)
-                    telemetry.reportFrameSent(circuitIndex)
+                // Send on PRIMARY circuit
+                val primaryKey = circuitKeys[primaryCircuit]
+                if (primaryKey != null) {
+                    // Create VoiceFrame for AAD encoding (primary circuit)
+                    val primaryFrame = VoiceFrame(
+                        callId = callIdBytes,
+                        sequenceNumber = currentSeq,
+                        direction = direction,
+                        circuitIndex = primaryCircuit,
+                        encryptedPayload = ByteArray(0)
+                    )
+
+                    val primaryNonce = crypto.deriveNonce(callIdBytes, currentSeq)
+                    val primaryAad = primaryFrame.encodeAAD()
+                    val primaryEncrypted = crypto.encryptFrame(opusFrame, primaryKey, primaryNonce, primaryAad)
+
+                    primarySuccess = RustBridge.sendAudioPacket(
+                        callId, currentSeq.toInt(), timestamp, primaryEncrypted, primaryCircuit, 0x01
+                    )
+
+                    if (primarySuccess) {
+                        circuitScheduler.reportSendSuccess(primaryCircuit)
+                        telemetry.reportFrameSent(primaryCircuit)
+                    } else {
+                        circuitScheduler.reportSendFailure(primaryCircuit)
+                    }
                 } else {
-                    Log.w(TAG, "Failed to send voice packet seq=$currentSeq on circuit $circuitIndex")
-                    circuitScheduler.reportSendFailure(circuitIndex)
+                    circuitScheduler.reportSendFailure(primaryCircuit)
+                }
+
+                // Send on SECONDARY circuit (DOUBLE-SEND for redundancy!)
+                val secondaryKey = circuitKeys[secondaryCircuit]
+                if (secondaryKey != null) {
+                    // Create VoiceFrame for AAD encoding (secondary circuit)
+                    val secondaryFrame = VoiceFrame(
+                        callId = callIdBytes,
+                        sequenceNumber = currentSeq,
+                        direction = direction,
+                        circuitIndex = secondaryCircuit,
+                        encryptedPayload = ByteArray(0)
+                    )
+
+                    val secondaryNonce = crypto.deriveNonce(callIdBytes, currentSeq)
+                    val secondaryAad = secondaryFrame.encodeAAD()
+                    val secondaryEncrypted = crypto.encryptFrame(opusFrame, secondaryKey, secondaryNonce, secondaryAad)
+
+                    secondarySuccess = RustBridge.sendAudioPacket(
+                        callId, currentSeq.toInt(), timestamp, secondaryEncrypted, secondaryCircuit, 0x01
+                    )
+
+                    if (secondarySuccess) {
+                        circuitScheduler.reportSendSuccess(secondaryCircuit)
+                        telemetry.reportFrameSent(secondaryCircuit)
+                    } else {
+                        circuitScheduler.reportSendFailure(secondaryCircuit)
+                    }
+                } else {
+                    circuitScheduler.reportSendFailure(secondaryCircuit)
+                }
+
+                // Log result (success if AT LEAST ONE circuit succeeded)
+                if (!primarySuccess && !secondarySuccess) {
+                    Log.w(TAG, "DOUBLE-SEND: Both circuits failed seq=$currentSeq (primary=$primaryCircuit, secondary=$secondaryCircuit)")
                 }
 
             } catch (e: Exception) {
@@ -521,7 +558,14 @@ class VoiceCallSession(
      * Enable/disable speaker
      */
     fun setSpeakerEnabled(enabled: Boolean) {
-        audioPlaybackManager.setSpeakerEnabled(enabled)
+        // Check if audioPlaybackManager is initialized (may not be during RINGING state)
+        if (::audioPlaybackManager.isInitialized) {
+            audioPlaybackManager.setSpeakerEnabled(enabled)
+        } else {
+            // Save pending speaker state to apply when AudioPlaybackManager initializes
+            pendingSpeakerEnabled = enabled
+            Log.d(TAG, "Saved pending speaker state: $enabled (will apply when call connects)")
+        }
     }
 
     /**

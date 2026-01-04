@@ -7,16 +7,16 @@ import kotlin.random.Random
 /**
  * Adaptive circuit scheduler for voice call multi-circuit routing
  *
- * Replaces deterministic round-robin with intelligent weighted selection based on:
- * - Send failure tracking
- * - Receiver-reported late frame percentage (from feedback)
- * - Circuit cooldown after repeated failures
- * - Micro-burst routing to reduce reordering
+ * Uses circuit stickiness to minimize reordering while maintaining redundancy:
+ * - Stays on same circuit for 500ms (25 frames @ 20ms)
+ * - Switches immediately if current circuit is bad (>12% late OR >5% missing)
+ * - Switches after epoch if another circuit is clearly better (15% hysteresis)
  *
- * Algorithm:
- * - ~70% traffic on best circuit
- * - ~20% on second-best
- * - ~10% on third (keeps it warm and measured)
+ * Features:
+ * - Send failure tracking
+ * - Receiver-reported late/missing/PLC percentages (from feedback)
+ * - Circuit cooldown after repeated failures
+ * - Circuit quarantine and rebuild for persistent issues
  *
  * Based on: securelegion_voice_transport_v2_plan.md § 3
  */
@@ -27,8 +27,21 @@ class CircuitScheduler(
     companion object {
         private const val TAG = "CircuitScheduler"
 
-        // Micro-burst: switch circuits every K frames (reduces reordering)
-        private const val BURST_SIZE = 4 // 4 frames = 80ms burst
+        // Phase 2.1: Adaptive monitoring window (Donar paper: 2s window prevents thrashing)
+        private const val MONITORING_WINDOW_MS = 2000L  // 2 seconds
+
+        // Phase 1: Round-robin rotation interval
+        private const val ROTATION_INTERVAL_MS = 100L  // 100ms = 5 frames @ 20ms
+
+        // Circuit stickiness: stay on same circuit for 500ms (25 frames @ 20ms)
+        private const val STICKY_EPOCH_MS = 500L  // 500ms = 25 frames
+
+        // Immediate failover thresholds (switch before epoch expires)
+        private const val BAD_LATE_THRESHOLD = 12.0  // % late frames
+        private const val BAD_MISSING_THRESHOLD = 5.0  // % missing frames
+
+        // Hysteresis for circuit switching (prevents flapping)
+        private const val SWITCH_MARGIN = 0.15  // New circuit must be 15% better
 
         // Cooldown duration for failing circuits (milliseconds)
         private const val COOLDOWN_DURATION_MS = 8000L // 8 seconds (increased for Tor recovery)
@@ -62,6 +75,18 @@ class CircuitScheduler(
         STRICT          // 45s+: Strict thresholds (missing% > 5%, PLC% > 5%)
     }
 
+    /**
+     * Phase 2.2: Circuit group classification (Donar paper strategy)
+     * L1ST: Best 3 circuits (primary use)
+     * L2ND: Next 3 circuits (backup, reduces load on L1ST)
+     * LINACTIVE: Remaining circuits (monitored but idle)
+     */
+    private enum class CircuitGroup {
+        L1ST,       // Top 3 fastest circuits
+        L2ND,       // Next 3 circuits
+        LINACTIVE   // Remaining circuits
+    }
+
     // Track call start time for phase detection
     private val callStartTime = System.currentTimeMillis()
 
@@ -80,9 +105,9 @@ class CircuitScheduler(
      */
     private data class CircuitHealth(
         var sendFailures: Int = 0,              // Consecutive send failures
-        var lateFramePercent: Double = 0.0,     // Receiver-reported late %
-        var missingFramePercent: Double = 0.0,  // Receiver-reported missing % (FIX #1/#4)
-        var plcPercent: Double = 0.0,           // Receiver-reported PLC % (FIX #2)
+        var lateFramePercent: Double = 0.0,     // Receiver-reported late % (raw)
+        var missingFramePercent: Double = 0.0,  // Receiver-reported missing % (raw)
+        var plcPercent: Double = 0.0,           // Receiver-reported PLC % (raw)
         var cooldownUntil: Long = 0,            // Timestamp when cooldown expires
         var totalFramesSent: Long = 0,          // Total frames WE sent on this circuit
         var peerFramesReceived: Long = 0,       // Total frames PEER received (from CONTROL feedback)
@@ -90,6 +115,11 @@ class CircuitScheduler(
         var cleanWindowsCount: Int = 0,         // Consecutive clean windows for ramp-up
         var badDeliveryWindows: Int = 0,        // Consecutive bad delivery windows (persistence)
         var lastCooldownReason: CooldownReason? = null,  // Last reason for cooldown
+
+        // EMA smoothing (alpha=0.2, ~2s memory at 500ms updates)
+        var lateEma: Double = 0.0,              // Smoothed late %
+        var missingEma: Double = 0.0,           // Smoothed missing %
+        var plcEma: Double = 0.0,               // Smoothed PLC %
 
         // Circuit rebuild policy (v3 - Quarantine → Replace → Ramp)
         var badWindowsCount: Int = 0,           // Consecutive bad 5s windows (for rebuild)
@@ -117,7 +147,20 @@ class CircuitScheduler(
         }
 
         /**
+         * Update EMA smoothing for circuit metrics (alpha=0.2, ~2s memory)
+         * Call this when new feedback is received
+         */
+        fun updateEma() {
+            val alpha = 0.2
+            lateEma = alpha * lateFramePercent + (1.0 - alpha) * lateEma
+            missingEma = alpha * missingFramePercent + (1.0 - alpha) * missingEma
+            plcEma = alpha * plcPercent + (1.0 - alpha) * plcEma
+        }
+
+        /**
          * FIX A: Correct scoring model (lower score = better circuit)
+         *
+         * Uses EMA-smoothed values to prevent noise-driven flapping
          *
          * Accumulates penalties:
          * - Late%: 0.5x weight (indicates timing issues)
@@ -129,10 +172,10 @@ class CircuitScheduler(
          */
         fun score(): Double {
             var penalties = 0.0
-            penalties += lateFramePercent * 0.5   // Late frames = timing issues
-            penalties += missingFramePercent * 1.5 // Missing frames = packet loss
-            penalties += plcPercent * 2.0          // PLC = severe quality hit
-            penalties += sendFailures * 5.0        // Send failures
+            penalties += lateEma * 0.5        // Late frames = timing issues (smoothed)
+            penalties += missingEma * 1.5     // Missing frames = packet loss (smoothed)
+            penalties += plcEma * 2.0         // PLC = severe quality hit (smoothed)
+            penalties += sendFailures * 5.0   // Send failures (instant)
 
             return penalties  // Lower = better
         }
@@ -210,9 +253,15 @@ class CircuitScheduler(
     // Health tracking per circuit
     private val circuitHealth = Array(numCircuits) { CircuitHealth() }
 
-    // Micro-burst state
-    private var burstCircuitIndex: Int = 0
-    private var burstFrameCount: Int = 0
+    // Round-robin state (Phase 1: simple rotation through all circuits)
+    private var currentCircuit: Int = 0  // Current circuit index (0 to numCircuits-1)
+    private var lastRotationMs: Long = 0L  // Last time we rotated to next circuit
+    private var lastPhase: CallPhase? = null  // Track phase transitions
+
+    // Phase 2.2: Circuit group state
+    private val circuitGroups = mutableMapOf<Int, CircuitGroup>()  // Circuit index → group
+    private var lastGroupClassificationMs: Long = 0L  // Last time we reclassified groups
+    private var useL1stGroup: Boolean = true  // Alternate between L1ST and L2ND groups
 
     // Circuit rebuild policy (v3 - Quarantine → Replace → Ramp)
     private var rebuildInProgress: Boolean = false
@@ -234,20 +283,171 @@ class CircuitScheduler(
     /**
      * Select next circuit for sending a frame
      *
-     * Uses micro-burst routing: sends K consecutive frames on the same circuit
-     * before switching, then uses weighted selection based on circuit health
+     * Stable primary circuit selection (bounded adaptive strategy)
+     * - Select best circuit from L1ST group
+     * - Stick with it unless circuit becomes bad (cooldown, high late%, or high missing%)
+     * - Only failover when quality degrades to prevent reordering/jitter
      */
     fun selectCircuit(): Int {
-        // Continue current burst if not exhausted
-        if (burstFrameCount < BURST_SIZE) {
-            burstFrameCount++
-            return burstCircuitIndex
+        val nowMs = System.currentTimeMillis()
+
+        // Initialize on first call - select best circuit from L1ST group
+        if (lastRotationMs == 0L) {
+            lastRotationMs = nowMs
+            classifyCircuitGroups()  // Initial classification
+            currentCircuit = getBestCircuitFromGroup(CircuitGroup.L1ST) ?: 0
+            Log.d(TAG, "Stable primary initialized: selected circuit $currentCircuit from L1ST group")
+            return currentCircuit
         }
 
-        // Burst complete - select new circuit using weighted selection
-        burstCircuitIndex = selectWeightedCircuit()
-        burstFrameCount = 1
-        return burstCircuitIndex
+        // Reclassify groups every 2 seconds (Phase 2.1: monitoring window)
+        if (nowMs - lastGroupClassificationMs >= MONITORING_WINDOW_MS) {
+            classifyCircuitGroups()
+            lastGroupClassificationMs = nowMs
+        }
+
+        // Check if current circuit is still healthy
+        val currentHealth = circuitHealth[currentCircuit]
+        val isInCooldown = currentHealth.cooldownUntil > nowMs
+        val isBadLate = currentHealth.lateFramePercent > BAD_LATE_THRESHOLD
+        val isBadMissing = currentHealth.missingFramePercent > BAD_MISSING_THRESHOLD
+
+        // Only failover if current circuit is bad
+        if (isInCooldown || isBadLate || isBadMissing) {
+            val reason = when {
+                isInCooldown -> "in cooldown"
+                isBadLate -> "high late% (${String.format("%.1f", currentHealth.lateFramePercent)}%)"
+                isBadMissing -> "high missing% (${String.format("%.1f", currentHealth.missingFramePercent)}%)"
+                else -> "unknown"
+            }
+
+            // Failover: select best available circuit from L1ST or L2ND
+            val newCircuit = getBestCircuitFromGroup(CircuitGroup.L1ST)
+                ?: getBestCircuitFromGroup(CircuitGroup.L2ND)
+                ?: ((currentCircuit + 1) % numCircuits)  // Last resort
+
+            if (newCircuit != currentCircuit) {
+                Log.w(TAG, "FAILOVER: circuit $currentCircuit → $newCircuit (reason: $reason)")
+                currentCircuit = newCircuit
+                lastRotationMs = nowMs
+            }
+        }
+
+        return currentCircuit
+    }
+
+    /**
+     * Get best (lowest latency) circuit from a specific group that's not in cooldown
+     */
+    private fun getBestCircuitFromGroup(targetGroup: CircuitGroup): Int? {
+        val nowMs = System.currentTimeMillis()
+        val candidates = circuitGroups.filter { it.value == targetGroup }.keys
+
+        return candidates
+            .filter { circuitHealth[it].cooldownUntil <= nowMs }  // Not in cooldown
+            .minByOrNull { circuitHealth[it].score() }  // Lowest score = best
+    }
+
+    /**
+     * Phase 4: DOUBLE-SEND - Select TWO different circuits for maximum reliability
+     * Returns: Pair of (primaryCircuit, secondaryCircuit)
+     * Strategy: Use round-robin for primary, then select best available circuit from different group for secondary
+     */
+    fun selectTwoCircuits(): Pair<Int, Int> {
+        val nowMs = System.currentTimeMillis()
+
+        // Initialize on first call
+        if (lastRotationMs == 0L) {
+            lastRotationMs = nowMs
+            currentCircuit = 0
+            classifyCircuitGroups()
+        }
+
+        // Reclassify groups every 2 seconds
+        if (nowMs - lastGroupClassificationMs >= MONITORING_WINDOW_MS) {
+            classifyCircuitGroups()
+            lastGroupClassificationMs = nowMs
+        }
+
+        // Get primary circuit via round-robin (same as selectCircuit)
+        val targetGroup = if (useL1stGroup) CircuitGroup.L1ST else CircuitGroup.L2ND
+        val availableCircuits = circuitGroups.filter { it.value == targetGroup }.keys.sorted()
+
+        val primaryCircuit = if (availableCircuits.isEmpty()) {
+            // Fallback to all circuits
+            currentCircuit
+        } else {
+            val currentIndex = availableCircuits.indexOf(currentCircuit)
+
+            // Rotate to next circuit every 100ms
+            if (nowMs - lastRotationMs >= ROTATION_INTERVAL_MS && currentIndex != -1) {
+                currentCircuit = availableCircuits[(currentIndex + 1) % availableCircuits.size]
+                lastRotationMs = nowMs
+                useL1stGroup = !useL1stGroup
+            }
+            currentCircuit
+        }
+
+        // Select secondary circuit from DIFFERENT group (path diversity!)
+        val secondaryTargetGroup = if (targetGroup == CircuitGroup.L1ST) CircuitGroup.L2ND else CircuitGroup.L1ST
+        val secondaryAvailable = circuitGroups.filter {
+            it.value == secondaryTargetGroup && it.key != primaryCircuit
+        }.keys.sorted()
+
+        val secondaryCircuit = if (secondaryAvailable.isNotEmpty()) {
+            // Pick best circuit from secondary group (lowest score)
+            secondaryAvailable.minByOrNull { circuitHealth[it].score() } ?: primaryCircuit
+        } else {
+            // Fallback: Pick any circuit different from primary
+            val fallback = (0 until numCircuits).filter { it != primaryCircuit }.minByOrNull { circuitHealth[it].score() }
+            fallback ?: ((primaryCircuit + 1) % numCircuits)
+        }
+
+        Log.d(TAG, "DOUBLE-SEND: primary=$primaryCircuit (group=$targetGroup), secondary=$secondaryCircuit (group=$secondaryTargetGroup)")
+
+        return Pair(primaryCircuit, secondaryCircuit)
+    }
+
+    /**
+     * Phase 2.2: Classify circuits into groups based on health scores
+     * L1ST: Top 3 circuits (best performance)
+     * L2ND: Next 3 circuits (backup)
+     * LINACTIVE: Remaining circuits (monitored but not used)
+     */
+    private fun classifyCircuitGroups() {
+        // Sort circuits by score (lower = better)
+        val sorted = (0 until numCircuits).sortedBy { circuitHealth[it].score() }
+
+        // Clear existing groups
+        circuitGroups.clear()
+
+        // Assign groups
+        sorted.take(3).forEach { circuitGroups[it] = CircuitGroup.L1ST }
+        sorted.drop(3).take(3).forEach { circuitGroups[it] = CircuitGroup.L2ND }
+        sorted.drop(6).forEach { circuitGroups[it] = CircuitGroup.LINACTIVE }
+
+        val l1st = circuitGroups.filter { it.value == CircuitGroup.L1ST }.keys.sorted()
+        val l2nd = circuitGroups.filter { it.value == CircuitGroup.L2ND }.keys.sorted()
+        val linactive = circuitGroups.filter { it.value == CircuitGroup.LINACTIVE }.keys.sorted()
+
+        Log.d(TAG, "Circuit groups: L1ST=$l1st, L2ND=$l2nd, LINACTIVE=$linactive")
+    }
+
+    /**
+     * Select best available circuit (lowest score)
+     * Honors cooldowns and ramp-up weights for scoring
+     */
+    private fun selectBestCircuit(): Int {
+        // Get available circuits (not in cooldown)
+        var availableCircuits = (0 until numCircuits).filter { !circuitHealth[it].isInCooldown() }
+
+        // If all circuits in cooldown, enforce minimum circuit active
+        if (availableCircuits.isEmpty()) {
+            availableCircuits = enforceMinimumCircuitActive()
+        }
+
+        // Return circuit with lowest score (best)
+        return availableCircuits.minByOrNull { circuitHealth[it].score() } ?: 0
     }
 
     /**
@@ -271,75 +471,6 @@ class CircuitScheduler(
         return listOf(leastBadCircuit)
     }
 
-    /**
-     * Select circuit using weighted probability based on health scores
-     * FIX A: Correctly ranks by score (lower = better)
-     * FIX B: Applies ramp-up weight to prevent flapping
-     * WARMUP: Equal probing during ESTABLISHMENT phase (0-3s)
-     * STAGED: Never allow all circuits to be in cooldown simultaneously
-     */
-    private fun selectWeightedCircuit(): Int {
-        val phase = getCurrentPhase()
-
-        // ESTABLISHMENT PHASE (0-3s): Equal probing (33/33/33) to gather initial stats
-        if (phase == CallPhase.ESTABLISHMENT) {
-            // Simple round-robin across all circuits
-            val equalProbeCircuit = (burstCircuitIndex + 1) % numCircuits
-            Log.d(TAG, "ESTABLISHMENT phase: equal probing circuit $equalProbeCircuit")
-            return equalProbeCircuit
-        }
-
-        // Get available circuits (not in cooldown)
-        var availableCircuits = (0 until numCircuits).filter { !circuitHealth[it].isInCooldown() }
-
-        // CRITICAL: Enforce "at least one circuit active" invariant
-        if (availableCircuits.isEmpty()) {
-            Log.w(TAG, "All circuits in cooldown - enforcing minimum circuit active")
-            availableCircuits = enforceMinimumCircuitActive()
-        }
-
-        // If only one available, use it
-        if (availableCircuits.size == 1) {
-            return availableCircuits[0]
-        }
-
-        // FIX A: Rank circuits by health score (lower score = better circuit)
-        // sortedBy = ascending order, so best (0.0) comes first
-        val rankedCircuits = availableCircuits.sortedBy { circuitHealth[it].score() }
-
-        // FIX B: Calculate effective weights with ramp-up multipliers
-        // Circuit recovering from cooldown starts at 5% and ramps up gradually
-        val effectiveWeights = rankedCircuits.map { idx ->
-            val baseWeight = when (rankedCircuits.indexOf(idx)) {
-                0 -> 0.70  // Best circuit gets 70%
-                1 -> 0.20  // Second-best gets 20%
-                2 -> 0.10  // Third-best gets 10%
-                else -> 0.0
-            }
-            baseWeight * circuitHealth[idx].rampUpWeight
-        }
-
-        // Normalize weights to sum to 1.0
-        val totalWeight = effectiveWeights.sum()
-        val normalizedWeights = if (totalWeight > 0) {
-            effectiveWeights.map { it / totalWeight }
-        } else {
-            List(rankedCircuits.size) { 1.0 / rankedCircuits.size }
-        }
-
-        // Select circuit using weighted random selection
-        val random = Random.nextDouble()
-        var cumulative = 0.0
-        for (i in rankedCircuits.indices) {
-            cumulative += normalizedWeights[i]
-            if (random < cumulative) {
-                return rankedCircuits[i]
-            }
-        }
-
-        // Fallback (should never reach here)
-        return rankedCircuits[0]
-    }
 
     /**
      * Report send success on a circuit
@@ -390,11 +521,14 @@ class CircuitScheduler(
             if (circuitIndex in 0 until numCircuits) {
                 val health = circuitHealth[circuitIndex]
 
-                // Update stats from peer feedback
+                // Update stats from peer feedback (raw values)
                 health.lateFramePercent = stats.latePercent
                 health.missingFramePercent = stats.missingPercent
                 health.plcPercent = stats.plcPercent
                 health.peerFramesReceived = stats.framesReceived  // CRITICAL: Peer's received count!
+
+                // Update EMA smoothing for stable circuit selection
+                health.updateEma()
 
                 // WARMUP: No cooldowns during ESTABLISHMENT or WARMUP phases
                 if (phase == CallPhase.ESTABLISHMENT || phase == CallPhase.WARMUP) {

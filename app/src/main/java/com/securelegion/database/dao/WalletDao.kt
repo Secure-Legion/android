@@ -32,6 +32,6 @@ interface WalletDao {
     @Query("DELETE FROM wallets WHERE walletId = :walletId AND isMainWallet = 0")
     suspend fun deleteWalletById(walletId: String): Int
 
-    @Query("SELECT COUNT(*) FROM wallets")
+    @Query("SELECT COUNT(*) FROM wallets WHERE isMainWallet = 0")
     suspend fun getWalletCount(): Int
 }

@@ -320,34 +320,13 @@ class CreateAccountActivity : AppCompatActivity() {
                     }
                 }
 
-                // Create voice hidden service - retry until success
-                var voiceOnionAddress = ""
-                var voiceAttempt = 0
-                while (voiceOnionAddress.isEmpty()) {
-                    try {
-                        voiceAttempt++
-                        withContext(Dispatchers.Main) {
-                            showLoading("Creating account...", "Setting up voice calling service" + if (voiceAttempt > 1) " (attempt $voiceAttempt)" else "")
-                        }
-                        Log.d("CreateAccount", "Creating voice hidden service (attempt $voiceAttempt)...")
-
-                        // Ensure voice streaming server is started first
-                        com.securelegion.crypto.RustBridge.startVoiceStreamingServer()
-                        Log.d("CreateAccount", "Voice streaming server started on localhost:9152")
-
-                        // Create voice hidden service
-                        voiceOnionAddress = com.securelegion.crypto.RustBridge.createVoiceHiddenService()
-                        torManager.saveVoiceOnionAddress(voiceOnionAddress)
-                        Log.i("CreateAccount", "Voice hidden service created: $voiceOnionAddress")
-                    } catch (e: Exception) {
-                        Log.e("CreateAccount", "Failed to create voice hidden service (attempt $voiceAttempt): ${e.message}", e)
-                        if (voiceAttempt < 5) {
-                            Thread.sleep(2000) // Wait 2 seconds before retry
-                        } else {
-                            throw Exception("Failed to create voice hidden service after $voiceAttempt attempts: ${e.message}")
-                        }
-                    }
+                // Voice onion address will be created automatically by TorService on first startup
+                // (Single Onion Services must be configured in torrc, not via ADD_ONION)
+                withContext(Dispatchers.Main) {
+                    showLoading("Creating account...", "Voice calling service will be set up on first launch")
                 }
+                Log.i("CreateAccount", "Voice onion will be created by TorService from torrc hostname file")
+                val voiceOnionAddress = "" // Will be populated by TorService on first launch
 
                 // Generate random PIN first
                 val cardManager = ContactCardManager(this@CreateAccountActivity)

@@ -1,6 +1,9 @@
 package com.securelegion
 
+import android.app.NotificationManager
+import android.app.PendingIntent
 import android.content.Context
+import android.content.Intent
 import android.media.AudioManager
 import android.media.ToneGenerator
 import android.os.Build
@@ -15,12 +18,15 @@ import android.view.animation.AnimationUtils
 import android.widget.ImageView
 import android.widget.ProgressBar
 import android.widget.TextView
+import androidx.core.app.NotificationCompat
 import androidx.lifecycle.lifecycleScope
 import com.google.android.material.floatingactionbutton.FloatingActionButton
 import com.securelegion.ui.WaveformView
 import com.securelegion.utils.ThemedToast
+import com.securelegion.voice.CallSignaling
 import com.securelegion.voice.VoiceCallManager
 import com.securelegion.voice.VoiceCallSession
+import com.securelegion.crypto.KeyManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -44,6 +50,8 @@ class VoiceCallActivity : BaseActivity() {
 
     companion object {
         private const val TAG = "VoiceCallActivity"
+        private const val ONGOING_CALL_NOTIFICATION_ID = 1001
+
         const val EXTRA_CONTACT_ID = "CONTACT_ID"
         const val EXTRA_CONTACT_NAME = "CONTACT_NAME"
         const val EXTRA_CALL_ID = "CALL_ID"
@@ -138,6 +146,13 @@ class VoiceCallActivity : BaseActivity() {
     // Proximity sensor wake lock (turns screen off when near ear)
     private var proximityWakeLock: PowerManager.WakeLock? = null
 
+    // Audio manager for speaker/earpiece routing
+    private var audioManager: AudioManager? = null
+    private var previousAudioMode: Int = AudioManager.MODE_NORMAL
+
+    // Notification manager for ongoing call notification
+    private var notificationManager: NotificationManager? = null
+
     // Call manager
     private lateinit var callManager: VoiceCallManager
 
@@ -167,6 +182,21 @@ class VoiceCallActivity : BaseActivity() {
 
         // Set up proximity sensor to turn off screen when phone is near ear
         setupProximitySensor()
+
+        // Initialize AudioManager for proper speaker/earpiece routing
+        // CRITICAL: Must set MODE_IN_COMMUNICATION for speaker button to work during ringing
+        audioManager = getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+        audioManager?.let { am ->
+            previousAudioMode = am.mode
+            am.mode = AudioManager.MODE_IN_COMMUNICATION
+            // Start with earpiece (speaker OFF) by default
+            @Suppress("DEPRECATION")
+            am.isSpeakerphoneOn = false
+            Log.d(TAG, "AudioManager initialized: mode=MODE_IN_COMMUNICATION (prev: $previousAudioMode)")
+        }
+
+        // Initialize NotificationManager for ongoing call notification
+        notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
 
         // Get data from intent
         contactId = intent.getLongExtra(EXTRA_CONTACT_ID, -1)
@@ -397,8 +427,29 @@ class VoiceCallActivity : BaseActivity() {
 
     private fun toggleSpeaker() {
         isSpeakerOn = !isSpeakerOn
-        callManager.setSpeakerEnabled(isSpeakerOn)
 
+        // Set speaker mode directly via AudioManager
+        // This works for both:
+        // 1. RINGING state - controls ringback tone playback
+        // 2. ACTIVE state - controls voice call audio (also handled via AudioPlaybackManager)
+        audioManager?.let { am ->
+            try {
+                @Suppress("DEPRECATION")
+                am.isSpeakerphoneOn = isSpeakerOn
+                Log.d(TAG, "Speaker ${if (isSpeakerOn) "ON" else "OFF"} via AudioManager (mode=${am.mode})")
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to set speaker via AudioManager", e)
+            }
+        } ?: Log.e(TAG, "AudioManager is null, cannot toggle speaker")
+
+        // Also notify call manager (for when AudioPlaybackManager is initialized)
+        try {
+            callManager.setSpeakerEnabled(isSpeakerOn)
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not set speaker via callManager (call may not be active yet)", e)
+        }
+
+        // Update UI
         if (isSpeakerOn) {
             speakerButton.setImageResource(R.drawable.ic_speaker_on)
             speakerButton.backgroundTintList = android.content.res.ColorStateList.valueOf(0xFF4A9EFF.toInt())
@@ -417,6 +468,7 @@ class VoiceCallActivity : BaseActivity() {
 
     private fun endCall() {
         // Stop waiting if we're in waiting state
+        val wasWaitingForAnswer = waitingForAnswer
         waitingForAnswer = false
 
         // Stop ringback tone
@@ -424,6 +476,29 @@ class VoiceCallActivity : BaseActivity() {
 
         // Stop monitoring
         stopSignalQualityMonitoring()
+
+        // CRITICAL FIX: If this is an outgoing call that hasn't been answered yet,
+        // send CALL_END to stop the recipient's phone from ringing
+        if (isOutgoing && wasWaitingForAnswer && contactVoiceOnion != null && contactX25519PublicKey != null) {
+            lifecycleScope.launch {
+                try {
+                    val keyManager = KeyManager.getInstance(this@VoiceCallActivity)
+                    val ourX25519PublicKey = keyManager.getEncryptionPublicKey()
+
+                    Log.d(TAG, "Sending CALL_END to stop recipient's phone from ringing (callId=$callId)")
+                    CallSignaling.sendCallEnd(
+                        contactX25519PublicKey!!,
+                        contactVoiceOnion!!,
+                        callId,
+                        "Caller ended before answer",
+                        ourX25519PublicKey
+                    )
+                    Log.d(TAG, "CALL_END sent successfully")
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to send CALL_END", e)
+                }
+            }
+        }
 
         // Always try to end the call, even if it's not fully active
         try {
@@ -579,7 +654,11 @@ class VoiceCallActivity : BaseActivity() {
                 val minutes = seconds / 60
                 val secs = seconds % 60
 
-                callTimerText.text = String.format(Locale.US, "%02d:%02d", minutes, secs)
+                val durationText = String.format(Locale.US, "%02d:%02d", minutes, secs)
+                callTimerText.text = durationText
+
+                // Update ongoing call notification with duration
+                updateOngoingCallNotification(durationText)
 
                 timerHandler.postDelayed(this, 1000)
             }
@@ -674,6 +753,9 @@ class VoiceCallActivity : BaseActivity() {
      * Handles both outgoing and incoming calls
      */
     private fun startActualCall() {
+        // Show ongoing call notification
+        showOngoingCallNotification()
+
         lifecycleScope.launch {
             try {
                 // Get contact info from database
@@ -898,8 +980,10 @@ class VoiceCallActivity : BaseActivity() {
     }
 
     override fun onBackPressed() {
-        // Prevent accidental back button press
-        confirmEndCall()
+        // Back button should minimize app, not end call (like real phone apps)
+        // Call continues in background, user can return via ongoing notification
+        moveTaskToBack(true)
+        Log.d(TAG, "Back button pressed - minimizing to background (call continues)")
     }
 
     override fun onDestroy() {
@@ -922,6 +1006,15 @@ class VoiceCallActivity : BaseActivity() {
 
         // Release proximity sensor wake lock
         releaseProximitySensor()
+
+        // Clear ongoing call notification
+        clearOngoingCallNotification()
+
+        // Restore previous audio mode
+        audioManager?.let { am ->
+            am.mode = previousAudioMode
+            Log.d(TAG, "Audio mode restored to $previousAudioMode")
+        }
 
         // Clean up active call if still exists
         if (callManager.hasActiveCall()) {
@@ -967,5 +1060,79 @@ class VoiceCallActivity : BaseActivity() {
         } catch (e: Exception) {
             Log.e(TAG, "Failed to release proximity sensor wake lock", e)
         }
+    }
+
+    /**
+     * Show ongoing call notification
+     * This appears in the notification bar while a call is active
+     */
+    private fun showOngoingCallNotification() {
+        val intent = Intent(this, VoiceCallActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        }
+
+        val pendingIntent = PendingIntent.getActivity(
+            this,
+            0,
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val notification = NotificationCompat.Builder(this, SecureLegionApplication.CHANNEL_ID_CALLS)
+            .setContentTitle("Call in progress")
+            .setContentText(contactName)
+            .setSmallIcon(R.drawable.ic_call)
+            .setOngoing(true)  // Can't be swiped away
+            .setContentIntent(pendingIntent)
+            .setPriority(NotificationCompat.PRIORITY_LOW)  // Low priority = silent, no heads-up
+            .setCategory(NotificationCompat.CATEGORY_CALL)
+            .setSound(null)  // No sound
+            .setVibrate(longArrayOf(0))  // No vibration
+            .setDefaults(0)  // Disable all defaults
+            .setSilent(true)  // Explicitly mark as silent
+            .build()
+
+        notificationManager?.notify(ONGOING_CALL_NOTIFICATION_ID, notification)
+        Log.d(TAG, "Ongoing call notification shown")
+    }
+
+    /**
+     * Update ongoing call notification with current call duration
+     */
+    private fun updateOngoingCallNotification(durationText: String) {
+        val intent = Intent(this, VoiceCallActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        }
+
+        val pendingIntent = PendingIntent.getActivity(
+            this,
+            0,
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val notification = NotificationCompat.Builder(this, SecureLegionApplication.CHANNEL_ID_CALLS)
+            .setContentTitle("Call in progress")
+            .setContentText("$contactName • $durationText")
+            .setSmallIcon(R.drawable.ic_call)
+            .setOngoing(true)
+            .setContentIntent(pendingIntent)
+            .setPriority(NotificationCompat.PRIORITY_LOW)  // Low priority = silent, no heads-up
+            .setCategory(NotificationCompat.CATEGORY_CALL)
+            .setSound(null)  // No sound
+            .setVibrate(longArrayOf(0))  // No vibration
+            .setDefaults(0)  // Disable all defaults
+            .setSilent(true)  // Explicitly mark as silent
+            .build()
+
+        notificationManager?.notify(ONGOING_CALL_NOTIFICATION_ID, notification)
+    }
+
+    /**
+     * Clear ongoing call notification
+     */
+    private fun clearOngoingCallNotification() {
+        notificationManager?.cancel(ONGOING_CALL_NOTIFICATION_ID)
+        Log.d(TAG, "Ongoing call notification cleared")
     }
 }

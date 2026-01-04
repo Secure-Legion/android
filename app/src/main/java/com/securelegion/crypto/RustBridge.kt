@@ -113,6 +113,14 @@ object RustBridge {
     external fun initializeTor(): String
 
     /**
+     * Initialize VOICE Tor control connection (port 9052)
+     * Must be called AFTER voice Tor daemon is started by TorManager
+     * Voice Tor runs with Single Onion Service configuration for reduced latency
+     * @return Status message
+     */
+    external fun initializeVoiceTorControl(): String
+
+    /**
      * Create a hidden service and get the .onion address
      * @param servicePort The virtual port on the .onion address (default 9150)
      * @param localPort The local port to forward connections to (default 9150)

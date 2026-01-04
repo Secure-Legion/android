@@ -283,6 +283,13 @@
                 android:value="Maintains Tor hidden service for secure P2P messaging" />
         </service>
 
+        <!-- Voice Tor service - Dedicated Tor instance for voice calling (Single Onion Service) -->
+        <service
+            android:name=".services.VoiceTorService"
+            android:enabled="true"
+            android:exported="false"
+            android:stopWithTask="false" />
+
         <!-- Download message service - Handles background message downloads -->
         <service
             android:name=".services.DownloadMessageService"

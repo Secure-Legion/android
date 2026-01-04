@@ -272,24 +272,31 @@ class IncomingCallActivity : AppCompatActivity() {
         // Stop ringtone
         stopRingtone()
 
-        // Send CALL_REJECT
-        lifecycleScope.launch {
-            val keyManager = KeyManager.getInstance(this@IncomingCallActivity)
-            val ourX25519PublicKey = keyManager.getEncryptionPublicKey()
-            CallSignaling.sendCallReject(
-                contactX25519PublicKey,
-                contactOnion,
-                callId,
-                "User declined",
-                ourX25519PublicKey
-            )
-        }
-
-        // Reject in call manager
+        // Reject in call manager first
         callManager.rejectCall(callId)
 
-        // Close activity
-        finish()
+        // Send CALL_REJECT and wait for it to complete before closing activity
+        lifecycleScope.launch {
+            try {
+                val keyManager = KeyManager.getInstance(this@IncomingCallActivity)
+                val ourX25519PublicKey = keyManager.getEncryptionPublicKey()
+
+                Log.d(TAG, "Sending CALL_REJECT for callId=$callId")
+                CallSignaling.sendCallReject(
+                    contactX25519PublicKey,
+                    contactOnion,
+                    callId,
+                    "User declined",
+                    ourX25519PublicKey
+                )
+                Log.d(TAG, "CALL_REJECT sent successfully")
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to send CALL_REJECT", e)
+            } finally {
+                // CRITICAL: Only close activity AFTER rejection message is sent
+                finish()
+            }
+        }
     }
 
     private fun answerCall() {

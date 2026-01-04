@@ -95,8 +95,12 @@ class SecureLegionApplication : Application() {
 
     /**
      * Register lifecycle observer to lock app when backgrounded
+     * DISABLED: We now only use inactivity timer in BaseActivity, not immediate lock on background
      */
     private fun registerLifecycleObserver() {
+        // DISABLED: Don't lock immediately when app backgrounds
+        // Only use the inactivity timer in BaseActivity (lock after X minutes of no interaction)
+        /*
         ProcessLifecycleOwner.get().lifecycle.addObserver(object : DefaultLifecycleObserver {
             override fun onStop(owner: LifecycleOwner) {
                 // App went to background
@@ -122,6 +126,7 @@ class SecureLegionApplication : Application() {
                 }
             }
         })
+        */
 
         // Track current foreground activity
         registerActivityLifecycleCallbacks(object : ActivityLifecycleCallbacks {

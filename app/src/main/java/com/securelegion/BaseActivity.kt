@@ -47,7 +47,12 @@ abstract class BaseActivity : AppCompatActivity() {
         // Clear the within-app navigation flag
         isNavigatingWithinApp = false
 
-        checkAutoLock()
+        // Clear any old pause timestamp to prevent legacy lock behavior
+        val lifecyclePrefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+        lifecyclePrefs.edit().remove(PREF_LAST_PAUSE_TIME).apply()
+
+        // DISABLED: Don't lock based on time away from app - only use inactivity timer
+        // checkAutoLock()
         startAutoLockTimer()
         updateFriendRequestBadge()
     }
@@ -56,13 +61,8 @@ abstract class BaseActivity : AppCompatActivity() {
         super.onPause()
         cancelAutoLockTimer()
 
-        // Only record pause time if we're actually going to background
-        // Not when just switching activities within the app
-        if (!isLaunchingActivity && !isNavigatingWithinApp) {
-            recordPauseTime()
-        } else {
-            Log.d(TAG, "Skipping pause time recording - navigating within app")
-        }
+        // DISABLED: Don't record pause time - we only lock based on inactivity timer now
+        // The app will only lock after X minutes of inactivity, not when switching apps
 
         // Reset flag
         isLaunchingActivity = false

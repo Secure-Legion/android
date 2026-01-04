@@ -32,6 +32,8 @@ import com.securelegion.workers.ImmediateRetryWorker
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.io.File
 import kotlin.math.min
 
 /**
@@ -114,8 +116,8 @@ class TorService : Service() {
         private const val RESTART_REQUEST_CODE = 1001
         private const val CHANNEL_ID = "tor_service_channel"
         private const val CHANNEL_NAME = "Tor Hidden Service"
-        private const val AUTH_CHANNEL_ID = "message_auth_channel"
-        private const val AUTH_CHANNEL_NAME = "Message Authentication"
+        private const val AUTH_CHANNEL_ID = "message_auth_channel_v2"  // Changed to v2 to recreate with sound
+        private const val AUTH_CHANNEL_NAME = "Friend Requests & Messages"
 
         const val ACTION_START_TOR = "com.securelegion.action.START_TOR"
         const val ACTION_STOP_TOR = "com.securelegion.action.STOP_TOR"
@@ -614,7 +616,14 @@ class TorService : Service() {
                     val pingBytes = RustBridge.pollIncomingPing()
                     if (pingBytes != null) {
                         Log.i(TAG, "Received incoming Ping token: ${pingBytes.size} bytes")
-                        handleIncomingPing(pingBytes)
+                        // CRITICAL FIX: Launch handleIncomingPing in coroutine to avoid blocking the poller thread
+                        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+                            try {
+                                handleIncomingPing(pingBytes)
+                            } catch (e: Exception) {
+                                Log.e(TAG, "Error in handleIncomingPing coroutine", e)
+                            }
+                        }
                     } else {
                         // Log every 10 seconds to confirm poller is running
                         pollCount++
@@ -1521,6 +1530,25 @@ class TorService : Service() {
                     RustBridge.cleanupExpiredSessions()
                     Log.i(TAG, "✓ Periodic Rust session cleanup completed")
 
+                    // CRITICAL FIX: Clean up old received_ids entries to prevent table bloat
+                    // Delete entries older than 7 days (604800000 ms)
+                    // This prevents duplicate detection from blocking legitimate new messages
+                    try {
+                        val keyManager = com.securelegion.crypto.KeyManager.getInstance(this@TorService)
+                        val dbPassphrase = keyManager.getDatabasePassphrase()
+                        val database = com.securelegion.database.SecureLegionDatabase.getInstance(this@TorService, dbPassphrase)
+
+                        val cutoffTimestamp = System.currentTimeMillis() - (7 * 24 * 60 * 60 * 1000L)
+                        kotlinx.coroutines.runBlocking {
+                            val deletedCount = database.receivedIdDao().deleteOldIds(cutoffTimestamp)
+                            if (deletedCount > 0) {
+                                Log.i(TAG, "✓ Cleaned up $deletedCount old received_ids entries (older than 7 days)")
+                            }
+                        }
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Error cleaning up old received_ids", e)
+                    }
+
                 } catch (e: InterruptedException) {
                     Log.d(TAG, "Session cleanup thread interrupted")
                     break
@@ -1787,7 +1815,7 @@ class TorService : Service() {
         }
     }
 
-    private fun handleIncomingPing(encodedData: ByteArray) {
+    private suspend fun handleIncomingPing(encodedData: ByteArray) {
         try {
             // Wire format: [connection_id (8 bytes LE)][encrypted_ping_wire]
             if (encodedData.size < 8) {
@@ -1823,9 +1851,15 @@ class TorService : Service() {
 
                 // This might be a Pong response! Try to decrypt as Pong
                 val pongPingId = try {
-                    RustBridge.decryptIncomingPong(encryptedPingWire)
+                    Log.d(TAG, "Calling decryptIncomingPong()...")
+                    val startTime = System.currentTimeMillis()
+                    val result = RustBridge.decryptIncomingPong(encryptedPingWire)
+                    val elapsed = System.currentTimeMillis() - startTime
+                    Log.d(TAG, "decryptIncomingPong() completed in ${elapsed}ms")
+                    result
                 } catch (e: Exception) {
                     Log.e(TAG, "⚠️  decryptIncomingPong threw exception: ${e.message}")
+                    Log.e(TAG, "Stack trace:", e)
                     null
                 }
 
@@ -1886,7 +1920,8 @@ class TorService : Service() {
                     }
 
                     // Check if we already sent the message for this Pong (secondary check)
-                    val message = kotlinx.coroutines.runBlocking {
+                    // CRITICAL FIX: Use suspend function instead of runBlocking to avoid freezing
+                    val message = withContext(Dispatchers.IO) {
                         database.messageDao().getMessageByPingId(pongPingId)
                     }
 
@@ -1931,118 +1966,125 @@ class TorService : Service() {
             // Successfully decrypted as Ping
             Log.i(TAG, "✓ Decrypted as Ping. Ping ID: $pingId")
 
-            // Track this pingId to prevent duplicate processing (PRIMARY deduplication)
-            Log.d(TAG, "═══ DEDUPLICATION CHECK: Ping ID = $pingId ═══")
-            val pingTracking = com.securelegion.database.entities.ReceivedId(
-                receivedId = pingId,
-                idType = com.securelegion.database.entities.ReceivedId.TYPE_PING,
-                receivedTimestamp = System.currentTimeMillis()
-            )
-
-            val rowId = tryInsertReceivedId(database, pingTracking, "PING")
-
-            if (rowId == -1L) {
-                Log.w(TAG, "⚠️  DUPLICATE PING BLOCKED! PingId=$pingId already in tracking table")
-                Log.w(TAG, "→ This is the deduplication working correctly - no ghost ping created")
-                Log.i(TAG, "→ Will still send PING_ACK to stop sender from retrying")
-
-                // Get sender info to send PING_ACK
-                val senderPublicKey = RustBridge.getPingSenderPublicKey(pingId)
-                if (senderPublicKey != null) {
-                    val publicKeyBase64 = android.util.Base64.encodeToString(senderPublicKey, android.util.Base64.NO_WRAP)
-                    val contact = kotlinx.coroutines.runBlocking {
-                        database.contactDao().getContactByPublicKey(publicKeyBase64)
-                    }
-
-                    if (contact != null) {
-                        // Send PING_ACK for duplicate to stop sender from retrying
-                        CoroutineScope(ackDispatcher).launch {
-                            sendAckWithRetry(
-                                connectionId = connectionId,
-                                itemId = pingId,
-                                ackType = "PING_ACK",
-                                contactId = contact.id,
-                                maxRetries = 3,
-                                initialDelayMs = 1000L
-                            )
-                        }
-                    }
-                }
-                return
-            }
-            Log.i(TAG, "✓ NEW PING ACCEPTED - Tracked in database (rowId=$rowId)")
-
-            // Check if this ping has already been processed in messages table (secondary check)
-
-
-            val existingMessage = kotlinx.coroutines.runBlocking {
-                database.messageDao().getMessageByPingId(pingId)
-            }
-
-            if (existingMessage != null) {
-                Log.w(TAG, "⚠️  Duplicate Ping detected! PingId=$pingId already processed (messageId=${existingMessage.messageId})")
-                Log.i(TAG, "→ Skipping notification for duplicate Ping, but will still respond to allow sender to retry")
-                // Don't show notification, don't store pending ping, but continue to send PING_ACK
-                // This allows the sender to retry getting their message if they didn't receive it
-            } else {
-                Log.i(TAG, "→ New Ping - processing normally")
-            }
-
             // Get sender information from the Ping token
             val senderPublicKey = RustBridge.getPingSenderPublicKey(pingId)
 
             // Look up sender in contacts database
-            val senderName = if (senderPublicKey != null) {
-                lookupContactName(senderPublicKey)
-            } else {
-                "Unknown Contact"
-            }
-
-            Log.i(TAG, "Incoming message request from: $senderName")
-
-            // Only store pending ping and show notification if this is NOT a duplicate
-            var contactId: Long? = null
-            if (existingMessage == null) {
-                // Store pending Ping for user to download later (including encrypted bytes for restore)
-                contactId = storePendingPing(pingId, connectionId, senderPublicKey, senderName, encryptedPingWire)
-
-                // Only show notification and broadcast if Ping was stored (sender is in contacts)
-                if (contactId != null) {
-                    // Show notification for each new ping (deduplication handled by database)
-                    showNewMessageNotification()
-
-                    // Broadcast to update MainActivity and ChatActivity if open (explicit broadcast)
-                    val intent = Intent("com.securelegion.NEW_PING")
-                    intent.setPackage(packageName) // Make it explicit
-                    intent.putExtra("CONTACT_ID", contactId)
-                    sendBroadcast(intent)
-                    Log.d(TAG, "Sent explicit NEW_PING broadcast for contactId=$contactId")
-                } else {
-                    Log.w(TAG, "Ping from unknown contact - no notification shown")
+            val contactInfo = if (senderPublicKey != null) {
+                val publicKeyBase64 = android.util.Base64.encodeToString(senderPublicKey, android.util.Base64.NO_WRAP)
+                withContext(Dispatchers.IO) {
+                    database.contactDao().getContactByPublicKey(publicKeyBase64)
                 }
             } else {
-                // For duplicate pings, still need contactId for PING_ACK
-                if (senderPublicKey != null) {
-                    val publicKeyBase64 = android.util.Base64.encodeToString(senderPublicKey, android.util.Base64.NO_WRAP)
-                    val contact = database.contactDao().getContactByPublicKey(publicKeyBase64)
-                    contactId = contact?.id
+                null
+            }
+
+            val contactId = contactInfo?.id
+            val senderName = contactInfo?.displayName ?: "Unknown Contact"
+            Log.i(TAG, "Incoming message request from: $senderName (contactId=$contactId)")
+
+            if (contactId == null) {
+                Log.w(TAG, "Ping from unknown contact - ignoring")
+                return
+            }
+
+            // PING INBOX STATE TRACKING: Check current state
+            Log.d(TAG, "═══ PING INBOX CHECK: pingId=$pingId ═══")
+            val existingPing = withContext(Dispatchers.IO) {
+                database.pingInboxDao().getByPingId(pingId)
+            }
+
+            val now = System.currentTimeMillis()
+            var shouldNotify = false
+
+            when {
+                existingPing != null && existingPing.state == com.securelegion.database.entities.PingInbox.STATE_MSG_STORED -> {
+                    // Message already stored - just update retry tracking
+                    Log.i(TAG, "✓ Message $pingId already stored (state=MSG_STORED)")
+                    Log.i(TAG, "→ Updating retry tracking and sending PING_ACK (idempotent)")
+                    withContext(Dispatchers.IO) {
+                        database.pingInboxDao().updatePingRetry(pingId, now)
+                    }
+                    // No notification needed
+                }
+
+                existingPing != null -> {
+                    // PING seen before but message not stored yet - update retry tracking
+                    Log.i(TAG, "✓ PING $pingId seen before (state=${existingPing.state}, attempt=${existingPing.attemptCount + 1})")
+                    withContext(Dispatchers.IO) {
+                        database.pingInboxDao().updatePingRetry(pingId, now)
+                    }
+                    Log.i(TAG, "→ Updated retry tracking, sending PING_ACK")
+                    // Don't notify again
+                }
+
+                else -> {
+                    // New PING - insert into ping_inbox as PING_SEEN
+                    Log.i(TAG, "✓ NEW PING $pingId - inserting as PING_SEEN")
+                    val pingInbox = com.securelegion.database.entities.PingInbox(
+                        pingId = pingId,
+                        contactId = contactId,
+                        state = com.securelegion.database.entities.PingInbox.STATE_PING_SEEN,
+                        firstSeenAt = now,
+                        lastUpdatedAt = now,
+                        lastPingAt = now,
+                        pingAckedAt = null,  // Will update after sending ACK
+                        attemptCount = 1
+                    )
+
+                    val inserted = withContext(Dispatchers.IO) {
+                        try {
+                            database.pingInboxDao().insert(pingInbox)
+                            true
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Failed to insert ping_inbox entry", e)
+                            false
+                        }
+                    }
+
+                    if (inserted) {
+                        // Store pending ping for UI display
+                        storePendingPing(pingId, connectionId, senderPublicKey, senderName, encryptedPingWire)
+
+                        shouldNotify = true
+                        Log.i(TAG, "→ Will show notification and send PING_ACK")
+                    }
                 }
             }
 
-            // Send PING_ACK back to sender IMMEDIATELY to stop them from retrying
-            // Use runBlocking to send synchronously (prevents sender from thinking PING was lost)
-            if (senderPublicKey != null && contactId != null) {
-                kotlinx.coroutines.runBlocking {
+            // Show notification for new pings only
+            if (shouldNotify) {
+                showNewMessageNotification()
+
+                // Broadcast to update MainActivity and ChatActivity if open
+                val intent = Intent("com.securelegion.NEW_PING")
+                intent.setPackage(packageName)
+                intent.putExtra("CONTACT_ID", contactId)
+                sendBroadcast(intent)
+                Log.d(TAG, "Sent NEW_PING broadcast for contactId=$contactId")
+            }
+
+            // Send PING_ACK (always, regardless of state - "I saw your ping")
+            CoroutineScope(ackDispatcher).launch {
+                try {
                     sendAckWithRetry(
                         connectionId = connectionId,
                         itemId = pingId,
                         ackType = "PING_ACK",
                         contactId = contactId,
-                        maxRetries = 1,  // Single fast attempt (immediate response)
-                        initialDelayMs = 0L  // No delay
+                        maxRetries = 1,
+                        initialDelayMs = 0L
                     )
+
+                    // Update pingAckedAt timestamp
+                    withContext(Dispatchers.IO) {
+                        database.pingInboxDao().updatePingAckTime(pingId, System.currentTimeMillis())
+                    }
+
+                    Log.d(TAG, "✓ PING_ACK sent for pingId=$pingId")
+                } catch (e: Exception) {
+                    Log.w(TAG, "Failed to send PING_ACK", e)
                 }
-                Log.d(TAG, "✓ PING_ACK sent immediately (blocking)")
             }
 
         } catch (e: Exception) {
@@ -2055,18 +2097,20 @@ class TorService : Service() {
      * Returns 0L (treat as new) on database failure to prevent app crashes.
      * This is better than crashing - a ghost duplicate (~0.0001% risk) is acceptable.
      *
+     * CRITICAL FIX: Now a suspend function to avoid blocking the ping handler thread
+     *
      * @param database The SecureLegion database instance
      * @param receivedId The ReceivedId entity to insert
      * @param itemType The type of item ("PING", "PONG", "MESSAGE") for logging
      * @return Row ID on success, -1L if duplicate, 0L on database failure
      */
-    private fun tryInsertReceivedId(
+    private suspend fun tryInsertReceivedId(
         database: com.securelegion.database.SecureLegionDatabase,
         receivedId: com.securelegion.database.entities.ReceivedId,
         itemType: String
     ): Long {
         return try {
-            kotlinx.coroutines.runBlocking {
+            withContext(Dispatchers.IO) {
                 Log.d(TAG, "Attempting to insert $itemType ID into received_ids table...")
                 val result = database.receivedIdDao().insertReceivedId(receivedId)
                 Log.d(TAG, "Insert result: rowId=$result (${if (result == -1L) "DUPLICATE" else "NEW"})")
@@ -3260,53 +3304,53 @@ class TorService : Service() {
     /**
      * Store pending Ping for user to manually download later
      */
-    private fun storePendingPing(pingId: String, connectionId: Long, senderPublicKey: ByteArray?, senderName: String, encryptedPingWire: ByteArray): Long? {
-        try {
-            val keyManager = com.securelegion.crypto.KeyManager.getInstance(this)
-            val dbPassphrase = keyManager.getDatabasePassphrase()
-            val database = com.securelegion.database.SecureLegionDatabase.getInstance(this, dbPassphrase)
+    private suspend fun storePendingPing(pingId: String, connectionId: Long, senderPublicKey: ByteArray?, senderName: String, encryptedPingWire: ByteArray): Long? {
+        return withContext(Dispatchers.IO) {
+            try {
+                val keyManager = com.securelegion.crypto.KeyManager.getInstance(this@TorService)
+                val dbPassphrase = keyManager.getDatabasePassphrase()
+                val database = com.securelegion.database.SecureLegionDatabase.getInstance(this@TorService, dbPassphrase)
 
-            // Find contact by public key
-            if (senderPublicKey != null) {
-                val publicKeyBase64 = android.util.Base64.encodeToString(senderPublicKey, android.util.Base64.NO_WRAP)
-                Log.d(TAG, "Looking up contact by public key (Base64, first 20 chars): ${publicKeyBase64.take(20)}...")
+                // Find contact by public key
+                if (senderPublicKey != null) {
+                    val publicKeyBase64 = android.util.Base64.encodeToString(senderPublicKey, android.util.Base64.NO_WRAP)
+                    Log.d(TAG, "Looking up contact by public key (Base64, first 20 chars): ${publicKeyBase64.take(20)}...")
 
-                // Debug: List all contacts and their public keys
-                val allContacts = kotlinx.coroutines.runBlocking {
-                    database.contactDao().getAllContacts()
+                    // Debug: List all contacts and their public keys
+                    val allContacts = database.contactDao().getAllContacts()
+                    Log.d(TAG, "Total contacts in database: ${allContacts.size}")
+                    for (c in allContacts) {
+                        Log.d(TAG, "  Contact: ${c.displayName}, PubKey (first 20 chars): ${c.publicKeyBase64.take(20)}...")
+                    }
+
+                    val contact = database.contactDao().getContactByPublicKey(publicKeyBase64)
+
+                    if (contact != null) {
+                        // Store pending Ping in queue (NEW: supports multiple pings per contact)
+                        val prefs = getSharedPreferences("pending_pings", Context.MODE_PRIVATE)
+                        val encryptedPingBase64 = android.util.Base64.encodeToString(encryptedPingWire, android.util.Base64.NO_WRAP)
+
+                        val pendingPing = com.securelegion.models.PendingPing(
+                            pingId = pingId,
+                            connectionId = connectionId,
+                            senderName = senderName,
+                            timestamp = System.currentTimeMillis(),
+                            encryptedPingData = encryptedPingBase64,
+                            senderOnionAddress = contact.messagingOnion ?: contact.torOnionAddress ?: ""
+                        )
+
+                        com.securelegion.models.PendingPing.addToQueue(prefs, contact.id, pendingPing)
+                        Log.i(TAG, "Added Ping $pingId to queue for contact ${contact.id}: $senderName")
+                        return@withContext contact.id  // Return contact ID for broadcast
+                    } else {
+                        Log.w(TAG, "Cannot store Ping - sender not in contacts: $senderName")
+                    }
                 }
-                Log.d(TAG, "Total contacts in database: ${allContacts.size}")
-                for (c in allContacts) {
-                    Log.d(TAG, "  Contact: ${c.displayName}, PubKey (first 20 chars): ${c.publicKeyBase64.take(20)}...")
-                }
-
-                val contact = database.contactDao().getContactByPublicKey(publicKeyBase64)
-
-                if (contact != null) {
-                    // Store pending Ping in queue (NEW: supports multiple pings per contact)
-                    val prefs = getSharedPreferences("pending_pings", Context.MODE_PRIVATE)
-                    val encryptedPingBase64 = android.util.Base64.encodeToString(encryptedPingWire, android.util.Base64.NO_WRAP)
-
-                    val pendingPing = com.securelegion.models.PendingPing(
-                        pingId = pingId,
-                        connectionId = connectionId,
-                        senderName = senderName,
-                        timestamp = System.currentTimeMillis(),
-                        encryptedPingData = encryptedPingBase64,
-                        senderOnionAddress = contact.messagingOnion ?: contact.torOnionAddress ?: ""
-                    )
-
-                    com.securelegion.models.PendingPing.addToQueue(prefs, contact.id, pendingPing)
-                    Log.i(TAG, "Added Ping $pingId to queue for contact ${contact.id}: $senderName")
-                    return contact.id  // Return contact ID for broadcast
-                } else {
-                    Log.w(TAG, "Cannot store Ping - sender not in contacts: $senderName")
-                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to store pending Ping", e)
             }
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to store pending Ping", e)
+            return@withContext null  // Failed to find/store contact
         }
-        return null  // Failed to find/store contact
     }
 
     /**
@@ -3869,10 +3913,17 @@ class TorService : Service() {
                 AUTH_CHANNEL_NAME,
                 NotificationManager.IMPORTANCE_HIGH
             ).apply {
-                description = "Requires your approval to receive encrypted messages"
+                description = "Friend requests and message approvals"
                 setShowBadge(true)
                 enableVibration(true)
                 enableLights(true)
+                setSound(
+                    android.provider.Settings.System.DEFAULT_NOTIFICATION_URI,
+                    android.media.AudioAttributes.Builder()
+                        .setUsage(android.media.AudioAttributes.USAGE_NOTIFICATION)
+                        .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                        .build()
+                )
             }
 
             // Badge channel (for app icon badge with unread count)
@@ -4025,32 +4076,51 @@ class TorService : Service() {
             })
             Log.i(TAG, "✓ Voice signaling callback registered")
 
-            // IMPORTANT: Start voice streaming server FIRST (bind to localhost:9152)
+            // CRITICAL: Start VOICE TOR first (separate Tor instance with Single Onion Service)
+            // This Tor runs on port 9052 with HiddenServiceNonAnonymousMode 1 for 3-hop latency
+            val torManager = com.securelegion.crypto.TorManager.getInstance(applicationContext)
+            Log.i(TAG, "Starting VOICE Tor instance (Single Onion Service mode)...")
+            val voiceTorStarted = torManager.startVoiceTor()
+            if (!voiceTorStarted) {
+                Log.e(TAG, "Failed to start voice Tor - cannot create voice hidden service")
+                return
+            }
+            Log.i(TAG, "✓ Voice Tor started successfully (3-hop Single Onion Service)")
+
+            // IMPORTANT: Start voice streaming server SECOND (bind to localhost:9152)
             // This must happen BEFORE creating the hidden service, otherwise Tor will try
             // to route traffic to a port that isn't listening yet
             Log.d(TAG, "Starting voice streaming server on localhost:9152...")
             RustBridge.startVoiceStreamingServer()
             Log.i(TAG, "✓ Voice streaming server started on localhost:9152")
 
-            // Check if voice onion already exists (created during account setup)
-            val torManager = com.securelegion.crypto.TorManager.getInstance(applicationContext)
-            val existingVoiceOnion = torManager.getVoiceOnionAddress()
+            // Read voice onion address from torrc-generated hostname file
+            // (Single Onion Services don't support ADD_ONION, must be configured in torrc)
+            Log.i(TAG, "Reading voice onion address from torrc-generated hostname file...")
+            val hostnameFile = File(filesDir, "voice_tor/voice_hidden_service/hostname")
 
-            if (!existingVoiceOnion.isNullOrEmpty()) {
-                Log.i(TAG, "Voice onion already exists (created during account setup): $existingVoiceOnion")
-                Log.i(TAG, "Re-registering with Tor to ensure ephemeral service is active...")
-                try {
-                    val voiceOnion = RustBridge.createVoiceHiddenService()
-                    Log.i(TAG, "✓ Voice hidden service re-registered with Tor: $voiceOnion")
-                } catch (e: Exception) {
-                    Log.w(TAG, "Failed to re-register voice service (non-fatal): ${e.message}")
-                }
-            } else {
-                Log.i(TAG, "No existing voice onion - creating new one...")
-                val voiceOnion = RustBridge.createVoiceHiddenService()
-                Log.i(TAG, "Rust returned voice onion: $voiceOnion")
+            // Wait for hostname file to be created by Tor (max 30 seconds)
+            var attempts = 0
+            while (!hostnameFile.exists() && attempts < 30) {
+                Thread.sleep(1000)
+                attempts++
+            }
+
+            if (!hostnameFile.exists()) {
+                Log.e(TAG, "❌ Voice hidden service hostname file not found after 30s")
+                throw Exception("Voice Tor did not create hostname file")
+            }
+
+            val voiceOnion = hostnameFile.readText().trim()
+            Log.i(TAG, "✓ Voice onion address from torrc: $voiceOnion")
+
+            // Check if this is different from what's stored
+            val existingVoiceOnion = torManager.getVoiceOnionAddress()
+            if (existingVoiceOnion != voiceOnion) {
+                Log.i(TAG, "Voice onion changed from $existingVoiceOnion to $voiceOnion - updating...")
                 torManager.saveVoiceOnionAddress(voiceOnion)
-                Log.i(TAG, "✓ Voice hidden service registered with Tor: $voiceOnion")
+            } else {
+                Log.i(TAG, "Voice onion address unchanged: $voiceOnion")
             }
 
             Log.i(TAG, "✓ Voice streaming service fully initialized")

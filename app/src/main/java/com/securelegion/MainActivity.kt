@@ -217,6 +217,12 @@ class MainActivity : BaseActivity() {
             startActivity(walletIntent)
         }
 
+        // Check if we should show phone/call tab
+        if (intent.getBooleanExtra("SHOW_PHONE", false)) {
+            isCallMode = true
+            showContactsTab()
+        }
+
         // Register broadcast receiver for incoming Pings (stays registered even when paused)
         val filter = IntentFilter("com.securelegion.NEW_PING")
         registerReceiver(pingReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
@@ -383,6 +389,13 @@ class MainActivity : BaseActivity() {
             Log.d("MainActivity", "onNewIntent - opening wallet activity")
             val walletIntent = Intent(this, WalletActivity::class.java)
             startActivity(walletIntent)
+        }
+
+        // Check if we should show phone/call tab
+        if (intent.getBooleanExtra("SHOW_PHONE", false)) {
+            Log.d("MainActivity", "onNewIntent - showing phone/call view")
+            isCallMode = true
+            showContactsTab()
         }
     }
 

@@ -227,8 +227,10 @@ class SettingsActivity : BaseActivity() {
             finish()
         }
 
-        findViewById<View>(R.id.navLock).setOnClickListener {
-            val intent = Intent(this, LockActivity::class.java)
+        findViewById<View>(R.id.navPhone).setOnClickListener {
+            val intent = Intent(this, MainActivity::class.java)
+            intent.putExtra("SHOW_PHONE", true)
+            intent.flags = Intent.FLAG_ACTIVITY_CLEAR_TOP
             startActivity(intent)
             finish()
         }

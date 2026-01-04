@@ -49,7 +49,71 @@ data class PendingPing(
         }
 
         /**
-         * Load all pending pings for a contact from SharedPreferences
+         * Load all pending pings for a contact from ping_inbox database (SOURCE OF TRUTH)
+         * Falls back to SharedPreferences for backward compatibility during migration
+         * @param database The SecureLegionDatabase instance
+         * @param prefs SharedPreferences for fallback/cache
+         * @param contactId The contact ID
+         * @return List of pending pings (state < MSG_STORED)
+         */
+        suspend fun loadQueueFromDatabase(
+            database: com.securelegion.database.SecureLegionDatabase,
+            prefs: android.content.SharedPreferences,
+            contactId: Long
+        ): List<PendingPing> {
+            return try {
+                // PRIMARY SOURCE: ping_inbox table (durable, restart-safe)
+                val pingInboxEntries = database.pingInboxDao().getPendingByContact(
+                    contactId = contactId,
+                    msgStoredState = com.securelegion.database.entities.PingInbox.STATE_MSG_STORED
+                )
+
+                if (pingInboxEntries.isEmpty()) {
+                    // No pending pings in database - return empty
+                    android.util.Log.d("PendingPing", "No pending pings in database for contact $contactId")
+                    return emptyList()
+                }
+
+                android.util.Log.i("PendingPing", "Loaded ${pingInboxEntries.size} pending pings from database (source of truth)")
+
+                // Convert ping_inbox entries to PendingPing objects
+                // We need to reconstruct the full PendingPing from stored data
+                val pendingPings = mutableListOf<PendingPing>()
+
+                for (entry in pingInboxEntries) {
+                    // Try to load full details from SharedPreferences cache first
+                    val cachedQueue = loadQueueForContact(prefs, contactId)
+                    val cached = cachedQueue.find { it.pingId == entry.pingId }
+
+                    if (cached != null) {
+                        // Use cached version (has all fields)
+                        pendingPings.add(cached)
+                        android.util.Log.d("PendingPing", "  Using cached data for ping ${entry.pingId.take(8)}")
+                    } else {
+                        // Cache miss - reconstruct from what we have
+                        // This can happen after app data clear or first launch after DB migration
+                        android.util.Log.w("PendingPing", "  Cache miss for ping ${entry.pingId.take(8)} - needs re-download")
+
+                        // We can't fully reconstruct without the encrypted ping wire bytes,
+                        // so we'll need to wait for sender to retry the PING
+                        // For now, skip this entry (sender will retry and repopulate)
+                    }
+                }
+
+                // Sync database state back to SharedPreferences cache
+                saveQueueForContact(prefs, contactId, pendingPings, synchronous = true)
+
+                pendingPings
+            } catch (e: Exception) {
+                android.util.Log.e("PendingPing", "Failed to load from database, falling back to SharedPreferences", e)
+                // Fallback to SharedPreferences on error
+                loadQueueForContact(prefs, contactId)
+            }
+        }
+
+        /**
+         * Load all pending pings for a contact from SharedPreferences (LEGACY/CACHE)
+         * Use loadQueueFromDatabase() for restart-safe, database-backed loading
          */
         fun loadQueueForContact(prefs: android.content.SharedPreferences, contactId: Long): List<PendingPing> {
             val queueJson = prefs.getString("ping_queue_$contactId", null) ?: return emptyList()

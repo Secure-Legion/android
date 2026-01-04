@@ -875,8 +875,15 @@ class AddFriendActivity : BaseActivity() {
     private fun acceptPhase2FriendRequest(senderOnion: String, senderPin: String) {
         CoroutineScope(Dispatchers.Main).launch {
             try {
+                // Sanitize .onion address - remove https://, http://, and trailing slashes
+                val sanitizedOnion = senderOnion
+                    .replace("https://", "", ignoreCase = true)
+                    .replace("http://", "", ignoreCase = true)
+                    .removeSuffix("/")
+                    .trim()
+
                 showLoading("Accepting friend request...")
-                Log.d(TAG, "Phase 2: Accepting friend request from: $senderOnion")
+                Log.d(TAG, "Phase 2: Accepting friend request from: $sanitizedOnion (original: $senderOnion)")
 
                 // Find the pending incoming request by onion address (stored in ipfsCid field for v2.0)
                 val prefs = getSharedPreferences("friend_requests", Context.MODE_PRIVATE)
@@ -1029,8 +1036,15 @@ class AddFriendActivity : BaseActivity() {
     private fun initiateFriendRequest(friendOnion: String, friendPin: String) {
         CoroutineScope(Dispatchers.Main).launch {
             try {
+                // Sanitize .onion address - remove https://, http://, and trailing slashes
+                val sanitizedOnion = friendOnion
+                    .replace("https://", "", ignoreCase = true)
+                    .replace("http://", "", ignoreCase = true)
+                    .removeSuffix("/")
+                    .trim()
+
                 showLoading("Sending friend request...")
-                Log.d(TAG, "Phase 1: Initiating friend request to: $friendOnion")
+                Log.d(TAG, "Phase 1: Initiating friend request to: $sanitizedOnion (original: $friendOnion)")
 
                 // Get YOUR info for Phase 1
                 val keyManager = KeyManager.getInstance(this@AddFriendActivity)
@@ -1063,7 +1077,7 @@ class AddFriendActivity : BaseActivity() {
                 // Send Phase 1 via Tor using dedicated friend request channel
                 val success = withContext(Dispatchers.IO) {
                     com.securelegion.crypto.RustBridge.sendFriendRequest(
-                        recipientOnion = friendOnion,
+                        recipientOnion = sanitizedOnion,
                         encryptedFriendRequest = encryptedPhase1
                     )
                 }
@@ -1074,7 +1088,7 @@ class AddFriendActivity : BaseActivity() {
                     // Save as outgoing pending request (awaiting Phase 2)
                     val pendingRequest = com.securelegion.models.PendingFriendRequest(
                         displayName = "Pending Friend",
-                        ipfsCid = friendOnion, // Store recipient's .onion address for retry
+                        ipfsCid = sanitizedOnion, // Store recipient's .onion address for retry
                         direction = com.securelegion.models.PendingFriendRequest.DIRECTION_OUTGOING,
                         status = com.securelegion.models.PendingFriendRequest.STATUS_PENDING,
                         timestamp = System.currentTimeMillis(),

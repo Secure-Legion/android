@@ -37,12 +37,14 @@ class AudioPlaybackManager(
         private const val AUDIO_FORMAT = AudioFormat.ENCODING_PCM_16BIT
         private const val FRAME_SIZE_SAMPLES = OpusCodec.FRAME_SIZE_SAMPLES
 
-        // Jitter buffer configuration (optimized for Tor network conditions)
-        // Tor circuits typically have 250-600ms latency with occasional spikes
-        // Larger buffers prevent dropouts at the cost of ~100-200ms additional latency
-        private const val MIN_BUFFER_MS = 300        // Minimum 300ms delay (was 200ms)
-        private const val MAX_BUFFER_MS = 800        // Maximum 800ms delay (was 500ms)
-        private const val INITIAL_BUFFER_MS = 400    // Start with 400ms (was 300ms)
+        // Jitter buffer configuration (bounded adaptive playout for Tor)
+        // Fixed low clamp (e.g., 250ms) is incompatible with Tor tails.
+        // We use bounded adaptive playout with a hard cap to prevent delay creep
+        // while preserving audio on variable links.
+        private const val MIN_BUFFER_MS = 150        // Minimum target buffer (adaptive lower bound)
+        private const val MAX_BUFFER_MS = 450        // Maximum target buffer (adaptive upper bound)
+        private const val INITIAL_BUFFER_MS = 250    // Start with 250ms
+        private const val HARD_CAP_MS = 900          // Absolute "never exceed" safety rail (panic trim)
         private const val FRAME_DURATION_MS = 20     // 20ms per frame
         private const val MAX_OUT_OF_ORDER = 10      // Max frames to buffer before considering lost
 
@@ -56,6 +58,10 @@ class AudioPlaybackManager(
         // Adaptive buffer tuning (more tolerant for Tor jitter)
         private const val LATE_FRAME_THRESHOLD = 0.10f  // If >10% frames late, increase buffer (was 5%)
         private const val EARLY_FRAME_THRESHOLD = 0.95f // If >95% frames early, decrease buffer (was 90%)
+
+        // Resynchronization (recover from dead circuits by skipping forward)
+        // This is the ONLY delay control mechanism - latency clamp removed (incompatible with Tor)
+        private const val RESYNC_PLC_THRESHOLD = 15  // Skip forward after 15 consecutive PLC frames (300ms dead)
     }
 
     private var audioTrack: AudioTrack? = null
@@ -74,21 +80,31 @@ class AudioPlaybackManager(
     )
 
     // Current state
+    @Volatile
     private var nextExpectedSeq: Long = 0
+    @Volatile
+    private var maxSeqSeen: Long = 0          // Track highest sequence number received (for buffer depth)
     private var jitterBufferMs: Int = INITIAL_BUFFER_MS
     private var framesReceived: Long = 0
     private var framesLate: Long = 0
     private var framesLost: Long = 0
     private var framesLateToBuffer: Long = 0  // Arrived after playout deadline (v3)
+    private var framesPanicTrimmed: Long = 0  // Dropped due to exceeding HARD_CAP_MS
 
     // FEC statistics
     private var fecAttempts: Long = 0
     private var fecSuccess: Long = 0
     private var plcFrames: Long = 0
 
+    // Resynchronization statistics
+    private var consecutivePLCFrames: Int = 0   // Track consecutive PLC for resync detection
+    private var resyncCount: Long = 0           // Number of times we've resynchronized
+
     // Seq → Circuit mapping for PLC attribution (v3)
-    // Ring buffer of last 500 sequence numbers to their circuit index
-    private val seqToCircuit = LinkedHashMap<Long, Int>(500, 0.75f, false)
+    // Thread-safe map of sequence numbers to their circuit index (ConcurrentHashMap prevents ConcurrentModificationException)
+    private val seqToCircuit = java.util.concurrent.ConcurrentHashMap<Long, Int>()
+    // Track insertion order for trimming oldest entries (preserves FIFO semantics)
+    private val seqOrder = java.util.concurrent.ConcurrentLinkedQueue<Long>()
 
     // Per-circuit statistics (v2) for adaptive routing feedback
     private data class CircuitStats(
@@ -118,14 +134,25 @@ class AudioPlaybackManager(
             // Set up AudioManager for voice communication mode
             audioManager = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
             audioManager?.let { am ->
-                previousAudioMode = am.mode
-                am.mode = AudioManager.MODE_IN_COMMUNICATION
+                // IMPORTANT: Do NOT change the audio mode if it's already MODE_IN_COMMUNICATION
+                // VoiceCallActivity may have already set it up, and we don't want to override its settings
+                if (am.mode != AudioManager.MODE_IN_COMMUNICATION) {
+                    previousAudioMode = am.mode
+                    am.mode = AudioManager.MODE_IN_COMMUNICATION
+                    Log.d(TAG, "Set AudioManager mode to MODE_IN_COMMUNICATION (prev: $previousAudioMode)")
+                } else {
+                    // Mode already set by VoiceCallActivity - don't change it
+                    previousAudioMode = AudioManager.MODE_NORMAL  // Will restore to NORMAL on release
+                    Log.d(TAG, "AudioManager already in MODE_IN_COMMUNICATION - preserving existing settings")
+                }
 
-                // Start with earpiece (speaker OFF) by default
+                // CRITICAL FIX: Respect current speaker state instead of forcing it OFF
+                // VoiceCallActivity may have already set speaker ON during "Calling..." phase
                 @Suppress("DEPRECATION")
-                am.isSpeakerphoneOn = false
+                val currentSpeakerState = am.isSpeakerphoneOn
+                isSpeakerEnabled = currentSpeakerState
 
-                Log.d(TAG, "AudioManager initialized: mode=MODE_IN_COMMUNICATION (prev: $previousAudioMode), speaker=OFF (earpiece)")
+                Log.d(TAG, "AudioPlaybackManager initialized: mode=${am.mode}, speaker=${if (currentSpeakerState) "ON" else "OFF"} (preserved from VoiceCallActivity)")
             }
 
             // Calculate buffer size
@@ -195,10 +222,14 @@ class AudioPlaybackManager(
             audioTrack.play()
             isPlaying = true
 
-            // Reset sequence tracking
-            nextExpectedSeq = 0
-            jitterBuffer.clear()
-            seqToCircuit.clear()
+            // Reset sequence tracking (synchronized for thread safety with addFrame)
+            synchronized(this) {
+                nextExpectedSeq = 0
+                maxSeqSeen = 0
+                jitterBuffer.clear()
+                seqToCircuit.clear()
+                seqOrder.clear()
+            }
 
             // Launch playback loop
             playbackJob = scope.launch(Dispatchers.IO) {
@@ -227,7 +258,10 @@ class AudioPlaybackManager(
      * @param sequenceNumber Packet sequence number
      * @param opusFrame Decoded Opus frame bytes
      * @param circuitIndex Which circuit this frame arrived on (for per-circuit stats)
+     *
+     * CRITICAL: Synchronized to handle DOUBLE-SEND - same packet arriving on 2 circuits simultaneously
      */
+    @Synchronized
     fun addFrame(sequenceNumber: Long, opusFrame: ByteArray, circuitIndex: Int = 0) {
         if (!isPlaying) {
             return
@@ -241,11 +275,33 @@ class AudioPlaybackManager(
 
         // Track which circuit this sequence came from (v3 - for PLC attribution)
         seqToCircuit[sequenceNumber] = circuitIndex
+        seqOrder.add(sequenceNumber)
 
-        // Trim old entries (keep last 500 seqs)
+        // Trim old entries (keep last 500 seqs) - use ConcurrentLinkedQueue for FIFO ordering
         while (seqToCircuit.size > 500) {
-            val oldestKey = seqToCircuit.keys.firstOrNull() ?: break
-            seqToCircuit.remove(oldestKey)
+            val oldestSeq = seqOrder.poll() ?: break
+            seqToCircuit.remove(oldestSeq)
+        }
+
+        // Update max sequence seen for buffer depth tracking
+        if (sequenceNumber > maxSeqSeen) {
+            maxSeqSeen = sequenceNumber
+        }
+
+        // PANIC TRIM: Check if buffer depth exceeds hard cap (prevent delay creep)
+        // bufferDepthMs = (maxSeqSeen - nextExpectedSeq) * frameMs
+        val bufferDepthMs = (maxSeqSeen - nextExpectedSeq) * FRAME_DURATION_MS
+        if (bufferDepthMs > HARD_CAP_MS) {
+            // Buffer depth exceeded hard cap - advance nextExpectedSeq to bring it back to targetBufferMs
+            val trimToSeq = maxSeqSeen - (jitterBufferMs / FRAME_DURATION_MS)
+            val framesTrimmed = trimToSeq - nextExpectedSeq
+            if (framesTrimmed > 0) {
+                framesPanicTrimmed += framesTrimmed
+                framesLost += framesTrimmed
+                nextExpectedSeq = trimToSeq
+                Log.w(TAG, "PANIC TRIM: buffer depth ${bufferDepthMs}ms exceeded HARD_CAP ${HARD_CAP_MS}ms, " +
+                        "trimmed $framesTrimmed frames, advanced seq to $nextExpectedSeq (target buffer ${jitterBufferMs}ms)")
+            }
         }
 
         // Check if frame is late (already played)
@@ -294,7 +350,8 @@ class AudioPlaybackManager(
                 var frame = getNextFrame()
 
                 if (frame != null) {
-                    // Case A: Perfect in-order packet
+                    // Case A: Perfect in-order packet (latency clamp removed - incompatible with Tor's variable latency)
+                    consecutivePLCFrames = 0  // Reset PLC counter on successful frame
                     try {
                         val pcmSamples = opusCodec.decode(frame.opusFrame)
 
@@ -309,6 +366,7 @@ class AudioPlaybackManager(
                         Log.e(TAG, "Opus decode error, using PLC", e)
                         playPLC(audioTrack)
                         plcFrames++
+                        consecutivePLCFrames++
 
                         // Attribution: decode failed for a frame we had (v3)
                         val expectedCircuit = seqToCircuit[frame.sequenceNumber] ?: 0
@@ -318,12 +376,33 @@ class AudioPlaybackManager(
                     nextExpectedSeq = frame.sequenceNumber + 1
 
                 } else {
+                    // Frame not in buffer - check if we're stuck on dead circuit (resynchronization)
+                    if (consecutivePLCFrames >= RESYNC_PLC_THRESHOLD && !jitterBuffer.isEmpty()) {
+                        // We've been using PLC for too long AND we have frames available
+                        // This means playout is stuck on a dead circuit while new circuits have frames
+                        val earliestFrame = jitterBuffer.peek()
+                        if (earliestFrame != null && earliestFrame.sequenceNumber > nextExpectedSeq) {
+                            val gap = earliestFrame.sequenceNumber - nextExpectedSeq
+                            Log.w(TAG, "⚡ RESYNC: Skipping forward from seq=$nextExpectedSeq to ${earliestFrame.sequenceNumber} (gap=$gap frames, ${gap * FRAME_DURATION_MS}ms) after $consecutivePLCFrames consecutive PLC")
+
+                            // JUMP FORWARD to recover from dead circuit
+                            nextExpectedSeq = earliestFrame.sequenceNumber
+                            consecutivePLCFrames = 0
+                            resyncCount++
+
+                            // Don't delay - immediately process the frame on next iteration
+                            continue
+                        }
+                    }
+
                     // Frame not in buffer - apply reorder grace window (v3)
                     delay(REORDER_GRACE_MS)
                     frame = getNextFrame()
 
                     if (frame != null) {
                         Log.d(TAG, "Frame arrived during reorder grace: seq=${frame.sequenceNumber} (expected=$nextExpectedSeq)")
+
+                        consecutivePLCFrames = 0  // Reset on success
 
                         // Decode and play the reordered frame
                         try {
@@ -340,6 +419,7 @@ class AudioPlaybackManager(
                             Log.e(TAG, "Opus decode error on reordered frame, using PLC", e)
                             playPLC(audioTrack)
                             plcFrames++
+                            consecutivePLCFrames++
 
                             val expectedCircuit = seqToCircuit[frame.sequenceNumber] ?: 0
                             telemetry?.reportPLCForCircuit(expectedCircuit)
@@ -355,6 +435,7 @@ class AudioPlaybackManager(
                             // FEC failed after grace window - fallback to PLC
                             framesLost++
                             plcFrames++
+                            consecutivePLCFrames++
 
                             // Attribution: which circuit should have delivered this seq? (v3)
                             val expectedCircuit = seqToCircuit[nextExpectedSeq] ?: 0
@@ -365,6 +446,7 @@ class AudioPlaybackManager(
                             nextExpectedSeq++
                         } else {
                             // FEC recovered and played frame(s)
+                            consecutivePLCFrames = 0  // Reset on FEC success
                             // nextExpectedSeq already advanced in attemptFECRecovery
                             // Skip regular delay since we handled timing in attemptFECRecovery
                             continue
@@ -607,13 +689,19 @@ class AudioPlaybackManager(
         try {
             audioTrack?.stop()
             audioTrack?.flush()
-            jitterBuffer.clear()
-            seqToCircuit.clear()
 
-            // Log final stats (v3)
+            // Clear buffers (synchronized for thread safety with addFrame)
+            synchronized(this) {
+                jitterBuffer.clear()
+                seqToCircuit.clear()
+                seqOrder.clear()
+            }
+
+            // Log final stats (v3 - latency clamp removed)
             if (framesReceived > 0) {
                 val lateToBufferRate = (framesLateToBuffer.toFloat() / framesReceived * 100)
                 Log.d(TAG, "Final stats: framesLateToBuffer=$framesLateToBuffer (${String.format("%.1f", lateToBufferRate)}%)")
+                Log.d(TAG, "Resynchronization: resyncs=$resyncCount")
             }
 
             Log.d(TAG, "Audio playback stopped")
@@ -722,6 +810,7 @@ class AudioPlaybackManager(
      * Get per-circuit late frame percentages for scheduler feedback
      * Returns map of circuit index → late frame percentage
      */
+    @Synchronized
     fun getPerCircuitLatePercent(): Map<Int, Double> {
         return circuitStats.mapValues { (_, stats) ->
             if (stats.framesReceived > 0) {
@@ -735,6 +824,7 @@ class AudioPlaybackManager(
     /**
      * Reset per-circuit statistics (call periodically after feedback sent)
      */
+    @Synchronized
     fun resetCircuitStats() {
         circuitStats.clear()
     }
