@@ -24,6 +24,12 @@ interface CallHistoryDao {
     fun getAllCallHistory(): LiveData<List<CallHistory>>
 
     /**
+     * Get all call history as plain list (for one-time queries)
+     */
+    @Query("SELECT * FROM call_history ORDER BY timestamp DESC")
+    suspend fun getAllCallHistoryList(): List<CallHistory>
+
+    /**
      * Get call history for a specific contact
      */
     @Query("SELECT * FROM call_history WHERE contactId = :contactId ORDER BY timestamp DESC")
@@ -64,4 +70,10 @@ interface CallHistoryDao {
      */
     @Query("UPDATE call_history SET duration = :duration WHERE callId = :callId")
     suspend fun updateCallDuration(callId: String, duration: Long)
+
+    /**
+     * Get the last call for a specific contact (for New Call UI)
+     */
+    @Query("SELECT * FROM call_history WHERE contactId = :contactId ORDER BY timestamp DESC LIMIT 1")
+    suspend fun getLastCallForContact(contactId: Long): CallHistory?
 }

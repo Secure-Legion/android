@@ -43,17 +43,17 @@ class AudioPlaybackManager(
         // while preserving audio on variable links.
         private const val MIN_BUFFER_MS = 150        // Minimum target buffer (adaptive lower bound)
         private const val MAX_BUFFER_MS = 450        // Maximum target buffer (adaptive upper bound)
-        private const val INITIAL_BUFFER_MS = 250    // Start with 250ms
-        private const val HARD_CAP_MS = 900          // Absolute "never exceed" safety rail (panic trim)
-        private const val FRAME_DURATION_MS = 20     // 20ms per frame
+        private const val INITIAL_BUFFER_MS = 250    // Start with 250ms (MVP target)
+        private const val HARD_CAP_MS = 1200         // MVP: Hard cap at 1200ms (drop frames beyond)
+        private const val FRAME_DURATION_MS = 40     // MVP: 40ms per frame
         private const val MAX_OUT_OF_ORDER = 10      // Max frames to buffer before considering lost
 
         // FEC grace window (v2 - wait for next packet before PLCing)
-        private const val FEC_GRACE_WINDOW_MS = 30L  // Wait 30ms for next packet (1.5 frames)
+        private const val FEC_GRACE_WINDOW_MS = 60L  // MVP: Wait 60ms for next packet (1.5 frames @ 40ms)
         private const val FEC_MAX_RETRIES = 2        // Check for next frame 2 times during grace window
 
         // Reorder grace window (v3 - wait for out-of-order frames before missing)
-        private const val REORDER_GRACE_MS = 40L     // Wait 40ms for out-of-order frames (2 frames)
+        private const val REORDER_GRACE_MS = 80L     // MVP: Wait 80ms for out-of-order frames (2 frames @ 40ms)
 
         // Adaptive buffer tuning (more tolerant for Tor jitter)
         private const val LATE_FRAME_THRESHOLD = 0.10f  // If >10% frames late, increase buffer (was 5%)

@@ -397,6 +397,9 @@ class IncomingCallActivity : AppCompatActivity() {
         if (!callWasAnswered) {
             Log.d(TAG, "IncomingCallActivity destroyed without answer - rejecting call")
             callManager.rejectCall(callId)
+
+            // Save missed call to history
+            saveMissedCallToHistory()
         } else {
             Log.d(TAG, "IncomingCallActivity destroyed after answer - VoiceCallActivity handling call")
         }
@@ -435,6 +438,37 @@ class IncomingCallActivity : AppCompatActivity() {
             Log.d(TAG, "Ringtone stopped")
         } catch (e: Exception) {
             Log.e(TAG, "Failed to stop ringtone", e)
+        }
+    }
+
+    /**
+     * Save missed call to call history database
+     */
+    private fun saveMissedCallToHistory() {
+        lifecycleScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            try {
+                val keyManager = KeyManager.getInstance(this@IncomingCallActivity)
+                val dbPassphrase = keyManager.getDatabasePassphrase()
+                val database = com.securelegion.database.SecureLegionDatabase.getInstance(this@IncomingCallActivity, dbPassphrase)
+
+                // Create missed call history entry
+                val callHistory = com.securelegion.database.entities.CallHistory(
+                    contactId = contactId,
+                    contactName = contactName,
+                    callId = java.util.UUID.randomUUID().toString(),
+                    type = com.securelegion.database.entities.CallType.MISSED,
+                    timestamp = System.currentTimeMillis(),
+                    duration = 0L
+                )
+
+                // Insert into database
+                database.callHistoryDao().insert(callHistory)
+
+                Log.i(TAG, "Missed call saved to history: contact=$contactName")
+
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to save missed call to history", e)
+            }
         }
     }
 

@@ -60,3 +60,8 @@ gradlew.bat
 notification_*.png
 screenshot_*.png
 pixel6a.png
+
+# Database backups
+*.db
+*_backup.db
+secure_legion_backup.db

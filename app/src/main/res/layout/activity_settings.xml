@@ -554,6 +554,53 @@
 
             </LinearLayout>
 
+            <!-- Tor Mode (VPN) -->
+            <LinearLayout
+                android:id="@+id/torModeItem"
+                android:layout_width="match_parent"
+                android:layout_height="80dp"
+                android:orientation="horizontal"
+                android:background="@drawable/settings_box_bg"
+                android:paddingStart="10dp"
+                android:paddingEnd="10dp"
+                android:layout_marginBottom="12dp"
+                android:gravity="center_vertical">
+
+                <FrameLayout
+                    android:layout_width="50dp"
+                    android:layout_height="50dp"
+                    android:background="@drawable/settings_icon_bg"
+                    android:layout_marginStart="8dp"
+                    android:layout_marginEnd="16dp">
+
+                    <ImageView
+                        android:layout_width="24dp"
+                        android:layout_height="24dp"
+                        android:layout_gravity="center"
+                        android:src="@drawable/ic_tor"
+                        android:tint="#888888" />
+
+                </FrameLayout>
+
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="Tor Mode"
+                    android:textSize="16sp"
+                    android:textColor="#CCCCCC"
+                    android:fontFamily="@font/poppins_medium" />
+
+                <androidx.appcompat.widget.SwitchCompat
+                    android:id="@+id/torModeSwitch"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:checked="false"
+                    app:thumbTint="#333333"
+                    app:trackTint="#888888" />
+
+            </LinearLayout>
+
             <!-- Developer -->
             <LinearLayout
                 android:id="@+id/developerItem"

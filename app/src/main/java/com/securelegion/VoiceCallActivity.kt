@@ -509,7 +509,56 @@ class VoiceCallActivity : BaseActivity() {
             android.util.Log.e(TAG, "Error ending call", e)
         }
         stopCallTimer()
+
+        // Save call to history
+        saveCallToHistory()
+
         finish()
+    }
+
+    /**
+     * Save call to call history database
+     */
+    private fun saveCallToHistory() {
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                val keyManager = KeyManager.getInstance(this@VoiceCallActivity)
+                val dbPassphrase = keyManager.getDatabasePassphrase()
+                val database = com.securelegion.database.SecureLegionDatabase.getInstance(this@VoiceCallActivity, dbPassphrase)
+
+                // Calculate call duration in seconds
+                val durationSeconds = if (callStartTime > 0) {
+                    (System.currentTimeMillis() - callStartTime) / 1000
+                } else {
+                    0L
+                }
+
+                // Determine call type
+                val callType = when {
+                    isOutgoing -> com.securelegion.database.entities.CallType.OUTGOING
+                    durationSeconds > 0 -> com.securelegion.database.entities.CallType.INCOMING
+                    else -> com.securelegion.database.entities.CallType.MISSED
+                }
+
+                // Create call history entry
+                val callHistory = com.securelegion.database.entities.CallHistory(
+                    contactId = contactId,
+                    contactName = contactName,
+                    callId = java.util.UUID.randomUUID().toString(),
+                    type = callType,
+                    timestamp = System.currentTimeMillis(),
+                    duration = durationSeconds
+                )
+
+                // Insert into database
+                database.callHistoryDao().insert(callHistory)
+
+                Log.i(TAG, "Call saved to history: type=$callType, duration=${durationSeconds}s, contact=$contactName")
+
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to save call to history", e)
+            }
+        }
     }
 
     private fun handleCallStateChanged(state: VoiceCallSession.Companion.CallState) {

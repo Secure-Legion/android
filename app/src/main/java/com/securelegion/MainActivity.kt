@@ -880,9 +880,14 @@ class MainActivity : BaseActivity() {
 
         findViewById<View>(R.id.navPhone)?.setOnClickListener {
             Log.d("MainActivity", "Phone nav clicked")
-            // Show contacts view in call mode
-            isCallMode = true
-            showContactsTab()
+            val intent = Intent(this, NewCallActivity::class.java)
+            startActivity(intent)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                overrideActivityTransition(Activity.OVERRIDE_TRANSITION_OPEN, 0, 0)
+            } else {
+                @Suppress("DEPRECATION")
+                overridePendingTransition(0, 0)
+            }
         }
 
         // Profile Icon (navigate to user profile)

@@ -23,7 +23,11 @@
     <!-- Foreground Service for Tor (Ping-Pong Protocol) -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SYSTEM_EXEMPTED" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+
+    <!-- VPN Service for Tor Mode (Routes all device traffic through Tor) -->
+    <uses-permission android:name="android.permission.BIND_VPN_SERVICE" />
 
     <!-- Notifications (Android 13+) -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
@@ -74,6 +78,15 @@
 
         <activity
             android:name=".CallLogActivity"
+            android:exported="false" />
+
+        <activity
+            android:name=".NewCallActivity"
+            android:exported="false"
+            android:windowSoftInputMode="adjustPan" />
+
+        <activity
+            android:name=".CallHistoryActivity"
             android:exported="false" />
 
         <activity
@@ -299,6 +312,18 @@
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="Downloads encrypted messages via Tor" />
+        </service>
+
+        <!-- Tor VPN Service - Routes all device traffic through Tor when enabled -->
+        <service
+            android:name=".services.TorVpnService"
+            android:enabled="true"
+            android:exported="false"
+            android:foregroundServiceType="systemExempted"
+            android:permission="android.permission.BIND_VPN_SERVICE">
+            <intent-filter>
+                <action android:name="android.net.VpnService" />
+            </intent-filter>
         </service>
 
         <!-- Broadcast receiver for TorService restart via AlarmManager -->

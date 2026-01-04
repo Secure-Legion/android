@@ -551,8 +551,24 @@ class TorManager(private val context: Context) {
                 "obfs4" -> {
                     Log.d(TAG, "Starting obfs4 transport...")
                     controller.start(IPtProxy.Obfs4, null)
-                    val port = controller.port(IPtProxy.Obfs4)
-                    Log.i(TAG, "Started obfs4 transport on port $port")
+
+                    // Wait for obfs4 to start and bind to a port
+                    var port = 0L
+                    var attempts = 0
+                    while (port == 0L && attempts < 30) {
+                        Thread.sleep(1000)
+                        port = controller.port(IPtProxy.Obfs4)
+                        attempts++
+                        if (port > 0) {
+                            Log.i(TAG, "✓ obfs4 transport started on port $port after ${attempts}s")
+                            break
+                        }
+                        Log.d(TAG, "Waiting for obfs4 to start... (${attempts}s)")
+                    }
+
+                    if (port == 0L) {
+                        Log.e(TAG, "✗ obfs4 failed to start after 30 seconds")
+                    }
                 }
                 "snowflake" -> {
                     Log.d(TAG, "Configuring snowflake transport...")
@@ -562,14 +578,46 @@ class TorManager(private val context: Context) {
                     controller.snowflakeIceServers = "stun:stun.l.google.com:19302,stun:stun.altar.com.pl:3478,stun:stun.antisip.com:3478"
                     Log.d(TAG, "Starting snowflake transport...")
                     controller.start(IPtProxy.Snowflake, null)
-                    val port = controller.port(IPtProxy.Snowflake)
-                    Log.i(TAG, "Started snowflake transport on port $port")
+
+                    // Wait for Snowflake to start and bind to a port
+                    var port = 0L
+                    var attempts = 0
+                    while (port == 0L && attempts < 30) {
+                        Thread.sleep(1000)
+                        port = controller.port(IPtProxy.Snowflake)
+                        attempts++
+                        if (port > 0) {
+                            Log.i(TAG, "✓ Snowflake transport started on port $port after ${attempts}s")
+                            break
+                        }
+                        Log.d(TAG, "Waiting for Snowflake to start... (${attempts}s)")
+                    }
+
+                    if (port == 0L) {
+                        Log.e(TAG, "✗ Snowflake failed to start after 30 seconds")
+                    }
                 }
                 "meek" -> {
                     Log.d(TAG, "Starting meek_lite transport...")
                     controller.start(IPtProxy.MeekLite, null)
-                    val port = controller.port(IPtProxy.MeekLite)
-                    Log.i(TAG, "Started meek_lite transport on port $port")
+
+                    // Wait for meek_lite to start and bind to a port
+                    var port = 0L
+                    var attempts = 0
+                    while (port == 0L && attempts < 30) {
+                        Thread.sleep(1000)
+                        port = controller.port(IPtProxy.MeekLite)
+                        attempts++
+                        if (port > 0) {
+                            Log.i(TAG, "✓ meek_lite transport started on port $port after ${attempts}s")
+                            break
+                        }
+                        Log.d(TAG, "Waiting for meek_lite to start... (${attempts}s)")
+                    }
+
+                    if (port == 0L) {
+                        Log.e(TAG, "✗ meek_lite failed to start after 30 seconds")
+                    }
                 }
             }
         } catch (e: Exception) {

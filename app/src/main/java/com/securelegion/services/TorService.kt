@@ -107,8 +107,14 @@ class TorService : Service() {
     private var torConnected = false
     private var listenersReady = false
     private var isAppInForeground = false
-    private val BANDWIDTH_UPDATE_FAST = 2000L      // 2 seconds when app open
+    private val BANDWIDTH_UPDATE_FAST = 5000L      // 5 seconds when app open (matches VPN update interval)
     private val BANDWIDTH_UPDATE_SLOW = 10000L     // 10 seconds when app closed (saves battery)
+
+    // VPN bandwidth (received from TorVpnService)
+    private var vpnBytesReceived = 0L
+    private var vpnBytesSent = 0L
+    private var vpnActive = false
+    private var vpnBroadcastReceiver: android.content.BroadcastReceiver? = null
 
     companion object {
         private const val TAG = "TorService"
@@ -124,8 +130,12 @@ class TorService : Service() {
         const val ACTION_NOTIFICATION_DELETED = "com.securelegion.action.NOTIFICATION_DELETED"
         const val ACTION_ACCEPT_MESSAGE = "com.securelegion.action.ACCEPT_MESSAGE"
         const val ACTION_DECLINE_MESSAGE = "com.securelegion.action.DECLINE_MESSAGE"
+        const val ACTION_VPN_BANDWIDTH_UPDATE = "com.securelegion.action.VPN_BANDWIDTH_UPDATE"
         const val EXTRA_PING_ID = "ping_id"
         const val EXTRA_CONNECTION_ID = "connection_id"
+        const val EXTRA_VPN_RX_BYTES = "vpn_rx_bytes"
+        const val EXTRA_VPN_TX_BYTES = "vpn_tx_bytes"
+        const val EXTRA_VPN_ACTIVE = "vpn_active"
         const val EXTRA_SENDER_NAME = "sender_name"
 
         // Track service state
@@ -220,6 +230,9 @@ class TorService : Service() {
 
         // Setup network monitoring
         setupNetworkMonitoring()
+
+        // Register VPN bandwidth broadcast receiver
+        setupVpnBroadcastReceiver()
 
         // Acquire partial wake lock to keep CPU running
         val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
@@ -1108,12 +1121,15 @@ class TorService : Service() {
 
             savePendingFriendRequest(pendingRequest)
 
+            // Show system notification
+            showFriendRequestNotification(username)
+
             // Send broadcast to update UI badge (explicit broadcast for Android 8.0+)
             val broadcastIntent = android.content.Intent("com.securelegion.FRIEND_REQUEST_RECEIVED")
             broadcastIntent.setPackage(packageName)
             sendBroadcast(broadcastIntent)
 
-            Log.i(TAG, "✓ Phase 1 friend request saved and broadcast sent")
+            Log.i(TAG, "✓ Phase 1 friend request saved, notification shown, and broadcast sent")
 
         } catch (e: Exception) {
             Log.e(TAG, "Error processing Phase 1 friend request", e)
@@ -1186,6 +1202,9 @@ class TorService : Service() {
 
             // Remove pending outgoing request
             removePendingRequest(matchingRequest)
+
+            // Show "Friend request accepted" notification
+            showFriendRequestAcceptedNotification(contactCard.displayName)
 
             Log.i(TAG, "✓ Phase 2 complete - ${contactCard.displayName} added to contacts")
 
@@ -1312,6 +1331,9 @@ class TorService : Service() {
 
             // Remove the pending request
             removePendingRequest(matchingRequest)
+
+            // Show "Friend added" notification
+            showFriendRequestAcceptedNotification(contactCard.displayName)
 
             // Send broadcast to update UI
             val broadcastIntent = android.content.Intent("com.securelegion.FRIEND_REQUEST_COMPLETED")
@@ -3159,12 +3181,24 @@ class TorService : Service() {
             // Use hashCode to create stable ID for each unique sender
             val friendRequestNotificationId = 5000 + Math.abs(senderName.hashCode() % 10000)
 
-            // Launch via LockActivity to prevent showing app before authentication
-            val intent = android.content.Intent(this, com.securelegion.LockActivity::class.java).apply {
-                putExtra("TARGET_ACTIVITY", "MainActivity")
-                putExtra("SHOW_FRIEND_REQUESTS", true)
-                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            // Check if user is already unlocked - if so, go directly to MainActivity
+            val isUnlocked = com.securelegion.utils.SessionManager.isUnlocked(this)
+
+            val intent = if (isUnlocked) {
+                // User is already logged in - go directly to MainActivity
+                android.content.Intent(this, com.securelegion.MainActivity::class.java).apply {
+                    putExtra("SHOW_FRIEND_REQUESTS", true)
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
+                }
+            } else {
+                // User is locked - go through LockActivity
+                android.content.Intent(this, com.securelegion.LockActivity::class.java).apply {
+                    putExtra("TARGET_ACTIVITY", "MainActivity")
+                    putExtra("SHOW_FRIEND_REQUESTS", true)
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+                }
             }
+
             val pendingIntent = android.app.PendingIntent.getActivity(
                 this,
                 0,
@@ -3250,11 +3284,22 @@ class TorService : Service() {
             // Use hashCode to create stable ID for each unique contact (different range from friend requests)
             val acceptedNotificationId = 6000 + Math.abs(contactName.hashCode() % 10000)
 
-            // Launch via LockActivity to prevent showing app before authentication
-            val intent = android.content.Intent(this, com.securelegion.LockActivity::class.java).apply {
-                putExtra("TARGET_ACTIVITY", "MainActivity")
-                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            // Check if user is already unlocked - if so, go directly to MainActivity
+            val isUnlocked = com.securelegion.utils.SessionManager.isUnlocked(this)
+
+            val intent = if (isUnlocked) {
+                // User is already logged in - go directly to MainActivity
+                android.content.Intent(this, com.securelegion.MainActivity::class.java).apply {
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
+                }
+            } else {
+                // User is locked - go through LockActivity
+                android.content.Intent(this, com.securelegion.LockActivity::class.java).apply {
+                    putExtra("TARGET_ACTIVITY", "MainActivity")
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+                }
             }
+
             val pendingIntent = android.app.PendingIntent.getActivity(
                 this,
                 0,
@@ -3422,11 +3467,23 @@ class TorService : Service() {
      * Show simple notification that a message is waiting
      */
     private fun showNewMessageNotification() {
-        // Launch via LockActivity to prevent showing app before authentication
-        val openAppIntent = Intent(this, LockActivity::class.java).apply {
-            putExtra("TARGET_ACTIVITY", "MainActivity")
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        // Check if user is already unlocked - if so, go directly to MainActivity
+        // If locked, go through LockActivity for authentication
+        val isUnlocked = com.securelegion.utils.SessionManager.isUnlocked(this)
+
+        val openAppIntent = if (isUnlocked) {
+            // User is already logged in - go directly to MainActivity
+            Intent(this, MainActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
+            }
+        } else {
+            // User is locked - go through LockActivity
+            Intent(this, LockActivity::class.java).apply {
+                putExtra("TARGET_ACTIVITY", "MainActivity")
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            }
         }
+
         val openAppPendingIntent = PendingIntent.getActivity(
             this,
             0,
@@ -3976,15 +4033,32 @@ class TorService : Service() {
                    .setContentText(status)
                    .setPriority(NotificationCompat.PRIORITY_DEFAULT)
         } else {
-            // Connected state - show bandwidth stats like Orbot
-            val downloadSpeed = formatBytes(currentDownloadSpeed)
-            val uploadSpeed = formatBytes(currentUploadSpeed)
+            // Connected state - show bandwidth stats
+            if (vpnActive) {
+                // VPN enabled - show combined stats
+                val messagingDown = formatBytes(currentDownloadSpeed)
+                val messagingUp = formatBytes(currentUploadSpeed)
+                val vpnDown = formatBytesTotal(vpnBytesReceived)
+                val vpnUp = formatBytesTotal(vpnBytesSent)
 
-            builder.setContentTitle("Connected to the Tor Network")
-                   .setContentText("↓ $downloadSpeed / ↑ $uploadSpeed")
-                   .setPriority(NotificationCompat.PRIORITY_MIN)
-                   .setShowWhen(false)  // Don't show timestamp
-                   .setSilent(true)      // Silent notification
+                builder.setContentTitle("🛡️ Secure Legion")
+                       .setContentText("Messaging: ↓ $messagingDown ↑ $messagingUp\nVPN: ↓ $vpnDown ↑ $vpnUp")
+                       .setStyle(NotificationCompat.BigTextStyle()
+                           .bigText("Messaging Tor: ↓ $messagingDown / ↑ $messagingUp\nDevice VPN: ↓ $vpnDown / ↑ $vpnUp"))
+                       .setPriority(NotificationCompat.PRIORITY_MIN)
+                       .setShowWhen(false)
+                       .setSilent(true)
+            } else {
+                // VPN disabled - show only messaging stats
+                val downloadSpeed = formatBytes(currentDownloadSpeed)
+                val uploadSpeed = formatBytes(currentUploadSpeed)
+
+                builder.setContentTitle("Connected to the Tor Network")
+                       .setContentText("↓ $downloadSpeed / ↑ $uploadSpeed")
+                       .setPriority(NotificationCompat.PRIORITY_MIN)
+                       .setShowWhen(false)
+                       .setSilent(true)
+            }
         }
 
         // Android 12+ (API 31+): Make notification truly non-dismissible
@@ -4151,7 +4225,7 @@ class TorService : Service() {
 
                 // Adaptive update interval: fast when app open, slow when closed
                 val updateInterval = if (isAppInForeground) {
-                    BANDWIDTH_UPDATE_FAST  // 2 seconds
+                    BANDWIDTH_UPDATE_FAST  // 5 seconds
                 } else {
                     BANDWIDTH_UPDATE_SLOW  // 10 seconds (saves battery)
                 }
@@ -4173,7 +4247,7 @@ class TorService : Service() {
     fun setAppInForeground(inForeground: Boolean) {
         if (isAppInForeground != inForeground) {
             isAppInForeground = inForeground
-            Log.d(TAG, "App foreground state changed: $inForeground (bandwidth updates: ${if (inForeground) "fast (2s)" else "slow (10s)"})")
+            Log.d(TAG, "App foreground state changed: $inForeground (bandwidth updates: ${if (inForeground) "fast (5s)" else "slow (10s)"})")
         }
     }
 
@@ -4229,6 +4303,18 @@ class TorService : Service() {
         }
     }
 
+    /**
+     * Format total bytes (not speed) into human-readable string
+     * Examples: "1.2 MB", "456 KB", "12 B"
+     */
+    private fun formatBytesTotal(bytes: Long): String {
+        return when {
+            bytes >= 1024 * 1024 -> String.format("%.1f MB", bytes / (1024.0 * 1024.0))
+            bytes >= 1024 -> String.format("%.1f KB", bytes / 1024.0)
+            else -> "$bytes B"
+        }
+    }
+
     override fun onBind(intent: Intent?): IBinder? {
         // This is not a bound service
         return null
@@ -4277,6 +4363,31 @@ class TorService : Service() {
         } catch (e: Exception) {
             Log.e(TAG, "Failed to register network callback", e)
         }
+    }
+
+    private fun setupVpnBroadcastReceiver() {
+        vpnBroadcastReceiver = object : android.content.BroadcastReceiver() {
+            override fun onReceive(context: Context?, intent: Intent?) {
+                if (intent?.action == ACTION_VPN_BANDWIDTH_UPDATE) {
+                    vpnBytesReceived = intent.getLongExtra(EXTRA_VPN_RX_BYTES, 0L)
+                    vpnBytesSent = intent.getLongExtra(EXTRA_VPN_TX_BYTES, 0L)
+                    vpnActive = intent.getBooleanExtra(EXTRA_VPN_ACTIVE, false)
+
+                    // Update notification with new VPN stats
+                    if (torConnected) {
+                        updateNotification("Connected to the Tor Network")
+                    }
+                }
+            }
+        }
+
+        val filter = android.content.IntentFilter(ACTION_VPN_BANDWIDTH_UPDATE)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(vpnBroadcastReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            registerReceiver(vpnBroadcastReceiver, filter)
+        }
+        Log.d(TAG, "VPN broadcast receiver registered")
     }
 
     // ==================== HEALTH CHECK MONITORING ====================
@@ -4748,6 +4859,13 @@ class TorService : Service() {
             networkCallback?.let { connectivityManager?.unregisterNetworkCallback(it) }
         } catch (e: Exception) {
             Log.e(TAG, "Error unregistering network callback", e)
+        }
+
+        // Unregister VPN broadcast receiver
+        try {
+            vpnBroadcastReceiver?.let { unregisterReceiver(it) }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error unregistering VPN broadcast receiver", e)
         }
 
         // Release wake lock

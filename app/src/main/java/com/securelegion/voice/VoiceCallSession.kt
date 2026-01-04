@@ -348,82 +348,45 @@ class VoiceCallSession(
 
         callScope.launch {
             try {
-                // Phase 4: DOUBLE-SEND - Select TWO different circuits for maximum reliability
-                val (primaryCircuit, secondaryCircuit) = circuitScheduler.selectTwoCircuits()
+                // MVP: Single-circuit send (no DOUBLE-SEND, no multipath)
+                val circuit = circuitScheduler.selectCircuit()
 
                 // Get current sequence number and increment
                 val currentSeq = sendSeqNum++
 
-                // Timestamp is currentSeq * 20ms (assuming 20ms Opus frames)
-                val timestamp = currentSeq * 20
+                // Timestamp is currentSeq * 40ms (MVP: 40ms Opus frames)
+                val timestamp = currentSeq * 40
 
-                // Encrypt and send on BOTH circuits (path diversity!)
-                var primarySuccess = false
-                var secondarySuccess = false
-
-                // Send on PRIMARY circuit
-                val primaryKey = circuitKeys[primaryCircuit]
-                if (primaryKey != null) {
-                    // Create VoiceFrame for AAD encoding (primary circuit)
-                    val primaryFrame = VoiceFrame(
+                // Send on selected circuit only
+                val key = circuitKeys[circuit]
+                if (key != null) {
+                    // Create VoiceFrame for AAD encoding
+                    val frame = VoiceFrame(
                         callId = callIdBytes,
                         sequenceNumber = currentSeq,
                         direction = direction,
-                        circuitIndex = primaryCircuit,
+                        circuitIndex = circuit,
                         encryptedPayload = ByteArray(0)
                     )
 
-                    val primaryNonce = crypto.deriveNonce(callIdBytes, currentSeq)
-                    val primaryAad = primaryFrame.encodeAAD()
-                    val primaryEncrypted = crypto.encryptFrame(opusFrame, primaryKey, primaryNonce, primaryAad)
+                    val nonce = crypto.deriveNonce(callIdBytes, currentSeq)
+                    val aad = frame.encodeAAD()
+                    val encrypted = crypto.encryptFrame(opusFrame, key, nonce, aad)
 
-                    primarySuccess = RustBridge.sendAudioPacket(
-                        callId, currentSeq.toInt(), timestamp, primaryEncrypted, primaryCircuit, 0x01
+                    val success = RustBridge.sendAudioPacket(
+                        callId, currentSeq.toInt(), timestamp, encrypted, circuit, 0x01
                     )
 
-                    if (primarySuccess) {
-                        circuitScheduler.reportSendSuccess(primaryCircuit)
-                        telemetry.reportFrameSent(primaryCircuit)
+                    if (success) {
+                        circuitScheduler.reportSendSuccess(circuit)
+                        telemetry.reportFrameSent(circuit)
                     } else {
-                        circuitScheduler.reportSendFailure(primaryCircuit)
+                        circuitScheduler.reportSendFailure(circuit)
+                        Log.w(TAG, "Send failed: seq=$currentSeq circuit=$circuit")
                     }
                 } else {
-                    circuitScheduler.reportSendFailure(primaryCircuit)
-                }
-
-                // Send on SECONDARY circuit (DOUBLE-SEND for redundancy!)
-                val secondaryKey = circuitKeys[secondaryCircuit]
-                if (secondaryKey != null) {
-                    // Create VoiceFrame for AAD encoding (secondary circuit)
-                    val secondaryFrame = VoiceFrame(
-                        callId = callIdBytes,
-                        sequenceNumber = currentSeq,
-                        direction = direction,
-                        circuitIndex = secondaryCircuit,
-                        encryptedPayload = ByteArray(0)
-                    )
-
-                    val secondaryNonce = crypto.deriveNonce(callIdBytes, currentSeq)
-                    val secondaryAad = secondaryFrame.encodeAAD()
-                    val secondaryEncrypted = crypto.encryptFrame(opusFrame, secondaryKey, secondaryNonce, secondaryAad)
-
-                    secondarySuccess = RustBridge.sendAudioPacket(
-                        callId, currentSeq.toInt(), timestamp, secondaryEncrypted, secondaryCircuit, 0x01
-                    )
-
-                    if (secondarySuccess) {
-                        circuitScheduler.reportSendSuccess(secondaryCircuit)
-                        telemetry.reportFrameSent(secondaryCircuit)
-                    } else {
-                        circuitScheduler.reportSendFailure(secondaryCircuit)
-                    }
-                } else {
-                    circuitScheduler.reportSendFailure(secondaryCircuit)
-                }
-
-                // Log result (success if AT LEAST ONE circuit succeeded)
-                if (!primarySuccess && !secondarySuccess) {
-                    Log.w(TAG, "DOUBLE-SEND: Both circuits failed seq=$currentSeq (primary=$primaryCircuit, secondary=$secondaryCircuit)")
+                    circuitScheduler.reportSendFailure(circuit)
+                    Log.e(TAG, "No key for circuit $circuit")
                 }
 
             } catch (e: Exception) {
