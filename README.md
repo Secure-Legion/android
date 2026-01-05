@@ -13,7 +13,7 @@
 [![Platform](https://img.shields.io/badge/platform-Android-green)](https://www.android.com/)
 [![Language](https://img.shields.io/badge/language-Kotlin%20%7C%20Rust-orange)](https://kotlinlang.org/)
 [![License](https://img.shields.io/badge/license-PolyForm%20Noncommercial-blue)](LICENSE)
-[![Website](https://img.shields.io/badge/website-securelegion.com-blue)](https://securelegion.org)
+[![Website](https://img.shields.io/badge/website-securelegion.org-blue)](https://securelegion.org)
 
 > "No servers. No metadata. No compromises."
 
@@ -830,7 +830,7 @@ Secure Legion is built on the shoulders of giants. Thank you to these projects:
 - **Email**: contact@securelegion.org
 
 **Security Issues:**
-- **Email**: contact@securelegion.org (PGP key available on website)
+- **Email**: contact@securelegion.org
 - **Response Time**: 48 hours for critical vulnerabilities
 
 **Commercial Licensing:**
@@ -847,3 +847,4 @@ Secure Legion is built on the shoulders of giants. Thank you to these projects:
 [Download Beta](https://securelegion.org/download) • [Website](https://securelegion.org) • [GitHub](https://github.com/Secure-Legion)
 
 </div>
+
