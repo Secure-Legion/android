@@ -2,7 +2,7 @@
 
 # Secure Legion
 
-**Privacy-first Android messaging with zero metadata, serverless P2P, and hardware-backed encryption**
+**Privacy-first Android messaging with Privacy Payments, Metadata Resistant, serverless P2P**
 
 [![Platform](https://img.shields.io/badge/platform-Android-green)](https://www.android.com/)
 [![Language](https://img.shields.io/badge/language-Kotlin%20%7C%20Rust-orange)](https://kotlinlang.org/)
@@ -49,7 +49,8 @@ Secure Legion is a native Android messaging application that combines truly priv
 | **Integrated Wallet** | Yes (Zcash + Solana) | No (MobileCoin limited) | No | No | No |
 | **Payment Protocol** | Yes (NLx402) | No | No | No | No |
 | **2-Phase Friend Requests** | Yes | No | No | No | No |
-| **VPN Mode** | Planned | No | No | No | Yes |
+| **VPN Mode** | Yes (OnionMasq) | No | No | No | Yes |
+| **Voice Calling** | Yes (over Tor) | Yes | No | No | N/A |
 | **Image Messaging** | Yes | Yes | Yes | No | N/A |
 | **Voice Messages** | Yes | Yes | Yes | No | N/A |
 
@@ -65,19 +66,29 @@ Secure Legion is a native Android messaging application that combines truly priv
 - Read receipts (optional)
 - Message deletion with secure wipe
 
+**Voice Calling:**
+- Voice calls over Tor using Opus codec
+- End-to-end encrypted with XChaCha20-Poly1305
+- Real-time audio streaming via hidden services
+- Call quality indicators and statistics
+
 **Coming Soon:**
 - File attachments (general files)
 - Group messaging
-- Voice/video calling over Tor
 
 ### Security & Privacy
 
 **Cryptography:**
-- **Encryption**: XChaCha20-Poly1305 (authenticated encryption)
+- **Encryption**: XChaCha20-Poly1305 AEAD (authenticated encryption with associated data)
 - **Signatures**: Ed25519 (message authentication)
-- **Key Exchange**: X25519 (ephemeral session keys)
+- **Key Exchange**: X25519 ECDH + HKDF-SHA256 (ephemeral session keys)
+- **Forward Secrecy**: Per-message forward secrecy with bidirectional key chains
+  - Every message gets a unique ephemeral key
+  - HMAC-based key ratcheting
+  - Keys destroyed immediately after use
 - **Hashing**: Argon2id (password derivation)
 - **Database**: SQLCipher AES-256-GCM (local storage encryption)
+- **In Development**: Post-quantum hybrid encryption (Diffie-Hellman + post-quantum KEM)
 
 **Hardware Security:**
 - Private keys stored in Android StrongBox or Trusted Execution Environment
@@ -93,9 +104,14 @@ Secure Legion is a native Android messaging application that combines truly priv
 **Network Privacy:**
 - All traffic routed exclusively through Tor network
 - No IP address leakage
+- **Tor VPN Mode**: System-wide Tor routing using OnionMasq (Arti-based)
+  - Routes ALL device traffic through Tor
+  - Protects all apps, not just Secure Legion
+  - Supports bridges (obfs4, Snowflake, webtunnel) for censorship circumvention
 - Dual Tor v3 hidden services (.onion addresses):
   - **Friend Request .onion**: Receives new friend requests (port 9151)
   - **Messaging .onion**: Receives encrypted messages from contacts (port 9150→8080)
+  - **Voice .onion**: Receives voice call signaling and audio streams
 - Deterministic .onion generation from seed phrase (ephemeral services)
 - No DNS queries (Tor handles resolution)
 
@@ -267,17 +283,25 @@ SENDER                          RECIPIENT
 |-----------|-----------|----------|---------|
 | **Message Encryption** | XChaCha20-Poly1305 | 256-bit | AEAD encryption for message content |
 | **Digital Signatures** | Ed25519 | 256-bit | Message authentication and sender verification |
-| **Key Exchange** | X25519 | 256-bit | Ephemeral session keys for forward secrecy |
+| **Key Exchange** | X25519 ECDH | 256-bit | Ephemeral session keys for forward secrecy |
+| **Key Derivation** | HKDF-SHA256 | 256-bit | Per-message key ratcheting from shared secret |
+| **Forward Secrecy** | HMAC-based ratchet | 256-bit | Bidirectional key chains, unique key per message |
+| **Voice Encryption** | XChaCha20-Poly1305 | 256-bit | Real-time audio stream encryption |
+| **Voice Codec** | Opus | Variable | High-quality audio encoding/decoding |
 | **Password Hashing** | Argon2id | Variable | PIN/password derivation (interactive params) |
 | **Database Encryption** | AES-256-GCM | 256-bit | SQLCipher local storage encryption |
 | **Friend Request Encryption** | XSalsa20-Poly1305 | 256-bit | PIN-based Phase 1 encryption |
 
 **Implementation Details:**
 - All crypto operations delegated to Rust core (memory-safe)
+- **Per-message forward secrecy**: Every message uses unique ephemeral key derived from ratcheting chain
+- **Bidirectional key chains**: Separate ratchets for sending and receiving
+- **Immediate key destruction**: Ephemeral keys zeroized from memory after use
 - Nonces never reused (random for XChaCha20, deterministic for signatures)
 - Constant-time comparisons prevent timing attacks
 - Secure memory wiping after use (zeroize crate in Rust)
 - Hardware-backed keys used where available
+- **Post-quantum readiness**: Hybrid encryption in development (X25519 + PQ-KEM)
 
 ### Threat Model
 
@@ -464,13 +488,15 @@ secure-legion-android/
 - [x] Message queue persistence
 - [x] Dual .onion architecture (separate friend request and messaging addresses)
 - [x] Deterministic hidden service generation from seed phrase
+- [x] Voice calling over Tor (Opus codec, real-time streaming)
+- [x] Tor VPN mode (OnionMasq system-wide routing)
+- [x] Per-message forward secrecy with bidirectional key ratcheting
 
 ### In Development
 
+- [ ] Post-quantum hybrid encryption (X25519 + PQ-KEM for future-proof security)
 - [ ] File attachments (general file sharing)
 - [ ] Group messaging (multi-party encrypted conversations)
-- [ ] Voice/video calling over Tor
-- [ ] VpnService mode (system-wide Tor routing)
 - [x] Export/import account data
 - [ ] Reproducible builds
 - [ ] F-Droid release
@@ -726,7 +752,7 @@ A: Zero analytics, zero telemetry, zero tracking. No data leaves your device exc
 
 **Security Vulnerabilities:**
 
-If you discover a security vulnerability, **DO NOT** open a public GitHub issue. Email **security@securelegion.com** with:
+If you discover a security vulnerability, **DO NOT** open a public GitHub issue. Email **contact@securelegion.org** with:
 - Detailed description of the vulnerability
 - Steps to reproduce
 - Potential impact assessment
@@ -750,7 +776,7 @@ This project is licensed under the **PolyForm Noncommercial License 1.0.0**.
 
 **Commercial Licensing:**
 
-If you want to use Secure Legion commercially, contact **licensing@securelegion.com** for a commercial license agreement.
+If you want to use Secure Legion commercially, contact **contact@securelegion.org** for a commercial license agreement.
 
 See [LICENSE](LICENSE) file for full legal terms or visit [polyformproject.org](https://polyformproject.org/licenses/noncommercial/1.0.0/).
 
@@ -767,8 +793,10 @@ Secure Legion is built on the shoulders of giants. Thank you to these projects:
 **Networking:**
 - [Tor Project](https://www.torproject.org/) - Anonymous routing network
 - [Guardian Project tor-android](https://guardianproject.info/) - Tor binaries for Android
+- [OnionMasq](https://github.com/guardianproject/onionmasq) - Tor VPN using Arti (Rust Tor implementation)
 - [jtorctl](https://github.com/guardianproject/jtorctl) - Tor control protocol library
-- [IPtProxy](https://github.com/tladesignz/IPtProxy) - Pluggable transports (obfs4, snowflake)
+- [IPtProxy](https://github.com/tladesignz/IPtProxy) - Pluggable transports (obfs4, snowflake, webtunnel)
+- [Opus Codec](https://opus-codec.org/) - High-quality audio encoding for voice calls
 
 **Blockchain:**
 - [Zcash](https://z.cash/) - Privacy-focused cryptocurrency
@@ -793,14 +821,14 @@ Secure Legion is built on the shoulders of giants. Thank you to these projects:
 - **GitHub Discussions**: [Questions and community chat](https://github.com/Secure-Legion/secure-legion-android/discussions)
 - **Website**: [securelegion.org](https://securelegion.org)
 - **Twitter**: [@SecureLegion](https://x.com/SecureLegion)
-- **Email**: support@securelegion.com
+- **Email**: contact@securelegion.org
 
 **Security Issues:**
-- **Email**: security@securelegion.com (PGP key available on website)
+- **Email**: contact@securelegion.org (PGP key available on website)
 - **Response Time**: 48 hours for critical vulnerabilities
 
 **Commercial Licensing:**
-- **Email**: licensing@securelegion.com
+- **Email**: contact@securelegion.org
 
 ---
 
