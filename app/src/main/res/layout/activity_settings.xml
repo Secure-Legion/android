@@ -99,8 +99,7 @@
                         android:layout_width="24dp"
                         android:layout_height="24dp"
                         android:layout_gravity="center"
-                        android:src="@android:drawable/ic_menu_edit"
-                        android:tint="#888888" />
+                        android:src="@drawable/ic_duress_pin" />
 
                 </FrameLayout>
 
@@ -152,8 +151,7 @@
                         android:layout_width="24dp"
                         android:layout_height="24dp"
                         android:layout_gravity="center"
-                        android:src="@android:drawable/ic_menu_info_details"
-                        android:tint="#888888" />
+                        android:src="@drawable/ic_wipe_data" />
 
                 </FrameLayout>
 
@@ -304,8 +302,7 @@
                         android:layout_width="24dp"
                         android:layout_height="24dp"
                         android:layout_gravity="center"
-                        android:src="@android:drawable/ic_dialog_info"
-                        android:tint="#888888" />
+                        android:src="@drawable/ic_advanced_security" />
 
                 </FrameLayout>
 
@@ -359,8 +356,7 @@
                         android:layout_width="24dp"
                         android:layout_height="24dp"
                         android:layout_gravity="center"
-                        android:src="@android:drawable/ic_dialog_info"
-                        android:tint="#888888" />
+                        android:src="@drawable/ic_notification_bell" />
 
                 </FrameLayout>
 
@@ -414,8 +410,7 @@
                         android:layout_width="24dp"
                         android:layout_height="24dp"
                         android:layout_gravity="center"
-                        android:src="@android:drawable/ic_menu_info_details"
-                        android:tint="#888888" />
+                        android:src="@drawable/ic_about_info" />
 
                 </FrameLayout>
 
@@ -469,8 +464,7 @@
                         android:layout_width="24dp"
                         android:layout_height="24dp"
                         android:layout_gravity="center"
-                        android:src="@android:drawable/ic_dialog_info"
-                        android:tint="#888888" />
+                        android:src="@drawable/ic_delete_account" />
 
                 </FrameLayout>
 
@@ -524,8 +518,7 @@
                         android:layout_width="24dp"
                         android:layout_height="24dp"
                         android:layout_gravity="center"
-                        android:src="@android:drawable/ic_dialog_info"
-                        android:tint="#888888" />
+                        android:src="@drawable/ic_bridge" />
 
                 </FrameLayout>
 
@@ -577,7 +570,7 @@
                         android:layout_width="24dp"
                         android:layout_height="24dp"
                         android:layout_gravity="center"
-                        android:src="@drawable/ic_tor"
+                        android:src="@drawable/ic_onion"
                         android:tint="#888888" />
 
                 </FrameLayout>
@@ -586,7 +579,7 @@
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:layout_weight="1"
-                    android:text="Tor Mode"
+                    android:text="Tor VPN Mode"
                     android:textSize="16sp"
                     android:textColor="#CCCCCC"
                     android:fontFamily="@font/poppins_medium" />

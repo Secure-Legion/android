@@ -75,7 +75,7 @@
             android:paddingBottom="24dp"
             android:gravity="center_horizontal">
 
-            <!-- Profile Icon -->
+            <!-- Profile Photo -->
             <FrameLayout
                 android:layout_width="120dp"
                 android:layout_height="120dp"
@@ -83,12 +83,30 @@
                 android:layout_marginBottom="24dp"
                 android:background="@drawable/settings_icon_bg">
 
-                <ImageView
-                    android:layout_width="48dp"
-                    android:layout_height="48dp"
-                    android:layout_gravity="center"
-                    android:src="@drawable/ic_person"
-                    android:tint="#888888" />
+                <com.securelegion.views.AvatarView
+                    android:id="@+id/profilePhotoAvatar"
+                    android:layout_width="120dp"
+                    android:layout_height="120dp"
+                    android:contentDescription="Profile Photo" />
+
+                <!-- Edit Icon -->
+                <FrameLayout
+                    android:id="@+id/editProfilePhotoButton"
+                    android:layout_width="36dp"
+                    android:layout_height="36dp"
+                    android:layout_gravity="bottom|end"
+                    android:background="@drawable/settings_icon_bg"
+                    android:clickable="true"
+                    android:focusable="true">
+
+                    <ImageView
+                        android:layout_width="18dp"
+                        android:layout_height="18dp"
+                        android:layout_gravity="center"
+                        android:src="@drawable/ic_edit"
+                        android:tint="#888888" />
+
+                </FrameLayout>
 
             </FrameLayout>
 

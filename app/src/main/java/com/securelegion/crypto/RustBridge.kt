@@ -27,6 +27,26 @@ object RustBridge {
         }
     }
 
+    // ==================== RESULT WRAPPER CLASSES ====================
+
+    /**
+     * Result of encryption with atomic key evolution
+     * Signal-like approach: encryption and key evolution happen atomically
+     */
+    data class EncryptionResult(
+        val ciphertext: ByteArray,
+        val evolvedChainKey: ByteArray
+    )
+
+    /**
+     * Result of decryption with atomic key evolution
+     * Signal-like approach: decryption and key evolution happen atomically
+     */
+    data class DecryptionResult(
+        val plaintext: String,
+        val evolvedChainKey: ByteArray
+    )
+
     // ==================== CRYPTOGRAPHY ====================
 
     /**
@@ -80,6 +100,120 @@ object RustBridge {
      * @return Password hash
      */
     external fun hashPassword(password: String, salt: ByteArray): ByteArray
+
+    // ==================== KEY EVOLUTION (Progressive Ephemeral Keys) ====================
+
+    /**
+     * Derive X25519 shared secret using ECDH
+     * @param ourPrivateKey Our 32-byte X25519 private key
+     * @param theirPublicKey Their 32-byte X25519 public key
+     * @return 32-byte shared secret
+     */
+    external fun deriveSharedSecret(ourPrivateKey: ByteArray, theirPublicKey: ByteArray): ByteArray
+
+    /**
+     * Derive root key from X25519 shared secret using HKDF-SHA256
+     * Initializes the key chain for a contact
+     * @param sharedSecret 32-byte X25519 shared secret
+     * @param info Context string (e.g., "SecureLegion-RootKey-v1")
+     * @return 32-byte root key
+     */
+    external fun deriveRootKey(sharedSecret: ByteArray, info: String): ByteArray
+
+    /**
+     * Evolve chain key forward using HMAC-SHA256 (one-way function)
+     * Provides forward secrecy - old chain keys cannot be recovered from new ones
+     * @param chainKey Current 32-byte chain key (will be zeroized in Rust)
+     * @return Next chain key (32 bytes)
+     */
+    external fun evolveChainKey(chainKey: ByteArray): ByteArray
+
+    /**
+     * Derive ephemeral message key from chain key
+     * @param chainKey Current 32-byte chain key
+     * @return 32-byte message key for encrypting/decrypting this message
+     */
+    external fun deriveMessageKey(chainKey: ByteArray): ByteArray
+
+    // ==================== NATIVE JNI FUNCTIONS (PRIVATE) ====================
+
+    /**
+     * Native JNI function for encryption with key evolution
+     * Returns: [evolved_chain_key:32][ciphertext]
+     */
+    private external fun encryptMessageWithEvolutionJNI(
+        plaintext: String,
+        chainKey: ByteArray,
+        sequence: Long
+    ): ByteArray
+
+    /**
+     * Native JNI function for decryption with key evolution
+     * Returns: [evolved_chain_key:32][plaintext_utf8], or null if decryption fails
+     */
+    private external fun decryptMessageWithEvolutionJNI(
+        encryptedData: ByteArray,
+        chainKey: ByteArray,
+        expectedSequence: Long
+    ): ByteArray?
+
+    // ==================== PUBLIC WRAPPER FUNCTIONS ====================
+
+    /**
+     * Encrypt message with atomic key evolution
+     * ATOMIC OPERATION like Signal's Double Ratchet
+     *
+     * Returns both encrypted message AND evolved key in one indivisible operation.
+     * This prevents encryption/key-state desync bugs.
+     *
+     * @param plaintext Message to encrypt
+     * @param chainKey Current chain key
+     * @param sequence Message sequence number
+     * @return EncryptionResult containing both ciphertext and evolved chain key
+     */
+    fun encryptMessageWithEvolution(
+        plaintext: String,
+        chainKey: ByteArray,
+        sequence: Long
+    ): EncryptionResult {
+        // Call JNI function that returns [evolved_key:32][ciphertext]
+        val result = encryptMessageWithEvolutionJNI(plaintext, chainKey, sequence)
+
+        // Split result: first 32 bytes = evolved key, rest = ciphertext
+        val evolvedKey = result.copyOfRange(0, 32)
+        val ciphertext = result.copyOfRange(32, result.size)
+
+        return EncryptionResult(ciphertext, evolvedKey)
+    }
+
+    /**
+     * Decrypt message with atomic key evolution
+     * ATOMIC OPERATION like Signal's Double Ratchet
+     *
+     * Returns both decrypted message AND evolved key in one indivisible operation.
+     * This prevents decryption/key-state desync bugs.
+     *
+     * @param encryptedData Encrypted message with wire format header
+     * @param chainKey Current chain key
+     * @param expectedSequence Expected sequence number (for replay protection)
+     * @return DecryptionResult containing both plaintext and evolved chain key, or null if decryption fails
+     */
+    fun decryptMessageWithEvolution(
+        encryptedData: ByteArray,
+        chainKey: ByteArray,
+        expectedSequence: Long
+    ): DecryptionResult? {
+        // Call JNI function that returns [evolved_key:32][plaintext_utf8]
+        val result = decryptMessageWithEvolutionJNI(encryptedData, chainKey, expectedSequence)
+            ?: return null
+
+        // Split result: first 32 bytes = evolved key, rest = plaintext
+        val evolvedKey = result.copyOfRange(0, 32)
+        val plaintextBytes = result.copyOfRange(32, result.size)
+        val plaintext = String(plaintextBytes, Charsets.UTF_8)
+
+        return DecryptionResult(plaintext, evolvedKey)
+    }
 
     // ==================== TOR NETWORK & MESSAGING ====================
 

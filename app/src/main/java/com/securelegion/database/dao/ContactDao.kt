@@ -111,6 +111,12 @@ interface ContactDao {
     suspend fun updateBlockedStatus(contactId: Long, isBlocked: Boolean)
 
     /**
+     * Update contact profile photo
+     */
+    @Query("UPDATE contacts SET profilePictureBase64 = :photoBase64 WHERE id = :contactId")
+    suspend fun updateContactPhoto(contactId: Long, photoBase64: String?)
+
+    /**
      * Get all distress contacts
      */
     @Query("SELECT * FROM contacts WHERE isDistressContact = 1 ORDER BY displayName ASC")

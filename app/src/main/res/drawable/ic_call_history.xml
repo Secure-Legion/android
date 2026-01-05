@@ -1,0 +1,47 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+
+    <!-- Clipboard/document outline -->
+    <path
+        android:strokeColor="#888888"
+        android:strokeWidth="1.8"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M6,4 L6,20 L18,20 L18,4 Z"/>
+
+    <!-- Top clip/handle -->
+    <path
+        android:strokeColor="#888888"
+        android:strokeWidth="1.8"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M9,2 L15,2"/>
+
+    <!-- List entries (horizontal lines) -->
+    <path
+        android:strokeColor="#888888"
+        android:strokeWidth="1.5"
+        android:strokeLineCap="round"
+        android:pathData="M9,8 L15,8"/>
+
+    <path
+        android:strokeColor="#888888"
+        android:strokeWidth="1.5"
+        android:strokeLineCap="round"
+        android:pathData="M9,12 L15,12"/>
+
+    <path
+        android:strokeColor="#888888"
+        android:strokeWidth="1.5"
+        android:strokeLineCap="round"
+        android:pathData="M9,16 L15,16"/>
+
+    <!-- Small phone icon in bottom right -->
+    <path
+        android:fillColor="#888888"
+        android:pathData="M16,18 Q16.5,18 17,17.5 Q17,17 17,16.5 Q16.5,16 16,16 Q15.5,16.5 16,17 Q16,17.5 16,18 Z"/>
+
+</vector>

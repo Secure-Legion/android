@@ -690,7 +690,8 @@ class MainActivity : BaseActivity() {
                         id = dbContact.id.toString(),
                         name = dbContact.displayName,
                         address = dbContact.solanaAddress,
-                        friendshipStatus = dbContact.friendshipStatus
+                        friendshipStatus = dbContact.friendshipStatus,
+                        profilePhotoBase64 = dbContact.profilePictureBase64
                     )
                 }
 

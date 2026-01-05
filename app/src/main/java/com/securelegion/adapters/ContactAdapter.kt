@@ -62,6 +62,7 @@ class ContactAdapter(
 
     class ContactViewHolder(view: View) : RecyclerView.ViewHolder(view) {
         val nameView: TextView = view.findViewById(R.id.contactName)
+        val avatarView: com.securelegion.views.AvatarView = view.findViewById(R.id.contactAvatar)
         val initialView: TextView = view.findViewById(R.id.contactInitial)
         val lastMessageView: TextView = view.findViewById(R.id.lastMessage)
         val timestampView: TextView = view.findViewById(R.id.messageTimestamp)
@@ -100,11 +101,15 @@ class ContactAdapter(
                 val displayName = contact.name.removePrefix("@")
                 holder.nameView.text = displayName
 
-                // Display first letter of name as initial (uppercase)
-                val initial = contact.name.removePrefix("@").firstOrNull()?.uppercaseChar()?.toString() ?: "?"
-                holder.initialView.text = initial
+                // Set avatar with photo or initials
+                holder.avatarView.setName(displayName)
+                if (!contact.profilePhotoBase64.isNullOrEmpty()) {
+                    holder.avatarView.setPhotoBase64(contact.profilePhotoBase64)
+                } else {
+                    holder.avatarView.clearPhoto()
+                }
 
-                Log.d("ContactAdapter", "Binding contact: ${contact.name}, display: $displayName, initial: $initial")
+                Log.d("ContactAdapter", "Binding contact: ${contact.name}, display: $displayName")
 
                 holder.itemView.setOnClickListener { onContactClick(contact) }
             }

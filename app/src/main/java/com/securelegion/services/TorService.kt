@@ -27,6 +27,9 @@ import com.securelegion.MainActivity
 import com.securelegion.R
 import com.securelegion.crypto.TorManager
 import com.securelegion.crypto.RustBridge
+import com.securelegion.crypto.KeyChainManager
+import com.securelegion.database.entities.sendChainKeyBytes
+import com.securelegion.database.entities.receiveChainKeyBytes
 import com.securelegion.utils.ThemedToast
 import com.securelegion.workers.ImmediateRetryWorker
 import kotlinx.coroutines.CoroutineScope
@@ -1372,8 +1375,28 @@ class TorService : Service() {
 
             // Run database insert in coroutine
             kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
-                database.contactDao().insertContact(contact)
-                Log.i(TAG, "Contact added to database: ${contact.displayName}")
+                val contactId = database.contactDao().insertContact(contact)
+                Log.i(TAG, "Contact added to database: ${contact.displayName} (ID: $contactId)")
+
+                // Initialize key chain for progressive ephemeral key evolution
+                try {
+                    val ourMessagingOnion = torManager.getOnionAddress()
+                    val theirMessagingOnion = contact.messagingOnion ?: contactCard.messagingOnion
+                    if (ourMessagingOnion.isNullOrEmpty() || theirMessagingOnion.isNullOrEmpty()) {
+                        Log.e(TAG, "Cannot initialize key chain: missing onion address (ours=$ourMessagingOnion, theirs=$theirMessagingOnion) for ${contact.displayName}")
+                    } else {
+                        com.securelegion.crypto.KeyChainManager.initializeKeyChain(
+                            context = this@TorService,
+                            contactId = contactId,
+                            theirX25519PublicKey = contactCard.x25519PublicKey,
+                            ourMessagingOnion = ourMessagingOnion,
+                            theirMessagingOnion = theirMessagingOnion
+                        )
+                        Log.i(TAG, "✓ Key chain initialized for ${contact.displayName}")
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to initialize key chain for ${contact.displayName}", e)
+                }
             }
 
         } catch (e: Exception) {
@@ -2508,17 +2531,52 @@ class TorService : Service() {
                 }
             }
 
-            Log.d(TAG, "Attempting to decrypt ${actualEncryptedMessage.size} bytes...")
-            val plaintext = RustBridge.decryptMessage(actualEncryptedMessage, ourEd25519PublicKey, ourPrivateKey)
-            if (plaintext == null) {
+            // Get key chain for progressive ephemeral key evolution
+            Log.d(TAG, "Decrypting message with key evolution...")
+            val keyChain = kotlinx.coroutines.runBlocking {
+                com.securelegion.crypto.KeyChainManager.getKeyChain(this@TorService, contact.id)
+            }
+
+            if (keyChain == null) {
+                Log.e(TAG, "✗ Key chain not found for contact ${contact.displayName}")
+                Log.e(TAG, "  Contact ID: ${contact.id}")
+                Log.e(TAG, "  This contact may need to be re-added to initialize key chain")
+                return
+            }
+
+            Log.d(TAG, "Attempting to decrypt ${actualEncryptedMessage.size} bytes with sequence ${keyChain.receiveCounter}...")
+            val result = RustBridge.decryptMessageWithEvolution(
+                actualEncryptedMessage,
+                keyChain.receiveChainKeyBytes,
+                keyChain.receiveCounter
+            )
+
+            if (result == null) {
                 Log.e(TAG, "✗ Failed to decrypt message from ${contact.displayName}")
                 Log.e(TAG, "  Encrypted payload size: ${actualEncryptedMessage.size} bytes")
+                Log.e(TAG, "  Expected sequence: ${keyChain.receiveCounter}")
                 Log.e(TAG, "  Message type: ${messageType}")
                 if (messageType == com.securelegion.database.entities.Message.MESSAGE_TYPE_VOICE) {
                     Log.e(TAG, "  Voice duration: ${voiceDuration}s")
                 }
                 return
             }
+
+            val plaintext = result.plaintext
+
+            // Save evolved key to database (key evolution happened atomically in Rust)
+            kotlinx.coroutines.runBlocking {
+                val keyManager = com.securelegion.crypto.KeyManager.getInstance(this@TorService)
+                val dbPassphrase = keyManager.getDatabasePassphrase()
+                val database = com.securelegion.database.SecureLegionDatabase.getInstance(this@TorService, dbPassphrase)
+                database.contactKeyChainDao().updateReceiveChainKey(
+                    contactId = contact.id,
+                    newReceiveChainKeyBase64 = android.util.Base64.encodeToString(result.evolvedChainKey, android.util.Base64.NO_WRAP),
+                    newReceiveCounter = keyChain.receiveCounter + 1,
+                    timestamp = System.currentTimeMillis()
+                )
+            }
+            Log.d(TAG, "✓ Message decrypted with sequence ${keyChain.receiveCounter}")
 
             Log.i(TAG, "✓ Decrypted message (${messageType}): ${if (messageType == com.securelegion.database.entities.Message.MESSAGE_TYPE_TEXT) plaintext.take(50) else "${voiceDuration}s voice, ${plaintext.length} bytes"}...")
 

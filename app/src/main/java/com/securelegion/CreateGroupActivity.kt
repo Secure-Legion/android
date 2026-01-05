@@ -1,5 +1,8 @@
 package com.securelegion
 
+import android.app.Activity
+import android.app.AlertDialog
+import android.graphics.Bitmap
 import android.os.Bundle
 import android.text.InputFilter
 import android.util.Log
@@ -9,6 +12,7 @@ import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
@@ -20,6 +24,7 @@ import com.securelegion.database.entities.Contact
 import com.securelegion.services.GroupManager
 import com.securelegion.ui.adapters.ContactSelectionAdapter
 import com.securelegion.ui.adapters.SelectedMembersAdapter
+import com.securelegion.utils.ImagePicker
 import com.securelegion.utils.ThemedToast
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -47,8 +52,41 @@ class CreateGroupActivity : BaseActivity() {
 
     // Selected members
     private val selectedMembers = mutableListOf<Contact>()
-    private var selectedGroupIcon: String? = null // Future: Store emoji or icon ID
+    private var selectedGroupIcon: String? = null // Stores Base64-encoded image
     private lateinit var selectedMembersAdapter: SelectedMembersAdapter
+
+    // Image picker launchers
+    private val galleryLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK) {
+            val uri = result.data?.data
+            val base64 = ImagePicker.processImageUri(this, uri)
+            if (base64 != null) {
+                selectedGroupIcon = base64
+                updateGroupIconPreview(base64)
+                ThemedToast.show(this, "Group icon updated")
+            } else {
+                ThemedToast.show(this, "Failed to process image")
+            }
+        }
+    }
+
+    private val cameraLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK) {
+            val bitmap = result.data?.extras?.get("data") as? Bitmap
+            val base64 = ImagePicker.processImageBitmap(bitmap)
+            if (base64 != null) {
+                selectedGroupIcon = base64
+                updateGroupIconPreview(base64)
+                ThemedToast.show(this, "Group icon updated")
+            } else {
+                ThemedToast.show(this, "Failed to process image")
+            }
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -104,9 +142,9 @@ class CreateGroupActivity : BaseActivity() {
             ThemedToast.show(this, "Group settings - Coming soon")
         }
 
-        // Group icon container (future: icon/emoji picker)
+        // Group icon container - image picker
         groupIconContainer.setOnClickListener {
-            ThemedToast.show(this, "Icon picker - Coming soon")
+            showGroupIconPickerDialog()
         }
 
         // Add member button
@@ -325,5 +363,35 @@ class CreateGroupActivity : BaseActivity() {
                 }
             }
         }
+    }
+
+    // ==================== GROUP ICON PICKER ====================
+
+    private fun showGroupIconPickerDialog() {
+        AlertDialog.Builder(this)
+            .setTitle("Change Group Icon")
+            .setItems(arrayOf("Take Photo", "Choose from Gallery", "Remove Icon")) { _, which ->
+                when (which) {
+                    0 -> ImagePicker.pickFromCamera(cameraLauncher)
+                    1 -> ImagePicker.pickFromGallery(galleryLauncher)
+                    2 -> removeGroupIcon()
+                }
+            }
+            .show()
+    }
+
+    private fun updateGroupIconPreview(base64: String) {
+        val bitmap = ImagePicker.decodeBase64ToBitmap(base64)
+        if (bitmap != null) {
+            groupIconImage.setImageBitmap(bitmap)
+            groupIconImage.scaleType = ImageView.ScaleType.CENTER_CROP
+        }
+    }
+
+    private fun removeGroupIcon() {
+        selectedGroupIcon = null
+        groupIconImage.setImageResource(R.drawable.ic_contacts)
+        groupIconImage.scaleType = ImageView.ScaleType.CENTER_INSIDE
+        ThemedToast.show(this, "Group icon removed")
     }
 }

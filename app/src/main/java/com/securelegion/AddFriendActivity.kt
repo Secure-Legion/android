@@ -484,10 +484,9 @@ class AddFriendActivity : BaseActivity() {
         Log.d(TAG, "Accepting friend request from ${friendRequest.displayName}")
 
         // Use the existing downloadContactCard function
+        // Note: downloadContactCard will automatically call removeFriendRequestByCid()
+        // when the download completes successfully, which will refresh the UI
         downloadContactCard(friendRequest.ipfsCid, pin)
-
-        // Remove from pending requests
-        removeFriendRequest(friendRequest)
     }
 
     /**
