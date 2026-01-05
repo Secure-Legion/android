@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.Intent
 import android.util.Base64
 import android.util.Log
+import com.securelegion.crypto.KeyChainManager
 import com.securelegion.crypto.KeyManager
 import com.securelegion.crypto.NLx402Manager
 import com.securelegion.crypto.RustBridge
@@ -11,6 +12,8 @@ import com.securelegion.database.SecureLegionDatabase
 import com.securelegion.database.entities.Message
 import com.securelegion.database.entities.ed25519PublicKeyBytes
 import com.securelegion.database.entities.x25519PublicKeyBytes
+import com.securelegion.database.entities.sendChainKeyBytes
+import com.securelegion.database.entities.receiveChainKeyBytes
 import com.securelegion.voice.CallSignaling
 import com.securelegion.voice.VoiceCallManager
 import com.securelegion.IncomingCallActivity
@@ -87,19 +90,31 @@ class MessageService(private val context: Context) {
             val ourPublicKey = keyManager.getSigningPublicKey()
             val ourPrivateKey = keyManager.getSigningKeyBytes()
 
-            // Get recipient's X25519 public key (for encryption)
-            val recipientX25519PublicKey = Base64.decode(contact.x25519PublicKeyBase64, Base64.NO_WRAP)
-
-            // Encrypt the audio bytes
-            Log.d(TAG, "Encrypting voice message...")
+            // Get key chain for this contact (for progressive ephemeral key evolution)
+            Log.d(TAG, "Encrypting voice message with key evolution...")
             Log.d(TAG, "  Audio bytes: ${audioBytes.size} bytes")
             Log.d(TAG, "  Duration: ${durationSeconds}s")
 
-            val encryptedBytes = RustBridge.encryptMessage(
+            val keyChain = KeyChainManager.getKeyChain(context, contactId)
+                ?: throw Exception("Key chain not found for contact $contactId")
+
+            // Encrypt using current send chain key and counter (ATOMIC key evolution)
+            // Wire format: [version:1][sequence:8][nonce:24][ciphertext][tag:16]
+            val result = RustBridge.encryptMessageWithEvolution(
                 String(audioBytes, Charsets.ISO_8859_1), // Convert bytes to string for encryption
-                recipientX25519PublicKey
+                keyChain.sendChainKeyBytes,
+                keyChain.sendCounter
             )
-            Log.d(TAG, "  Encrypted: ${encryptedBytes.size} bytes")
+            val encryptedBytes = result.ciphertext
+            Log.d(TAG, "  Encrypted: ${encryptedBytes.size} bytes (sequence ${keyChain.sendCounter})")
+
+            // Save evolved key to database (key evolution happened atomically in Rust)
+            database.contactKeyChainDao().updateSendChainKey(
+                contactId = contactId,
+                newSendChainKeyBase64 = android.util.Base64.encodeToString(result.evolvedChainKey, android.util.Base64.NO_WRAP),
+                newSendCounter = keyChain.sendCounter + 1,
+                timestamp = System.currentTimeMillis()
+            )
 
             // Prepend message type byte: 0x01 for VOICE, followed by duration (4 bytes, big-endian)
             val durationBytes = ByteArray(4)
@@ -113,8 +128,8 @@ class MessageService(private val context: Context) {
             Log.d(TAG, "  Metadata: 1 byte type + 4 bytes duration")
             Log.d(TAG, "  Total payload: ${encryptedWithMetadata.size} bytes (${encryptedBase64.length} Base64 chars)")
 
-            // Generate nonce (first 24 bytes of encrypted data)
-            val nonce = encryptedBytes.take(24).toByteArray()
+            // Extract nonce from wire format (bytes 9-32, after version and sequence)
+            val nonce = encryptedBytes.sliceArray(9 until 33)
             val nonceBase64 = Base64.encodeToString(nonce, Base64.NO_WRAP)
 
             // Sign the message
@@ -232,32 +247,44 @@ class MessageService(private val context: Context) {
             val ourPublicKey = keyManager.getSigningPublicKey()
             val ourPrivateKey = keyManager.getSigningKeyBytes()
 
-            // Get recipient's X25519 public key (for encryption)
-            val recipientX25519PublicKey = Base64.decode(contact.x25519PublicKeyBase64, Base64.NO_WRAP)
-
-            // Encrypt the image bytes
-            Log.d(TAG, "Encrypting image message...")
+            // Get key chain for this contact (for progressive ephemeral key evolution)
+            Log.d(TAG, "Encrypting image message with key evolution...")
             val imageBytes = Base64.decode(imageBase64, Base64.NO_WRAP)
             Log.d(TAG, "  Image bytes: ${imageBytes.size} bytes")
 
-            val encryptedBytes = RustBridge.encryptMessage(
+            val keyChain = KeyChainManager.getKeyChain(context, contactId)
+                ?: throw Exception("Key chain not found for contact $contactId")
+
+            // Encrypt using current send chain key and counter (ATOMIC key evolution)
+            // Wire format: [version:1][sequence:8][nonce:24][ciphertext][tag:16]
+            val result = RustBridge.encryptMessageWithEvolution(
                 String(imageBytes, Charsets.ISO_8859_1), // Convert bytes to string for encryption
-                recipientX25519PublicKey
+                keyChain.sendChainKeyBytes,
+                keyChain.sendCounter
             )
-            Log.d(TAG, "  Encrypted: ${encryptedBytes.size} bytes")
+            val encryptedBytes = result.ciphertext
+            Log.d(TAG, "  Encrypted: ${encryptedBytes.size} bytes (sequence ${keyChain.sendCounter})")
+
+            // Save evolved key to database (key evolution happened atomically in Rust)
+            database.contactKeyChainDao().updateSendChainKey(
+                contactId = contactId,
+                newSendChainKeyBase64 = android.util.Base64.encodeToString(result.evolvedChainKey, android.util.Base64.NO_WRAP),
+                newSendCounter = keyChain.sendCounter + 1,
+                timestamp = System.currentTimeMillis()
+            )
 
             // Prepend metadata byte (0x02 = IMAGE) AFTER encryption (like VOICE messages)
             val encryptedWithMetadata = byteArrayOf(0x02.toByte()) + encryptedBytes
             Log.d(TAG, "  Total with metadata: ${encryptedWithMetadata.size} bytes (prepended 0x02)")
 
             // NOTE: Type byte (0x09) is added by android.rs sendPing(), not here
-            // encryptedWithMetadata format: [0x02][Our X25519 Public Key - 32 bytes][Encrypted Message]
+            // Wire format: [0x02][version:1][sequence:8][nonce:24][ciphertext][tag:16]
             val encryptedBase64 = Base64.encodeToString(encryptedWithMetadata, Base64.NO_WRAP)
 
             Log.d(TAG, "  Total payload: ${encryptedBytes.size} bytes (${encryptedBase64.length} Base64 chars)")
 
-            // Generate nonce (first 24 bytes of encrypted data)
-            val nonce = encryptedBytes.take(24).toByteArray()
+            // Extract nonce from wire format (bytes 9-32, after version and sequence)
+            val nonce = encryptedBytes.sliceArray(9 until 33)
             val nonceBase64 = Base64.encodeToString(nonce, Base64.NO_WRAP)
 
             // Sign the message
@@ -373,19 +400,40 @@ class MessageService(private val context: Context) {
             val ourPublicKey = keyManager.getSigningPublicKey()
             val ourPrivateKey = keyManager.getSigningKeyBytes()
 
-            // Get recipient's X25519 public key (for encryption)
-            val recipientX25519PublicKey = Base64.decode(contact.x25519PublicKeyBase64, Base64.NO_WRAP)
+            // Get key chain for this contact (for progressive ephemeral key evolution)
+            Log.d(TAG, "Encrypting message with key evolution...")
+            val keyChain = KeyChainManager.getKeyChain(context, contactId)
+                ?: throw Exception("Key chain not found for contact $contactId")
 
-            // Encrypt the message
-            Log.d(TAG, "Encrypting message...")
-            val encryptedBytes = RustBridge.encryptMessage(plaintext, recipientX25519PublicKey)
+            // ATOMIC ENCRYPTION + KEY EVOLUTION (Signal-style)
+            // Encrypts and evolves key in one indivisible operation to prevent desync
+            // Wire format: [version:1][sequence:8][nonce:24][ciphertext][tag:16]
+            val result = RustBridge.encryptMessageWithEvolution(
+                plaintext,
+                keyChain.sendChainKeyBytes,
+                keyChain.sendCounter
+            )
+            val encryptedBytes = result.ciphertext
 
-            // NOTE: Type byte is added by android.rs sendPing(), not here
-            // encryptedBytes format: [Our X25519 Public Key - 32 bytes][Encrypted Message]
-            val encryptedBase64 = Base64.encodeToString(encryptedBytes, Base64.NO_WRAP)
+            // Save evolved key to database (key evolution happened atomically in Rust)
+            database.contactKeyChainDao().updateSendChainKey(
+                contactId = contactId,
+                newSendChainKeyBase64 = android.util.Base64.encodeToString(result.evolvedChainKey, android.util.Base64.NO_WRAP),
+                newSendCounter = keyChain.sendCounter + 1,
+                timestamp = System.currentTimeMillis()
+            )
+            Log.d(TAG, "Message encrypted with sequence ${keyChain.sendCounter}")
 
-            // Generate nonce (first 24 bytes of encrypted data)
-            val nonce = encryptedBytes.take(24).toByteArray()
+            // Prepend metadata byte (0x00 = TEXT) AFTER encryption (like VOICE/IMAGE messages)
+            val encryptedWithMetadata = byteArrayOf(0x00.toByte()) + encryptedBytes
+            Log.d(TAG, "  Total with metadata: ${encryptedWithMetadata.size} bytes (prepended 0x00)")
+
+            // NOTE: Wire protocol type byte (0x03) is added by android.rs sendPing(), not here
+            // Wire format: [0x00][version:1][sequence:8][nonce:24][ciphertext][tag:16]
+            val encryptedBase64 = Base64.encodeToString(encryptedWithMetadata, Base64.NO_WRAP)
+
+            // Extract nonce from wire format (bytes 9-32, after version and sequence)
+            val nonce = encryptedBytes.sliceArray(9 until 33)
             val nonceBase64 = Base64.encodeToString(nonce, Base64.NO_WRAP)
 
             // Sign the message
@@ -886,14 +934,33 @@ class MessageService(private val context: Context) {
 
             Log.d(TAG, "Message from: ${contact.displayName}")
 
-            // Decrypt message
-            val encryptedBytes = Base64.decode(encryptedData, Base64.NO_WRAP)
-            val ourPrivateKey = keyManager.getSigningKeyBytes()
-            val decryptedData = RustBridge.decryptMessage(encryptedBytes, senderPublicKey, ourPrivateKey)
-                ?: return@withContext Result.failure(Exception("Failed to decrypt message"))
+            // Get key chain for this contact (for progressive ephemeral key evolution)
+            Log.d(TAG, "Decrypting message with key evolution...")
+            val keyChain = KeyChainManager.getKeyChain(context, contact.id)
+                ?: throw Exception("Key chain not found for contact ${contact.id}")
 
-            // Extract nonce
-            val nonce = encryptedBytes.take(24).toByteArray()
+            // Decrypt using current receive chain key and counter (ATOMIC key evolution)
+            // Wire format: [version:1][sequence:8][nonce:24][ciphertext][tag:16]
+            val encryptedBytes = Base64.decode(encryptedData, Base64.NO_WRAP)
+            val result = RustBridge.decryptMessageWithEvolution(
+                encryptedBytes,
+                keyChain.receiveChainKeyBytes,
+                keyChain.receiveCounter
+            ) ?: return@withContext Result.failure(Exception("Failed to decrypt message"))
+
+            val decryptedData = result.plaintext
+
+            // Save evolved key to database (key evolution happened atomically in Rust)
+            database.contactKeyChainDao().updateReceiveChainKey(
+                contactId = contact.id,
+                newReceiveChainKeyBase64 = android.util.Base64.encodeToString(result.evolvedChainKey, android.util.Base64.NO_WRAP),
+                newReceiveCounter = keyChain.receiveCounter + 1,
+                timestamp = System.currentTimeMillis()
+            )
+            Log.d(TAG, "Message decrypted with sequence ${keyChain.receiveCounter}")
+
+            // Extract nonce from wire format (bytes 9-32, after version and sequence)
+            val nonce = encryptedBytes.sliceArray(9 until 33)
             val nonceBase64 = Base64.encodeToString(nonce, Base64.NO_WRAP)
 
             // Handle based on message type

@@ -1,5 +1,6 @@
 package com.securelegion
 
+import android.app.Activity
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
@@ -12,6 +13,7 @@ import android.widget.Button
 import android.widget.EditText
 import android.widget.ImageView
 import android.widget.TextView
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.FileProvider
@@ -22,6 +24,7 @@ import com.google.zxing.qrcode.QRCodeWriter
 import com.securelegion.crypto.KeyManager
 import com.securelegion.models.ContactCard
 import com.securelegion.services.ContactCardManager
+import com.securelegion.utils.ImagePicker
 import com.securelegion.utils.ThemedToast
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -32,6 +35,42 @@ import java.io.FileOutputStream
 import java.security.SecureRandom
 
 class WalletIdentityActivity : AppCompatActivity() {
+
+    private lateinit var profilePhotoAvatar: com.securelegion.views.AvatarView
+
+    // Image picker launchers
+    private val galleryLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK) {
+            val uri = result.data?.data
+            val base64 = ImagePicker.processImageUri(this, uri)
+            if (base64 != null) {
+                saveProfilePhoto(base64)
+                profilePhotoAvatar.setPhotoBase64(base64)
+                ThemedToast.show(this, "Profile photo updated")
+            } else {
+                ThemedToast.show(this, "Failed to process image")
+            }
+        }
+    }
+
+    private val cameraLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK) {
+            val bitmap = result.data?.extras?.get("data") as? Bitmap
+            val base64 = ImagePicker.processImageBitmap(bitmap)
+            if (base64 != null) {
+                saveProfilePhoto(base64)
+                profilePhotoAvatar.setPhotoBase64(base64)
+                ThemedToast.show(this, "Profile photo updated")
+            } else {
+                ThemedToast.show(this, "Failed to process image")
+            }
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_wallet_identity)
@@ -44,6 +83,7 @@ class WalletIdentityActivity : AppCompatActivity() {
         loadUsername()
         loadContactCardInfo()
         setupBottomNavigation()
+        setupProfilePhoto()
 
         // New Identity button - Creates new wallet, CID, username, and onion address
         findViewById<View>(R.id.updateUsernameButton).setOnClickListener {
@@ -454,5 +494,51 @@ class WalletIdentityActivity : AppCompatActivity() {
             startActivity(intent)
             finish()
         }
+    }
+
+    // ==================== PROFILE PHOTO ====================
+
+    private fun setupProfilePhoto() {
+        profilePhotoAvatar = findViewById(R.id.profilePhotoAvatar)
+
+        // Load existing photo
+        val prefs = getSharedPreferences("secure_legion_settings", MODE_PRIVATE)
+        val photoBase64 = prefs.getString("profile_photo_base64", null)
+        val username = prefs.getString("username", "User")
+
+        if (!photoBase64.isNullOrEmpty()) {
+            profilePhotoAvatar.setPhotoBase64(photoBase64)
+        }
+        profilePhotoAvatar.setName(username)
+
+        // Edit photo button
+        findViewById<View>(R.id.editProfilePhotoButton).setOnClickListener {
+            showImagePickerDialog()
+        }
+    }
+
+    private fun showImagePickerDialog() {
+        AlertDialog.Builder(this)
+            .setTitle("Change Profile Photo")
+            .setItems(arrayOf("Take Photo", "Choose from Gallery", "Remove Photo")) { _, which ->
+                when (which) {
+                    0 -> ImagePicker.pickFromCamera(cameraLauncher)
+                    1 -> ImagePicker.pickFromGallery(galleryLauncher)
+                    2 -> removeProfilePhoto()
+                }
+            }
+            .show()
+    }
+
+    private fun saveProfilePhoto(base64: String) {
+        val prefs = getSharedPreferences("secure_legion_settings", MODE_PRIVATE)
+        prefs.edit().putString("profile_photo_base64", base64).apply()
+    }
+
+    private fun removeProfilePhoto() {
+        val prefs = getSharedPreferences("secure_legion_settings", MODE_PRIVATE)
+        prefs.edit().remove("profile_photo_base64").apply()
+        profilePhotoAvatar.clearPhoto()
+        ThemedToast.show(this, "Profile photo removed")
     }
 }

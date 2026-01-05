@@ -94,6 +94,7 @@ class ChatActivity : BaseActivity() {
     private lateinit var recordingTimer: TextView
     private lateinit var cancelRecordingButton: ImageView
     private lateinit var sendVoiceButton: ImageView
+    private lateinit var contactAvatar: com.securelegion.views.AvatarView
 
     private var contactId: Long = -1
     private var contactName: String = "@user"
@@ -149,6 +150,39 @@ class ChatActivity : BaseActivity() {
 
         if (success && cameraPhotoUri != null) {
             handleSelectedImage(cameraPhotoUri!!)
+        }
+    }
+
+    // Contact photo picker launchers
+    private val contactPhotoGalleryLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == android.app.Activity.RESULT_OK) {
+            val uri = result.data?.data
+            val base64 = com.securelegion.utils.ImagePicker.processImageUri(this, uri)
+            if (base64 != null) {
+                saveContactPhoto(base64)
+                contactAvatar.setPhotoBase64(base64)
+                ThemedToast.show(this, "Contact photo updated")
+            } else {
+                ThemedToast.show(this, "Failed to process image")
+            }
+        }
+    }
+
+    private val contactPhotoCameraLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == android.app.Activity.RESULT_OK) {
+            val bitmap = result.data?.extras?.get("data") as? Bitmap
+            val base64 = com.securelegion.utils.ImagePicker.processImageBitmap(bitmap)
+            if (base64 != null) {
+                saveContactPhoto(base64)
+                contactAvatar.setPhotoBase64(base64)
+                ThemedToast.show(this, "Contact photo updated")
+            } else {
+                ThemedToast.show(this, "Failed to process image")
+            }
         }
     }
 
@@ -385,6 +419,7 @@ class ChatActivity : BaseActivity() {
 
         // Setup UI
         findViewById<TextView>(R.id.chatName).text = contactName
+        setupContactAvatar()
 
         setupRecyclerView()
         setupClickListeners()
@@ -2259,6 +2294,90 @@ class ChatActivity : BaseActivity() {
                 Log.e(TAG, "Failed to start voice call", e)
                 ThemedToast.show(this@ChatActivity, "Failed to start call: ${e.message}")
                 isInitiatingCall = false
+            }
+        }
+    }
+
+    // ==================== CONTACT PHOTO ====================
+
+    private fun setupContactAvatar() {
+        contactAvatar = findViewById(R.id.contactAvatar)
+
+        // Load contact photo from database
+        lifecycleScope.launch {
+            try {
+                val keyManager = KeyManager.getInstance(this@ChatActivity)
+                val dbPassphrase = keyManager.getDatabasePassphrase()
+                val database = SecureLegionDatabase.getInstance(this@ChatActivity, dbPassphrase)
+
+                val contact = withContext(Dispatchers.IO) {
+                    database.contactDao().getContactById(contactId)
+                }
+
+                if (contact != null) {
+                    // Set photo if available, otherwise use name for initials
+                    if (!contact.profilePictureBase64.isNullOrEmpty()) {
+                        contactAvatar.setPhotoBase64(contact.profilePictureBase64)
+                    }
+                    contactAvatar.setName(contact.displayName)
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error loading contact photo", e)
+                contactAvatar.setName(contactName)
+            }
+        }
+
+        // Click listener to change contact photo
+        contactAvatar.setOnClickListener {
+            showContactPhotoPickerDialog()
+        }
+    }
+
+    private fun showContactPhotoPickerDialog() {
+        AlertDialog.Builder(this)
+            .setTitle("Change Contact Photo")
+            .setItems(arrayOf("Take Photo", "Choose from Gallery", "Remove Photo")) { _, which ->
+                when (which) {
+                    0 -> com.securelegion.utils.ImagePicker.pickFromCamera(contactPhotoCameraLauncher)
+                    1 -> com.securelegion.utils.ImagePicker.pickFromGallery(contactPhotoGalleryLauncher)
+                    2 -> removeContactPhoto()
+                }
+            }
+            .show()
+    }
+
+    private fun saveContactPhoto(base64: String) {
+        lifecycleScope.launch {
+            try {
+                val keyManager = KeyManager.getInstance(this@ChatActivity)
+                val dbPassphrase = keyManager.getDatabasePassphrase()
+                val database = SecureLegionDatabase.getInstance(this@ChatActivity, dbPassphrase)
+
+                withContext(Dispatchers.IO) {
+                    database.contactDao().updateContactPhoto(contactId, base64)
+                }
+                Log.d(TAG, "Contact photo saved to database")
+            } catch (e: Exception) {
+                Log.e(TAG, "Error saving contact photo", e)
+            }
+        }
+    }
+
+    private fun removeContactPhoto() {
+        lifecycleScope.launch {
+            try {
+                val keyManager = KeyManager.getInstance(this@ChatActivity)
+                val dbPassphrase = keyManager.getDatabasePassphrase()
+                val database = SecureLegionDatabase.getInstance(this@ChatActivity, dbPassphrase)
+
+                withContext(Dispatchers.IO) {
+                    database.contactDao().updateContactPhoto(contactId, null)
+                }
+                contactAvatar.clearPhoto()
+                ThemedToast.show(this@ChatActivity, "Contact photo removed")
+                Log.d(TAG, "Contact photo removed from database")
+            } catch (e: Exception) {
+                Log.e(TAG, "Error removing contact photo", e)
             }
         }
     }
