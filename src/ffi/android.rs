@@ -9,7 +9,8 @@ use zeroize::Zeroize;
 
 use crate::crypto::{
     decrypt_message, encrypt_message, generate_keypair, hash_handle, hash_password, sign_data,
-    verify_signature,
+    verify_signature, derive_root_key, evolve_chain_key, derive_message_key,
+    encrypt_message_with_evolution, decrypt_message_with_evolution,
 };
 use crate::network::{TorManager, PENDING_CONNECTIONS};
 use crate::protocol::ContactCard;
@@ -4642,6 +4643,278 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_deriveSharedSecret(
             }
             Err(e) => {
                 let _ = env.throw_new("java/lang/RuntimeException", format!("{}", e));
+                std::ptr::null_mut()
+            }
+        }
+    }, std::ptr::null_mut())
+}
+
+/// Derive root key from X25519 shared secret using HKDF-SHA256
+/// @param sharedSecret 32-byte X25519 shared secret
+/// @param info Context string (e.g., "SecureLegion-RootKey-v1")
+/// @return 32-byte root key
+#[no_mangle]
+pub extern "C" fn Java_com_securelegion_crypto_RustBridge_deriveRootKey(
+    mut env: JNIEnv,
+    _class: JClass,
+    shared_secret: JByteArray,
+    info: JString,
+) -> jbyteArray {
+    catch_panic!(env, {
+        let shared_secret_vec = match jbytearray_to_vec(&mut env, shared_secret) {
+            Ok(v) => v,
+            Err(e) => {
+                let _ = env.throw_new("java/lang/IllegalArgumentException", e);
+                return std::ptr::null_mut();
+            }
+        };
+
+        if shared_secret_vec.len() != 32 {
+            let _ = env.throw_new("java/lang/IllegalArgumentException", "Shared secret must be 32 bytes");
+            return std::ptr::null_mut();
+        }
+
+        let info_str = match jstring_to_string(&mut env, info) {
+            Ok(s) => s,
+            Err(e) => {
+                let _ = env.throw_new("java/lang/IllegalArgumentException", e);
+                return std::ptr::null_mut();
+            }
+        };
+
+        match derive_root_key(&shared_secret_vec, info_str.as_bytes()) {
+            Ok(root_key) => match vec_to_jbytearray(&mut env, &root_key) {
+                Ok(arr) => arr.into_raw(),
+                Err(e) => {
+                    let _ = env.throw_new("java/lang/RuntimeException", e);
+                    std::ptr::null_mut()
+                }
+            },
+            Err(e) => {
+                let _ = env.throw_new("java/lang/RuntimeException", format!("{}", e));
+                std::ptr::null_mut()
+            }
+        }
+    }, std::ptr::null_mut())
+}
+
+/// Evolve chain key forward using HMAC-SHA256 (one-way function)
+/// Provides forward secrecy - old chain keys cannot be recovered from new ones
+/// @param chainKey Current 32-byte chain key (will be zeroized)
+/// @return Next chain key (32 bytes)
+#[no_mangle]
+pub extern "C" fn Java_com_securelegion_crypto_RustBridge_evolveChainKey(
+    mut env: JNIEnv,
+    _class: JClass,
+    chain_key: JByteArray,
+) -> jbyteArray {
+    catch_panic!(env, {
+        let chain_key_vec = match jbytearray_to_vec(&mut env, chain_key) {
+            Ok(v) => v,
+            Err(e) => {
+                let _ = env.throw_new("java/lang/IllegalArgumentException", e);
+                return std::ptr::null_mut();
+            }
+        };
+
+        if chain_key_vec.len() != 32 {
+            let _ = env.throw_new("java/lang/IllegalArgumentException", "Chain key must be 32 bytes");
+            return std::ptr::null_mut();
+        }
+
+        let mut chain_key_array: [u8; 32] = chain_key_vec.try_into().unwrap();
+
+        match evolve_chain_key(&mut chain_key_array) {
+            Ok(new_chain_key) => match vec_to_jbytearray(&mut env, &new_chain_key) {
+                Ok(arr) => arr.into_raw(),
+                Err(e) => {
+                    let _ = env.throw_new("java/lang/RuntimeException", e);
+                    std::ptr::null_mut()
+                }
+            },
+            Err(e) => {
+                let _ = env.throw_new("java/lang/RuntimeException", format!("{}", e));
+                std::ptr::null_mut()
+            }
+        }
+    }, std::ptr::null_mut())
+}
+
+/// Derive ephemeral message key from chain key
+/// @param chainKey Current 32-byte chain key
+/// @return 32-byte message key for encrypting/decrypting this message
+#[no_mangle]
+pub extern "C" fn Java_com_securelegion_crypto_RustBridge_deriveMessageKey(
+    mut env: JNIEnv,
+    _class: JClass,
+    chain_key: JByteArray,
+) -> jbyteArray {
+    catch_panic!(env, {
+        let chain_key_vec = match jbytearray_to_vec(&mut env, chain_key) {
+            Ok(v) => v,
+            Err(e) => {
+                let _ = env.throw_new("java/lang/IllegalArgumentException", e);
+                return std::ptr::null_mut();
+            }
+        };
+
+        if chain_key_vec.len() != 32 {
+            let _ = env.throw_new("java/lang/IllegalArgumentException", "Chain key must be 32 bytes");
+            return std::ptr::null_mut();
+        }
+
+        let chain_key_array: [u8; 32] = chain_key_vec.try_into().unwrap();
+
+        match derive_message_key(&chain_key_array) {
+            Ok(message_key) => match vec_to_jbytearray(&mut env, &message_key) {
+                Ok(arr) => arr.into_raw(),
+                Err(e) => {
+                    let _ = env.throw_new("java/lang/RuntimeException", e);
+                    std::ptr::null_mut()
+                }
+            },
+            Err(e) => {
+                let _ = env.throw_new("java/lang/RuntimeException", format!("{}", e));
+                std::ptr::null_mut()
+            }
+        }
+    }, std::ptr::null_mut())
+}
+
+/// Encrypt message with key evolution (for messaging)
+/// ATOMIC OPERATION: Returns both encrypted message and evolved key
+///
+/// Wire format: [version:1][sequence:8][nonce:24][ciphertext][tag:16]
+/// Return format: [evolved_key:32][ciphertext]
+///
+/// @param plaintext Message to encrypt
+/// @param chainKey Current chain key (will be evolved)
+/// @param sequence Message sequence number
+/// @return [evolved_chain_key:32][encrypted_message] - split first 32 bytes on Kotlin side
+#[no_mangle]
+pub extern "C" fn Java_com_securelegion_crypto_RustBridge_encryptMessageWithEvolutionJNI(
+    mut env: JNIEnv,
+    _class: JClass,
+    plaintext: JString,
+    chain_key: JByteArray,
+    sequence: jlong,
+) -> jbyteArray {
+    catch_panic!(env, {
+        let plaintext_str = match jstring_to_string(&mut env, plaintext) {
+            Ok(s) => s,
+            Err(e) => {
+                let _ = env.throw_new("java/lang/IllegalArgumentException", e);
+                return std::ptr::null_mut();
+            }
+        };
+
+        let chain_key_vec = match jbytearray_to_vec(&mut env, chain_key) {
+            Ok(v) => v,
+            Err(e) => {
+                let _ = env.throw_new("java/lang/IllegalArgumentException", e);
+                return std::ptr::null_mut();
+            }
+        };
+
+        if chain_key_vec.len() != 32 {
+            let _ = env.throw_new("java/lang/IllegalArgumentException", "Chain key must be 32 bytes");
+            return std::ptr::null_mut();
+        }
+
+        let mut chain_key_array: [u8; 32] = chain_key_vec.try_into().unwrap();
+
+        match encrypt_message_with_evolution(plaintext_str.as_bytes(), &mut chain_key_array, sequence as u64) {
+            Ok(result) => {
+                // Build result: [evolved_key:32][ciphertext]
+                let mut output = Vec::with_capacity(32 + result.ciphertext.len());
+                output.extend_from_slice(&result.evolved_chain_key);
+                output.extend_from_slice(&result.ciphertext);
+
+                match vec_to_jbytearray(&mut env, &output) {
+                    Ok(arr) => arr.into_raw(),
+                    Err(e) => {
+                        let _ = env.throw_new("java/lang/RuntimeException", e);
+                        std::ptr::null_mut()
+                    }
+                }
+            },
+            Err(e) => {
+                let _ = env.throw_new("java/lang/RuntimeException", format!("{}", e));
+                std::ptr::null_mut()
+            }
+        }
+    }, std::ptr::null_mut())
+}
+
+/// Decrypt message with key evolution (for messaging)
+/// ATOMIC OPERATION: Returns both decrypted message and evolved key
+///
+/// Wire format: [version:1][sequence:8][nonce:24][ciphertext][tag:16]
+/// Return format: [evolved_key:32][plaintext_utf8]
+///
+/// @param encryptedData Encrypted message with wire format header
+/// @param chainKey Current chain key (will be evolved)
+/// @param expectedSequence Expected sequence number (for replay protection)
+/// @return [evolved_chain_key:32][plaintext_utf8] - split first 32 bytes on Kotlin side, or null if decryption fails
+#[no_mangle]
+pub extern "C" fn Java_com_securelegion_crypto_RustBridge_decryptMessageWithEvolutionJNI(
+    mut env: JNIEnv,
+    _class: JClass,
+    encrypted_data: JByteArray,
+    chain_key: JByteArray,
+    expected_sequence: jlong,
+) -> jbyteArray {
+    catch_panic!(env, {
+        let encrypted_vec = match jbytearray_to_vec(&mut env, encrypted_data) {
+            Ok(v) => v,
+            Err(e) => {
+                let _ = env.throw_new("java/lang/IllegalArgumentException", e);
+                return std::ptr::null_mut();
+            }
+        };
+
+        let chain_key_vec = match jbytearray_to_vec(&mut env, chain_key) {
+            Ok(v) => v,
+            Err(e) => {
+                let _ = env.throw_new("java/lang/IllegalArgumentException", e);
+                return std::ptr::null_mut();
+            }
+        };
+
+        if chain_key_vec.len() != 32 {
+            let _ = env.throw_new("java/lang/IllegalArgumentException", "Chain key must be 32 bytes");
+            return std::ptr::null_mut();
+        }
+
+        let mut chain_key_array: [u8; 32] = chain_key_vec.try_into().unwrap();
+
+        match decrypt_message_with_evolution(&encrypted_vec, &mut chain_key_array, expected_sequence as u64) {
+            Ok(result) => {
+                // Convert plaintext bytes to UTF-8 string first
+                match String::from_utf8(result.plaintext.clone()) {
+                    Ok(plaintext_str) => {
+                        // Build result: [evolved_key:32][plaintext_utf8]
+                        let plaintext_bytes = plaintext_str.as_bytes();
+                        let mut output = Vec::with_capacity(32 + plaintext_bytes.len());
+                        output.extend_from_slice(&result.evolved_chain_key);
+                        output.extend_from_slice(plaintext_bytes);
+
+                        match vec_to_jbytearray(&mut env, &output) {
+                            Ok(arr) => arr.into_raw(),
+                            Err(e) => {
+                                let _ = env.throw_new("java/lang/RuntimeException", e);
+                                std::ptr::null_mut()
+                            }
+                        }
+                    },
+                    Err(e) => {
+                        let _ = env.throw_new("java/lang/RuntimeException", format!("Invalid UTF-8: {}", e));
+                        std::ptr::null_mut()
+                    }
+                }
+            },
+            Err(e) => {
+                let _ = env.throw_new("java/lang/RuntimeException", format!("Decryption failed: {}", e));
                 std::ptr::null_mut()
             }
         }
