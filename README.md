@@ -82,13 +82,16 @@ Secure Legion is a native Android messaging application that combines truly priv
 - **Encryption**: XChaCha20-Poly1305 AEAD (authenticated encryption with associated data)
 - **Signatures**: Ed25519 (message authentication)
 - **Key Exchange**: X25519 ECDH + HKDF-SHA256 (ephemeral session keys)
+- **Post-Quantum Cryptography**: Hybrid X25519 + ML-KEM-1024 (NIST FIPS 203)
+  - Combines classical elliptic curve with post-quantum key encapsulation
+  - Secure if EITHER X25519 OR ML-KEM remains unbroken
+  - 64-byte combined shared secret using HKDF-SHA256
 - **Forward Secrecy**: Per-message forward secrecy with bidirectional key chains
   - Every message gets a unique ephemeral key
   - HMAC-based key ratcheting
   - Keys destroyed immediately after use
 - **Hashing**: Argon2id (password derivation)
 - **Database**: SQLCipher AES-256-GCM (local storage encryption)
-- **In Development**: Post-quantum hybrid encryption (Diffie-Hellman + post-quantum KEM)
 
 **Hardware Security:**
 - Private keys stored in Android StrongBox or Trusted Execution Environment
@@ -284,6 +287,7 @@ SENDER                          RECIPIENT
 | **Message Encryption** | XChaCha20-Poly1305 | 256-bit | AEAD encryption for message content |
 | **Digital Signatures** | Ed25519 | 256-bit | Message authentication and sender verification |
 | **Key Exchange** | X25519 ECDH | 256-bit | Ephemeral session keys for forward secrecy |
+| **Post-Quantum KEM** | Hybrid X25519 + ML-KEM-1024 | 512-bit combined | Quantum-resistant key encapsulation (NIST FIPS 203) |
 | **Key Derivation** | HKDF-SHA256 | 256-bit | Per-message key ratcheting from shared secret |
 | **Forward Secrecy** | HMAC-based ratchet | 256-bit | Bidirectional key chains, unique key per message |
 | **Voice Encryption** | XChaCha20-Poly1305 | 256-bit | Real-time audio stream encryption |
@@ -297,11 +301,14 @@ SENDER                          RECIPIENT
 - **Per-message forward secrecy**: Every message uses unique ephemeral key derived from ratcheting chain
 - **Bidirectional key chains**: Separate ratchets for sending and receiving
 - **Immediate key destruction**: Ephemeral keys zeroized from memory after use
+- **Post-quantum cryptography**: Hybrid X25519 + ML-KEM-1024 provides quantum resistance
+  - Uses NIST-standardized ML-KEM (formerly Kyber-1024) from FIPS 203
+  - Combines 32-byte X25519 + 32-byte ML-KEM secrets into 64-byte hybrid secret via HKDF
+  - Secure if EITHER classical OR post-quantum algorithm remains unbroken
 - Nonces never reused (random for XChaCha20, deterministic for signatures)
 - Constant-time comparisons prevent timing attacks
 - Secure memory wiping after use (zeroize crate in Rust)
 - Hardware-backed keys used where available
-- **Post-quantum readiness**: Hybrid encryption in development (X25519 + PQ-KEM)
 
 ### Threat Model
 
@@ -491,10 +498,11 @@ secure-legion-android/
 - [x] Voice calling over Tor (Opus codec, real-time streaming)
 - [x] Tor VPN mode (OnionMasq system-wide routing)
 - [x] Per-message forward secrecy with bidirectional key ratcheting
+- [x] Post-quantum cryptography (Hybrid X25519 + ML-KEM-1024 for quantum resistance)
 
 ### In Development
 
-- [ ] Post-quantum hybrid encryption (X25519 + PQ-KEM for future-proof security)
+- [ ] Post-quantum Double Ratchet (PQC-enhanced forward secrecy with X3DH-style key agreement)
 - [ ] File attachments (general file sharing)
 - [ ] Group messaging (multi-party encrypted conversations)
 - [x] Export/import account data
@@ -787,6 +795,7 @@ Secure Legion is built on the shoulders of giants. Thank you to these projects:
 **Cryptography:**
 - [RustCrypto AEADs](https://github.com/RustCrypto/AEADs) - ChaCha20-Poly1305 implementation
 - [Dalek Cryptography](https://github.com/dalek-cryptography) - Ed25519 and X25519 primitives
+- [pqc_kyber](https://github.com/Argyle-Software/kyber) - ML-KEM-1024 post-quantum KEM (NIST FIPS 203)
 - [Argon2](https://github.com/P-H-C/phc-winner-argon2) - Password hashing (PHC winner)
 - [Lazysodium](https://github.com/terl/lazysodium-android) - Android libsodium bindings
 
