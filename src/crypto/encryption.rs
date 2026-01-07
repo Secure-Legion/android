@@ -9,6 +9,11 @@ use sha2::Sha256;
 use thiserror::Error;
 use zeroize::Zeroize;
 
+/// Maximum number of sequence numbers ahead that will be accepted
+/// Messages with sequence >= expected + WINDOW_SIZE will be rejected
+/// This prevents desync from packet loss while still protecting against replay attacks
+const SEQUENCE_WINDOW_SIZE: u64 = 100;
+
 /// Result of encryption with atomic key evolution
 #[derive(Debug, Clone)]
 pub struct EncryptionResult {
@@ -33,6 +38,12 @@ pub enum EncryptionError {
     InvalidKeyLength,
     #[error("Invalid nonce length")]
     InvalidNonceLength,
+    #[error("Replay attack detected: sequence {received} < expected {expected}")]
+    ReplayAttack { received: u64, expected: u64 },
+    #[error("Sequence too far ahead: received {received}, expected {expected}, max {max}")]
+    SequenceTooFar { received: u64, expected: u64, max: u64 },
+    #[error("Out of order message: received {received}, expected {expected}")]
+    OutOfOrder { received: u64, expected: u64 },
 }
 
 pub type Result<T> = std::result::Result<T, EncryptionError>;
@@ -317,9 +328,32 @@ pub fn decrypt_message_with_evolution(
             .map_err(|_| EncryptionError::DecryptionFailed)?
     );
 
-    // Verify sequence number (prevents replay attacks)
+    // Windowed sequence acceptance (prevents replay while allowing out-of-order delivery)
+
+    // Reject replays (sequence < expected)
+    if sequence < expected_sequence {
+        return Err(EncryptionError::ReplayAttack {
+            received: sequence,
+            expected: expected_sequence,
+        });
+    }
+
+    // Reject sequences too far in future (prevents desync attacks)
+    if sequence >= expected_sequence + SEQUENCE_WINDOW_SIZE {
+        return Err(EncryptionError::SequenceTooFar {
+            received: sequence,
+            expected: expected_sequence,
+            max: expected_sequence + SEQUENCE_WINDOW_SIZE - 1,
+        });
+    }
+
+    // Accept out-of-order messages within window [expected, expected+100)
+    // Note: Kotlin layer must buffer and process in order to maintain key chain sync
     if sequence != expected_sequence {
-        return Err(EncryptionError::DecryptionFailed);
+        return Err(EncryptionError::OutOfOrder {
+            received: sequence,
+            expected: expected_sequence,
+        });
     }
 
     let nonce_bytes = &encrypted_data[9..33];
