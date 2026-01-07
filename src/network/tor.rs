@@ -202,6 +202,12 @@ pub static MESSAGE_TX: once_cell::sync::OnceCell<Arc<StdMutex<tokio::sync::mpsc:
 /// Initialized when voice listener starts
 pub static VOICE_TX: once_cell::sync::OnceCell<Arc<StdMutex<tokio::sync::mpsc::UnboundedSender<(u64, Vec<u8>)>>>> = once_cell::sync::OnceCell::new();
 
+/// Global channel for DELIVERY_CONFIRMATION (ACK) types
+/// Shared between port 8080 (main listener - error recovery) and port 9153 (dedicated ACK listener)
+/// This ensures ACKs arriving on wrong port still get processed (no message loss)
+/// Initialized when ACK listener starts on port 9153
+pub static ACK_TX: once_cell::sync::OnceCell<Arc<StdMutex<tokio::sync::mpsc::UnboundedSender<(u64, Vec<u8>)>>>> = once_cell::sync::OnceCell::new();
+
 pub struct TorManager {
     control_stream: Option<Arc<Mutex<TcpStream>>>,
     voice_control_stream: Option<Arc<Mutex<TcpStream>>>,  // VOICE TOR: port 9052 (Single Onion)
@@ -918,8 +924,23 @@ impl TorManager {
                 tx.send((conn_id, data)).ok();
             }
             MSG_TYPE_DELIVERY_CONFIRMATION => {
-                log::info!("→ Routing to DELIVERY_CONFIRMATION handler");
-                tx.send((conn_id, data)).ok();
+                log::warn!("⚠️  Received ACK on main listener (port 8080) - should go to port 9153!");
+                log::info!("→ Routing to ACK channel (error recovery - ensures no message loss)");
+
+                // ERROR RECOVERY: ACK arrived on wrong port, but we MUST NOT drop it!
+                // Route to shared ACK_TX channel so it still gets processed.
+                // This prevents permanent message delivery failures.
+                if let Some(ack_tx) = ACK_TX.get() {
+                    let tx_lock = ack_tx.lock().unwrap();
+                    if let Err(e) = tx_lock.send((conn_id, data)) {
+                        log::error!("Failed to send ACK to ACK channel: {}", e);
+                    } else {
+                        log::info!("✓ ACK successfully routed to ACK channel from port 8080");
+                    }
+                } else {
+                    log::error!("✗ ACK channel not initialized - ACK will be lost!");
+                    log::error!("   Start ACK listener on port 9153 to initialize ACK_TX channel");
+                }
             }
             MSG_TYPE_FRIEND_REQUEST => {
                 log::info!("→ Routing to FRIEND_REQUEST handler (separate channel)");

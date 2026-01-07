@@ -15,7 +15,7 @@ use crate::crypto::{
 use crate::network::{TorManager, PENDING_CONNECTIONS};
 use crate::protocol::ContactCard;
 use crate::blockchain::{register_username, lookup_username};
-use crate::audio::voice_streaming::{VoiceStreamingServer, VoicePacket};
+use crate::audio::voice_streaming::{VoiceStreamingListener, VoicePacket};
 use tokio::sync::{mpsc, oneshot};
 use tokio::io::AsyncReadExt;
 
@@ -90,8 +90,8 @@ static GLOBAL_MESSAGE_RECEIVER: OnceCell<Arc<Mutex<mpsc::UnboundedReceiver<(u64,
 static GLOBAL_VOICE_RECEIVER: OnceCell<Arc<Mutex<mpsc::UnboundedReceiver<(u64, Vec<u8>)>>>> = OnceCell::new();
 static GLOBAL_FRIEND_REQUEST_RECEIVER: OnceCell<Arc<Mutex<mpsc::UnboundedReceiver<Vec<u8>>>>> = OnceCell::new();
 
-/// Global Voice Streaming Server (v2.0)
-static GLOBAL_VOICE_STREAMING_SERVER: OnceCell<Arc<tokio::sync::Mutex<VoiceStreamingServer>>> = OnceCell::new();
+/// Global Voice Streaming Listener (v2.0)
+static GLOBAL_VOICE_LISTENER: OnceCell<Arc<tokio::sync::Mutex<VoiceStreamingListener>>> = OnceCell::new();
 
 /// Global Voice Packet Callback (v2.0)
 /// Stores a global reference to the Kotlin callback object
@@ -127,12 +127,12 @@ fn get_tor_manager() -> Arc<Mutex<TorManager>> {
         .clone()
 }
 
-/// Get or initialize the global Voice Streaming Server
-fn get_voice_streaming_server() -> Arc<tokio::sync::Mutex<VoiceStreamingServer>> {
-    GLOBAL_VOICE_STREAMING_SERVER
+/// Get or initialize the global Voice Streaming Listener
+fn get_voice_listener() -> Arc<tokio::sync::Mutex<VoiceStreamingListener>> {
+    GLOBAL_VOICE_LISTENER
         .get_or_init(|| {
-            let voice_server = VoiceStreamingServer::new();
-            Arc::new(tokio::sync::Mutex::new(voice_server))
+            let voice_listener = VoiceStreamingListener::new();
+            Arc::new(tokio::sync::Mutex::new(voice_listener))
         })
         .clone()
 }
@@ -1520,6 +1520,11 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendPing(
                     conn.stream.read_exact(&mut type_byte).await?;
 
                     if type_byte[0] != crate::network::tor::MSG_TYPE_PONG {
+                        if type_byte[0] == crate::network::tor::MSG_TYPE_DELIVERY_CONFIRMATION {
+                            log::warn!("⚠️  Received PING_ACK (0x06) on PING connection - ignoring (should go to port 9153)");
+                            log::warn!("→ This is a bug - PING_ACK was sent to wrong port. Treating as 'no instant pong'.");
+                            return Err("PING_ACK received on wrong connection".into());
+                        }
                         log::warn!("Expected PONG (0x02) but got type 0x{:02x}", type_byte[0]);
                         return Err(format!("Wrong message type: expected PONG, got 0x{:02x}", type_byte[0]).into());
                     }
@@ -1677,6 +1682,11 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_resendPingWithWireByte
                     conn.stream.read_exact(&mut type_byte).await?;
 
                     if type_byte[0] != crate::network::tor::MSG_TYPE_PONG {
+                        if type_byte[0] == crate::network::tor::MSG_TYPE_DELIVERY_CONFIRMATION {
+                            log::warn!("⚠️  Received PING_ACK (0x06) on PING connection during retry - ignoring (should go to port 9153)");
+                            log::warn!("→ This is a bug - PING_ACK was sent to wrong port. Treating as 'no instant pong'.");
+                            return Err("PING_ACK received on wrong connection".into());
+                        }
                         log::warn!("Expected PONG (0x02) but got type 0x{:02x}", type_byte[0]);
                         return Err(format!("Wrong message type: expected PONG, got 0x{:02x}", type_byte[0]).into());
                     }
@@ -2676,7 +2686,7 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendMessageBlob(
 }
 
 /// Send call signaling message via HTTP POST to voice .onion
-/// This bypasses VOICE channel routing and sends directly to voice streaming server
+/// This bypasses VOICE channel routing and sends directly to voice streaming listener
 #[no_mangle]
 pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendHttpToVoiceOnion(
     mut env: JNIEnv,
@@ -2722,7 +2732,7 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendHttpToVoiceOnion(
 
         log::info!("Wire message: {} bytes total", wire_message.len());
 
-        // Send HTTP POST via SOCKS5 to voice server on port 9152
+        // Send HTTP POST via SOCKS5 to voice listener on port 9152
         let result = GLOBAL_RUNTIME.block_on(async {
             use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
@@ -2757,7 +2767,7 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendHttpToVoiceOnion(
             let response_str = String::from_utf8_lossy(&response_buf[..n]);
 
             if response_str.contains("200 OK") {
-                log::info!("✓ HTTP 200 OK received from voice server");
+                log::info!("✓ HTTP 200 OK received from voice listener");
                 Ok(())
             } else {
                 log::error!("✗ Unexpected HTTP response: {}", response_str.lines().next().unwrap_or(""));
@@ -3461,6 +3471,11 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendDirectMessage(
             // Extract type byte
             let type_byte = pong_response[0];
             if type_byte != crate::network::tor::MSG_TYPE_PONG {
+                if type_byte == crate::network::tor::MSG_TYPE_DELIVERY_CONFIRMATION {
+                    log::warn!("⚠️  Received PING_ACK (0x06) when expecting PONG - ignoring (should go to port 9153)");
+                    log::warn!("→ This is a bug - PING_ACK was sent to wrong port. Continuing without instant pong.");
+                    return Err("PING_ACK received instead of PONG".into());
+                }
                 log::warn!("Expected PONG (0x02) but got type 0x{:02x}", type_byte);
                 return Err(format!("Wrong message type: expected PONG, got 0x{:02x}", type_byte).into());
             }
@@ -4669,8 +4684,8 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_deriveRootKey(
             }
         };
 
-        if shared_secret_vec.len() != 32 {
-            let _ = env.throw_new("java/lang/IllegalArgumentException", "Shared secret must be 32 bytes");
+        if shared_secret_vec.len() != 32 && shared_secret_vec.len() != 64 {
+            let _ = env.throw_new("java/lang/IllegalArgumentException", "Shared secret must be 32 or 64 bytes");
             return std::ptr::null_mut();
         }
 
@@ -4780,6 +4795,237 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_deriveMessageKey(
         }
     }, std::ptr::null_mut())
 }
+
+// ==================== HYBRID POST-QUANTUM CRYPTOGRAPHY ====================
+
+/// Generate hybrid KEM keypair from seed (X25519 + Kyber-1024)
+/// @param seed 32-byte seed for deterministic key generation
+/// @return Serialized keypair: [x25519_pub:32][x25519_sec:32][kyber_pub:1568][kyber_sec:3168]
+#[no_mangle]
+pub extern "C" fn Java_com_securelegion_crypto_RustBridge_generateHybridKEMKeypairFromSeed(
+    mut env: JNIEnv,
+    _class: JClass,
+    seed: JByteArray,
+) -> jbyteArray {
+    catch_panic!(env, {
+        let seed_vec = match jbytearray_to_vec(&mut env, seed) {
+            Ok(v) => v,
+            Err(e) => {
+                let _ = env.throw_new("java/lang/IllegalArgumentException", e);
+                return std::ptr::null_mut();
+            }
+        };
+
+        if seed_vec.len() != 32 {
+            let _ = env.throw_new(
+                "java/lang/IllegalArgumentException",
+                "Seed must be 32 bytes"
+            );
+            return std::ptr::null_mut();
+        }
+
+        let mut seed_array = [0u8; 32];
+        seed_array.copy_from_slice(&seed_vec);
+
+        match crate::crypto::generate_hybrid_keypair_from_seed(&seed_array) {
+            Ok(keypair) => {
+                let serialized = keypair.to_bytes();
+                match vec_to_jbytearray(&mut env, &serialized) {
+                    Ok(arr) => arr.into_raw(),
+                    Err(e) => {
+                        let _ = env.throw_new("java/lang/RuntimeException", e);
+                        std::ptr::null_mut()
+                    }
+                }
+            }
+            Err(e) => {
+                let _ = env.throw_new(
+                    "java/lang/RuntimeException",
+                    format!("Failed to generate hybrid keypair: {}", e)
+                );
+                std::ptr::null_mut()
+            }
+        }
+    }, std::ptr::null_mut())
+}
+
+/// Hybrid encapsulation (X25519 + Kyber-1024)
+/// @param theirX25519Public Their X25519 public key (32 bytes)
+/// @param theirKyberPublic Their Kyber public key (1568 bytes)
+/// @return [combined_secret:64][x25519_ephemeral:32][kyber_ciphertext:1568]
+#[no_mangle]
+pub extern "C" fn Java_com_securelegion_crypto_RustBridge_hybridEncapsulate(
+    mut env: JNIEnv,
+    _class: JClass,
+    their_x25519_public: JByteArray,
+    their_kyber_public: JByteArray,
+) -> jbyteArray {
+    catch_panic!(env, {
+        let x25519_pub = match jbytearray_to_vec(&mut env, their_x25519_public) {
+            Ok(v) => v,
+            Err(e) => {
+                let _ = env.throw_new("java/lang/IllegalArgumentException", e);
+                return std::ptr::null_mut();
+            }
+        };
+
+        let kyber_pub = match jbytearray_to_vec(&mut env, their_kyber_public) {
+            Ok(v) => v,
+            Err(e) => {
+                let _ = env.throw_new("java/lang/IllegalArgumentException", e);
+                return std::ptr::null_mut();
+            }
+        };
+
+        if x25519_pub.len() != 32 {
+            let _ = env.throw_new(
+                "java/lang/IllegalArgumentException",
+                "X25519 public key must be 32 bytes"
+            );
+            return std::ptr::null_mut();
+        }
+
+        if kyber_pub.len() != 1568 {
+            let _ = env.throw_new(
+                "java/lang/IllegalArgumentException",
+                "Kyber public key must be 1568 bytes"
+            );
+            return std::ptr::null_mut();
+        }
+
+        let mut x25519_array = [0u8; 32];
+        x25519_array.copy_from_slice(&x25519_pub);
+
+        let mut kyber_array = [0u8; 1568];
+        kyber_array.copy_from_slice(&kyber_pub);
+
+        match crate::crypto::hybrid_encapsulate(&x25519_array, &kyber_array) {
+            Ok((combined_secret, ciphertext)) => {
+                // Serialize: [combined_secret:64][ciphertext]
+                let mut result = Vec::with_capacity(64 + ciphertext.to_bytes().len());
+                result.extend_from_slice(&combined_secret);
+                result.extend_from_slice(&ciphertext.to_bytes());
+
+                match vec_to_jbytearray(&mut env, &result) {
+                    Ok(arr) => arr.into_raw(),
+                    Err(e) => {
+                        let _ = env.throw_new("java/lang/RuntimeException", e);
+                        std::ptr::null_mut()
+                    }
+                }
+            }
+            Err(e) => {
+                let _ = env.throw_new(
+                    "java/lang/RuntimeException",
+                    format!("Encapsulation failed: {}", e)
+                );
+                std::ptr::null_mut()
+            }
+        }
+    }, std::ptr::null_mut())
+}
+
+/// Hybrid decapsulation (X25519 + Kyber-1024)
+/// @param ourX25519Secret Our X25519 secret key (32 bytes)
+/// @param ourKyberSecret Our Kyber secret key (3168 bytes)
+/// @param ciphertext Combined ciphertext (1600 bytes: 32 + 1568)
+/// @return Combined secret (64 bytes)
+#[no_mangle]
+pub extern "C" fn Java_com_securelegion_crypto_RustBridge_hybridDecapsulate(
+    mut env: JNIEnv,
+    _class: JClass,
+    our_x25519_secret: JByteArray,
+    our_kyber_secret: JByteArray,
+    ciphertext: JByteArray,
+) -> jbyteArray {
+    catch_panic!(env, {
+        let x25519_sec = match jbytearray_to_vec(&mut env, our_x25519_secret) {
+            Ok(v) => v,
+            Err(e) => {
+                let _ = env.throw_new("java/lang/IllegalArgumentException", e);
+                return std::ptr::null_mut();
+            }
+        };
+
+        let kyber_sec = match jbytearray_to_vec(&mut env, our_kyber_secret) {
+            Ok(v) => v,
+            Err(e) => {
+                let _ = env.throw_new("java/lang/IllegalArgumentException", e);
+                return std::ptr::null_mut();
+            }
+        };
+
+        let ct = match jbytearray_to_vec(&mut env, ciphertext) {
+            Ok(v) => v,
+            Err(e) => {
+                let _ = env.throw_new("java/lang/IllegalArgumentException", e);
+                return std::ptr::null_mut();
+            }
+        };
+
+        if x25519_sec.len() != 32 {
+            let _ = env.throw_new(
+                "java/lang/IllegalArgumentException",
+                "X25519 secret must be 32 bytes"
+            );
+            return std::ptr::null_mut();
+        }
+
+        if kyber_sec.len() != 3168 {
+            let _ = env.throw_new(
+                "java/lang/IllegalArgumentException",
+                "Kyber secret must be 3168 bytes"
+            );
+            return std::ptr::null_mut();
+        }
+
+        if ct.len() != 1600 {
+            let _ = env.throw_new(
+                "java/lang/IllegalArgumentException",
+                "Ciphertext must be 1600 bytes (32 + 1568)"
+            );
+            return std::ptr::null_mut();
+        }
+
+        let mut x25519_array = [0u8; 32];
+        x25519_array.copy_from_slice(&x25519_sec);
+
+        let mut kyber_array = [0u8; 3168];
+        kyber_array.copy_from_slice(&kyber_sec);
+
+        let hybrid_ct = match crate::crypto::HybridCiphertext::from_bytes(&ct) {
+            Ok(ct) => ct,
+            Err(e) => {
+                let _ = env.throw_new(
+                    "java/lang/IllegalArgumentException",
+                    format!("Invalid ciphertext: {}", e)
+                );
+                return std::ptr::null_mut();
+            }
+        };
+
+        match crate::crypto::hybrid_decapsulate(&x25519_array, &kyber_array, &hybrid_ct) {
+            Ok(combined_secret) => {
+                match vec_to_jbytearray(&mut env, &combined_secret) {
+                    Ok(arr) => arr.into_raw(),
+                    Err(e) => {
+                        let _ = env.throw_new("java/lang/RuntimeException", e);
+                        std::ptr::null_mut()
+                    }
+                }
+            }
+            Err(e) => {
+                let _ = env.throw_new(
+                    "java/lang/RuntimeException",
+                    format!("Decapsulation failed: {}", e)
+                );
+                std::ptr::null_mut()
+            }
+        }
+    }, std::ptr::null_mut())
+}
+
+// ==================== END HYBRID POST-QUANTUM CRYPTOGRAPHY ====================
 
 /// Encrypt message with key evolution (for messaging)
 /// ATOMIC OPERATION: Returns both encrypted message and evolved key
@@ -5130,16 +5376,40 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_startAckListener(
         log::info!("Starting ACK listener on port {}...", port);
 
         let tor_manager = get_tor_manager();
-        let runtime = GLOBAL_RUNTIME.handle();
 
-        match runtime.block_on(async {
+        // Run async listener start using the global runtime
+        let result = GLOBAL_RUNTIME.block_on(async {
             let mut manager = tor_manager.lock().unwrap();
             manager.start_listener(Some(port as u16)).await
-        }) {
-            Ok(rx) => {
-                // Store receiver in global static
+        });
+
+        match result {
+            Ok(mut receiver) => {
+                // Create shared channel for ACK messages
+                // This channel is accessible from both port 9153 (normal path) and port 8080 (error recovery)
+                let (tx, rx) = mpsc::unbounded_channel::<(u64, Vec<u8>)>();
+
+                // Store receiver globally for polling
                 let _ = GLOBAL_ACK_RECEIVER.set(Arc::new(Mutex::new(rx)));
-                log::info!("ACK listener started successfully on port {}", port);
+
+                // Store sender globally so port 8080 can route misrouted ACKs
+                let _ = crate::network::tor::ACK_TX.set(Arc::new(std::sync::Mutex::new(tx.clone())));
+
+                // Spawn task to receive from TorManager listener and forward to shared ACK channel
+                GLOBAL_RUNTIME.spawn(async move {
+                    while let Some((connection_id, ack_bytes)) = receiver.recv().await {
+                        log::info!("Received ACK via port 9153 listener: {} bytes", ack_bytes.len());
+
+                        // Forward to shared ACK channel
+                        if let Err(e) = tx.send((connection_id, ack_bytes)) {
+                            log::error!("Failed to send ACK to shared channel: {}", e);
+                            break;
+                        }
+                    }
+                    log::warn!("ACK listener receiver closed");
+                });
+
+                log::info!("ACK listener started successfully on port {} with shared channel", port);
                 1 // success
             }
             Err(e) => {
@@ -5745,8 +6015,8 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_createFriendRequestHid
     }, std::ptr::null_mut())
 }
 
-/// Start the friend request HTTP server on the specified port
-/// Returns true if server started successfully
+/// Start the contact exchange endpoint on the specified port
+/// Returns true if endpoint started successfully
 #[no_mangle]
 pub extern "C" fn Java_com_securelegion_crypto_RustBridge_startFriendRequestServer(
     mut env: JNIEnv,
@@ -5754,17 +6024,17 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_startFriendRequestServ
     port: jint,
 ) -> jboolean {
     catch_panic!(env, {
-        log::info!("Starting friend request server on port {}", port);
+        log::info!("Starting contact exchange endpoint on port {}", port);
 
-        // Start server in background tokio runtime
+        // Start contact exchange endpoint in background tokio runtime
         std::thread::spawn(move || {
             let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
             rt.block_on(async {
-                let server = crate::network::friend_request_server::get_server().await;
-                if let Err(e) = server.start(port as u16).await {
-                    log::error!("Failed to start friend request server: {}", e);
+                let endpoint = crate::network::friend_request_server::get_endpoint().await;
+                if let Err(e) = endpoint.start(port as u16).await {
+                    log::error!("Failed to start contact exchange endpoint: {}", e);
                 } else {
-                    log::info!("Friend request server started successfully on port {}", port);
+                    log::info!("Contact exchange endpoint started successfully on port {}", port);
                 }
             });
         });
@@ -5773,22 +6043,22 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_startFriendRequestServ
     }, 0)
 }
 
-/// Stop the friend request HTTP server
+/// Stop the contact exchange endpoint
 #[no_mangle]
 pub extern "C" fn Java_com_securelegion_crypto_RustBridge_stopFriendRequestServer(
     mut env: JNIEnv,
     _class: JClass,
 ) {
     catch_panic!(env, {
-        log::info!("Stopping friend request server");
+        log::info!("Stopping contact exchange endpoint");
 
-        // Stop server in background task
+        // Stop endpoint in background task
         std::thread::spawn(|| {
             let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
             rt.block_on(async {
-                let server = crate::network::friend_request_server::get_server().await;
-                server.stop().await;
-                log::info!("Friend request server stopped");
+                let endpoint = crate::network::friend_request_server::get_endpoint().await;
+                endpoint.stop().await;
+                log::info!("Contact exchange endpoint stopped");
             });
         });
 
@@ -5823,20 +6093,20 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_serveContactCard(
 
         log::info!("Storing encrypted contact card (CID: {}, length: {})", cid_str, card_length);
 
-        // Store card in server state
+        // Store card in endpoint state
         std::thread::spawn(move || {
             let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
             rt.block_on(async {
-                let server = crate::network::friend_request_server::get_server().await;
-                server.set_contact_card(card_bytes, cid_str).await;
-                log::info!("Contact card stored in friend request server");
+                let endpoint = crate::network::friend_request_server::get_endpoint().await;
+                endpoint.set_contact_card(card_bytes, cid_str).await;
+                log::info!("Contact card stored in contact exchange endpoint");
             });
         });
 
     }, ())
 }
 
-/// Serve contact list on the friend request HTTP server (v5 architecture)
+/// Serve contact list on the contact exchange endpoint (v5 architecture)
 #[no_mangle]
 pub extern "C" fn Java_com_securelegion_crypto_RustBridge_serveContactList(
     mut env: JNIEnv,
@@ -5864,13 +6134,13 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_serveContactList(
 
         log::info!("Storing encrypted contact list (CID: {}, length: {})", cid_str, list_length);
 
-        // Store contact list in server state
+        // Store contact list in endpoint state
         std::thread::spawn(move || {
             let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
             rt.block_on(async {
-                let server = crate::network::friend_request_server::get_server().await;
-                server.set_contact_list(cid_str, list_bytes).await;
-                log::info!("Contact list stored in friend request server");
+                let endpoint = crate::network::friend_request_server::get_endpoint().await;
+                endpoint.set_contact_list(cid_str, list_bytes).await;
+                log::info!("Contact list stored in contact exchange endpoint");
             });
         });
 
@@ -5924,8 +6194,8 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_pollFriendResponse(
         let result = std::thread::spawn(|| {
             let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
             rt.block_on(async {
-                let server = crate::network::friend_request_server::get_server().await;
-                server.poll_response().await
+                let endpoint = crate::network::friend_request_server::get_endpoint().await;
+                endpoint.poll_response().await
             })
         }).join();
 
@@ -6123,7 +6393,7 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_setVoiceSignalingCallb
     }, ())
 }
 
-/// Start voice streaming server on port 9152 (v2.0)
+/// Start voice streaming listener on port 9152 (v2.0)
 /// Must be called before accepting or creating voice sessions
 #[no_mangle]
 pub extern "C" fn Java_com_securelegion_crypto_RustBridge_startVoiceStreamingServer(
@@ -6131,18 +6401,18 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_startVoiceStreamingSer
     _class: JClass,
 ) {
     catch_panic!(env, {
-        let voice_server = get_voice_streaming_server();
+        let voice_listener = get_voice_listener();
 
         // Get JavaVM for callback invocations (get twice since JavaVM doesn't implement Clone)
         let jvm_audio = env.get_java_vm().expect("Failed to get JavaVM");
         let jvm_signaling = env.get_java_vm().expect("Failed to get JavaVM");
 
-        // Start server in background task
+        // Start listener in background task
         GLOBAL_RUNTIME.spawn(async move {
-            // Set audio callback (must be done before starting server)
+            // Set audio callback (must be done before starting listener)
             {
-                let mut server = voice_server.lock().await;
-                server.set_audio_callback(move |call_id: String, packet: crate::audio::voice_streaming::VoicePacket| {
+                let mut listener = voice_listener.lock().await;
+                listener.set_audio_callback(move |call_id: String, packet: crate::audio::voice_streaming::VoicePacket| {
                 // Get JNI environment (attach thread if needed)
                 let mut env = match jvm_audio.attach_current_thread() {
                     Ok(env) => env,
@@ -6201,7 +6471,7 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_startVoiceStreamingSer
                 });
 
                 // Set signaling callback for HTTP POST messages (CALL_OFFER, CALL_ANSWER, etc)
-                server.set_signaling_callback(move |sender_pubkey: Vec<u8>, wire_message: Vec<u8>| {
+                listener.set_signaling_callback(move |sender_pubkey: Vec<u8>, wire_message: Vec<u8>| {
                     // Get JNI environment (attach thread if needed)
                     let mut env = match jvm_signaling.attach_current_thread() {
                         Ok(env) => env,
@@ -6258,13 +6528,13 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_startVoiceStreamingSer
                 });
             } // Drop MutexGuard here
 
-            // Start server
-            if let Err(e) = voice_server.lock().await.start().await {
-                log::error!("Failed to start voice streaming server: {}", e);
+            // Start listener
+            if let Err(e) = voice_listener.lock().await.start().await {
+                log::error!("Failed to start voice streaming listener: {}", e);
                 return;
             }
 
-            log::info!("Voice streaming server started on port 9152");
+            log::info!("Voice streaming listener started on port 9152");
 
             // Note: start() now spawns its own accept task internally,
             // so we don't need to do anything else here
@@ -6304,12 +6574,12 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_createVoiceSession(
         log::info!("Creating voice session with {} circuits for call: {} to {}",
                    num_circuits_usize, call_id_str, peer_onion_str);
 
-        let voice_server = get_voice_streaming_server();
+        let voice_listener = get_voice_listener();
 
         // Create session using global runtime
         let result = GLOBAL_RUNTIME.block_on(async {
-            let mut server = voice_server.lock().await;
-            server.create_session(call_id_str.clone(), &peer_onion_str, num_circuits_usize).await
+            let mut listener = voice_listener.lock().await;
+            listener.create_session(call_id_str.clone(), &peer_onion_str, num_circuits_usize).await
         });
 
         match result {
@@ -6369,10 +6639,10 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendAudioPacket(
             redundant_sequence: 0,              // Phase 3: Will be populated by sender task
         };
 
-        let voice_server = get_voice_streaming_server();
-        let server = voice_server.blocking_lock();
+        let voice_listener = get_voice_listener();
+        let listener = voice_listener.blocking_lock();
 
-        match server.send_audio(&call_id_str, circuit_index as usize, packet) {
+        match listener.send_audio(&call_id_str, circuit_index as usize, packet) {
             Ok(_) => 1,
             Err(e) => {
                 log::warn!("Failed to send audio packet for call {} on circuit {}: {}", call_id_str, circuit_index, e);
@@ -6400,9 +6670,9 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_endVoiceSession(
 
         log::info!("Ending voice session for call: {}", call_id_str);
 
-        let voice_server = get_voice_streaming_server();
-        let server = voice_server.blocking_lock();
-        server.end_session(&call_id_str);
+        let voice_listener = get_voice_listener();
+        let listener = voice_listener.blocking_lock();
+        listener.end_session(&call_id_str);
     }, ())
 }
 
@@ -6412,9 +6682,9 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_getActiveVoiceSessions
     _env: JNIEnv,
     _class: JClass,
 ) -> jint {
-    let voice_server = get_voice_streaming_server();
-    let server = voice_server.blocking_lock();
-    server.active_sessions() as jint
+    let voice_listener = get_voice_listener();
+    let listener = voice_listener.blocking_lock();
+    listener.active_sessions() as jint
 }
 
 /// Rebuild a specific voice circuit (close and reconnect with fresh Tor path)
@@ -6444,10 +6714,10 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_rebuildVoiceCircuit(
 
         // Rebuild circuit via async runtime
         let result = GLOBAL_RUNTIME.block_on(async {
-            let voice_server = get_voice_streaming_server();
-            let mut server = voice_server.lock().await;
+            let voice_listener = get_voice_listener();
+            let mut listener = voice_listener.lock().await;
 
-            server.rebuild_circuit(&call_id_str, circuit_index as usize, rebuild_epoch as u32).await
+            listener.rebuild_circuit(&call_id_str, circuit_index as usize, rebuild_epoch as u32).await
         });
 
         match result {

@@ -1,10 +1,10 @@
-/// Contact Card HTTP Server (v2.0 + v5 Contact List Backup)
+/// Contact Exchange Endpoint (v2.0 + v5 Contact List Backup)
 ///
-/// Lightweight HTTP server that runs on localhost and serves:
+/// P2P endpoint that listens on localhost and serves contact data:
 /// - GET /contact-card - Returns encrypted contact card
 /// - GET /contact-list/{cid} - Returns encrypted contact list (v5 architecture)
 ///
-/// This server is accessible via the friend request .onion address.
+/// This endpoint is accessible via the friend request .onion address.
 /// Friend requests are handled by the v1.0 wire protocol (0x07/0x08) on messaging .onion.
 
 use std::sync::Arc;
@@ -13,19 +13,19 @@ use tokio::sync::Mutex;
 use tokio::net::TcpListener;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-/// Global state for the contact card server
-pub struct FriendRequestServer {
+/// Global state for the contact exchange endpoint
+pub struct ContactExchangeEndpoint {
     /// The encrypted contact card to serve
     contact_card: Arc<Mutex<Option<Vec<u8>>>>,
     /// IPFS CID for the contact card
     cid: Arc<Mutex<Option<String>>>,
     /// Contact lists (CID → encrypted data) for v5 architecture
     contact_lists: Arc<Mutex<HashMap<String, Vec<u8>>>>,
-    /// Server shutdown signal
+    /// Endpoint shutdown signal
     shutdown: Arc<Mutex<bool>>,
 }
 
-impl FriendRequestServer {
+impl ContactExchangeEndpoint {
     pub fn new() -> Self {
         Self {
             contact_card: Arc::new(Mutex::new(None)),
@@ -58,14 +58,14 @@ impl FriendRequestServer {
         log::info!("Contact list stored for CID: {} ({} bytes)", cid, list_len);
     }
 
-    /// Start the HTTP server on the specified port
+    /// Start the contact exchange listener on the specified port
     pub async fn start(&self, port: u16) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let addr = format!("127.0.0.1:{}", port);
         let listener = TcpListener::bind(&addr).await?;
 
-        log::info!("Contact card server listening on {}", addr);
+        log::info!("Contact exchange endpoint listening on {}", addr);
 
-        // Clone Arc pointers for the server task
+        // Clone Arc pointers for the listener task
         let contact_card = self.contact_card.clone();
         let cid = self.cid.clone();
         let contact_lists = self.contact_lists.clone();
@@ -77,7 +77,7 @@ impl FriendRequestServer {
                 {
                     let shutdown_lock = shutdown.lock().await;
                     if *shutdown_lock {
-                        log::info!("Contact card server shutting down");
+                        log::info!("Contact exchange endpoint shutting down");
                         break;
                     }
                 }
@@ -110,24 +110,24 @@ impl FriendRequestServer {
         Ok(())
     }
 
-    /// Stop the server
+    /// Stop the listener
     pub async fn stop(&self) {
         let mut shutdown_lock = self.shutdown.lock().await;
         *shutdown_lock = true;
-        log::info!("Contact card server stop signal sent");
+        log::info!("Contact exchange endpoint stop signal sent");
     }
 
     /// Poll for incoming friend request (stub - friend requests handled by wire protocol)
     /// Friend requests are processed via v1.0 wire protocol (0x07/0x08) on messaging .onion
     pub async fn poll_request(&self) -> Option<FriendRequest> {
-        // Friend requests are handled by TorService wire protocol, not HTTP server
+        // Friend requests are handled by TorService wire protocol, not contact exchange endpoint
         None
     }
 
     /// Poll for friend request response (stub - friend requests handled by wire protocol)
     /// Friend request responses are processed via v1.0 wire protocol (0x07/0x08) on messaging .onion
     pub async fn poll_response(&self) -> Option<FriendResponse> {
-        // Friend request responses are handled by TorService wire protocol, not HTTP server
+        // Friend request responses are handled by TorService wire protocol, not contact exchange endpoint
         None
     }
 }
@@ -149,7 +149,7 @@ pub struct FriendResponse {
     pub approved: bool,
 }
 
-/// Handle an individual HTTP connection
+/// Handle incoming contact fetch request from peer
 async fn handle_connection(
     socket: &mut tokio::net::TcpStream,
     contact_card: Arc<Mutex<Option<Vec<u8>>>>,
@@ -248,12 +248,12 @@ async fn handle_connection(
     Ok(())
 }
 
-// Global server instance
+// Global endpoint instance
 use once_cell::sync::Lazy;
-static GLOBAL_SERVER: Lazy<Arc<FriendRequestServer>> =
-    Lazy::new(|| Arc::new(FriendRequestServer::new()));
+static GLOBAL_ENDPOINT: Lazy<Arc<ContactExchangeEndpoint>> =
+    Lazy::new(|| Arc::new(ContactExchangeEndpoint::new()));
 
-/// Get the global server instance
-pub async fn get_server() -> Arc<FriendRequestServer> {
-    GLOBAL_SERVER.clone()
+/// Get the global contact exchange endpoint instance
+pub async fn get_endpoint() -> Arc<ContactExchangeEndpoint> {
+    GLOBAL_ENDPOINT.clone()
 }

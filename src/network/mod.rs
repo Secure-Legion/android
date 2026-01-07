@@ -17,5 +17,5 @@ pub use pingpong::{
     cleanup_expired_acks,
 };
 pub use tor::{TorManager, PENDING_CONNECTIONS, PendingConnection};
-pub use friend_request_server::{FriendRequestServer, get_server};
+pub use friend_request_server::{ContactExchangeEndpoint, get_endpoint};
 pub use socks5_client::Socks5Client;

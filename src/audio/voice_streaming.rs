@@ -1,9 +1,9 @@
-/// Voice Streaming Server for SecureLegion (v2.0)
+/// Voice Streaming Listener for SecureLegion (v2.0)
 ///
 /// Handles bidirectional voice streaming over Tor hidden services
-/// - Runs on port 9152 (voice .onion address)
+/// - Listens on port 9152 (voice .onion address)
 /// - Uses Opus codec for audio compression
-/// - Server-based architecture: each device runs a server, peer connects as client
+/// - P2P architecture: each device runs a listener, peers connect directly
 /// - Real-time audio packet streaming with encryption
 /// - VOICE_HELLO/OK handshake ensures both sides ready before audio starts
 
@@ -102,10 +102,10 @@ impl VoiceSession {
     }
 }
 
-/// Voice Streaming Server
+/// Voice Streaming Listener
 /// Listens on port 9152 for incoming voice connections
 /// Handles BOTH call signaling (HTTP POST) and audio streaming (raw TCP)
-pub struct VoiceStreamingServer {
+pub struct VoiceStreamingListener {
     /// TCP listener
     pub listener: Option<TcpListener>,
     /// Active sessions (keyed by call ID, vector contains one session per circuit)
@@ -117,10 +117,10 @@ pub struct VoiceStreamingServer {
     pub signaling_callback: Option<Arc<dyn Fn(Vec<u8>, Vec<u8>) + Send + Sync>>,
 }
 
-impl VoiceStreamingServer {
-    /// Create new voice streaming server
+impl VoiceStreamingListener {
+    /// Create new voice streaming listener
     pub fn new() -> Self {
-        VoiceStreamingServer {
+        VoiceStreamingListener {
             listener: None,
             sessions: Arc::new(Mutex::new(HashMap::new())),
             audio_callback: None,
@@ -128,11 +128,11 @@ impl VoiceStreamingServer {
         }
     }
 
-    /// Start server on port 9152
+    /// Start listener on port 9152
     /// This also spawns a background task to accept incoming connections
     pub async fn start(&mut self) -> Result<(), Box<dyn Error>> {
         let listener = TcpListener::bind("127.0.0.1:9152").await?;
-        log::info!("Voice streaming server started on 127.0.0.1:9152");
+        log::info!("Voice streaming listener started on 127.0.0.1:9152");
 
         // Store listener temporarily
         self.listener = Some(listener);
@@ -140,7 +140,7 @@ impl VoiceStreamingServer {
         // Take listener out (we'll move it into the background task)
         let listener = self.listener.take().unwrap();
 
-        // Clone shared state so task doesn't need to hold server lock
+        // Clone shared state so task doesn't need to hold lock
         let sessions = self.sessions.clone();
         let audio_callback = self.audio_callback.clone();
         let signaling_callback = self.signaling_callback.clone();
@@ -200,7 +200,7 @@ impl VoiceStreamingServer {
     /// Accept incoming connections (run in loop)
     pub async fn accept_connections(&mut self) -> Result<(), Box<dyn Error>> {
         let listener = self.listener.as_ref()
-            .ok_or("Server not started")?;
+            .ok_or("Listener not started")?;
 
         loop {
             let (mut socket, addr) = listener.accept().await?;
@@ -982,8 +982,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_server_creation() {
-        let server = VoiceStreamingServer::new();
-        assert_eq!(server.active_sessions(), 0);
+    async fn test_listener_creation() {
+        let listener = VoiceStreamingListener::new();
+        assert_eq!(listener.active_sessions(), 0);
     }
 }

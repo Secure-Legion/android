@@ -118,13 +118,13 @@ pub fn generate_key() -> [u8; 32] {
 /// Derive root key from X25519 shared secret using HKDF-SHA256
 ///
 /// # Arguments
-/// * `shared_secret` - 32-byte X25519 shared secret
+/// * `shared_secret` - 32-byte X25519 shared secret OR 64-byte hybrid X25519+Kyber combined secret
 /// * `info` - Context information (e.g., "SecureLegion-RootKey-v1")
 ///
 /// # Returns
 /// 32-byte root key for initializing key chains
 pub fn derive_root_key(shared_secret: &[u8], info: &[u8]) -> Result<[u8; 32]> {
-    if shared_secret.len() != 32 {
+    if shared_secret.len() != 32 && shared_secret.len() != 64 {
         return Err(EncryptionError::InvalidKeyLength);
     }
 
