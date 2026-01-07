@@ -1831,7 +1831,10 @@ class TorService : Service() {
                                 intent.putExtra("CONTACT_ID", message.contactId)
                                 sendBroadcast(intent)
                                 Log.i(TAG, "✓ Broadcast MESSAGE_RECEIVED for PING_ACK (contact ${message.contactId})")
-                                message.copy(pingDelivered = true)
+                                message.copy(
+                                    pingDelivered = true,
+                                    status = com.securelegion.database.entities.Message.STATUS_PING_SENT
+                                )
                             }
                             "MESSAGE_ACK" -> {
                                 Log.i(TAG, "✓ Received MESSAGE_ACK for message ${message.messageId}")

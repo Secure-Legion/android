@@ -528,7 +528,9 @@ class MainActivity : BaseActivity() {
                                 unreadCount = unreadCount + pendingPings.size,  // Add count of ALL pending pings
                                 isOnline = false,
                                 avatar = contact.displayName.firstOrNull()?.toString()?.uppercase() ?: "?",
-                                securityBadge = ""
+                                securityBadge = "",
+                                lastMessageStatus = if (lastMessage != null && lastMessage.isSentByMe) lastMessage.status else 0,
+                                lastMessageIsSent = lastMessage?.isSentByMe ?: false
                             )
                             val timestamp = if (lastMessage != null) lastMessage.timestamp else System.currentTimeMillis()
                             chatsList.add(Pair(chat, timestamp))

@@ -53,7 +53,8 @@
                 android:layout_height="wrap_content"
                 android:text="Message content"
                 android:textColor="@color/text_white"
-                android:textSize="15sp"
+                android:textSize="17sp"
+                android:fontFamily="sans-serif-medium"
                 android:lineSpacingMultiplier="1.2" />
 
         </LinearLayout>

@@ -67,15 +67,34 @@
                     android:textColor="@color/text_white"
                     android:fontFamily="@font/poppins_medium" />
 
-                <TextView
-                    android:id="@+id/chatTime"
+                <!-- Time and Status Column -->
+                <LinearLayout
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="1m ago"
-                    android:textSize="13sp"
-                    android:textColor="@color/text_gray"
-                    android:fontFamily="@font/poppins_regular"
-                    android:layout_marginStart="8dp" />
+                    android:orientation="vertical"
+                    android:gravity="end"
+                    android:layout_marginStart="8dp">
+
+                    <TextView
+                        android:id="@+id/chatTime"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="1m ago"
+                        android:textSize="13sp"
+                        android:textColor="@color/text_gray"
+                        android:fontFamily="@font/poppins_regular" />
+
+                    <!-- Message status indicator -->
+                    <ImageView
+                        android:id="@+id/chatMessageStatus"
+                        android:layout_width="12dp"
+                        android:layout_height="12dp"
+                        android:src="@drawable/status_pending"
+                        android:layout_marginTop="4dp"
+                        android:contentDescription="Message status"
+                        android:visibility="visible" />
+
+                </LinearLayout>
 
             </LinearLayout>
 

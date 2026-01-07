@@ -41,6 +41,28 @@ class MessageService(private val context: Context) {
         private const val TAG = "MessageService"
 
         /**
+         * Buffered out-of-order message waiting for gap to fill
+         */
+        data class BufferedMessage(
+            val sequence: Long,
+            val encryptedData: String,
+            val senderPublicKey: ByteArray,
+            val senderOnionAddress: String,
+            val messageType: String,
+            val voiceDuration: Int?,
+            val selfDestructAt: Long?,
+            val requiresReadReceipt: Boolean,
+            val pingId: String?,
+            val timestamp: Long
+        )
+
+        /**
+         * Buffer for out-of-order messages per contact
+         * Key: contactId, Value: Map of sequence -> BufferedMessage
+         */
+        private val messageBuffer = java.util.concurrent.ConcurrentHashMap<Long, java.util.concurrent.ConcurrentHashMap<Long, BufferedMessage>>()
+
+        /**
          * Generate a cryptographically random 24-byte nonce for ping ID
          * Returns hex-encoded string (48 characters)
          * This matches the format Rust PingToken expects
@@ -179,7 +201,7 @@ class MessageService(private val context: Context) {
                 voiceFilePath = voiceFilePath,
                 isSentByMe = true,
                 timestamp = currentTime,
-                status = Message.STATUS_PING_SENT,
+                status = Message.STATUS_PENDING,
                 signatureBase64 = signatureBase64,
                 nonceBase64 = nonceBase64,
                 selfDestructAt = selfDestructAt,
@@ -332,7 +354,7 @@ class MessageService(private val context: Context) {
                 attachmentData = imageBase64, // Store original for display
                 isSentByMe = true,
                 timestamp = currentTime,
-                status = Message.STATUS_PING_SENT,
+                status = Message.STATUS_PENDING,
                 signatureBase64 = signatureBase64,
                 nonceBase64 = nonceBase64,
                 selfDestructAt = selfDestructAt,
@@ -498,7 +520,7 @@ class MessageService(private val context: Context) {
                 encryptedContent = plaintext, // Store plaintext for now (will encrypt in future)
                 isSentByMe = true,
                 timestamp = currentTime,
-                status = Message.STATUS_PING_SENT, // Changed: Start as PING_SENT, not PENDING
+                status = Message.STATUS_PENDING, // Changed: Start as PING_SENT, not PENDING
                 signatureBase64 = signatureBase64,
                 nonceBase64 = nonceBase64,
                 selfDestructAt = selfDestructAt,
@@ -642,7 +664,7 @@ class MessageService(private val context: Context) {
                 messageType = Message.MESSAGE_TYPE_PAYMENT_REQUEST,
                 isSentByMe = true,
                 timestamp = currentTime,
-                status = Message.STATUS_PING_SENT,
+                status = Message.STATUS_PENDING,
                 signatureBase64 = signatureBase64,
                 nonceBase64 = nonceBase64,
                 pingId = pingId,
@@ -776,7 +798,7 @@ class MessageService(private val context: Context) {
                 messageType = Message.MESSAGE_TYPE_PAYMENT_SENT,
                 isSentByMe = true,
                 timestamp = currentTime,
-                status = Message.STATUS_PING_SENT,
+                status = Message.STATUS_PENDING,
                 signatureBase64 = signatureBase64,
                 nonceBase64 = nonceBase64,
                 pingId = pingId,
@@ -889,7 +911,7 @@ class MessageService(private val context: Context) {
                 messageType = Message.MESSAGE_TYPE_PAYMENT_ACCEPTED,
                 isSentByMe = true,
                 timestamp = currentTime,
-                status = Message.STATUS_PING_SENT,
+                status = Message.STATUS_PENDING,
                 signatureBase64 = signatureBase64,
                 nonceBase64 = nonceBase64,
                 pingId = pingId,
@@ -992,28 +1014,75 @@ class MessageService(private val context: Context) {
             val encryptedBytes = Base64.decode(encryptedData, Base64.NO_WRAP)
 
             // Extract sequence from wire format for logging
-            if (encryptedBytes.size >= 9) {
-                val messageSequence = java.nio.ByteBuffer.wrap(encryptedBytes.sliceArray(1..8)).long
+            val messageSequence = if (encryptedBytes.size >= 9) {
+                java.nio.ByteBuffer.wrap(encryptedBytes.sliceArray(1..8)).long
+            } else {
+                -1L
+            }
+
+            if (messageSequence >= 0) {
                 Log.d(TAG, "📨 Message sequence: $messageSequence (expecting: ${keyChain.receiveCounter})")
-                if (messageSequence != keyChain.receiveCounter) {
-                    Log.e(TAG, "❌ SEQUENCE MISMATCH: Message has sequence $messageSequence but we expect ${keyChain.receiveCounter}")
-                    Log.e(TAG, "   This usually means messages were sent but not received, causing key chain desync.")
+            }
+
+            // Try to decrypt with windowed sequence acceptance
+            val result = try {
+                RustBridge.decryptMessageWithEvolution(
+                    encryptedBytes,
+                    keyChain.receiveChainKeyBytes,
+                    keyChain.receiveCounter
+                )
+            } catch (e: Exception) {
+                val errorMsg = e.message ?: ""
+
+                when {
+                    errorMsg.contains("Out of order") -> {
+                        // Message is valid but out of order - buffer it
+                        Log.w(TAG, "⏳ OUT OF ORDER: Buffering message seq=$messageSequence (expected=${keyChain.receiveCounter})")
+
+                        val contactBuffer = messageBuffer.getOrPut(contact.id) {
+                            java.util.concurrent.ConcurrentHashMap()
+                        }
+
+                        contactBuffer[messageSequence] = BufferedMessage(
+                            sequence = messageSequence,
+                            encryptedData = encryptedData,
+                            senderPublicKey = senderPublicKey,
+                            senderOnionAddress = senderOnionAddress,
+                            messageType = messageType,
+                            voiceDuration = voiceDuration,
+                            selfDestructAt = selfDestructAt,
+                            requiresReadReceipt = requiresReadReceipt,
+                            pingId = pingId,
+                            timestamp = System.currentTimeMillis()
+                        )
+
+                        Log.d(TAG, "   Buffered. Waiting for seq=${keyChain.receiveCounter}. Buffer size: ${contactBuffer.size}")
+                        return@withContext Result.failure(Exception("Message buffered - out of order"))
+                    }
+
+                    errorMsg.contains("Replay attack") -> {
+                        // Sequence < expected - replay attack
+                        Log.e(TAG, "🚨 REPLAY ATTACK: $errorMsg")
+                        return@withContext Result.failure(Exception("Replay attack detected"))
+                    }
+
+                    errorMsg.contains("Sequence too far") -> {
+                        // Sequence >= expected + 100 - too far ahead
+                        Log.e(TAG, "⚠️ SEQUENCE TOO FAR: $errorMsg")
+                        return@withContext Result.failure(Exception("Sequence too far ahead - possible desync"))
+                    }
+
+                    else -> {
+                        // Other decryption errors
+                        Log.e(TAG, "❌ DECRYPTION FAILED: $errorMsg")
+                        return@withContext Result.failure(Exception("Failed to decrypt message: $errorMsg"))
+                    }
                 }
             }
 
-            val result = RustBridge.decryptMessageWithEvolution(
-                encryptedBytes,
-                keyChain.receiveChainKeyBytes,
-                keyChain.receiveCounter
-            )
-
             if (result == null) {
-                Log.e(TAG, "❌ DECRYPTION FAILED: RustBridge.decryptMessageWithEvolution returned null")
-                Log.e(TAG, "   Possible causes:")
-                Log.e(TAG, "   1. Sequence number mismatch (message sequence != receiveCounter)")
-                Log.e(TAG, "   2. Wrong encryption key (key chain desynchronized)")
-                Log.e(TAG, "   3. Corrupted ciphertext")
-                return@withContext Result.failure(Exception("Failed to decrypt message - sequence mismatch or corrupted data"))
+                Log.e(TAG, "❌ DECRYPTION FAILED: RustBridge returned null unexpectedly")
+                return@withContext Result.failure(Exception("Failed to decrypt message - null result"))
             }
 
             val decryptedData = result.plaintext
@@ -1258,6 +1327,10 @@ class MessageService(private val context: Context) {
             Log.d(TAG, "Sent explicit NEW_PING broadcast to refresh MainActivity chat list")
 
             Log.i(TAG, "$messageType message received and saved: ${message.messageId}")
+
+            // Process any buffered out-of-order messages that are now sequential
+            processBufferedMessages(contact.id, database)
+
             Result.success(message.copy(id = savedMessageId))
 
         } catch (e: Exception) {
@@ -1759,6 +1832,54 @@ class MessageService(private val context: Context) {
         } catch (e: Exception) {
             Log.e(TAG, "Failed to poll for Pongs", e)
             Result.failure(e)
+        }
+    }
+
+    /**
+     * Process buffered out-of-order messages after successfully decrypting a message
+     * This recursively processes buffered messages that are now in sequence
+     *
+     * @param contactId The contact whose messages to process
+     * @param database Database instance
+     */
+    private suspend fun processBufferedMessages(contactId: Long, database: SecureLegionDatabase) {
+        val contactBuffer = messageBuffer[contactId] ?: return
+
+        // Get current expected sequence number
+        val keyChain = KeyChainManager.getKeyChain(context, contactId) ?: return
+        val expectedSeq = keyChain.receiveCounter
+
+        // Check if we have the next sequential message buffered
+        val buffered = contactBuffer.remove(expectedSeq) ?: return
+
+        Log.d(TAG, "📦 Processing buffered message seq=$expectedSeq (buffer size: ${contactBuffer.size})")
+
+        // Recursively process this buffered message
+        try {
+            val result = receiveMessage(
+                encryptedData = buffered.encryptedData,
+                senderPublicKey = buffered.senderPublicKey,
+                senderOnionAddress = buffered.senderOnionAddress,
+                messageType = buffered.messageType,
+                voiceDuration = buffered.voiceDuration,
+                selfDestructAt = buffered.selfDestructAt,
+                requiresReadReceipt = buffered.requiresReadReceipt,
+                pingId = buffered.pingId
+            )
+
+            if (result.isSuccess) {
+                Log.d(TAG, "✅ Buffered message seq=$expectedSeq processed successfully")
+                // processBufferedMessages will be called recursively from receiveMessage
+            } else {
+                Log.w(TAG, "⚠️ Failed to process buffered message seq=$expectedSeq: ${result.exceptionOrNull()?.message}")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ Error processing buffered message seq=$expectedSeq", e)
+        }
+
+        // Clean up empty buffers
+        if (contactBuffer.isEmpty()) {
+            messageBuffer.remove(contactId)
         }
     }
 }

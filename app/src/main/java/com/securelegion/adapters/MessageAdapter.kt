@@ -204,7 +204,7 @@ class MessageAdapter(
         val timestampHeader: TextView = view.findViewById(R.id.timestampHeader)
         val messageBubble: LinearLayout = view.findViewById(R.id.messageBubble)
         val messageText: TextView = view.findViewById(R.id.messageText)
-        val messageStatus: TextView = view.findViewById(R.id.messageStatus)
+        val messageStatus: ImageView = view.findViewById(R.id.messageStatus)
         val swipeRevealedTime: TextView = view.findViewById(R.id.swipeRevealedTime)
         val messageCheckbox: CheckBox = view.findViewById(R.id.messageCheckbox)
     }
@@ -253,7 +253,7 @@ class MessageAdapter(
         val timestampHeader: TextView = view.findViewById(R.id.timestampHeader)
         val messageBubble: CardView = view.findViewById(R.id.messageBubble)
         val messageImage: ImageView = view.findViewById(R.id.messageImage)
-        val messageStatus: TextView = view.findViewById(R.id.messageStatus)
+        val messageStatus: ImageView = view.findViewById(R.id.messageStatus)
         val swipeRevealedTime: TextView = view.findViewById(R.id.swipeRevealedTime)
         val messageCheckbox: CheckBox = view.findViewById(R.id.messageCheckbox)
     }
@@ -274,7 +274,7 @@ class MessageAdapter(
         val paymentAmount: TextView = view.findViewById(R.id.paymentAmount)
         val paymentAmountUsd: TextView = view.findViewById(R.id.paymentAmountUsd)
         val paymentStatus: TextView = view.findViewById(R.id.paymentStatus)
-        val messageStatus: TextView = view.findViewById(R.id.messageStatus)
+        val messageStatus: ImageView = view.findViewById(R.id.messageStatus)
         val messageCheckbox: CheckBox = view.findViewById(R.id.messageCheckbox)
     }
 
@@ -453,7 +453,7 @@ class MessageAdapter(
 
     private fun bindSentMessage(holder: SentMessageViewHolder, message: Message, position: Int) {
         holder.messageText.text = message.encryptedContent
-        holder.messageStatus.text = getStatusIcon(message.status)
+        holder.messageStatus.setImageResource(getStatusIcon(message.status))
 
         // Show timestamp header if this is the first message or date changed
         if (shouldShowTimestampHeader(position)) {
@@ -807,7 +807,7 @@ class MessageAdapter(
             }
         }
 
-        holder.messageStatus.text = getStatusIcon(message.status)
+        holder.messageStatus.setImageResource(getStatusIcon(message.status))
 
         // Show timestamp header if this is the first message or date changed
         if (shouldShowTimestampHeader(position)) {
@@ -966,7 +966,7 @@ class MessageAdapter(
         holder.paymentStatus.setTextColor(statusColor)
 
         // Set message status
-        holder.messageStatus.text = getStatusIcon(message.status)
+        holder.messageStatus.setImageResource(getStatusIcon(message.status))
 
         // Show timestamp header if needed
         if (shouldShowTimestampHeader(position)) {
@@ -1220,7 +1220,7 @@ class MessageAdapter(
     private fun setupSwipeGestureForCard(
         bubble: CardView,
         timeView: TextView,
-        statusView: TextView?,
+        statusView: ImageView?,
         position: Int,
         isSent: Boolean
     ) {
@@ -1269,7 +1269,7 @@ class MessageAdapter(
     private fun setupSwipeGesture(
         bubble: View,
         timeView: TextView,
-        statusView: TextView?,
+        statusView: ImageView?,
         position: Int,
         isSent: Boolean
     ) {
@@ -1396,15 +1396,15 @@ class MessageAdapter(
         return sdf.format(Date(timestamp))
     }
 
-    private fun getStatusIcon(status: Int): String {
+    private fun getStatusIcon(status: Int): Int {
         return when (status) {
-            Message.STATUS_PENDING -> "○"  // Pending
-            Message.STATUS_PING_SENT -> "✓"     // Ping sent (1 checkmark)
-            Message.STATUS_SENT -> "✓"     // Sent (1 checkmark)
-            Message.STATUS_DELIVERED -> "✓✓" // Delivered (2 checkmarks)
-            Message.STATUS_READ -> "✓✓"    // Read (2 checkmarks)
-            Message.STATUS_FAILED -> "✗"   // Failed
-            else -> "✓"  // Default to single checkmark
+            Message.STATUS_PENDING -> R.drawable.status_pending  // Empty circle
+            Message.STATUS_PING_SENT -> R.drawable.status_sent     // Circle with 1 checkmark
+            Message.STATUS_SENT -> R.drawable.status_sent     // Circle with 1 checkmark
+            Message.STATUS_DELIVERED -> R.drawable.status_delivered // Solid circle with 2 checkmarks
+            Message.STATUS_READ -> R.drawable.status_delivered    // Solid circle with 2 checkmarks
+            Message.STATUS_FAILED -> R.drawable.status_failed   // Red circle with X
+            else -> R.drawable.status_sent  // Default to single checkmark
         }
     }
 
