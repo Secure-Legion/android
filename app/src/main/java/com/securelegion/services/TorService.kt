@@ -508,6 +508,21 @@ class TorService : Service() {
                 return
             }
 
+            // PHASE 1: Start ACK listener FIRST (port 9153)
+            // CRITICAL: Must start BEFORE main listener to avoid race condition
+            // This initializes ACK_TX channel so any ACKs arriving on port 8080 can be routed
+            Log.d(TAG, "Starting ACK listener on port 9153 (BEFORE main listener)...")
+            val ackSuccess = RustBridge.startAckListener(9153)
+            if (ackSuccess) {
+                Log.i(TAG, "ACK listener started successfully - ACK_TX channel initialized")
+            } else {
+                Log.w(TAG, "ACK listener already running")
+            }
+
+            // Start polling for incoming ACKs
+            startAckPoller()
+
+            // PHASE 2: Now safe to start main listener on port 8080
             Log.d(TAG, "Starting hidden service listener on port 8080...")
             val success = RustBridge.startHiddenServiceListener(8080)
             if (success) {
@@ -523,7 +538,7 @@ class TorService : Service() {
             startMessagePoller()
             startVoicePoller()
 
-            // PHASE 7: Start tap listener on port 9151
+            // PHASE 3: Start tap listener on port 9151
             Log.d(TAG, "Starting tap listener on port 9151...")
             val tapSuccess = RustBridge.startTapListener(9151)
             if (tapSuccess) {
@@ -535,7 +550,7 @@ class TorService : Service() {
             // Start polling for incoming taps
             startTapPoller()
 
-            // PHASE 7.5: Start friend request listener (separate channel to avoid interference)
+            // PHASE 4: Start friend request listener (separate channel to avoid interference)
             Log.d(TAG, "Starting friend request listener...")
             val friendRequestSuccess = RustBridge.startFriendRequestListener()
             if (friendRequestSuccess) {
@@ -553,18 +568,6 @@ class TorService : Service() {
 
             // Start periodic session cleanup (5-minute intervals)
             startSessionCleanup()
-
-            // PHASE 9: Start ACK listener on port 9153
-            Log.d(TAG, "Starting ACK listener on port 9153...")
-            val ackSuccess = RustBridge.startAckListener(9153)
-            if (ackSuccess) {
-                Log.i(TAG, "ACK listener started successfully")
-            } else {
-                Log.w(TAG, "ACK listener already running")
-            }
-
-            // Start polling for incoming ACKs
-            startAckPoller()
 
             // Ensure SOCKS proxy is running for outgoing connections
             ensureSocksProxyRunning()
@@ -1043,11 +1046,11 @@ class TorService : Service() {
                             val request = com.securelegion.models.PendingFriendRequest.fromJson(requestJson)
                             if (request.direction == com.securelegion.models.PendingFriendRequest.DIRECTION_OUTGOING) {
                                 val json = org.json.JSONObject(request.contactCardJson ?: "{}")
-                                // Phase 1 has "username", Phase 2 has different structure
-                                if (json.has("username")) {
-                                    hasOutgoingPhase1 = true
-                                } else {
+                                // Phase 2 saved state has "hybrid_shared_secret", Phase 1 doesn't
+                                if (json.has("hybrid_shared_secret")) {
                                     hasOutgoingPhase2 = true
+                                } else if (json.has("username")) {
+                                    hasOutgoingPhase1 = true
                                 }
                             }
                         } catch (e: Exception) {
@@ -1196,12 +1199,131 @@ class TorService : Service() {
 
             Log.i(TAG, "Phase 2 decrypted successfully")
 
-            // Parse ContactCard
-            val contactCard = com.securelegion.models.ContactCard.fromJson(decryptedJson)
+            // Try to parse as NEW Phase 2 format with signature (v2.1+)
+            var contactCard: com.securelegion.models.ContactCard? = null
+            var kyberCiphertext: ByteArray? = null
+
+            try {
+                val phase2Obj = org.json.JSONObject(decryptedJson)
+                if (phase2Obj.has("phase") && phase2Obj.getInt("phase") == 2) {
+                    // NEW Phase 2 format with signature
+                    Log.d(TAG, "Parsing NEW Phase 2 format with signature...")
+
+                    // Verify Ed25519 signature
+                    if (phase2Obj.has("signature") && phase2Obj.has("ed25519_public_key")) {
+                        val signature = android.util.Base64.decode(phase2Obj.getString("signature"), android.util.Base64.NO_WRAP)
+                        val senderEd25519PublicKey = android.util.Base64.decode(phase2Obj.getString("ed25519_public_key"), android.util.Base64.NO_WRAP)
+
+                        // Reconstruct unsigned JSON
+                        val unsignedJson = org.json.JSONObject().apply {
+                            put("contact_card", phase2Obj.getJSONObject("contact_card"))
+                            if (phase2Obj.has("kyber_ciphertext")) {
+                                put("kyber_ciphertext", phase2Obj.getString("kyber_ciphertext"))
+                            }
+                            put("phase", 2)
+                        }.toString()
+
+                        val signatureValid = RustBridge.verifySignature(
+                            unsignedJson.toByteArray(Charsets.UTF_8),
+                            signature,
+                            senderEd25519PublicKey
+                        )
+
+                        if (!signatureValid) {
+                            Log.e(TAG, "❌ Phase 2 signature verification FAILED - rejecting (possible MitM)")
+                            return
+                        }
+                        Log.i(TAG, "✓ Phase 2 signature verified (Ed25519)")
+                    }
+
+                    // Extract contact card and kyber ciphertext
+                    val contactCardJson = phase2Obj.getJSONObject("contact_card").toString()
+                    contactCard = com.securelegion.models.ContactCard.fromJson(contactCardJson)
+
+                    if (phase2Obj.has("kyber_ciphertext")) {
+                        val ciphertextBase64 = phase2Obj.getString("kyber_ciphertext")
+                        kyberCiphertext = android.util.Base64.decode(ciphertextBase64, android.util.Base64.NO_WRAP)
+                        Log.i(TAG, "✓ Phase 2 with Kyber ciphertext (${kyberCiphertext.size} bytes)")
+                    }
+                } else {
+                    // OLD Phase 2 format (plain ContactCard)
+                    contactCard = com.securelegion.models.ContactCard.fromJson(decryptedJson)
+                }
+            } catch (e: org.json.JSONException) {
+                // Fallback: Try parsing as plain ContactCard (old format)
+                Log.d(TAG, "Not Phase 2 wrapper, trying plain ContactCard format...")
+                contactCard = com.securelegion.models.ContactCard.fromJson(decryptedJson)
+            }
+
+            if (contactCard == null) {
+                Log.e(TAG, "Failed to parse ContactCard from Phase 2")
+                return
+            }
+
             Log.i(TAG, "✓ Friend request accepted by: ${contactCard.displayName}")
 
-            // Add to contacts database
-            addContactToDatabase(contactCard)
+            // Add to contacts database (WITHOUT key chain - we'll initialize it below)
+            val keyManager = com.securelegion.crypto.KeyManager.getInstance(this)
+            val dbPassphrase = keyManager.getDatabasePassphrase()
+            val database = com.securelegion.database.SecureLegionDatabase.getInstance(this, dbPassphrase)
+
+            val contact = com.securelegion.database.entities.Contact(
+                displayName = contactCard.displayName,
+                solanaAddress = contactCard.solanaAddress,
+                publicKeyBase64 = android.util.Base64.encodeToString(contactCard.solanaPublicKey, android.util.Base64.NO_WRAP),
+                x25519PublicKeyBase64 = android.util.Base64.encodeToString(contactCard.x25519PublicKey, android.util.Base64.NO_WRAP),
+                kyberPublicKeyBase64 = android.util.Base64.encodeToString(contactCard.kyberPublicKey, android.util.Base64.NO_WRAP),
+                friendRequestOnion = contactCard.friendRequestOnion,
+                messagingOnion = contactCard.messagingOnion,
+                voiceOnion = contactCard.voiceOnion,
+                contactPin = contactCard.contactPin,
+                ipfsCid = contactCard.ipfsCid,
+                addedTimestamp = System.currentTimeMillis(),
+                friendshipStatus = com.securelegion.database.entities.Contact.FRIENDSHIP_CONFIRMED
+            )
+
+            val contactId = kotlinx.coroutines.runBlocking {
+                database.contactDao().insertContact(contact)
+            }
+
+            Log.i(TAG, "Contact added to database: ${contactCard.displayName} (ID: $contactId)")
+
+            // Initialize key chain with kyber ciphertext if present
+            kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+                try {
+                    val ourMessagingOnion = torManager.getOnionAddress()
+                    val theirMessagingOnion = contactCard.messagingOnion
+                    if (ourMessagingOnion.isNullOrEmpty() || theirMessagingOnion.isNullOrEmpty()) {
+                        Log.e(TAG, "Cannot initialize key chain: missing onion address")
+                    } else if (kyberCiphertext != null) {
+                        // Device A path: Decapsulate the ciphertext from Phase 2
+                        com.securelegion.crypto.KeyChainManager.initializeKeyChain(
+                            context = this@TorService,
+                            contactId = contactId,
+                            theirX25519PublicKey = contactCard.x25519PublicKey,
+                            theirKyberPublicKey = contactCard.kyberPublicKey,
+                            ourMessagingOnion = ourMessagingOnion,
+                            theirMessagingOnion = theirMessagingOnion,
+                            kyberCiphertext = kyberCiphertext
+                        )
+                        Log.i(TAG, "✓ Key chain initialized for ${contactCard.displayName} (quantum - decapsulated)")
+                    } else {
+                        // Legacy path without Kyber
+                        Log.w(TAG, "⚠️  No Kyber ciphertext - key chain will be initialized without quantum parameters")
+                        com.securelegion.crypto.KeyChainManager.initializeKeyChain(
+                            context = this@TorService,
+                            contactId = contactId,
+                            theirX25519PublicKey = contactCard.x25519PublicKey,
+                            theirKyberPublicKey = contactCard.kyberPublicKey,
+                            ourMessagingOnion = ourMessagingOnion,
+                            theirMessagingOnion = theirMessagingOnion
+                        )
+                        Log.i(TAG, "✓ Key chain initialized for ${contactCard.displayName} (legacy)")
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to initialize key chain for ${contactCard.displayName}", e)
+                }
+            }
 
             // Remove pending outgoing request
             removePendingRequest(matchingRequest)
@@ -1233,6 +1355,7 @@ class TorService : Service() {
                 displayName = keyManager.getUsername() ?: "Unknown",
                 solanaPublicKey = keyManager.getSolanaPublicKey(),
                 x25519PublicKey = keyManager.getEncryptionPublicKey(),
+                kyberPublicKey = keyManager.getKyberPublicKey(),
                 solanaAddress = keyManager.getSolanaAddress(),
                 friendRequestOnion = keyManager.getFriendRequestOnion() ?: "",
                 messagingOnion = keyManager.getMessagingOnion() ?: "",
@@ -1329,8 +1452,62 @@ class TorService : Service() {
             val contactCard = com.securelegion.models.ContactCard.fromJson(decryptedJson)
             Log.i(TAG, "✓ Friend request fully confirmed by: ${contactCard.displayName}")
 
-            // Add to contacts database
-            addContactToDatabase(contactCard)
+            // Add to contacts database and initialize key chain (both in coroutine)
+            kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+                try {
+                    // Add contact to database first
+                    val contactId = addContactToDatabase(contactCard)
+
+                    if (contactId == null) {
+                        Log.e(TAG, "Failed to add contact to database")
+                        return@launch
+                    }
+
+                    // Extract precomputed shared secret from saved Phase 2 state
+                    val savedJson = org.json.JSONObject(matchingRequest.contactCardJson ?: "{}")
+                    val precomputedSharedSecret = if (savedJson.has("hybrid_shared_secret")) {
+                        val sharedSecretBase64 = savedJson.getString("hybrid_shared_secret")
+                        android.util.Base64.decode(sharedSecretBase64, android.util.Base64.NO_WRAP)
+                    } else null
+
+                    val torManager = com.securelegion.crypto.TorManager.getInstance(this@TorService)
+                    val ourMessagingOnion = torManager.getOnionAddress()
+                    val theirMessagingOnion = contactCard.messagingOnion
+
+                    if (ourMessagingOnion.isNullOrEmpty() || theirMessagingOnion.isNullOrEmpty()) {
+                        Log.e(TAG, "Cannot initialize key chain: missing onion address")
+                        return@launch
+                    }
+
+                    if (precomputedSharedSecret != null) {
+                        // Device B path: Use shared secret from Phase 2 encapsulation
+                        com.securelegion.crypto.KeyChainManager.initializeKeyChain(
+                            context = this@TorService,
+                            contactId = contactId,
+                            theirX25519PublicKey = contactCard.x25519PublicKey,
+                            theirKyberPublicKey = contactCard.kyberPublicKey,
+                            ourMessagingOnion = ourMessagingOnion,
+                            theirMessagingOnion = theirMessagingOnion,
+                            precomputedSharedSecret = precomputedSharedSecret
+                        )
+                        Log.i(TAG, "✓ Key chain initialized for ${contactCard.displayName} (quantum - precomputed secret)")
+                    } else {
+                        // Legacy path without quantum parameters
+                        Log.w(TAG, "⚠️  No precomputed shared secret - initializing key chain in legacy mode")
+                        com.securelegion.crypto.KeyChainManager.initializeKeyChain(
+                            context = this@TorService,
+                            contactId = contactId,
+                            theirX25519PublicKey = contactCard.x25519PublicKey,
+                            theirKyberPublicKey = contactCard.kyberPublicKey,
+                            ourMessagingOnion = ourMessagingOnion,
+                            theirMessagingOnion = theirMessagingOnion
+                        )
+                        Log.i(TAG, "✓ Key chain initialized for ${contactCard.displayName} (legacy)")
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to add contact or initialize key chain for ${contactCard.displayName}", e)
+                }
+            }
 
             // Remove the pending request
             removePendingRequest(matchingRequest)
@@ -1352,55 +1529,41 @@ class TorService : Service() {
 
     /**
      * Add ContactCard to contacts database
+     * Returns the inserted contact ID, or null on error
      */
-    private fun addContactToDatabase(contactCard: com.securelegion.models.ContactCard) {
-        try {
-            val keyManager = com.securelegion.crypto.KeyManager.getInstance(this)
-            val dbPassphrase = keyManager.getDatabasePassphrase()
-            val database = com.securelegion.database.SecureLegionDatabase.getInstance(this, dbPassphrase)
+    private suspend fun addContactToDatabase(contactCard: com.securelegion.models.ContactCard): Long? {
+        return try {
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                val keyManager = com.securelegion.crypto.KeyManager.getInstance(this@TorService)
+                val dbPassphrase = keyManager.getDatabasePassphrase()
+                val database = com.securelegion.database.SecureLegionDatabase.getInstance(this@TorService, dbPassphrase)
 
-            val contact = com.securelegion.database.entities.Contact(
-                displayName = contactCard.displayName,
-                solanaAddress = contactCard.solanaAddress,
-                publicKeyBase64 = android.util.Base64.encodeToString(contactCard.solanaPublicKey, android.util.Base64.NO_WRAP),
-                x25519PublicKeyBase64 = android.util.Base64.encodeToString(contactCard.x25519PublicKey, android.util.Base64.NO_WRAP),
-                friendRequestOnion = contactCard.friendRequestOnion,
-                messagingOnion = contactCard.messagingOnion,
-                voiceOnion = contactCard.voiceOnion,
-                contactPin = contactCard.contactPin,
-                ipfsCid = contactCard.ipfsCid,
-                addedTimestamp = System.currentTimeMillis(),
-                friendshipStatus = com.securelegion.database.entities.Contact.FRIENDSHIP_CONFIRMED
-            )
+                val contact = com.securelegion.database.entities.Contact(
+                    displayName = contactCard.displayName,
+                    solanaAddress = contactCard.solanaAddress,
+                    publicKeyBase64 = android.util.Base64.encodeToString(contactCard.solanaPublicKey, android.util.Base64.NO_WRAP),
+                    x25519PublicKeyBase64 = android.util.Base64.encodeToString(contactCard.x25519PublicKey, android.util.Base64.NO_WRAP),
+                    kyberPublicKeyBase64 = android.util.Base64.encodeToString(contactCard.kyberPublicKey, android.util.Base64.NO_WRAP),
+                    friendRequestOnion = contactCard.friendRequestOnion,
+                    messagingOnion = contactCard.messagingOnion,
+                    voiceOnion = contactCard.voiceOnion,
+                    contactPin = contactCard.contactPin,
+                    ipfsCid = contactCard.ipfsCid,
+                    addedTimestamp = System.currentTimeMillis(),
+                    friendshipStatus = com.securelegion.database.entities.Contact.FRIENDSHIP_CONFIRMED
+                )
 
-            // Run database insert in coroutine
-            kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
                 val contactId = database.contactDao().insertContact(contact)
                 Log.i(TAG, "Contact added to database: ${contact.displayName} (ID: $contactId)")
 
-                // Initialize key chain for progressive ephemeral key evolution
-                try {
-                    val ourMessagingOnion = torManager.getOnionAddress()
-                    val theirMessagingOnion = contact.messagingOnion ?: contactCard.messagingOnion
-                    if (ourMessagingOnion.isNullOrEmpty() || theirMessagingOnion.isNullOrEmpty()) {
-                        Log.e(TAG, "Cannot initialize key chain: missing onion address (ours=$ourMessagingOnion, theirs=$theirMessagingOnion) for ${contact.displayName}")
-                    } else {
-                        com.securelegion.crypto.KeyChainManager.initializeKeyChain(
-                            context = this@TorService,
-                            contactId = contactId,
-                            theirX25519PublicKey = contactCard.x25519PublicKey,
-                            ourMessagingOnion = ourMessagingOnion,
-                            theirMessagingOnion = theirMessagingOnion
-                        )
-                        Log.i(TAG, "✓ Key chain initialized for ${contact.displayName}")
-                    }
-                } catch (e: Exception) {
-                    Log.e(TAG, "Failed to initialize key chain for ${contact.displayName}", e)
-                }
-            }
+                // NOTE: Key chain initialization is handled by the caller (Phase 2/3 handlers)
+                // Do NOT initialize here without quantum parameters - causes encryption mismatch!
 
+                contactId
+            }
         } catch (e: Exception) {
             Log.e(TAG, "Failed to add contact to database", e)
+            null
         }
     }
 
@@ -1621,7 +1784,7 @@ class TorService : Service() {
                 var message: com.securelegion.database.entities.Message? = null
 
                 // Determine lookup method based on ACK type
-                val lookupByPingId = (ackType == "PING_ACK" || ackType == "TAP_ACK" || ackType == "PONG_ACK")
+                val lookupByPingId = (ackType == "PING_ACK" || ackType == "TAP_ACK" || ackType == "PONG_ACK" || ackType == "MESSAGE_ACK")
 
                 while (retryCount < maxRetries && message == null) {
                     try {
@@ -1629,8 +1792,8 @@ class TorService : Service() {
                         val dbPassphrase = keyManager.getDatabasePassphrase()
                         val database = com.securelegion.database.SecureLegionDatabase.getInstance(this@TorService, dbPassphrase)
 
-                        // For PING_ACK, TAP_ACK, PONG_ACK: lookup by pingId
-                        // For MESSAGE_ACK: lookup by messageId
+                        // For PING_ACK, TAP_ACK, PONG_ACK, MESSAGE_ACK: lookup by pingId
+                        // (Currently all ACKs use pingId for lookup)
                         message = if (lookupByPingId) {
                             database.messageDao().getMessageByPingId(itemId)
                         } else {
@@ -2212,10 +2375,19 @@ class TorService : Service() {
             try {
                 var ackSuccess = false
 
-                // PATH 1: Try existing connection (only if connectionId provided)
-                if (connectionId != null) {
+                // PATH 1: DISABLED - Connection reuse for ACKs
+                //
+                // ARCHITECTURAL DECISION: All ACKs MUST go to dedicated port 9153 for clean separation.
+                // Connection reuse optimization is disabled because:
+                //   1. Reusing connections sends ACKs to port 8080 (wrong port)
+                //   2. Causes routing confusion between PING/PONG and ACK handlers
+                //   3. Performance difference (~200ms) is negligible for background confirmations
+                //   4. Clean architecture > micro-optimization
+                //
+                // Connection reuse code preserved below but disabled:
+                if (false && connectionId != null) {
                     ackSuccess = RustBridge.sendAckOnConnection(
-                        connectionId,
+                        connectionId!!,  // Safe because null check above
                         itemId,
                         ackType,
                         senderX25519Pubkey
@@ -2227,6 +2399,9 @@ class TorService : Service() {
                     }
                     Log.d(TAG, "Connection closed, falling back to new connection for $ackType (attempt ${attempt + 1})")
                 }
+
+                // All ACKs now use PATH 2 (new connection to port 9153)
+                Log.d(TAG, "Sending $ackType via new connection to port 9153 (connection reuse disabled)")
 
                 // PATH 2: Open new connection (always available)
                 val onionAddress = contact.messagingOnion ?: contact.torOnionAddress ?: ""
@@ -2532,7 +2707,8 @@ class TorService : Service() {
             }
 
             // Get key chain for progressive ephemeral key evolution
-            Log.d(TAG, "Decrypting message with key evolution...")
+            Log.d(TAG, "KEY CHAIN LOAD: Loading key chain from database...")
+            Log.d(TAG, "  contactId=${contact.id} (${contact.displayName})")
             val keyChain = kotlinx.coroutines.runBlocking {
                 com.securelegion.crypto.KeyChainManager.getKeyChain(this@TorService, contact.id)
             }
@@ -2544,6 +2720,9 @@ class TorService : Service() {
                 return
             }
 
+            Log.d(TAG, "KEY CHAIN LOAD: Loaded from database successfully")
+            Log.d(TAG, "  sendCounter=${keyChain.sendCounter}")
+            Log.d(TAG, "  receiveCounter=${keyChain.receiveCounter} <- will use this for decryption")
             Log.d(TAG, "Attempting to decrypt ${actualEncryptedMessage.size} bytes with sequence ${keyChain.receiveCounter}...")
             val result = RustBridge.decryptMessageWithEvolution(
                 actualEncryptedMessage,
@@ -2565,6 +2744,10 @@ class TorService : Service() {
             val plaintext = result.plaintext
 
             // Save evolved key to database (key evolution happened atomically in Rust)
+            Log.d(TAG, "KEY EVOLUTION: About to update receive chain key")
+            Log.d(TAG, "  contactId=${contact.id} (${contact.displayName})")
+            Log.d(TAG, "  Current receiveCounter=${keyChain.receiveCounter}")
+            Log.d(TAG, "  New receiveCounter will be=${keyChain.receiveCounter + 1}")
             kotlinx.coroutines.runBlocking {
                 val keyManager = com.securelegion.crypto.KeyManager.getInstance(this@TorService)
                 val dbPassphrase = keyManager.getDatabasePassphrase()
@@ -2575,21 +2758,31 @@ class TorService : Service() {
                     newReceiveCounter = keyChain.receiveCounter + 1,
                     timestamp = System.currentTimeMillis()
                 )
+                // VERIFY the update actually persisted
+                val verifyKeyChain = database.contactKeyChainDao().getKeyChainByContactId(contact.id)
+                Log.d(TAG, "VERIFICATION: After update, database shows receiveCounter=${verifyKeyChain?.receiveCounter}")
+                if (verifyKeyChain?.receiveCounter != keyChain.receiveCounter + 1) {
+                    Log.e(TAG, "ERROR: Counter update did NOT persist! Expected ${keyChain.receiveCounter + 1}, got ${verifyKeyChain?.receiveCounter}")
+                } else {
+                    Log.d(TAG, "Counter update verified successfully")
+                }
             }
             Log.d(TAG, "✓ Message decrypted with sequence ${keyChain.receiveCounter}")
 
             Log.i(TAG, "✓ Decrypted message (${messageType}): ${if (messageType == com.securelegion.database.entities.Message.MESSAGE_TYPE_TEXT) plaintext.take(50) else "${voiceDuration}s voice, ${plaintext.length} bytes"}...")
 
             // Save message directly to database (already decrypted)
+            Log.d(TAG, "MESSAGE SAVE: Launching coroutine to save message to database")
             kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
                 try {
+                    Log.d(TAG, "MESSAGE SAVE: Coroutine started (contactId=${contact.id}, contact=${contact.displayName})")
                     // Generate messageId from ENCRYPTED PAYLOAD (prevents ghost messages across both paths)
                     // Using encrypted bytes ensures same message arriving via both listener and pong has same ID
                     // Encrypted payload includes random nonce, so identical plaintexts get different IDs
                     val messageIdHash = java.security.MessageDigest.getInstance("SHA-256").digest(actualEncryptedMessage)
                     val messageId = "blob_" + android.util.Base64.encodeToString(messageIdHash, android.util.Base64.NO_WRAP).take(28)
 
-                    Log.d(TAG, "Message ID generated from encrypted payload hash: $messageId")
+                    Log.d(TAG, "MESSAGE SAVE: Message ID generated from encrypted payload hash: $messageId")
 
                     // Get database
                     val dbPassphrase = keyManager.getDatabasePassphrase()
@@ -2601,11 +2794,13 @@ class TorService : Service() {
                         idType = com.securelegion.database.entities.ReceivedId.TYPE_MESSAGE,
                         receivedTimestamp = System.currentTimeMillis()
                     )
+                    Log.d(TAG, "MESSAGE SAVE: Attempting to insert messageId into ReceivedId tracking table...")
                     val rowId = tryInsertReceivedId(database, messageTracking, "MESSAGE")
+                    Log.d(TAG, "MESSAGE SAVE: ReceivedId insert result: rowId=$rowId")
 
                     if (rowId == -1L) {
-                        Log.w(TAG, "⚠️  DUPLICATE MESSAGE BLOB BLOCKED! MessageId=$messageId already in tracking table")
-                        Log.i(TAG, "→ Skipping duplicate message blob processing")
+                        Log.w(TAG, "MESSAGE SAVE: DUPLICATE MESSAGE BLOB BLOCKED! MessageId=$messageId already in tracking table")
+                        Log.i(TAG, "MESSAGE SAVE: Skipping duplicate message blob processing")
 
                         // Send MESSAGE_ACK to stop sender from retrying (with retry logic)
                         CoroutineScope(ackDispatcher).launch {
@@ -2773,8 +2968,13 @@ class TorService : Service() {
                     )
 
                     // Save to database
+                    Log.d(TAG, "MESSAGE SAVE: About to insert message into database")
+                    Log.d(TAG, "  messageId=$messageId")
+                    Log.d(TAG, "  contactId=${contact.id}")
+                    Log.d(TAG, "  messageType=$messageType")
+                    Log.d(TAG, "  content length=${message.encryptedContent.length}")
                     val savedMessageId = database.messageDao().insertMessage(message)
-                    Log.i(TAG, "✓ Message saved to database: $savedMessageId")
+                    Log.i(TAG, "MESSAGE SAVE: Message saved to database successfully! DB row ID=$savedMessageId")
 
                     // If this was an active download, update ping state to READY for atomic swap
                     if (downloadPingId != null) {
@@ -2817,7 +3017,11 @@ class TorService : Service() {
                     sendBroadcast(intentMain)
                     Log.i(TAG, "✓ Broadcast explicit NEW_PING to refresh MainActivity chat list")
                 } catch (e: Exception) {
-                    Log.e(TAG, "Error saving message", e)
+                    Log.e(TAG, "MESSAGE SAVE: CRITICAL ERROR - Exception occurred while saving message!", e)
+                    Log.e(TAG, "  contactId=${contact.id}")
+                    Log.e(TAG, "  Exception type: ${e.javaClass.simpleName}")
+                    Log.e(TAG, "  Exception message: ${e.message}")
+                    e.printStackTrace()
                 }
             }
 
@@ -2927,16 +3131,66 @@ class TorService : Service() {
 
             Log.d(TAG, "Decrypted JSON (first 200 chars): ${decryptedJson.take(200)}...")
 
-            // Try to parse as Phase 2 ContactCard first (new v2.0 format)
+            // Try to parse as NEW Phase 2 format with Kyber ciphertext (v2.1)
             var contactCard: com.securelegion.models.ContactCard? = null
+            var kyberCiphertext: ByteArray? = null
             var isPhase2 = false
 
             try {
-                contactCard = com.securelegion.models.ContactCard.fromJson(decryptedJson)
-                isPhase2 = true
-                Log.i(TAG, "✓ Phase 2: Received full ContactCard from: ${contactCard.displayName}")
+                val phase2Obj = org.json.JSONObject(decryptedJson)
+                if (phase2Obj.has("phase") && phase2Obj.getInt("phase") == 2) {
+                    // NEW Phase 2 format with contact_card + kyber_ciphertext
+                    Log.d(TAG, "Parsing Phase 2 with Kyber ciphertext...")
+                    val contactCardJson = phase2Obj.getJSONObject("contact_card").toString()
+                    contactCard = com.securelegion.models.ContactCard.fromJson(contactCardJson)
+
+                    // Extract Kyber ciphertext if present
+                    if (phase2Obj.has("kyber_ciphertext")) {
+                        val ciphertextBase64 = phase2Obj.getString("kyber_ciphertext")
+                        kyberCiphertext = android.util.Base64.decode(ciphertextBase64, android.util.Base64.NO_WRAP)
+                        Log.i(TAG, "✓ Phase 2 (quantum): Received ContactCard + Kyber ciphertext (${kyberCiphertext.size} bytes) from: ${contactCard.displayName}")
+                    } else {
+                        Log.i(TAG, "✓ Phase 2 (legacy): Received ContactCard from: ${contactCard.displayName}")
+                    }
+
+                    // Verify Ed25519 signature (defense-in-depth against .onion MitM)
+                    if (phase2Obj.has("signature") && phase2Obj.has("ed25519_public_key")) {
+                        val signature = android.util.Base64.decode(phase2Obj.getString("signature"), android.util.Base64.NO_WRAP)
+                        val senderEd25519PublicKey = android.util.Base64.decode(phase2Obj.getString("ed25519_public_key"), android.util.Base64.NO_WRAP)
+
+                        // Reconstruct unsigned JSON to verify signature
+                        val unsignedJson = org.json.JSONObject().apply {
+                            put("contact_card", phase2Obj.getJSONObject("contact_card"))
+                            if (phase2Obj.has("kyber_ciphertext")) {
+                                put("kyber_ciphertext", phase2Obj.getString("kyber_ciphertext"))
+                            }
+                            put("phase", 2)
+                        }.toString()
+
+                        val signatureValid = RustBridge.verifySignature(
+                            unsignedJson.toByteArray(Charsets.UTF_8),
+                            signature,
+                            senderEd25519PublicKey
+                        )
+
+                        if (!signatureValid) {
+                            Log.e(TAG, "❌ Phase 2 signature verification FAILED - rejecting contact (possible MitM attack)")
+                            return
+                        }
+                        Log.i(TAG, "✓ Phase 2 signature verified (Ed25519)")
+                    } else {
+                        Log.w(TAG, "⚠️  Phase 2 has no signature (legacy response)")
+                    }
+
+                    isPhase2 = true
+                } else {
+                    // Try old Phase 2 format (just ContactCard)
+                    contactCard = com.securelegion.models.ContactCard.fromJson(decryptedJson)
+                    isPhase2 = true
+                    Log.i(TAG, "✓ Phase 2 (old format): Received ContactCard from: ${contactCard.displayName}")
+                }
             } catch (e: Exception) {
-                Log.d(TAG, "Not a Phase 2 ContactCard, trying old v1.0 format...")
+                Log.d(TAG, "Not a Phase 2 ContactCard, trying old v1.0 format... ${e.message}")
             }
 
             // PHASE 2 PATH: Full contact card received
@@ -2959,6 +3213,10 @@ class TorService : Service() {
                             contactCard.x25519PublicKey,
                             android.util.Base64.NO_WRAP
                         ),
+                        kyberPublicKeyBase64 = android.util.Base64.encodeToString(
+                            contactCard.kyberPublicKey,
+                            android.util.Base64.NO_WRAP
+                        ),
                         torOnionAddress = contactCard.messagingOnion,  // DEPRECATED - for backward compatibility
                         friendRequestOnion = contactCard.friendRequestOnion,  // NEW - public .onion for friend requests (port 9151)
                         messagingOnion = contactCard.messagingOnion,  // NEW - private .onion for messaging (port 8080)
@@ -2971,11 +3229,83 @@ class TorService : Service() {
                         friendshipStatus = com.securelegion.database.entities.Contact.FRIENDSHIP_CONFIRMED
                     )
 
-                    kotlinx.coroutines.runBlocking {
+                    val contactId = kotlinx.coroutines.runBlocking {
                         database.contactDao().insertContact(contact)
                     }
 
-                    Log.i(TAG, "✓ Phase 2: Added ${contactCard.displayName} to Contacts")
+                    Log.i(TAG, "✓ Phase 2: Added ${contactCard.displayName} to Contacts (ID: $contactId)")
+
+                    // Initialize key chain for progressive ephemeral key evolution
+                    kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+                        try {
+                            val ourMessagingOnion = torManager.getOnionAddress()
+                            val theirMessagingOnion = contact.messagingOnion ?: contactCard.messagingOnion
+                            if (ourMessagingOnion.isNullOrEmpty() || theirMessagingOnion.isNullOrEmpty()) {
+                                Log.e(TAG, "Cannot initialize key chain: missing onion address (ours=$ourMessagingOnion, theirs=$theirMessagingOnion) for ${contact.displayName}")
+                            } else {
+                                // Check if we have a saved shared secret from Phase 2 encapsulation
+                                // This happens when Device B (accepter) receives Phase 2b from Device A (initiator)
+                                var precomputedSharedSecret: ByteArray? = null
+                                try {
+                                    val prefs = getSharedPreferences("friend_requests", MODE_PRIVATE)
+                                    val pendingRequestsSet = prefs.getStringSet("pending_requests_v2", mutableSetOf()) ?: mutableSetOf()
+                                    val savedRequest = pendingRequestsSet.mapNotNull { requestJson ->
+                                        try {
+                                            com.securelegion.models.PendingFriendRequest.fromJson(requestJson)
+                                        } catch (e: Exception) {
+                                            null
+                                        }
+                                    }.find { it.ipfsCid == contactCard.friendRequestOnion }
+
+                                    if (savedRequest != null && savedRequest.contactCardJson != null) {
+                                        val savedData = org.json.JSONObject(savedRequest.contactCardJson)
+                                        if (savedData.has("hybrid_shared_secret")) {
+                                            val sharedSecretBase64 = savedData.getString("hybrid_shared_secret")
+                                            precomputedSharedSecret = android.util.Base64.decode(sharedSecretBase64, android.util.Base64.NO_WRAP)
+                                            Log.i(TAG, "✓ Found saved shared secret (${precomputedSharedSecret.size} bytes) from Phase 2 encapsulation")
+                                        }
+                                    }
+                                } catch (e: Exception) {
+                                    Log.w(TAG, "Could not load saved shared secret: ${e.message}")
+                                }
+
+                                // Initialize key chain with appropriate parameters
+                                if (precomputedSharedSecret != null) {
+                                    // Device B (accepter) path: Use shared secret from Phase 2 encapsulation
+                                    com.securelegion.crypto.KeyChainManager.initializeKeyChain(
+                                        context = this@TorService,
+                                        contactId = contactId,
+                                        theirX25519PublicKey = contactCard.x25519PublicKey,
+                                        theirKyberPublicKey = contactCard.kyberPublicKey,
+                                        ourMessagingOnion = ourMessagingOnion,
+                                        theirMessagingOnion = theirMessagingOnion,
+                                        precomputedSharedSecret = precomputedSharedSecret
+                                    )
+                                    Log.i(TAG, "✓ Key chain initialized for ${contact.displayName} (quantum - precomputed secret)")
+                                } else if (kyberCiphertext != null) {
+                                    // Device A (initiator) path: Decapsulate ciphertext from Phase 2
+                                    com.securelegion.crypto.KeyChainManager.initializeKeyChain(
+                                        context = this@TorService,
+                                        contactId = contactId,
+                                        theirX25519PublicKey = contactCard.x25519PublicKey,
+                                        theirKyberPublicKey = contactCard.kyberPublicKey,
+                                        ourMessagingOnion = ourMessagingOnion,
+                                        theirMessagingOnion = theirMessagingOnion,
+                                        kyberCiphertext = kyberCiphertext
+                                    )
+                                    Log.i(TAG, "✓ Key chain initialized for ${contact.displayName} (quantum - decapsulated)")
+                                } else {
+                                    // ERROR: Should NEVER reach here - we have Kyber keys but no quantum parameters!
+                                    Log.e(TAG, "❌ CRITICAL BUG: Cannot initialize key chain - missing BOTH precomputedSharedSecret AND kyberCiphertext!")
+                                    Log.e(TAG, "This will cause encryption mismatch - messages won't decrypt!")
+                                    Log.e(TAG, "Contact has Kyber key: ${contactCard.kyberPublicKey.any { it != 0.toByte() }}")
+                                    throw IllegalStateException("Cannot initialize key chain without quantum parameters")
+                                }
+                            }
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Failed to initialize key chain for ${contact.displayName}", e)
+                        }
+                    }
 
                     // Send Phase 2b confirmation back to them
                     // This tells them we received their contact card and added them
@@ -2989,6 +3319,7 @@ class TorService : Service() {
                                 displayName = keyManager.getUsername() ?: "Unknown",
                                 solanaPublicKey = keyManager.getSolanaPublicKey(),
                                 x25519PublicKey = keyManager.getEncryptionPublicKey(),
+                                kyberPublicKey = keyManager.getKyberPublicKey(),
                                 solanaAddress = keyManager.getSolanaAddress(),
                                 friendRequestOnion = keyManager.getFriendRequestOnion() ?: "",
                                 messagingOnion = keyManager.getMessagingOnion() ?: "",
@@ -3108,6 +3439,10 @@ class TorService : Service() {
                         contactCard.x25519PublicKey,
                         android.util.Base64.NO_WRAP
                     ),
+                    kyberPublicKeyBase64 = android.util.Base64.encodeToString(
+                        contactCard.kyberPublicKey,
+                        android.util.Base64.NO_WRAP
+                    ),
                     torOnionAddress = contactCard.messagingOnion,  // DEPRECATED - for backward compatibility
                     friendRequestOnion = contactCard.friendRequestOnion,
                     messagingOnion = contactCard.messagingOnion,
@@ -3120,11 +3455,16 @@ class TorService : Service() {
                     friendshipStatus = com.securelegion.database.entities.Contact.FRIENDSHIP_CONFIRMED
                 )
 
-                kotlinx.coroutines.runBlocking {
+                val contactId = kotlinx.coroutines.runBlocking {
                     database.contactDao().insertContact(contact)
                 }
 
-                Log.i(TAG, "✓ Added ${contactCard.displayName} to Contacts with CONFIRMED status")
+                Log.i(TAG, "✓ Added ${contactCard.displayName} to Contacts with CONFIRMED status (ID: $contactId)")
+
+                // NOTE: This is the OLD v1.0 friend request handler (DEPRECATED)
+                // Key chain initialization should happen in Phase 2 handler with quantum parameters
+                // Do NOT initialize here - will cause encryption mismatch!
+                Log.w(TAG, "⚠️  OLD v1.0 friend request path - key chain NOT initialized (use NEW Phase 1/2/2b flow)")
 
                 // Remove from pending
                 val newPendingSet = pendingRequestsV2.toMutableSet()

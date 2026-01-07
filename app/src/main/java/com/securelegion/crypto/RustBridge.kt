@@ -101,6 +101,36 @@ object RustBridge {
      */
     external fun hashPassword(password: String, salt: ByteArray): ByteArray
 
+    // ==================== POST-QUANTUM CRYPTOGRAPHY (Hybrid X25519 + ML-KEM-1024) ====================
+
+    /**
+     * Generate hybrid post-quantum KEM keypair from seed (deterministic)
+     * Combines X25519 (classical ECDH) with ML-KEM-1024 (NIST FIPS 203)
+     * Security: Protected if EITHER X25519 OR Kyber-1024 remains unbroken
+     * @param seed 32-byte seed for deterministic key derivation
+     * @return Serialized keypair bytes: [x25519_pub:32][x25519_sec:32][kyber_pub:1568][kyber_sec:3168]
+     */
+    external fun generateHybridKEMKeypairFromSeed(seed: ByteArray): ByteArray
+
+    /**
+     * Hybrid KEM encapsulation - generate shared secret for recipient
+     * Combines X25519 ECDH with Kyber-1024 encapsulation using HKDF-SHA256
+     * @param theirX25519Public Recipient's X25519 public key (32 bytes)
+     * @param theirKyberPublic Recipient's Kyber-1024 public key (1568 bytes)
+     * @return Result bytes: [combined_secret:64][x25519_ephemeral:32][kyber_ciphertext:1568]
+     */
+    external fun hybridEncapsulate(theirX25519Public: ByteArray, theirKyberPublic: ByteArray): ByteArray
+
+    /**
+     * Hybrid KEM decapsulation - recover shared secret from ciphertext
+     * Decapsulates both X25519 and Kyber-1024 components and combines using HKDF
+     * @param ourX25519Secret Our X25519 secret key (32 bytes)
+     * @param ourKyberSecret Our Kyber-1024 secret key (3168 bytes)
+     * @param ciphertext Hybrid ciphertext: [x25519_ephemeral:32][kyber_ciphertext:1568]
+     * @return Combined shared secret (64 bytes), or null if decapsulation fails
+     */
+    external fun hybridDecapsulate(ourX25519Secret: ByteArray, ourKyberSecret: ByteArray, ciphertext: ByteArray): ByteArray?
+
     // ==================== KEY EVOLUTION (Progressive Ephemeral Keys) ====================
 
     /**
@@ -285,18 +315,18 @@ object RustBridge {
     ): String
 
     /**
-     * Start HTTP server for friend request handling (v2.0)
+     * Start contact exchange endpoint for friend request handling (v2.0)
      * Listens on localPort and serves:
      * - GET /contact-card
      * - POST /friend-request
      * - POST /friend-response
      * @param port The local port to listen on (default 8081)
-     * @return True if server started successfully
+     * @return True if endpoint started successfully
      */
     external fun startFriendRequestServer(port: Int = 8081): Boolean
 
     /**
-     * Stop friend request HTTP server (v2.0)
+     * Stop contact exchange endpoint (v2.0)
      */
     external fun stopFriendRequestServer()
 
@@ -309,7 +339,7 @@ object RustBridge {
     external fun serveContactCard(encryptedCard: ByteArray, cardLength: Int, cid: String)
 
     /**
-     * Serve contact list on friend request HTTP server (v5 architecture)
+     * Serve contact list on contact exchange endpoint (v5 architecture)
      * @param cid The IPFS CID for this contact list
      * @param encryptedList The encrypted contact list data
      * @param listLength Length of the encrypted data
@@ -378,14 +408,14 @@ object RustBridge {
     external fun stopHiddenServiceListener()
 
     /**
-     * Start SOCKS5 proxy server on 127.0.0.1:9050
+     * Start SOCKS5 proxy on 127.0.0.1:9050
      * Routes all HTTP traffic (wallet RPC, IPFS) through Tor for privacy
      * @return True if proxy started successfully
      */
     external fun startSocksProxy(): Boolean
 
     /**
-     * Stop SOCKS5 proxy server
+     * Stop SOCKS5 proxy
      */
     external fun stopSocksProxy()
 
@@ -532,7 +562,7 @@ object RustBridge {
 
     /**
      * Set callback handler for incoming voice packets (v2.0)
-     * Must be called before startVoiceStreamingServer
+     * Must be called before starting voice streaming listener
      * @param callback The callback that will receive packets
      */
     external fun setVoicePacketCallback(callback: VoicePacketCallback)
@@ -540,13 +570,13 @@ object RustBridge {
     /**
      * Set callback handler for incoming signaling messages (v2.0)
      * Handles CALL_OFFER, CALL_ANSWER, etc received via HTTP POST to voice onion
-     * Must be called before startVoiceStreamingServer
+     * Must be called before starting voice streaming listener
      * @param callback The callback that will receive signaling messages
      */
     external fun setVoiceSignalingCallback(callback: VoiceSignalingCallback)
 
     /**
-     * Start voice streaming server on port 9152 (v2.0)
+     * Start voice streaming listener on port 9152 (v2.0)
      * Must be called before accepting or creating voice sessions
      * Runs in background and accepts incoming voice connections
      */
@@ -743,7 +773,7 @@ object RustBridge {
 
     /**
      * Send call signaling message via HTTP POST to voice .onion
-     * This bypasses the VOICE channel routing and sends directly to the voice streaming server
+     * This bypasses the VOICE channel routing and sends directly to the voice streaming listener
      * @param voiceOnion Recipient's voice .onion address
      * @param senderX25519Pubkey Our X25519 public key (32 bytes) - included in wire format
      * @param encryptedMessage The encrypted call signaling message

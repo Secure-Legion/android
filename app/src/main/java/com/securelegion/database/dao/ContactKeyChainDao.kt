@@ -116,4 +116,18 @@ interface ContactKeyChainDao {
      */
     @Query("SELECT COUNT(*) FROM contact_key_chains")
     suspend fun getKeyChainCount(): Int
+
+    /**
+     * Reset both send and receive counters to 0 for a contact
+     * Used to fix key chain desynchronization issues
+     * WARNING: Both parties must reset at the same time!
+     */
+    @Query("""
+        UPDATE contact_key_chains
+        SET sendCounter = 0,
+            receiveCounter = 0,
+            lastEvolutionTimestamp = :timestamp
+        WHERE contactId = :contactId
+    """)
+    suspend fun resetCounters(contactId: Long, timestamp: Long)
 }

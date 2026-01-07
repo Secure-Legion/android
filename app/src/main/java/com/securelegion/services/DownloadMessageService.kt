@@ -641,14 +641,20 @@ class DownloadMessageService : Service() {
             when (typeByte.toInt()) {
                 0x03 -> {
                     // TEXT message: [0x03][X25519 32 bytes][Encrypted Text]
+                    // Minimum: 1 (type) + 32 (X25519) + 1 (version) + 8 (seq) + 24 (nonce) + 16 (tag) = 82 bytes
+                    if (messageBytes.size < 82) {
+                        Log.e(TAG, "TEXT message blob too small: ${messageBytes.size} bytes (need at least 82)")
+                        return
+                    }
                     senderX25519PublicKey = messageBytes.copyOfRange(1, 33)
                     encryptedPayload = messageBytes.copyOfRange(33, messageBytes.size)
                     voiceDuration = null
                 }
                 0x04 -> {
                     // VOICE message: [0x04][0x01][Duration 4 bytes][X25519 32 bytes][Encrypted Audio]
-                    if (messageBytes.size < 38) {
-                        Log.e(TAG, "VOICE message blob too small: ${messageBytes.size} bytes (need at least 38)")
+                    // Minimum: 1 (type) + 1 (internal) + 4 (duration) + 32 (X25519) + 1 (version) + 8 (seq) + 24 (nonce) + 16 (tag) = 87 bytes
+                    if (messageBytes.size < 87) {
+                        Log.e(TAG, "VOICE message blob too small: ${messageBytes.size} bytes (need at least 87)")
                         return
                     }
                     // Skip byte 1 (internal type 0x01), extract duration from bytes 2-5
@@ -664,6 +670,17 @@ class DownloadMessageService : Service() {
                     // Extract encrypted audio from byte 38 onward
                     encryptedPayload = messageBytes.copyOfRange(38, messageBytes.size)
                     Log.d(TAG, "Voice duration: ${voiceDuration}s")
+                }
+                0x09 -> {
+                    // IMAGE message: [0x09][X25519 32 bytes][Encrypted Image]
+                    // Minimum: 1 (type) + 32 (X25519) + 1 (version) + 8 (seq) + 24 (nonce) + 16 (tag) = 82 bytes
+                    if (messageBytes.size < 82) {
+                        Log.e(TAG, "IMAGE message blob too small: ${messageBytes.size} bytes (need at least 82)")
+                        return
+                    }
+                    senderX25519PublicKey = messageBytes.copyOfRange(1, 33)
+                    encryptedPayload = messageBytes.copyOfRange(33, messageBytes.size)
+                    voiceDuration = null
                 }
                 else -> {
                     Log.e(TAG, "Unknown message type: 0x${String.format("%02X", typeByte)}")
@@ -759,10 +776,10 @@ class DownloadMessageService : Service() {
 
                     // Save to database via MessageService
                     val messageService = MessageService(this@DownloadMessageService)
-                    // Reconstruct encrypted wire for database storage (NO type byte)
-                    // Format: [X25519 32 bytes][Encrypted data]
-                    val encryptedWire = senderX25519PublicKey + encryptedPayload
-                    val encryptedBase64 = android.util.Base64.encodeToString(encryptedWire, android.util.Base64.NO_WRAP)
+                    // Pass encrypted payload directly - it's already in the correct wire format
+                    // Wire format: [version:1][sequence:8][nonce:24][ciphertext][tag:16]
+                    // DON'T prepend X25519 key - that's not part of the key chain evolution format
+                    val encryptedBase64 = android.util.Base64.encodeToString(encryptedPayload, android.util.Base64.NO_WRAP)
 
                     // ATOMIC TRANSACTION: Check duplicate + Insert message + update ping_inbox state
                     val result = kotlin.runCatching {
@@ -846,10 +863,10 @@ class DownloadMessageService : Service() {
 
                     // Save to database via MessageService
                     val messageService = MessageService(this@DownloadMessageService)
-                    // Reconstruct encrypted wire for database storage (NO type byte)
-                    // Format: [X25519 32 bytes][Encrypted audio data]
-                    val encryptedWire = senderX25519PublicKey + encryptedPayload
-                    val encryptedBase64 = android.util.Base64.encodeToString(encryptedWire, android.util.Base64.NO_WRAP)
+                    // Pass encrypted payload directly - it's already in the correct wire format
+                    // Wire format: [version:1][sequence:8][nonce:24][ciphertext][tag:16]
+                    // DON'T prepend X25519 key - that's not part of the key chain evolution format
+                    val encryptedBase64 = android.util.Base64.encodeToString(encryptedPayload, android.util.Base64.NO_WRAP)
 
                     // ATOMIC TRANSACTION: Check duplicate + Insert message + update ping_inbox state
                     val result = kotlin.runCatching {
@@ -927,10 +944,10 @@ class DownloadMessageService : Service() {
 
                     // Save to database via MessageService
                     val messageService = MessageService(this@DownloadMessageService)
-                    // Reconstruct encrypted wire for database storage (NO type byte)
-                    // Format: [X25519 32 bytes][Encrypted image data]
-                    val encryptedWire = senderX25519PublicKey + encryptedPayload
-                    val encryptedBase64 = android.util.Base64.encodeToString(encryptedWire, android.util.Base64.NO_WRAP)
+                    // Pass encrypted payload directly - it's already in the correct wire format
+                    // Wire format: [version:1][sequence:8][nonce:24][ciphertext][tag:16]
+                    // DON'T prepend X25519 key - that's not part of the key chain evolution format
+                    val encryptedBase64 = android.util.Base64.encodeToString(encryptedPayload, android.util.Base64.NO_WRAP)
 
                     // ATOMIC TRANSACTION: Check duplicate + Insert message + update ping_inbox state
                     val result = kotlin.runCatching {

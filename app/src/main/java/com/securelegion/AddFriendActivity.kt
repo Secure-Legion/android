@@ -774,6 +774,10 @@ class AddFriendActivity : BaseActivity() {
                             contactCard.x25519PublicKey,
                             Base64.NO_WRAP
                         ),
+                        kyberPublicKeyBase64 = Base64.encodeToString(
+                            contactCard.kyberPublicKey,
+                            Base64.NO_WRAP
+                        ),
                         torOnionAddress = contactCard.torOnionAddress,
                         voiceOnion = contactCard.voiceOnion,
                         addedTimestamp = System.currentTimeMillis(),
@@ -788,12 +792,35 @@ class AddFriendActivity : BaseActivity() {
 
                     Log.i(TAG, "SUCCESS! Contact added with ID: $contactId")
 
+                    // Initialize key chain for progressive ephemeral key evolution
+                    try {
+                        val keyManager = com.securelegion.crypto.KeyManager.getInstance(this@AddFriendActivity)
+                        val ourMessagingOnion = keyManager.getMessagingOnion()
+                        val theirMessagingOnion = contact.messagingOnion ?: contactCard.messagingOnion
+
+                        if (ourMessagingOnion.isNullOrEmpty() || theirMessagingOnion.isNullOrEmpty()) {
+                            Log.e(TAG, "Cannot initialize key chain: missing onion address (ours=$ourMessagingOnion, theirs=$theirMessagingOnion) for ${contact.displayName}")
+                        } else {
+                            com.securelegion.crypto.KeyChainManager.initializeKeyChain(
+                                context = this@AddFriendActivity,
+                                contactId = contactId,
+                                theirX25519PublicKey = contactCard.x25519PublicKey,
+                                theirKyberPublicKey = contactCard.kyberPublicKey,
+                                ourMessagingOnion = ourMessagingOnion,
+                                theirMessagingOnion = theirMessagingOnion
+                            )
+                            Log.i(TAG, "✓ Key chain initialized for ${contact.displayName}")
+                        }
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Failed to initialize key chain for ${contact.displayName}", e)
+                    }
+
                     // Remove the incoming request from pending
                     removeFriendRequestByCid(cid)
 
-                    // Send acceptance notification
-                    Log.i(TAG, "Sending FRIEND_REQUEST_ACCEPTED notification...")
-                    sendFriendRequestAccepted(contactCard)
+                    // NOTE: OLD v1.0 friend request notification removed - use NEW Phase 1/2/2b flow instead
+                    Log.i(TAG, "Contact added successfully (manual download flow)")
+                    // TODO: Consider removing this entire manual download flow in favor of Phase 1/2/2b
 
                     ThemedToast.showLong(this@AddFriendActivity, "Contact added: ${contactCard.displayName}")
                 } else {
@@ -812,11 +839,11 @@ class AddFriendActivity : BaseActivity() {
                     // Save to pending requests
                     savePendingFriendRequest(pendingRequest)
 
-                    // Send friend request notification
-                    Log.i(TAG, "Sending initial FRIEND_REQUEST...")
-                    sendFriendRequest(contactCard, cid)
+                    // NOTE: OLD v1.0 friend request notification removed - use NEW Phase 1/2/2b flow instead
+                    Log.i(TAG, "Contact card saved to pending (manual download flow)")
+                    // TODO: Consider removing this entire manual download flow in favor of Phase 1/2/2b
 
-                    ThemedToast.showLong(this@AddFriendActivity, "Friend request sent to ${contactCard.displayName}. Waiting for acceptance.")
+                    ThemedToast.showLong(this@AddFriendActivity, "Contact card saved. Use Phase 1 flow to send friend request.")
                 }
 
                 hideLoading()
@@ -919,10 +946,49 @@ class AddFriendActivity : BaseActivity() {
                 val senderX25519PublicKeyBase64 = phase1Obj.getString("x25519_public_key")
                 val senderX25519PublicKey = Base64.decode(senderX25519PublicKeyBase64, Base64.NO_WRAP)
 
+                // Extract Kyber public key (for quantum resistance)
+                val senderKyberPublicKey = if (phase1Obj.has("kyber_public_key")) {
+                    Base64.decode(phase1Obj.getString("kyber_public_key"), Base64.NO_WRAP)
+                } else {
+                    null
+                }
+
+                // Verify Ed25519 signature (defense-in-depth against .onion MitM)
+                if (phase1Obj.has("signature") && phase1Obj.has("ed25519_public_key")) {
+                    val signature = Base64.decode(phase1Obj.getString("signature"), Base64.NO_WRAP)
+                    val senderEd25519PublicKey = Base64.decode(phase1Obj.getString("ed25519_public_key"), Base64.NO_WRAP)
+
+                    // Reconstruct unsigned JSON to verify signature
+                    val unsignedJson = org.json.JSONObject().apply {
+                        put("username", senderUsername)
+                        put("friend_request_onion", senderFriendRequestOnion)
+                        put("x25519_public_key", senderX25519PublicKeyBase64)
+                        put("kyber_public_key", phase1Obj.getString("kyber_public_key"))
+                        put("phase", 1)
+                    }.toString()
+
+                    val signatureValid = com.securelegion.crypto.RustBridge.verifySignature(
+                        unsignedJson.toByteArray(Charsets.UTF_8),
+                        signature,
+                        senderEd25519PublicKey
+                    )
+
+                    if (!signatureValid) {
+                        hideLoading()
+                        ThemedToast.show(this@AddFriendActivity, "Invalid signature - friend request rejected (possible MitM attack)")
+                        Log.e(TAG, "Phase 1 signature verification FAILED - rejecting friend request")
+                        return@launch
+                    }
+                    Log.i(TAG, "✓ Phase 1 signature verified (Ed25519)")
+                } else {
+                    Log.w(TAG, "⚠️  Phase 1 has no signature (legacy friend request)")
+                }
+
                 Log.i(TAG, "Phase 1 decrypted successfully:")
                 Log.i(TAG, "  Sender: $senderUsername")
                 Log.i(TAG, "  Sender .onion: $senderFriendRequestOnion")
                 Log.i(TAG, "  Sender X25519 key: ${senderX25519PublicKey.size} bytes")
+                Log.i(TAG, "  Sender Kyber key: ${senderKyberPublicKey?.size ?: 0} bytes (quantum=${senderKyberPublicKey != null})")
 
                 // Build YOUR full contact card
                 val keyManager = KeyManager.getInstance(this@AddFriendActivity)
@@ -931,6 +997,7 @@ class AddFriendActivity : BaseActivity() {
                     displayName = keyManager.getUsername() ?: throw Exception("Username not set"),
                     solanaPublicKey = keyManager.getSolanaPublicKey(),
                     x25519PublicKey = keyManager.getEncryptionPublicKey(),
+                    kyberPublicKey = keyManager.getKyberPublicKey(),
                     solanaAddress = keyManager.getSolanaAddress(),
                     friendRequestOnion = keyManager.getFriendRequestOnion() ?: throw Exception("Friend request .onion not set"),
                     messagingOnion = keyManager.getMessagingOnion() ?: throw Exception("Messaging .onion not set"),
@@ -942,8 +1009,54 @@ class AddFriendActivity : BaseActivity() {
 
                 Log.d(TAG, "Built own contact card for Phase 2")
 
-                // Encrypt YOUR contact card with sender's X25519 public key
-                val phase2Payload = ownContactCard.toJson()
+                // Generate Kyber ciphertext for quantum-resistant key chain initialization
+                var hybridSharedSecret: ByteArray? = null
+                val kyberCiphertextBase64 = withContext(Dispatchers.IO) {
+                    if (senderKyberPublicKey != null && senderKyberPublicKey.any { it != 0.toByte() }) {
+                        // Perform hybrid encapsulation using sender's keys
+                        Log.d(TAG, "Generating hybrid Kyber ciphertext for quantum resistance")
+                        val encapResult = RustBridge.hybridEncapsulate(
+                            senderX25519PublicKey,
+                            senderKyberPublicKey
+                        )
+                        // Result: [combined_secret:64][x25519_ephemeral:32][kyber_ciphertext:1568]
+                        // Extract shared secret (first 64 bytes) - WE NEED TO SAVE THIS for key chain init!
+                        hybridSharedSecret = encapResult.copyOfRange(0, 64)
+                        // Extract ciphertext (remaining bytes) - send to Device A
+                        val ciphertext = encapResult.copyOfRange(64, encapResult.size)
+                        Base64.encodeToString(ciphertext, Base64.NO_WRAP)
+                    } else {
+                        Log.w(TAG, "Sender has no Kyber key - using legacy X25519-only mode")
+                        null
+                    }
+                }
+
+                // Build Phase 2 payload with contact card + Kyber ciphertext
+                val phase2UnsignedJson = org.json.JSONObject().apply {
+                    put("contact_card", org.json.JSONObject(ownContactCard.toJson()))
+                    if (kyberCiphertextBase64 != null) {
+                        put("kyber_ciphertext", kyberCiphertextBase64)
+                    }
+                    put("phase", 2)
+                }.toString()
+
+                // Sign Phase 2 with our Ed25519 key (defense-in-depth)
+                val ownSigningKey = keyManager.getSigningKeyBytes()
+                val ownSigningPublicKey = keyManager.getSigningPublicKey()
+                val phase2Signature = RustBridge.signData(
+                    phase2UnsignedJson.toByteArray(Charsets.UTF_8),
+                    ownSigningKey
+                )
+
+                // Add signature to payload
+                val phase2Payload = org.json.JSONObject(phase2UnsignedJson).apply {
+                    put("ed25519_public_key", Base64.encodeToString(ownSigningPublicKey, Base64.NO_WRAP))
+                    put("signature", Base64.encodeToString(phase2Signature, Base64.NO_WRAP))
+                }.toString()
+
+                Log.d(TAG, "Phase 2 payload signed with Ed25519")
+
+                // Encrypt Phase 2 payload with sender's X25519 public key
                 val encryptedPhase2 = withContext(Dispatchers.IO) {
                     RustBridge.encryptMessage(
                         plaintext = phase2Payload,
@@ -951,7 +1064,7 @@ class AddFriendActivity : BaseActivity() {
                     )
                 }
 
-                Log.d(TAG, "Encrypted Phase 2 payload: ${encryptedPhase2.size} bytes")
+                Log.d(TAG, "Encrypted Phase 2 payload: ${encryptedPhase2.size} bytes (quantum=${kyberCiphertextBase64 != null})")
 
                 // Send Phase 2 to sender's friend-request.onion using dedicated channel
                 val success = withContext(Dispatchers.IO) {
@@ -968,12 +1081,20 @@ class AddFriendActivity : BaseActivity() {
                     removeFriendRequestByCid(incomingRequest.ipfsCid)
 
                     // Save sender's partial info as pending (waiting for their Phase 2b with full card)
-                    // For now, we have: username, friend-request.onion, X25519 key
+                    // For now, we have: username, friend-request.onion, X25519 key, Kyber key, shared secret
                     // We're waiting for: messaging.onion, solana address, full contact card
                     val partialContactJson = org.json.JSONObject().apply {
                         put("username", senderUsername)
                         put("friend_request_onion", senderFriendRequestOnion)
                         put("x25519_public_key", senderX25519PublicKeyBase64)
+                        if (senderKyberPublicKey != null) {
+                            put("kyber_public_key", Base64.encodeToString(senderKyberPublicKey, Base64.NO_WRAP))
+                        }
+                        // CRITICAL: Store the shared secret we generated during encapsulation
+                        // This will be used to initialize the key chain when we receive their Phase 2b
+                        if (hybridSharedSecret != null) {
+                            put("hybrid_shared_secret", Base64.encodeToString(hybridSharedSecret, Base64.NO_WRAP))
+                        }
                     }.toString()
 
                     val pendingContact = com.securelegion.models.PendingFriendRequest(
@@ -1052,18 +1173,34 @@ class AddFriendActivity : BaseActivity() {
                 val ownFriendRequestOnion = keyManager.getFriendRequestOnion()
                     ?: throw Exception("Friend request .onion not set")
                 val ownX25519PublicKey = keyManager.getEncryptionPublicKey()
+                val ownKyberPublicKey = keyManager.getKyberPublicKey()
 
                 Log.d(TAG, "Sending Phase 1 key exchange as: $ownDisplayName")
 
-                // Build Phase 1 payload (minimal public info)
-                val phase1Payload = org.json.JSONObject().apply {
+                // Build Phase 1 payload (minimal public info + Kyber key for quantum resistance)
+                val phase1UnsignedJson = org.json.JSONObject().apply {
                     put("username", ownDisplayName)
                     put("friend_request_onion", ownFriendRequestOnion)
                     put("x25519_public_key", android.util.Base64.encodeToString(ownX25519PublicKey, android.util.Base64.NO_WRAP))
+                    put("kyber_public_key", android.util.Base64.encodeToString(ownKyberPublicKey, android.util.Base64.NO_WRAP))
                     put("phase", 1)
                 }.toString()
 
-                Log.d(TAG, "Phase 1 payload: $phase1Payload")
+                // Sign Phase 1 with our Ed25519 key (defense-in-depth against .onion MitM)
+                val ownSigningKey = keyManager.getSigningKeyBytes()
+                val ownSigningPublicKey = keyManager.getSigningPublicKey()
+                val phase1Signature = com.securelegion.crypto.RustBridge.signData(
+                    phase1UnsignedJson.toByteArray(Charsets.UTF_8),
+                    ownSigningKey
+                )
+
+                // Add signature and signing public key to payload
+                val phase1Payload = org.json.JSONObject(phase1UnsignedJson).apply {
+                    put("ed25519_public_key", android.util.Base64.encodeToString(ownSigningPublicKey, android.util.Base64.NO_WRAP))
+                    put("signature", android.util.Base64.encodeToString(phase1Signature, android.util.Base64.NO_WRAP))
+                }.toString()
+
+                Log.d(TAG, "Phase 1 payload signed with Ed25519")
 
                 // Encrypt Phase 1 with PIN
                 val cardManager = com.securelegion.services.ContactCardManager(this@AddFriendActivity)
@@ -1141,97 +1278,13 @@ class AddFriendActivity : BaseActivity() {
         }
     }
 
-    /**
-     * Send friend request to newly added contact
-     * This notifies them that someone wants to add them as a friend
-     */
-    private fun sendFriendRequest(recipientContactCard: ContactCard, recipientCid: String) {
-        CoroutineScope(Dispatchers.Main).launch {
-            try {
-                Log.d(TAG, "Sending friend request to ${recipientContactCard.displayName}")
-
-                // Check if Tor is ready before attempting to send
-                if (!com.securelegion.services.TorService.isMessagingReady()) {
-                    Log.w(TAG, "Tor not ready - cannot send friend request. Will retry when Tor connects.")
-                    ThemedToast.show(this@AddFriendActivity, "Tor not ready. Friend request will be sent when connected.")
-                    return@launch
-                }
-
-                // Additional check: verify SOCKS proxy is actually running
-                val socksRunning = withContext(Dispatchers.IO) {
-                    com.securelegion.crypto.RustBridge.isSocksProxyRunning()
-                }
-                if (!socksRunning) {
-                    Log.w(TAG, "SOCKS proxy not running - attempting to start")
-                    val started = withContext(Dispatchers.IO) {
-                        com.securelegion.crypto.RustBridge.startSocksProxy()
-                    }
-                    if (!started) {
-                        Log.e(TAG, "Failed to start SOCKS proxy")
-                        ThemedToast.show(this@AddFriendActivity, "Network proxy unavailable. Friend request saved as pending.")
-                        return@launch
-                    }
-                    // Wait a moment for SOCKS proxy to initialize
-                    kotlinx.coroutines.delay(1000)
-                }
-
-                // Get own account information (just username and CID)
-                val keyManager = KeyManager.getInstance(this@AddFriendActivity)
-                val ownDisplayName = keyManager.getUsername()
-                    ?: throw Exception("Username not set")
-                val ownCid = keyManager.getIPFSCID()
-                    ?: throw Exception("IPFS CID not found")
-
-                // Create friend request object (minimal data: username + CID only)
-                val friendRequest = com.securelegion.models.FriendRequest(
-                    displayName = ownDisplayName,
-                    ipfsCid = ownCid
-                )
-
-                // Serialize to JSON
-                val friendRequestJson = friendRequest.toJson()
-                Log.d(TAG, "Friend request JSON: $friendRequestJson")
-
-                // Encrypt the friend request using recipient's X25519 public key
-                // Wire format: [Sender X25519 - 32 bytes][Encrypted Friend Request]
-                // Note: Rust sendFriendRequest adds the 0x07 wire type byte automatically
-                val encryptedFriendRequest = withContext(Dispatchers.IO) {
-                    com.securelegion.crypto.RustBridge.encryptMessage(
-                        plaintext = friendRequestJson,
-                        recipientX25519PublicKey = recipientContactCard.x25519PublicKey
-                    )
-                }
-
-                // Send via Tor using fire-and-forget friend request function
-                // Rust will add wire type 0x07 during transmission
-                val success = withContext(Dispatchers.IO) {
-                    com.securelegion.crypto.RustBridge.sendFriendRequest(
-                        recipientOnion = recipientContactCard.friendRequestOnion,
-                        encryptedFriendRequest = encryptedFriendRequest
-                    )
-                }
-
-                if (success) {
-                    Log.i(TAG, "Friend request sent successfully to ${recipientContactCard.displayName}")
-                } else {
-                    Log.w(TAG, "Failed to send friend request to ${recipientContactCard.displayName} (recipient may be offline)")
-
-                    // Mark request as failed and show toast
-                    ThemedToast.showLong(this@AddFriendActivity, "Friend request failed - Retry in add friend tab")
-                    markRequestAsFailed(recipientCid)
-                }
-
-            } catch (e: Exception) {
-                Log.e(TAG, "Error sending friend request", e)
-                ThemedToast.showLong(this@AddFriendActivity, "Friend request failed - Retry in add friend tab")
-                markRequestAsFailed(recipientCid)
-            }
-        }
-    }
+    // OLD v1.0 sendFriendRequest() function REMOVED
+    // Use NEW Phase 1/2/2b flow (initiateFriendRequest -> acceptPhase2FriendRequest) instead
 
     /**
      * Resend friend request from pending request (retry functionality)
-     * Handles both v2.0 Phase 1 requests and old v1.0 full ContactCard requests
+     * Handles Phase 1 requests (NEW v2.0+ system)
+     * OLD v1.0 full ContactCard format is NO LONGER SUPPORTED
      */
     private fun resendFriendRequest(pendingRequest: com.securelegion.models.PendingFriendRequest) {
         CoroutineScope(Dispatchers.Main).launch {
@@ -1305,56 +1358,9 @@ class AddFriendActivity : BaseActivity() {
 
                     return@launch
                 } else {
-                    // v1.0 full ContactCard resend (old format)
-                    Log.d(TAG, "Resending as full ContactCard request (v1.0)")
-
-                    val recipientContactCard = try {
-                        com.securelegion.models.ContactCard.fromJson(jsonData)
-                    } catch (e: Exception) {
-                        ThemedToast.showLong(this@AddFriendActivity, "Cannot resend: Invalid contact card data")
-                        Log.e(TAG, "Failed to parse saved ContactCard", e)
-                        return@launch
-                    }
-
-                    // Get own account information
-                    val keyManager = KeyManager.getInstance(this@AddFriendActivity)
-                    val ownDisplayName = keyManager.getUsername()
-                        ?: throw Exception("Username not set")
-                    val ownCid = keyManager.getIPFSCID()
-                        ?: throw Exception("IPFS CID not found")
-
-                    // Create friend request object
-                    val friendRequest = com.securelegion.models.FriendRequest(
-                        displayName = ownDisplayName,
-                        ipfsCid = ownCid
-                    )
-
-                    // Serialize to JSON
-                    val friendRequestJson = friendRequest.toJson()
-
-                    // Encrypt the friend request using recipient's X25519 public key
-                    val encryptedFriendRequest = withContext(Dispatchers.IO) {
-                        com.securelegion.crypto.RustBridge.encryptMessage(
-                            plaintext = friendRequestJson,
-                            recipientX25519PublicKey = recipientContactCard.x25519PublicKey
-                        )
-                    }
-
-                    // Send via Tor
-                    val success = withContext(Dispatchers.IO) {
-                        com.securelegion.crypto.RustBridge.sendFriendRequest(
-                            recipientOnion = recipientContactCard.friendRequestOnion,
-                            encryptedFriendRequest = encryptedFriendRequest
-                        )
-                    }
-
-                    if (success) {
-                        Log.i(TAG, "Friend request resent successfully to ${recipientContactCard.displayName}")
-                        ThemedToast.show(this@AddFriendActivity, "Friend request resent to ${pendingRequest.displayName}")
-                    } else {
-                        Log.w(TAG, "Failed to resend friend request to ${recipientContactCard.displayName} (recipient may be offline)")
-                        ThemedToast.showLong(this@AddFriendActivity, "Send failed - recipient may be offline. Try again later.")
-                    }
+                    // v1.0 full ContactCard resend (old format) - NO LONGER SUPPORTED
+                    Log.w(TAG, "Cannot resend v1.0 request - old friend request system removed")
+                    ThemedToast.showLong(this@AddFriendActivity, "Old friend request format not supported. Please use NEW Phase 1/2/2b flow.")
                 }
 
             } catch (e: Exception) {
@@ -1364,61 +1370,8 @@ class AddFriendActivity : BaseActivity() {
         }
     }
 
-    /**
-     * Send friend request accepted notification
-     * Notifies the original requester that we've accepted their request
-     */
-    private fun sendFriendRequestAccepted(recipientContactCard: ContactCard) {
-        CoroutineScope(Dispatchers.Main).launch {
-            try {
-                Log.d(TAG, "Sending friend request accepted notification to ${recipientContactCard.displayName}")
-
-                // Get own account information (just username and CID)
-                val keyManager = KeyManager.getInstance(this@AddFriendActivity)
-                val ownDisplayName = keyManager.getUsername()
-                    ?: throw Exception("Username not set")
-                val ownCid = keyManager.getIPFSCID()
-                    ?: throw Exception("IPFS CID not found")
-
-                // Create acceptance notification (same format as friend request for simplicity)
-                val acceptance = com.securelegion.models.FriendRequest(
-                    displayName = ownDisplayName,
-                    ipfsCid = ownCid
-                )
-
-                // Serialize to JSON
-                val acceptanceJson = acceptance.toJson()
-                Log.d(TAG, "Acceptance notification JSON: $acceptanceJson")
-
-                // Encrypt the acceptance using recipient's X25519 public key
-                val encryptedAcceptance = withContext(Dispatchers.IO) {
-                    com.securelegion.crypto.RustBridge.encryptMessage(
-                        plaintext = acceptanceJson,
-                        recipientX25519PublicKey = recipientContactCard.x25519PublicKey
-                    )
-                }
-
-                // Send via Tor using fire-and-forget acceptance function
-                // Rust will add wire type 0x08 during transmission
-                val success = withContext(Dispatchers.IO) {
-                    com.securelegion.crypto.RustBridge.sendFriendRequestAccepted(
-                        recipientOnion = recipientContactCard.friendRequestOnion,
-                        encryptedAcceptance = encryptedAcceptance
-                    )
-                }
-
-                if (success) {
-                    Log.i(TAG, "Friend request accepted notification sent successfully to ${recipientContactCard.displayName}")
-                } else {
-                    Log.w(TAG, "Failed to send acceptance notification to ${recipientContactCard.displayName} (recipient may be offline)")
-                }
-
-            } catch (e: Exception) {
-                Log.e(TAG, "Error sending friend request accepted notification", e)
-                // Don't show error to user - notification sending is best-effort
-            }
-        }
-    }
+    // OLD v1.0 sendFriendRequestAccepted() function REMOVED
+    // Use NEW Phase 1/2/2b flow (acceptPhase2FriendRequest sends full contact card) instead
 
     /**
      * Save pending friend request to SharedPreferences

@@ -41,6 +41,7 @@ import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.securelegion.adapters.MessageAdapter
+import com.securelegion.crypto.KeyChainManager
 import com.securelegion.crypto.KeyManager
 import com.securelegion.crypto.TorManager
 import com.securelegion.database.SecureLegionDatabase
@@ -418,7 +419,40 @@ class ChatActivity : BaseActivity() {
         voicePlayer = VoicePlayer(this)
 
         // Setup UI
-        findViewById<TextView>(R.id.chatName).text = contactName
+        val chatNameView = findViewById<TextView>(R.id.chatName)
+        chatNameView.text = contactName
+
+        // DEBUG: Long-press contact name to reset key chain counters
+        chatNameView.setOnLongClickListener {
+            Log.d(TAG, "🔍 DEBUG: Long-press detected on contact name!")
+            ThemedToast.show(this, "Long-press detected - showing reset dialog")
+
+            AlertDialog.Builder(this)
+                .setTitle("Reset Key Chain?")
+                .setMessage("This will reset send/receive counters to 0 for this contact.\n\n⚠️ WARNING: Both devices must reset at the same time!")
+                .setPositiveButton("Reset") { _, _ ->
+                    Log.d(TAG, "🔍 DEBUG: User tapped RESET button in dialog")
+                    ThemedToast.show(this@ChatActivity, "Resetting key chain counters...")
+                    lifecycleScope.launch {
+                        try {
+                            Log.d(TAG, "🔍 DEBUG: Calling KeyChainManager.resetKeyChainCounters for contactId=$contactId")
+                            KeyChainManager.resetKeyChainCounters(this@ChatActivity, contactId)
+                            Log.d(TAG, "🔍 DEBUG: Reset completed successfully!")
+                            ThemedToast.show(this@ChatActivity, "✓ Key chain counters reset to 0")
+                        } catch (e: Exception) {
+                            Log.e(TAG, "🔍 DEBUG: Reset failed with exception", e)
+                            ThemedToast.show(this@ChatActivity, "Failed to reset: ${e.message}")
+                        }
+                    }
+                }
+                .setNegativeButton("Cancel") { _, _ ->
+                    Log.d(TAG, "🔍 DEBUG: User tapped CANCEL button in dialog")
+                }
+                .show()
+            Log.d(TAG, "🔍 DEBUG: Reset dialog shown to user")
+            true
+        }
+
         setupContactAvatar()
 
         setupRecyclerView()

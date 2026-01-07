@@ -91,30 +91,43 @@ class MessageService(private val context: Context) {
             val ourPrivateKey = keyManager.getSigningKeyBytes()
 
             // Get key chain for this contact (for progressive ephemeral key evolution)
-            Log.d(TAG, "Encrypting voice message with key evolution...")
+            Log.d(TAG, "SEND KEY CHAIN LOAD (VOICE): Loading key chain from database...")
+            Log.d(TAG, "  contactId=$contactId (${contact.displayName})")
             Log.d(TAG, "  Audio bytes: ${audioBytes.size} bytes")
             Log.d(TAG, "  Duration: ${durationSeconds}s")
 
             val keyChain = KeyChainManager.getKeyChain(context, contactId)
-                ?: throw Exception("Key chain not found for contact $contactId")
+                ?: throw Exception("Key chain not found for contact ${contact.displayName} (ID: $contactId)")
+            Log.d(TAG, "SEND KEY CHAIN LOAD (VOICE): Loaded from database successfully")
+            Log.d(TAG, "  sendCounter=${keyChain.sendCounter} <- will use this for encryption")
 
             // Encrypt using current send chain key and counter (ATOMIC key evolution)
             // Wire format: [version:1][sequence:8][nonce:24][ciphertext][tag:16]
+            Log.d(TAG, "SEND KEY EVOLUTION (VOICE): Encrypting with sequence ${keyChain.sendCounter}")
             val result = RustBridge.encryptMessageWithEvolution(
                 String(audioBytes, Charsets.ISO_8859_1), // Convert bytes to string for encryption
                 keyChain.sendChainKeyBytes,
                 keyChain.sendCounter
             )
             val encryptedBytes = result.ciphertext
-            Log.d(TAG, "  Encrypted: ${encryptedBytes.size} bytes (sequence ${keyChain.sendCounter})")
+            Log.d(TAG, "SEND KEY EVOLUTION (VOICE): Encryption complete, encrypted ${encryptedBytes.size} bytes")
 
             // Save evolved key to database (key evolution happened atomically in Rust)
+            Log.d(TAG, "SEND KEY EVOLUTION (VOICE): Updating database with new sendCounter=${keyChain.sendCounter + 1}")
             database.contactKeyChainDao().updateSendChainKey(
                 contactId = contactId,
                 newSendChainKeyBase64 = android.util.Base64.encodeToString(result.evolvedChainKey, android.util.Base64.NO_WRAP),
                 newSendCounter = keyChain.sendCounter + 1,
                 timestamp = System.currentTimeMillis()
             )
+            // VERIFY the update actually persisted
+            val verifyKeyChain = database.contactKeyChainDao().getKeyChainByContactId(contactId)
+            Log.d(TAG, "SEND VERIFICATION (VOICE): After update, database shows sendCounter=${verifyKeyChain?.sendCounter}")
+            if (verifyKeyChain?.sendCounter != keyChain.sendCounter + 1) {
+                Log.e(TAG, "SEND ERROR (VOICE): Counter update did NOT persist! Expected ${keyChain.sendCounter + 1}, got ${verifyKeyChain?.sendCounter}")
+            } else {
+                Log.d(TAG, "SEND (VOICE): Counter update verified successfully")
+            }
 
             // Prepend message type byte: 0x01 for VOICE, followed by duration (4 bytes, big-endian)
             val durationBytes = ByteArray(4)
@@ -122,10 +135,15 @@ class MessageService(private val context: Context) {
             durationBytes[1] = (durationSeconds shr 16).toByte()
             durationBytes[2] = (durationSeconds shr 8).toByte()
             durationBytes[3] = durationSeconds.toByte()
-            val encryptedWithMetadata = byteArrayOf(0x01) + durationBytes + encryptedBytes
+
+            // Get our X25519 public key for sender identification
+            val ourX25519PublicKey = keyManager.getEncryptionPublicKey()
+
+            // Wire format: [0x01][Duration:4][X25519:32][Encrypted Audio]
+            val encryptedWithMetadata = byteArrayOf(0x01) + durationBytes + ourX25519PublicKey + encryptedBytes
             val encryptedBase64 = Base64.encodeToString(encryptedWithMetadata, Base64.NO_WRAP)
 
-            Log.d(TAG, "  Metadata: 1 byte type + 4 bytes duration")
+            Log.d(TAG, "  Metadata: 1 byte type + 4 bytes duration + 32 bytes X25519")
             Log.d(TAG, "  Total payload: ${encryptedWithMetadata.size} bytes (${encryptedBase64.length} Base64 chars)")
 
             // Extract nonce from wire format (bytes 9-32, after version and sequence)
@@ -253,7 +271,7 @@ class MessageService(private val context: Context) {
             Log.d(TAG, "  Image bytes: ${imageBytes.size} bytes")
 
             val keyChain = KeyChainManager.getKeyChain(context, contactId)
-                ?: throw Exception("Key chain not found for contact $contactId")
+                ?: throw Exception("Key chain not found for contact ${contact.displayName} (ID: $contactId)")
 
             // Encrypt using current send chain key and counter (ATOMIC key evolution)
             // Wire format: [version:1][sequence:8][nonce:24][ciphertext][tag:16]
@@ -273,12 +291,14 @@ class MessageService(private val context: Context) {
                 timestamp = System.currentTimeMillis()
             )
 
-            // Prepend metadata byte (0x02 = IMAGE) AFTER encryption (like VOICE messages)
-            val encryptedWithMetadata = byteArrayOf(0x02.toByte()) + encryptedBytes
-            Log.d(TAG, "  Total with metadata: ${encryptedWithMetadata.size} bytes (prepended 0x02)")
+            // Get our X25519 public key for sender identification
+            val ourX25519PublicKey = keyManager.getEncryptionPublicKey()
 
-            // NOTE: Type byte (0x09) is added by android.rs sendPing(), not here
-            // Wire format: [0x02][version:1][sequence:8][nonce:24][ciphertext][tag:16]
+            // Wire format: [X25519:32][version:1][sequence:8][nonce:24][ciphertext][tag:16]
+            // NOTE: Wire protocol type byte (0x09) is added by android.rs sendPing()
+            val encryptedWithMetadata = ourX25519PublicKey + encryptedBytes
+            Log.d(TAG, "  Total with metadata: ${encryptedWithMetadata.size} bytes (X25519 + encrypted)")
+
             val encryptedBase64 = Base64.encodeToString(encryptedWithMetadata, Base64.NO_WRAP)
 
             Log.d(TAG, "  Total payload: ${encryptedBytes.size} bytes (${encryptedBase64.length} Base64 chars)")
@@ -401,35 +421,55 @@ class MessageService(private val context: Context) {
             val ourPrivateKey = keyManager.getSigningKeyBytes()
 
             // Get key chain for this contact (for progressive ephemeral key evolution)
-            Log.d(TAG, "Encrypting message with key evolution...")
+            Log.d(TAG, "SEND KEY CHAIN LOAD: Loading key chain from database...")
+            Log.d(TAG, "  contactId=$contactId (${contact.displayName})")
             val keyChain = KeyChainManager.getKeyChain(context, contactId)
-                ?: throw Exception("Key chain not found for contact $contactId")
+                ?: throw Exception("Key chain not found for contact ${contact.displayName} (ID: $contactId)")
+            Log.d(TAG, "SEND KEY CHAIN LOAD: Loaded from database successfully")
+            Log.d(TAG, "  sendCounter=${keyChain.sendCounter} <- will use this for encryption")
+            Log.d(TAG, "  receiveCounter=${keyChain.receiveCounter}")
 
-            // ATOMIC ENCRYPTION + KEY EVOLUTION (Signal-style)
+            // ATOMIC ENCRYPTION + KEY EVOLUTION
             // Encrypts and evolves key in one indivisible operation to prevent desync
             // Wire format: [version:1][sequence:8][nonce:24][ciphertext][tag:16]
+            Log.d(TAG, "SEND KEY EVOLUTION: About to encrypt and evolve send chain key")
+            Log.d(TAG, "  contactId=$contactId (${contact.displayName})")
+            Log.d(TAG, "  Current sendCounter=${keyChain.sendCounter}")
+            Log.d(TAG, "  Will encrypt with sequence ${keyChain.sendCounter}")
             val result = RustBridge.encryptMessageWithEvolution(
                 plaintext,
                 keyChain.sendChainKeyBytes,
                 keyChain.sendCounter
             )
             val encryptedBytes = result.ciphertext
+            Log.d(TAG, "SEND KEY EVOLUTION: Encryption complete, encrypted ${encryptedBytes.size} bytes")
 
             // Save evolved key to database (key evolution happened atomically in Rust)
+            Log.d(TAG, "SEND KEY EVOLUTION: Updating database with new sendCounter=${keyChain.sendCounter + 1}")
             database.contactKeyChainDao().updateSendChainKey(
                 contactId = contactId,
                 newSendChainKeyBase64 = android.util.Base64.encodeToString(result.evolvedChainKey, android.util.Base64.NO_WRAP),
                 newSendCounter = keyChain.sendCounter + 1,
                 timestamp = System.currentTimeMillis()
             )
+            // VERIFY the update actually persisted
+            val verifyKeyChain = database.contactKeyChainDao().getKeyChainByContactId(contactId)
+            Log.d(TAG, "SEND VERIFICATION: After update, database shows sendCounter=${verifyKeyChain?.sendCounter}")
+            if (verifyKeyChain?.sendCounter != keyChain.sendCounter + 1) {
+                Log.e(TAG, "SEND ERROR: Counter update did NOT persist! Expected ${keyChain.sendCounter + 1}, got ${verifyKeyChain?.sendCounter}")
+            } else {
+                Log.d(TAG, "SEND: Counter update verified successfully")
+            }
             Log.d(TAG, "Message encrypted with sequence ${keyChain.sendCounter}")
 
-            // Prepend metadata byte (0x00 = TEXT) AFTER encryption (like VOICE/IMAGE messages)
-            val encryptedWithMetadata = byteArrayOf(0x00.toByte()) + encryptedBytes
-            Log.d(TAG, "  Total with metadata: ${encryptedWithMetadata.size} bytes (prepended 0x00)")
+            // Get our X25519 public key for sender identification
+            val ourX25519PublicKey = keyManager.getEncryptionPublicKey()
 
-            // NOTE: Wire protocol type byte (0x03) is added by android.rs sendPing(), not here
-            // Wire format: [0x00][version:1][sequence:8][nonce:24][ciphertext][tag:16]
+            // Wire format: [X25519:32][version:1][sequence:8][nonce:24][ciphertext][tag:16]
+            // NOTE: Wire protocol type byte (0x03) is added by android.rs sendPing()
+            val encryptedWithMetadata = ourX25519PublicKey + encryptedBytes
+            Log.d(TAG, "  Total with metadata: ${encryptedWithMetadata.size} bytes (X25519 + encrypted)")
+
             val encryptedBase64 = Base64.encodeToString(encryptedWithMetadata, Base64.NO_WRAP)
 
             // Extract nonce from wire format (bytes 9-32, after version and sequence)
@@ -937,16 +977,44 @@ class MessageService(private val context: Context) {
             // Get key chain for this contact (for progressive ephemeral key evolution)
             Log.d(TAG, "Decrypting message with key evolution...")
             val keyChain = KeyChainManager.getKeyChain(context, contact.id)
-                ?: throw Exception("Key chain not found for contact ${contact.id}")
+            if (keyChain == null) {
+                Log.e(TAG, "❌ DECRYPTION FAILED: Key chain not found for contact ${contact.id} (${contact.displayName})")
+                Log.e(TAG, "   This contact was probably added before key chain support was implemented.")
+                Log.e(TAG, "   Fix: Remove and re-add this contact to initialize a new key chain.")
+                throw Exception("Key chain not found for contact ${contact.id}")
+            }
+
+            // Log current key chain state for debugging
+            Log.d(TAG, "📊 Key chain state: sendCounter=${keyChain.sendCounter}, receiveCounter=${keyChain.receiveCounter}")
 
             // Decrypt using current receive chain key and counter (ATOMIC key evolution)
             // Wire format: [version:1][sequence:8][nonce:24][ciphertext][tag:16]
             val encryptedBytes = Base64.decode(encryptedData, Base64.NO_WRAP)
+
+            // Extract sequence from wire format for logging
+            if (encryptedBytes.size >= 9) {
+                val messageSequence = java.nio.ByteBuffer.wrap(encryptedBytes.sliceArray(1..8)).long
+                Log.d(TAG, "📨 Message sequence: $messageSequence (expecting: ${keyChain.receiveCounter})")
+                if (messageSequence != keyChain.receiveCounter) {
+                    Log.e(TAG, "❌ SEQUENCE MISMATCH: Message has sequence $messageSequence but we expect ${keyChain.receiveCounter}")
+                    Log.e(TAG, "   This usually means messages were sent but not received, causing key chain desync.")
+                }
+            }
+
             val result = RustBridge.decryptMessageWithEvolution(
                 encryptedBytes,
                 keyChain.receiveChainKeyBytes,
                 keyChain.receiveCounter
-            ) ?: return@withContext Result.failure(Exception("Failed to decrypt message"))
+            )
+
+            if (result == null) {
+                Log.e(TAG, "❌ DECRYPTION FAILED: RustBridge.decryptMessageWithEvolution returned null")
+                Log.e(TAG, "   Possible causes:")
+                Log.e(TAG, "   1. Sequence number mismatch (message sequence != receiveCounter)")
+                Log.e(TAG, "   2. Wrong encryption key (key chain desynchronized)")
+                Log.e(TAG, "   3. Corrupted ciphertext")
+                return@withContext Result.failure(Exception("Failed to decrypt message - sequence mismatch or corrupted data"))
+            }
 
             val decryptedData = result.plaintext
 
@@ -1147,9 +1215,10 @@ class MessageService(private val context: Context) {
                     // Text message (default)
                     val plaintext = decryptedData
 
-                    // Generate message ID from content + sender (for deduplication)
-                    // NOTE: Don't use nonce - each retry has a new nonce but same content
-                    val messageId = generateMessageId(plaintext, senderOnionAddress)
+                    // Generate message ID from ENCRYPTED payload (prevents duplicate plaintext blocking)
+                    // Encrypted payload includes random nonce, so identical plaintexts get different IDs
+                    val messageIdHash = java.security.MessageDigest.getInstance("SHA-256").digest(encryptedBytes)
+                    val messageId = "blob_" + Base64.encodeToString(messageIdHash, Base64.NO_WRAP).take(28)
 
                     // Check for duplicate
                     if (database.messageDao().messageExists(messageId)) {

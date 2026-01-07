@@ -337,6 +337,7 @@ class WalletIdentityActivity : AppCompatActivity() {
                     displayName = username,
                     solanaPublicKey = keyManager.getSolanaPublicKey(),
                     x25519PublicKey = keyManager.getEncryptionPublicKey(),
+                    kyberPublicKey = keyManager.getKyberPublicKey(),
                     solanaAddress = newWalletAddress,
                     friendRequestOnion = friendRequestOnion,
                     messagingOnion = newOnionAddress,

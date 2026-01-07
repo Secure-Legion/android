@@ -7,10 +7,10 @@
 
     <!-- Spartan Helmet -->
     <group
-        android:scaleX="0.37"
-        android:scaleY="0.37"
-        android:translateX="28"
-        android:translateY="27">
+        android:scaleX="0.45"
+        android:scaleY="0.45"
+        android:translateX="22"
+        android:translateY="21">
         <path
             android:fillColor="#FFFFFF"
             android:strokeColor="#000000"

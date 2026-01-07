@@ -313,14 +313,16 @@ class MessageAdapter(
     }
 
     override fun getItemViewType(position: Int): Int {
+        Log.d(TAG, "getItemViewType() called for position $position (messages.size=${messages.size})")
         // Check if this is in the pending messages range (after regular messages)
         if (position >= messages.size) {
+            Log.d(TAG, "  -> VIEW_TYPE_PENDING")
             return VIEW_TYPE_PENDING
         }
 
         val message = messages[position]
 
-        return when {
+        val viewType = when {
             message.messageType == Message.MESSAGE_TYPE_VOICE && message.isSentByMe -> VIEW_TYPE_VOICE_SENT
             message.messageType == Message.MESSAGE_TYPE_VOICE && !message.isSentByMe -> VIEW_TYPE_VOICE_RECEIVED
             message.messageType == Message.MESSAGE_TYPE_IMAGE && message.isSentByMe -> VIEW_TYPE_IMAGE_SENT
@@ -332,16 +334,21 @@ class MessageAdapter(
             message.isSentByMe -> VIEW_TYPE_SENT
             else -> VIEW_TYPE_RECEIVED
         }
+        Log.d(TAG, "  -> viewType=$viewType (type=${message.messageType}, sentByMe=${message.isSentByMe})")
+        return viewType
     }
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): RecyclerView.ViewHolder {
+        Log.d(TAG, "onCreateViewHolder() called for viewType=$viewType")
         return when (viewType) {
             VIEW_TYPE_SENT -> {
+                Log.d(TAG, "  -> Creating SentMessageViewHolder")
                 val view = LayoutInflater.from(parent.context)
                     .inflate(R.layout.item_message_sent, parent, false)
                 SentMessageViewHolder(view)
             }
             VIEW_TYPE_PENDING -> {
+                Log.d(TAG, "  -> Creating PendingMessageViewHolder")
                 val view = LayoutInflater.from(parent.context)
                     .inflate(R.layout.item_message_pending, parent, false)
                 PendingMessageViewHolder(view)
@@ -395,8 +402,10 @@ class MessageAdapter(
     }
 
     override fun onBindViewHolder(holder: RecyclerView.ViewHolder, position: Int) {
+        Log.d(TAG, "onBindViewHolder() called for position=$position, holder type=${holder.javaClass.simpleName}")
         when (holder) {
             is SentMessageViewHolder -> {
+                Log.d(TAG, "  -> Binding SentMessageViewHolder")
                 val message = messages[position]
                 bindSentMessage(holder, message, position)
             }
@@ -1400,7 +1409,9 @@ class MessageAdapter(
     }
 
     override fun getItemCount(): Int {
-        return messages.size + pendingPings.size
+        val count = messages.size + pendingPings.size
+        Log.d(TAG, "getItemCount() called: messages=${messages.size}, pending=${pendingPings.size}, total=$count")
+        return count
     }
 
     override fun onViewRecycled(holder: RecyclerView.ViewHolder) {
@@ -1451,6 +1462,7 @@ class MessageAdapter(
         newDownloadingPingIds: Set<String> = emptySet(),
         newAutoPongPingIds: Set<String> = emptySet()
     ) {
+        Log.d(TAG, "updateMessages() called: old=${messages.size}, new=${newMessages.size}, pending=${newPendingPings.size}")
         // Stop all running ellipsis animations (views will be recycled)
         ellipsisAnimations.keys.toList().forEach { textView ->
             stopEllipsisAnimation(textView)
@@ -1460,6 +1472,7 @@ class MessageAdapter(
         val oldMessageCount = messages.size
         val oldPendingCount = pendingPings.size
         val oldTotalCount = oldMessageCount + oldPendingCount
+        Log.d(TAG, "  Old state: messages=$oldMessageCount, pending=$oldPendingCount, total=$oldTotalCount")
 
         // Update state
         messages = newMessages
@@ -1471,58 +1484,81 @@ class MessageAdapter(
         val newMessageCount = newMessages.size
         val newPendingCount = newPendingPings.size
         val newTotalCount = newMessageCount + newPendingCount
+        Log.d(TAG, "  New state: messages=$newMessageCount, pending=$newPendingCount, total=$newTotalCount")
 
         // Reset swipe state
         currentSwipeRevealedPosition = -1
 
         // Notify RecyclerView about specific changes to avoid crashes
+        Log.d(TAG, "  Deciding notification strategy...")
         when {
             // Pending pings removed (after downloads or deletions)
             oldPendingCount > 0 && newPendingCount == 0 -> {
+                Log.d(TAG, "  Strategy: Pending pings removed")
                 // ATOMIC SWAP case: Total count stayed the same (ping became message)
                 // Use notifyDataSetChanged to avoid animation gap
                 if (newTotalCount == oldTotalCount) {
+                    Log.d(TAG, "    -> notifyDataSetChanged() [ATOMIC SWAP]")
                     notifyDataSetChanged()
                 } else {
                     // Normal case: notify about changes
                     if (newMessageCount != oldMessageCount) {
+                        Log.d(TAG, "    -> notifyItemRangeChanged(0, $newMessageCount)")
                         notifyItemRangeChanged(0, newMessageCount)
                     }
                     // Remove all pending items
+                    Log.d(TAG, "    -> notifyItemRangeRemoved($oldMessageCount, $oldPendingCount)")
                     notifyItemRangeRemoved(oldMessageCount, oldPendingCount)
                 }
             }
             // Pending pings added
             oldPendingCount == 0 && newPendingCount > 0 -> {
+                Log.d(TAG, "  Strategy: Pending pings added")
                 // Notify about message changes if any
                 if (newMessageCount != oldMessageCount) {
+                    Log.d(TAG, "    -> notifyItemRangeChanged(0, $oldMessageCount)")
                     notifyItemRangeChanged(0, oldMessageCount)
                 }
                 // Insert new pending items at the end
+                Log.d(TAG, "    -> notifyItemRangeInserted($newMessageCount, $newPendingCount)")
                 notifyItemRangeInserted(newMessageCount, newPendingCount)
             }
             // Pending count changed
             newPendingCount != oldPendingCount -> {
+                Log.d(TAG, "  Strategy: Pending count changed")
                 // Update messages if count changed
                 if (newMessageCount != oldMessageCount) {
-                    notifyItemRangeChanged(0, kotlin.math.min(newMessageCount, oldMessageCount))
+                    val minCount = kotlin.math.min(newMessageCount, oldMessageCount)
+                    Log.d(TAG, "    -> notifyItemRangeChanged(0, $minCount)")
+                    notifyItemRangeChanged(0, minCount)
                 }
                 // Handle pending changes
                 if (newPendingCount > oldPendingCount) {
-                    notifyItemRangeInserted(oldMessageCount + oldPendingCount, newPendingCount - oldPendingCount)
+                    val insertPos = oldMessageCount + oldPendingCount
+                    val insertCount = newPendingCount - oldPendingCount
+                    Log.d(TAG, "    -> notifyItemRangeInserted($insertPos, $insertCount)")
+                    notifyItemRangeInserted(insertPos, insertCount)
                 } else {
-                    notifyItemRangeRemoved(oldMessageCount + newPendingCount, oldPendingCount - newPendingCount)
+                    val removePos = oldMessageCount + newPendingCount
+                    val removeCount = oldPendingCount - newPendingCount
+                    Log.d(TAG, "    -> notifyItemRangeRemoved($removePos, $removeCount)")
+                    notifyItemRangeRemoved(removePos, removeCount)
                 }
             }
             // Just messages changed
             newMessageCount > oldMessageCount -> {
+                Log.d(TAG, "  Strategy: Messages increased ($oldMessageCount -> $newMessageCount)")
+                Log.d(TAG, "    -> notifyItemRangeInserted($oldMessageCount, ${newMessageCount - oldMessageCount})")
                 notifyItemRangeInserted(oldMessageCount, newMessageCount - oldMessageCount)
             }
             newMessageCount < oldMessageCount -> {
+                Log.d(TAG, "  Strategy: Messages decreased ($oldMessageCount -> $newMessageCount)")
+                Log.d(TAG, "    -> notifyItemRangeRemoved($newMessageCount, ${oldMessageCount - newMessageCount})")
                 notifyItemRangeRemoved(newMessageCount, oldMessageCount - newMessageCount)
             }
             else -> {
-                // Same count, just update all
+                Log.d(TAG, "  Strategy: Same count, update all ($newTotalCount items)")
+                Log.d(TAG, "    -> notifyItemRangeChanged(0, $newTotalCount)")
                 notifyItemRangeChanged(0, newTotalCount)
             }
         }

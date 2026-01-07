@@ -37,23 +37,22 @@ class AudioPlaybackManager(
         private const val AUDIO_FORMAT = AudioFormat.ENCODING_PCM_16BIT
         private const val FRAME_SIZE_SAMPLES = OpusCodec.FRAME_SIZE_SAMPLES
 
-        // Jitter buffer configuration (bounded adaptive playout for Tor)
-        // Fixed low clamp (e.g., 250ms) is incompatible with Tor tails.
-        // We use bounded adaptive playout with a hard cap to prevent delay creep
-        // while preserving audio on variable links.
-        private const val MIN_BUFFER_MS = 150        // Minimum target buffer (adaptive lower bound)
-        private const val MAX_BUFFER_MS = 450        // Maximum target buffer (adaptive upper bound)
-        private const val INITIAL_BUFFER_MS = 250    // Start with 250ms (MVP target)
-        private const val HARD_CAP_MS = 1200         // MVP: Hard cap at 1200ms (drop frames beyond)
-        private const val FRAME_DURATION_MS = 40     // MVP: 40ms per frame
+        // Jitter buffer configuration (optimized for Tor)
+        // Tor has high variance - we prioritize smoothness over low latency
+        // Start big, grow immediately on underrun, shrink slowly after long stability
+        private const val MIN_BUFFER_MS = 500        // Minimum target buffer (was 150ms - TOO SMALL for Tor)
+        private const val MAX_BUFFER_MS = 1400       // Maximum target buffer (was 450ms - increased for Tor variance)
+        private const val INITIAL_BUFFER_MS = 700    // Start with 700ms for Tor stability
+        private const val HARD_CAP_MS = 1600         // Hard cap at 1600ms (drop frames beyond)
+        private const val FRAME_DURATION_MS = 20     // CRITICAL FIX: 20ms per frame (matches OpusCodec.FRAME_SIZE_MS)
         private const val MAX_OUT_OF_ORDER = 10      // Max frames to buffer before considering lost
 
         // FEC grace window (v2 - wait for next packet before PLCing)
-        private const val FEC_GRACE_WINDOW_MS = 60L  // MVP: Wait 60ms for next packet (1.5 frames @ 40ms)
+        private const val FEC_GRACE_WINDOW_MS = 60L  // Wait 60ms for next packet (3 frames @ 20ms)
         private const val FEC_MAX_RETRIES = 2        // Check for next frame 2 times during grace window
 
         // Reorder grace window (v3 - wait for out-of-order frames before missing)
-        private const val REORDER_GRACE_MS = 80L     // MVP: Wait 80ms for out-of-order frames (2 frames @ 40ms)
+        private const val REORDER_GRACE_MS = 80L     // Wait 80ms for out-of-order frames (4 frames @ 20ms)
 
         // Adaptive buffer tuning (more tolerant for Tor jitter)
         private const val LATE_FRAME_THRESHOLD = 0.10f  // If >10% frames late, increase buffer (was 5%)
@@ -62,6 +61,11 @@ class AudioPlaybackManager(
         // Resynchronization (recover from dead circuits by skipping forward)
         // This is the ONLY delay control mechanism - latency clamp removed (incompatible with Tor)
         private const val RESYNC_PLC_THRESHOLD = 15  // Skip forward after 15 consecutive PLC frames (300ms dead)
+
+        // Buffer adaptation tuning (immediate growth, slow shrinking)
+        private const val UNDERRUN_GROWTH_MS = 150    // Immediate +150ms on underrun (not gradual)
+        private const val SHRINK_STEP_MS = 20         // Tiny -20ms shrink steps (slow)
+        private const val SHRINK_STABILITY_MS = 20_000L  // Wait 20 seconds stable before shrinking
     }
 
     private var audioTrack: AudioTrack? = null
@@ -90,6 +94,11 @@ class AudioPlaybackManager(
     private var framesLost: Long = 0
     private var framesLateToBuffer: Long = 0  // Arrived after playout deadline (v3)
     private var framesPanicTrimmed: Long = 0  // Dropped due to exceeding HARD_CAP_MS
+
+    // Buffer adaptation tracking
+    private var lastUnderrunTime: Long = 0   // Last time we had an underrun (for stability tracking)
+    private var underrunCount: Long = 0      // Total underruns during call
+    private var playbackFrameCount: Long = 0 // Frame counter for periodic buffer adaptation
 
     // FEC statistics
     private var fecAttempts: Long = 0
@@ -229,6 +238,8 @@ class AudioPlaybackManager(
                 jitterBuffer.clear()
                 seqToCircuit.clear()
                 seqOrder.clear()
+                playbackFrameCount = 0  // Reset frame counter for buffer adaptation
+                lastUnderrunTime = System.currentTimeMillis()  // Initialize stability timer
             }
 
             // Launch playback loop
@@ -326,12 +337,6 @@ class AudioPlaybackManager(
 
         // Add to jitter buffer
         jitterBuffer.offer(BufferedFrame(sequenceNumber, opusFrame))
-
-        // Adapt jitter buffer based on arrival patterns
-        if (framesReceived % 100 == 0L) {
-            adaptJitterBuffer()
-            telemetry?.updateJitterBuffer(jitterBufferMs)
-        }
     }
 
     /**
@@ -433,6 +438,9 @@ class AudioPlaybackManager(
 
                         if (!recovered) {
                             // FEC failed after grace window - fallback to PLC
+                            // THIS IS AN UNDERRUN - buffer was too small
+                            onUnderrun()  // Immediate buffer growth
+
                             framesLost++
                             plcFrames++
                             consecutivePLCFrames++
@@ -452,6 +460,13 @@ class AudioPlaybackManager(
                             continue
                         }
                     }
+                }
+
+                // Periodically check if we can shrink buffer (slow shrinking)
+                playbackFrameCount++
+                if (playbackFrameCount % 250 == 0L) {  // Every 5 seconds (250 frames * 20ms)
+                    adaptJitterBuffer()
+                    telemetry?.updateJitterBuffer(jitterBufferMs)
                 }
 
                 // Frame duration is 20ms, sleep to maintain real-time playback
@@ -644,30 +659,38 @@ class AudioPlaybackManager(
     }
 
     /**
-     * Adapt jitter buffer size based on frame arrival patterns
+     * Handle buffer underrun (immediate growth)
+     * Called when frame == null in playback loop (missing frame)
+     */
+    private fun onUnderrun() {
+        val now = System.currentTimeMillis()
+        val oldBuffer = jitterBufferMs
+
+        // IMMEDIATE GROWTH: +150ms on underrun (don't wait for gradual increase)
+        jitterBufferMs = (jitterBufferMs + UNDERRUN_GROWTH_MS).coerceAtMost(MAX_BUFFER_MS)
+        lastUnderrunTime = now
+        underrunCount++
+
+        Log.w(TAG, "⚡ UNDERRUN #$underrunCount! Grew buffer ${oldBuffer}ms → ${jitterBufferMs}ms")
+    }
+
+    /**
+     * Adapt jitter buffer size (slow shrinking after stability)
+     * Call this periodically (e.g., every ~5 seconds) during playback
      */
     private fun adaptJitterBuffer() {
-        if (framesReceived < 50) {
-            return // Not enough data
-        }
+        val now = System.currentTimeMillis()
+        val stableDuration = now - lastUnderrunTime
 
-        val lateRate = framesLate.toFloat() / framesReceived
+        // Only shrink if:
+        // 1. No underruns for 20+ seconds (SHRINK_STABILITY_MS)
+        // 2. Buffer is above minimum
+        if (stableDuration > SHRINK_STABILITY_MS && jitterBufferMs > MIN_BUFFER_MS) {
+            val oldBuffer = jitterBufferMs
+            jitterBufferMs = max(MIN_BUFFER_MS, jitterBufferMs - SHRINK_STEP_MS)
+            lastUnderrunTime = now  // Reset stability timer after shrink
 
-        if (lateRate > LATE_FRAME_THRESHOLD) {
-            // Too many late frames, increase buffer (bigger steps for Tor)
-            jitterBufferMs = (jitterBufferMs + 100).coerceIn(MIN_BUFFER_MS, MAX_BUFFER_MS)
-            Log.d(TAG, "Increased jitter buffer to ${jitterBufferMs}ms (late rate: ${String.format("%.1f", lateRate * 100)}%)")
-
-        } else if (lateRate < EARLY_FRAME_THRESHOLD * 0.1f && jitterBufferMs > MIN_BUFFER_MS) {
-            // Very few late frames, decrease buffer (slower steps to avoid oscillation)
-            jitterBufferMs = max(MIN_BUFFER_MS, jitterBufferMs - 50)
-            Log.d(TAG, "Decreased jitter buffer to ${jitterBufferMs}ms (late rate: ${String.format("%.1f", lateRate * 100)}%)")
-        }
-
-        // Reset stats periodically
-        if (framesReceived % 500 == 0L) {
-            framesLate = 0
-            framesReceived = 0
+            Log.d(TAG, "📉 Stable for ${stableDuration/1000}s, shrunk buffer ${oldBuffer}ms → ${jitterBufferMs}ms")
         }
     }
 

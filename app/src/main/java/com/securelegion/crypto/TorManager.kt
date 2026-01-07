@@ -238,8 +238,8 @@ class TorManager(private val context: Context) {
                     Log.d(TAG, "Friend-request hidden service re-registered: $friendRequestOnion")
 
                     // Note: Voice hidden service is created later by TorService.startVoiceService()
-                    // after the voice streaming server is started on localhost:9152
-                    Log.d(TAG, "Voice hidden service will be registered by TorService after voice server starts")
+                    // after the voice streaming listener is started on localhost:9152
+                    Log.d(TAG, "Voice hidden service will be registered by TorService after voice listener starts")
 
                     address
                 } else {

@@ -7,10 +7,10 @@ import com.securelegion.crypto.RustBridge
 import kotlinx.coroutines.*
 
 /**
- * Contact Card Server (v2.0)
+ * Contact Exchange Service (v2.0)
  *
- * Manages the contact card HTTP server on friend request .onion:
- * - Starts HTTP server on friend request .onion address
+ * Manages the contact exchange endpoint on friend request .onion:
+ * - Starts P2P listener on friend request .onion address
  * - Serves encrypted contact card at GET /contact-card
  *
  * Friend requests are handled by v1.0 wire protocol (0x07/0x08) on messaging .onion.
@@ -35,23 +35,23 @@ class FriendRequestService(private val context: Context) {
     private var serverStarted = false
 
     /**
-     * Start the contact card HTTP server
+     * Start the contact exchange listener
      * Note: Friend requests use v1.0 wire protocol (0x07/0x08) on messaging .onion
      */
     suspend fun startServer(): Result<Unit> {
         return withContext(Dispatchers.IO) {
             try {
                 if (serverStarted) {
-                    Log.d(TAG, "Contact card server already running")
+                    Log.d(TAG, "Contact exchange listener already running")
                     return@withContext Result.success(Unit)
                 }
 
-                Log.i(TAG, "Starting contact card HTTP server...")
+                Log.i(TAG, "Starting contact exchange listener...")
 
                 // Get KeyManager and contact card info
                 val keyManager = KeyManager.getInstance(context)
                 if (!keyManager.hasContactCardInfo()) {
-                    Log.w(TAG, "No contact card info available - server not started")
+                    Log.w(TAG, "No contact card info available - listener not started")
                     return@withContext Result.failure(Exception("Contact card not initialized"))
                 }
 
@@ -67,6 +67,7 @@ class FriendRequestService(private val context: Context) {
                     displayName = keyManager.getUsername() ?: "User",
                     solanaPublicKey = keyManager.getSolanaPublicKey(),
                     x25519PublicKey = keyManager.getEncryptionPublicKey(),
+                    kyberPublicKey = keyManager.getKyberPublicKey(),
                     solanaAddress = keyManager.getSolanaAddress(),
                     friendRequestOnion = keyManager.getFriendRequestOnion() ?: "",
                     messagingOnion = keyManager.getMessagingOnion() ?: "",
@@ -83,36 +84,36 @@ class FriendRequestService(private val context: Context) {
 
                 Log.d(TAG, "Encrypted contact card: ${encryptedCardResult.size} bytes")
 
-                // Start HTTP server via Rust
+                // Start contact exchange endpoint via Rust
                 val started = RustBridge.startFriendRequestServer(SERVER_PORT)
                 if (!started) {
-                    throw Exception("Failed to start contact card server")
+                    throw Exception("Failed to start contact exchange endpoint")
                 }
 
-                // Store encrypted card in server
+                // Store encrypted card in endpoint
                 RustBridge.serveContactCard(encryptedCardResult, encryptedCardResult.size, cid)
 
                 serverStarted = true
-                Log.i(TAG, "Contact card server started on port $SERVER_PORT (CID: $cid)")
+                Log.i(TAG, "Contact exchange endpoint started on port $SERVER_PORT (CID: $cid)")
 
                 Result.success(Unit)
             } catch (e: Exception) {
-                Log.e(TAG, "Failed to start contact card server", e)
+                Log.e(TAG, "Failed to start contact exchange endpoint", e)
                 Result.failure(e)
             }
         }
     }
 
     /**
-     * Stop the contact card HTTP server
+     * Stop the contact exchange listener
      */
     fun stopServer() {
         try {
             RustBridge.stopFriendRequestServer()
             serverStarted = false
-            Log.i(TAG, "Contact card server stopped")
+            Log.i(TAG, "Contact exchange endpoint stopped")
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to stop contact card server", e)
+            Log.e(TAG, "Failed to stop contact exchange endpoint", e)
         }
     }
 }

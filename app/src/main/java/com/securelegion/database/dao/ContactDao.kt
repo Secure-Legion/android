@@ -43,9 +43,9 @@ interface ContactDao {
     suspend fun getContactBySolanaAddress(solanaAddress: String): Contact?
 
     /**
-     * Get contact by Tor onion address
+     * Get contact by Tor onion address (checks both friend-request and messaging onions)
      */
-    @Query("SELECT * FROM contacts WHERE torOnionAddress = :onionAddress")
+    @Query("SELECT * FROM contacts WHERE torOnionAddress = :onionAddress OR messagingOnion = :onionAddress")
     suspend fun getContactByOnionAddress(onionAddress: String): Contact?
 
     /**

@@ -383,6 +383,7 @@ class CreateAccountActivity : AppCompatActivity() {
                     displayName = username,
                     solanaPublicKey = keyManager.getSolanaPublicKey(),
                     x25519PublicKey = keyManager.getEncryptionPublicKey(),
+                    kyberPublicKey = keyManager.getKyberPublicKey(),
                     solanaAddress = keyManager.getSolanaAddress(),
                     friendRequestOnion = friendRequestOnion,
                     messagingOnion = onionAddress,

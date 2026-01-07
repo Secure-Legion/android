@@ -44,6 +44,15 @@ data class Contact(
     val x25519PublicKeyBase64: String,
 
     /**
+     * Kyber-1024 public key (1568 bytes) for post-quantum key encapsulation
+     * Used together with X25519 for hybrid quantum-resistant encryption
+     * Stored as Base64 for database compatibility
+     * Security: NIST FIPS 203 (ML-KEM-1024)
+     * Nullable for backward compatibility - will be populated during wallet initialization
+     */
+    val kyberPublicKeyBase64: String? = null,
+
+    /**
      * DEPRECATED - Tor v3 onion address (v1.0 single .onion)
      * Kept for migration compatibility - use messagingOnion instead
      */
@@ -150,3 +159,10 @@ val Contact.ed25519PublicKeyBytes: ByteArray
  */
 val Contact.x25519PublicKeyBytes: ByteArray
     get() = Base64.decode(x25519PublicKeyBase64, Base64.NO_WRAP)
+
+/**
+ * Extension property to decode Kyber-1024 public key from Base64 to ByteArray
+ * Returns null if Kyber key is not yet initialized
+ */
+val Contact.kyberPublicKeyBytes: ByteArray?
+    get() = kyberPublicKeyBase64?.let { Base64.decode(it, Base64.NO_WRAP) }

@@ -201,7 +201,7 @@ class MainActivity : BaseActivity() {
         // Start Tor foreground service (shows notification and handles Ping-Pong protocol)
         startTorService()
 
-        // Start friend request HTTP server (v2.0)
+        // Start contact exchange endpoint (v2.0)
         startFriendRequestServer()
 
         // Load data asynchronously to avoid blocking UI

@@ -43,6 +43,7 @@ class KeyManager private constructor(context: Context) {
         private const val WALLET_SEED_ALIAS = "${KEYSTORE_ALIAS_PREFIX}wallet_seed"
         private const val ED25519_SIGNING_KEY_ALIAS = "${KEYSTORE_ALIAS_PREFIX}signing_key"
         private const val X25519_ENCRYPTION_KEY_ALIAS = "${KEYSTORE_ALIAS_PREFIX}encryption_key"
+        private const val KYBER_KEY_ALIAS = "${KEYSTORE_ALIAS_PREFIX}kyber_key"  // Post-quantum Kyber-1024 keys
         private const val HIDDEN_SERVICE_KEY_ALIAS = "${KEYSTORE_ALIAS_PREFIX}hidden_service_key"
         private const val DEVICE_PASSWORD_HASH_ALIAS = "${KEYSTORE_ALIAS_PREFIX}device_password_hash"
         private const val DEVICE_PASSWORD_SALT_ALIAS = "${KEYSTORE_ALIAS_PREFIX}device_password_salt"
@@ -112,9 +113,13 @@ class KeyManager private constructor(context: Context) {
             // Generate Ed25519 voice service key (for voice calling .onion address)
             val voiceServiceKeyPair = deriveVoiceServiceKeyPair(seed)
 
+            // Generate hybrid post-quantum KEM keypair (X25519 + Kyber-1024)
+            val kyberKeyPair = deriveHybridKEMKeypair(seed)
+
             // Store keys securely in encrypted preferences
             storeKeyPair(ED25519_SIGNING_KEY_ALIAS, ed25519KeyPair)
             storeKeyPair(X25519_ENCRYPTION_KEY_ALIAS, x25519KeyPair)
+            storeKeyPair(KYBER_KEY_ALIAS, kyberKeyPair)
             storeKeyPair(HIDDEN_SERVICE_KEY_ALIAS, hiddenServiceKeyPair)
             storeKeyPair(VOICE_ONION_ALIAS, voiceServiceKeyPair)
 
@@ -205,6 +210,26 @@ class KeyManager private constructor(context: Context) {
     fun getEncryptionPublicKey(): ByteArray {
         return getStoredKey("${X25519_ENCRYPTION_KEY_ALIAS}_public")
             ?: throw KeyManagerException("Encryption public key not found")
+    }
+
+    /**
+     * Get Kyber-1024 public key (1568 bytes)
+     * Shared with contacts for hybrid post-quantum key encapsulation
+     * Used together with X25519 public key for quantum-resistant encryption
+     */
+    fun getKyberPublicKey(): ByteArray {
+        return getStoredKey("${KYBER_KEY_ALIAS}_public")
+            ?: throw KeyManagerException("Kyber public key not found. Initialize wallet first.")
+    }
+
+    /**
+     * Get Kyber-1024 secret key (3168 bytes)
+     * Used for hybrid post-quantum key decapsulation
+     * Must be kept secret and protected
+     */
+    fun getKyberSecretKey(): ByteArray {
+        return getStoredKey("${KYBER_KEY_ALIAS}_private")
+            ?: throw KeyManagerException("Kyber secret key not found. Initialize wallet first.")
     }
 
     /**
@@ -491,6 +516,34 @@ class KeyManager private constructor(context: Context) {
         Log.d(TAG, "Derived X25519 keypair (private: ${privateKey.size} bytes, public: ${publicKey.size} bytes)")
 
         return KeyPair(privateKey, publicKey)
+    }
+
+    /**
+     * Derive hybrid post-quantum KEM keypair from seed (X25519 + Kyber-1024)
+     * Stores only Kyber keys (1568-byte public + 3168-byte secret)
+     * X25519 keys are already stored separately via deriveX25519KeyPair
+     *
+     * Security: Uses same seed as X25519, but Rust applies domain separation
+     * internally to derive independent Kyber seed via SHA-256(seed || "kyber1024")
+     */
+    private fun deriveHybridKEMKeypair(seed: ByteArray): KeyPair {
+        // Use same seed derivation as X25519 for consistency
+        val messageDigest = MessageDigest.getInstance("SHA-256")
+        messageDigest.update(seed)
+        messageDigest.update("x25519".toByteArray())
+        val x25519Seed = messageDigest.digest()
+
+        // Call Rust to generate full hybrid keypair
+        // Returns: [x25519_pub:32][x25519_sec:32][kyber_pub:1568][kyber_sec:3168]
+        val fullKeypair = RustBridge.generateHybridKEMKeypairFromSeed(x25519Seed)
+
+        // Extract only Kyber keys (skip first 64 bytes which are X25519 keys)
+        val kyberPublic = fullKeypair.copyOfRange(64, 64 + 1568)
+        val kyberSecret = fullKeypair.copyOfRange(64 + 1568, fullKeypair.size)
+
+        Log.d(TAG, "Derived Kyber-1024 keypair (public: ${kyberPublic.size} bytes, secret: ${kyberSecret.size} bytes)")
+
+        return KeyPair(kyberSecret, kyberPublic)
     }
 
     /**

@@ -52,32 +52,78 @@ object KeyChainManager {
     }
 
     /**
-     * Initialize key chain for a newly added contact
-     * This must be called after the contact is inserted into the database
+     * Initialize hybrid post-quantum key chain for a newly added contact
+     * Uses X25519 + Kyber-1024 hybrid KEM for quantum-resistant key establishment
+     *
+     * Security: Protected if EITHER X25519 OR Kyber-1024 remains unbroken
      *
      * @param context Application context
      * @param contactId Contact database ID
      * @param theirX25519PublicKey Their X25519 public key (32 bytes)
+     * @param theirKyberPublicKey Their Kyber-1024 public key (1568 bytes)
      * @param ourMessagingOnion Our messaging .onion address (for deterministic direction mapping)
      * @param theirMessagingOnion Their messaging .onion address (for deterministic direction mapping)
+     * @param kyberCiphertext Optional hybrid ciphertext (1600 bytes: 32-byte X25519 ephemeral + 1568-byte Kyber ciphertext)
+     *                        - Null = we are initiating (will encapsulate and generate new ciphertext)
+     *                        - Non-null = we are responding (will decapsulate using provided ciphertext)
      */
     suspend fun initializeKeyChain(
         context: Context,
         contactId: Long,
         theirX25519PublicKey: ByteArray,
+        theirKyberPublicKey: ByteArray? = null,
         ourMessagingOnion: String,
-        theirMessagingOnion: String
+        theirMessagingOnion: String,
+        kyberCiphertext: ByteArray? = null,  // Null = we are sender (encapsulate), non-null = we are receiver (decapsulate)
+        precomputedSharedSecret: ByteArray? = null  // If provided, skip KEM entirely and use this shared secret
     ) {
         withContext(Dispatchers.IO) {
             try {
-                Log.i(TAG, "Initializing key chain for contact $contactId")
+                // Check if Kyber key is present AND non-zero (legacy cards use zero-filled placeholder)
+                val hasValidKyberKey = (theirKyberPublicKey != null && theirKyberPublicKey.any { it != 0.toByte() })
+                val isHybridMode = hasValidKyberKey
+                val modeDesc = if (isHybridMode) "hybrid post-quantum" else "legacy X25519-only"
 
-                // Get our X25519 private key from KeyManager
+                if (theirKyberPublicKey != null && !hasValidKyberKey) {
+                    Log.w(TAG, "⚠️  Contact has zero-filled Kyber key (${theirKyberPublicKey.size} bytes) - falling back to legacy X25519 mode")
+                }
+
+                Log.i(TAG, "Initializing $modeDesc key chain for contact $contactId")
+
+                // Get our keys from KeyManager
                 val keyManager = KeyManager.getInstance(context)
                 val ourX25519PrivateKey = keyManager.getEncryptionKeyBytes()
 
-                // Derive shared secret using X25519 ECDH (via Rust)
-                val sharedSecret = RustBridge.deriveSharedSecret(ourX25519PrivateKey, theirX25519PublicKey)
+                // Derive shared secret using Hybrid KEM or legacy X25519 ECDH
+                val sharedSecret: ByteArray
+
+                if (precomputedSharedSecret != null) {
+                    // PRECOMPUTED MODE: Use shared secret we generated during encapsulation
+                    Log.d(TAG, "Using precomputed shared secret (${precomputedSharedSecret.size} bytes) from encapsulation")
+                    sharedSecret = precomputedSharedSecret
+                } else if (isHybridMode && theirKyberPublicKey != null) {
+                    // HYBRID MODE: Use X25519 + Kyber-1024
+                    val ourKyberSecretKey = keyManager.getKyberSecretKey()
+
+                    if (kyberCiphertext == null) {
+                        // ❌ ERROR: This path should NOT be hit anymore!
+                        // Both devices should either use precomputedSharedSecret OR kyberCiphertext
+                        Log.e(TAG, "⚠️  WARNING: Hybrid mode with null ciphertext and null precomputed secret - this is the OLD BUG!")
+                        Log.e(TAG, "This will generate a DIFFERENT shared secret! Key chain will fail!")
+                        // Fallback to legacy mode to avoid crash
+                        sharedSecret = RustBridge.deriveSharedSecret(ourX25519PrivateKey, theirX25519PublicKey)
+                    } else {
+                        // We are the RECEIVER - decapsulate to recover shared secret
+                        Log.d(TAG, "Performing hybrid decapsulation (we are receiver)")
+                        sharedSecret = RustBridge.hybridDecapsulate(ourX25519PrivateKey, ourKyberSecretKey, kyberCiphertext)
+                            ?: throw IllegalStateException("Hybrid decapsulation failed - invalid ciphertext or keys")
+                        Log.d(TAG, "Hybrid KEM complete - derived 64-byte combined secret")
+                    }
+                } else {
+                    // LEGACY MODE: Use X25519 ECDH only (for backward compatibility)
+                    Log.d(TAG, "Using legacy X25519 ECDH (contact has no Kyber key)")
+                    sharedSecret = RustBridge.deriveSharedSecret(ourX25519PrivateKey, theirX25519PublicKey)
+                }
 
                 // Derive root key from shared secret using HKDF-SHA256
                 val rootKey = RustBridge.deriveRootKey(sharedSecret, ROOT_KEY_INFO)
@@ -213,6 +259,47 @@ object KeyChainManager {
 
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to evolve receive chain key for contact $contactId", e)
+                throw e
+            }
+        }
+    }
+
+    /**
+     * Reset key chain counters back to 0 for BOTH send and receive
+     * This is used to fix key chain desynchronization issues
+     * WARNING: Both parties must reset at the same time!
+     */
+    suspend fun resetKeyChainCounters(context: Context, contactId: Long) {
+        withContext(Dispatchers.IO) {
+            try {
+                Log.w(TAG, "🔍 DEBUG: ⚠️  RESETTING key chain counters to 0 for contact $contactId")
+
+                // Get current key chain state BEFORE reset
+                val keyManager = KeyManager.getInstance(context)
+                val dbPassphrase = keyManager.getDatabasePassphrase()
+                val database = SecureLegionDatabase.getInstance(context, dbPassphrase)
+
+                val keyChainBefore = database.contactKeyChainDao().getKeyChainByContactId(contactId)
+                Log.d(TAG, "🔍 DEBUG: Key chain BEFORE reset: sendCounter=${keyChainBefore?.sendCounter}, receiveCounter=${keyChainBefore?.receiveCounter}")
+
+                // Reset both counters to 0
+                val timestamp = System.currentTimeMillis()
+                Log.d(TAG, "🔍 DEBUG: Calling database.contactKeyChainDao().resetCounters(contactId=$contactId, timestamp=$timestamp)")
+                database.contactKeyChainDao().resetCounters(contactId, timestamp)
+                Log.d(TAG, "🔍 DEBUG: Database update call completed")
+
+                // Verify counters were actually reset
+                val keyChainAfter = database.contactKeyChainDao().getKeyChainByContactId(contactId)
+                Log.d(TAG, "🔍 DEBUG: Key chain AFTER reset: sendCounter=${keyChainAfter?.sendCounter}, receiveCounter=${keyChainAfter?.receiveCounter}")
+
+                if (keyChainAfter?.sendCounter == 0L && keyChainAfter?.receiveCounter == 0L) {
+                    Log.i(TAG, "🔍 DEBUG: ✓✓✓ VERIFIED: Key chain counters successfully reset to 0 for contact $contactId")
+                } else {
+                    Log.e(TAG, "🔍 DEBUG: ❌ VERIFICATION FAILED: Counters NOT at 0 after reset!")
+                }
+
+            } catch (e: Exception) {
+                Log.e(TAG, "🔍 DEBUG: Failed to reset key chain counters for contact $contactId", e)
                 throw e
             }
         }

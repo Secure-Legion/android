@@ -17,6 +17,7 @@ data class ContactCard(
     val displayName: String,            // User-facing name (e.g., "John Doe")
     val solanaPublicKey: ByteArray,     // Ed25519 public key for signing (32 bytes)
     val x25519PublicKey: ByteArray,     // X25519 public key for encryption (32 bytes)
+    val kyberPublicKey: ByteArray,      // Kyber-1024 public key for post-quantum KEM (1568 bytes)
     val solanaAddress: String,          // Base58-encoded Solana address
 
     // NEW - Three .onion addresses (v2.0)
@@ -52,9 +53,14 @@ data class ContactCard(
         val x25519KeyArray = JSONArray()
         x25519PublicKey.forEach { x25519KeyArray.put(it.toInt() and 0xFF) }
 
+        // Convert Kyber-1024 public key to array
+        val kyberKeyArray = JSONArray()
+        kyberPublicKey.forEach { kyberKeyArray.put(it.toInt() and 0xFF) }
+
         json.put("handle", displayName)
         json.put("public_key", pubKeyArray)
         json.put("x25519_public_key", x25519KeyArray)
+        json.put("kyber_public_key", kyberKeyArray)
         json.put("solana_address", solanaAddress)
 
         // NEW fields (v2.0)
@@ -108,6 +114,17 @@ data class ContactCard(
                 x25519KeyArray.getInt(i).toByte()
             }
 
+            // Parse Kyber-1024 public key from array (with fallback for legacy cards)
+            val kyberPublicKey = if (json.has("kyber_public_key")) {
+                val kyberKeyArray = json.getJSONArray("kyber_public_key")
+                ByteArray(kyberKeyArray.length()) { i ->
+                    kyberKeyArray.getInt(i).toByte()
+                }
+            } else {
+                // Legacy card without Kyber key - use empty 1568-byte array as placeholder
+                ByteArray(1568)
+            }
+
             // Parse new fields with fallback to legacy format
             val friendRequestOnion = json.optString("friend_request_onion", "")
 
@@ -134,6 +151,7 @@ data class ContactCard(
                 displayName = json.getString("handle"),
                 solanaPublicKey = publicKey,
                 x25519PublicKey = x25519PublicKey,
+                kyberPublicKey = kyberPublicKey,
                 solanaAddress = json.getString("solana_address"),
                 friendRequestOnion = friendRequestOnion,
                 messagingOnion = messagingOnion,
@@ -155,6 +173,7 @@ data class ContactCard(
         if (displayName != other.displayName) return false
         if (!solanaPublicKey.contentEquals(other.solanaPublicKey)) return false
         if (!x25519PublicKey.contentEquals(other.x25519PublicKey)) return false
+        if (!kyberPublicKey.contentEquals(other.kyberPublicKey)) return false
         if (solanaAddress != other.solanaAddress) return false
         if (friendRequestOnion != other.friendRequestOnion) return false
         if (messagingOnion != other.messagingOnion) return false
@@ -169,6 +188,7 @@ data class ContactCard(
         var result = displayName.hashCode()
         result = 31 * result + solanaPublicKey.contentHashCode()
         result = 31 * result + x25519PublicKey.contentHashCode()
+        result = 31 * result + kyberPublicKey.contentHashCode()
         result = 31 * result + solanaAddress.hashCode()
         result = 31 * result + friendRequestOnion.hashCode()
         result = 31 * result + messagingOnion.hashCode()
