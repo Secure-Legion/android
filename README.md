@@ -2,7 +2,7 @@
 
 # Secure Legion
 
-**Privacy-first Android messaging with Privacy Payments, Metadata Resistant, serverless P2P**
+**Privacy-first Android messaging with Post-Quantum Cryptography, Privacy Payments, Metadata Resistant, serverless over Tor**
 
 [![Platform](https://img.shields.io/badge/platform-Android-green)](https://www.android.com/)
 [![Language](https://img.shields.io/badge/language-Kotlin%20%7C%20Rust-orange)](https://kotlinlang.org/)
@@ -19,9 +19,10 @@
 
 ## Overview
 
-Secure Legion is a native Android messaging application that combines truly private P2P communication with cryptocurrency payments. Unlike Signal, Session, or traditional messengers, Secure Legion eliminates ALL central infrastructure - no servers can log your metadata, no company can hand over data that doesn't exist.
+Secure Legion is a native Android messaging application that combines truly private P2P communication with cryptocurrency payments and **post-quantum cryptography**. Unlike Signal, Session, or traditional messengers, Secure Legion eliminates ALL central infrastructure - no servers can log your metadata, no company can hand over data that doesn't exist.
 
 **Core Architecture:**
+- **Post-Quantum Cryptography** - Hybrid X25519 + ML-KEM-1024 (NIST FIPS 203) protects against quantum computer attacks
 - **Zero Metadata** - No central servers track who communicates with whom
 - **Direct P2P via Tor** - Messages route directly between peers over Tor hidden services
 - **Dual .onion System** - Separate hidden services for friend requests and messaging (deterministic, ephemeral)
