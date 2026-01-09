@@ -7,7 +7,7 @@
 [![Platform](https://img.shields.io/badge/platform-Android-green)](https://www.android.com/)
 [![Language](https://img.shields.io/badge/language-Kotlin%20%7C%20Rust-orange)](https://kotlinlang.org/)
 [![License](https://img.shields.io/badge/license-PolyForm%20Noncommercial-blue)](LICENSE)
-[![Website](https://img.shields.io/badge/website-securelegion.com-blue)](https://securelegion.org)
+[![Website](https://img.shields.io/badge/website-securelegion.org-blue)](https://securelegion.org)
 
 > "No servers. No metadata. No compromises."
 
@@ -512,11 +512,11 @@ secure-legion-android/
 
 ### Planned Features
 
-- [ ] Multi-device sync (via encrypted IPFS)
+- [ ] Multi-device sync (via encrypted Mesh)
 - [ ] Desktop client (Linux/Windows/macOS)
 - [ ] iOS app
 - [ ] Disappearing messages (auto-delete after time)
-- [x] Screen security (prevent screenshots)
+- [x] Screen security (prevent screenshots on disappearing messages)
 - [ ] Incognito keyboard (disable autocorrect/suggestions)
 - [x] Contact verification (safety numbers like Signal)
 - [ ] Message reactions
