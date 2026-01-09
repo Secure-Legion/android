@@ -232,6 +232,10 @@ class ZcashService(private val context: Context) {
     private var network: ZcashNetwork = ZcashNetwork.Mainnet
     private var zcashAccount: cash.z.ecc.android.sdk.model.Account? = null
 
+    // Active wallet tracking
+    @Volatile
+    private var activeWalletId: String? = null
+
     // Cached balance (updated automatically when synced)
     @Volatile
     private var cachedBalance: Double = 0.0
@@ -329,6 +333,223 @@ class ZcashService(private val context: Context) {
             Log.e(TAG, "Failed to initialize Zcash wallet", e)
             (synchronizer as? AutoCloseable)?.close()
             synchronizer = null
+            Result.failure(e)
+        }
+    }
+
+    /**
+     * Set active Zcash wallet for syncing
+     * Stops current synchronizer and starts new one with selected wallet's seed
+     *
+     * @param walletId Wallet ID to activate
+     * @return Result with unified address or error
+     */
+    suspend fun setActiveZcashWallet(walletId: String): Result<String> = withContext(Dispatchers.IO) {
+        try {
+            Log.i(TAG, "Setting active Zcash wallet: $walletId")
+
+            // Get database access
+            val dbPassphrase = keyManager.getDatabasePassphrase()
+            val database = com.securelegion.database.SecureLegionDatabase.getInstance(context, dbPassphrase)
+
+            // Update database: mark this wallet as active
+            database.walletDao().clearActiveZcashWallet()
+            database.walletDao().setActiveZcashWallet(walletId)
+
+            // Stop current synchronizer
+            stopSynchronizer()
+
+            // Get seed phrase for this wallet
+            val seedPhrase = keyManager.getWalletSeedPhrase(walletId)
+                ?: return@withContext Result.failure(IllegalStateException("No seed phrase found for wallet: $walletId"))
+
+            // Get wallet info from database
+            val wallet = database.walletDao().getWalletById(walletId)
+                ?: return@withContext Result.failure(IllegalStateException("Wallet not found: $walletId"))
+
+            // Initialize synchronizer with this wallet's seed
+            activeWalletId = walletId
+            val result = initializeSynchronizerForWallet(
+                walletId = walletId,
+                seedPhrase = seedPhrase,
+                birthdayHeight = wallet.zcashBirthdayHeight
+            )
+
+            if (result.isSuccess) {
+                Log.i(TAG, "Successfully activated Zcash wallet: $walletId")
+            } else {
+                Log.e(TAG, "Failed to activate Zcash wallet: $walletId", result.exceptionOrNull())
+            }
+
+            result
+
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to set active Zcash wallet", e)
+            Result.failure(e)
+        }
+    }
+
+    /**
+     * Initialize synchronizer for a specific wallet
+     * Uses per-wallet data directory for isolation
+     *
+     * @param walletId Wallet ID
+     * @param seedPhrase BIP39 seed phrase
+     * @param birthdayHeight Optional birthday height
+     * @return Result with unified address
+     */
+    private suspend fun initializeSynchronizerForWallet(
+        walletId: String,
+        seedPhrase: String,
+        birthdayHeight: Long? = null
+    ): Result<String> = withContext(Dispatchers.IO) {
+        try {
+            Log.d(TAG, "Initializing synchronizer for wallet: $walletId")
+
+            // Set network (always mainnet for now)
+            network = ZcashNetwork.Mainnet
+
+            // Convert seed phrase to bytes
+            val seedBytes = Mnemonics.MnemonicCode(seedPhrase.toCharArray()).toSeed()
+
+            // Use provided birthday or latest checkpoint
+            val birthday = if (birthdayHeight != null && birthdayHeight > 0) {
+                BlockHeight.new(birthdayHeight)
+            } else {
+                BlockHeight.ofLatestCheckpoint(context, network)
+            }
+            Log.d(TAG, "Using birthday block height: ${birthday.value} for wallet: $walletId")
+
+            // Create lightwalletd endpoint (mainnet)
+            val endpoint = LightWalletEndpoint(MAINNET_LIGHTWALLETD_HOST, MAINNET_LIGHTWALLETD_PORT, true)
+
+            Log.i(TAG, "Connecting to lightwalletd for wallet $walletId through Tor")
+
+            // IMPORTANT: Use per-wallet alias for separate data directories
+            val walletAlias = "securelegion_wallet_${walletId}"
+
+            synchronizer = Synchronizer.newBlocking(
+                context = context,
+                zcashNetwork = network,
+                alias = walletAlias,  // ✅ Per-wallet data directory
+                lightWalletEndpoint = endpoint,
+                birthday = birthday,
+                walletInitMode = WalletInitMode.RestoreWallet,
+                setup = AccountCreateSetup(
+                    accountName = "SecureLegion Wallet $walletId",
+                    keySource = null,
+                    seed = FirstClassByteArray(seedBytes)
+                ),
+                isTorEnabled = true,
+                isExchangeRateEnabled = false
+            )
+
+            Log.i(TAG, "Synchronizer created for wallet: $walletId")
+
+            // Get account and addresses
+            zcashAccount = runBlocking { synchronizer?.getAccounts()?.firstOrNull() }
+            val unifiedAddress = runBlocking {
+                zcashAccount?.let { synchronizer?.getUnifiedAddress(it) }
+            }
+            val transparentAddress = runBlocking {
+                zcashAccount?.let { synchronizer?.getTransparentAddress(it) }
+            }
+
+            if (unifiedAddress != null) {
+                Log.i(TAG, "Unified address for wallet $walletId: $unifiedAddress")
+            }
+            if (transparentAddress != null) {
+                Log.i(TAG, "Transparent address for wallet $walletId: $transparentAddress")
+            }
+
+            Result.success(unifiedAddress ?: "")
+
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to initialize synchronizer for wallet: $walletId", e)
+            (synchronizer as? AutoCloseable)?.close()
+            synchronizer = null
+            Result.failure(e)
+        }
+    }
+
+    /**
+     * Stop current synchronizer and clean up
+     */
+    private suspend fun stopSynchronizer() = withContext(Dispatchers.IO) {
+        try {
+            val sync = synchronizer
+            if (sync != null) {
+                Log.i(TAG, "Stopping synchronizer for wallet: $activeWalletId")
+                (sync as? AutoCloseable)?.close()
+                synchronizer = null
+                zcashAccount = null
+                cachedBalance = 0.0
+                Log.i(TAG, "Synchronizer stopped successfully")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error stopping synchronizer", e)
+        }
+    }
+
+    /**
+     * Get currently active wallet ID
+     */
+    fun getActiveWalletId(): String? = activeWalletId
+
+    /**
+     * Initialize from active wallet on app startup
+     * Loads the wallet marked as active in the database and starts syncing
+     *
+     * @return Result with unified address or null if no active wallet
+     */
+    suspend fun initializeFromActiveWallet(): Result<String?> = withContext(Dispatchers.IO) {
+        try {
+            Log.d(TAG, "Initializing from active wallet on startup")
+
+            // Get database access
+            val dbPassphrase = keyManager.getDatabasePassphrase()
+            val database = com.securelegion.database.SecureLegionDatabase.getInstance(context, dbPassphrase)
+
+            // Find active Zcash wallet
+            val activeWalletId = database.walletDao().getActiveZcashWalletId()
+
+            if (activeWalletId == null) {
+                Log.i(TAG, "No active Zcash wallet found")
+                return@withContext Result.success(null)
+            }
+
+            // Get seed phrase for active wallet
+            val seedPhrase = keyManager.getWalletSeedPhrase(activeWalletId)
+            if (seedPhrase == null) {
+                Log.w(TAG, "No seed phrase found for active wallet: $activeWalletId")
+                return@withContext Result.success(null)
+            }
+
+            // Get wallet info
+            val wallet = database.walletDao().getWalletById(activeWalletId)
+            if (wallet == null) {
+                Log.w(TAG, "Active wallet not found in database: $activeWalletId")
+                return@withContext Result.success(null)
+            }
+
+            // Initialize synchronizer
+            this@ZcashService.activeWalletId = activeWalletId
+            val result = initializeSynchronizerForWallet(
+                walletId = activeWalletId,
+                seedPhrase = seedPhrase,
+                birthdayHeight = wallet.zcashBirthdayHeight
+            )
+
+            if (result.isSuccess) {
+                Log.i(TAG, "Successfully initialized active Zcash wallet on startup: $activeWalletId")
+            } else {
+                Log.e(TAG, "Failed to initialize active wallet: $activeWalletId", result.exceptionOrNull())
+            }
+
+            result
+
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to initialize from active wallet", e)
             Result.failure(e)
         }
     }

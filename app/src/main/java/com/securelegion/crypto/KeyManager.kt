@@ -1421,6 +1421,22 @@ class KeyManager private constructor(context: Context) {
     }
 
     /**
+     * Store seed phrase for a specific wallet
+     */
+    fun storeWalletSeed(walletId: String, seedPhrase: String) {
+        try {
+            val walletSeedAlias = "${KEYSTORE_ALIAS_PREFIX}wallet_${walletId}_seed"
+            encryptedPrefs.edit {
+                putString(walletSeedAlias, seedPhrase)
+            }
+            Log.i(TAG, "Stored seed phrase for wallet: $walletId")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to store wallet seed phrase", e)
+            throw KeyManagerException("Failed to store wallet seed phrase", e)
+        }
+    }
+
+    /**
      * Get seed phrase for a specific wallet (for backup)
      * NOTE: Protected wallets will return null for security
      */

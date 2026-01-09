@@ -287,7 +287,23 @@
                 android:id="@+id/copyAddressButton"
                 android:layout_width="match_parent"
                 android:layout_height="60dp"
-                android:text="COPY"
+                android:text="COPY ADDRESS"
+                android:textSize="16sp"
+                android:textStyle="bold"
+                android:textColor="#FFFFFF"
+                android:background="@drawable/wallet_dropdown_bg"
+                android:gravity="center"
+                android:fontFamily="@font/space_grotesk_bold"
+                android:clickable="true"
+                android:focusable="true"
+                android:layout_marginBottom="16dp" />
+
+            <!-- Share QR Button -->
+            <TextView
+                android:id="@+id/shareQrButton"
+                android:layout_width="match_parent"
+                android:layout_height="60dp"
+                android:text="SHARE QR CODE"
                 android:textSize="16sp"
                 android:textStyle="bold"
                 android:textColor="#FFFFFF"

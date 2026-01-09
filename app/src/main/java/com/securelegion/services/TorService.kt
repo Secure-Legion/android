@@ -926,19 +926,26 @@ class TorService : Service() {
             // TAP = "I'm online" heartbeat, so check ALL message phases and take appropriate action
             CoroutineScope(Dispatchers.IO).launch {
                 try {
-                    val pendingMessages = database.messageDao().getMessagesAwaitingPong()
+                    // Query ALL pending/failed messages (not just awaiting pong)
+                    val pendingMessages = database.messageDao().getPendingMessages()
                         .filter { it.contactId == contact.id }
 
-                    if (pendingMessages.isEmpty()) {
+                    // Also include messages awaiting pong
+                    val awaitingPong = database.messageDao().getMessagesAwaitingPong()
+                        .filter { it.contactId == contact.id }
+
+                    val allMessages = (pendingMessages + awaitingPong).distinctBy { it.id }
+
+                    if (allMessages.isEmpty()) {
                         Log.d(TAG, "No pending messages to ${contact.displayName}")
                         return@launch
                     }
 
-                    Log.i(TAG, "Found ${pendingMessages.size} pending message(s) to ${contact.displayName} - checking phases")
+                    Log.i(TAG, "Found ${allMessages.size} pending message(s) to ${contact.displayName} (${pendingMessages.size} unsent, ${awaitingPong.size} awaiting pong) - checking phases")
 
                     val messageService = com.securelegion.services.MessageService(this@TorService)
 
-                    for (message in pendingMessages) {
+                    for (message in allMessages) {
                         // ============ ACK-BASED FLOW CONTROL FOR TAP ============
                         // Contact is online - check what phase each message is in and take action
 
@@ -968,21 +975,8 @@ class TorService : Service() {
                             continue
                         }
 
-                        // PHASE 1: No PING_ACK → Check if we should retry
-                        // Don't retry too aggressively - wait 30s between attempts (adaptive backoff)
-                        val currentTime = System.currentTimeMillis()
-                        val timeSinceLastRetry = if (message.lastRetryTimestamp != null) {
-                            currentTime - message.lastRetryTimestamp!!
-                        } else {
-                            currentTime - (message.timestamp ?: 0)
-                        }
-
-                        if (timeSinceLastRetry < 30000) {
-                            Log.d(TAG, "→ ${message.messageId}: Ping sent ${timeSinceLastRetry/1000}s ago - waiting for PING_ACK (adaptive backoff)")
-                            continue  // Don't retry yet, give receiver time to ACK
-                        }
-
-                        Log.i(TAG, "→ ${message.messageId}: No PING_ACK after ${timeSinceLastRetry/1000}s - retrying Ping (contact online now)")
+                        // PHASE 1: No PING_ACK → Retry immediately (contact confirmed online via TAP)
+                        Log.i(TAG, "→ ${message.messageId}: No PING_ACK yet - retrying Ping (contact online via TAP)")
                         try {
                             val result = messageService.sendPingForMessage(message)
                             if (result.isSuccess) {
@@ -992,7 +986,7 @@ class TorService : Service() {
                                     lastRetryTimestamp = System.currentTimeMillis()
                                 )
                                 database.messageDao().updateMessage(updatedMessage)
-                                Log.i(TAG, "✓ Retried Ping for ${message.messageId} after TAP (adaptive timeout)")
+                                Log.i(TAG, "✓ Retried Ping for ${message.messageId} after TAP")
                             }
                         } catch (e: Exception) {
                             Log.e(TAG, "Failed to retry Ping for ${message.messageId}", e)
@@ -1885,7 +1879,54 @@ class TorService : Service() {
                                 )
                             }
                             "TAP_ACK" -> {
-                                Log.i(TAG, "✓ Received TAP_ACK for message ${message.messageId} (pingId: $itemId) after $retryCount retries")
+                                Log.i(TAG, "✓ Received TAP_ACK - contact ${message.contactId} confirmed online! Triggering retry for all pending messages")
+
+                                // TAP_ACK means peer is online and ready to receive - retry all pending messages
+                                CoroutineScope(Dispatchers.IO).launch {
+                                    try {
+                                        // Query ALL pending/failed messages for this contact
+                                        val pendingMessages = database.messageDao().getPendingMessages()
+                                            .filter { it.contactId == message.contactId }
+                                        val awaitingPong = database.messageDao().getMessagesAwaitingPong()
+                                            .filter { it.contactId == message.contactId }
+                                        val allMessages = (pendingMessages + awaitingPong).distinctBy { it.id }
+
+                                        if (allMessages.isNotEmpty()) {
+                                            Log.i(TAG, "Found ${allMessages.size} pending messages to retry after TAP_ACK")
+                                            val messageService = com.securelegion.services.MessageService(this@TorService)
+
+                                            for (msg in allMessages) {
+                                                try {
+                                                    // Skip if already delivered
+                                                    if (msg.messageDelivered) continue
+
+                                                    // Retry based on phase
+                                                    if (msg.pongDelivered) {
+                                                        // PONG received - receiver downloading
+                                                        Log.d(TAG, "  ${msg.messageId}: PONG_ACK received, waiting for download")
+                                                    } else if (msg.pingDelivered) {
+                                                        // PING delivered - poll for PONG
+                                                        Log.d(TAG, "  ${msg.messageId}: PING_ACK received, polling for PONG")
+                                                        messageService.pollForPongsAndSendMessages()
+                                                    } else {
+                                                        // No PING_ACK - retry PING
+                                                        Log.i(TAG, "  ${msg.messageId}: Retrying PING after TAP_ACK")
+                                                        messageService.sendPingForMessage(msg)
+                                                        database.messageDao().updateMessage(msg.copy(
+                                                            retryCount = msg.retryCount + 1,
+                                                            lastRetryTimestamp = System.currentTimeMillis()
+                                                        ))
+                                                    }
+                                                } catch (e: Exception) {
+                                                    Log.e(TAG, "Failed to retry message ${msg.messageId} after TAP_ACK", e)
+                                                }
+                                            }
+                                        }
+                                    } catch (e: Exception) {
+                                        Log.e(TAG, "Error processing TAP_ACK retry logic", e)
+                                    }
+                                }
+
                                 message.copy(tapDelivered = true)
                             }
                             "PONG_ACK" -> {

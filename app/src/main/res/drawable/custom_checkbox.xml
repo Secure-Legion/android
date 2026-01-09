@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <selector xmlns:android="http://schemas.android.com/apk/res/android">
-    <!-- Checked state (white circle with inner dot) -->
-    <item android:state_checked="true">
+    <!-- Selected state (white circle with inner dot) -->
+    <item android:state_selected="true">
         <layer-list>
             <!-- Outer circle -->
             <item>
@@ -11,7 +11,7 @@
                     <size android:width="24dp" android:height="24dp"/>
                 </shape>
             </item>
-            <!-- Inner filled circle -->
+            <!-- Inner filled circle (white dot) -->
             <item android:top="6dp" android:bottom="6dp" android:left="6dp" android:right="6dp">
                 <shape android:shape="oval">
                     <solid android:color="#FFFFFF"/>

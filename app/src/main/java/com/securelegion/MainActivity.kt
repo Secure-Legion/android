@@ -72,18 +72,33 @@ class MainActivity : BaseActivity() {
     private var pendingCallContact: Contact? = null // Temporary storage for pending call after permission request
     private var isInitiatingCall = false // Prevent duplicate call initiations
 
-    // BroadcastReceiver to listen for incoming Pings and refresh UI
+    // BroadcastReceiver to listen for incoming Pings and message status updates
     private val pingReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
-            if (intent?.action == "com.securelegion.NEW_PING") {
-                Log.d("MainActivity", "Received NEW_PING broadcast - refreshing chat list")
-                // Update UI immediately on main thread
-                runOnUiThread {
-                    if (currentTab == "messages") {
-                        Log.d("MainActivity", "Refreshing chat list from broadcast")
-                        setupChatList()
-                    } else {
-                        Log.d("MainActivity", "Not on messages tab, skipping refresh")
+            when (intent?.action) {
+                "com.securelegion.NEW_PING" -> {
+                    Log.d("MainActivity", "Received NEW_PING broadcast - refreshing chat list")
+                    // Update UI immediately on main thread
+                    runOnUiThread {
+                        if (currentTab == "messages") {
+                            Log.d("MainActivity", "Refreshing chat list from NEW_PING broadcast")
+                            setupChatList()
+                        } else {
+                            Log.d("MainActivity", "Not on messages tab, skipping refresh")
+                        }
+                    }
+                }
+                "com.securelegion.MESSAGE_RECEIVED" -> {
+                    val contactId = intent.getLongExtra("CONTACT_ID", -1)
+                    Log.d("MainActivity", "⚡ Received MESSAGE_RECEIVED broadcast for contact $contactId - refreshing chat list for status update")
+                    // Update UI immediately on main thread
+                    runOnUiThread {
+                        if (currentTab == "messages") {
+                            Log.d("MainActivity", "⚡ Refreshing chat list from MESSAGE_RECEIVED broadcast (contact $contactId)")
+                            setupChatList()
+                        } else {
+                            Log.d("MainActivity", "Not on messages tab (current: $currentTab), skipping refresh")
+                        }
                     }
                 }
             }
@@ -223,10 +238,13 @@ class MainActivity : BaseActivity() {
             showContactsTab()
         }
 
-        // Register broadcast receiver for incoming Pings (stays registered even when paused)
-        val filter = IntentFilter("com.securelegion.NEW_PING")
+        // Register broadcast receiver for incoming Pings and message status updates
+        val filter = IntentFilter().apply {
+            addAction("com.securelegion.NEW_PING")
+            addAction("com.securelegion.MESSAGE_RECEIVED")
+        }
         registerReceiver(pingReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
-        Log.d("MainActivity", "Registered NEW_PING broadcast receiver in onCreate")
+        Log.d("MainActivity", "Registered NEW_PING and MESSAGE_RECEIVED broadcast receiver in onCreate")
 
         // Register broadcast receiver for friend requests
         val friendRequestFilter = IntentFilter("com.securelegion.FRIEND_REQUEST_RECEIVED")
@@ -467,7 +485,7 @@ class MainActivity : BaseActivity() {
         // Unregister broadcast receivers when activity is destroyed
         try {
             unregisterReceiver(pingReceiver)
-            Log.d("MainActivity", "Unregistered NEW_PING broadcast receiver in onDestroy")
+            Log.d("MainActivity", "Unregistered NEW_PING and MESSAGE_RECEIVED broadcast receiver in onDestroy")
         } catch (e: IllegalArgumentException) {
             Log.w("MainActivity", "Ping receiver was not registered during onDestroy")
         }
@@ -520,6 +538,10 @@ class MainActivity : BaseActivity() {
                         if (lastMessage != null || hasPendingPing) {
                             val unreadCount = database.messageDao().getUnreadCount(contact.id)
 
+                            val messageStatus = if (lastMessage != null && lastMessage.isSentByMe) lastMessage.status else 0
+                            val isSent = lastMessage?.isSentByMe ?: false
+                            Log.d("MainActivity", "📊 Contact ${contact.displayName}: status=$messageStatus, isSent=$isSent, messageId=${lastMessage?.messageId}")
+
                             val chat = Chat(
                                 id = contact.id.toString(),
                                 nickname = contact.displayName,
@@ -529,8 +551,8 @@ class MainActivity : BaseActivity() {
                                 isOnline = false,
                                 avatar = contact.displayName.firstOrNull()?.toString()?.uppercase() ?: "?",
                                 securityBadge = "",
-                                lastMessageStatus = if (lastMessage != null && lastMessage.isSentByMe) lastMessage.status else 0,
-                                lastMessageIsSent = lastMessage?.isSentByMe ?: false
+                                lastMessageStatus = messageStatus,
+                                lastMessageIsSent = isSent
                             )
                             val timestamp = if (lastMessage != null) lastMessage.timestamp else System.currentTimeMillis()
                             chatsList.add(Pair(chat, timestamp))
