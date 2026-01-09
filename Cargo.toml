@@ -75,12 +75,6 @@ bytes = "1.5"
 # Networking (optional - for future Tor/P2P implementation)
 reqwest = { version = "0.11", default-features = false, features = ["blocking", "rustls-tls"], optional = true }
 
-# Solana blockchain integration (using compatible versions)
-# Note: Actual Solana RPC integration will be added later
-# For now, we implement the encryption/storage layer only
-borsh = "0.10"
-borsh-derive = "0.10"
-
 [dev-dependencies]
 hex-literal = "0.4"
 

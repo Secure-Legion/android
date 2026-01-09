@@ -8,15 +8,13 @@ use std::collections::HashMap;
 use zeroize::Zeroize;
 
 use crate::crypto::{
-    decrypt_message, encrypt_message, generate_keypair, hash_handle, hash_password, sign_data,
+    decrypt_message, encrypt_message, generate_keypair, sign_data,
     verify_signature, derive_root_key, evolve_chain_key, derive_message_key,
     encrypt_message_with_evolution, decrypt_message_with_evolution,
 };
 use crate::network::{TorManager, PENDING_CONNECTIONS};
-use crate::protocol::ContactCard;
-use crate::blockchain::{register_username, lookup_username};
 use crate::audio::voice_streaming::{VoiceStreamingListener, VoicePacket};
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::mpsc;
 use tokio::io::AsyncReadExt;
 
 // ==================== LIBRARY INITIALIZATION ====================
@@ -4371,130 +4369,6 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendSolanaTransaction(
         match string_to_jstring(&mut env, "tx_signature_123") {
             Ok(s) => s.into_raw(),
             Err(_) => std::ptr::null_mut(),
-        }
-    }, std::ptr::null_mut())
-}
-
-/// Register username on Solana Name Service with PIN protection
-/// Args:
-///   username - Username to register (e.g., "john")
-///   pin - PIN for encrypting contact card
-///   contactCardJson - ContactCard serialized as JSON
-/// Returns: Full SNS domain (e.g., "john.securelegion.sol")
-#[no_mangle]
-pub extern "C" fn Java_com_securelegion_crypto_RustBridge_registerUsername(
-    mut env: JNIEnv,
-    _class: JClass,
-    username: JString,
-    pin: JString,
-    contact_card_json: JString,
-) -> jstring {
-    catch_panic!(env, {
-        // Convert Java strings to Rust
-        let username_str = match jstring_to_string(&mut env, username) {
-            Ok(s) => s,
-            Err(e) => {
-                let _ = env.throw_new("java/lang/IllegalArgumentException", e);
-                return std::ptr::null_mut();
-            }
-        };
-
-        let pin_str = match jstring_to_string(&mut env, pin) {
-            Ok(s) => s,
-            Err(e) => {
-                let _ = env.throw_new("java/lang/IllegalArgumentException", e);
-                return std::ptr::null_mut();
-            }
-        };
-
-        let card_json = match jstring_to_string(&mut env, contact_card_json) {
-            Ok(s) => s,
-            Err(e) => {
-                let _ = env.throw_new("java/lang/IllegalArgumentException", e);
-                return std::ptr::null_mut();
-            }
-        };
-
-        // Deserialize ContactCard
-        let contact_card = match ContactCard::from_json(&card_json) {
-            Ok(card) => card,
-            Err(e) => {
-                let _ = env.throw_new("java/lang/IllegalArgumentException",
-                    format!("Failed to parse ContactCard JSON: {}", e));
-                return std::ptr::null_mut();
-            }
-        };
-
-        // Register username
-        match register_username(&username_str, &pin_str, &contact_card) {
-            Ok(domain) => {
-                match string_to_jstring(&mut env, &domain) {
-                    Ok(s) => s.into_raw(),
-                    Err(_) => std::ptr::null_mut(),
-                }
-            }
-            Err(e) => {
-                let _ = env.throw_new("java/lang/RuntimeException",
-                    format!("Username registration failed: {}", e));
-                std::ptr::null_mut()
-            }
-        }
-    }, std::ptr::null_mut())
-}
-
-/// Lookup username on Solana Name Service and decrypt with PIN
-/// Args:
-///   username - Username to lookup (e.g., "john")
-///   pin - PIN to decrypt contact card
-/// Returns: ContactCard as JSON string
-#[no_mangle]
-pub extern "C" fn Java_com_securelegion_crypto_RustBridge_lookupUsername(
-    mut env: JNIEnv,
-    _class: JClass,
-    username: JString,
-    pin: JString,
-) -> jstring {
-    catch_panic!(env, {
-        // Convert Java strings to Rust
-        let username_str = match jstring_to_string(&mut env, username) {
-            Ok(s) => s,
-            Err(e) => {
-                let _ = env.throw_new("java/lang/IllegalArgumentException", e);
-                return std::ptr::null_mut();
-            }
-        };
-
-        let pin_str = match jstring_to_string(&mut env, pin) {
-            Ok(s) => s,
-            Err(e) => {
-                let _ = env.throw_new("java/lang/IllegalArgumentException", e);
-                return std::ptr::null_mut();
-            }
-        };
-
-        // Lookup and decrypt
-        match lookup_username(&username_str, &pin_str) {
-            Ok(contact_card) => {
-                // Serialize to JSON
-                match contact_card.to_json() {
-                    Ok(json) => {
-                        match string_to_jstring(&mut env, &json) {
-                            Ok(s) => s.into_raw(),
-                            Err(_) => std::ptr::null_mut(),
-                        }
-                    }
-                    Err(e) => {
-                        let _ = env.throw_new("java/lang/RuntimeException",
-                            format!("Failed to serialize ContactCard: {}", e));
-                        std::ptr::null_mut()
-                    }
-                }
-            }
-            Err(e) => {
-                let _ = env.throw_new("java/lang/RuntimeException",
-                    format!("Username lookup failed: {}", e));
-                std::ptr::null_mut()
-            }
         }
     }, std::ptr::null_mut())
 }
