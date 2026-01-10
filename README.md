@@ -201,7 +201,7 @@
 - Pluggable transports: obfs4, Snowflake, meek, webtunnel
 - Bridge support for censorship circumvention
 
-**Ping-Pong Wake Protocol:**
+**Ping-Pong Wake TAP Protocol:**
 ```
 SENDER                          RECIPIENT
   |                                 |
