@@ -1,0 +1,21 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <!-- Warning triangle -->
+    <path
+        android:fillColor="#888888"
+        android:pathData="M1,21 L23,21 L12,2 Z M3.5,19 L12,4.5 L20.5,19 Z"/>
+    <!-- Skull icon inside triangle -->
+    <path
+        android:fillColor="#888888"
+        android:pathData="M12,8 C10.34,8 9,9.34 9,11 L9,13 C9,13.55 9.45,14 10,14 L10,15.5 C10,15.78 10.22,16 10.5,16 L11.5,16 L11.5,17 L12.5,17 L12.5,16 L13.5,16 C13.78,16 14,15.78 14,15.5 L14,14 C14.55,14 15,13.55 15,13 L15,11 C15,9.34 13.66,8 12,8 Z"/>
+    <!-- Eyes -->
+    <path
+        android:fillColor="#000000"
+        android:pathData="M10.5,10.5 m-0.7,0 a0.7,0.7 0,1,1 1.4,0 a0.7,0.7 0,1,1 -1.4,0"/>
+    <path
+        android:fillColor="#000000"
+        android:pathData="M13.5,10.5 m-0.7,0 a0.7,0.7 0,1,1 1.4,0 a0.7,0.7 0,1,1 -1.4,0"/>
+</vector>

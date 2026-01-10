@@ -25,6 +25,7 @@ class ChatAdapter(
         val chatName: TextView = view.findViewById(R.id.chatName)
         val chatMessage: TextView = view.findViewById(R.id.chatMessage)
         val chatTime: TextView = view.findViewById(R.id.chatTime)
+        val chatMessageStatus: android.widget.ImageView = view.findViewById(R.id.chatMessageStatus)
         val unreadBadge: TextView = view.findViewById(R.id.unreadBadge)
         val securityBadge: TextView = view.findViewById(R.id.securityBadge)
         val onlineIndicator: TextView = view.findViewById(R.id.onlineIndicator)
@@ -53,6 +54,24 @@ class ChatAdapter(
 
         // Set timestamp
         holder.chatTime.text = chat.time
+
+        // Show message status indicator (only for sent messages)
+        if (chat.lastMessageIsSent) {
+            holder.chatMessageStatus.visibility = View.VISIBLE
+            val statusIcon = when (chat.lastMessageStatus) {
+                0 -> R.drawable.status_pending  // STATUS_PENDING (before any acks)
+                1 -> R.drawable.status_pending  // STATUS_PENDING
+                2 -> R.drawable.status_sent     // STATUS_PING_SENT
+                3 -> R.drawable.status_sent     // STATUS_SENT
+                4 -> R.drawable.status_delivered // STATUS_DELIVERED
+                5 -> R.drawable.status_delivered // STATUS_READ
+                6 -> R.drawable.status_failed    // STATUS_FAILED
+                else -> R.drawable.status_sent
+            }
+            holder.chatMessageStatus.setImageResource(statusIcon)
+        } else {
+            holder.chatMessageStatus.visibility = View.GONE
+        }
 
         // Never show download button in preview - only inside the chat
         holder.downloadButton.visibility = View.GONE

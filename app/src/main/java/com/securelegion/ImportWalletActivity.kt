@@ -144,8 +144,8 @@ class ImportWalletActivity : AppCompatActivity() {
             val dbPassphrase = keyManager.getDatabasePassphrase()
             val database = SecureLegionDatabase.getInstance(this@ImportWalletActivity, dbPassphrase)
 
-            // Get Solana address for the imported wallet (uses main wallet since we can't derive per wallet yet)
-            val solanaAddress = keyManager.getSolanaAddress()
+            // Get Solana address for the imported wallet
+            val solanaAddress = keyManager.getWalletSolanaAddress(walletId)
 
             val wallet = Wallet(
                 walletId = walletId,
@@ -181,12 +181,12 @@ class ImportWalletActivity : AppCompatActivity() {
             // Generate a unique wallet ID
             val walletId = "zec_${System.currentTimeMillis()}"
 
-            // Try to import as seed phrase (12 words)
+            // Try to import as seed phrase (12 or 24 words)
             val words = privateKeyOrSeed.split("\\s+".toRegex())
 
-            val imported = if (words.size == 12) {
+            val imported = if (words.size == 12 || words.size == 24) {
                 // Import from seed phrase
-                Log.d("ImportWallet", "Importing Zcash wallet from 12-word seed phrase")
+                Log.d("ImportWallet", "Importing Zcash wallet from ${words.size}-word seed phrase")
                 keyManager.importWalletFromSeed(walletId, privateKeyOrSeed)
             } else {
                 // Zcash private key import (WIF format)
@@ -206,14 +206,32 @@ class ImportWalletActivity : AppCompatActivity() {
             val dbPassphrase = keyManager.getDatabasePassphrase()
             val database = SecureLegionDatabase.getInstance(this@ImportWalletActivity, dbPassphrase)
 
-            // Get Zcash address for the imported wallet (uses main wallet since we can't derive per wallet yet)
-            val zcashAddress = keyManager.getZcashAddress()
+            // Derive Zcash unified address for THIS wallet's seed
+            val zcashUnifiedAddress = if (words.size == 12 || words.size == 24) {
+                try {
+                    com.securelegion.utils.ZcashAddressDeriver.deriveUnifiedAddressFromSeed(
+                        seedPhrase = privateKeyOrSeed,
+                        network = cash.z.ecc.android.sdk.model.ZcashNetwork.Mainnet,
+                        accountIndex = 0
+                    )
+                } catch (e: Exception) {
+                    Log.e("ImportWallet", "Failed to derive Zcash UA", e)
+                    null
+                }
+            } else {
+                // For private key import (WIF), address derivation not supported yet
+                Log.w("ImportWallet", "Cannot derive UA from WIF private key - will need to sync with ZcashService")
+                null
+            }
 
             val wallet = Wallet(
                 walletId = walletId,
                 name = walletName,
                 solanaAddress = "",
-                zcashAddress = zcashAddress,
+                zcashUnifiedAddress = zcashUnifiedAddress,
+                zcashAccountIndex = 0,
+                zcashBirthdayHeight = null, // TODO: Could ask user or use current height
+                isActiveZcash = false, // Don't auto-activate imported wallet
                 isMainWallet = false,
                 createdAt = System.currentTimeMillis(),
                 lastUsedAt = System.currentTimeMillis()
@@ -221,7 +239,20 @@ class ImportWalletActivity : AppCompatActivity() {
 
             database.walletDao().insertWallet(wallet)
 
+            // Update Zcash derived info in DB
+            if (zcashUnifiedAddress != null) {
+                database.walletDao().updateZcashDerivedInfo(
+                    walletId = walletId,
+                    ua = zcashUnifiedAddress,
+                    accountIndex = 0,
+                    birthdayHeight = null
+                )
+            }
+
             Log.i("ImportWallet", "Zcash wallet imported successfully: $walletId")
+            if (zcashUnifiedAddress != null) {
+                Log.i("ImportWallet", "Derived UA: ${zcashUnifiedAddress.take(20)}...")
+            }
 
             withContext(Dispatchers.Main) {
                 ThemedToast.show(this@ImportWalletActivity, "Wallet imported successfully!")

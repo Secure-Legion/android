@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Outer glow ring with segments -->
+    <item>
+        <rotate
+            android:fromDegrees="0"
+            android:toDegrees="360"
+            android:pivotX="50%"
+            android:pivotY="50%">
+            <shape android:shape="ring"
+                android:innerRadiusRatio="2.5"
+                android:thicknessRatio="15"
+                android:useLevel="false">
+                <gradient
+                    android:type="sweep"
+                    android:startColor="#004A9EFF"
+                    android:centerColor="#FF4FACFE"
+                    android:endColor="#004A9EFF"
+                    android:angle="0" />
+            </shape>
+        </rotate>
+    </item>
+
+    <!-- Inner bright ring -->
+    <item>
+        <shape android:shape="ring"
+            android:innerRadiusRatio="2.8"
+            android:thicknessRatio="20"
+            android:useLevel="false">
+            <solid android:color="#4A9EFF" />
+        </shape>
+    </item>
+</layer-list>

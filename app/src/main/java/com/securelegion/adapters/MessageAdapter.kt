@@ -6,7 +6,10 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.graphics.BitmapFactory
+import android.os.Handler
+import android.os.Looper
 import android.util.Base64
+import android.util.Log
 import android.view.GestureDetector
 import android.view.LayoutInflater
 import android.view.MotionEvent
@@ -15,6 +18,7 @@ import android.view.ViewGroup
 import android.widget.CheckBox
 import android.widget.ImageView
 import android.widget.LinearLayout
+import android.widget.PopupMenu
 import android.widget.TextView
 import androidx.cardview.widget.CardView
 import androidx.recyclerview.widget.RecyclerView
@@ -32,6 +36,7 @@ class MessageAdapter(
     private var messages: List<Message> = emptyList(),
     private var pendingPings: List<com.securelegion.models.PendingPing> = emptyList(),
     private var downloadingPingIds: Set<String> = emptySet(),  // Track which pings are being downloaded
+    private var autoPongPingIds: Set<String> = emptySet(),  // Track auto-downloading pings (show typing indicator)
     private val onDownloadClick: ((String) -> Unit)? = null,  // Now passes ping ID
     private val onVoicePlayClick: ((Message) -> Unit)? = null,
     private var currentlyPlayingMessageId: String? = null,
@@ -39,10 +44,12 @@ class MessageAdapter(
     private val onImageClick: ((String) -> Unit)? = null,  // Base64 image data
     private val onPaymentRequestClick: ((Message) -> Unit)? = null,  // Click on payment request (to pay)
     private val onPaymentDetailsClick: ((Message) -> Unit)? = null,  // Click on completed payment (for details)
-    private val onPriceRefreshClick: ((Message, TextView, TextView) -> Unit)? = null  // Refresh price callback
+    private val onPriceRefreshClick: ((Message, TextView, TextView) -> Unit)? = null,  // Refresh price callback
+    private val onDeleteMessage: ((Message) -> Unit)? = null  // Delete single message callback
 ) : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
 
     companion object {
+        private const val TAG = "MessageAdapter"
         private const val VIEW_TYPE_SENT = 1
         private const val VIEW_TYPE_RECEIVED = 2
         private const val VIEW_TYPE_PENDING = 3
@@ -67,6 +74,10 @@ class MessageAdapter(
     private var isSelectionMode = false
     private val selectedMessages = mutableSetOf<String>()  // Use String to support both message IDs and ping IDs
 
+    // Track animated ellipsis for downloading/decrypting states
+    private val ellipsisAnimations = mutableMapOf<TextView, Runnable>()
+    private val ellipsisHandler = Handler(Looper.getMainLooper())
+
     fun setSelectionMode(enabled: Boolean) {
         isSelectionMode = enabled
         if (!enabled) {
@@ -82,11 +93,118 @@ class MessageAdapter(
         notifyDataSetChanged()
     }
 
+    /**
+     * Start animated ellipsis for loading states (Downloading, Decrypting, etc.)
+     * Cycles through: "Text", "Text.", "Text..", "Text..."
+     */
+    private fun startEllipsisAnimation(textView: TextView, baseText: String) {
+        // Stop any existing animation on this view
+        stopEllipsisAnimation(textView)
+
+        var dotCount = 0
+        val runnable = object : Runnable {
+            override fun run() {
+                val dots = ".".repeat(dotCount)
+                textView.text = "$baseText$dots"
+                dotCount = (dotCount + 1) % 4  // Cycle 0, 1, 2, 3
+                ellipsisHandler.postDelayed(this, 500)  // Update every 500ms
+            }
+        }
+
+        ellipsisAnimations[textView] = runnable
+        ellipsisHandler.post(runnable)
+    }
+
+    /**
+     * Stop ellipsis animation for a TextView
+     */
+    private fun stopEllipsisAnimation(textView: TextView) {
+        ellipsisAnimations[textView]?.let { runnable ->
+            ellipsisHandler.removeCallbacks(runnable)
+            ellipsisAnimations.remove(textView)
+        }
+    }
+
+    /**
+     * Animate typing indicator dots (bouncing effect like iMessage/WhatsApp)
+     * Each dot fades up and down in sequence
+     */
+    private fun startTypingAnimation(dot1: TextView, dot2: TextView, dot3: TextView) {
+        Log.d(TAG, "🔵 startTypingAnimation() called - starting bounce animation")
+
+        // Stop any existing animation on these views first (important for RecyclerView recycling)
+        stopTypingAnimation(dot1, dot2, dot3)
+
+        val dots = listOf(dot1, dot2, dot3)
+
+        // Set initial state - all dots at normal size
+        dots.forEach {
+            it.scaleX = 1.0f
+            it.scaleY = 1.0f
+        }
+
+        var currentDot = 0
+        val runnable = object : Runnable {
+            override fun run() {
+                // Safety check: make sure views are still attached before animating
+                if (dot1.parent == null) {
+                    Log.d(TAG, "🔵 Typing animation stopped - views detached")
+                    stopTypingAnimation(dot1, dot2, dot3)
+                    return
+                }
+
+                Log.d(TAG, "🔵 Typing animation tick - bouncing dot $currentDot")
+
+                // Reset all dots to normal size
+                dots.forEach {
+                    it.animate()
+                        .scaleX(1.0f)
+                        .scaleY(1.0f)
+                        .setDuration(200)
+                        .start()
+                }
+
+                // Bounce current dot (scale up)
+                dots[currentDot].animate()
+                    .scaleX(1.4f)
+                    .scaleY(1.4f)
+                    .setDuration(200)
+                    .start()
+
+                // Move to next dot
+                currentDot = (currentDot + 1) % 3
+
+                ellipsisHandler.postDelayed(this, 400)  // Update every 400ms
+            }
+        }
+
+        // Store runnable using first dot as key (representative)
+        ellipsisAnimations[dot1] = runnable
+        ellipsisHandler.post(runnable)
+        Log.d(TAG, "🔵 Typing animation runnable posted to handler")
+    }
+
+    /**
+     * Stop typing indicator animation
+     */
+    private fun stopTypingAnimation(dot1: TextView, dot2: TextView? = null, dot3: TextView? = null) {
+        ellipsisAnimations[dot1]?.let { runnable ->
+            ellipsisHandler.removeCallbacks(runnable)
+            ellipsisAnimations.remove(dot1)
+
+            // Reset all dots to normal size
+            listOf(dot1, dot2, dot3).forEach { dot ->
+                dot?.scaleX = 1.0f
+                dot?.scaleY = 1.0f
+            }
+        }
+    }
+
     class SentMessageViewHolder(view: View) : RecyclerView.ViewHolder(view) {
         val timestampHeader: TextView = view.findViewById(R.id.timestampHeader)
         val messageBubble: LinearLayout = view.findViewById(R.id.messageBubble)
         val messageText: TextView = view.findViewById(R.id.messageText)
-        val messageStatus: TextView = view.findViewById(R.id.messageStatus)
+        val messageStatus: ImageView = view.findViewById(R.id.messageStatus)
         val swipeRevealedTime: TextView = view.findViewById(R.id.swipeRevealedTime)
         val messageCheckbox: CheckBox = view.findViewById(R.id.messageCheckbox)
     }
@@ -106,6 +224,10 @@ class MessageAdapter(
         val downloadingText: TextView = view.findViewById(R.id.downloadingText)
         val swipeRevealedTime: TextView = view.findViewById(R.id.swipeRevealedTime)
         val messageCheckbox: CheckBox = view.findViewById(R.id.messageCheckbox)
+        val typingIndicator: LinearLayout = view.findViewById(R.id.typingIndicator)
+        val typingDot1: TextView = view.findViewById(R.id.typingDot1)
+        val typingDot2: TextView = view.findViewById(R.id.typingDot2)
+        val typingDot3: TextView = view.findViewById(R.id.typingDot3)
     }
 
     class VoiceSentMessageViewHolder(view: View) : RecyclerView.ViewHolder(view) {
@@ -131,7 +253,7 @@ class MessageAdapter(
         val timestampHeader: TextView = view.findViewById(R.id.timestampHeader)
         val messageBubble: CardView = view.findViewById(R.id.messageBubble)
         val messageImage: ImageView = view.findViewById(R.id.messageImage)
-        val messageStatus: TextView = view.findViewById(R.id.messageStatus)
+        val messageStatus: ImageView = view.findViewById(R.id.messageStatus)
         val swipeRevealedTime: TextView = view.findViewById(R.id.swipeRevealedTime)
         val messageCheckbox: CheckBox = view.findViewById(R.id.messageCheckbox)
     }
@@ -152,7 +274,7 @@ class MessageAdapter(
         val paymentAmount: TextView = view.findViewById(R.id.paymentAmount)
         val paymentAmountUsd: TextView = view.findViewById(R.id.paymentAmountUsd)
         val paymentStatus: TextView = view.findViewById(R.id.paymentStatus)
-        val messageStatus: TextView = view.findViewById(R.id.messageStatus)
+        val messageStatus: ImageView = view.findViewById(R.id.messageStatus)
         val messageCheckbox: CheckBox = view.findViewById(R.id.messageCheckbox)
     }
 
@@ -191,14 +313,16 @@ class MessageAdapter(
     }
 
     override fun getItemViewType(position: Int): Int {
+        Log.d(TAG, "getItemViewType() called for position $position (messages.size=${messages.size})")
         // Check if this is in the pending messages range (after regular messages)
         if (position >= messages.size) {
+            Log.d(TAG, "  -> VIEW_TYPE_PENDING")
             return VIEW_TYPE_PENDING
         }
 
         val message = messages[position]
 
-        return when {
+        val viewType = when {
             message.messageType == Message.MESSAGE_TYPE_VOICE && message.isSentByMe -> VIEW_TYPE_VOICE_SENT
             message.messageType == Message.MESSAGE_TYPE_VOICE && !message.isSentByMe -> VIEW_TYPE_VOICE_RECEIVED
             message.messageType == Message.MESSAGE_TYPE_IMAGE && message.isSentByMe -> VIEW_TYPE_IMAGE_SENT
@@ -210,16 +334,21 @@ class MessageAdapter(
             message.isSentByMe -> VIEW_TYPE_SENT
             else -> VIEW_TYPE_RECEIVED
         }
+        Log.d(TAG, "  -> viewType=$viewType (type=${message.messageType}, sentByMe=${message.isSentByMe})")
+        return viewType
     }
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): RecyclerView.ViewHolder {
+        Log.d(TAG, "onCreateViewHolder() called for viewType=$viewType")
         return when (viewType) {
             VIEW_TYPE_SENT -> {
+                Log.d(TAG, "  -> Creating SentMessageViewHolder")
                 val view = LayoutInflater.from(parent.context)
                     .inflate(R.layout.item_message_sent, parent, false)
                 SentMessageViewHolder(view)
             }
             VIEW_TYPE_PENDING -> {
+                Log.d(TAG, "  -> Creating PendingMessageViewHolder")
                 val view = LayoutInflater.from(parent.context)
                     .inflate(R.layout.item_message_pending, parent, false)
                 PendingMessageViewHolder(view)
@@ -273,8 +402,10 @@ class MessageAdapter(
     }
 
     override fun onBindViewHolder(holder: RecyclerView.ViewHolder, position: Int) {
+        Log.d(TAG, "onBindViewHolder() called for position=$position, holder type=${holder.javaClass.simpleName}")
         when (holder) {
             is SentMessageViewHolder -> {
+                Log.d(TAG, "  -> Binding SentMessageViewHolder")
                 val message = messages[position]
                 bindSentMessage(holder, message, position)
             }
@@ -322,7 +453,7 @@ class MessageAdapter(
 
     private fun bindSentMessage(holder: SentMessageViewHolder, message: Message, position: Int) {
         holder.messageText.text = message.encryptedContent
-        holder.messageStatus.text = getStatusIcon(message.status)
+        holder.messageStatus.setImageResource(getStatusIcon(message.status))
 
         // Show timestamp header if this is the first message or date changed
         if (shouldShowTimestampHeader(position)) {
@@ -365,13 +496,9 @@ class MessageAdapter(
             holder.messageCheckbox.setOnCheckedChangeListener(null)
             holder.messageBubble.setOnClickListener(null)
 
-            // Add long-press listener to copy text
+            // Add long-press listener to show popup menu with Copy and Delete options
             holder.messageBubble.setOnLongClickListener {
-                val context = holder.itemView.context
-                val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                val clip = ClipData.newPlainText("Message", message.encryptedContent)
-                clipboard.setPrimaryClip(clip)
-                ThemedToast.show(context, "Message copied")
+                showMessagePopupMenu(it, message)
                 true
             }
         }
@@ -426,13 +553,9 @@ class MessageAdapter(
             holder.messageCheckbox.setOnCheckedChangeListener(null)
             holder.messageBubble.setOnClickListener(null)
 
-            // Add long-press listener to copy text
+            // Add long-press listener to show popup menu with Copy and Delete options
             holder.messageBubble.setOnLongClickListener {
-                val context = holder.itemView.context
-                val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                val clip = ClipData.newPlainText("Message", message.encryptedContent)
-                clipboard.setPrimaryClip(clip)
-                ThemedToast.show(context, "Message copied")
+                showMessagePopupMenu(it, message)
                 true
             }
         }
@@ -449,15 +572,41 @@ class MessageAdapter(
         val pendingPing = pendingPings[pendingIndex]
         val timestamp = pendingPing.timestamp
 
-        // Reset visibility states for recycled views
-        // Check if this ping is currently being downloaded
-        val isDownloading = pendingPing.pingId in downloadingPingIds
-        if (isDownloading) {
-            holder.downloadButton.visibility = View.GONE
-            holder.downloadingText.visibility = View.VISIBLE
-        } else {
-            holder.downloadButton.visibility = View.VISIBLE
-            holder.downloadingText.visibility = View.GONE
+        // Check if this is an auto-downloading ping (show typing indicator)
+        val isAutoPong = pendingPing.pingId in autoPongPingIds
+        if (isAutoPong) {
+            android.util.Log.i("MessageAdapter", "🔵 Ping ${pendingPing.pingId.take(8)} is AUTO-PONG - showing typing indicator")
+        }
+
+        // Update UI based on ping state
+        when (pendingPing.state) {
+            com.securelegion.models.PingState.PENDING -> {
+                // Show "Download" button (lock icon)
+                holder.downloadButton.visibility = View.VISIBLE
+                holder.downloadingText.visibility = View.GONE
+                holder.typingIndicator.visibility = View.GONE
+                stopEllipsisAnimation(holder.downloadingText)
+                stopTypingAnimation(holder.typingDot1, holder.typingDot2, holder.typingDot3)
+            }
+            com.securelegion.models.PingState.DOWNLOADING,
+            com.securelegion.models.PingState.DECRYPTING,
+            com.securelegion.models.PingState.READY -> {
+                holder.downloadButton.visibility = View.GONE
+
+                if (isAutoPong) {
+                    // Auto-PONG: Show typing indicator with animated dots (like real messaging apps)
+                    holder.downloadingText.visibility = View.GONE
+                    holder.typingIndicator.visibility = View.VISIBLE
+                    stopEllipsisAnimation(holder.downloadingText)
+                    startTypingAnimation(holder.typingDot1, holder.typingDot2, holder.typingDot3)
+                } else {
+                    // Manual download: Show "Downloading..." text with ellipsis
+                    holder.downloadingText.visibility = View.VISIBLE
+                    holder.typingIndicator.visibility = View.GONE
+                    stopTypingAnimation(holder.typingDot1, holder.typingDot2, holder.typingDot3)
+                    startEllipsisAnimation(holder.downloadingText, "Downloading")
+                }
+            }
         }
 
         // Show timestamp header if this is the first message or date changed
@@ -658,7 +807,7 @@ class MessageAdapter(
             }
         }
 
-        holder.messageStatus.text = getStatusIcon(message.status)
+        holder.messageStatus.setImageResource(getStatusIcon(message.status))
 
         // Show timestamp header if this is the first message or date changed
         if (shouldShowTimestampHeader(position)) {
@@ -704,7 +853,12 @@ class MessageAdapter(
             holder.messageBubble.setOnClickListener {
                 onImageClick?.invoke(message.attachmentData ?: "")
             }
-            holder.messageBubble.setOnLongClickListener(null)
+
+            // Add long-press listener to show popup menu with Delete option
+            holder.messageBubble.setOnLongClickListener {
+                showMessagePopupMenu(it, message)
+                true
+            }
         }
 
         // Setup swipe gesture (disabled in selection mode)
@@ -768,7 +922,12 @@ class MessageAdapter(
             holder.messageBubble.setOnClickListener {
                 onImageClick?.invoke(message.attachmentData ?: "")
             }
-            holder.messageBubble.setOnLongClickListener(null)
+
+            // Add long-press listener to show popup menu with Delete option
+            holder.messageBubble.setOnLongClickListener {
+                showMessagePopupMenu(it, message)
+                true
+            }
         }
 
         // Setup swipe gesture (disabled in selection mode)
@@ -807,7 +966,7 @@ class MessageAdapter(
         holder.paymentStatus.setTextColor(statusColor)
 
         // Set message status
-        holder.messageStatus.text = getStatusIcon(message.status)
+        holder.messageStatus.setImageResource(getStatusIcon(message.status))
 
         // Show timestamp header if needed
         if (shouldShowTimestampHeader(position)) {
@@ -1061,7 +1220,7 @@ class MessageAdapter(
     private fun setupSwipeGestureForCard(
         bubble: CardView,
         timeView: TextView,
-        statusView: TextView?,
+        statusView: ImageView?,
         position: Int,
         isSent: Boolean
     ) {
@@ -1110,7 +1269,7 @@ class MessageAdapter(
     private fun setupSwipeGesture(
         bubble: View,
         timeView: TextView,
-        statusView: TextView?,
+        statusView: ImageView?,
         position: Int,
         isSent: Boolean
     ) {
@@ -1237,25 +1396,56 @@ class MessageAdapter(
         return sdf.format(Date(timestamp))
     }
 
-    private fun getStatusIcon(status: Int): String {
+    private fun getStatusIcon(status: Int): Int {
         return when (status) {
-            Message.STATUS_PENDING -> "○"  // Pending
-            Message.STATUS_PING_SENT -> "✓"     // Ping sent (1 checkmark)
-            Message.STATUS_SENT -> "✓"     // Sent (1 checkmark)
-            Message.STATUS_DELIVERED -> "✓✓" // Delivered (2 checkmarks)
-            Message.STATUS_READ -> "✓✓"    // Read (2 checkmarks)
-            Message.STATUS_FAILED -> "✗"   // Failed
-            else -> "✓"  // Default to single checkmark
+            Message.STATUS_PENDING -> R.drawable.status_pending  // Empty circle
+            Message.STATUS_PING_SENT -> R.drawable.status_sent     // Circle with 1 checkmark
+            Message.STATUS_SENT -> R.drawable.status_sent     // Circle with 1 checkmark
+            Message.STATUS_DELIVERED -> R.drawable.status_delivered // Solid circle with 2 checkmarks
+            Message.STATUS_READ -> R.drawable.status_delivered    // Solid circle with 2 checkmarks
+            Message.STATUS_FAILED -> R.drawable.status_failed   // Red circle with X
+            else -> R.drawable.status_sent  // Default to single checkmark
         }
     }
 
     override fun getItemCount(): Int {
-        return messages.size + pendingPings.size
+        val count = messages.size + pendingPings.size
+        Log.d(TAG, "getItemCount() called: messages=${messages.size}, pending=${pendingPings.size}, total=$count")
+        return count
+    }
+
+    override fun onViewRecycled(holder: RecyclerView.ViewHolder) {
+        super.onViewRecycled(holder)
+
+        // Stop any running animations when view is recycled to prevent crashes
+        if (holder is PendingMessageViewHolder) {
+            Log.d(TAG, "🔴 View recycled - stopping typing animation")
+            stopTypingAnimation(holder.typingDot1, holder.typingDot2, holder.typingDot3)
+            stopEllipsisAnimation(holder.downloadingText)
+        }
     }
 
     fun setCurrentlyPlayingMessageId(messageId: String?) {
         currentlyPlayingMessageId = messageId
         notifyDataSetChanged() // Update all voice message icons
+    }
+
+    /**
+     * Stop all running animations (call this in onDestroy to prevent memory leaks)
+     */
+    fun stopAllAnimations() {
+        Log.d(TAG, "🛑 Stopping all animations in adapter")
+        // Stop all ellipsis animations
+        ellipsisAnimations.keys.toList().forEach { textView ->
+            ellipsisAnimations[textView]?.let { runnable ->
+                ellipsisHandler.removeCallbacks(runnable)
+            }
+        }
+        ellipsisAnimations.clear()
+
+        // Remove all pending messages from handler
+        ellipsisHandler.removeCallbacksAndMessages(null)
+        Log.d(TAG, "🛑 All animations stopped")
     }
 
     fun resetSwipeState() {
@@ -1269,70 +1459,142 @@ class MessageAdapter(
     fun updateMessages(
         newMessages: List<Message>,
         newPendingPings: List<com.securelegion.models.PendingPing> = emptyList(),
-        newDownloadingPingIds: Set<String> = emptySet()
+        newDownloadingPingIds: Set<String> = emptySet(),
+        newAutoPongPingIds: Set<String> = emptySet()
     ) {
+        Log.d(TAG, "updateMessages() called: old=${messages.size}, new=${newMessages.size}, pending=${newPendingPings.size}")
+        // Stop all running ellipsis animations (views will be recycled)
+        ellipsisAnimations.keys.toList().forEach { textView ->
+            stopEllipsisAnimation(textView)
+        }
+
         // Track old state
         val oldMessageCount = messages.size
         val oldPendingCount = pendingPings.size
         val oldTotalCount = oldMessageCount + oldPendingCount
+        Log.d(TAG, "  Old state: messages=$oldMessageCount, pending=$oldPendingCount, total=$oldTotalCount")
 
         // Update state
         messages = newMessages
         pendingPings = newPendingPings
         downloadingPingIds = newDownloadingPingIds
+        autoPongPingIds = newAutoPongPingIds
 
         // Track new state
         val newMessageCount = newMessages.size
         val newPendingCount = newPendingPings.size
         val newTotalCount = newMessageCount + newPendingCount
+        Log.d(TAG, "  New state: messages=$newMessageCount, pending=$newPendingCount, total=$newTotalCount")
 
         // Reset swipe state
         currentSwipeRevealedPosition = -1
 
         // Notify RecyclerView about specific changes to avoid crashes
+        Log.d(TAG, "  Deciding notification strategy...")
         when {
             // Pending pings removed (after downloads or deletions)
             oldPendingCount > 0 && newPendingCount == 0 -> {
-                // Notify about message changes if any
-                if (newMessageCount != oldMessageCount) {
-                    notifyItemRangeChanged(0, newMessageCount)
+                Log.d(TAG, "  Strategy: Pending pings removed")
+                // ATOMIC SWAP case: Total count stayed the same (ping became message)
+                // Use notifyDataSetChanged to avoid animation gap
+                if (newTotalCount == oldTotalCount) {
+                    Log.d(TAG, "    -> notifyDataSetChanged() [ATOMIC SWAP]")
+                    notifyDataSetChanged()
+                } else {
+                    // Normal case: notify about changes
+                    if (newMessageCount != oldMessageCount) {
+                        Log.d(TAG, "    -> notifyItemRangeChanged(0, $newMessageCount)")
+                        notifyItemRangeChanged(0, newMessageCount)
+                    }
+                    // Remove all pending items
+                    Log.d(TAG, "    -> notifyItemRangeRemoved($oldMessageCount, $oldPendingCount)")
+                    notifyItemRangeRemoved(oldMessageCount, oldPendingCount)
                 }
-                // Remove all pending items
-                notifyItemRangeRemoved(oldMessageCount, oldPendingCount)
             }
             // Pending pings added
             oldPendingCount == 0 && newPendingCount > 0 -> {
+                Log.d(TAG, "  Strategy: Pending pings added")
                 // Notify about message changes if any
                 if (newMessageCount != oldMessageCount) {
+                    Log.d(TAG, "    -> notifyItemRangeChanged(0, $oldMessageCount)")
                     notifyItemRangeChanged(0, oldMessageCount)
                 }
                 // Insert new pending items at the end
+                Log.d(TAG, "    -> notifyItemRangeInserted($newMessageCount, $newPendingCount)")
                 notifyItemRangeInserted(newMessageCount, newPendingCount)
             }
             // Pending count changed
             newPendingCount != oldPendingCount -> {
+                Log.d(TAG, "  Strategy: Pending count changed")
                 // Update messages if count changed
                 if (newMessageCount != oldMessageCount) {
-                    notifyItemRangeChanged(0, kotlin.math.min(newMessageCount, oldMessageCount))
+                    val minCount = kotlin.math.min(newMessageCount, oldMessageCount)
+                    Log.d(TAG, "    -> notifyItemRangeChanged(0, $minCount)")
+                    notifyItemRangeChanged(0, minCount)
                 }
                 // Handle pending changes
                 if (newPendingCount > oldPendingCount) {
-                    notifyItemRangeInserted(oldMessageCount + oldPendingCount, newPendingCount - oldPendingCount)
+                    val insertPos = oldMessageCount + oldPendingCount
+                    val insertCount = newPendingCount - oldPendingCount
+                    Log.d(TAG, "    -> notifyItemRangeInserted($insertPos, $insertCount)")
+                    notifyItemRangeInserted(insertPos, insertCount)
                 } else {
-                    notifyItemRangeRemoved(oldMessageCount + newPendingCount, oldPendingCount - newPendingCount)
+                    val removePos = oldMessageCount + newPendingCount
+                    val removeCount = oldPendingCount - newPendingCount
+                    Log.d(TAG, "    -> notifyItemRangeRemoved($removePos, $removeCount)")
+                    notifyItemRangeRemoved(removePos, removeCount)
                 }
             }
             // Just messages changed
             newMessageCount > oldMessageCount -> {
+                Log.d(TAG, "  Strategy: Messages increased ($oldMessageCount -> $newMessageCount)")
+                Log.d(TAG, "    -> notifyItemRangeInserted($oldMessageCount, ${newMessageCount - oldMessageCount})")
                 notifyItemRangeInserted(oldMessageCount, newMessageCount - oldMessageCount)
             }
             newMessageCount < oldMessageCount -> {
+                Log.d(TAG, "  Strategy: Messages decreased ($oldMessageCount -> $newMessageCount)")
+                Log.d(TAG, "    -> notifyItemRangeRemoved($newMessageCount, ${oldMessageCount - newMessageCount})")
                 notifyItemRangeRemoved(newMessageCount, oldMessageCount - newMessageCount)
             }
             else -> {
-                // Same count, just update all
+                Log.d(TAG, "  Strategy: Same count, update all ($newTotalCount items)")
+                Log.d(TAG, "    -> notifyItemRangeChanged(0, $newTotalCount)")
                 notifyItemRangeChanged(0, newTotalCount)
             }
         }
+    }
+
+    /**
+     * Show popup menu on message long-press with Copy and Delete options
+     */
+    private fun showMessagePopupMenu(view: View, message: Message) {
+        val popup = PopupMenu(view.context, view)
+        popup.inflate(R.menu.message_actions_menu)
+
+        // Hide "Copy" option for image messages (copying base64 string isn't useful)
+        if (message.messageType == Message.MESSAGE_TYPE_IMAGE) {
+            popup.menu.findItem(R.id.action_copy)?.isVisible = false
+        }
+
+        popup.setOnMenuItemClickListener { menuItem ->
+            when (menuItem.itemId) {
+                R.id.action_copy -> {
+                    // Copy message text
+                    val clipboard = view.context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                    val clip = ClipData.newPlainText("Message", message.encryptedContent)
+                    clipboard.setPrimaryClip(clip)
+                    ThemedToast.show(view.context, "Message copied")
+                    true
+                }
+                R.id.action_delete -> {
+                    // Delete message
+                    onDeleteMessage?.invoke(message)
+                    true
+                }
+                else -> false
+            }
+        }
+
+        popup.show()
     }
 }

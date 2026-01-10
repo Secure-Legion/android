@@ -260,6 +260,57 @@
 
             </LinearLayout>
 
+            <!-- Delete Contact Option -->
+            <LinearLayout
+                android:id="@+id/deleteContactOption"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:background="@drawable/wallet_token_bg"
+                android:paddingStart="20dp"
+                android:paddingEnd="20dp"
+                android:paddingTop="18dp"
+                android:paddingBottom="18dp"
+                android:gravity="center_vertical"
+                android:layout_marginBottom="12dp"
+                android:clickable="true"
+                android:focusable="true">
+
+                <!-- Icon Background -->
+                <FrameLayout
+                    android:layout_width="40dp"
+                    android:layout_height="40dp"
+                    android:background="@drawable/top_icon_bg">
+
+                    <ImageView
+                        android:layout_width="20dp"
+                        android:layout_height="20dp"
+                        android:layout_gravity="center"
+                        android:src="@drawable/ic_delete"
+                        android:tint="#FF3B30"
+                        android:contentDescription="Delete" />
+
+                </FrameLayout>
+
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="Delete Contact"
+                    android:textSize="15sp"
+                    android:textColor="#FF3B30"
+                    android:fontFamily="@font/poppins_regular"
+                    android:layout_marginStart="16dp" />
+
+                <ImageView
+                    android:layout_width="20dp"
+                    android:layout_height="20dp"
+                    android:src="@drawable/ic_arrow_forward"
+                    android:tint="#666666"
+                    android:contentDescription="Arrow" />
+
+            </LinearLayout>
+
             <!-- Hidden fields for backward compatibility -->
             <EditText
                 android:id="@+id/displayNameInput"

@@ -17,6 +17,7 @@ import android.view.View
 import android.widget.Spinner
 import android.widget.AdapterView
 import android.widget.TextView
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
@@ -39,33 +40,65 @@ import com.securelegion.database.entities.Wallet
 import com.securelegion.models.Chat
 import com.securelegion.models.Contact
 import com.securelegion.services.SolanaService
+import com.securelegion.services.TorService
 import com.securelegion.services.ZcashService
 import com.securelegion.utils.startActivityWithSlideAnimation
 import com.securelegion.utils.BadgeUtils
 import com.securelegion.utils.ThemedToast
+import com.securelegion.voice.CallSignaling
+import com.securelegion.voice.VoiceCallManager
+import com.securelegion.voice.crypto.VoiceCallCrypto
 import com.securelegion.workers.SelfDestructWorker
 import com.securelegion.workers.MessageRetryWorker
+import com.securelegion.database.entities.ed25519PublicKeyBytes
+import com.securelegion.database.entities.x25519PublicKeyBytes
+import java.util.UUID
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.concurrent.TimeUnit
 
 class MainActivity : BaseActivity() {
-    private var currentTab = "messages" // Track current tab: "messages", "contacts", or "wallet"
-    private var currentWallet: Wallet? = null // Track currently selected wallet
+    companion object {
+        private const val TAG = "MainActivity"
+        private const val PERMISSION_REQUEST_CALL = 100
+    }
 
-    // BroadcastReceiver to listen for incoming Pings and refresh UI
+    private var currentTab = "messages" // Track current tab: "messages", "groups", "contacts", or "wallet"
+    private var currentWallet: Wallet? = null // Track currently selected wallet
+    private var isCallMode = false // Track if we're in call mode (Phone icon clicked)
+    private var pendingCallContact: Contact? = null // Temporary storage for pending call after permission request
+    private var isInitiatingCall = false // Prevent duplicate call initiations
+
+    // BroadcastReceiver to listen for incoming Pings and message status updates
     private val pingReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
-            if (intent?.action == "com.securelegion.NEW_PING") {
-                Log.d("MainActivity", "Received NEW_PING broadcast - refreshing chat list")
-                // Update UI immediately on main thread
-                runOnUiThread {
-                    if (currentTab == "messages") {
-                        Log.d("MainActivity", "Refreshing chat list from broadcast")
-                        setupChatList()
-                    } else {
-                        Log.d("MainActivity", "Not on messages tab, skipping refresh")
+            when (intent?.action) {
+                "com.securelegion.NEW_PING" -> {
+                    Log.d("MainActivity", "Received NEW_PING broadcast - refreshing chat list")
+                    // Update UI immediately on main thread
+                    runOnUiThread {
+                        if (currentTab == "messages") {
+                            Log.d("MainActivity", "Refreshing chat list from NEW_PING broadcast")
+                            setupChatList()
+                        } else {
+                            Log.d("MainActivity", "Not on messages tab, skipping refresh")
+                        }
+                    }
+                }
+                "com.securelegion.MESSAGE_RECEIVED" -> {
+                    val contactId = intent.getLongExtra("CONTACT_ID", -1)
+                    Log.d("MainActivity", "⚡ Received MESSAGE_RECEIVED broadcast for contact $contactId - refreshing chat list for status update")
+                    // Update UI immediately on main thread
+                    runOnUiThread {
+                        if (currentTab == "messages") {
+                            Log.d("MainActivity", "⚡ Refreshing chat list from MESSAGE_RECEIVED broadcast (contact $contactId)")
+                            setupChatList()
+                        } else {
+                            Log.d("MainActivity", "Not on messages tab (current: $currentTab), skipping refresh")
+                        }
                     }
                 }
             }
@@ -79,6 +112,34 @@ class MainActivity : BaseActivity() {
                 Log.d("MainActivity", "Received FRIEND_REQUEST_RECEIVED broadcast - updating badge")
                 runOnUiThread {
                     updateFriendRequestBadge()
+                }
+            }
+        }
+    }
+
+    // BroadcastReceiver to listen for group invites and group messages
+    private val groupReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            when (intent?.action) {
+                "com.securelegion.GROUP_INVITE_RECEIVED" -> {
+                    Log.d("MainActivity", "Received GROUP_INVITE_RECEIVED broadcast")
+                    runOnUiThread {
+                        if (currentTab == "groups") {
+                            setupGroupsList()
+                        }
+                        // Show toast notification
+                        val groupName = intent.getStringExtra("GROUP_NAME")
+                        val senderName = intent.getStringExtra("SENDER_NAME")
+                        ThemedToast.show(this@MainActivity, "New group invite: $groupName from $senderName")
+                    }
+                }
+                "com.securelegion.NEW_GROUP_MESSAGE" -> {
+                    Log.d("MainActivity", "Received NEW_GROUP_MESSAGE broadcast")
+                    runOnUiThread {
+                        if (currentTab == "groups") {
+                            setupGroupsList()
+                        }
+                    }
                 }
             }
         }
@@ -140,6 +201,7 @@ class MainActivity : BaseActivity() {
 
         // Ensure messages tab is shown by default
         findViewById<View>(R.id.chatListContainer).visibility = View.VISIBLE
+        findViewById<View>(R.id.groupsView).visibility = View.GONE
         findViewById<View>(R.id.contactsView).visibility = View.GONE
 
         // Show chat list (no empty state)
@@ -154,6 +216,9 @@ class MainActivity : BaseActivity() {
         // Start Tor foreground service (shows notification and handles Ping-Pong protocol)
         startTorService()
 
+        // Start contact exchange endpoint (v2.0)
+        startFriendRequestServer()
+
         // Load data asynchronously to avoid blocking UI
         setupChatList()
         setupContactsList()
@@ -167,15 +232,32 @@ class MainActivity : BaseActivity() {
             startActivity(walletIntent)
         }
 
-        // Register broadcast receiver for incoming Pings (stays registered even when paused)
-        val filter = IntentFilter("com.securelegion.NEW_PING")
+        // Check if we should show phone/call tab
+        if (intent.getBooleanExtra("SHOW_PHONE", false)) {
+            isCallMode = true
+            showContactsTab()
+        }
+
+        // Register broadcast receiver for incoming Pings and message status updates
+        val filter = IntentFilter().apply {
+            addAction("com.securelegion.NEW_PING")
+            addAction("com.securelegion.MESSAGE_RECEIVED")
+        }
         registerReceiver(pingReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
-        Log.d("MainActivity", "Registered NEW_PING broadcast receiver in onCreate")
+        Log.d("MainActivity", "Registered NEW_PING and MESSAGE_RECEIVED broadcast receiver in onCreate")
 
         // Register broadcast receiver for friend requests
         val friendRequestFilter = IntentFilter("com.securelegion.FRIEND_REQUEST_RECEIVED")
         registerReceiver(friendRequestReceiver, friendRequestFilter, Context.RECEIVER_NOT_EXPORTED)
         Log.d("MainActivity", "Registered FRIEND_REQUEST_RECEIVED broadcast receiver in onCreate")
+
+        // Register broadcast receiver for group invites and messages
+        val groupFilter = IntentFilter().apply {
+            addAction("com.securelegion.GROUP_INVITE_RECEIVED")
+            addAction("com.securelegion.NEW_GROUP_MESSAGE")
+        }
+        registerReceiver(groupReceiver, groupFilter, Context.RECEIVER_NOT_EXPORTED)
+        Log.d("MainActivity", "Registered group broadcast receivers in onCreate")
     }
 
     private fun updateAppBadge() {
@@ -278,6 +360,28 @@ class MainActivity : BaseActivity() {
         }
     }
 
+    /**
+     * Start the friend request HTTP server (v2.0)
+     * This listens for incoming friend requests on the friend request .onion address
+     */
+    private fun startFriendRequestServer() {
+        lifecycleScope.launch {
+            try {
+                Log.d("MainActivity", "Starting friend request HTTP server...")
+                val friendRequestService = com.securelegion.services.FriendRequestService.getInstance(this@MainActivity)
+                val result = friendRequestService.startServer()
+
+                if (result.isSuccess) {
+                    Log.i("MainActivity", "Friend request server started successfully")
+                } else {
+                    Log.w("MainActivity", "Failed to start friend request server: ${result.exceptionOrNull()?.message}")
+                }
+            } catch (e: Exception) {
+                Log.e("MainActivity", "Error starting friend request server", e)
+            }
+        }
+    }
+
     private suspend fun cleanupExpiredMessages() {
         try {
             val keyManager = KeyManager.getInstance(this@MainActivity)
@@ -304,15 +408,35 @@ class MainActivity : BaseActivity() {
             val walletIntent = Intent(this, WalletActivity::class.java)
             startActivity(walletIntent)
         }
+
+        // Check if we should show phone/call tab
+        if (intent.getBooleanExtra("SHOW_PHONE", false)) {
+            Log.d("MainActivity", "onNewIntent - showing phone/call view")
+            isCallMode = true
+            showContactsTab()
+        }
     }
 
     override fun onResume() {
         super.onResume()
         Log.d("MainActivity", "onResume called - current tab: $currentTab")
 
+        // Reset call initiation flag when returning from VoiceCallActivity
+        // This allows subsequent call attempts after previous call ends/fails
+        if (isInitiatingCall) {
+            Log.d("MainActivity", "Resetting isInitiatingCall flag on resume")
+            isInitiatingCall = false
+        }
+
+        // Notify TorService that app is in foreground (fast bandwidth updates)
+        com.securelegion.services.TorService.setForegroundState(true)
+
         // Reload data when returning to MainActivity (receiver stays registered)
         if (currentTab == "messages") {
             setupChatList()
+        } else if (currentTab == "groups") {
+            // Reload groups list
+            setupGroupsList()
         } else if (currentTab == "wallet") {
             // Reload wallet spinner to show newly created wallets
             setupWalletSpinner()
@@ -325,12 +449,43 @@ class MainActivity : BaseActivity() {
         updateFriendRequestBadge()
     }
 
+    override fun onPause() {
+        super.onPause()
+        Log.d("MainActivity", "onPause called")
+
+        // Notify TorService that app is in background (slow bandwidth updates to save battery)
+        com.securelegion.services.TorService.setForegroundState(false)
+    }
+
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+
+        if (requestCode == PERMISSION_REQUEST_CALL) {
+            if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                // Permission granted! Retry the call with stored contact
+                pendingCallContact?.let { contact ->
+                    Log.i(TAG, "Microphone permission granted - retrying call to ${contact.name}")
+                    startVoiceCallWithContact(contact)
+                    pendingCallContact = null // Clear after use
+                }
+            } else {
+                // Permission denied
+                pendingCallContact = null
+                ThemedToast.show(this, "Microphone permission required for voice calls")
+            }
+        }
+    }
+
     override fun onDestroy() {
         super.onDestroy()
         // Unregister broadcast receivers when activity is destroyed
         try {
             unregisterReceiver(pingReceiver)
-            Log.d("MainActivity", "Unregistered NEW_PING broadcast receiver in onDestroy")
+            Log.d("MainActivity", "Unregistered NEW_PING and MESSAGE_RECEIVED broadcast receiver in onDestroy")
         } catch (e: IllegalArgumentException) {
             Log.w("MainActivity", "Ping receiver was not registered during onDestroy")
         }
@@ -340,6 +495,13 @@ class MainActivity : BaseActivity() {
             Log.d("MainActivity", "Unregistered FRIEND_REQUEST_RECEIVED broadcast receiver in onDestroy")
         } catch (e: IllegalArgumentException) {
             Log.w("MainActivity", "Friend request receiver was not registered during onDestroy")
+        }
+
+        try {
+            unregisterReceiver(groupReceiver)
+            Log.d("MainActivity", "Unregistered group broadcast receivers in onDestroy")
+        } catch (e: IllegalArgumentException) {
+            Log.w("MainActivity", "Group receiver was not registered during onDestroy")
         }
     }
 
@@ -376,6 +538,10 @@ class MainActivity : BaseActivity() {
                         if (lastMessage != null || hasPendingPing) {
                             val unreadCount = database.messageDao().getUnreadCount(contact.id)
 
+                            val messageStatus = if (lastMessage != null && lastMessage.isSentByMe) lastMessage.status else 0
+                            val isSent = lastMessage?.isSentByMe ?: false
+                            Log.d("MainActivity", "📊 Contact ${contact.displayName}: status=$messageStatus, isSent=$isSent, messageId=${lastMessage?.messageId}")
+
                             val chat = Chat(
                                 id = contact.id.toString(),
                                 nickname = contact.displayName,
@@ -384,7 +550,9 @@ class MainActivity : BaseActivity() {
                                 unreadCount = unreadCount + pendingPings.size,  // Add count of ALL pending pings
                                 isOnline = false,
                                 avatar = contact.displayName.firstOrNull()?.toString()?.uppercase() ?: "?",
-                                securityBadge = ""
+                                securityBadge = "",
+                                lastMessageStatus = messageStatus,
+                                lastMessageIsSent = isSent
                             )
                             val timestamp = if (lastMessage != null) lastMessage.timestamp else System.currentTimeMillis()
                             chatsList.add(Pair(chat, timestamp))
@@ -546,7 +714,8 @@ class MainActivity : BaseActivity() {
                         id = dbContact.id.toString(),
                         name = dbContact.displayName,
                         address = dbContact.solanaAddress,
-                        friendshipStatus = dbContact.friendshipStatus
+                        friendshipStatus = dbContact.friendshipStatus,
+                        profilePhotoBase64 = dbContact.profilePictureBase64
                     )
                 }
 
@@ -559,12 +728,17 @@ class MainActivity : BaseActivity() {
                     contactsList.visibility = View.VISIBLE
                     contactsList.layoutManager = LinearLayoutManager(this@MainActivity)
                     contactsList.adapter = ContactAdapter(contacts) { contact ->
-                        // Open contact options screen
-                        val intent = android.content.Intent(this@MainActivity, ContactOptionsActivity::class.java)
-                        intent.putExtra("CONTACT_ID", contact.id.toLong())
-                        intent.putExtra("CONTACT_NAME", contact.name)
-                        intent.putExtra("CONTACT_ADDRESS", contact.address)
-                        startActivityWithSlideAnimation(intent)
+                        if (isCallMode) {
+                            // Start voice call
+                            startVoiceCallWithContact(contact)
+                        } else {
+                            // Open contact options screen
+                            val intent = android.content.Intent(this@MainActivity, ContactOptionsActivity::class.java)
+                            intent.putExtra("CONTACT_ID", contact.id.toLong())
+                            intent.putExtra("CONTACT_NAME", contact.name)
+                            intent.putExtra("CONTACT_ADDRESS", contact.address)
+                            startActivityWithSlideAnimation(intent)
+                        }
                     }
                     Log.i("MainActivity", "RecyclerView adapter set with ${contacts.size} items")
 
@@ -611,11 +785,98 @@ class MainActivity : BaseActivity() {
         }
     }
 
+    private fun setupGroupsList() {
+        lifecycleScope.launch {
+            try {
+                // Load groups from database with member counts
+                val groupsWithCounts = withContext(Dispatchers.IO) {
+                    val keyManager = com.securelegion.crypto.KeyManager.getInstance(this@MainActivity)
+                    val dbPassphrase = keyManager.getDatabasePassphrase()
+                    val database = com.securelegion.database.SecureLegionDatabase.getInstance(this@MainActivity, dbPassphrase)
+
+                    val groups = database.groupDao().getAllGroups()
+
+                    // Get member count for each group
+                    groups.map { group ->
+                        val memberCount = database.groupMemberDao().getMemberCount(group.groupId)
+                        com.securelegion.adapters.GroupAdapter.GroupWithMemberCount(
+                            group = group,
+                            memberCount = memberCount
+                        )
+                    }
+                }
+
+                // Load pending invites from SharedPreferences
+                val invites = withContext(Dispatchers.IO) {
+                    val prefs = getSharedPreferences("pending_group_invites", MODE_PRIVATE)
+                    val invitesSet = prefs.getStringSet("invites", mutableSetOf()) ?: mutableSetOf()
+                    invitesSet.toList()
+                }
+
+                withContext(Dispatchers.Main) {
+                    // Get views
+                    val invitesHeader = findViewById<View>(R.id.invitesHeader)
+                    val inviteCountText = findViewById<android.widget.TextView>(R.id.inviteCount)
+                    val invitesRecyclerView = findViewById<androidx.recyclerview.widget.RecyclerView>(R.id.invitesRecyclerView)
+                    val groupsRecyclerView = findViewById<androidx.recyclerview.widget.RecyclerView>(R.id.groupsRecyclerView)
+                    val emptyState = findViewById<View>(R.id.emptyState)
+
+                    // Show/hide invites section
+                    if (invites.isNotEmpty()) {
+                        invitesHeader.visibility = View.VISIBLE
+                        invitesRecyclerView.visibility = View.VISIBLE
+                        inviteCountText.text = invites.size.toString()
+
+                        // TODO: Setup invites adapter
+                        // For now, just log
+                        Log.d("MainActivity", "Found ${invites.size} pending group invites")
+                    } else {
+                        invitesHeader.visibility = View.GONE
+                        invitesRecyclerView.visibility = View.GONE
+                    }
+
+                    // Show/hide groups list
+                    if (groupsWithCounts.isNotEmpty()) {
+                        groupsRecyclerView.visibility = View.VISIBLE
+                        emptyState.visibility = View.GONE
+
+                        // Setup groups adapter
+                        val groupAdapter = com.securelegion.adapters.GroupAdapter(groupsWithCounts) { group ->
+                            // Open group chat when clicked
+                            val intent = Intent(this@MainActivity, GroupChatActivity::class.java)
+                            intent.putExtra(GroupChatActivity.EXTRA_GROUP_ID, group.groupId)
+                            intent.putExtra(GroupChatActivity.EXTRA_GROUP_NAME, group.name)
+                            startActivity(intent)
+                            overridePendingTransition(R.anim.slide_in_right, R.anim.slide_out_left)
+                        }
+
+                        groupsRecyclerView.layoutManager = LinearLayoutManager(this@MainActivity)
+                        groupsRecyclerView.adapter = groupAdapter
+
+                        Log.d("MainActivity", "Loaded ${groupsWithCounts.size} groups")
+                    } else if (invites.isEmpty()) {
+                        // Show empty state only if no invites and no groups
+                        groupsRecyclerView.visibility = View.GONE
+                        emptyState.visibility = View.VISIBLE
+                    }
+                }
+
+            } catch (e: Exception) {
+                Log.e("MainActivity", "Failed to load groups", e)
+            }
+        }
+    }
+
     private fun setupClickListeners() {
-        // New Message Button (in search bar)
+        // New Message/Group Button (in search bar)
         findViewById<View>(R.id.newMessageBtn).setOnClickListener {
-            val intent = android.content.Intent(this, ComposeActivity::class.java)
-            startActivityWithSlideAnimation(intent)
+            if (currentTab == "groups") {
+                val intent = android.content.Intent(this, CreateGroupActivity::class.java)
+                startActivityWithSlideAnimation(intent)
+            } else {
+                val intent = android.content.Intent(this, ComposeActivity::class.java)
+                startActivityWithSlideAnimation(intent)
+            }
         }
 
         // Bottom Navigation
@@ -642,11 +903,16 @@ class MainActivity : BaseActivity() {
             }
         }
 
-        findViewById<View>(R.id.navLock)?.setOnClickListener {
-            Log.d("MainActivity", "Lock nav clicked")
-            val intent = android.content.Intent(this, LockActivity::class.java)
+        findViewById<View>(R.id.navPhone)?.setOnClickListener {
+            Log.d("MainActivity", "Phone nav clicked")
+            val intent = Intent(this, NewCallActivity::class.java)
             startActivity(intent)
-            finish()
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                overrideActivityTransition(Activity.OVERRIDE_TRANSITION_OPEN, 0, 0)
+            } else {
+                @Suppress("DEPRECATION")
+                overridePendingTransition(0, 0)
+            }
         }
 
         // Profile Icon (navigate to user profile)
@@ -666,7 +932,12 @@ class MainActivity : BaseActivity() {
             showAllChatsTab()
         }
 
+        findViewById<View>(R.id.tabGroups).setOnClickListener {
+            showGroupsTab()
+        }
+
         findViewById<View>(R.id.tabContacts).setOnClickListener {
+            isCallMode = false  // Regular contacts mode
             showContactsTab()
         }
     }
@@ -736,6 +1007,7 @@ class MainActivity : BaseActivity() {
         Log.d("MainActivity", "Switching to messages tab")
         currentTab = "messages"
         findViewById<View>(R.id.chatListContainer).visibility = View.VISIBLE
+        findViewById<View>(R.id.groupsView).visibility = View.GONE
         findViewById<View>(R.id.contactsView).visibility = View.GONE
 
         // Show tabs
@@ -747,8 +1019,45 @@ class MainActivity : BaseActivity() {
         // Reload message threads when switching back to messages tab
         setupChatList()
 
-        // Update tab styling - Messages active, Contacts inactive
+        // Update tab styling - Messages active, Groups and Contacts inactive
         findViewById<android.widget.TextView>(R.id.tabMessages).apply {
+            setTextColor(ContextCompat.getColor(context, R.color.text_white))
+            typeface = android.graphics.Typeface.create("@font/space_grotesk_bold", android.graphics.Typeface.BOLD)
+        }
+
+        findViewById<android.widget.TextView>(R.id.tabGroups).apply {
+            setTextColor(ContextCompat.getColor(context, R.color.text_gray))
+            typeface = android.graphics.Typeface.create("@font/space_grotesk_bold", android.graphics.Typeface.NORMAL)
+        }
+
+        findViewById<android.widget.ImageView>(R.id.tabContacts).apply {
+            setColorFilter(ContextCompat.getColor(context, R.color.text_gray))
+        }
+    }
+
+    private fun showGroupsTab() {
+        Log.d("MainActivity", "Switching to groups tab")
+        currentTab = "groups"
+        findViewById<View>(R.id.chatListContainer).visibility = View.GONE
+        findViewById<View>(R.id.groupsView).visibility = View.VISIBLE
+        findViewById<View>(R.id.contactsView).visibility = View.GONE
+
+        // Show tabs
+        findViewById<View>(R.id.tabsContainer).visibility = View.VISIBLE
+
+        // Update search bar hint
+        findViewById<android.widget.EditText>(R.id.searchBar).hint = "Search your groups..."
+
+        // Load groups and invites
+        setupGroupsList()
+
+        // Update tab styling - Groups active, Messages and Contacts inactive
+        findViewById<android.widget.TextView>(R.id.tabMessages).apply {
+            setTextColor(ContextCompat.getColor(context, R.color.text_gray))
+            typeface = android.graphics.Typeface.create("@font/space_grotesk_bold", android.graphics.Typeface.NORMAL)
+        }
+
+        findViewById<android.widget.TextView>(R.id.tabGroups).apply {
             setTextColor(ContextCompat.getColor(context, R.color.text_white))
             typeface = android.graphics.Typeface.create("@font/space_grotesk_bold", android.graphics.Typeface.BOLD)
         }
@@ -762,6 +1071,7 @@ class MainActivity : BaseActivity() {
         Log.d("MainActivity", "Switching to contacts tab")
         currentTab = "contacts"
         findViewById<View>(R.id.chatListContainer).visibility = View.GONE
+        findViewById<View>(R.id.groupsView).visibility = View.GONE
         findViewById<View>(R.id.contactsView).visibility = View.VISIBLE
 
         // Show tabs
@@ -773,10 +1083,15 @@ class MainActivity : BaseActivity() {
         // Reload contacts list
         setupContactsList()
 
-        // Update tab styling - Contacts active, Messages inactive
+        // Update tab styling - Contacts active, Messages and Groups inactive
         findViewById<android.widget.TextView>(R.id.tabMessages).apply {
             setTextColor(ContextCompat.getColor(context, R.color.text_gray))
             typeface = android.graphics.Typeface.create("@font/poppins_medium", android.graphics.Typeface.NORMAL)
+        }
+
+        findViewById<android.widget.TextView>(R.id.tabGroups).apply {
+            setTextColor(ContextCompat.getColor(context, R.color.text_gray))
+            typeface = android.graphics.Typeface.create("@font/space_grotesk_bold", android.graphics.Typeface.NORMAL)
         }
 
         findViewById<android.widget.ImageView>(R.id.tabContacts).apply {
@@ -992,6 +1307,214 @@ class MainActivity : BaseActivity() {
                 withContext(Dispatchers.Main) {
                     ThemedToast.show(this@MainActivity, "Download failed: ${e.message}")
                 }
+            }
+        }
+    }
+
+    /**
+     * Start a voice call with the selected contact
+     */
+    private fun startVoiceCallWithContact(contact: Contact) {
+        // Prevent duplicate call initiations
+        if (isInitiatingCall) {
+            Log.w(TAG, "⚠️ Call initiation already in progress - ignoring duplicate request")
+            return
+        }
+        isInitiatingCall = true
+
+        lifecycleScope.launch {
+            try {
+                // Check RECORD_AUDIO permission
+                if (ContextCompat.checkSelfPermission(
+                        this@MainActivity,
+                        Manifest.permission.RECORD_AUDIO
+                    ) != PackageManager.PERMISSION_GRANTED
+                ) {
+                    // Store contact for retry after permission granted
+                    pendingCallContact = contact
+                    ActivityCompat.requestPermissions(
+                        this@MainActivity,
+                        arrayOf(Manifest.permission.RECORD_AUDIO),
+                        PERMISSION_REQUEST_CALL
+                    )
+                    return@launch
+                }
+
+                // Get full contact details from database
+                val keyManager = KeyManager.getInstance(this@MainActivity)
+                val dbPassphrase = keyManager.getDatabasePassphrase()
+                val database = SecureLegionDatabase.getInstance(this@MainActivity, dbPassphrase)
+
+                val fullContact = withContext(Dispatchers.IO) {
+                    database.contactDao().getContactById(contact.id.toLong())
+                }
+
+                if (fullContact == null) {
+                    ThemedToast.show(this@MainActivity, "Contact not found")
+                    isInitiatingCall = false
+                    return@launch
+                }
+
+                if (fullContact.voiceOnion.isNullOrEmpty()) {
+                    ThemedToast.show(this@MainActivity, "Contact has no voice address")
+                    isInitiatingCall = false
+                    return@launch
+                }
+
+                if (fullContact.messagingOnion == null) {
+                    ThemedToast.show(this@MainActivity, "Contact has no messaging address")
+                    isInitiatingCall = false
+                    return@launch
+                }
+
+                // Generate call ID (use full UUID for proper matching)
+                val callId = UUID.randomUUID().toString()
+
+                // Generate ephemeral keypair
+                val crypto = VoiceCallCrypto()
+                val ephemeralKeypair = crypto.generateEphemeralKeypair()
+
+                // Launch VoiceCallActivity immediately (shows "Calling..." screen)
+                val intent = Intent(this@MainActivity, VoiceCallActivity::class.java)
+                intent.putExtra(VoiceCallActivity.EXTRA_CONTACT_ID, fullContact.id)
+                intent.putExtra(VoiceCallActivity.EXTRA_CONTACT_NAME, fullContact.displayName)
+                intent.putExtra(VoiceCallActivity.EXTRA_CALL_ID, callId)
+                intent.putExtra(VoiceCallActivity.EXTRA_IS_OUTGOING, true)
+                intent.putExtra(VoiceCallActivity.EXTRA_OUR_EPHEMERAL_SECRET_KEY, ephemeralKeypair.secretKey.asBytes)
+                startActivity(intent)
+
+                // Get voice onion once for reuse in retries
+                val torManager = com.securelegion.crypto.TorManager.getInstance(this@MainActivity)
+                val myVoiceOnion = torManager.getVoiceOnionAddress() ?: ""
+                if (myVoiceOnion.isEmpty()) {
+                    Log.w("MainActivity", "⚠️ Voice onion address not yet created - call may fail")
+                } else {
+                    Log.i("MainActivity", "My voice onion: $myVoiceOnion")
+                }
+
+                // Get our X25519 public key for HTTP wire format (reuse existing keyManager from earlier)
+                val ourX25519PublicKey = keyManager.getEncryptionPublicKey()
+
+                // Send CALL_OFFER (first attempt) to voice onion via HTTP POST
+                Log.i("MainActivity", "CALL_OFFER_SEND attempt=1 call_id=$callId to voice onion via HTTP POST")
+                val success = withContext(Dispatchers.IO) {
+                    CallSignaling.sendCallOffer(
+                        recipientX25519PublicKey = fullContact.x25519PublicKeyBytes,
+                        recipientOnion = fullContact.voiceOnion!!,
+                        callId = callId,
+                        ephemeralPublicKey = ephemeralKeypair.publicKey.asBytes,
+                        voiceOnion = myVoiceOnion,
+                        ourX25519PublicKey = ourX25519PublicKey,
+                        numCircuits = 1
+                    )
+                }
+
+                if (!success) {
+                    ThemedToast.show(this@MainActivity, "Failed to send call offer")
+                    isInitiatingCall = false
+                    return@launch
+                }
+
+                // Register pending call
+                val callManager = VoiceCallManager.getInstance(this@MainActivity)
+
+                // Create timeout checker
+                val timeoutJob = lifecycleScope.launch {
+                    while (isActive) {
+                        delay(1000)
+                        callManager.checkPendingCallTimeouts()
+                    }
+                }
+
+                // CALL_OFFER retry timer per spec
+                // Resend every 2 seconds until answered or 25-second deadline
+                val offerRetryInterval = 2000L
+                val callSetupDeadline = 25000L
+                val setupStartTime = System.currentTimeMillis()
+                var offerAttemptNum = 1
+
+                val offerRetryJob = lifecycleScope.launch {
+                    while (isActive) {
+                        delay(offerRetryInterval)
+
+                        val elapsed = System.currentTimeMillis() - setupStartTime
+                        if (elapsed >= callSetupDeadline) {
+                            Log.e("MainActivity", "CALL_SETUP_TIMEOUT call_id=$callId elapsed_ms=$elapsed")
+                            break
+                        }
+
+                        offerAttemptNum++
+                        Log.i("MainActivity", "CALL_OFFER_SEND attempt=$offerAttemptNum call_id=$callId (retry to voice onion via HTTP POST)")
+
+                        withContext(Dispatchers.IO) {
+                            CallSignaling.sendCallOffer(
+                                recipientX25519PublicKey = fullContact.x25519PublicKeyBytes,
+                                recipientOnion = fullContact.voiceOnion!!,
+                                callId = callId,
+                                ephemeralPublicKey = ephemeralKeypair.publicKey.asBytes,
+                                voiceOnion = myVoiceOnion,
+                                ourX25519PublicKey = ourX25519PublicKey,
+                                numCircuits = 1
+                            )
+                        }
+                    }
+                }
+
+                callManager.registerPendingOutgoingCall(
+                    callId = callId,
+                    contactOnion = fullContact.voiceOnion!!,
+                    contactEd25519PublicKey = fullContact.ed25519PublicKeyBytes,
+                    contactName = fullContact.displayName,
+                    ourEphemeralPublicKey = ephemeralKeypair.publicKey.asBytes,
+                    onAnswered = { theirEphemeralKey ->
+                        lifecycleScope.launch(Dispatchers.Main) {
+                            val elapsed = System.currentTimeMillis() - setupStartTime
+                            Log.i("MainActivity", "CALL_ANSWER_RECEIVED call_id=$callId elapsed_ms=$elapsed")
+                            timeoutJob.cancel()
+                            offerRetryJob.cancel()
+                            // Notify the active VoiceCallActivity that CALL_ANSWER was received
+                            VoiceCallActivity.onCallAnswered(callId, theirEphemeralKey)
+                            Log.i("MainActivity", "Call answered, notified VoiceCallActivity")
+                            isCallMode = false
+                            isInitiatingCall = false
+                        }
+                    },
+                    onTimeout = {
+                        lifecycleScope.launch(Dispatchers.Main) {
+                            timeoutJob.cancel()
+                            offerRetryJob.cancel()
+                            VoiceCallActivity.onCallTimeout(callId)
+                            isCallMode = false
+                            isInitiatingCall = false
+                        }
+                    },
+                    onRejected = { reason ->
+                        lifecycleScope.launch(Dispatchers.Main) {
+                            timeoutJob.cancel()
+                            offerRetryJob.cancel()
+                            VoiceCallActivity.onCallRejected(callId, reason)
+                            isCallMode = false
+                            isInitiatingCall = false
+                        }
+                    },
+                    onBusy = {
+                        lifecycleScope.launch(Dispatchers.Main) {
+                            timeoutJob.cancel()
+                            offerRetryJob.cancel()
+                            VoiceCallActivity.onCallBusy(callId)
+                            isCallMode = false
+                            isInitiatingCall = false
+                        }
+                    }
+                )
+
+                Log.i("MainActivity", "Voice call initiated to ${fullContact.displayName} with call ID: $callId")
+
+            } catch (e: Exception) {
+                Log.e("MainActivity", "Failed to start voice call", e)
+                ThemedToast.show(this@MainActivity, "Failed to start call: ${e.message}")
+                isCallMode = false
+                isInitiatingCall = false
             }
         }
     }

@@ -30,31 +30,34 @@
             android:id="@+id/messageBubble"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:orientation="vertical"
+            android:orientation="horizontal"
             android:maxWidth="280dp"
             android:background="@drawable/message_sent_bg"
-            android:padding="12dp">
+            android:padding="12dp"
+            android:baselineAligned="false">
 
             <TextView
                 android:id="@+id/messageText"
-                android:layout_width="wrap_content"
+                android:layout_width="0dp"
                 android:layout_height="wrap_content"
+                android:layout_weight="1"
                 android:text="Message content"
                 android:textColor="@color/text_white"
-                android:textSize="15sp"
+                android:textSize="17sp"
+                android:fontFamily="sans-serif-medium"
                 android:lineSpacingMultiplier="1.2" />
 
-            <!-- Delivery status indicator (checkmarks) -->
-            <TextView
+            <!-- Delivery status indicator (circle with checkmarks) - right of text, inline with text baseline -->
+            <ImageView
                 android:id="@+id/messageStatus"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="✓"
-                android:textColor="@color/text_gray"
-                android:textSize="11sp"
-                android:layout_gravity="end"
-                android:layout_marginTop="4dp"
-                android:visibility="gone" />
+                android:layout_width="12dp"
+                android:layout_height="12dp"
+                android:src="@drawable/status_pending"
+                android:layout_marginStart="4dp"
+                android:layout_marginBottom="2dp"
+                android:layout_gravity="bottom"
+                android:contentDescription="Message status"
+                android:visibility="visible" />
 
         </LinearLayout>
 

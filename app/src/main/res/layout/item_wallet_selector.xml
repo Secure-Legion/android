@@ -12,12 +12,14 @@
 
     <!-- Wallet Icon -->
     <FrameLayout
+        android:id="@+id/walletIconFrame"
         android:layout_width="48dp"
         android:layout_height="48dp"
         android:background="@drawable/settings_icon_bg"
         android:layout_marginEnd="12dp">
 
         <ImageView
+            android:id="@+id/walletIcon"
             android:layout_width="24dp"
             android:layout_height="24dp"
             android:layout_gravity="center"
@@ -45,32 +47,29 @@
             android:id="@+id/walletBalance"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="9.2362 ETH"
+            android:text="$0.00"
             android:textSize="12sp"
             android:textColor="#888888"
             android:fontFamily="@font/poppins_regular" />
 
     </LinearLayout>
 
-    <!-- Balance -->
-    <TextView
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="$0.00"
-        android:textSize="14sp"
-        android:textColor="@color/text_white"
-        android:fontFamily="@font/poppins_medium"
-        android:layout_marginEnd="12dp" />
-
-    <!-- Edit Button -->
-    <ImageView
+    <!-- Edit Button with Background -->
+    <FrameLayout
         android:id="@+id/walletSettingsBtn"
-        android:layout_width="20dp"
-        android:layout_height="20dp"
-        android:src="@android:drawable/ic_menu_edit"
-        android:tint="#888888"
+        android:layout_width="42dp"
+        android:layout_height="42dp"
+        android:background="@drawable/settings_icon_bg"
         android:clickable="true"
-        android:focusable="true"
-        android:contentDescription="Edit" />
+        android:focusable="true">
+
+        <ImageView
+            android:layout_width="20dp"
+            android:layout_height="20dp"
+            android:layout_gravity="center"
+            android:src="@android:drawable/ic_menu_edit"
+            android:tint="#888888"
+            android:contentDescription="Edit" />
+    </FrameLayout>
 
 </LinearLayout>

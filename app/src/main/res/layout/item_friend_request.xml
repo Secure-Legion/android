@@ -9,9 +9,9 @@
     <!-- Checkbox (Initially hidden) -->
     <CheckBox
         android:id="@+id/requestCheckbox"
-        android:layout_width="18dp"
-        android:layout_height="18dp"
-        android:layout_marginEnd="8dp"
+        android:layout_width="24dp"
+        android:layout_height="24dp"
+        android:layout_marginEnd="12dp"
         android:button="@drawable/custom_checkbox"
         android:buttonTint="@null"
         android:visibility="gone" />

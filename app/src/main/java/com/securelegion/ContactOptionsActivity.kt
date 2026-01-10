@@ -183,10 +183,13 @@ class ContactOptionsActivity : BaseActivity() {
             finish()
         }
 
-        // Compose button (edit) - currently just a placeholder
+        // Compose button - opens chat with this contact
         findViewById<View>(R.id.composeButton)?.setOnClickListener {
-            // Could open a menu or perform an action
-            ThemedToast.show(this, "Edit contact")
+            val intent = Intent(this, ChatActivity::class.java)
+            intent.putExtra(ChatActivity.EXTRA_CONTACT_ID, contactId)
+            intent.putExtra(ChatActivity.EXTRA_CONTACT_NAME, name)
+            intent.putExtra(ChatActivity.EXTRA_CONTACT_ADDRESS, fullAddress)
+            startActivity(intent)
         }
 
         // Change Username button
@@ -206,6 +209,11 @@ class ContactOptionsActivity : BaseActivity() {
             if (isChecked != isFavorite) {
                 toggleFavoriteStatus()
             }
+        }
+
+        // Delete contact button
+        findViewById<View>(R.id.deleteContactOption)?.setOnClickListener {
+            showDeleteConfirmationDialog(name)
         }
     }
 
@@ -318,6 +326,35 @@ class ContactOptionsActivity : BaseActivity() {
                             Log.d(TAG, "✓ Database vacuumed after contact deletion")
                         } catch (e: Exception) {
                             Log.e(TAG, "Failed to vacuum database", e)
+                        }
+
+                        // Unpin friend's contact list from IPFS mesh (v5 architecture)
+                        if (contact.ipfsCid != null) {
+                            try {
+                                val ipfsManager = com.securelegion.services.IPFSManager.getInstance(this@ContactOptionsActivity)
+                                val unpinResult = ipfsManager.unpinFriendContactList(contact.ipfsCid)
+                                if (unpinResult.isSuccess) {
+                                    Log.i(TAG, "✓ Unpinned friend's contact list from IPFS mesh: ${contact.ipfsCid}")
+                                } else {
+                                    Log.w(TAG, "Failed to unpin friend's contact list: ${unpinResult.exceptionOrNull()?.message}")
+                                }
+                            } catch (e: Exception) {
+                                Log.w(TAG, "Non-critical error during unpinning", e)
+                            }
+                        }
+
+                        // Backup our own contact list (now excludes this deleted contact)
+                        try {
+                            val contactListManager = com.securelegion.services.ContactListManager.getInstance(this@ContactOptionsActivity)
+                            val backupResult = contactListManager.backupToIPFS()
+                            if (backupResult.isSuccess) {
+                                val ourCID = backupResult.getOrThrow()
+                                Log.i(TAG, "✓ Contact list backed up after deletion: $ourCID")
+                            } else {
+                                Log.w(TAG, "Failed to backup contact list: ${backupResult.exceptionOrNull()?.message}")
+                            }
+                        } catch (e: Exception) {
+                            Log.w(TAG, "Non-critical error during contact list backup", e)
                         }
 
                         // Clear any pending Pings for this contact (using new queue format)

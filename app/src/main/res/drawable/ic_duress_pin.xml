@@ -1,0 +1,29 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <!-- Alert triangle background -->
+    <path
+        android:fillColor="#888888"
+        android:pathData="M12,2 L22,20 L2,20 Z M12,6 L18,18 L6,18 Z"/>
+    <!-- Keypad dots representing PIN -->
+    <path
+        android:fillColor="#000000"
+        android:pathData="M9,10 m-1,0 a1,1 0,1,1 2,0 a1,1 0,1,1 -2,0"/>
+    <path
+        android:fillColor="#000000"
+        android:pathData="M12,10 m-1,0 a1,1 0,1,1 2,0 a1,1 0,1,1 -2,0"/>
+    <path
+        android:fillColor="#000000"
+        android:pathData="M15,10 m-1,0 a1,1 0,1,1 2,0 a1,1 0,1,1 -2,0"/>
+    <path
+        android:fillColor="#000000"
+        android:pathData="M9,13 m-1,0 a1,1 0,1,1 2,0 a1,1 0,1,1 -2,0"/>
+    <path
+        android:fillColor="#000000"
+        android:pathData="M12,13 m-1,0 a1,1 0,1,1 2,0 a1,1 0,1,1 -2,0"/>
+    <path
+        android:fillColor="#000000"
+        android:pathData="M15,13 m-1,0 a1,1 0,1,1 2,0 a1,1 0,1,1 -2,0"/>
+</vector>

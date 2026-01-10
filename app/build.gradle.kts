@@ -4,7 +4,7 @@ import java.io.FileInputStream
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
-    id("com.google.devtools.ksp") version "2.0.21-1.0.28"
+    id("com.google.devtools.ksp") version "2.2.21-2.0.4"
 }
 
 // Load keystore properties
@@ -74,12 +74,12 @@ android {
         }
     }
     compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_11
-        targetCompatibility = JavaVersion.VERSION_11
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
         isCoreLibraryDesugaringEnabled = true
     }
     kotlinOptions {
-        jvmTarget = "11"
+        jvmTarget = "17"
     }
 }
 
@@ -104,9 +104,9 @@ dependencies {
     // Biometric authentication
     implementation("androidx.biometric:biometric:1.2.0-alpha05")
 
-    // Cryptography libraries
-    implementation("com.goterl:lazysodium-android:5.1.0@aar")
-    implementation("net.java.dev.jna:jna:5.13.0@aar")
+    // Cryptography libraries (5.2.0+ has 16KB-aligned libsodium.so)
+    implementation("com.goterl:lazysodium-android:5.2.0@aar")
+    implementation("net.java.dev.jna:jna:5.17.0@aar")  // Updated for 16KB page size support
 
     // BouncyCastle for SHA3-256 (Tor v3 onion address checksum) - must be first
     implementation("org.bouncycastle:bcprov-jdk15to18:1.69")
@@ -121,20 +121,21 @@ dependencies {
 
     // JSON processing
     implementation("org.json:json:20231013")
+    implementation("com.google.code.gson:gson:2.10.1")
 
     // QR Code generation
     implementation("com.google.zxing:core:3.5.2")
     implementation("com.journeyapps:zxing-android-embedded:4.3.0")
 
-    // CameraX for QR scanning
-    val cameraxVersion = "1.3.1"
+    // CameraX for QR scanning (1.4.0+ required for 16KB page size support)
+    val cameraxVersion = "1.4.0"
     implementation("androidx.camera:camera-core:$cameraxVersion")
     implementation("androidx.camera:camera-camera2:$cameraxVersion")
     implementation("androidx.camera:camera-lifecycle:$cameraxVersion")
     implementation("androidx.camera:camera-view:$cameraxVersion")
 
-    // ML Kit Barcode Scanning
-    implementation("com.google.mlkit:barcode-scanning:17.2.0")
+    // ML Kit Barcode Scanning (latest version)
+    implementation("com.google.mlkit:barcode-scanning:17.3.0")
 
     // Base58 encoding for Solana addresses
     implementation("org.bitcoinj:bitcoinj-core:0.16.2")
@@ -146,13 +147,13 @@ dependencies {
     implementation("cash.z.ecc.android:kotlin-bip39:1.0.9")
 
     // Room Database with SQLCipher encryption
-    val roomVersion = "2.6.1"
+    val roomVersion = "2.7.0-alpha11"
     implementation("androidx.room:room-runtime:$roomVersion")
     implementation("androidx.room:room-ktx:$roomVersion")
     ksp("androidx.room:room-compiler:$roomVersion")
 
-    // SQLCipher for database encryption
-    implementation("net.zetetic:android-database-sqlcipher:4.5.4")
+    // SQLCipher for database encryption (modern package with 16KB support + active security updates)
+    implementation("net.zetetic:sqlcipher-android:4.6.1")
     implementation("androidx.sqlite:sqlite:2.4.0")
 
     // WorkManager for background tasks
@@ -163,7 +164,7 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-common:2.8.7")
 
     // Tor binaries for Android (provides libtor.so)
-    implementation("info.guardianproject:tor-android:0.4.8.18")
+    implementation("info.guardianproject:tor-android:0.4.8.21")
 
     // Tor control library for managing Tor via control port
     implementation("info.guardianproject:jtorctl:0.4.5.7")
@@ -171,6 +172,12 @@ dependencies {
     // Pluggable Transports for bridges (obfs4, snowflake, meek)
     // IPtProxy includes obfs4proxy, snowflake, and meek_lite pluggable transports
     implementation("com.netzarchitekten:IPtProxy:4.2.2")
+
+    // Voice Calling - Opus codec for audio compression
+    // Using native Rust implementation via RustBridge (libopus built from source)
+
+    // Coroutines for async voice call handling (if not already included via core-ktx)
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
 
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)

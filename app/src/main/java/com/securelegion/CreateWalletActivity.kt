@@ -29,6 +29,14 @@ class CreateWalletActivity : AppCompatActivity() {
 
     private var selectedWalletType = "SOLANA" // Default to Solana
 
+    // Helper data class for 4 return values
+    private data class WalletCreationResult(
+        val walletId: String,
+        val solanaAddress: String,
+        val zcashAddress: String?,
+        val seedPhrase: String?
+    )
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_create_wallet)
@@ -38,6 +46,12 @@ class CreateWalletActivity : AppCompatActivity() {
         zcashOption = findViewById(R.id.zcashOption)
         solanaCheckbox = findViewById(R.id.solanaCheckbox)
         zcashCheckbox = findViewById(R.id.zcashCheckbox)
+
+        // Check if chain was pre-selected via intent
+        val preSelectedChain = intent.getStringExtra("SELECTED_CHAIN")
+        if (preSelectedChain != null) {
+            selectedWalletType = preSelectedChain
+        }
 
         setupClickListeners()
         setDefaultWalletName()
@@ -112,33 +126,54 @@ class CreateWalletActivity : AppCompatActivity() {
 
                 val keyManager = KeyManager.getInstance(this@CreateWalletActivity)
 
-                val (walletId, solanaAddress, zcashAddress) = if (selectedWalletType == "ZCASH") {
-                    // Generate unique wallet ID for Zcash (uses main wallet's seed for keys)
+                val result = if (selectedWalletType == "ZCASH") {
+                    // Generate unique wallet ID for Zcash
                     val walletId = "wallet_${System.currentTimeMillis()}"
 
-                    // Initialize ZcashService to generate both unified and transparent addresses
-                    val seedPhrase = keyManager.getSeedPhrase()
+                    // Use main wallet seed for Zcash (all Zcash wallets share main seed)
+                    val mainSeed = keyManager.getMainWalletSeedForZcash()
+                    val backupSeed = keyManager.getSeedPhrase()
+                    val seedPhrase = mainSeed ?: backupSeed
+
                     if (seedPhrase != null) {
-                        val zcashService = com.securelegion.services.ZcashService.getInstance(this@CreateWalletActivity)
-                        val result = zcashService.initialize(seedPhrase, useTestnet = false)
-                        if (result.isSuccess) {
-                            val zcashAddr = result.getOrNull()
-                            Log.i("CreateWallet", "Zcash wallet initialized: $zcashAddr")
-                            Log.i("CreateWallet", "Transparent address: ${keyManager.getZcashTransparentAddress()}")
-                            Triple(walletId, "", zcashAddr)
-                        } else {
-                            Log.e("CreateWallet", "Failed to initialize Zcash wallet: ${result.exceptionOrNull()}")
-                            Triple(walletId, "", keyManager.getZcashAddress())
+                        Log.d("CreateWallet", "Deriving Zcash address offline from main seed")
+
+                        // Use FAST offline derivation (no blockchain sync needed)
+                        val zcashUnifiedAddress = try {
+                            val derivedAddress = com.securelegion.utils.ZcashAddressDeriver.deriveUnifiedAddressFromSeed(
+                                seedPhrase = seedPhrase,
+                                network = cash.z.ecc.android.sdk.model.ZcashNetwork.Mainnet,
+                                accountIndex = 0
+                            )
+                            Log.i("CreateWallet", "Successfully derived Zcash UA (offline): ${derivedAddress.take(20)}...")
+                            derivedAddress
+                        } catch (e: Exception) {
+                            Log.e("CreateWallet", "Failed to derive Zcash address", e)
+                            withContext(Dispatchers.Main) {
+                                ThemedToast.showLong(this@CreateWalletActivity, "Failed to derive address: ${e.message}")
+                            }
+                            null
                         }
+
+                        WalletCreationResult(walletId, "", zcashUnifiedAddress, seedPhrase)
                     } else {
-                        Log.e("CreateWallet", "No seed phrase found")
-                        Triple(walletId, "", keyManager.getZcashAddress())
+                        Log.e("CreateWallet", "No seed phrase found for Zcash wallet")
+                        withContext(Dispatchers.Main) {
+                            ThemedToast.show(this@CreateWalletActivity, "No seed phrase found - cannot create Zcash wallet")
+                        }
+                        WalletCreationResult("wallet_${System.currentTimeMillis()}", "", null, null)
                     }
                 } else {
                     // Generate new Solana wallet with unique seed
                     val (id, addr) = keyManager.generateNewWallet()
-                    Triple(id, addr, null)
+                    val solSeed = keyManager.getWalletSeedPhrase(id)
+                    WalletCreationResult(id, addr, null, solSeed)
                 }
+
+                val walletId = result.walletId
+                val solanaAddress = result.solanaAddress
+                val zcashAddress = result.zcashAddress
+                val seedPhrase = result.seedPhrase
 
                 // Create wallet entity
                 val timestamp = System.currentTimeMillis()
@@ -146,7 +181,10 @@ class CreateWalletActivity : AppCompatActivity() {
                     walletId = walletId,
                     name = walletName,
                     solanaAddress = solanaAddress,
-                    zcashAddress = zcashAddress,
+                    zcashUnifiedAddress = zcashAddress,
+                    zcashAccountIndex = 0,
+                    zcashBirthdayHeight = null,
+                    isActiveZcash = false,
                     isMainWallet = false,
                     createdAt = timestamp,
                     lastUsedAt = timestamp
@@ -157,21 +195,15 @@ class CreateWalletActivity : AppCompatActivity() {
                 val database = SecureLegionDatabase.getInstance(this@CreateWalletActivity, dbPassphrase)
                 database.walletDao().insertWallet(wallet)
 
-                // Get seed phrase to show user
-                val seedPhrase = if (selectedWalletType == "SOLANA") {
-                    keyManager.getWalletSeedPhrase(walletId)
-                } else {
-                    // For Zcash, get the main wallet seed since that's what generates the ZEC address
-                    keyManager.getSeedPhrase()
+                // Update Zcash derived info if Zcash wallet
+                if (selectedWalletType == "ZCASH" && zcashAddress != null) {
+                    database.walletDao().updateZcashDerivedInfo(
+                        walletId = walletId,
+                        ua = zcashAddress,
+                        accountIndex = 0,
+                        birthdayHeight = null
+                    )
                 }
-
-                // Get private key bytes for Solana (deprecated, but keeping for compatibility)
-                val privateKeyBytes = if (selectedWalletType == "SOLANA") {
-                    keyManager.getWalletPrivateKey(walletId)
-                } else {
-                    null
-                }
-                val privateKey = privateKeyBytes?.let { android.util.Base64.encodeToString(it, android.util.Base64.NO_WRAP) }
 
                 // Display address
                 val displayAddress = if (selectedWalletType == "ZCASH") zcashAddress ?: "" else solanaAddress
@@ -179,7 +211,7 @@ class CreateWalletActivity : AppCompatActivity() {
                 withContext(Dispatchers.Main) {
                     Log.i("CreateWallet", "Wallet created successfully: $walletId")
                     createButton.isEnabled = true
-                    showWalletCreatedBottomSheet(walletName, displayAddress, seedPhrase)
+                    showWalletCreatedBottomSheet(walletName, displayAddress, seedPhrase, walletId)
                 }
 
             } catch (e: Exception) {
@@ -192,19 +224,15 @@ class CreateWalletActivity : AppCompatActivity() {
         }
     }
 
-    private fun showWalletCreatedBottomSheet(walletName: String, address: String, privateKey: String?) {
+    private fun showWalletCreatedBottomSheet(walletName: String, address: String, privateKey: String?, walletId: String) {
         val bottomSheet = BottomSheetDialog(this)
         val view = layoutInflater.inflate(R.layout.bottom_sheet_wallet_created, null)
 
         // Set wallet details
         view.findViewById<TextView>(R.id.walletNameText).text = walletName
 
-        val addressShort = if (address.length > 15) {
-            "${address.take(5)}.....${address.takeLast(6)}"
-        } else {
-            address
-        }
-        view.findViewById<TextView>(R.id.walletAddressText).text = addressShort
+        // Show full address instead of shortened
+        view.findViewById<TextView>(R.id.walletAddressText).text = address
 
         // Copy address button
         view.findViewById<View>(R.id.copyAddressButton).setOnClickListener {
@@ -214,10 +242,28 @@ class CreateWalletActivity : AppCompatActivity() {
             ThemedToast.show(this, "Address copied to clipboard")
         }
 
-        // Done button
+        // Done button - set wallet as active before finishing
         view.findViewById<View>(R.id.doneButton).setOnClickListener {
-            bottomSheet.dismiss()
-            finish()
+            lifecycleScope.launch(Dispatchers.IO) {
+                try {
+                    // Set this wallet as active by updating its lastUsedAt timestamp
+                    val keyManager = KeyManager.getInstance(this@CreateWalletActivity)
+                    val dbPassphrase = keyManager.getDatabasePassphrase()
+                    val database = SecureLegionDatabase.getInstance(this@CreateWalletActivity, dbPassphrase)
+                    database.walletDao().updateLastUsed(walletId, System.currentTimeMillis())
+
+                    withContext(Dispatchers.Main) {
+                        bottomSheet.dismiss()
+                        finish()
+                    }
+                } catch (e: Exception) {
+                    Log.e("CreateWallet", "Failed to set wallet as active", e)
+                    withContext(Dispatchers.Main) {
+                        bottomSheet.dismiss()
+                        finish()
+                    }
+                }
+            }
         }
 
         bottomSheet.setContentView(view)

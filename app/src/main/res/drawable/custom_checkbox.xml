@@ -1,18 +1,30 @@
 <?xml version="1.0" encoding="utf-8"?>
 <selector xmlns:android="http://schemas.android.com/apk/res/android">
-    <!-- Checked state (filled white circle) -->
-    <item android:state_checked="true">
-        <shape android:shape="oval">
-            <solid android:color="#FFFFFF"/>
-            <size android:width="20dp" android:height="20dp"/>
-        </shape>
+    <!-- Selected state (white circle with inner dot) -->
+    <item android:state_selected="true">
+        <layer-list>
+            <!-- Outer circle -->
+            <item>
+                <shape android:shape="oval">
+                    <stroke android:width="2dp" android:color="#FFFFFF"/>
+                    <solid android:color="@android:color/transparent"/>
+                    <size android:width="24dp" android:height="24dp"/>
+                </shape>
+            </item>
+            <!-- Inner filled circle (white dot) -->
+            <item android:top="6dp" android:bottom="6dp" android:left="6dp" android:right="6dp">
+                <shape android:shape="oval">
+                    <solid android:color="#FFFFFF"/>
+                </shape>
+            </item>
+        </layer-list>
     </item>
-    <!-- Unchecked state (empty circle with white border) -->
+    <!-- Unselected state (empty circle with white border) -->
     <item>
         <shape android:shape="oval">
             <stroke android:width="2dp" android:color="#FFFFFF"/>
             <solid android:color="@android:color/transparent"/>
-            <size android:width="20dp" android:height="20dp"/>
+            <size android:width="24dp" android:height="24dp"/>
         </shape>
     </item>
 </selector>

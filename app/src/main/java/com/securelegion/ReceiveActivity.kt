@@ -32,6 +32,8 @@ import com.securelegion.database.entities.Wallet
 class ReceiveActivity : BaseActivity() {
     private var selectedCurrency = "ZEC" // Default to Zcash
     private var showTransparentAddress = false // For Zcash: false = unified, true = transparent
+    private var currentQrBitmap: Bitmap? = null
+    private var currentAddress: String = ""
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -58,11 +60,25 @@ class ReceiveActivity : BaseActivity() {
         findViewById<View>(R.id.copyAddressButton).setOnClickListener {
             val address = findViewById<TextView>(R.id.depositAddress).text.toString()
 
+            if (address.isEmpty() || address == "Loading...") {
+                ThemedToast.show(this, "No address to copy")
+                return@setOnClickListener
+            }
+
             val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
             val clip = ClipData.newPlainText("Wallet Address", address)
             clipboard.setPrimaryClip(clip)
 
             ThemedToast.show(this, "Address copied to clipboard")
+        }
+
+        // Share QR button
+        findViewById<View>(R.id.shareQrButton).setOnClickListener {
+            if (currentQrBitmap != null && currentAddress.isNotEmpty() && currentAddress != "Loading...") {
+                shareQrCode(currentQrBitmap!!, currentAddress)
+            } else {
+                ThemedToast.show(this, "No QR code to share")
+            }
         }
     }
 
@@ -146,7 +162,7 @@ class ReceiveActivity : BaseActivity() {
 
                         // Detect wallet type and update currency selector
                         if (currentWallet != null) {
-                            val currency = if (currentWallet.zcashAddress != null) {
+                            val currency = if (!currentWallet.zcashUnifiedAddress.isNullOrEmpty() || !currentWallet.zcashAddress.isNullOrEmpty()) {
                                 "ZEC"
                             } else {
                                 "SOL"
@@ -268,7 +284,7 @@ class ReceiveActivity : BaseActivity() {
                     walletNameText?.text = wallet.name
 
                     // Detect wallet type and update currency selector
-                    val currency = if (wallet.zcashAddress != null) {
+                    val currency = if (!wallet.zcashUnifiedAddress.isNullOrEmpty() || !wallet.zcashAddress.isNullOrEmpty()) {
                         "ZEC"
                     } else {
                         "SOL"
@@ -408,9 +424,10 @@ class ReceiveActivity : BaseActivity() {
                 // Get the most recently used wallet
                 val currentWallet = wallets.maxByOrNull { it.lastUsedAt }
 
-                // Get unified address from wallet entity first, then fallback to KeyManager
-                var unifiedAddress = currentWallet?.zcashAddress ?: keyManager.getZcashAddress()
-                Log.d("ReceiveActivity", "Unified address from database: ${currentWallet?.zcashAddress}")
+                // Get unified address from wallet entity (use new zcashUnifiedAddress field)
+                var unifiedAddress = currentWallet?.zcashUnifiedAddress ?: currentWallet?.zcashAddress ?: keyManager.getZcashAddress()
+                Log.d("ReceiveActivity", "Unified address from database (new field): ${currentWallet?.zcashUnifiedAddress}")
+                Log.d("ReceiveActivity", "Unified address from database (old field): ${currentWallet?.zcashAddress}")
                 Log.d("ReceiveActivity", "Unified address from KeyManager: ${keyManager.getZcashAddress()}")
 
                 if (unifiedAddress == null) {
@@ -511,12 +528,55 @@ class ReceiveActivity : BaseActivity() {
                 }
             }
 
+            // Store bitmap and address for sharing
+            currentQrBitmap = bitmap
+            currentAddress = text
+
             findViewById<ImageView>(R.id.qrCodeImage).setImageBitmap(bitmap)
             Log.i("ReceiveActivity", "QR code generated successfully")
 
         } catch (e: Exception) {
             Log.e("ReceiveActivity", "Failed to generate QR code", e)
             ThemedToast.show(this, "Failed to generate QR code")
+        }
+    }
+
+    private fun shareQrCode(qrBitmap: Bitmap, address: String) {
+        try {
+            // Save bitmap to cache directory
+            val cachePath = java.io.File(cacheDir, "images")
+            cachePath.mkdirs()
+            val file = java.io.File(cachePath, "qr_code.png")
+            val stream = java.io.FileOutputStream(file)
+            qrBitmap.compress(Bitmap.CompressFormat.PNG, 100, stream)
+            stream.close()
+
+            // Get content URI
+            val contentUri = androidx.core.content.FileProvider.getUriForFile(
+                this,
+                "${applicationContext.packageName}.fileprovider",
+                file
+            )
+
+            // Determine currency name
+            val currencyName = if (selectedCurrency == "ZEC") {
+                if (showTransparentAddress) "Zcash (Transparent)" else "Zcash (Unified)"
+            } else {
+                "Solana"
+            }
+
+            // Create share intent
+            val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                type = "image/png"
+                putExtra(Intent.EXTRA_STREAM, contentUri)
+                putExtra(Intent.EXTRA_TEXT, "$currencyName Address:\n$address")
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+
+            startActivity(Intent.createChooser(shareIntent, "Share $currencyName Address"))
+        } catch (e: Exception) {
+            Log.e("ReceiveActivity", "Failed to share QR code", e)
+            ThemedToast.show(this, "Failed to share QR code")
         }
     }
 

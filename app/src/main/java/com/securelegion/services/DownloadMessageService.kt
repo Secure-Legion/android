@@ -18,6 +18,7 @@ import com.securelegion.crypto.KeyManager
 import com.securelegion.crypto.TorManager
 import com.securelegion.database.SecureLegionDatabase
 import kotlinx.coroutines.*
+import androidx.room.withTransaction
 
 class DownloadMessageService : Service() {
 
@@ -88,9 +89,12 @@ class DownloadMessageService : Service() {
                 sendBroadcast(failureIntent)
                 Log.d(TAG, "Sent DOWNLOAD_FAILED broadcast")
             } finally {
-                // Clear download-in-progress flag
-                downloadStatusPrefs.edit().putBoolean("downloading_$contactId", false).apply()
-                Log.d(TAG, "Cleared download-in-progress flag for contact $contactId")
+                // Clear download-in-progress flag and timestamp
+                downloadStatusPrefs.edit()
+                    .putBoolean("downloading_$contactId", false)
+                    .remove("download_start_time_$contactId")
+                    .apply()
+                Log.d(TAG, "Cleared download-in-progress flag and timestamp for contact $contactId")
                 stopSelf()
             }
         }
@@ -233,22 +237,41 @@ class DownloadMessageService : Service() {
         Log.i(TAG, "========== STAGE 1/4: PREPARING ==========")
 
         // Restore Ping from PendingPing object
-        try {
+        // This is CRITICAL - if restoration fails, the Ping session is unrecoverable
+        val restoredPingId = try {
             Log.d(TAG, "Restoring Ping from queue")
             val encryptedPingWire = android.util.Base64.decode(pendingPing.encryptedPingData, android.util.Base64.NO_WRAP)
 
-            val restoredPingId = withContext(Dispatchers.IO) {
+            withContext(Dispatchers.IO) {
                 com.securelegion.crypto.RustBridge.decryptIncomingPing(encryptedPingWire)
             }
-
-            if (restoredPingId != null && restoredPingId == pingId) {
-                Log.i(TAG, "Successfully restored Ping: $pingId")
-            } else {
-                Log.w(TAG, "Restored Ping ID mismatch or failed: expected=$pingId, got=$restoredPingId")
-            }
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to restore Ping from queue", e)
+            Log.e(TAG, "Failed to restore Ping from queue - Ping session is unrecoverable", e)
+            downloadCompleted = true
+            watchdogJob.cancel()
+
+            // Remove this unrecoverable ping from queue
+            com.securelegion.models.PendingPing.removeFromQueue(prefs, contactId, pingId, synchronous = true)
+            Log.w(TAG, "Removed unrecoverable ping from queue: $pingId")
+
+            showFailureNotification(contactName, "Message expired. Ask sender to resend.")
+            return
         }
+
+        if (restoredPingId == null || restoredPingId != pingId) {
+            Log.e(TAG, "Ping restoration failed or ID mismatch: expected=$pingId, got=$restoredPingId")
+            downloadCompleted = true
+            watchdogJob.cancel()
+
+            // Remove this corrupted ping from queue
+            com.securelegion.models.PendingPing.removeFromQueue(prefs, contactId, pingId, synchronous = true)
+            Log.w(TAG, "Removed corrupted ping from queue: $pingId")
+
+            showFailureNotification(contactName, "Message corrupted. Ask sender to resend.")
+            return
+        }
+
+        Log.i(TAG, "Successfully restored Ping: $pingId")
 
         // Get sender's .onion address from PendingPing
         val senderOnion = pendingPing.senderOnionAddress
@@ -280,6 +303,10 @@ class DownloadMessageService : Service() {
 
         // STAGE 3: Sending response and waiting for message
         Log.i(TAG, "========== STAGE 3/4: DOWNLOADING MESSAGE ==========")
+
+        // Update ping state to DOWNLOADING
+        com.securelegion.models.PendingPing.updateState(prefs, contactId, pingId, com.securelegion.models.PingState.DOWNLOADING, synchronous = true)
+        broadcastStateUpdate(contactId)
 
         // DUAL-PATH APPROACH: Try instant reply first, then fall back to listener
         var pongSent = false
@@ -377,6 +404,11 @@ class DownloadMessageService : Service() {
         } else {
             Log.i(TAG, "✓ Pong sent! Now waiting for message payload...")
 
+            // Track this active download so TorService can associate incoming message with pingId
+            val downloadPrefs = getSharedPreferences("active_downloads", MODE_PRIVATE)
+            downloadPrefs.edit().putString("download_$contactId", pingId).commit()
+            Log.d(TAG, "⚡ Tracked active download: contactId=$contactId, pingId=${pingId.take(8)}")
+
             // Update notification
             updateNotification(contactName, "Waiting for message...")
 
@@ -423,6 +455,15 @@ class DownloadMessageService : Service() {
             Log.i(TAG, "✓ Message received successfully!")
         }
 
+        // Transition ping_inbox to MSG_STORED
+        withContext(Dispatchers.IO) {
+            val keyManager = KeyManager.getInstance(this@DownloadMessageService)
+            val dbPassphrase = keyManager.getDatabasePassphrase()
+            val database = SecureLegionDatabase.getInstance(this@DownloadMessageService, dbPassphrase)
+            Log.i(TAG, "→ Transitioning pingId=$pingId to MSG_STORED (listener path)")
+            database.pingInboxDao().transitionToMsgStored(pingId, System.currentTimeMillis())
+        }
+
         // Send MESSAGE_ACK to sender after successfully receiving the message
         // connectionId not available here (polling path), so pass -1L
         sendMessageAck(contactId, contactName, -1L)
@@ -433,11 +474,11 @@ class DownloadMessageService : Service() {
         notificationManager?.cancel(notificationId)
         Log.i(TAG, "Dismissed pending message notification (ID: $notificationId)")
 
-        // Remove this specific ping from the queue (synchronous for immediate consistency)
+        // Remove ping from queue - message is now in DB
+        Log.i(TAG, "⚡ Removing ping ${pingId.take(8)} from queue (message received via listener)")
         com.securelegion.models.PendingPing.removeFromQueue(prefs, contactId, pingId, synchronous = true)
-        Log.i(TAG, "Removed ping $pingId from queue (synchronous write)")
 
-        // Broadcast to ChatActivity to refresh (ChatActivity will notify MainActivity if needed)
+        // Broadcast to ChatActivity to refresh
         val intent = Intent("com.securelegion.MESSAGE_RECEIVED")
         intent.setPackage(packageName)
         intent.putExtra("CONTACT_ID", contactId)
@@ -488,6 +529,7 @@ class DownloadMessageService : Service() {
     private fun createNotification(contactName: String, message: String): Notification {
         // Launch via LockActivity to prevent showing chat before authentication
         // Open ChatActivity if we have a valid contactId, otherwise MainActivity
+        // Use SINGLE_TOP to prevent restarting LockActivity if it's already running
         val intent = Intent(this, LockActivity::class.java).apply {
             if (currentContactId != -1L) {
                 putExtra("TARGET_ACTIVITY", "ChatActivity")
@@ -496,7 +538,8 @@ class DownloadMessageService : Service() {
             } else {
                 putExtra("TARGET_ACTIVITY", "MainActivity")
             }
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            // Use SINGLE_TOP instead of CLEAR_TOP to avoid restarting the activity
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
         }
         val pendingIntent = PendingIntent.getActivity(
             this, currentContactId.toInt(), intent,
@@ -519,6 +562,7 @@ class DownloadMessageService : Service() {
     private fun showSuccessNotification(contactName: String) {
         // Launch via LockActivity to prevent showing chat before authentication
         // Open ChatActivity with the contactId
+        // Use SINGLE_TOP to prevent restarting LockActivity if it's already running
         val intent = Intent(this, LockActivity::class.java).apply {
             if (currentContactId != -1L) {
                 putExtra("TARGET_ACTIVITY", "ChatActivity")
@@ -527,7 +571,8 @@ class DownloadMessageService : Service() {
             } else {
                 putExtra("TARGET_ACTIVITY", "MainActivity")
             }
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            // Use SINGLE_TOP instead of CLEAR_TOP to avoid restarting the activity
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
         }
         val pendingIntent = PendingIntent.getActivity(
             this, currentContactId.toInt(), intent,
@@ -554,6 +599,16 @@ class DownloadMessageService : Service() {
             .build()
 
         notificationManager?.notify(NOTIFICATION_ID, notification)
+    }
+
+    /**
+     * Broadcast state update to ChatActivity to refresh UI
+     */
+    private fun broadcastStateUpdate(contactId: Long) {
+        val intent = Intent("com.securelegion.MESSAGE_RECEIVED")
+        intent.setPackage(packageName)
+        intent.putExtra("CONTACT_ID", contactId)
+        sendBroadcast(intent)
     }
 
     /**
@@ -586,14 +641,20 @@ class DownloadMessageService : Service() {
             when (typeByte.toInt()) {
                 0x03 -> {
                     // TEXT message: [0x03][X25519 32 bytes][Encrypted Text]
+                    // Minimum: 1 (type) + 32 (X25519) + 1 (version) + 8 (seq) + 24 (nonce) + 16 (tag) = 82 bytes
+                    if (messageBytes.size < 82) {
+                        Log.e(TAG, "TEXT message blob too small: ${messageBytes.size} bytes (need at least 82)")
+                        return
+                    }
                     senderX25519PublicKey = messageBytes.copyOfRange(1, 33)
                     encryptedPayload = messageBytes.copyOfRange(33, messageBytes.size)
                     voiceDuration = null
                 }
                 0x04 -> {
                     // VOICE message: [0x04][0x01][Duration 4 bytes][X25519 32 bytes][Encrypted Audio]
-                    if (messageBytes.size < 38) {
-                        Log.e(TAG, "VOICE message blob too small: ${messageBytes.size} bytes (need at least 38)")
+                    // Minimum: 1 (type) + 1 (internal) + 4 (duration) + 32 (X25519) + 1 (version) + 8 (seq) + 24 (nonce) + 16 (tag) = 87 bytes
+                    if (messageBytes.size < 87) {
+                        Log.e(TAG, "VOICE message blob too small: ${messageBytes.size} bytes (need at least 87)")
                         return
                     }
                     // Skip byte 1 (internal type 0x01), extract duration from bytes 2-5
@@ -609,6 +670,17 @@ class DownloadMessageService : Service() {
                     // Extract encrypted audio from byte 38 onward
                     encryptedPayload = messageBytes.copyOfRange(38, messageBytes.size)
                     Log.d(TAG, "Voice duration: ${voiceDuration}s")
+                }
+                0x09 -> {
+                    // IMAGE message: [0x09][X25519 32 bytes][Encrypted Image]
+                    // Minimum: 1 (type) + 32 (X25519) + 1 (version) + 8 (seq) + 24 (nonce) + 16 (tag) = 82 bytes
+                    if (messageBytes.size < 82) {
+                        Log.e(TAG, "IMAGE message blob too small: ${messageBytes.size} bytes (need at least 82)")
+                        return
+                    }
+                    senderX25519PublicKey = messageBytes.copyOfRange(1, 33)
+                    encryptedPayload = messageBytes.copyOfRange(33, messageBytes.size)
+                    voiceDuration = null
                 }
                 else -> {
                     Log.e(TAG, "Unknown message type: 0x${String.format("%02X", typeByte)}")
@@ -631,11 +703,71 @@ class DownloadMessageService : Service() {
                 return
             }
 
+            // PING INBOX STATE CHECK: Verify state and transition to PONG_SENT
+            Log.d(TAG, "═══ PING INBOX CHECK: pingId=$pingId ═══")
+            val pingInbox = database.pingInboxDao().getByPingId(pingId)
+
+            if (pingInbox == null) {
+                Log.w(TAG, "⚠️ Ping $pingId not in ping_inbox - this shouldn't happen")
+                // Fallback: check messages DB
+                val existingMessage = database.messageDao().getMessageByPingId(pingId)
+                if (existingMessage != null) {
+                    Log.i(TAG, "✓ Message $pingId found in DB (fallback check)")
+
+                    // Remove ping from queue
+                    val prefs = getSharedPreferences("pending_pings", MODE_PRIVATE)
+                    com.securelegion.models.PendingPing.removeFromQueue(prefs, contactId, pingId, synchronous = true)
+
+                    // Send MESSAGE_ACK
+                    sendMessageAck(contactId, contactName, connectionId)
+
+                    // Broadcast to refresh UI
+                    val intent = Intent("com.securelegion.MESSAGE_RECEIVED")
+                    intent.setPackage(packageName)
+                    intent.putExtra("CONTACT_ID", contactId)
+                    sendBroadcast(intent)
+
+                    return
+                }
+                // Continue with download if not in DB
+            } else if (pingInbox.state == com.securelegion.database.entities.PingInbox.STATE_MSG_STORED) {
+                // Already stored - send MESSAGE_ACK and skip
+                Log.i(TAG, "✓ Message $pingId already stored (state=MSG_STORED)")
+
+                // Remove ping from queue
+                val prefs = getSharedPreferences("pending_pings", MODE_PRIVATE)
+                com.securelegion.models.PendingPing.removeFromQueue(prefs, contactId, pingId, synchronous = true)
+
+                // Send MESSAGE_ACK (idempotent)
+                sendMessageAck(contactId, contactName, connectionId)
+
+                // Broadcast to refresh UI
+                val intent = Intent("com.securelegion.MESSAGE_RECEIVED")
+                intent.setPackage(packageName)
+                intent.putExtra("CONTACT_ID", contactId)
+                sendBroadcast(intent)
+
+                return
+            } else {
+                // Transition to PONG_SENT if currently PING_SEEN
+                if (pingInbox.state == com.securelegion.database.entities.PingInbox.STATE_PING_SEEN) {
+                    Log.i(TAG, "→ Transitioning pingId=$pingId to PONG_SENT")
+                    database.pingInboxDao().transitionToPongSent(pingId, System.currentTimeMillis())
+                }
+            }
+
+            Log.i(TAG, "✓ Message $pingId not yet stored - proceeding with download")
+
             // Get sender's Ed25519 public key for decryption
             val senderPublicKey = android.util.Base64.decode(contact.publicKeyBase64, android.util.Base64.NO_WRAP)
 
             // Decrypt message using Ed25519 key
             val ourPrivateKey = keyManager.getSigningKeyBytes()
+
+            // Update ping state to DECRYPTING
+            val prefs = getSharedPreferences("pending_pings", MODE_PRIVATE)
+            com.securelegion.models.PendingPing.updateState(prefs, contactId, pingId, com.securelegion.models.PingState.DECRYPTING, synchronous = true)
+            broadcastStateUpdate(contactId)
 
             when (typeByte.toInt()) {
                 0x03 -> {
@@ -644,28 +776,68 @@ class DownloadMessageService : Service() {
 
                     // Save to database via MessageService
                     val messageService = MessageService(this@DownloadMessageService)
-                    // Reconstruct encrypted wire for database storage (NO type byte)
-                    // Format: [X25519 32 bytes][Encrypted data]
-                    val encryptedWire = senderX25519PublicKey + encryptedPayload
-                    val encryptedBase64 = android.util.Base64.encodeToString(encryptedWire, android.util.Base64.NO_WRAP)
+                    // Pass encrypted payload directly - it's already in the correct wire format
+                    // Wire format: [version:1][sequence:8][nonce:24][ciphertext][tag:16]
+                    // DON'T prepend X25519 key - that's not part of the key chain evolution format
+                    val encryptedBase64 = android.util.Base64.encodeToString(encryptedPayload, android.util.Base64.NO_WRAP)
 
-                    val result = messageService.receiveMessage(
-                        encryptedData = encryptedBase64,
-                        senderPublicKey = senderPublicKey,
-                        senderOnionAddress = contact.torOnionAddress,
-                        pingId = pingId
-                    )
+                    // ATOMIC TRANSACTION: Check duplicate + Insert message + update ping_inbox state
+                    val result = kotlin.runCatching {
+                        database.withTransaction {
+                            // Check if message already exists by pingId (BEFORE attempting insert)
+                            // This prevents SQL exception from UNIQUE constraint and ensures state transition
+                            val existingMessage = database.messageDao().getMessageByPingId(pingId)
 
-                    if (result.isSuccess) {
-                        Log.i(TAG, "✓ TEXT message saved to database")
+                            if (existingMessage != null) {
+                                // Duplicate detected - message already in DB
+                                Log.i(TAG, "✓ Message $pingId already in DB (duplicate insert via multipath/retry)")
 
-                        // Dismiss notification immediately - message is already saved
+                                // CRITICAL: Still transition ping_inbox to MSG_STORED (idempotent, monotonic guard)
+                                // This ensures duplicates don't get stuck in PONG_SENT state
+                                database.pingInboxDao().transitionToMsgStored(pingId, System.currentTimeMillis())
 
-                        // Send MESSAGE_ACK in background (fire-and-forget, don't block UI)
+                                // Return success with existing message (not a failure!)
+                                Result.success(existingMessage)
+                            } else {
+                                // New message - insert it
+                                val insertResult = messageService.receiveMessage(
+                                    encryptedData = encryptedBase64,
+                                    senderPublicKey = senderPublicKey,
+                                    senderOnionAddress = contact.messagingOnion ?: contact.torOnionAddress ?: "",
+                                    pingId = pingId
+                                )
 
+                                if (insertResult.isSuccess) {
+                                    // Transition ping_inbox to MSG_STORED (monotonic guard prevents regression)
+                                    Log.i(TAG, "→ Transitioning pingId=$pingId to MSG_STORED (atomic)")
+                                    database.pingInboxDao().transitionToMsgStored(pingId, System.currentTimeMillis())
+                                }
+
+                                insertResult
+                            }
+                        }
+                    }
+
+                    if (result.isSuccess && result.getOrNull()?.isSuccess == true) {
+                        Log.i(TAG, "✓ TEXT message saved to database (atomic transaction)")
+
+                        // Remove ping from queue - message is now in DB
+                        val prefs = getSharedPreferences("pending_pings", MODE_PRIVATE)
+                        Log.i(TAG, "⚡ Removing ping ${pingId.take(8)} from queue (message received)")
+                        com.securelegion.models.PendingPing.removeFromQueue(prefs, contactId, pingId, synchronous = true)
+
+                        // Broadcast to refresh UI
+                        val intent = Intent("com.securelegion.MESSAGE_RECEIVED")
+                        intent.setPackage(packageName)
+                        intent.putExtra("CONTACT_ID", contactId)
+                        sendBroadcast(intent)
+                        Log.i(TAG, "✓ Broadcast sent to refresh UI")
+
+                        // Send MESSAGE_ACK ("I stored the message")
                         CoroutineScope(Dispatchers.IO).launch {
                             try {
                                 sendMessageAck(contactId, contactName, connectionId)
+                                Log.i(TAG, "✓ MESSAGE_ACK sent")
                             } catch (e: Exception) {
                                 Log.w(TAG, "MESSAGE_ACK failed (non-critical): ${e.message}")
                             }
@@ -691,22 +863,62 @@ class DownloadMessageService : Service() {
 
                     // Save to database via MessageService
                     val messageService = MessageService(this@DownloadMessageService)
-                    // Reconstruct encrypted wire for database storage (NO type byte)
-                    // Format: [X25519 32 bytes][Encrypted audio data]
-                    val encryptedWire = senderX25519PublicKey + encryptedPayload
-                    val encryptedBase64 = android.util.Base64.encodeToString(encryptedWire, android.util.Base64.NO_WRAP)
+                    // Pass encrypted payload directly - it's already in the correct wire format
+                    // Wire format: [version:1][sequence:8][nonce:24][ciphertext][tag:16]
+                    // DON'T prepend X25519 key - that's not part of the key chain evolution format
+                    val encryptedBase64 = android.util.Base64.encodeToString(encryptedPayload, android.util.Base64.NO_WRAP)
 
-                    val result = messageService.receiveMessage(
-                        encryptedData = encryptedBase64,
-                        senderPublicKey = senderPublicKey,
-                        senderOnionAddress = contact.torOnionAddress,
-                        messageType = com.securelegion.database.entities.Message.MESSAGE_TYPE_VOICE,
-                        voiceDuration = voiceDuration!!,  // Already extracted above
-                        pingId = pingId
-                    )
+                    // ATOMIC TRANSACTION: Check duplicate + Insert message + update ping_inbox state
+                    val result = kotlin.runCatching {
+                        database.withTransaction {
+                            // Check if message already exists by pingId (BEFORE attempting insert)
+                            val existingMessage = database.messageDao().getMessageByPingId(pingId)
 
-                    if (result.isSuccess) {
-                        Log.i(TAG, "✓ VOICE message saved to database")
+                            if (existingMessage != null) {
+                                // Duplicate detected - message already in DB
+                                Log.i(TAG, "✓ VOICE message $pingId already in DB (duplicate insert via multipath/retry)")
+
+                                // CRITICAL: Still transition ping_inbox to MSG_STORED (idempotent, monotonic guard)
+                                database.pingInboxDao().transitionToMsgStored(pingId, System.currentTimeMillis())
+
+                                // Return success with existing message (not a failure!)
+                                Result.success(existingMessage)
+                            } else {
+                                // New message - insert it
+                                val insertResult = messageService.receiveMessage(
+                                    encryptedData = encryptedBase64,
+                                    senderPublicKey = senderPublicKey,
+                                    senderOnionAddress = contact.messagingOnion ?: contact.torOnionAddress ?: "",
+                                    messageType = com.securelegion.database.entities.Message.MESSAGE_TYPE_VOICE,
+                                    voiceDuration = voiceDuration!!,
+                                    pingId = pingId
+                                )
+
+                                if (insertResult.isSuccess) {
+                                    Log.i(TAG, "→ Transitioning pingId=$pingId to MSG_STORED (atomic)")
+                                    database.pingInboxDao().transitionToMsgStored(pingId, System.currentTimeMillis())
+                                }
+
+                                insertResult
+                            }
+                        }
+                    }
+
+                    if (result.isSuccess && result.getOrNull()?.isSuccess == true) {
+                        Log.i(TAG, "✓ VOICE message saved to database (atomic transaction)")
+
+                        // Remove ping from queue - message is now in DB
+                        val prefs = getSharedPreferences("pending_pings", MODE_PRIVATE)
+                        Log.i(TAG, "⚡ Removing ping ${pingId.take(8)} from queue (VOICE message received)")
+                        com.securelegion.models.PendingPing.removeFromQueue(prefs, contactId, pingId, synchronous = true)
+
+                        // Broadcast to refresh UI
+                        val intent = Intent("com.securelegion.MESSAGE_RECEIVED")
+                        intent.setPackage(packageName)
+                        intent.putExtra("CONTACT_ID", contactId)
+                        sendBroadcast(intent)
+                        Log.i(TAG, "✓ Broadcast sent to refresh UI")
+
                         // Send MESSAGE_ACK to sender
                         sendMessageAck(contactId, contactName, connectionId)
                         // Dismiss the pending message notification
@@ -732,21 +944,61 @@ class DownloadMessageService : Service() {
 
                     // Save to database via MessageService
                     val messageService = MessageService(this@DownloadMessageService)
-                    // Reconstruct encrypted wire for database storage (NO type byte)
-                    // Format: [X25519 32 bytes][Encrypted image data]
-                    val encryptedWire = senderX25519PublicKey + encryptedPayload
-                    val encryptedBase64 = android.util.Base64.encodeToString(encryptedWire, android.util.Base64.NO_WRAP)
+                    // Pass encrypted payload directly - it's already in the correct wire format
+                    // Wire format: [version:1][sequence:8][nonce:24][ciphertext][tag:16]
+                    // DON'T prepend X25519 key - that's not part of the key chain evolution format
+                    val encryptedBase64 = android.util.Base64.encodeToString(encryptedPayload, android.util.Base64.NO_WRAP)
 
-                    val result = messageService.receiveMessage(
-                        encryptedData = encryptedBase64,
-                        senderPublicKey = senderPublicKey,
-                        senderOnionAddress = contact.torOnionAddress,
-                        messageType = com.securelegion.database.entities.Message.MESSAGE_TYPE_IMAGE,
-                        pingId = pingId
-                    )
+                    // ATOMIC TRANSACTION: Check duplicate + Insert message + update ping_inbox state
+                    val result = kotlin.runCatching {
+                        database.withTransaction {
+                            // Check if message already exists by pingId (BEFORE attempting insert)
+                            val existingMessage = database.messageDao().getMessageByPingId(pingId)
 
-                    if (result.isSuccess) {
-                        Log.i(TAG, "✓ IMAGE message saved to database")
+                            if (existingMessage != null) {
+                                // Duplicate detected - message already in DB
+                                Log.i(TAG, "✓ IMAGE message $pingId already in DB (duplicate insert via multipath/retry)")
+
+                                // CRITICAL: Still transition ping_inbox to MSG_STORED (idempotent, monotonic guard)
+                                database.pingInboxDao().transitionToMsgStored(pingId, System.currentTimeMillis())
+
+                                // Return success with existing message (not a failure!)
+                                Result.success(existingMessage)
+                            } else {
+                                // New message - insert it
+                                val insertResult = messageService.receiveMessage(
+                                    encryptedData = encryptedBase64,
+                                    senderPublicKey = senderPublicKey,
+                                    senderOnionAddress = contact.messagingOnion ?: contact.torOnionAddress ?: "",
+                                    messageType = com.securelegion.database.entities.Message.MESSAGE_TYPE_IMAGE,
+                                    pingId = pingId
+                                )
+
+                                if (insertResult.isSuccess) {
+                                    Log.i(TAG, "→ Transitioning pingId=$pingId to MSG_STORED (atomic)")
+                                    database.pingInboxDao().transitionToMsgStored(pingId, System.currentTimeMillis())
+                                }
+
+                                insertResult
+                            }
+                        }
+                    }
+
+                    if (result.isSuccess && result.getOrNull()?.isSuccess == true) {
+                        Log.i(TAG, "✓ IMAGE message saved to database (atomic transaction)")
+
+                        // Remove ping from queue - message is now in DB
+                        val prefs = getSharedPreferences("pending_pings", MODE_PRIVATE)
+                        Log.i(TAG, "⚡ Removing ping ${pingId.take(8)} from queue (IMAGE message received)")
+                        com.securelegion.models.PendingPing.removeFromQueue(prefs, contactId, pingId, synchronous = true)
+
+                        // Broadcast to refresh UI
+                        val intent = Intent("com.securelegion.MESSAGE_RECEIVED")
+                        intent.setPackage(packageName)
+                        intent.putExtra("CONTACT_ID", contactId)
+                        sendBroadcast(intent)
+                        Log.i(TAG, "✓ Broadcast sent to refresh UI")
+
                         // Send MESSAGE_ACK to sender
                         sendMessageAck(contactId, contactName, connectionId)
                         // Dismiss the pending message notification
@@ -777,13 +1029,25 @@ class DownloadMessageService : Service() {
                     val result = messageService.receiveMessage(
                         encryptedData = encryptedBase64,
                         senderPublicKey = senderPublicKey,
-                        senderOnionAddress = contact.torOnionAddress,
+                        senderOnionAddress = contact.messagingOnion ?: contact.torOnionAddress ?: "",
                         messageType = com.securelegion.database.entities.Message.MESSAGE_TYPE_PAYMENT_REQUEST,
                         pingId = pingId
                     )
 
                     if (result.isSuccess) {
                         Log.i(TAG, "✓ PAYMENT_REQUEST message saved to database")
+
+                        // Remove ping from queue
+                        val prefs = getSharedPreferences("pending_pings", MODE_PRIVATE)
+                        com.securelegion.models.PendingPing.removeFromQueue(prefs, contactId, pingId, synchronous = true)
+
+                        // Broadcast to trigger ChatActivity refresh
+                        val intent = Intent("com.securelegion.MESSAGE_RECEIVED")
+                        intent.setPackage(packageName)
+                        intent.putExtra("CONTACT_ID", contactId)
+                        sendBroadcast(intent)
+                        Log.i(TAG, "✓ Broadcast sent to refresh UI")
+
                         sendMessageAck(contactId, contactName, connectionId)
                         val notificationManager = getSystemService(android.app.NotificationManager::class.java)
                         notificationManager?.cancel(contactId.toInt() + 20000)
@@ -811,13 +1075,25 @@ class DownloadMessageService : Service() {
                     val result = messageService.receiveMessage(
                         encryptedData = encryptedBase64,
                         senderPublicKey = senderPublicKey,
-                        senderOnionAddress = contact.torOnionAddress,
+                        senderOnionAddress = contact.messagingOnion ?: contact.torOnionAddress ?: "",
                         messageType = com.securelegion.database.entities.Message.MESSAGE_TYPE_PAYMENT_SENT,
                         pingId = pingId
                     )
 
                     if (result.isSuccess) {
                         Log.i(TAG, "✓ PAYMENT_SENT message saved to database")
+
+                        // Remove ping from queue
+                        val prefs = getSharedPreferences("pending_pings", MODE_PRIVATE)
+                        com.securelegion.models.PendingPing.removeFromQueue(prefs, contactId, pingId, synchronous = true)
+
+                        // Broadcast to trigger ChatActivity refresh
+                        val intent = Intent("com.securelegion.MESSAGE_RECEIVED")
+                        intent.setPackage(packageName)
+                        intent.putExtra("CONTACT_ID", contactId)
+                        sendBroadcast(intent)
+                        Log.i(TAG, "✓ Broadcast sent to refresh UI")
+
                         sendMessageAck(contactId, contactName, connectionId)
                         val notificationManager = getSystemService(android.app.NotificationManager::class.java)
                         notificationManager?.cancel(contactId.toInt() + 20000)
@@ -845,13 +1121,25 @@ class DownloadMessageService : Service() {
                     val result = messageService.receiveMessage(
                         encryptedData = encryptedBase64,
                         senderPublicKey = senderPublicKey,
-                        senderOnionAddress = contact.torOnionAddress,
+                        senderOnionAddress = contact.messagingOnion ?: contact.torOnionAddress ?: "",
                         messageType = com.securelegion.database.entities.Message.MESSAGE_TYPE_PAYMENT_ACCEPTED,
                         pingId = pingId
                     )
 
                     if (result.isSuccess) {
                         Log.i(TAG, "✓ PAYMENT_ACCEPTED message saved to database")
+
+                        // Remove ping from queue
+                        val prefs = getSharedPreferences("pending_pings", MODE_PRIVATE)
+                        com.securelegion.models.PendingPing.removeFromQueue(prefs, contactId, pingId, synchronous = true)
+
+                        // Broadcast to trigger ChatActivity refresh
+                        val intent = Intent("com.securelegion.MESSAGE_RECEIVED")
+                        intent.setPackage(packageName)
+                        intent.putExtra("CONTACT_ID", contactId)
+                        sendBroadcast(intent)
+                        Log.i(TAG, "✓ Broadcast sent to refresh UI")
+
                         sendMessageAck(contactId, contactName, connectionId)
                         val notificationManager = getSystemService(android.app.NotificationManager::class.java)
                         notificationManager?.cancel(contactId.toInt() + 20000)
@@ -956,7 +1244,7 @@ class DownloadMessageService : Service() {
                             "MESSAGE_ACK",
                             senderEd25519Pubkey,
                             senderX25519Pubkey,
-                            contact.torOnionAddress
+                            contact.messagingOnion ?: contact.torOnionAddress ?: ""
                         )
                     }
 

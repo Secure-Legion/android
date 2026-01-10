@@ -171,6 +171,7 @@ pub const MSG_TYPE_IMAGE: u8 = 0x09;
 pub const MSG_TYPE_PAYMENT_REQUEST: u8 = 0x0A;
 pub const MSG_TYPE_PAYMENT_SENT: u8 = 0x0B;
 pub const MSG_TYPE_PAYMENT_ACCEPTED: u8 = 0x0C;
+pub const MSG_TYPE_CALL_SIGNALING: u8 = 0x0D;  // Voice call signaling (OFFER/ANSWER/REJECT/END/BUSY)
 
 /// Structure representing a pending connection waiting for Pong response
 pub struct PendingConnection {
@@ -186,8 +187,30 @@ pub static PENDING_CONNECTIONS: Lazy<Arc<StdMutex<HashMap<u64, PendingConnection
 pub static CONNECTION_ID_COUNTER: Lazy<Arc<StdMutex<u64>>> =
     Lazy::new(|| Arc::new(StdMutex::new(0)));
 
+/// Global friend request channel sender
+/// Separate from regular message channels to avoid interference with working message system
+/// Initialized from JNI via startFriendRequestListener()
+pub static FRIEND_REQUEST_TX: once_cell::sync::OnceCell<Arc<StdMutex<tokio::sync::mpsc::UnboundedSender<Vec<u8>>>>> = once_cell::sync::OnceCell::new();
+
+/// Global channel for MESSAGE types (TEXT/VOICE/IMAGE/PAYMENT)
+/// Separate from PING channel to enable direct routing without trial decryption
+/// Initialized when listener starts
+pub static MESSAGE_TX: once_cell::sync::OnceCell<Arc<StdMutex<tokio::sync::mpsc::UnboundedSender<(u64, Vec<u8>)>>>> = once_cell::sync::OnceCell::new();
+
+/// Global channel for VOICE CALL types (CALL_SIGNALING)
+/// Completely separate from MESSAGE to allow simultaneous text messaging during voice calls
+/// Initialized when voice listener starts
+pub static VOICE_TX: once_cell::sync::OnceCell<Arc<StdMutex<tokio::sync::mpsc::UnboundedSender<(u64, Vec<u8>)>>>> = once_cell::sync::OnceCell::new();
+
+/// Global channel for DELIVERY_CONFIRMATION (ACK) types
+/// Shared between port 8080 (main listener - error recovery) and port 9153 (dedicated ACK listener)
+/// This ensures ACKs arriving on wrong port still get processed (no message loss)
+/// Initialized when ACK listener starts on port 9153
+pub static ACK_TX: once_cell::sync::OnceCell<Arc<StdMutex<tokio::sync::mpsc::UnboundedSender<(u64, Vec<u8>)>>>> = once_cell::sync::OnceCell::new();
+
 pub struct TorManager {
     control_stream: Option<Arc<Mutex<TcpStream>>>,
+    voice_control_stream: Option<Arc<Mutex<TcpStream>>>,  // VOICE TOR: port 9052 (Single Onion)
     hidden_service_address: Option<String>,
     listener_handle: Option<tokio::task::JoinHandle<()>>,
     incoming_ping_tx: Option<tokio::sync::mpsc::UnboundedSender<(u64, Vec<u8>)>>,
@@ -201,6 +224,7 @@ impl TorManager {
     pub fn new() -> Result<Self, Box<dyn Error>> {
         Ok(TorManager {
             control_stream: None,
+            voice_control_stream: None,  // VOICE TOR initialized separately
             hidden_service_address: None,
             listener_handle: None,
             incoming_ping_tx: None,
@@ -239,6 +263,49 @@ impl TorManager {
 
         log::info!("Tor fully bootstrapped and ready");
         Ok("Tor client ready (managed by OnionProxyManager)".to_string())
+    }
+
+    /// Connect to VOICE Tor control port (port 9052 - Single Onion Service instance)
+    /// This is a separate Tor daemon specifically for voice hidden service
+    /// Must be called AFTER voice Tor daemon is started by TorManager.kt
+    pub async fn initialize_voice_control(&mut self) -> Result<String, Box<dyn Error>> {
+        log::info!("Connecting to VOICE Tor control port (9052)...");
+
+        // Connect to voice Tor control port
+        let mut control = TcpStream::connect("127.0.0.1:9052").await?;
+
+        // Read voice Tor cookie file
+        let cookie_path = "/data/data/com.securelegion/files/voice_tor/control_auth_cookie";
+        let cookie = match std::fs::read(cookie_path) {
+            Ok(c) => c,
+            Err(e) => {
+                log::warn!("Failed to read voice Tor cookie at {}: {}", cookie_path, e);
+                log::warn!("Trying alternate path...");
+                // Try alternate path
+                let alt_path = "/data/user/0/com.securelegion/files/voice_tor/control_auth_cookie";
+                std::fs::read(alt_path)?
+            }
+        };
+
+        // Hex-encode the cookie
+        let cookie_hex = hex::encode(&cookie);
+
+        // Authenticate with cookie
+        let auth_cmd = format!("AUTHENTICATE {}\r\n", cookie_hex);
+        control.write_all(auth_cmd.as_bytes()).await?;
+
+        let mut buf = vec![0u8; 1024];
+        let n = control.read(&mut buf).await?;
+        let response = String::from_utf8_lossy(&buf[..n]);
+
+        if !response.contains("250 OK") {
+            return Err(format!("Voice Tor control port authentication failed: {}", response).into());
+        }
+
+        self.voice_control_stream = Some(Arc::new(Mutex::new(control)));
+
+        log::info!("Connected to VOICE Tor control port (9052) successfully");
+        Ok("Voice Tor control ready (Single Onion Service mode)".to_string())
     }
 
     /// Wait for Tor to finish bootstrapping (100%)
@@ -373,12 +440,14 @@ impl TorManager {
         //   - Port 8080 → local 8080 (Pong listener - SAME as main listener for routing)
         //   - Port 9151 → local 9151 (Tap listener)
         //   - Port 9153 → local 9153 (ACK/Delivery Confirmation listener)
-        let actual_onion_address = {
+        let (actual_onion_address, is_new_service) = {
             let mut stream = control.lock().await;
 
-            // Flags=Detach makes hidden service persistent across Tor restarts
+            // Create ephemeral hidden service (no Flags=Detach)
+            // This prevents collision errors and ensures computed address matches Tor's address
+            // Service is recreated on each app start with same deterministic address from seed
             let command = format!(
-                "ADD_ONION ED25519-V3:{} Flags=Detach Port={},127.0.0.1:{} Port=8080,127.0.0.1:8080 Port=9151,127.0.0.1:9151 Port=9153,127.0.0.1:9153\r\n",
+                "ADD_ONION ED25519-V3:{} Port={},127.0.0.1:{} Port=8080,127.0.0.1:8080 Port=9151,127.0.0.1:9151 Port=9153,127.0.0.1:9153\r\n",
                 key_base64, service_port, local_port
             );
 
@@ -390,19 +459,12 @@ impl TorManager {
 
             log::info!("ADD_ONION response: {}", response);
 
+            // Check if service was created successfully
             if !response.contains("250 OK") {
-                // Check if error is due to service already existing (persistent service)
-                if response.contains("550") && (response.contains("collision") || response.contains("already")) {
-                    log::info!("Hidden service already exists (persistent) - using existing service");
-                    // Service already exists, just use the computed address
-                    self.hidden_service_address = Some(full_address.clone());
-                    log::info!("Using existing hidden service: {}", full_address);
-                    return Ok(full_address);
-                }
                 return Err(format!("Failed to create hidden service: {}", response).into());
             }
 
-            // Extract the actual ServiceID from Tor's response (not our computed address!)
+            // Successfully created new service - extract the actual ServiceID from Tor's response
             let actual_onion = if let Some(service_line) = response.lines().find(|l| l.contains("ServiceID=")) {
                 if let Some(start_idx) = service_line.find("ServiceID=") {
                     let service_id = &service_line[start_idx + 10..]; // Skip "ServiceID="
@@ -415,23 +477,113 @@ impl TorManager {
             };
 
             self.hidden_service_address = Some(actual_onion.clone());
-
-            log::info!("Hidden service created: {}", actual_onion);
+            log::info!("Hidden service registered: {}", actual_onion);
             log::info!("Service port: {}, Local forward: 127.0.0.1:{}", service_port, local_port);
-
-            actual_onion
+            // Return the address and mark as new
+            (actual_onion, true)
         };
 
         // Use the actual onion address from Tor's response
         let full_address = actual_onion_address;
 
-        // Now wait for descriptor upload events
-        log::info!("Waiting for hidden service descriptors to be uploaded...");
-        self.wait_for_descriptor_uploads_already_subscribed(&full_address).await?;
-
+        // Skip descriptor wait for ephemeral services (without Flags=Detach)
+        // Tor will publish descriptors in the background automatically
+        // Waiting for HS_DESC UPLOADED events doesn't work reliably with ephemeral services
+        log::info!("Ephemeral hidden service created - Tor will publish descriptors in background");
         log::info!("Hidden service is now reachable: {}", full_address);
 
         Ok(full_address)
+    }
+
+    /// Create voice hidden service for voice calling (port 9152 only)
+    /// This is a dedicated hidden service separate from messaging
+    pub async fn create_voice_hidden_service(
+        &mut self,
+        voice_private_key: &[u8],
+    ) -> Result<String, Box<dyn Error>> {
+        // Validate key length
+        if voice_private_key.len() != 32 {
+            return Err("Voice service private key must be 32 bytes".into());
+        }
+
+        // Create Ed25519 signing key from provided seed-derived key
+        let mut key_bytes = [0u8; 32];
+        key_bytes.copy_from_slice(voice_private_key);
+        let signing_key = SigningKey::from_bytes(&key_bytes);
+
+        // Get public key
+        let verifying_key: VerifyingKey = signing_key.verifying_key();
+
+        // Generate .onion address from public key
+        let mut onion_bytes = Vec::new();
+        onion_bytes.extend_from_slice(&verifying_key.to_bytes());
+
+        // Add checksum
+        let mut hasher = Sha3_256::new();
+        hasher.update(b".onion checksum");
+        hasher.update(&verifying_key.to_bytes());
+        hasher.update(&[0x03]); // version 3
+        let checksum = hasher.finalize();
+        onion_bytes.extend_from_slice(&checksum[..2]);
+
+        // Add version
+        onion_bytes.push(0x03);
+
+        // Encode to base32
+        let onion_addr = base32::encode(base32::Alphabet::Rfc4648Lower { padding: false }, &onion_bytes);
+        let full_address = format!("{}.onion", onion_addr);
+
+        // Format private key for ADD_ONION command (base64 of 64-byte expanded key)
+        let expanded_key = signing_key.to_keypair_bytes();
+        let key_base64 = base64::encode(&expanded_key);
+
+        // Create voice hidden service on port 9152 using VOICE TOR (port 9052)
+        // Voice Tor is configured with HiddenServiceNonAnonymousMode 1 and HiddenServiceSingleHopMode 1
+        // This creates a Single Onion Service (3-hop instead of 6-hop)
+        let control = self.voice_control_stream.as_ref()
+            .ok_or("Voice Tor control port not connected - did you call initialize_voice_control()?")?;
+
+        let actual_onion_address = {
+            let mut stream = control.lock().await;
+
+            // Create ephemeral voice hidden service with only port 9152
+            // Single Onion mode is configured in voice torrc (HiddenServiceNonAnonymousMode 1)
+            let command = format!(
+                "ADD_ONION ED25519-V3:{} Port=9152,127.0.0.1:9152\r\n",
+                key_base64
+            );
+
+            stream.write_all(command.as_bytes()).await?;
+
+            let mut buf = vec![0u8; 2048];
+            let n = stream.read(&mut buf).await?;
+            let response = String::from_utf8_lossy(&buf[..n]);
+
+            log::info!("ADD_ONION (voice) response: {}", response);
+
+            // Check if service was created successfully
+            if !response.contains("250 OK") {
+                return Err(format!("Failed to create voice hidden service: {}", response).into());
+            }
+
+            // Extract the actual ServiceID from Tor's response
+            if let Some(service_line) = response.lines().find(|l| l.contains("ServiceID=")) {
+                if let Some(start_idx) = service_line.find("ServiceID=") {
+                    let service_id = &service_line[start_idx + 10..]; // Skip "ServiceID="
+                    format!("{}.onion", service_id.trim())
+                } else {
+                    full_address.clone()
+                }
+            } else {
+                full_address.clone()
+            }
+        };
+
+        log::info!("✓ VOICE SINGLE ONION SERVICE registered: {}", actual_onion_address);
+        log::info!("✓ Voice service port: 9152 → local 9152 (voice streaming)");
+        log::info!("✓ Service mode: Single Onion (3-hop latency, service location visible)");
+
+        Ok(actual_onion_address)
     }
 
     /// Wait for HS_DESC UPLOADED events (assumes events are already subscribed)
@@ -715,7 +867,7 @@ impl TorManager {
                 tx.send((conn_id, data)).ok();
             }
             MSG_TYPE_TEXT | MSG_TYPE_VOICE | MSG_TYPE_IMAGE | MSG_TYPE_PAYMENT_REQUEST | MSG_TYPE_PAYMENT_SENT | MSG_TYPE_PAYMENT_ACCEPTED => {
-                log::info!("→ Routing to MESSAGE handler (type={})",
+                log::info!("→ Routing to MESSAGE handler (separate channel, type={})",
                     match msg_type {
                         MSG_TYPE_TEXT => "TEXT",
                         MSG_TYPE_VOICE => "VOICE",
@@ -735,25 +887,90 @@ impl TorManager {
                     });
                 }
 
-                tx.send((conn_id, data)).ok();
+                // Route to MESSAGE channel (not PING channel)
+                if let Some(message_tx) = MESSAGE_TX.get() {
+                    let tx_lock = message_tx.lock().unwrap();
+                    if let Err(e) = tx_lock.send((conn_id, data)) {
+                        log::error!("Failed to send message to MESSAGE channel: {}", e);
+                    }
+                } else {
+                    log::warn!("MESSAGE channel not initialized - dropping message");
+                }
+            }
+            MSG_TYPE_CALL_SIGNALING => {
+                log::info!("→ Routing to VOICE handler (dedicated channel for call signaling)");
+
+                // Store connection for delivery confirmation
+                {
+                    let mut pending = PENDING_CONNECTIONS.lock().unwrap();
+                    pending.insert(conn_id, PendingConnection {
+                        socket,
+                        encrypted_ping: data.clone(),
+                    });
+                }
+
+                // Route to VOICE channel (separate from MESSAGE to allow simultaneous messaging during calls)
+                if let Some(voice_tx) = VOICE_TX.get() {
+                    let tx_lock = voice_tx.lock().unwrap();
+                    if let Err(e) = tx_lock.send((conn_id, data)) {
+                        log::error!("Failed to send call signaling to VOICE channel: {}", e);
+                    }
+                } else {
+                    log::warn!("VOICE channel not initialized - dropping call signaling");
+                }
             }
             MSG_TYPE_TAP => {
                 log::info!("→ Routing to TAP handler");
                 tx.send((conn_id, data)).ok();
             }
             MSG_TYPE_DELIVERY_CONFIRMATION => {
-                log::info!("→ Routing to DELIVERY_CONFIRMATION handler");
-                tx.send((conn_id, data)).ok();
+                log::warn!("⚠️  Received ACK on main listener (port 8080) - should go to port 9153!");
+                log::info!("→ Routing to ACK channel (error recovery - ensures no message loss)");
+
+                // ERROR RECOVERY: ACK arrived on wrong port, but we MUST NOT drop it!
+                // Route to shared ACK_TX channel so it still gets processed.
+                // This prevents permanent message delivery failures.
+                if let Some(ack_tx) = ACK_TX.get() {
+                    let tx_lock = ack_tx.lock().unwrap();
+                    if let Err(e) = tx_lock.send((conn_id, data)) {
+                        log::error!("Failed to send ACK to ACK channel: {}", e);
+                    } else {
+                        log::info!("✓ ACK successfully routed to ACK channel from port 8080");
+                    }
+                } else {
+                    log::error!("✗ ACK channel not initialized - ACK will be lost!");
+                    log::error!("   Start ACK listener on port 9153 to initialize ACK_TX channel");
+                }
             }
             MSG_TYPE_FRIEND_REQUEST => {
-                log::info!("→ Routing to FRIEND_REQUEST handler (PING channel)");
-                // Friend requests are handled as message blobs, don't store connection
-                tx.send((conn_id, data)).ok();
+                log::info!("→ Routing to FRIEND_REQUEST handler (separate channel)");
+                // Friend requests routed to dedicated channel to avoid interference with message system
+                // Include type byte so Kotlin can distinguish Phase 1 (0x07) from Phase 2 (0x08)
+                if let Some(friend_tx) = FRIEND_REQUEST_TX.get() {
+                    let tx_lock = friend_tx.lock().unwrap();
+                    let mut wire_data = vec![msg_type]; // Prepend type byte
+                    wire_data.extend_from_slice(&data);
+                    if let Err(e) = tx_lock.send(wire_data) {
+                        log::error!("Failed to send friend request to channel: {}", e);
+                    }
+                } else {
+                    log::warn!("Friend request channel not initialized - dropping message");
+                }
             }
             MSG_TYPE_FRIEND_REQUEST_ACCEPTED => {
-                log::info!("→ Routing to FRIEND_REQUEST_ACCEPTED handler (PING channel)");
-                // Friend request accepted messages are handled as message blobs, don't store connection
-                tx.send((conn_id, data)).ok();
+                log::info!("→ Routing to FRIEND_REQUEST_ACCEPTED handler (separate channel)");
+                // Friend request accepted routed to dedicated channel to avoid interference with message system
+                // Include type byte so Kotlin can distinguish Phase 1 (0x07) from Phase 2 (0x08)
+                if let Some(friend_tx) = FRIEND_REQUEST_TX.get() {
+                    let tx_lock = friend_tx.lock().unwrap();
+                    let mut wire_data = vec![msg_type]; // Prepend type byte
+                    wire_data.extend_from_slice(&data);
+                    if let Err(e) = tx_lock.send(wire_data) {
+                        log::error!("Failed to send friend request accepted to channel: {}", e);
+                    }
+                } else {
+                    log::warn!("Friend request channel not initialized - dropping message");
+                }
             }
             _ => {
                 log::warn!("⚠️  Unknown message type: 0x{:02x}, treating as PING", msg_type);

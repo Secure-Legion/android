@@ -75,7 +75,7 @@
             android:paddingBottom="24dp"
             android:gravity="center_horizontal">
 
-            <!-- Profile Icon -->
+            <!-- Profile Photo -->
             <FrameLayout
                 android:layout_width="120dp"
                 android:layout_height="120dp"
@@ -83,12 +83,30 @@
                 android:layout_marginBottom="24dp"
                 android:background="@drawable/settings_icon_bg">
 
-                <ImageView
-                    android:layout_width="48dp"
-                    android:layout_height="48dp"
-                    android:layout_gravity="center"
-                    android:src="@drawable/ic_person"
-                    android:tint="#888888" />
+                <com.securelegion.views.AvatarView
+                    android:id="@+id/profilePhotoAvatar"
+                    android:layout_width="120dp"
+                    android:layout_height="120dp"
+                    android:contentDescription="Profile Photo" />
+
+                <!-- Edit Icon -->
+                <FrameLayout
+                    android:id="@+id/editProfilePhotoButton"
+                    android:layout_width="36dp"
+                    android:layout_height="36dp"
+                    android:layout_gravity="bottom|end"
+                    android:background="@drawable/settings_icon_bg"
+                    android:clickable="true"
+                    android:focusable="true">
+
+                    <ImageView
+                        android:layout_width="18dp"
+                        android:layout_height="18dp"
+                        android:layout_gravity="center"
+                        android:src="@drawable/ic_edit"
+                        android:tint="#888888" />
+
+                </FrameLayout>
 
             </FrameLayout>
 
@@ -103,11 +121,11 @@
                 android:fontFamily="@font/space_grotesk_bold"
                 android:layout_marginBottom="32dp" />
 
-            <!-- CID Section -->
+            <!-- Friend Request Address Section -->
             <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="CID (IPFS Contact ID)"
+                android:text="Friend Request Address"
                 android:textSize="14sp"
                 android:fontFamily="@font/poppins_medium"
                 android:textColor="#8C8C8C"
@@ -165,7 +183,7 @@
                 android:textColor="#8C8C8C"
                 android:layout_marginBottom="8dp" />
 
-            <!-- PIN Input Boxes -->
+            <!-- PIN Input Boxes in phone format: XXX-XXX-XXXX -->
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
@@ -173,82 +191,154 @@
                 android:gravity="center"
                 android:layout_marginBottom="8dp">
 
+                <!-- First group: 3 digits -->
                 <TextView
                     android:id="@+id/pinDigit1"
                     android:layout_width="0dp"
-                    android:layout_height="50dp"
+                    android:layout_height="36dp"
                     android:layout_weight="1"
-                    android:layout_marginEnd="8dp"
+                    android:layout_marginEnd="4dp"
                     android:background="@drawable/pin_box_bg"
                     android:gravity="center"
                     android:textColor="#8C8C8C"
-                    android:textSize="20sp"
+                    android:textSize="16sp"
                     android:fontFamily="@font/poppins_medium" />
 
                 <TextView
                     android:id="@+id/pinDigit2"
                     android:layout_width="0dp"
-                    android:layout_height="50dp"
+                    android:layout_height="36dp"
                     android:layout_weight="1"
-                    android:layout_marginEnd="8dp"
+                    android:layout_marginEnd="4dp"
                     android:background="@drawable/pin_box_bg"
                     android:gravity="center"
                     android:textColor="#8C8C8C"
-                    android:textSize="20sp"
+                    android:textSize="16sp"
                     android:fontFamily="@font/poppins_medium" />
 
                 <TextView
                     android:id="@+id/pinDigit3"
                     android:layout_width="0dp"
-                    android:layout_height="50dp"
+                    android:layout_height="36dp"
                     android:layout_weight="1"
                     android:layout_marginEnd="8dp"
                     android:background="@drawable/pin_box_bg"
                     android:gravity="center"
                     android:textColor="#8C8C8C"
-                    android:textSize="20sp"
+                    android:textSize="16sp"
                     android:fontFamily="@font/poppins_medium" />
 
+                <!-- Dash separator -->
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="36dp"
+                    android:text="-"
+                    android:textColor="#666666"
+                    android:textSize="20sp"
+                    android:gravity="center"
+                    android:layout_marginEnd="8dp" />
+
+                <!-- Second group: 3 digits -->
                 <TextView
                     android:id="@+id/pinDigit4"
                     android:layout_width="0dp"
-                    android:layout_height="50dp"
+                    android:layout_height="36dp"
                     android:layout_weight="1"
-                    android:layout_marginEnd="8dp"
+                    android:layout_marginEnd="4dp"
                     android:background="@drawable/pin_box_bg"
                     android:gravity="center"
                     android:textColor="#8C8C8C"
-                    android:textSize="20sp"
+                    android:textSize="16sp"
                     android:fontFamily="@font/poppins_medium" />
 
                 <TextView
                     android:id="@+id/pinDigit5"
                     android:layout_width="0dp"
-                    android:layout_height="50dp"
+                    android:layout_height="36dp"
                     android:layout_weight="1"
-                    android:layout_marginEnd="8dp"
+                    android:layout_marginEnd="4dp"
                     android:background="@drawable/pin_box_bg"
                     android:gravity="center"
                     android:textColor="#8C8C8C"
-                    android:textSize="20sp"
+                    android:textSize="16sp"
                     android:fontFamily="@font/poppins_medium" />
 
                 <TextView
                     android:id="@+id/pinDigit6"
                     android:layout_width="0dp"
-                    android:layout_height="50dp"
+                    android:layout_height="36dp"
                     android:layout_weight="1"
+                    android:layout_marginEnd="8dp"
                     android:background="@drawable/pin_box_bg"
                     android:gravity="center"
                     android:textColor="#8C8C8C"
-                    android:textSize="20sp"
+                    android:textSize="16sp"
                     android:fontFamily="@font/poppins_medium" />
 
+                <!-- Dash separator -->
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="36dp"
+                    android:text="-"
+                    android:textColor="#666666"
+                    android:textSize="20sp"
+                    android:gravity="center"
+                    android:layout_marginEnd="8dp" />
+
+                <!-- Third group: 4 digits -->
+                <TextView
+                    android:id="@+id/pinDigit7"
+                    android:layout_width="0dp"
+                    android:layout_height="36dp"
+                    android:layout_weight="1"
+                    android:layout_marginEnd="4dp"
+                    android:background="@drawable/pin_box_bg"
+                    android:gravity="center"
+                    android:textColor="#8C8C8C"
+                    android:textSize="16sp"
+                    android:fontFamily="@font/poppins_medium" />
+
+                <TextView
+                    android:id="@+id/pinDigit8"
+                    android:layout_width="0dp"
+                    android:layout_height="36dp"
+                    android:layout_weight="1"
+                    android:layout_marginEnd="4dp"
+                    android:background="@drawable/pin_box_bg"
+                    android:gravity="center"
+                    android:textColor="#8C8C8C"
+                    android:textSize="16sp"
+                    android:fontFamily="@font/poppins_medium" />
+
+                <TextView
+                    android:id="@+id/pinDigit9"
+                    android:layout_width="0dp"
+                    android:layout_height="36dp"
+                    android:layout_weight="1"
+                    android:layout_marginEnd="4dp"
+                    android:background="@drawable/pin_box_bg"
+                    android:gravity="center"
+                    android:textColor="#8C8C8C"
+                    android:textSize="16sp"
+                    android:fontFamily="@font/poppins_medium" />
+
+                <TextView
+                    android:id="@+id/pinDigit10"
+                    android:layout_width="0dp"
+                    android:layout_height="36dp"
+                    android:layout_weight="1"
+                    android:layout_marginEnd="8dp"
+                    android:background="@drawable/pin_box_bg"
+                    android:gravity="center"
+                    android:textColor="#8C8C8C"
+                    android:textSize="16sp"
+                    android:fontFamily="@font/poppins_medium" />
+
+                <!-- Copy button -->
                 <FrameLayout
                     android:id="@+id/copyPinButton"
                     android:layout_width="40dp"
                     android:layout_height="40dp"
-                    android:layout_marginStart="8dp"
                     android:background="@drawable/settings_icon_bg"
                     android:clickable="true"
                     android:focusable="true">
@@ -480,9 +570,9 @@
 
         </LinearLayout>
 
-        <!-- Lock Nav Item -->
+        <!-- Phone Nav Item -->
         <LinearLayout
-            android:id="@+id/navLock"
+            android:id="@+id/navPhone"
             android:layout_width="0dp"
             android:layout_height="match_parent"
             android:layout_weight="1"
@@ -495,15 +585,15 @@
             <ImageView
                 android:layout_width="24dp"
                 android:layout_height="24dp"
-                android:src="@drawable/ic_lock"
+                android:src="@drawable/ic_call"
                 android:layout_marginBottom="4dp"
                 android:tint="@color/text_gray"
-                android:contentDescription="Lock" />
+                android:contentDescription="Phone" />
 
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="Lock"
+                android:text="Phone"
                 android:textSize="11sp"
                 android:textColor="@color/text_gray"
                 android:fontFamily="@font/poppins_medium" />

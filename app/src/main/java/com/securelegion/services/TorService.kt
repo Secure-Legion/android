@@ -27,11 +27,16 @@ import com.securelegion.MainActivity
 import com.securelegion.R
 import com.securelegion.crypto.TorManager
 import com.securelegion.crypto.RustBridge
+import com.securelegion.crypto.KeyChainManager
+import com.securelegion.database.entities.sendChainKeyBytes
+import com.securelegion.database.entities.receiveChainKeyBytes
 import com.securelegion.utils.ThemedToast
 import com.securelegion.workers.ImmediateRetryWorker
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.io.File
 import kotlin.math.min
 
 /**
@@ -52,6 +57,9 @@ class TorService : Service() {
     private var isServiceRunning = false
     private var isPingPollerRunning = false
     private var isTapPollerRunning = false
+    private var isMessagePollerRunning = false
+    private var isVoicePollerRunning = false
+    private var isFriendRequestPollerRunning = false
     private var isPongPollerRunning = false
     private var isSessionCleanupRunning = false
     private var isAckPollerRunning = false
@@ -91,22 +99,46 @@ class TorService : Service() {
     // When receiving 10 Pings at once, ACKs are queued and sent one-at-a-time
     private val ackDispatcher = kotlinx.coroutines.newSingleThreadContext("ACK-Sender")
 
+    // Bandwidth monitoring
+    private var lastRxBytes = 0L
+    private var lastTxBytes = 0L
+    private var lastBandwidthUpdate = 0L
+    private var currentDownloadSpeed = 0L  // bytes per second
+    private var currentUploadSpeed = 0L    // bytes per second
+    private val bandwidthHandler = Handler(Looper.getMainLooper())
+    private var bandwidthUpdateRunnable: Runnable? = null
+    private var torConnected = false
+    private var listenersReady = false
+    private var isAppInForeground = false
+    private val BANDWIDTH_UPDATE_FAST = 5000L      // 5 seconds when app open (matches VPN update interval)
+    private val BANDWIDTH_UPDATE_SLOW = 10000L     // 10 seconds when app closed (saves battery)
+
+    // VPN bandwidth (received from TorVpnService)
+    private var vpnBytesReceived = 0L
+    private var vpnBytesSent = 0L
+    private var vpnActive = false
+    private var vpnBroadcastReceiver: android.content.BroadcastReceiver? = null
+
     companion object {
         private const val TAG = "TorService"
         private const val NOTIFICATION_ID = 1001
         private const val RESTART_REQUEST_CODE = 1001
         private const val CHANNEL_ID = "tor_service_channel"
         private const val CHANNEL_NAME = "Tor Hidden Service"
-        private const val AUTH_CHANNEL_ID = "message_auth_channel"
-        private const val AUTH_CHANNEL_NAME = "Message Authentication"
+        private const val AUTH_CHANNEL_ID = "message_auth_channel_v2"  // Changed to v2 to recreate with sound
+        private const val AUTH_CHANNEL_NAME = "Friend Requests & Messages"
 
         const val ACTION_START_TOR = "com.securelegion.action.START_TOR"
         const val ACTION_STOP_TOR = "com.securelegion.action.STOP_TOR"
         const val ACTION_NOTIFICATION_DELETED = "com.securelegion.action.NOTIFICATION_DELETED"
         const val ACTION_ACCEPT_MESSAGE = "com.securelegion.action.ACCEPT_MESSAGE"
         const val ACTION_DECLINE_MESSAGE = "com.securelegion.action.DECLINE_MESSAGE"
+        const val ACTION_VPN_BANDWIDTH_UPDATE = "com.securelegion.action.VPN_BANDWIDTH_UPDATE"
         const val EXTRA_PING_ID = "ping_id"
         const val EXTRA_CONNECTION_ID = "connection_id"
+        const val EXTRA_VPN_RX_BYTES = "vpn_rx_bytes"
+        const val EXTRA_VPN_TX_BYTES = "vpn_tx_bytes"
+        const val EXTRA_VPN_ACTIVE = "vpn_active"
         const val EXTRA_SENDER_NAME = "sender_name"
 
         // Track service state
@@ -119,9 +151,20 @@ class TorService : Service() {
         @Volatile
         private var listenersReady = false
 
+        @Volatile
+        private var instance: TorService? = null
+
         fun isRunning(): Boolean = running
 
         fun isTorConnected(): Boolean = torConnected
+
+        /**
+         * Notify service when app goes to foreground/background
+         * Adjusts bandwidth monitoring frequency (fast when open, slow when closed)
+         */
+        fun setForegroundState(inForeground: Boolean) {
+            instance?.setAppInForeground(inForeground)
+        }
 
         /**
          * Check if all listeners and pollers are ready for messaging
@@ -179,6 +222,9 @@ class TorService : Service() {
         super.onCreate()
         Log.d(TAG, "TorService created")
 
+        // Set instance for static access
+        instance = this
+
         // Initialize TorManager
         torManager = TorManager.getInstance(this)
 
@@ -187,6 +233,9 @@ class TorService : Service() {
 
         // Setup network monitoring
         setupNetworkMonitoring()
+
+        // Register VPN bandwidth broadcast receiver
+        setupVpnBroadcastReceiver()
 
         // Acquire partial wake lock to keep CPU running
         val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
@@ -441,16 +490,39 @@ class TorService : Service() {
     }
 
     private fun startIncomingListener() {
+        Log.i(TAG, "===== startIncomingListener() CALLED =====")
         try {
             // Check if listener is already running - if so, just start pollers
             if (isListenerRunning) {
                 Log.d(TAG, "Listener already running, skipping restart")
                 startPingPoller()
+                startMessagePoller()
+                startVoicePoller()
                 startTapPoller()
                 startSessionCleanup()
+
+                // CRITICAL: Always initialize voice service when listener is running
+                // Voice streaming server needs to be started on every app launch
+                Log.i(TAG, "Listener already running - initializing voice service...")
+                startVoiceService()
                 return
             }
 
+            // PHASE 1: Start ACK listener FIRST (port 9153)
+            // CRITICAL: Must start BEFORE main listener to avoid race condition
+            // This initializes ACK_TX channel so any ACKs arriving on port 8080 can be routed
+            Log.d(TAG, "Starting ACK listener on port 9153 (BEFORE main listener)...")
+            val ackSuccess = RustBridge.startAckListener(9153)
+            if (ackSuccess) {
+                Log.i(TAG, "ACK listener started successfully - ACK_TX channel initialized")
+            } else {
+                Log.w(TAG, "ACK listener already running")
+            }
+
+            // Start polling for incoming ACKs
+            startAckPoller()
+
+            // PHASE 2: Now safe to start main listener on port 8080
             Log.d(TAG, "Starting hidden service listener on port 8080...")
             val success = RustBridge.startHiddenServiceListener(8080)
             if (success) {
@@ -461,10 +533,12 @@ class TorService : Service() {
                 isListenerRunning = true
             }
 
-            // Start polling for incoming Pings (whether we started the listener or it's already running)
+            // Start polling for incoming Pings, MESSAGEs, and VOICE (whether we started the listener or it's already running)
             startPingPoller()
+            startMessagePoller()
+            startVoicePoller()
 
-            // PHASE 7: Start tap listener on port 9151
+            // PHASE 3: Start tap listener on port 9151
             Log.d(TAG, "Starting tap listener on port 9151...")
             val tapSuccess = RustBridge.startTapListener(9151)
             if (tapSuccess) {
@@ -476,24 +550,24 @@ class TorService : Service() {
             // Start polling for incoming taps
             startTapPoller()
 
+            // PHASE 4: Start friend request listener (separate channel to avoid interference)
+            Log.d(TAG, "Starting friend request listener...")
+            val friendRequestSuccess = RustBridge.startFriendRequestListener()
+            if (friendRequestSuccess) {
+                Log.i(TAG, "Friend request listener started successfully")
+            } else {
+                Log.w(TAG, "Friend request listener already running")
+            }
+
+            // Start polling for incoming friend requests
+            startFriendRequestPoller()
+
             // PONGs arrive at main listener (port 8080) and are routed by message type
             // Start polling for incoming pongs from main listener queue
             startPongPoller()
 
             // Start periodic session cleanup (5-minute intervals)
             startSessionCleanup()
-
-            // PHASE 9: Start ACK listener on port 9153
-            Log.d(TAG, "Starting ACK listener on port 9153...")
-            val ackSuccess = RustBridge.startAckListener(9153)
-            if (ackSuccess) {
-                Log.i(TAG, "ACK listener started successfully")
-            } else {
-                Log.w(TAG, "ACK listener already running")
-            }
-
-            // Start polling for incoming ACKs
-            startAckPoller()
 
             // Ensure SOCKS proxy is running for outgoing connections
             ensureSocksProxyRunning()
@@ -503,9 +577,21 @@ class TorService : Service() {
                 // All listeners, pollers, and SOCKS proxy ready - mark as ready for messaging
                 listenersReady = true
                 Log.i(TAG, "✓ All listeners, pollers, and SOCKS proxy (9050) ready - messaging enabled")
+
+                // Start bandwidth monitoring now that Tor is fully operational
+                startBandwidthMonitoring()
+
+                // Initialize voice service
+                startVoiceService()
             } else {
                 Log.w(TAG, "SOCKS proxy not running - messaging may not work for outgoing messages")
                 listenersReady = true // Still mark as ready since incoming works
+
+                // Start bandwidth monitoring anyway
+                startBandwidthMonitoring()
+
+                // Initialize voice service anyway
+                startVoiceService()
             }
         } catch (e: Exception) {
             Log.e(TAG, "Error starting listener", e)
@@ -549,7 +635,14 @@ class TorService : Service() {
                     val pingBytes = RustBridge.pollIncomingPing()
                     if (pingBytes != null) {
                         Log.i(TAG, "Received incoming Ping token: ${pingBytes.size} bytes")
-                        handleIncomingPing(pingBytes)
+                        // CRITICAL FIX: Launch handleIncomingPing in coroutine to avoid blocking the poller thread
+                        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+                            try {
+                                handleIncomingPing(pingBytes)
+                            } catch (e: Exception) {
+                                Log.e(TAG, "Error in handleIncomingPing coroutine", e)
+                            }
+                        }
                     } else {
                         // Log every 10 seconds to confirm poller is running
                         pollCount++
@@ -568,6 +661,92 @@ class TorService : Service() {
                 }
             }
             Log.d(TAG, "Ping poller thread stopped")
+        }.start()
+    }
+
+    /**
+     * Start MESSAGE poller for direct routing of TEXT/VOICE/IMAGE/PAYMENT messages
+     * Polls MESSAGE channel instead of trying trial decryption on PING channel
+     */
+    private fun startMessagePoller() {
+        if (isMessagePollerRunning) {
+            Log.d(TAG, "MESSAGE poller already running, skipping")
+            return
+        }
+
+        isMessagePollerRunning = true
+
+        // Poll for incoming MESSAGES in background thread
+        Thread {
+            Log.d(TAG, "MESSAGE poller thread started")
+            var pollCount = 0
+            while (isServiceRunning) {
+                try {
+                    val messageBytes = RustBridge.pollIncomingMessage()
+                    if (messageBytes != null) {
+                        Log.i(TAG, "Received incoming MESSAGE: ${messageBytes.size} bytes")
+                        handleIncomingMessage(messageBytes)
+                    } else {
+                        // Log every 10 seconds to confirm poller is running
+                        pollCount++
+                        if (pollCount % 10 == 0) {
+                            Log.d(TAG, "MESSAGE poller alive (poll #$pollCount, no message)")
+                        }
+                    }
+
+                    // Poll every second (same as PING)
+                    Thread.sleep(1000)
+                } catch (e: InterruptedException) {
+                    Log.d(TAG, "MESSAGE poller interrupted")
+                    break
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error polling for messages", e)
+                }
+            }
+            Log.d(TAG, "MESSAGE poller thread stopped")
+        }.start()
+    }
+
+    /**
+     * Start VOICE poller for call signaling (CALL_OFFER/ANSWER/REJECT/END/BUSY)
+     * Completely separate from MESSAGE channel to allow simultaneous text messaging during voice calls
+     */
+    private fun startVoicePoller() {
+        if (isVoicePollerRunning) {
+            Log.d(TAG, "VOICE poller already running, skipping")
+            return
+        }
+
+        isVoicePollerRunning = true
+
+        // Poll for incoming VOICE call signaling in background thread
+        Thread {
+            Log.d(TAG, "VOICE poller thread started")
+            var pollCount = 0
+            while (isServiceRunning) {
+                try {
+                    val voiceBytes = RustBridge.pollVoiceMessage()
+                    if (voiceBytes != null) {
+                        Log.i(TAG, "Received incoming VOICE call signaling: ${voiceBytes.size} bytes")
+                        handleIncomingVoiceMessage(voiceBytes)
+                    } else {
+                        // Log every 10 seconds to confirm poller is running
+                        pollCount++
+                        if (pollCount % 10 == 0) {
+                            Log.d(TAG, "VOICE poller alive (poll #$pollCount, no call signaling)")
+                        }
+                    }
+
+                    // Poll every second (same as MESSAGE)
+                    Thread.sleep(1000)
+                } catch (e: InterruptedException) {
+                    Log.d(TAG, "VOICE poller interrupted")
+                    break
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error polling for voice call signaling", e)
+                }
+            }
+            Log.d(TAG, "VOICE poller thread stopped")
         }.start()
     }
 
@@ -603,6 +782,42 @@ class TorService : Service() {
                 }
             }
             Log.d(TAG, "Tap poller thread stopped")
+        }.start()
+    }
+
+    /**
+     * PHASE 7.5: Start friend request poller (separate from TAP)
+     * Polls for incoming friend request wire protocol messages (0x07 FRIEND_REQUEST, 0x08 FRIEND_REQUEST_ACCEPTED)
+     */
+    private fun startFriendRequestPoller() {
+        if (isFriendRequestPollerRunning) {
+            Log.d(TAG, "Friend request poller already running, skipping")
+            return
+        }
+
+        isFriendRequestPollerRunning = true
+
+        // Poll for incoming friend requests in background thread
+        Thread {
+            Log.d(TAG, "Friend request poller thread started")
+            while (isServiceRunning) {
+                try {
+                    val friendRequestBytes = RustBridge.pollFriendRequest()
+                    if (friendRequestBytes != null) {
+                        Log.i(TAG, "Received incoming friend request: ${friendRequestBytes.size} bytes")
+                        handleIncomingFriendRequest(friendRequestBytes)
+                    }
+
+                    // Poll every 2 seconds (friend requests are infrequent)
+                    Thread.sleep(2000)
+                } catch (e: InterruptedException) {
+                    Log.d(TAG, "Friend request poller interrupted")
+                    break
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error polling for friend requests", e)
+                }
+            }
+            Log.d(TAG, "Friend request poller thread stopped")
         }.start()
     }
 
@@ -711,19 +926,26 @@ class TorService : Service() {
             // TAP = "I'm online" heartbeat, so check ALL message phases and take appropriate action
             CoroutineScope(Dispatchers.IO).launch {
                 try {
-                    val pendingMessages = database.messageDao().getMessagesAwaitingPong()
+                    // Query ALL pending/failed messages (not just awaiting pong)
+                    val pendingMessages = database.messageDao().getPendingMessages()
                         .filter { it.contactId == contact.id }
 
-                    if (pendingMessages.isEmpty()) {
+                    // Also include messages awaiting pong
+                    val awaitingPong = database.messageDao().getMessagesAwaitingPong()
+                        .filter { it.contactId == contact.id }
+
+                    val allMessages = (pendingMessages + awaitingPong).distinctBy { it.id }
+
+                    if (allMessages.isEmpty()) {
                         Log.d(TAG, "No pending messages to ${contact.displayName}")
                         return@launch
                     }
 
-                    Log.i(TAG, "Found ${pendingMessages.size} pending message(s) to ${contact.displayName} - checking phases")
+                    Log.i(TAG, "Found ${allMessages.size} pending message(s) to ${contact.displayName} (${pendingMessages.size} unsent, ${awaitingPong.size} awaiting pong) - checking phases")
 
                     val messageService = com.securelegion.services.MessageService(this@TorService)
 
-                    for (message in pendingMessages) {
+                    for (message in allMessages) {
                         // ============ ACK-BASED FLOW CONTROL FOR TAP ============
                         // Contact is online - check what phase each message is in and take action
 
@@ -753,8 +975,8 @@ class TorService : Service() {
                             continue
                         }
 
-                        // PHASE 1: No PING_ACK → Retry sending Ping (contact just came online)
-                        Log.i(TAG, "→ ${message.messageId}: No PING_ACK yet - retrying Ping (contact online now)")
+                        // PHASE 1: No PING_ACK → Retry immediately (contact confirmed online via TAP)
+                        Log.i(TAG, "→ ${message.messageId}: No PING_ACK yet - retrying Ping (contact online via TAP)")
                         try {
                             val result = messageService.sendPingForMessage(message)
                             if (result.isSuccess) {
@@ -777,6 +999,616 @@ class TorService : Service() {
 
         } catch (e: Exception) {
             Log.e(TAG, "Error handling tap", e)
+        }
+    }
+
+    /**
+     * Handle incoming friend request (Phase 1 or Phase 2)
+     * Phase 1 (0x07): PIN-encrypted minimal info
+     * Phase 2 (0x08): X25519-encrypted full ContactCard
+     */
+    private fun handleIncomingFriendRequest(encryptedBytes: ByteArray) {
+        try {
+            Log.i(TAG, "Handling incoming friend request (${encryptedBytes.size} bytes)")
+
+            // Wire format: [type byte][encrypted payload]
+            // Type byte was prepended by Rust routing layer
+            if (encryptedBytes.isEmpty()) {
+                Log.e(TAG, "Empty friend request data")
+                return
+            }
+
+            val typeByte = encryptedBytes[0]
+            val encryptedPayload = encryptedBytes.copyOfRange(1, encryptedBytes.size)
+
+            Log.d(TAG, "Friend request type: 0x${String.format("%02X", typeByte)}")
+            Log.d(TAG, "Encrypted payload: ${encryptedPayload.size} bytes")
+
+            when (typeByte.toInt()) {
+                0x07 -> handlePhase1FriendRequest(encryptedPayload)
+                0x08 -> {
+                    // 0x08 is used for both Phase 2 and Phase 3
+                    // Determine which by checking pending request direction
+                    val prefs = getSharedPreferences("friend_requests", MODE_PRIVATE)
+                    val pendingRequestsSet = prefs.getStringSet("pending_requests_v2", mutableSetOf()) ?: mutableSetOf()
+
+                    var hasOutgoingPhase1 = false
+                    var hasOutgoingPhase2 = false
+
+                    for (requestJson in pendingRequestsSet) {
+                        try {
+                            val request = com.securelegion.models.PendingFriendRequest.fromJson(requestJson)
+                            if (request.direction == com.securelegion.models.PendingFriendRequest.DIRECTION_OUTGOING) {
+                                val json = org.json.JSONObject(request.contactCardJson ?: "{}")
+                                // Phase 2 saved state has "hybrid_shared_secret", Phase 1 doesn't
+                                if (json.has("hybrid_shared_secret")) {
+                                    hasOutgoingPhase2 = true
+                                } else if (json.has("username")) {
+                                    hasOutgoingPhase1 = true
+                                }
+                            }
+                        } catch (e: Exception) {
+                            // Ignore parse errors
+                        }
+                    }
+
+                    when {
+                        hasOutgoingPhase1 -> handlePhase2FriendRequest(encryptedPayload) // We sent Phase 1, this is Phase 2
+                        hasOutgoingPhase2 -> handlePhase3Acknowledgment(encryptedPayload) // We sent Phase 2, this is Phase 3
+                        else -> Log.e(TAG, "Received 0x08 but no matching outgoing request found")
+                    }
+                }
+                else -> {
+                    Log.e(TAG, "Unknown friend request type: 0x${String.format("%02X", typeByte)}")
+                }
+            }
+
+        } catch (e: Exception) {
+            Log.e(TAG, "Error handling friend request", e)
+        }
+    }
+
+    /**
+     * Handle Phase 1 friend request (PIN-encrypted)
+     * Payload: {"username": "...", "friendRequestOnion": "...", "x25519PublicKey": "..."}
+     */
+    private fun handlePhase1FriendRequest(encryptedPayload: ByteArray) {
+        try {
+            Log.i(TAG, "Processing Phase 1 friend request (PIN-encrypted)")
+
+            // Retrieve user's own PIN from secure storage
+            val keyManager = com.securelegion.crypto.KeyManager.getInstance(this)
+            val myPin = keyManager.getContactPin()
+
+            if (myPin == null) {
+                Log.e(TAG, "User's contact PIN not found in storage")
+                Log.e(TAG, "User must generate their contact card first before receiving friend requests")
+                return
+            }
+
+            Log.d(TAG, "Retrieved user's PIN from secure storage")
+
+            val cardManager = ContactCardManager(this)
+            val decryptedJson = try {
+                cardManager.decryptWithPin(encryptedPayload, myPin)
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to decrypt Phase 1 friend request", e)
+                Log.e(TAG, "Sender may have used wrong PIN or data is corrupted")
+                return
+            }
+
+            Log.i(TAG, "Phase 1 decrypted successfully: $decryptedJson")
+
+            // Parse the JSON to extract friend request data
+            val json = org.json.JSONObject(decryptedJson)
+            val username = json.getString("username")
+            val friendRequestOnion = json.getString("friend_request_onion")
+            val x25519PublicKey = json.getString("x25519_public_key")
+
+            Log.i(TAG, "Phase 1 Friend Request from: $username")
+            Log.i(TAG, "Friend Request .onion: $friendRequestOnion")
+            Log.i(TAG, "X25519 Public Key: $x25519PublicKey")
+
+            // Store as pending friend request
+            val pendingRequest = com.securelegion.models.PendingFriendRequest(
+                displayName = username,
+                ipfsCid = friendRequestOnion,  // Store the .onion address in ipfsCid field
+                direction = com.securelegion.models.PendingFriendRequest.DIRECTION_INCOMING,
+                status = com.securelegion.models.PendingFriendRequest.STATUS_PENDING,
+                timestamp = System.currentTimeMillis(),
+                contactCardJson = decryptedJson  // Store Phase 1 data for later use
+            )
+
+            savePendingFriendRequest(pendingRequest)
+
+            // Show system notification
+            showFriendRequestNotification(username)
+
+            // Send broadcast to update UI badge (explicit broadcast for Android 8.0+)
+            val broadcastIntent = android.content.Intent("com.securelegion.FRIEND_REQUEST_RECEIVED")
+            broadcastIntent.setPackage(packageName)
+            sendBroadcast(broadcastIntent)
+
+            Log.i(TAG, "✓ Phase 1 friend request saved, notification shown, and broadcast sent")
+
+        } catch (e: Exception) {
+            Log.e(TAG, "Error processing Phase 1 friend request", e)
+        }
+    }
+
+    /**
+     * Handle Phase 2 friend request (X25519-encrypted)
+     * Payload: Full ContactCard JSON encrypted with X25519
+     * This is received when someone accepts OUR outgoing friend request
+     */
+    private fun handlePhase2FriendRequest(encryptedPayload: ByteArray) {
+        try {
+            Log.i(TAG, "Processing Phase 2 friend request (X25519-encrypted)")
+
+            // Find matching outgoing Phase 1 request to get sender's X25519 public key
+            val prefs = getSharedPreferences("friend_requests", MODE_PRIVATE)
+            val pendingRequestsSet = prefs.getStringSet("pending_requests_v2", mutableSetOf()) ?: mutableSetOf()
+
+            var senderX25519PublicKey: ByteArray? = null
+            var matchingRequest: com.securelegion.models.PendingFriendRequest? = null
+
+            for (requestJson in pendingRequestsSet) {
+                try {
+                    val request = com.securelegion.models.PendingFriendRequest.fromJson(requestJson)
+                    // Look for outgoing requests with Phase 1 data
+                    if (request.direction == com.securelegion.models.PendingFriendRequest.DIRECTION_OUTGOING &&
+                        request.contactCardJson != null) {
+
+                        val phase1Json = org.json.JSONObject(request.contactCardJson)
+                        val x25519Base64 = phase1Json.optString("x25519_public_key", null)
+
+                        if (x25519Base64 != null) {
+                            senderX25519PublicKey = android.util.Base64.decode(x25519Base64, android.util.Base64.NO_WRAP)
+                            matchingRequest = request
+                            Log.d(TAG, "Found matching outgoing request to: ${request.displayName}")
+                            break
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "Failed to parse pending request", e)
+                }
+            }
+
+            if (senderX25519PublicKey == null || matchingRequest == null) {
+                Log.e(TAG, "No matching outgoing friend request found for Phase 2")
+                return
+            }
+
+            // Decrypt with sender's X25519 public key
+            val decryptedJson = RustBridge.decryptMessage(
+                encryptedPayload,
+                senderX25519PublicKey,
+                ByteArray(32) // privateKey parameter is deprecated/unused
+            )
+
+            if (decryptedJson == null) {
+                Log.e(TAG, "Failed to decrypt Phase 2 ContactCard")
+                return
+            }
+
+            Log.i(TAG, "Phase 2 decrypted successfully")
+
+            // Try to parse as NEW Phase 2 format with signature (v2.1+)
+            var contactCard: com.securelegion.models.ContactCard? = null
+            var kyberCiphertext: ByteArray? = null
+
+            try {
+                val phase2Obj = org.json.JSONObject(decryptedJson)
+                if (phase2Obj.has("phase") && phase2Obj.getInt("phase") == 2) {
+                    // NEW Phase 2 format with signature
+                    Log.d(TAG, "Parsing NEW Phase 2 format with signature...")
+
+                    // Verify Ed25519 signature
+                    if (phase2Obj.has("signature") && phase2Obj.has("ed25519_public_key")) {
+                        val signature = android.util.Base64.decode(phase2Obj.getString("signature"), android.util.Base64.NO_WRAP)
+                        val senderEd25519PublicKey = android.util.Base64.decode(phase2Obj.getString("ed25519_public_key"), android.util.Base64.NO_WRAP)
+
+                        // Reconstruct unsigned JSON
+                        val unsignedJson = org.json.JSONObject().apply {
+                            put("contact_card", phase2Obj.getJSONObject("contact_card"))
+                            if (phase2Obj.has("kyber_ciphertext")) {
+                                put("kyber_ciphertext", phase2Obj.getString("kyber_ciphertext"))
+                            }
+                            put("phase", 2)
+                        }.toString()
+
+                        val signatureValid = RustBridge.verifySignature(
+                            unsignedJson.toByteArray(Charsets.UTF_8),
+                            signature,
+                            senderEd25519PublicKey
+                        )
+
+                        if (!signatureValid) {
+                            Log.e(TAG, "❌ Phase 2 signature verification FAILED - rejecting (possible MitM)")
+                            return
+                        }
+                        Log.i(TAG, "✓ Phase 2 signature verified (Ed25519)")
+                    }
+
+                    // Extract contact card and kyber ciphertext
+                    val contactCardJson = phase2Obj.getJSONObject("contact_card").toString()
+                    contactCard = com.securelegion.models.ContactCard.fromJson(contactCardJson)
+
+                    if (phase2Obj.has("kyber_ciphertext")) {
+                        val ciphertextBase64 = phase2Obj.getString("kyber_ciphertext")
+                        kyberCiphertext = android.util.Base64.decode(ciphertextBase64, android.util.Base64.NO_WRAP)
+                        Log.i(TAG, "✓ Phase 2 with Kyber ciphertext (${kyberCiphertext.size} bytes)")
+                    }
+                } else {
+                    // OLD Phase 2 format (plain ContactCard)
+                    contactCard = com.securelegion.models.ContactCard.fromJson(decryptedJson)
+                }
+            } catch (e: org.json.JSONException) {
+                // Fallback: Try parsing as plain ContactCard (old format)
+                Log.d(TAG, "Not Phase 2 wrapper, trying plain ContactCard format...")
+                contactCard = com.securelegion.models.ContactCard.fromJson(decryptedJson)
+            }
+
+            if (contactCard == null) {
+                Log.e(TAG, "Failed to parse ContactCard from Phase 2")
+                return
+            }
+
+            Log.i(TAG, "✓ Friend request accepted by: ${contactCard.displayName}")
+
+            // Add to contacts database (WITHOUT key chain - we'll initialize it below)
+            val keyManager = com.securelegion.crypto.KeyManager.getInstance(this)
+            val dbPassphrase = keyManager.getDatabasePassphrase()
+            val database = com.securelegion.database.SecureLegionDatabase.getInstance(this, dbPassphrase)
+
+            val contact = com.securelegion.database.entities.Contact(
+                displayName = contactCard.displayName,
+                solanaAddress = contactCard.solanaAddress,
+                publicKeyBase64 = android.util.Base64.encodeToString(contactCard.solanaPublicKey, android.util.Base64.NO_WRAP),
+                x25519PublicKeyBase64 = android.util.Base64.encodeToString(contactCard.x25519PublicKey, android.util.Base64.NO_WRAP),
+                kyberPublicKeyBase64 = android.util.Base64.encodeToString(contactCard.kyberPublicKey, android.util.Base64.NO_WRAP),
+                friendRequestOnion = contactCard.friendRequestOnion,
+                messagingOnion = contactCard.messagingOnion,
+                voiceOnion = contactCard.voiceOnion,
+                contactPin = contactCard.contactPin,
+                ipfsCid = contactCard.ipfsCid,
+                addedTimestamp = System.currentTimeMillis(),
+                friendshipStatus = com.securelegion.database.entities.Contact.FRIENDSHIP_CONFIRMED
+            )
+
+            val contactId = kotlinx.coroutines.runBlocking {
+                database.contactDao().insertContact(contact)
+            }
+
+            Log.i(TAG, "Contact added to database: ${contactCard.displayName} (ID: $contactId)")
+
+            // Initialize key chain with kyber ciphertext if present
+            kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+                try {
+                    val ourMessagingOnion = torManager.getOnionAddress()
+                    val theirMessagingOnion = contactCard.messagingOnion
+                    if (ourMessagingOnion.isNullOrEmpty() || theirMessagingOnion.isNullOrEmpty()) {
+                        Log.e(TAG, "Cannot initialize key chain: missing onion address")
+                    } else if (kyberCiphertext != null) {
+                        // Device A path: Decapsulate the ciphertext from Phase 2
+                        com.securelegion.crypto.KeyChainManager.initializeKeyChain(
+                            context = this@TorService,
+                            contactId = contactId,
+                            theirX25519PublicKey = contactCard.x25519PublicKey,
+                            theirKyberPublicKey = contactCard.kyberPublicKey,
+                            ourMessagingOnion = ourMessagingOnion,
+                            theirMessagingOnion = theirMessagingOnion,
+                            kyberCiphertext = kyberCiphertext
+                        )
+                        Log.i(TAG, "✓ Key chain initialized for ${contactCard.displayName} (quantum - decapsulated)")
+                    } else {
+                        // Legacy path without Kyber
+                        Log.w(TAG, "⚠️  No Kyber ciphertext - key chain will be initialized without quantum parameters")
+                        com.securelegion.crypto.KeyChainManager.initializeKeyChain(
+                            context = this@TorService,
+                            contactId = contactId,
+                            theirX25519PublicKey = contactCard.x25519PublicKey,
+                            theirKyberPublicKey = contactCard.kyberPublicKey,
+                            ourMessagingOnion = ourMessagingOnion,
+                            theirMessagingOnion = theirMessagingOnion
+                        )
+                        Log.i(TAG, "✓ Key chain initialized for ${contactCard.displayName} (legacy)")
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to initialize key chain for ${contactCard.displayName}", e)
+                }
+            }
+
+            // Remove pending outgoing request
+            removePendingRequest(matchingRequest)
+
+            // Show "Friend request accepted" notification
+            showFriendRequestAcceptedNotification(contactCard.displayName)
+
+            Log.i(TAG, "✓ Phase 2 complete - ${contactCard.displayName} added to contacts")
+
+            // Send Phase 3 ACK back to sender's friend-request .onion
+            sendPhase3Acknowledgment(contactCard)
+
+        } catch (e: Exception) {
+            Log.e(TAG, "Error processing Phase 2 friend request", e)
+        }
+    }
+
+    /**
+     * Send Phase 3 ACK to confirm friend request is complete
+     */
+    private fun sendPhase3Acknowledgment(contactCard: com.securelegion.models.ContactCard) {
+        try {
+            Log.i(TAG, "Sending Phase 3 ACK to ${contactCard.displayName}")
+
+            // Build ACK payload with OUR full ContactCard so they can add us
+            val keyManager = com.securelegion.crypto.KeyManager.getInstance(this)
+            val torManager = TorManager.getInstance(this@TorService)
+            val ownContactCard = com.securelegion.models.ContactCard(
+                displayName = keyManager.getUsername() ?: "Unknown",
+                solanaPublicKey = keyManager.getSolanaPublicKey(),
+                x25519PublicKey = keyManager.getEncryptionPublicKey(),
+                kyberPublicKey = keyManager.getKyberPublicKey(),
+                solanaAddress = keyManager.getSolanaAddress(),
+                friendRequestOnion = keyManager.getFriendRequestOnion() ?: "",
+                messagingOnion = keyManager.getMessagingOnion() ?: "",
+                voiceOnion = torManager.getVoiceOnionAddress() ?: "",
+                contactPin = keyManager.getContactPin() ?: "",
+                ipfsCid = keyManager.getIPFSCID(),
+                timestamp = System.currentTimeMillis() / 1000
+            )
+            val ackPayload = ownContactCard.toJson()
+
+            // Encrypt with their X25519 public key
+            val encryptedAck = com.securelegion.crypto.RustBridge.encryptMessage(
+                plaintext = ackPayload,
+                recipientX25519PublicKey = contactCard.x25519PublicKey
+            )
+
+            // Send to their friend-request .onion (reuse Phase 2 function - same wire format)
+            kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+                val success = com.securelegion.crypto.RustBridge.sendFriendRequestAccepted(
+                    recipientOnion = contactCard.friendRequestOnion,
+                    encryptedAcceptance = encryptedAck
+                )
+
+                if (success) {
+                    Log.i(TAG, "✓ Phase 3 ACK sent to ${contactCard.displayName}")
+                } else {
+                    Log.e(TAG, "Failed to send Phase 3 ACK to ${contactCard.displayName}")
+                }
+            }
+
+        } catch (e: Exception) {
+            Log.e(TAG, "Error sending Phase 3 ACK", e)
+        }
+    }
+
+    /**
+     * Handle Phase 3 acknowledgment (X25519-encrypted)
+     * Payload: Simple confirmation that they received and processed Phase 2
+     */
+    private fun handlePhase3Acknowledgment(encryptedPayload: ByteArray) {
+        try {
+            Log.i(TAG, "Processing Phase 3 acknowledgment (X25519-encrypted)")
+
+            // Find matching pending request (the one we're waiting for)
+            val prefs = getSharedPreferences("friend_requests", MODE_PRIVATE)
+            val pendingRequestsSet = prefs.getStringSet("pending_requests_v2", mutableSetOf()) ?: mutableSetOf()
+
+            var matchingRequest: com.securelegion.models.PendingFriendRequest? = null
+            var senderX25519PublicKey: ByteArray? = null
+
+            for (requestJson in pendingRequestsSet) {
+                try {
+                    val request = com.securelegion.models.PendingFriendRequest.fromJson(requestJson)
+                    // Look for outgoing pending requests (we sent Phase 2, waiting for ACK)
+                    if (request.direction == com.securelegion.models.PendingFriendRequest.DIRECTION_OUTGOING &&
+                        request.status == com.securelegion.models.PendingFriendRequest.STATUS_PENDING &&
+                        request.contactCardJson != null) {
+
+                        val partialJson = org.json.JSONObject(request.contactCardJson)
+                        val x25519Base64 = partialJson.optString("x25519_public_key", null)
+
+                        if (x25519Base64 != null) {
+                            senderX25519PublicKey = android.util.Base64.decode(x25519Base64, android.util.Base64.NO_WRAP)
+                            matchingRequest = request
+                            Log.d(TAG, "Found matching pending request for: ${request.displayName}")
+                            break
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "Failed to parse pending request", e)
+                }
+            }
+
+            if (senderX25519PublicKey == null || matchingRequest == null) {
+                Log.e(TAG, "No matching pending request found for Phase 3 ACK")
+                return
+            }
+
+            // Decrypt ACK
+            val decryptedJson = com.securelegion.crypto.RustBridge.decryptMessage(
+                encryptedPayload,
+                senderX25519PublicKey,
+                ByteArray(32) // privateKey parameter is deprecated/unused
+            )
+
+            if (decryptedJson == null) {
+                Log.e(TAG, "Failed to decrypt Phase 3 ACK")
+                return
+            }
+
+            Log.i(TAG, "Phase 3 ACK decrypted successfully")
+
+            // Parse the full ContactCard from the ACK
+            val contactCard = com.securelegion.models.ContactCard.fromJson(decryptedJson)
+            Log.i(TAG, "✓ Friend request fully confirmed by: ${contactCard.displayName}")
+
+            // Add to contacts database and initialize key chain (both in coroutine)
+            kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+                try {
+                    // Add contact to database first
+                    val contactId = addContactToDatabase(contactCard)
+
+                    if (contactId == null) {
+                        Log.e(TAG, "Failed to add contact to database")
+                        return@launch
+                    }
+
+                    // Extract precomputed shared secret from saved Phase 2 state
+                    val savedJson = org.json.JSONObject(matchingRequest.contactCardJson ?: "{}")
+                    val precomputedSharedSecret = if (savedJson.has("hybrid_shared_secret")) {
+                        val sharedSecretBase64 = savedJson.getString("hybrid_shared_secret")
+                        android.util.Base64.decode(sharedSecretBase64, android.util.Base64.NO_WRAP)
+                    } else null
+
+                    val torManager = com.securelegion.crypto.TorManager.getInstance(this@TorService)
+                    val ourMessagingOnion = torManager.getOnionAddress()
+                    val theirMessagingOnion = contactCard.messagingOnion
+
+                    if (ourMessagingOnion.isNullOrEmpty() || theirMessagingOnion.isNullOrEmpty()) {
+                        Log.e(TAG, "Cannot initialize key chain: missing onion address")
+                        return@launch
+                    }
+
+                    if (precomputedSharedSecret != null) {
+                        // Device B path: Use shared secret from Phase 2 encapsulation
+                        com.securelegion.crypto.KeyChainManager.initializeKeyChain(
+                            context = this@TorService,
+                            contactId = contactId,
+                            theirX25519PublicKey = contactCard.x25519PublicKey,
+                            theirKyberPublicKey = contactCard.kyberPublicKey,
+                            ourMessagingOnion = ourMessagingOnion,
+                            theirMessagingOnion = theirMessagingOnion,
+                            precomputedSharedSecret = precomputedSharedSecret
+                        )
+                        Log.i(TAG, "✓ Key chain initialized for ${contactCard.displayName} (quantum - precomputed secret)")
+                    } else {
+                        // Legacy path without quantum parameters
+                        Log.w(TAG, "⚠️  No precomputed shared secret - initializing key chain in legacy mode")
+                        com.securelegion.crypto.KeyChainManager.initializeKeyChain(
+                            context = this@TorService,
+                            contactId = contactId,
+                            theirX25519PublicKey = contactCard.x25519PublicKey,
+                            theirKyberPublicKey = contactCard.kyberPublicKey,
+                            ourMessagingOnion = ourMessagingOnion,
+                            theirMessagingOnion = theirMessagingOnion
+                        )
+                        Log.i(TAG, "✓ Key chain initialized for ${contactCard.displayName} (legacy)")
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to add contact or initialize key chain for ${contactCard.displayName}", e)
+                }
+            }
+
+            // Remove the pending request
+            removePendingRequest(matchingRequest)
+
+            // Show "Friend added" notification
+            showFriendRequestAcceptedNotification(contactCard.displayName)
+
+            // Send broadcast to update UI
+            val broadcastIntent = android.content.Intent("com.securelegion.FRIEND_REQUEST_COMPLETED")
+            broadcastIntent.setPackage(packageName)
+            sendBroadcast(broadcastIntent)
+
+            Log.i(TAG, "✓ Phase 3 complete - ACK received from ${contactCard.displayName}")
+
+        } catch (e: Exception) {
+            Log.e(TAG, "Error processing Phase 3 acknowledgment", e)
+        }
+    }
+
+    /**
+     * Add ContactCard to contacts database
+     * Returns the inserted contact ID, or null on error
+     */
+    private suspend fun addContactToDatabase(contactCard: com.securelegion.models.ContactCard): Long? {
+        return try {
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                val keyManager = com.securelegion.crypto.KeyManager.getInstance(this@TorService)
+                val dbPassphrase = keyManager.getDatabasePassphrase()
+                val database = com.securelegion.database.SecureLegionDatabase.getInstance(this@TorService, dbPassphrase)
+
+                val contact = com.securelegion.database.entities.Contact(
+                    displayName = contactCard.displayName,
+                    solanaAddress = contactCard.solanaAddress,
+                    publicKeyBase64 = android.util.Base64.encodeToString(contactCard.solanaPublicKey, android.util.Base64.NO_WRAP),
+                    x25519PublicKeyBase64 = android.util.Base64.encodeToString(contactCard.x25519PublicKey, android.util.Base64.NO_WRAP),
+                    kyberPublicKeyBase64 = android.util.Base64.encodeToString(contactCard.kyberPublicKey, android.util.Base64.NO_WRAP),
+                    friendRequestOnion = contactCard.friendRequestOnion,
+                    messagingOnion = contactCard.messagingOnion,
+                    voiceOnion = contactCard.voiceOnion,
+                    contactPin = contactCard.contactPin,
+                    ipfsCid = contactCard.ipfsCid,
+                    addedTimestamp = System.currentTimeMillis(),
+                    friendshipStatus = com.securelegion.database.entities.Contact.FRIENDSHIP_CONFIRMED
+                )
+
+                val contactId = database.contactDao().insertContact(contact)
+                Log.i(TAG, "Contact added to database: ${contact.displayName} (ID: $contactId)")
+
+                // NOTE: Key chain initialization is handled by the caller (Phase 2/3 handlers)
+                // Do NOT initialize here without quantum parameters - causes encryption mismatch!
+
+                contactId
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to add contact to database", e)
+            null
+        }
+    }
+
+    /**
+     * Remove pending friend request
+     */
+    private fun removePendingRequest(request: com.securelegion.models.PendingFriendRequest) {
+        try {
+            val prefs = getSharedPreferences("friend_requests", MODE_PRIVATE)
+            val pendingRequestsSet = prefs.getStringSet("pending_requests_v2", mutableSetOf()) ?: mutableSetOf()
+
+            val newSet = pendingRequestsSet.filter { requestJson ->
+                try {
+                    val existingRequest = com.securelegion.models.PendingFriendRequest.fromJson(requestJson)
+                    existingRequest.ipfsCid != request.ipfsCid
+                } catch (e: Exception) {
+                    true
+                }
+            }.toMutableSet()
+
+            prefs.edit()
+                .putStringSet("pending_requests_v2", newSet)
+                .apply()
+
+            Log.i(TAG, "Removed pending request for ${request.displayName}")
+
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to remove pending request", e)
+        }
+    }
+
+    /**
+     * Save pending friend request to SharedPreferences
+     */
+    private fun savePendingFriendRequest(request: com.securelegion.models.PendingFriendRequest) {
+        try {
+            val prefs = getSharedPreferences("friend_requests", MODE_PRIVATE)
+            val pendingRequestsSet = prefs.getStringSet("pending_requests_v2", mutableSetOf()) ?: mutableSetOf()
+
+            // Add new request
+            val newSet = pendingRequestsSet.toMutableSet()
+            newSet.add(request.toJson())
+
+            prefs.edit()
+                .putStringSet("pending_requests_v2", newSet)
+                .apply()
+
+            Log.i(TAG, "Saved pending friend request for ${request.displayName}")
+
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to save pending friend request", e)
         }
     }
 
@@ -900,6 +1732,25 @@ class TorService : Service() {
                     RustBridge.cleanupExpiredSessions()
                     Log.i(TAG, "✓ Periodic Rust session cleanup completed")
 
+                    // CRITICAL FIX: Clean up old received_ids entries to prevent table bloat
+                    // Delete entries older than 7 days (604800000 ms)
+                    // This prevents duplicate detection from blocking legitimate new messages
+                    try {
+                        val keyManager = com.securelegion.crypto.KeyManager.getInstance(this@TorService)
+                        val dbPassphrase = keyManager.getDatabasePassphrase()
+                        val database = com.securelegion.database.SecureLegionDatabase.getInstance(this@TorService, dbPassphrase)
+
+                        val cutoffTimestamp = System.currentTimeMillis() - (7 * 24 * 60 * 60 * 1000L)
+                        kotlinx.coroutines.runBlocking {
+                            val deletedCount = database.receivedIdDao().deleteOldIds(cutoffTimestamp)
+                            if (deletedCount > 0) {
+                                Log.i(TAG, "✓ Cleaned up $deletedCount old received_ids entries (older than 7 days)")
+                            }
+                        }
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Error cleaning up old received_ids", e)
+                    }
+
                 } catch (e: InterruptedException) {
                     Log.d(TAG, "Session cleanup thread interrupted")
                     break
@@ -927,7 +1778,7 @@ class TorService : Service() {
                 var message: com.securelegion.database.entities.Message? = null
 
                 // Determine lookup method based on ACK type
-                val lookupByPingId = (ackType == "PING_ACK" || ackType == "TAP_ACK" || ackType == "PONG_ACK")
+                val lookupByPingId = (ackType == "PING_ACK" || ackType == "TAP_ACK" || ackType == "PONG_ACK" || ackType == "MESSAGE_ACK")
 
                 while (retryCount < maxRetries && message == null) {
                     try {
@@ -935,8 +1786,8 @@ class TorService : Service() {
                         val dbPassphrase = keyManager.getDatabasePassphrase()
                         val database = com.securelegion.database.SecureLegionDatabase.getInstance(this@TorService, dbPassphrase)
 
-                        // For PING_ACK, TAP_ACK, PONG_ACK: lookup by pingId
-                        // For MESSAGE_ACK: lookup by messageId
+                        // For PING_ACK, TAP_ACK, PONG_ACK, MESSAGE_ACK: lookup by pingId
+                        // (Currently all ACKs use pingId for lookup)
                         message = if (lookupByPingId) {
                             database.messageDao().getMessageByPingId(itemId)
                         } else {
@@ -974,7 +1825,10 @@ class TorService : Service() {
                                 intent.putExtra("CONTACT_ID", message.contactId)
                                 sendBroadcast(intent)
                                 Log.i(TAG, "✓ Broadcast MESSAGE_RECEIVED for PING_ACK (contact ${message.contactId})")
-                                message.copy(pingDelivered = true)
+                                message.copy(
+                                    pingDelivered = true,
+                                    status = com.securelegion.database.entities.Message.STATUS_PING_SENT
+                                )
                             }
                             "MESSAGE_ACK" -> {
                                 Log.i(TAG, "✓ Received MESSAGE_ACK for message ${message.messageId}")
@@ -995,6 +1849,28 @@ class TorService : Service() {
                                     } catch (e: Exception) {
                                         Log.w(TAG, "Failed to clean up ReceivedId entries (non-critical)", e)
                                     }
+
+                                    // Clean up SharedPreferences ping tracking (prevents memory bloat)
+                                    // After MESSAGE_ACK, we'll never need this ping data again
+                                    try {
+                                        val prefs = getSharedPreferences("pending_pings", MODE_PRIVATE)
+                                        prefs.edit().apply {
+                                            // Remove ping-indexed entries (for Pong lookup)
+                                            remove("ping_${pingId}_contact_id")
+                                            remove("ping_${pingId}_name")
+                                            remove("ping_${pingId}_timestamp")
+                                            remove("ping_${pingId}_onion")
+                                            // Remove contact-indexed entries (for outgoing tracking)
+                                            remove("outgoing_ping_${message.contactId}_id")
+                                            remove("outgoing_ping_${message.contactId}_name")
+                                            remove("outgoing_ping_${message.contactId}_timestamp")
+                                            remove("outgoing_ping_${message.contactId}_onion")
+                                            apply()
+                                        }
+                                        Log.d(TAG, "✓ Cleaned up SharedPreferences ping tracking for ${pingId.take(8)}...")
+                                    } catch (e: Exception) {
+                                        Log.w(TAG, "Failed to clean up SharedPreferences (non-critical)", e)
+                                    }
                                 }
 
                                 message.copy(
@@ -1003,7 +1879,54 @@ class TorService : Service() {
                                 )
                             }
                             "TAP_ACK" -> {
-                                Log.i(TAG, "✓ Received TAP_ACK for message ${message.messageId} (pingId: $itemId) after $retryCount retries")
+                                Log.i(TAG, "✓ Received TAP_ACK - contact ${message.contactId} confirmed online! Triggering retry for all pending messages")
+
+                                // TAP_ACK means peer is online and ready to receive - retry all pending messages
+                                CoroutineScope(Dispatchers.IO).launch {
+                                    try {
+                                        // Query ALL pending/failed messages for this contact
+                                        val pendingMessages = database.messageDao().getPendingMessages()
+                                            .filter { it.contactId == message.contactId }
+                                        val awaitingPong = database.messageDao().getMessagesAwaitingPong()
+                                            .filter { it.contactId == message.contactId }
+                                        val allMessages = (pendingMessages + awaitingPong).distinctBy { it.id }
+
+                                        if (allMessages.isNotEmpty()) {
+                                            Log.i(TAG, "Found ${allMessages.size} pending messages to retry after TAP_ACK")
+                                            val messageService = com.securelegion.services.MessageService(this@TorService)
+
+                                            for (msg in allMessages) {
+                                                try {
+                                                    // Skip if already delivered
+                                                    if (msg.messageDelivered) continue
+
+                                                    // Retry based on phase
+                                                    if (msg.pongDelivered) {
+                                                        // PONG received - receiver downloading
+                                                        Log.d(TAG, "  ${msg.messageId}: PONG_ACK received, waiting for download")
+                                                    } else if (msg.pingDelivered) {
+                                                        // PING delivered - poll for PONG
+                                                        Log.d(TAG, "  ${msg.messageId}: PING_ACK received, polling for PONG")
+                                                        messageService.pollForPongsAndSendMessages()
+                                                    } else {
+                                                        // No PING_ACK - retry PING
+                                                        Log.i(TAG, "  ${msg.messageId}: Retrying PING after TAP_ACK")
+                                                        messageService.sendPingForMessage(msg)
+                                                        database.messageDao().updateMessage(msg.copy(
+                                                            retryCount = msg.retryCount + 1,
+                                                            lastRetryTimestamp = System.currentTimeMillis()
+                                                        ))
+                                                    }
+                                                } catch (e: Exception) {
+                                                    Log.e(TAG, "Failed to retry message ${msg.messageId} after TAP_ACK", e)
+                                                }
+                                            }
+                                        }
+                                    } catch (e: Exception) {
+                                        Log.e(TAG, "Error processing TAP_ACK retry logic", e)
+                                    }
+                                }
+
                                 message.copy(tapDelivered = true)
                             }
                             "PONG_ACK" -> {
@@ -1045,7 +1968,106 @@ class TorService : Service() {
         }
     }
 
-    private fun handleIncomingPing(encodedData: ByteArray) {
+    /**
+     * Handle incoming MESSAGE from MESSAGE channel (direct routing, no trial decryption needed)
+     * Wire format: [connection_id (8 bytes LE)][encrypted_message_blob]
+     */
+    private fun handleIncomingMessage(encodedData: ByteArray) {
+        try {
+            // Wire format: [connection_id (8 bytes LE)][encrypted_message_blob]
+            if (encodedData.size < 8) {
+                Log.e(TAG, "Invalid MESSAGE data: too short")
+                return
+            }
+
+            // Extract connection_id (first 8 bytes, little-endian)
+            val connectionId = java.nio.ByteBuffer.wrap(encodedData, 0, 8)
+                .order(java.nio.ByteOrder.LITTLE_ENDIAN)
+                .long
+
+            // Extract encrypted message blob (rest of bytes)
+            val encryptedMessageBlob = encodedData.copyOfRange(8, encodedData.size)
+
+            Log.i(TAG, "✓ Received MESSAGE on connection $connectionId via direct routing: ${encryptedMessageBlob.size} bytes")
+
+            // Process message blob directly (no trial decryption needed!)
+            handleIncomingMessageBlob(encryptedMessageBlob)
+        } catch (e: Exception) {
+            Log.e(TAG, "Error handling incoming MESSAGE", e)
+        }
+    }
+
+    /**
+     * Handle incoming VOICE call signaling from VOICE channel
+     * Wire format: [connection_id (8 bytes LE)][Sender X25519 Public Key (32 bytes)][Encrypted Payload]
+     * Completely separate from MESSAGE to allow simultaneous text messaging during voice calls
+     */
+    private fun handleIncomingVoiceMessage(encodedData: ByteArray) {
+        try {
+            // Wire format: [connection_id (8 bytes LE)][Sender X25519 key (32 bytes)][Encrypted payload]
+            if (encodedData.size < 40) {  // 8 + 32 minimum
+                Log.e(TAG, "Invalid VOICE data: too short (${encodedData.size} bytes)")
+                return
+            }
+
+            // Extract connection_id (first 8 bytes, little-endian)
+            val connectionId = java.nio.ByteBuffer.wrap(encodedData, 0, 8)
+                .order(java.nio.ByteOrder.LITTLE_ENDIAN)
+                .long
+
+            // Extract sender X25519 public key (next 32 bytes)
+            val senderX25519PublicKey = encodedData.copyOfRange(8, 40)
+
+            // Extract encrypted payload (rest of bytes)
+            val encryptedPayload = encodedData.copyOfRange(40, encodedData.size)
+
+            Log.i(TAG, "✓ Received VOICE call signaling on connection $connectionId: ${encryptedPayload.size} bytes")
+
+            // Look up contact by X25519 public key to get onion address
+            val keyManager = com.securelegion.crypto.KeyManager.getInstance(this)
+            val dbPassphrase = keyManager.getDatabasePassphrase()
+            val database = com.securelegion.database.SecureLegionDatabase.getInstance(this, dbPassphrase)
+
+            val contact = kotlinx.coroutines.runBlocking {
+                database.contactDao().getContactByX25519PublicKey(
+                    android.util.Base64.encodeToString(senderX25519PublicKey, android.util.Base64.NO_WRAP)
+                )
+            }
+
+            if (contact == null) {
+                Log.w(TAG, "⚠️  Cannot process VOICE call signaling - contact not found for X25519 key")
+                return
+            }
+
+            val senderOnion = contact.messagingOnion ?: contact.torOnionAddress ?: ""
+            if (senderOnion.isEmpty()) {
+                Log.w(TAG, "⚠️  Cannot process VOICE call signaling - no onion address for contact ${contact.id}")
+                return
+            }
+
+            // Process call signaling through MessageService
+            kotlinx.coroutines.GlobalScope.launch(Dispatchers.IO) {
+                try {
+                    val messageService = MessageService(this@TorService)
+                    val encryptedPayloadBase64 = android.util.Base64.encodeToString(encryptedPayload, android.util.Base64.NO_WRAP)
+
+                    // Call existing handler (it will decrypt, parse, and route to IncomingCallActivity)
+                    messageService.handleCallSignaling(
+                        encryptedData = encryptedPayloadBase64,
+                        senderPublicKey = senderX25519PublicKey,
+                        senderOnionAddress = senderOnion,
+                        contactId = contact.id  // Pass contact ID to avoid redundant lookup
+                    )
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error processing VOICE call signaling", e)
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error handling incoming VOICE call signaling", e)
+        }
+    }
+
+    private suspend fun handleIncomingPing(encodedData: ByteArray) {
         try {
             // Wire format: [connection_id (8 bytes LE)][encrypted_ping_wire]
             if (encodedData.size < 8) {
@@ -1081,9 +2103,15 @@ class TorService : Service() {
 
                 // This might be a Pong response! Try to decrypt as Pong
                 val pongPingId = try {
-                    RustBridge.decryptIncomingPong(encryptedPingWire)
+                    Log.d(TAG, "Calling decryptIncomingPong()...")
+                    val startTime = System.currentTimeMillis()
+                    val result = RustBridge.decryptIncomingPong(encryptedPingWire)
+                    val elapsed = System.currentTimeMillis() - startTime
+                    Log.d(TAG, "decryptIncomingPong() completed in ${elapsed}ms")
+                    result
                 } catch (e: Exception) {
                     Log.e(TAG, "⚠️  decryptIncomingPong threw exception: ${e.message}")
+                    Log.e(TAG, "Stack trace:", e)
                     null
                 }
 
@@ -1144,7 +2172,8 @@ class TorService : Service() {
                     }
 
                     // Check if we already sent the message for this Pong (secondary check)
-                    val message = kotlinx.coroutines.runBlocking {
+                    // CRITICAL FIX: Use suspend function instead of runBlocking to avoid freezing
+                    val message = withContext(Dispatchers.IO) {
                         database.messageDao().getMessageByPingId(pongPingId)
                     }
 
@@ -1189,118 +2218,125 @@ class TorService : Service() {
             // Successfully decrypted as Ping
             Log.i(TAG, "✓ Decrypted as Ping. Ping ID: $pingId")
 
-            // Track this pingId to prevent duplicate processing (PRIMARY deduplication)
-            Log.d(TAG, "═══ DEDUPLICATION CHECK: Ping ID = $pingId ═══")
-            val pingTracking = com.securelegion.database.entities.ReceivedId(
-                receivedId = pingId,
-                idType = com.securelegion.database.entities.ReceivedId.TYPE_PING,
-                receivedTimestamp = System.currentTimeMillis()
-            )
-
-            val rowId = tryInsertReceivedId(database, pingTracking, "PING")
-
-            if (rowId == -1L) {
-                Log.w(TAG, "⚠️  DUPLICATE PING BLOCKED! PingId=$pingId already in tracking table")
-                Log.w(TAG, "→ This is the deduplication working correctly - no ghost ping created")
-                Log.i(TAG, "→ Will still send PING_ACK to stop sender from retrying")
-
-                // Get sender info to send PING_ACK
-                val senderPublicKey = RustBridge.getPingSenderPublicKey(pingId)
-                if (senderPublicKey != null) {
-                    val publicKeyBase64 = android.util.Base64.encodeToString(senderPublicKey, android.util.Base64.NO_WRAP)
-                    val contact = kotlinx.coroutines.runBlocking {
-                        database.contactDao().getContactByPublicKey(publicKeyBase64)
-                    }
-
-                    if (contact != null) {
-                        // Send PING_ACK for duplicate to stop sender from retrying
-                        CoroutineScope(ackDispatcher).launch {
-                            sendAckWithRetry(
-                                connectionId = connectionId,
-                                itemId = pingId,
-                                ackType = "PING_ACK",
-                                contactId = contact.id,
-                                maxRetries = 3,
-                                initialDelayMs = 1000L
-                            )
-                        }
-                    }
-                }
-                return
-            }
-            Log.i(TAG, "✓ NEW PING ACCEPTED - Tracked in database (rowId=$rowId)")
-
-            // Check if this ping has already been processed in messages table (secondary check)
-
-
-            val existingMessage = kotlinx.coroutines.runBlocking {
-                database.messageDao().getMessageByPingId(pingId)
-            }
-
-            if (existingMessage != null) {
-                Log.w(TAG, "⚠️  Duplicate Ping detected! PingId=$pingId already processed (messageId=${existingMessage.messageId})")
-                Log.i(TAG, "→ Skipping notification for duplicate Ping, but will still respond to allow sender to retry")
-                // Don't show notification, don't store pending ping, but continue to send PING_ACK
-                // This allows the sender to retry getting their message if they didn't receive it
-            } else {
-                Log.i(TAG, "→ New Ping - processing normally")
-            }
-
             // Get sender information from the Ping token
             val senderPublicKey = RustBridge.getPingSenderPublicKey(pingId)
 
             // Look up sender in contacts database
-            val senderName = if (senderPublicKey != null) {
-                lookupContactName(senderPublicKey)
-            } else {
-                "Unknown Contact"
-            }
-
-            Log.i(TAG, "Incoming message request from: $senderName")
-
-            // Only store pending ping and show notification if this is NOT a duplicate
-            var contactId: Long? = null
-            if (existingMessage == null) {
-                // Store pending Ping for user to download later (including encrypted bytes for restore)
-                contactId = storePendingPing(pingId, connectionId, senderPublicKey, senderName, encryptedPingWire)
-
-                // Only show notification and broadcast if Ping was stored (sender is in contacts)
-                if (contactId != null) {
-                    // Show notification for each new ping (deduplication handled by database)
-                    showNewMessageNotification()
-
-                    // Broadcast to update MainActivity and ChatActivity if open (explicit broadcast)
-                    val intent = Intent("com.securelegion.NEW_PING")
-                    intent.setPackage(packageName) // Make it explicit
-                    intent.putExtra("CONTACT_ID", contactId)
-                    sendBroadcast(intent)
-                    Log.d(TAG, "Sent explicit NEW_PING broadcast for contactId=$contactId")
-                } else {
-                    Log.w(TAG, "Ping from unknown contact - no notification shown")
+            val contactInfo = if (senderPublicKey != null) {
+                val publicKeyBase64 = android.util.Base64.encodeToString(senderPublicKey, android.util.Base64.NO_WRAP)
+                withContext(Dispatchers.IO) {
+                    database.contactDao().getContactByPublicKey(publicKeyBase64)
                 }
             } else {
-                // For duplicate pings, still need contactId for PING_ACK
-                if (senderPublicKey != null) {
-                    val publicKeyBase64 = android.util.Base64.encodeToString(senderPublicKey, android.util.Base64.NO_WRAP)
-                    val contact = database.contactDao().getContactByPublicKey(publicKeyBase64)
-                    contactId = contact?.id
+                null
+            }
+
+            val contactId = contactInfo?.id
+            val senderName = contactInfo?.displayName ?: "Unknown Contact"
+            Log.i(TAG, "Incoming message request from: $senderName (contactId=$contactId)")
+
+            if (contactId == null) {
+                Log.w(TAG, "Ping from unknown contact - ignoring")
+                return
+            }
+
+            // PING INBOX STATE TRACKING: Check current state
+            Log.d(TAG, "═══ PING INBOX CHECK: pingId=$pingId ═══")
+            val existingPing = withContext(Dispatchers.IO) {
+                database.pingInboxDao().getByPingId(pingId)
+            }
+
+            val now = System.currentTimeMillis()
+            var shouldNotify = false
+
+            when {
+                existingPing != null && existingPing.state == com.securelegion.database.entities.PingInbox.STATE_MSG_STORED -> {
+                    // Message already stored - just update retry tracking
+                    Log.i(TAG, "✓ Message $pingId already stored (state=MSG_STORED)")
+                    Log.i(TAG, "→ Updating retry tracking and sending PING_ACK (idempotent)")
+                    withContext(Dispatchers.IO) {
+                        database.pingInboxDao().updatePingRetry(pingId, now)
+                    }
+                    // No notification needed
+                }
+
+                existingPing != null -> {
+                    // PING seen before but message not stored yet - update retry tracking
+                    Log.i(TAG, "✓ PING $pingId seen before (state=${existingPing.state}, attempt=${existingPing.attemptCount + 1})")
+                    withContext(Dispatchers.IO) {
+                        database.pingInboxDao().updatePingRetry(pingId, now)
+                    }
+                    Log.i(TAG, "→ Updated retry tracking, sending PING_ACK")
+                    // Don't notify again
+                }
+
+                else -> {
+                    // New PING - insert into ping_inbox as PING_SEEN
+                    Log.i(TAG, "✓ NEW PING $pingId - inserting as PING_SEEN")
+                    val pingInbox = com.securelegion.database.entities.PingInbox(
+                        pingId = pingId,
+                        contactId = contactId,
+                        state = com.securelegion.database.entities.PingInbox.STATE_PING_SEEN,
+                        firstSeenAt = now,
+                        lastUpdatedAt = now,
+                        lastPingAt = now,
+                        pingAckedAt = null,  // Will update after sending ACK
+                        attemptCount = 1
+                    )
+
+                    val inserted = withContext(Dispatchers.IO) {
+                        try {
+                            database.pingInboxDao().insert(pingInbox)
+                            true
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Failed to insert ping_inbox entry", e)
+                            false
+                        }
+                    }
+
+                    if (inserted) {
+                        // Store pending ping for UI display
+                        storePendingPing(pingId, connectionId, senderPublicKey, senderName, encryptedPingWire)
+
+                        shouldNotify = true
+                        Log.i(TAG, "→ Will show notification and send PING_ACK")
+                    }
                 }
             }
 
-            // Send PING_ACK back to sender IMMEDIATELY to stop them from retrying
-            // Use runBlocking to send synchronously (prevents sender from thinking PING was lost)
-            if (senderPublicKey != null && contactId != null) {
-                kotlinx.coroutines.runBlocking {
+            // Show notification for new pings only
+            if (shouldNotify) {
+                showNewMessageNotification()
+
+                // Broadcast to update MainActivity and ChatActivity if open
+                val intent = Intent("com.securelegion.NEW_PING")
+                intent.setPackage(packageName)
+                intent.putExtra("CONTACT_ID", contactId)
+                sendBroadcast(intent)
+                Log.d(TAG, "Sent NEW_PING broadcast for contactId=$contactId")
+            }
+
+            // Send PING_ACK (always, regardless of state - "I saw your ping")
+            CoroutineScope(ackDispatcher).launch {
+                try {
                     sendAckWithRetry(
                         connectionId = connectionId,
                         itemId = pingId,
                         ackType = "PING_ACK",
                         contactId = contactId,
-                        maxRetries = 1,  // Single fast attempt (immediate response)
-                        initialDelayMs = 0L  // No delay
+                        maxRetries = 1,
+                        initialDelayMs = 0L
                     )
+
+                    // Update pingAckedAt timestamp
+                    withContext(Dispatchers.IO) {
+                        database.pingInboxDao().updatePingAckTime(pingId, System.currentTimeMillis())
+                    }
+
+                    Log.d(TAG, "✓ PING_ACK sent for pingId=$pingId")
+                } catch (e: Exception) {
+                    Log.w(TAG, "Failed to send PING_ACK", e)
                 }
-                Log.d(TAG, "✓ PING_ACK sent immediately (blocking)")
             }
 
         } catch (e: Exception) {
@@ -1313,18 +2349,20 @@ class TorService : Service() {
      * Returns 0L (treat as new) on database failure to prevent app crashes.
      * This is better than crashing - a ghost duplicate (~0.0001% risk) is acceptable.
      *
+     * CRITICAL FIX: Now a suspend function to avoid blocking the ping handler thread
+     *
      * @param database The SecureLegion database instance
      * @param receivedId The ReceivedId entity to insert
      * @param itemType The type of item ("PING", "PONG", "MESSAGE") for logging
      * @return Row ID on success, -1L if duplicate, 0L on database failure
      */
-    private fun tryInsertReceivedId(
+    private suspend fun tryInsertReceivedId(
         database: com.securelegion.database.SecureLegionDatabase,
         receivedId: com.securelegion.database.entities.ReceivedId,
         itemType: String
     ): Long {
         return try {
-            kotlinx.coroutines.runBlocking {
+            withContext(Dispatchers.IO) {
                 Log.d(TAG, "Attempting to insert $itemType ID into received_ids table...")
                 val result = database.receivedIdDao().insertReceivedId(receivedId)
                 Log.d(TAG, "Insert result: rowId=$result (${if (result == -1L) "DUPLICATE" else "NEW"})")
@@ -1381,10 +2419,19 @@ class TorService : Service() {
             try {
                 var ackSuccess = false
 
-                // PATH 1: Try existing connection (only if connectionId provided)
-                if (connectionId != null) {
+                // PATH 1: DISABLED - Connection reuse for ACKs
+                //
+                // ARCHITECTURAL DECISION: All ACKs MUST go to dedicated port 9153 for clean separation.
+                // Connection reuse optimization is disabled because:
+                //   1. Reusing connections sends ACKs to port 8080 (wrong port)
+                //   2. Causes routing confusion between PING/PONG and ACK handlers
+                //   3. Performance difference (~200ms) is negligible for background confirmations
+                //   4. Clean architecture > micro-optimization
+                //
+                // Connection reuse code preserved below but disabled:
+                if (false && connectionId != null) {
                     ackSuccess = RustBridge.sendAckOnConnection(
-                        connectionId,
+                        connectionId!!,  // Safe because null check above
                         itemId,
                         ackType,
                         senderX25519Pubkey
@@ -1397,13 +2444,17 @@ class TorService : Service() {
                     Log.d(TAG, "Connection closed, falling back to new connection for $ackType (attempt ${attempt + 1})")
                 }
 
+                // All ACKs now use PATH 2 (new connection to port 9153)
+                Log.d(TAG, "Sending $ackType via new connection to port 9153 (connection reuse disabled)")
+
                 // PATH 2: Open new connection (always available)
+                val onionAddress = contact.messagingOnion ?: contact.torOnionAddress ?: ""
                 ackSuccess = RustBridge.sendDeliveryAck(
                     itemId,
                     ackType,
                     senderEd25519Pubkey,
                     senderX25519Pubkey,
-                    contact.torOnionAddress
+                    onionAddress
                 )
 
                 if (ackSuccess) {
@@ -1506,6 +2557,9 @@ class TorService : Service() {
 
             Log.i(TAG, "Processing message from: ${contact.displayName}")
 
+            // CALL_SIGNALING now arrives via dedicated VOICE channel (separate from MESSAGE)
+            // This MESSAGE handler only processes: TEXT, VOICE clips, IMAGES, PAYMENTS
+
             // Decrypt message using OUR OWN public key (message was encrypted with our public key)
             // MVP encryption: sender encrypts with recipient's public key, recipient decrypts with their own public key
             val ourEd25519PublicKey = keyManager.getSigningPublicKey()
@@ -1577,6 +2631,118 @@ class TorService : Service() {
                         actualEncryptedMessage = encryptedMessage.copyOfRange(1, encryptedMessage.size)
                         Log.d(TAG, "  Stripped 1 byte metadata, encrypted payload: ${actualEncryptedMessage.size} bytes")
                     }
+                    0x0E -> {
+                        // PING/PONG connectivity test message
+                        Log.i(TAG, "Message type: PING/PONG (connectivity test)")
+                        actualEncryptedMessage = encryptedMessage.copyOfRange(1, encryptedMessage.size)
+
+                        // Decrypt PING/PONG message
+                        val decryptedMessage = com.securelegion.crypto.RustBridge.decryptMessage(
+                            actualEncryptedMessage,
+                            ourEd25519PublicKey,
+                            ourPrivateKey
+                        )
+
+                        if (decryptedMessage != null) {
+                            // Convert back from ISO_8859_1 to get original bytes
+                            val messageBytes = decryptedMessage.toByteArray(Charsets.ISO_8859_1)
+                            val jsonString = String(messageBytes, Charsets.UTF_8)
+
+                            val pingPongMessage = com.securelegion.voice.ConnectivityTest.parsePingPongMessage(jsonString)
+
+                            when (pingPongMessage) {
+                                is com.securelegion.voice.ConnectivityTest.PingPongMessage.Ping -> {
+                                    Log.i(TAG, "✓ Received PING - auto-replying with PONG")
+
+                                    // Get contact X25519 and VOICE onion address for PONG reply
+                                    // IMPORTANT: Use voiceOnion, not messagingOnion, for security
+                                    val senderVoiceOnion = contact.voiceOnion ?: ""
+                                    val contactX25519PublicKey = try {
+                                        android.util.Base64.decode(contact.x25519PublicKeyBase64, android.util.Base64.NO_WRAP)
+                                    } catch (e: Exception) {
+                                        Log.e(TAG, "Failed to decode contact X25519 key", e)
+                                        ByteArray(0)
+                                    }
+
+                                    if (senderVoiceOnion.isNotEmpty() && contactX25519PublicKey.isNotEmpty()) {
+                                        kotlinx.coroutines.GlobalScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                                            com.securelegion.voice.ConnectivityTest.handleIncomingPing(
+                                                pingPongMessage,
+                                                contactX25519PublicKey,
+                                                senderVoiceOnion
+                                            )
+                                        }
+                                    } else {
+                                        Log.e(TAG, "Cannot send PONG - missing voice onion or X25519 key")
+                                    }
+                                }
+                                is com.securelegion.voice.ConnectivityTest.PingPongMessage.Pong -> {
+                                    Log.i(TAG, "✓ Received PONG - connectivity confirmed!")
+                                    Log.i(TAG, "  Test ID: ${pingPongMessage.testId}")
+                                    Log.i(TAG, "  Seq: ${pingPongMessage.seq}")
+
+                                    // Mark PONG as received so testConnectivity() can complete
+                                    com.securelegion.voice.ConnectivityTest.markPongReceived(pingPongMessage.testId)
+                                }
+                                null -> {
+                                    Log.w(TAG, "Failed to parse PING/PONG message")
+                                }
+                            }
+                        } else {
+                            Log.e(TAG, "Failed to decrypt PING/PONG message")
+                        }
+
+                        // Don't save PING/PONG messages to database - they're ephemeral
+                        return
+                    }
+                    0x20 -> {
+                        // GROUP_INVITE message
+                        Log.i(TAG, "Received GROUP INVITE")
+                        actualEncryptedMessage = encryptedMessage.copyOfRange(1, encryptedMessage.size)
+
+                        // Handle group invite using GroupMessagingService
+                        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+                            try {
+                                val groupMessagingService = GroupMessagingService.getInstance(this@TorService)
+                                val result = groupMessagingService.processReceivedGroupInvite(
+                                    actualEncryptedMessage,
+                                    ourEd25519PublicKey
+                                )
+                                if (result.isSuccess) {
+                                    Log.i(TAG, "✓ Group invite processed: ${result.getOrNull()}")
+                                } else {
+                                    Log.e(TAG, "✗ Failed to process group invite", result.exceptionOrNull())
+                                }
+                            } catch (e: Exception) {
+                                Log.e(TAG, "Error processing group invite", e)
+                            }
+                        }
+                        return  // Don't process as regular message
+                    }
+                    0x21 -> {
+                        // GROUP_MESSAGE message
+                        Log.i(TAG, "Received GROUP MESSAGE")
+                        actualEncryptedMessage = encryptedMessage.copyOfRange(1, encryptedMessage.size)
+
+                        // Handle group message using GroupMessagingService
+                        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+                            try {
+                                val groupMessagingService = GroupMessagingService.getInstance(this@TorService)
+                                val result = groupMessagingService.processReceivedGroupMessage(
+                                    actualEncryptedMessage,
+                                    ourEd25519PublicKey
+                                )
+                                if (result.isSuccess) {
+                                    Log.i(TAG, "✓ Group message processed: ${result.getOrNull()}")
+                                } else {
+                                    Log.e(TAG, "✗ Failed to process group message", result.exceptionOrNull())
+                                }
+                            } catch (e: Exception) {
+                                Log.e(TAG, "Error processing group message", e)
+                            }
+                        }
+                        return  // Don't process as regular message
+                    }
                     else -> {
                         // Legacy message without metadata - treat as TEXT
                         Log.d(TAG, "Message type: TEXT (legacy, no metadata)")
@@ -1584,11 +2750,34 @@ class TorService : Service() {
                 }
             }
 
-            Log.d(TAG, "Attempting to decrypt ${actualEncryptedMessage.size} bytes...")
-            val plaintext = RustBridge.decryptMessage(actualEncryptedMessage, ourEd25519PublicKey, ourPrivateKey)
-            if (plaintext == null) {
+            // Get key chain for progressive ephemeral key evolution
+            Log.d(TAG, "KEY CHAIN LOAD: Loading key chain from database...")
+            Log.d(TAG, "  contactId=${contact.id} (${contact.displayName})")
+            val keyChain = kotlinx.coroutines.runBlocking {
+                com.securelegion.crypto.KeyChainManager.getKeyChain(this@TorService, contact.id)
+            }
+
+            if (keyChain == null) {
+                Log.e(TAG, "✗ Key chain not found for contact ${contact.displayName}")
+                Log.e(TAG, "  Contact ID: ${contact.id}")
+                Log.e(TAG, "  This contact may need to be re-added to initialize key chain")
+                return
+            }
+
+            Log.d(TAG, "KEY CHAIN LOAD: Loaded from database successfully")
+            Log.d(TAG, "  sendCounter=${keyChain.sendCounter}")
+            Log.d(TAG, "  receiveCounter=${keyChain.receiveCounter} <- will use this for decryption")
+            Log.d(TAG, "Attempting to decrypt ${actualEncryptedMessage.size} bytes with sequence ${keyChain.receiveCounter}...")
+            val result = RustBridge.decryptMessageWithEvolution(
+                actualEncryptedMessage,
+                keyChain.receiveChainKeyBytes,
+                keyChain.receiveCounter
+            )
+
+            if (result == null) {
                 Log.e(TAG, "✗ Failed to decrypt message from ${contact.displayName}")
                 Log.e(TAG, "  Encrypted payload size: ${actualEncryptedMessage.size} bytes")
+                Log.e(TAG, "  Expected sequence: ${keyChain.receiveCounter}")
                 Log.e(TAG, "  Message type: ${messageType}")
                 if (messageType == com.securelegion.database.entities.Message.MESSAGE_TYPE_VOICE) {
                     Log.e(TAG, "  Voice duration: ${voiceDuration}s")
@@ -1596,18 +2785,48 @@ class TorService : Service() {
                 return
             }
 
+            val plaintext = result.plaintext
+
+            // Save evolved key to database (key evolution happened atomically in Rust)
+            Log.d(TAG, "KEY EVOLUTION: About to update receive chain key")
+            Log.d(TAG, "  contactId=${contact.id} (${contact.displayName})")
+            Log.d(TAG, "  Current receiveCounter=${keyChain.receiveCounter}")
+            Log.d(TAG, "  New receiveCounter will be=${keyChain.receiveCounter + 1}")
+            kotlinx.coroutines.runBlocking {
+                val keyManager = com.securelegion.crypto.KeyManager.getInstance(this@TorService)
+                val dbPassphrase = keyManager.getDatabasePassphrase()
+                val database = com.securelegion.database.SecureLegionDatabase.getInstance(this@TorService, dbPassphrase)
+                database.contactKeyChainDao().updateReceiveChainKey(
+                    contactId = contact.id,
+                    newReceiveChainKeyBase64 = android.util.Base64.encodeToString(result.evolvedChainKey, android.util.Base64.NO_WRAP),
+                    newReceiveCounter = keyChain.receiveCounter + 1,
+                    timestamp = System.currentTimeMillis()
+                )
+                // VERIFY the update actually persisted
+                val verifyKeyChain = database.contactKeyChainDao().getKeyChainByContactId(contact.id)
+                Log.d(TAG, "VERIFICATION: After update, database shows receiveCounter=${verifyKeyChain?.receiveCounter}")
+                if (verifyKeyChain?.receiveCounter != keyChain.receiveCounter + 1) {
+                    Log.e(TAG, "ERROR: Counter update did NOT persist! Expected ${keyChain.receiveCounter + 1}, got ${verifyKeyChain?.receiveCounter}")
+                } else {
+                    Log.d(TAG, "Counter update verified successfully")
+                }
+            }
+            Log.d(TAG, "✓ Message decrypted with sequence ${keyChain.receiveCounter}")
+
             Log.i(TAG, "✓ Decrypted message (${messageType}): ${if (messageType == com.securelegion.database.entities.Message.MESSAGE_TYPE_TEXT) plaintext.take(50) else "${voiceDuration}s voice, ${plaintext.length} bytes"}...")
 
             // Save message directly to database (already decrypted)
+            Log.d(TAG, "MESSAGE SAVE: Launching coroutine to save message to database")
             kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
                 try {
+                    Log.d(TAG, "MESSAGE SAVE: Coroutine started (contactId=${contact.id}, contact=${contact.displayName})")
                     // Generate messageId from ENCRYPTED PAYLOAD (prevents ghost messages across both paths)
                     // Using encrypted bytes ensures same message arriving via both listener and pong has same ID
                     // Encrypted payload includes random nonce, so identical plaintexts get different IDs
                     val messageIdHash = java.security.MessageDigest.getInstance("SHA-256").digest(actualEncryptedMessage)
                     val messageId = "blob_" + android.util.Base64.encodeToString(messageIdHash, android.util.Base64.NO_WRAP).take(28)
 
-                    Log.d(TAG, "Message ID generated from encrypted payload hash: $messageId")
+                    Log.d(TAG, "MESSAGE SAVE: Message ID generated from encrypted payload hash: $messageId")
 
                     // Get database
                     val dbPassphrase = keyManager.getDatabasePassphrase()
@@ -1619,11 +2838,13 @@ class TorService : Service() {
                         idType = com.securelegion.database.entities.ReceivedId.TYPE_MESSAGE,
                         receivedTimestamp = System.currentTimeMillis()
                     )
+                    Log.d(TAG, "MESSAGE SAVE: Attempting to insert messageId into ReceivedId tracking table...")
                     val rowId = tryInsertReceivedId(database, messageTracking, "MESSAGE")
+                    Log.d(TAG, "MESSAGE SAVE: ReceivedId insert result: rowId=$rowId")
 
                     if (rowId == -1L) {
-                        Log.w(TAG, "⚠️  DUPLICATE MESSAGE BLOB BLOCKED! MessageId=$messageId already in tracking table")
-                        Log.i(TAG, "→ Skipping duplicate message blob processing")
+                        Log.w(TAG, "MESSAGE SAVE: DUPLICATE MESSAGE BLOB BLOCKED! MessageId=$messageId already in tracking table")
+                        Log.i(TAG, "MESSAGE SAVE: Skipping duplicate message blob processing")
 
                         // Send MESSAGE_ACK to stop sender from retrying (with retry logic)
                         CoroutineScope(ackDispatcher).launch {
@@ -1754,6 +2975,13 @@ class TorService : Service() {
                         }
                     }
 
+                    // Check if this message is for an active download (associate with pingId)
+                    val downloadPrefs = getSharedPreferences("active_downloads", MODE_PRIVATE)
+                    val downloadPingId = downloadPrefs.getString("download_${contact.id}", null)
+                    if (downloadPingId != null) {
+                        Log.i(TAG, "⚡ Message associated with active download pingId: ${downloadPingId.take(8)}")
+                    }
+
                     // Create message entity (store plaintext in encryptedContent field for now)
                     val message = com.securelegion.database.entities.Message(
                         contactId = contact.id,
@@ -1779,12 +3007,35 @@ class TorService : Service() {
                         paymentToken = paymentToken,
                         paymentAmount = paymentAmount,
                         paymentStatus = paymentStatus,
-                        txSignature = txSignature
+                        txSignature = txSignature,
+                        pingId = downloadPingId  // ← Associate with download ping
                     )
 
                     // Save to database
+                    Log.d(TAG, "MESSAGE SAVE: About to insert message into database")
+                    Log.d(TAG, "  messageId=$messageId")
+                    Log.d(TAG, "  contactId=${contact.id}")
+                    Log.d(TAG, "  messageType=$messageType")
+                    Log.d(TAG, "  content length=${message.encryptedContent.length}")
                     val savedMessageId = database.messageDao().insertMessage(message)
-                    Log.i(TAG, "✓ Message saved to database: $savedMessageId")
+                    Log.i(TAG, "MESSAGE SAVE: Message saved to database successfully! DB row ID=$savedMessageId")
+
+                    // If this was an active download, update ping state to READY for atomic swap
+                    if (downloadPingId != null) {
+                        val pingPrefs = getSharedPreferences("pending_pings", MODE_PRIVATE)
+                        Log.i(TAG, "⚡ Setting ping ${downloadPingId.take(8)} to READY state (listener path)")
+                        com.securelegion.models.PendingPing.updateState(
+                            pingPrefs,
+                            contact.id,
+                            downloadPingId,
+                            com.securelegion.models.PingState.READY,
+                            synchronous = true
+                        )
+
+                        // Clear active download tracking
+                        downloadPrefs.edit().remove("download_${contact.id}").commit()
+                        Log.d(TAG, "  ✓ Cleared active download tracking for contact ${contact.id}")
+                    }
 
                     // Send MESSAGE_ACK to sender to confirm receipt (with retry logic)
                     CoroutineScope(ackDispatcher).launch {
@@ -1796,20 +3047,7 @@ class TorService : Service() {
                         )
                     }
 
-                    // Clear pending Ping from SharedPreferences (message has been downloaded)
-                    val prefs = getSharedPreferences("pending_pings", Context.MODE_PRIVATE)
-                    prefs.edit().apply {
-                        remove("ping_${contact.id}_id")
-                        remove("ping_${contact.id}_connection")
-                        remove("ping_${contact.id}_name")
-                        remove("ping_${contact.id}_timestamp")
-                        remove("ping_${contact.id}_data")
-                        remove("ping_${contact.id}_onion")
-                        apply()
-                    }
-                    Log.i(TAG, "✓ Cleared pending Ping for contact ${contact.id}")
-
-                    // Broadcast to ChatActivity so it can refresh (explicit broadcast)
+                    // Broadcast to ChatActivity so it can refresh and perform atomic swap (explicit broadcast)
                     val intentChat = Intent("com.securelegion.MESSAGE_RECEIVED")
                     intentChat.setPackage(packageName) // Make it explicit
                     intentChat.putExtra("CONTACT_ID", contact.id)
@@ -1823,7 +3061,11 @@ class TorService : Service() {
                     sendBroadcast(intentMain)
                     Log.i(TAG, "✓ Broadcast explicit NEW_PING to refresh MainActivity chat list")
                 } catch (e: Exception) {
-                    Log.e(TAG, "Error saving message", e)
+                    Log.e(TAG, "MESSAGE SAVE: CRITICAL ERROR - Exception occurred while saving message!", e)
+                    Log.e(TAG, "  contactId=${contact.id}")
+                    Log.e(TAG, "  Exception type: ${e.javaClass.simpleName}")
+                    Log.e(TAG, "  Exception message: ${e.message}")
+                    e.printStackTrace()
                 }
             }
 
@@ -1849,90 +3091,46 @@ class TorService : Service() {
                 return
             }
 
-            // Reconstruct wire format for decryption: [Sender X25519 - 32 bytes][Encrypted Data]
-            // The encryptMessage function creates this format, and decryptMessage expects it
-            val wireMessage = senderX25519PublicKey + encryptedFriendRequest
+            // NEW: Check if this is a Phase 1 PIN-encrypted message or old X25519-encrypted message
+            // Phase 1 messages are PIN-encrypted and contain {"phase":1, ...}
+            // Try to detect by attempting PIN decryption (user will need to provide PIN)
 
-            Log.d(TAG, "Reconstructed wire message: ${wireMessage.size} bytes (32 byte X25519 + ${encryptedFriendRequest.size} byte payload)")
+            Log.d(TAG, "Received friend request: ${encryptedFriendRequest.size} bytes")
+            Log.d(TAG, "This appears to be a Phase 1 PIN-encrypted friend request")
 
-            // Decrypt friend request (decryptMessage will derive X25519 private key from Ed25519)
+            // For Phase 1, we need the user to provide the PIN to decrypt
+            // So we save the encrypted payload and show it as a pending request
+            // The user will enter the sender's PIN when they click "Accept"
+
             val keyManager = com.securelegion.crypto.KeyManager.getInstance(this)
-            val ourEd25519PublicKey = keyManager.getSigningPublicKey()
-            val ourPrivateKey = keyManager.getSigningKeyBytes()
 
-            val friendRequestJson = com.securelegion.crypto.RustBridge.decryptMessage(
-                wireMessage,
-                ourEd25519PublicKey,
-                ourPrivateKey
-            )
-
-            if (friendRequestJson == null) {
-                Log.e(TAG, "Failed to decrypt friend request")
-                return
-            }
-
-            Log.i(TAG, "Decrypted friend request JSON: $friendRequestJson")
-
-            // Parse friend request
-            val friendRequest = com.securelegion.models.FriendRequest.fromJson(friendRequestJson)
-            Log.i(TAG, "Friend request from: ${friendRequest.displayName}")
-            Log.i(TAG, "  IPFS CID: ${friendRequest.ipfsCid}")
-
-            // Check if we already have this person in our contacts (by X25519 public key)
-            val dbPassphrase = keyManager.getDatabasePassphrase()
-            val database = com.securelegion.database.SecureLegionDatabase.getInstance(this, dbPassphrase)
-            val senderX25519Base64 = android.util.Base64.encodeToString(senderX25519PublicKey, android.util.Base64.NO_WRAP)
-            val existingContact = kotlinx.coroutines.runBlocking {
-                database.contactDao().getContactByX25519PublicKey(senderX25519Base64)
-            }
-
-            if (existingContact != null && existingContact.friendshipStatus == com.securelegion.database.entities.Contact.FRIENDSHIP_CONFIRMED) {
-                Log.i(TAG, "✓ Already have ${friendRequest.displayName} as a confirmed friend")
-                Log.i(TAG, "→ This is a status check - sending FRIEND_REQUEST_ACCEPTED back")
-
-                // They're checking if we accepted - send acceptance back
-                try {
-                    // Get their contact card to send acceptance
-                    val contactCard = com.securelegion.models.ContactCard(
-                        displayName = existingContact.displayName,
-                        solanaPublicKey = android.util.Base64.decode(existingContact.publicKeyBase64, android.util.Base64.NO_WRAP),
-                        x25519PublicKey = android.util.Base64.decode(existingContact.x25519PublicKeyBase64, android.util.Base64.NO_WRAP),
-                        solanaAddress = existingContact.solanaAddress,
-                        torOnionAddress = existingContact.torOnionAddress,
-                        timestamp = existingContact.addedTimestamp
-                    )
-
-                    // Send acceptance notification back
-                    sendFriendRequestAcceptedResponse(contactCard)
-                } catch (e: Exception) {
-                    Log.e(TAG, "Failed to send acceptance response", e)
-                }
-                return // Don't store as pending request
-            }
-
-            // Store in SharedPreferences as pending friend request (v2 format with direction)
+            // Store in SharedPreferences as pending friend request (Phase 1)
+            // We'll decrypt it when the user provides the PIN
             val prefs = getSharedPreferences("friend_requests", MODE_PRIVATE)
             val existingRequests = prefs.getStringSet("pending_requests_v2", mutableSetOf()) ?: mutableSetOf()
 
-            // Create PendingFriendRequest with direction=INCOMING
+            // Create PendingFriendRequest with encrypted Phase 1 data
+            // We'll show "New Friend Request" and decrypt when user provides PIN
             val pendingRequest = com.securelegion.models.PendingFriendRequest(
-                displayName = friendRequest.displayName,
-                ipfsCid = friendRequest.ipfsCid,
+                displayName = "New Friend Request",  // Will get real name after PIN decryption
+                ipfsCid = "",  // Not used in v2.0
                 direction = com.securelegion.models.PendingFriendRequest.DIRECTION_INCOMING,
                 status = com.securelegion.models.PendingFriendRequest.STATUS_PENDING,
                 timestamp = System.currentTimeMillis(),
-                contactCardJson = null  // Will be downloaded when user accepts
+                contactCardJson = android.util.Base64.encodeToString(encryptedFriendRequest, android.util.Base64.NO_WRAP)  // Store encrypted Phase 1 data
             )
 
-            // Add new request (use v2 JSON format)
+            // Add new request
             val updatedRequests = existingRequests.toMutableSet()
             updatedRequests.add(pendingRequest.toJson())
             prefs.edit().putStringSet("pending_requests_v2", updatedRequests).apply()
 
-            Log.i(TAG, "Friend request stored (v2 format) - total pending: ${updatedRequests.size}")
+            Log.i(TAG, "Phase 1 friend request stored - total pending: ${updatedRequests.size}")
 
             // Show notification
-            showFriendRequestNotification(friendRequest.displayName)
+            showFriendRequestNotification("New Friend Request")
+
+            Log.i(TAG, "Decrypted friend request JSON: (Phase 1 - will decrypt with PIN later)")
 
             // Broadcast to update MainActivity badge count (explicit broadcast)
             val intent = Intent("com.securelegion.FRIEND_REQUEST_RECEIVED")
@@ -1948,6 +3146,9 @@ class TorService : Service() {
     /**
      * Handle incoming friend request accepted notification from pending outgoing request
      * This means someone accepted our friend request - add them to Contacts
+     *
+     * NEW (Phase 2): Receives full ContactCard encrypted with our X25519 key
+     * OLD (v1.0): Receives FriendRequest with CID (for backward compatibility)
      */
     private fun handleFriendRequestAcceptedFromPending(senderX25519PublicKey: ByteArray, encryptedAcceptance: ByteArray) {
         try {
@@ -1955,7 +3156,7 @@ class TorService : Service() {
             Log.i(TAG, "║  FRIEND REQUEST ACCEPTED (FROM PENDING)")
             Log.i(TAG, "╚════════════════════════════════════════")
 
-            // Decrypt acceptance notification to get their CID
+            // Decrypt acceptance notification
             val wireMessage = senderX25519PublicKey + encryptedAcceptance
             val keyManager = com.securelegion.crypto.KeyManager.getInstance(this)
             val ourEd25519PublicKey = keyManager.getSigningPublicKey()
@@ -1972,9 +3173,269 @@ class TorService : Service() {
                 return
             }
 
-            // Parse the acceptance (contains their CID)
-            val acceptance = com.securelegion.models.FriendRequest.fromJson(decryptedJson)
-            Log.i(TAG, "Acceptance from: ${acceptance.displayName}, CID: ${acceptance.ipfsCid}")
+            Log.d(TAG, "Decrypted JSON (first 200 chars): ${decryptedJson.take(200)}...")
+
+            // Try to parse as NEW Phase 2 format with Kyber ciphertext (v2.1)
+            var contactCard: com.securelegion.models.ContactCard? = null
+            var kyberCiphertext: ByteArray? = null
+            var isPhase2 = false
+
+            try {
+                val phase2Obj = org.json.JSONObject(decryptedJson)
+                if (phase2Obj.has("phase") && phase2Obj.getInt("phase") == 2) {
+                    // NEW Phase 2 format with contact_card + kyber_ciphertext
+                    Log.d(TAG, "Parsing Phase 2 with Kyber ciphertext...")
+                    val contactCardJson = phase2Obj.getJSONObject("contact_card").toString()
+                    contactCard = com.securelegion.models.ContactCard.fromJson(contactCardJson)
+
+                    // Extract Kyber ciphertext if present
+                    if (phase2Obj.has("kyber_ciphertext")) {
+                        val ciphertextBase64 = phase2Obj.getString("kyber_ciphertext")
+                        kyberCiphertext = android.util.Base64.decode(ciphertextBase64, android.util.Base64.NO_WRAP)
+                        Log.i(TAG, "✓ Phase 2 (quantum): Received ContactCard + Kyber ciphertext (${kyberCiphertext.size} bytes) from: ${contactCard.displayName}")
+                    } else {
+                        Log.i(TAG, "✓ Phase 2 (legacy): Received ContactCard from: ${contactCard.displayName}")
+                    }
+
+                    // Verify Ed25519 signature (defense-in-depth against .onion MitM)
+                    if (phase2Obj.has("signature") && phase2Obj.has("ed25519_public_key")) {
+                        val signature = android.util.Base64.decode(phase2Obj.getString("signature"), android.util.Base64.NO_WRAP)
+                        val senderEd25519PublicKey = android.util.Base64.decode(phase2Obj.getString("ed25519_public_key"), android.util.Base64.NO_WRAP)
+
+                        // Reconstruct unsigned JSON to verify signature
+                        val unsignedJson = org.json.JSONObject().apply {
+                            put("contact_card", phase2Obj.getJSONObject("contact_card"))
+                            if (phase2Obj.has("kyber_ciphertext")) {
+                                put("kyber_ciphertext", phase2Obj.getString("kyber_ciphertext"))
+                            }
+                            put("phase", 2)
+                        }.toString()
+
+                        val signatureValid = RustBridge.verifySignature(
+                            unsignedJson.toByteArray(Charsets.UTF_8),
+                            signature,
+                            senderEd25519PublicKey
+                        )
+
+                        if (!signatureValid) {
+                            Log.e(TAG, "❌ Phase 2 signature verification FAILED - rejecting contact (possible MitM attack)")
+                            return
+                        }
+                        Log.i(TAG, "✓ Phase 2 signature verified (Ed25519)")
+                    } else {
+                        Log.w(TAG, "⚠️  Phase 2 has no signature (legacy response)")
+                    }
+
+                    isPhase2 = true
+                } else {
+                    // Try old Phase 2 format (just ContactCard)
+                    contactCard = com.securelegion.models.ContactCard.fromJson(decryptedJson)
+                    isPhase2 = true
+                    Log.i(TAG, "✓ Phase 2 (old format): Received ContactCard from: ${contactCard.displayName}")
+                }
+            } catch (e: Exception) {
+                Log.d(TAG, "Not a Phase 2 ContactCard, trying old v1.0 format... ${e.message}")
+            }
+
+            // PHASE 2 PATH: Full contact card received
+            if (isPhase2 && contactCard != null) {
+                Log.i(TAG, "Phase 2: Adding ${contactCard.displayName} to Contacts directly...")
+
+                // Add contact to database
+                try {
+                    val dbPassphrase = keyManager.getDatabasePassphrase()
+                    val database = com.securelegion.database.SecureLegionDatabase.getInstance(this, dbPassphrase)
+
+                    val contact = com.securelegion.database.entities.Contact(
+                        displayName = contactCard.displayName,
+                        solanaAddress = contactCard.solanaAddress,
+                        publicKeyBase64 = android.util.Base64.encodeToString(
+                            contactCard.solanaPublicKey,
+                            android.util.Base64.NO_WRAP
+                        ),
+                        x25519PublicKeyBase64 = android.util.Base64.encodeToString(
+                            contactCard.x25519PublicKey,
+                            android.util.Base64.NO_WRAP
+                        ),
+                        kyberPublicKeyBase64 = android.util.Base64.encodeToString(
+                            contactCard.kyberPublicKey,
+                            android.util.Base64.NO_WRAP
+                        ),
+                        torOnionAddress = contactCard.messagingOnion,  // DEPRECATED - for backward compatibility
+                        friendRequestOnion = contactCard.friendRequestOnion,  // NEW - public .onion for friend requests (port 9151)
+                        messagingOnion = contactCard.messagingOnion,  // NEW - private .onion for messaging (port 8080)
+                        voiceOnion = contactCard.voiceOnion,  // NEW - voice calling .onion (port 9152)
+                        ipfsCid = contactCard.ipfsCid,
+                        contactPin = contactCard.contactPin,
+                        addedTimestamp = System.currentTimeMillis(),
+                        lastContactTimestamp = System.currentTimeMillis(),
+                        trustLevel = com.securelegion.database.entities.Contact.TRUST_UNTRUSTED,
+                        friendshipStatus = com.securelegion.database.entities.Contact.FRIENDSHIP_CONFIRMED
+                    )
+
+                    val contactId = kotlinx.coroutines.runBlocking {
+                        database.contactDao().insertContact(contact)
+                    }
+
+                    Log.i(TAG, "✓ Phase 2: Added ${contactCard.displayName} to Contacts (ID: $contactId)")
+
+                    // Initialize key chain for progressive ephemeral key evolution
+                    kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+                        try {
+                            val ourMessagingOnion = torManager.getOnionAddress()
+                            val theirMessagingOnion = contact.messagingOnion ?: contactCard.messagingOnion
+                            if (ourMessagingOnion.isNullOrEmpty() || theirMessagingOnion.isNullOrEmpty()) {
+                                Log.e(TAG, "Cannot initialize key chain: missing onion address (ours=$ourMessagingOnion, theirs=$theirMessagingOnion) for ${contact.displayName}")
+                            } else {
+                                // Check if we have a saved shared secret from Phase 2 encapsulation
+                                // This happens when Device B (accepter) receives Phase 2b from Device A (initiator)
+                                var precomputedSharedSecret: ByteArray? = null
+                                try {
+                                    val prefs = getSharedPreferences("friend_requests", MODE_PRIVATE)
+                                    val pendingRequestsSet = prefs.getStringSet("pending_requests_v2", mutableSetOf()) ?: mutableSetOf()
+                                    val savedRequest = pendingRequestsSet.mapNotNull { requestJson ->
+                                        try {
+                                            com.securelegion.models.PendingFriendRequest.fromJson(requestJson)
+                                        } catch (e: Exception) {
+                                            null
+                                        }
+                                    }.find { it.ipfsCid == contactCard.friendRequestOnion }
+
+                                    if (savedRequest != null && savedRequest.contactCardJson != null) {
+                                        val savedData = org.json.JSONObject(savedRequest.contactCardJson)
+                                        if (savedData.has("hybrid_shared_secret")) {
+                                            val sharedSecretBase64 = savedData.getString("hybrid_shared_secret")
+                                            precomputedSharedSecret = android.util.Base64.decode(sharedSecretBase64, android.util.Base64.NO_WRAP)
+                                            Log.i(TAG, "✓ Found saved shared secret (${precomputedSharedSecret.size} bytes) from Phase 2 encapsulation")
+                                        }
+                                    }
+                                } catch (e: Exception) {
+                                    Log.w(TAG, "Could not load saved shared secret: ${e.message}")
+                                }
+
+                                // Initialize key chain with appropriate parameters
+                                if (precomputedSharedSecret != null) {
+                                    // Device B (accepter) path: Use shared secret from Phase 2 encapsulation
+                                    com.securelegion.crypto.KeyChainManager.initializeKeyChain(
+                                        context = this@TorService,
+                                        contactId = contactId,
+                                        theirX25519PublicKey = contactCard.x25519PublicKey,
+                                        theirKyberPublicKey = contactCard.kyberPublicKey,
+                                        ourMessagingOnion = ourMessagingOnion,
+                                        theirMessagingOnion = theirMessagingOnion,
+                                        precomputedSharedSecret = precomputedSharedSecret
+                                    )
+                                    Log.i(TAG, "✓ Key chain initialized for ${contact.displayName} (quantum - precomputed secret)")
+                                } else if (kyberCiphertext != null) {
+                                    // Device A (initiator) path: Decapsulate ciphertext from Phase 2
+                                    com.securelegion.crypto.KeyChainManager.initializeKeyChain(
+                                        context = this@TorService,
+                                        contactId = contactId,
+                                        theirX25519PublicKey = contactCard.x25519PublicKey,
+                                        theirKyberPublicKey = contactCard.kyberPublicKey,
+                                        ourMessagingOnion = ourMessagingOnion,
+                                        theirMessagingOnion = theirMessagingOnion,
+                                        kyberCiphertext = kyberCiphertext
+                                    )
+                                    Log.i(TAG, "✓ Key chain initialized for ${contact.displayName} (quantum - decapsulated)")
+                                } else {
+                                    // ERROR: Should NEVER reach here - we have Kyber keys but no quantum parameters!
+                                    Log.e(TAG, "❌ CRITICAL BUG: Cannot initialize key chain - missing BOTH precomputedSharedSecret AND kyberCiphertext!")
+                                    Log.e(TAG, "This will cause encryption mismatch - messages won't decrypt!")
+                                    Log.e(TAG, "Contact has Kyber key: ${contactCard.kyberPublicKey.any { it != 0.toByte() }}")
+                                    throw IllegalStateException("Cannot initialize key chain without quantum parameters")
+                                }
+                            }
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Failed to initialize key chain for ${contact.displayName}", e)
+                        }
+                    }
+
+                    // Send Phase 2b confirmation back to them
+                    // This tells them we received their contact card and added them
+                    kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+                        try {
+                            Log.d(TAG, "Sending Phase 2b confirmation to ${contactCard.displayName}")
+
+                            // Build our contact card
+                            val torManager = TorManager.getInstance(this@TorService)
+                            val ownContactCard = com.securelegion.models.ContactCard(
+                                displayName = keyManager.getUsername() ?: "Unknown",
+                                solanaPublicKey = keyManager.getSolanaPublicKey(),
+                                x25519PublicKey = keyManager.getEncryptionPublicKey(),
+                                kyberPublicKey = keyManager.getKyberPublicKey(),
+                                solanaAddress = keyManager.getSolanaAddress(),
+                                friendRequestOnion = keyManager.getFriendRequestOnion() ?: "",
+                                messagingOnion = keyManager.getMessagingOnion() ?: "",
+                                voiceOnion = torManager.getVoiceOnionAddress() ?: "",
+                                contactPin = keyManager.getContactPin() ?: "",
+                                ipfsCid = keyManager.deriveContactListCID(),
+                                timestamp = System.currentTimeMillis() / 1000
+                            )
+
+                            // Encrypt with their X25519 public key
+                            val confirmationJson = ownContactCard.toJson()
+                            val encryptedConfirmation = RustBridge.encryptMessage(
+                                plaintext = confirmationJson,
+                                recipientX25519PublicKey = contactCard.x25519PublicKey
+                            )
+
+                            // Send via their friend-request.onion
+                            val success = RustBridge.sendFriendRequestAccepted(
+                                recipientOnion = contactCard.friendRequestOnion,
+                                encryptedAcceptance = encryptedConfirmation
+                            )
+
+                            if (success) {
+                                Log.i(TAG, "✓ Sent Phase 2b confirmation to ${contactCard.displayName}")
+                            } else {
+                                Log.w(TAG, "Failed to send Phase 2b confirmation (they may be offline)")
+                            }
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Error sending Phase 2b confirmation", e)
+                        }
+                    }
+
+                    // Remove any pending outgoing requests to this friend
+                    val prefs = getSharedPreferences("friend_requests", MODE_PRIVATE)
+                    val pendingRequestsV2 = prefs.getStringSet("pending_requests_v2", mutableSetOf())?.toMutableSet() ?: mutableSetOf()
+                    val updatedRequests = pendingRequestsV2.filter { requestJson ->
+                        try {
+                            val request = com.securelegion.models.PendingFriendRequest.fromJson(requestJson)
+                            // Keep requests that don't match this friend
+                            request.displayName != contactCard.displayName ||
+                            request.direction != com.securelegion.models.PendingFriendRequest.DIRECTION_OUTGOING
+                        } catch (e: Exception) {
+                            true  // Keep if can't parse
+                        }
+                    }.toMutableSet()
+                    prefs.edit().putStringSet("pending_requests_v2", updatedRequests).apply()
+
+                    // Broadcast to update AddFriendActivity UI
+                    val broadcastIntent = Intent("com.securelegion.FRIEND_REQUEST_RECEIVED")
+                    broadcastIntent.setPackage(packageName)
+                    sendBroadcast(broadcastIntent)
+                    Log.d(TAG, "Broadcast sent to refresh UI after friend added")
+
+                    // Show notification
+                    showFriendRequestAcceptedNotification(contactCard.displayName)
+                    return
+
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to add Phase 2 contact to database", e)
+                    return
+                }
+            }
+
+            // OLD v1.0 PATH: Parse as FriendRequest (backward compatibility)
+            val acceptance = try {
+                com.securelegion.models.FriendRequest.fromJson(decryptedJson)
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to parse as either Phase 2 or v1.0 format", e)
+                return
+            }
+
+            Log.i(TAG, "v1.0: Acceptance from: ${acceptance.displayName}, CID: ${acceptance.ipfsCid}")
 
             // Find matching pending outgoing request
             val prefs = getSharedPreferences("friend_requests", MODE_PRIVATE)
@@ -2022,18 +3483,32 @@ class TorService : Service() {
                         contactCard.x25519PublicKey,
                         android.util.Base64.NO_WRAP
                     ),
-                    torOnionAddress = contactCard.torOnionAddress,
+                    kyberPublicKeyBase64 = android.util.Base64.encodeToString(
+                        contactCard.kyberPublicKey,
+                        android.util.Base64.NO_WRAP
+                    ),
+                    torOnionAddress = contactCard.messagingOnion,  // DEPRECATED - for backward compatibility
+                    friendRequestOnion = contactCard.friendRequestOnion,
+                    messagingOnion = contactCard.messagingOnion,
+                    voiceOnion = contactCard.voiceOnion,
+                    ipfsCid = contactCard.ipfsCid,
+                    contactPin = contactCard.contactPin,
                     addedTimestamp = System.currentTimeMillis(),
                     lastContactTimestamp = System.currentTimeMillis(),
                     trustLevel = com.securelegion.database.entities.Contact.TRUST_UNTRUSTED,
                     friendshipStatus = com.securelegion.database.entities.Contact.FRIENDSHIP_CONFIRMED
                 )
 
-                kotlinx.coroutines.runBlocking {
+                val contactId = kotlinx.coroutines.runBlocking {
                     database.contactDao().insertContact(contact)
                 }
 
-                Log.i(TAG, "✓ Added ${contactCard.displayName} to Contacts with CONFIRMED status")
+                Log.i(TAG, "✓ Added ${contactCard.displayName} to Contacts with CONFIRMED status (ID: $contactId)")
+
+                // NOTE: This is the OLD v1.0 friend request handler (DEPRECATED)
+                // Key chain initialization should happen in Phase 2 handler with quantum parameters
+                // Do NOT initialize here - will cause encryption mismatch!
+                Log.w(TAG, "⚠️  OLD v1.0 friend request path - key chain NOT initialized (use NEW Phase 1/2/2b flow)")
 
                 // Remove from pending
                 val newPendingSet = pendingRequestsV2.toMutableSet()
@@ -2042,6 +3517,12 @@ class TorService : Service() {
 
                 Log.i(TAG, "✓ Friend request accepted! ${acceptance.displayName} is now your friend")
                 Log.i(TAG, "   Removed from pending requests, added to Contacts")
+
+                // Broadcast to update AddFriendActivity UI
+                val broadcastIntent = Intent("com.securelegion.FRIEND_REQUEST_RECEIVED")
+                broadcastIntent.setPackage(packageName)
+                sendBroadcast(broadcastIntent)
+                Log.d(TAG, "Broadcast sent to refresh UI after friend added")
 
                 // Show notification
                 showFriendRequestAcceptedNotification(acceptance.displayName)
@@ -2142,12 +3623,24 @@ class TorService : Service() {
             // Use hashCode to create stable ID for each unique sender
             val friendRequestNotificationId = 5000 + Math.abs(senderName.hashCode() % 10000)
 
-            // Launch via LockActivity to prevent showing app before authentication
-            val intent = android.content.Intent(this, com.securelegion.LockActivity::class.java).apply {
-                putExtra("TARGET_ACTIVITY", "MainActivity")
-                putExtra("SHOW_FRIEND_REQUESTS", true)
-                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            // Check if user is already unlocked - if so, go directly to MainActivity
+            val isUnlocked = com.securelegion.utils.SessionManager.isUnlocked(this)
+
+            val intent = if (isUnlocked) {
+                // User is already logged in - go directly to MainActivity
+                android.content.Intent(this, com.securelegion.MainActivity::class.java).apply {
+                    putExtra("SHOW_FRIEND_REQUESTS", true)
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
+                }
+            } else {
+                // User is locked - go through LockActivity
+                android.content.Intent(this, com.securelegion.LockActivity::class.java).apply {
+                    putExtra("TARGET_ACTIVITY", "MainActivity")
+                    putExtra("SHOW_FRIEND_REQUESTS", true)
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+                }
             }
+
             val pendingIntent = android.app.PendingIntent.getActivity(
                 this,
                 0,
@@ -2188,8 +3681,8 @@ class TorService : Service() {
                 val keyManager = com.securelegion.crypto.KeyManager.getInstance(this@TorService)
                 val ownDisplayName = keyManager.getUsername()
                     ?: throw Exception("Username not set")
-                val ownCid = keyManager.getContactCardCid()
-                    ?: throw Exception("Contact card CID not found")
+                val ownCid = keyManager.getIPFSCID()
+                    ?: throw Exception("IPFS CID not found")
 
                 // Create acceptance notification
                 val acceptance = com.securelegion.models.FriendRequest(
@@ -2208,7 +3701,7 @@ class TorService : Service() {
 
                 // Send via Tor
                 val success = com.securelegion.crypto.RustBridge.sendFriendRequestAccepted(
-                    recipientOnion = recipientContactCard.torOnionAddress,
+                    recipientOnion = recipientContactCard.friendRequestOnion,
                     encryptedAcceptance = encryptedAcceptance
                 )
 
@@ -2233,11 +3726,22 @@ class TorService : Service() {
             // Use hashCode to create stable ID for each unique contact (different range from friend requests)
             val acceptedNotificationId = 6000 + Math.abs(contactName.hashCode() % 10000)
 
-            // Launch via LockActivity to prevent showing app before authentication
-            val intent = android.content.Intent(this, com.securelegion.LockActivity::class.java).apply {
-                putExtra("TARGET_ACTIVITY", "MainActivity")
-                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            // Check if user is already unlocked - if so, go directly to MainActivity
+            val isUnlocked = com.securelegion.utils.SessionManager.isUnlocked(this)
+
+            val intent = if (isUnlocked) {
+                // User is already logged in - go directly to MainActivity
+                android.content.Intent(this, com.securelegion.MainActivity::class.java).apply {
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
+                }
+            } else {
+                // User is locked - go through LockActivity
+                android.content.Intent(this, com.securelegion.LockActivity::class.java).apply {
+                    putExtra("TARGET_ACTIVITY", "MainActivity")
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+                }
             }
+
             val pendingIntent = android.app.PendingIntent.getActivity(
                 this,
                 0,
@@ -2287,53 +3791,53 @@ class TorService : Service() {
     /**
      * Store pending Ping for user to manually download later
      */
-    private fun storePendingPing(pingId: String, connectionId: Long, senderPublicKey: ByteArray?, senderName: String, encryptedPingWire: ByteArray): Long? {
-        try {
-            val keyManager = com.securelegion.crypto.KeyManager.getInstance(this)
-            val dbPassphrase = keyManager.getDatabasePassphrase()
-            val database = com.securelegion.database.SecureLegionDatabase.getInstance(this, dbPassphrase)
+    private suspend fun storePendingPing(pingId: String, connectionId: Long, senderPublicKey: ByteArray?, senderName: String, encryptedPingWire: ByteArray): Long? {
+        return withContext(Dispatchers.IO) {
+            try {
+                val keyManager = com.securelegion.crypto.KeyManager.getInstance(this@TorService)
+                val dbPassphrase = keyManager.getDatabasePassphrase()
+                val database = com.securelegion.database.SecureLegionDatabase.getInstance(this@TorService, dbPassphrase)
 
-            // Find contact by public key
-            if (senderPublicKey != null) {
-                val publicKeyBase64 = android.util.Base64.encodeToString(senderPublicKey, android.util.Base64.NO_WRAP)
-                Log.d(TAG, "Looking up contact by public key (Base64, first 20 chars): ${publicKeyBase64.take(20)}...")
+                // Find contact by public key
+                if (senderPublicKey != null) {
+                    val publicKeyBase64 = android.util.Base64.encodeToString(senderPublicKey, android.util.Base64.NO_WRAP)
+                    Log.d(TAG, "Looking up contact by public key (Base64, first 20 chars): ${publicKeyBase64.take(20)}...")
 
-                // Debug: List all contacts and their public keys
-                val allContacts = kotlinx.coroutines.runBlocking {
-                    database.contactDao().getAllContacts()
+                    // Debug: List all contacts and their public keys
+                    val allContacts = database.contactDao().getAllContacts()
+                    Log.d(TAG, "Total contacts in database: ${allContacts.size}")
+                    for (c in allContacts) {
+                        Log.d(TAG, "  Contact: ${c.displayName}, PubKey (first 20 chars): ${c.publicKeyBase64.take(20)}...")
+                    }
+
+                    val contact = database.contactDao().getContactByPublicKey(publicKeyBase64)
+
+                    if (contact != null) {
+                        // Store pending Ping in queue (NEW: supports multiple pings per contact)
+                        val prefs = getSharedPreferences("pending_pings", Context.MODE_PRIVATE)
+                        val encryptedPingBase64 = android.util.Base64.encodeToString(encryptedPingWire, android.util.Base64.NO_WRAP)
+
+                        val pendingPing = com.securelegion.models.PendingPing(
+                            pingId = pingId,
+                            connectionId = connectionId,
+                            senderName = senderName,
+                            timestamp = System.currentTimeMillis(),
+                            encryptedPingData = encryptedPingBase64,
+                            senderOnionAddress = contact.messagingOnion ?: contact.torOnionAddress ?: ""
+                        )
+
+                        com.securelegion.models.PendingPing.addToQueue(prefs, contact.id, pendingPing)
+                        Log.i(TAG, "Added Ping $pingId to queue for contact ${contact.id}: $senderName")
+                        return@withContext contact.id  // Return contact ID for broadcast
+                    } else {
+                        Log.w(TAG, "Cannot store Ping - sender not in contacts: $senderName")
+                    }
                 }
-                Log.d(TAG, "Total contacts in database: ${allContacts.size}")
-                for (c in allContacts) {
-                    Log.d(TAG, "  Contact: ${c.displayName}, PubKey (first 20 chars): ${c.publicKeyBase64.take(20)}...")
-                }
-
-                val contact = database.contactDao().getContactByPublicKey(publicKeyBase64)
-
-                if (contact != null) {
-                    // Store pending Ping in queue (NEW: supports multiple pings per contact)
-                    val prefs = getSharedPreferences("pending_pings", Context.MODE_PRIVATE)
-                    val encryptedPingBase64 = android.util.Base64.encodeToString(encryptedPingWire, android.util.Base64.NO_WRAP)
-
-                    val pendingPing = com.securelegion.models.PendingPing(
-                        pingId = pingId,
-                        connectionId = connectionId,
-                        senderName = senderName,
-                        timestamp = System.currentTimeMillis(),
-                        encryptedPingData = encryptedPingBase64,
-                        senderOnionAddress = contact.torOnionAddress
-                    )
-
-                    com.securelegion.models.PendingPing.addToQueue(prefs, contact.id, pendingPing)
-                    Log.i(TAG, "Added Ping $pingId to queue for contact ${contact.id}: $senderName")
-                    return contact.id  // Return contact ID for broadcast
-                } else {
-                    Log.w(TAG, "Cannot store Ping - sender not in contacts: $senderName")
-                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to store pending Ping", e)
             }
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to store pending Ping", e)
+            return@withContext null  // Failed to find/store contact
         }
-        return null  // Failed to find/store contact
     }
 
     /**
@@ -2372,7 +3876,7 @@ class TorService : Service() {
                         val success = RustBridge.sendTap(
                             recipientEd25519PubKey,
                             recipientX25519PubKey,
-                            contact.torOnionAddress
+                            contact.messagingOnion ?: contact.torOnionAddress ?: ""
                         )
 
                         if (success) {
@@ -2405,11 +3909,23 @@ class TorService : Service() {
      * Show simple notification that a message is waiting
      */
     private fun showNewMessageNotification() {
-        // Launch via LockActivity to prevent showing app before authentication
-        val openAppIntent = Intent(this, LockActivity::class.java).apply {
-            putExtra("TARGET_ACTIVITY", "MainActivity")
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        // Check if user is already unlocked - if so, go directly to MainActivity
+        // If locked, go through LockActivity for authentication
+        val isUnlocked = com.securelegion.utils.SessionManager.isUnlocked(this)
+
+        val openAppIntent = if (isUnlocked) {
+            // User is already logged in - go directly to MainActivity
+            Intent(this, MainActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
+            }
+        } else {
+            // User is locked - go through LockActivity
+            Intent(this, LockActivity::class.java).apply {
+                putExtra("TARGET_ACTIVITY", "MainActivity")
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            }
         }
+
         val openAppPendingIntent = PendingIntent.getActivity(
             this,
             0,
@@ -2832,6 +4348,9 @@ class TorService : Service() {
         listenersReady = false
         torConnected = false
 
+        // Stop bandwidth monitoring
+        stopBandwidthMonitoring()
+
         // Stop all listeners
         try {
             RustBridge.stopListeners()
@@ -2893,10 +4412,17 @@ class TorService : Service() {
                 AUTH_CHANNEL_NAME,
                 NotificationManager.IMPORTANCE_HIGH
             ).apply {
-                description = "Requires your approval to receive encrypted messages"
+                description = "Friend requests and message approvals"
                 setShowBadge(true)
                 enableVibration(true)
                 enableLights(true)
+                setSound(
+                    android.provider.Settings.System.DEFAULT_NOTIFICATION_URI,
+                    android.media.AudioAttributes.Builder()
+                        .setUsage(android.media.AudioAttributes.USAGE_NOTIFICATION)
+                        .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                        .build()
+                )
             }
 
             // Badge channel (for app icon badge with unread count)
@@ -2943,18 +4469,38 @@ class TorService : Service() {
             .setCategory(NotificationCompat.CATEGORY_SERVICE)
 
         // Only show notification text for problem states
-        // Normal "Connected" state shows only the app logo in status bar
+        // Normal "Connected" state shows bandwidth stats
         if (isProblemState) {
             builder.setContentTitle("Secure Legion")
                    .setContentText(status)
                    .setPriority(NotificationCompat.PRIORITY_DEFAULT)
         } else {
-            // Connected state - completely silent notification (just icon)
-            builder.setContentTitle("")
-                   .setContentText("")
-                   .setPriority(NotificationCompat.PRIORITY_MIN)
-                   .setShowWhen(false)  // Don't show timestamp
-                   .setSilent(true)      // Silent notification
+            // Connected state - show bandwidth stats
+            if (vpnActive) {
+                // VPN enabled - show combined stats
+                val messagingDown = formatBytes(currentDownloadSpeed)
+                val messagingUp = formatBytes(currentUploadSpeed)
+                val vpnDown = formatBytesTotal(vpnBytesReceived)
+                val vpnUp = formatBytesTotal(vpnBytesSent)
+
+                builder.setContentTitle("🛡️ Secure Legion")
+                       .setContentText("Messaging: ↓ $messagingDown ↑ $messagingUp\nVPN: ↓ $vpnDown ↑ $vpnUp")
+                       .setStyle(NotificationCompat.BigTextStyle()
+                           .bigText("Messaging Tor: ↓ $messagingDown / ↑ $messagingUp\nDevice VPN: ↓ $vpnDown / ↑ $vpnUp"))
+                       .setPriority(NotificationCompat.PRIORITY_MIN)
+                       .setShowWhen(false)
+                       .setSilent(true)
+            } else {
+                // VPN disabled - show only messaging stats
+                val downloadSpeed = formatBytes(currentDownloadSpeed)
+                val uploadSpeed = formatBytes(currentUploadSpeed)
+
+                builder.setContentTitle("Connected to the Tor Network")
+                       .setContentText("↓ $downloadSpeed / ↑ $uploadSpeed")
+                       .setPriority(NotificationCompat.PRIORITY_MIN)
+                       .setShowWhen(false)
+                       .setSilent(true)
+            }
         }
 
         // Android 12+ (API 31+): Make notification truly non-dismissible
@@ -2969,6 +4515,246 @@ class TorService : Service() {
         val notification = createNotification(status)
         val notificationManager = getSystemService(NotificationManager::class.java)
         notificationManager.notify(NOTIFICATION_ID, notification)
+    }
+
+    // ==================== VOICE SERVICE ====================
+
+    /**
+     * Initialize voice streaming service
+     * - Creates voice hidden service .onion address
+     * - Registers VoiceCallManager as packet callback
+     * - Starts voice streaming server on port 9152
+     */
+    private fun startVoiceService() {
+        Log.i(TAG, "startVoiceService() called")
+        try {
+            // Get VoiceCallManager singleton instance
+            Log.d(TAG, "Getting VoiceCallManager instance...")
+            val voiceCallManager = com.securelegion.voice.VoiceCallManager.getInstance(applicationContext)
+
+            // Register as voice packet callback for incoming voice packets
+            Log.d(TAG, "Setting voice packet callback...")
+            RustBridge.setVoicePacketCallback(voiceCallManager)
+
+            // Register signaling callback for CALL_OFFER/CALL_ANSWER messages over voice onion
+            Log.d(TAG, "Setting voice signaling callback...")
+            RustBridge.setVoiceSignalingCallback(object : RustBridge.VoiceSignalingCallback {
+                override fun onSignalingMessage(senderPubkey: ByteArray, wireMessage: ByteArray) {
+                    Log.i(TAG, "Voice signaling message received via HTTP: ${wireMessage.size} bytes")
+
+                    // Wire format: [Type][Sender X25519 Pubkey - 32 bytes][Encrypted Message]
+                    if (wireMessage.size < 33) {
+                        Log.e(TAG, "Invalid signaling message: too short (${wireMessage.size} bytes)")
+                        return
+                    }
+
+                    // Extract encrypted payload (skip type byte + 32 byte pubkey)
+                    val encryptedPayload = wireMessage.copyOfRange(33, wireMessage.size)
+
+                    // Lookup contact by X25519 public key
+                    kotlinx.coroutines.GlobalScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                        try {
+                            val keyManager = com.securelegion.crypto.KeyManager.getInstance(applicationContext)
+                            val dbPassphrase = keyManager.getDatabasePassphrase()
+                            val database = com.securelegion.database.SecureLegionDatabase.getInstance(applicationContext, dbPassphrase)
+
+                            val contact = database.contactDao().getContactByX25519PublicKey(
+                                android.util.Base64.encodeToString(senderPubkey, android.util.Base64.NO_WRAP)
+                            )
+
+                            if (contact == null) {
+                                Log.w(TAG, "⚠️  Cannot process signaling - contact not found for X25519 key")
+                                return@launch
+                            }
+
+                            val senderOnion = contact.voiceOnion ?: contact.messagingOnion ?: contact.torOnionAddress ?: ""
+                            if (senderOnion.isEmpty()) {
+                                Log.w(TAG, "⚠️  Cannot process signaling - no onion address for contact ${contact.id}")
+                                return@launch
+                            }
+
+                            // Process call signaling through MessageService
+                            val messageService = MessageService(applicationContext)
+                            val encryptedPayloadBase64 = android.util.Base64.encodeToString(encryptedPayload, android.util.Base64.NO_WRAP)
+
+                            messageService.handleCallSignaling(
+                                encryptedData = encryptedPayloadBase64,
+                                senderPublicKey = senderPubkey,
+                                senderOnionAddress = senderOnion,
+                                contactId = contact.id
+                            )
+                            Log.i(TAG, "✓ Voice signaling message processed via HTTP")
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Error processing voice signaling message", e)
+                        }
+                    }
+                }
+            })
+            Log.i(TAG, "✓ Voice signaling callback registered")
+
+            // CRITICAL: Start VOICE TOR first (separate Tor instance with Single Onion Service)
+            // This Tor runs on port 9052 with HiddenServiceNonAnonymousMode 1 for 3-hop latency
+            val torManager = com.securelegion.crypto.TorManager.getInstance(applicationContext)
+            Log.i(TAG, "Starting VOICE Tor instance (Single Onion Service mode)...")
+            val voiceTorStarted = torManager.startVoiceTor()
+            if (!voiceTorStarted) {
+                Log.e(TAG, "Failed to start voice Tor - cannot create voice hidden service")
+                return
+            }
+            Log.i(TAG, "✓ Voice Tor started successfully (3-hop Single Onion Service)")
+
+            // IMPORTANT: Start voice streaming server SECOND (bind to localhost:9152)
+            // This must happen BEFORE creating the hidden service, otherwise Tor will try
+            // to route traffic to a port that isn't listening yet
+            Log.d(TAG, "Starting voice streaming server on localhost:9152...")
+            RustBridge.startVoiceStreamingServer()
+            Log.i(TAG, "✓ Voice streaming server started on localhost:9152")
+
+            // Read voice onion address from torrc-generated hostname file
+            // (Single Onion Services don't support ADD_ONION, must be configured in torrc)
+            Log.i(TAG, "Reading voice onion address from torrc-generated hostname file...")
+            val hostnameFile = File(filesDir, "voice_tor/voice_hidden_service/hostname")
+
+            // Wait for hostname file to be created by Tor (max 30 seconds)
+            var attempts = 0
+            while (!hostnameFile.exists() && attempts < 30) {
+                Thread.sleep(1000)
+                attempts++
+            }
+
+            if (!hostnameFile.exists()) {
+                Log.e(TAG, "❌ Voice hidden service hostname file not found after 30s")
+                throw Exception("Voice Tor did not create hostname file")
+            }
+
+            val voiceOnion = hostnameFile.readText().trim()
+            Log.i(TAG, "✓ Voice onion address from torrc: $voiceOnion")
+
+            // Check if this is different from what's stored
+            val existingVoiceOnion = torManager.getVoiceOnionAddress()
+            if (existingVoiceOnion != voiceOnion) {
+                Log.i(TAG, "Voice onion changed from $existingVoiceOnion to $voiceOnion - updating...")
+                torManager.saveVoiceOnionAddress(voiceOnion)
+            } else {
+                Log.i(TAG, "Voice onion address unchanged: $voiceOnion")
+            }
+
+            Log.i(TAG, "✓ Voice streaming service fully initialized")
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ CRITICAL ERROR initializing voice service: ${e.message}", e)
+            e.printStackTrace()
+        }
+    }
+
+    // ==================== BANDWIDTH MONITORING ====================
+
+    /**
+     * Start monitoring network bandwidth and updating notification
+     * Updates every 2s when app open, 10s when app closed (saves battery)
+     */
+    private fun startBandwidthMonitoring() {
+        // Initialize baseline
+        lastRxBytes = android.net.TrafficStats.getTotalRxBytes()
+        lastTxBytes = android.net.TrafficStats.getTotalTxBytes()
+        lastBandwidthUpdate = System.currentTimeMillis()
+
+        // Create update runnable
+        bandwidthUpdateRunnable = object : Runnable {
+            override fun run() {
+                updateBandwidthStats()
+                // Update notification with current speeds
+                updateNotification("Connected to the Tor Network")
+
+                // Adaptive update interval: fast when app open, slow when closed
+                val updateInterval = if (isAppInForeground) {
+                    BANDWIDTH_UPDATE_FAST  // 5 seconds
+                } else {
+                    BANDWIDTH_UPDATE_SLOW  // 10 seconds (saves battery)
+                }
+
+                // Schedule next update
+                bandwidthHandler.postDelayed(this, updateInterval)
+            }
+        }
+
+        // Start monitoring
+        bandwidthHandler.post(bandwidthUpdateRunnable!!)
+        Log.d(TAG, "Bandwidth monitoring started")
+    }
+
+    /**
+     * Update foreground state (called by activities)
+     * Adjusts bandwidth update frequency
+     */
+    fun setAppInForeground(inForeground: Boolean) {
+        if (isAppInForeground != inForeground) {
+            isAppInForeground = inForeground
+            Log.d(TAG, "App foreground state changed: $inForeground (bandwidth updates: ${if (inForeground) "fast (5s)" else "slow (10s)"})")
+        }
+    }
+
+    /**
+     * Stop bandwidth monitoring
+     */
+    private fun stopBandwidthMonitoring() {
+        bandwidthUpdateRunnable?.let {
+            bandwidthHandler.removeCallbacks(it)
+        }
+        bandwidthUpdateRunnable = null
+        currentDownloadSpeed = 0
+        currentUploadSpeed = 0
+        Log.d(TAG, "Bandwidth monitoring stopped")
+    }
+
+    /**
+     * Update bandwidth statistics
+     * Calculates download/upload speeds based on traffic since last update
+     */
+    private fun updateBandwidthStats() {
+        val now = System.currentTimeMillis()
+        val currentRxBytes = android.net.TrafficStats.getTotalRxBytes()
+        val currentTxBytes = android.net.TrafficStats.getTotalTxBytes()
+
+        // Calculate time delta (in seconds)
+        val timeDelta = (now - lastBandwidthUpdate) / 1000.0
+        if (timeDelta <= 0) return  // Avoid division by zero
+
+        // Calculate bytes transferred since last update
+        val rxDelta = currentRxBytes - lastRxBytes
+        val txDelta = currentTxBytes - lastTxBytes
+
+        // Calculate speeds (bytes per second)
+        currentDownloadSpeed = (rxDelta / timeDelta).toLong()
+        currentUploadSpeed = (txDelta / timeDelta).toLong()
+
+        // Update for next iteration
+        lastRxBytes = currentRxBytes
+        lastTxBytes = currentTxBytes
+        lastBandwidthUpdate = now
+    }
+
+    /**
+     * Format bytes into human-readable speed string
+     * Examples: "1.2 MiB/s", "456 KiB/s", "12 B/s"
+     */
+    private fun formatBytes(bytes: Long): String {
+        return when {
+            bytes >= 1024 * 1024 -> String.format("%.1f MiB/s", bytes / (1024.0 * 1024.0))
+            bytes >= 1024 -> String.format("%.0f KiB/s", bytes / 1024.0)
+            else -> "$bytes B/s"
+        }
+    }
+
+    /**
+     * Format total bytes (not speed) into human-readable string
+     * Examples: "1.2 MB", "456 KB", "12 B"
+     */
+    private fun formatBytesTotal(bytes: Long): String {
+        return when {
+            bytes >= 1024 * 1024 -> String.format("%.1f MB", bytes / (1024.0 * 1024.0))
+            bytes >= 1024 -> String.format("%.1f KB", bytes / 1024.0)
+            else -> "$bytes B"
+        }
     }
 
     override fun onBind(intent: Intent?): IBinder? {
@@ -3019,6 +4805,31 @@ class TorService : Service() {
         } catch (e: Exception) {
             Log.e(TAG, "Failed to register network callback", e)
         }
+    }
+
+    private fun setupVpnBroadcastReceiver() {
+        vpnBroadcastReceiver = object : android.content.BroadcastReceiver() {
+            override fun onReceive(context: Context?, intent: Intent?) {
+                if (intent?.action == ACTION_VPN_BANDWIDTH_UPDATE) {
+                    vpnBytesReceived = intent.getLongExtra(EXTRA_VPN_RX_BYTES, 0L)
+                    vpnBytesSent = intent.getLongExtra(EXTRA_VPN_TX_BYTES, 0L)
+                    vpnActive = intent.getBooleanExtra(EXTRA_VPN_ACTIVE, false)
+
+                    // Update notification with new VPN stats
+                    if (torConnected) {
+                        updateNotification("Connected to the Tor Network")
+                    }
+                }
+            }
+        }
+
+        val filter = android.content.IntentFilter(ACTION_VPN_BANDWIDTH_UPDATE)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(vpnBroadcastReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            registerReceiver(vpnBroadcastReceiver, filter)
+        }
+        Log.d(TAG, "VPN broadcast receiver registered")
     }
 
     // ==================== HEALTH CHECK MONITORING ====================
@@ -3475,17 +5286,28 @@ class TorService : Service() {
         listenersReady = false
         isServiceRunning = false
 
+        // Clear instance
+        instance = null
+
         // Cancel AlarmManager restart checks
         cancelServiceRestart()
 
         // Clean up handlers
         reconnectHandler.removeCallbacksAndMessages(null)
+        bandwidthHandler.removeCallbacksAndMessages(null)
 
         // Unregister network callback
         try {
             networkCallback?.let { connectivityManager?.unregisterNetworkCallback(it) }
         } catch (e: Exception) {
             Log.e(TAG, "Error unregistering network callback", e)
+        }
+
+        // Unregister VPN broadcast receiver
+        try {
+            vpnBroadcastReceiver?.let { unregisterReceiver(it) }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error unregistering VPN broadcast receiver", e)
         }
 
         // Release wake lock

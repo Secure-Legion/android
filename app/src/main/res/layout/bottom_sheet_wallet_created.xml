@@ -74,9 +74,7 @@
             android:text="ADm9P...2eoLX5"
             android:textSize="14sp"
             android:textColor="@color/text_white"
-            android:fontFamily="@font/poppins_regular"
-            android:ellipsize="middle"
-            android:singleLine="true" />
+            android:fontFamily="@font/poppins_regular" />
 
         <ImageView
             android:id="@+id/copyAddressButton"
@@ -96,7 +94,6 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="horizontal"
-        android:background="#1A1A1A"
         android:padding="12dp"
         android:layout_marginBottom="16dp">
 

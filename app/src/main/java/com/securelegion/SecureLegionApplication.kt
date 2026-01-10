@@ -2,7 +2,10 @@ package com.securelegion
 
 import android.app.Activity
 import android.app.Application
+import android.app.NotificationChannel
+import android.app.NotificationManager
 import android.content.Intent
+import android.os.Build
 import android.os.Bundle
 import android.util.Log
 import androidx.lifecycle.DefaultLifecycleObserver
@@ -11,6 +14,9 @@ import androidx.lifecycle.ProcessLifecycleOwner
 import com.securelegion.crypto.TorManager
 import IPtProxy.Controller
 import java.io.File
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 
 /**
  * Application class for Secure Legion
@@ -24,6 +30,9 @@ class SecureLegionApplication : Application() {
 
     companion object {
         private const val TAG = "SecureLegionApp"
+
+        // Notification channel IDs
+        const val CHANNEL_ID_CALLS = "voice_calls"
 
         // Track if app is in background
         private var isInBackground = false
@@ -40,6 +49,9 @@ class SecureLegionApplication : Application() {
         super.onCreate()
 
         Log.d(TAG, "Application starting...")
+
+        // Create notification channels
+        createNotificationChannels()
 
         // Initialize IPtProxy controller for pluggable transports
         // This MUST be done before any bridge configuration
@@ -63,12 +75,32 @@ class SecureLegionApplication : Application() {
         } catch (e: Exception) {
             Log.e(TAG, "Failed to initialize Tor", e)
         }
+
+        // Initialize IPFS Manager for auto-pinning mesh (v5 architecture)
+        try {
+            Log.d(TAG, "Initializing IPFS Manager...")
+            CoroutineScope(Dispatchers.IO).launch {
+                val ipfsManager = com.securelegion.services.IPFSManager.getInstance(this@SecureLegionApplication)
+                val result = ipfsManager.initialize()
+                if (result.isSuccess) {
+                    Log.i(TAG, "IPFS Manager initialized successfully")
+                } else {
+                    Log.e(TAG, "IPFS Manager initialization failed: ${result.exceptionOrNull()?.message}")
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to initialize IPFS Manager", e)
+        }
     }
 
     /**
      * Register lifecycle observer to lock app when backgrounded
+     * DISABLED: We now only use inactivity timer in BaseActivity, not immediate lock on background
      */
     private fun registerLifecycleObserver() {
+        // DISABLED: Don't lock immediately when app backgrounds
+        // Only use the inactivity timer in BaseActivity (lock after X minutes of no interaction)
+        /*
         ProcessLifecycleOwner.get().lifecycle.addObserver(object : DefaultLifecycleObserver {
             override fun onStop(owner: LifecycleOwner) {
                 // App went to background
@@ -94,6 +126,7 @@ class SecureLegionApplication : Application() {
                 }
             }
         })
+        */
 
         // Track current foreground activity
         registerActivityLifecycleCallbacks(object : ActivityLifecycleCallbacks {
@@ -122,6 +155,29 @@ class SecureLegionApplication : Application() {
         })
 
         Log.d(TAG, "Lifecycle observer registered for auto-lock")
+    }
+
+    /**
+     * Create notification channels for Android 8.0+
+     */
+    private fun createNotificationChannels() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val notificationManager = getSystemService(NotificationManager::class.java)
+
+            // Voice calls notification channel
+            val callsChannel = NotificationChannel(
+                CHANNEL_ID_CALLS,
+                "Voice Calls",
+                NotificationManager.IMPORTANCE_HIGH
+            ).apply {
+                description = "Notifications for incoming calls and missed calls"
+                enableVibration(true)
+                setShowBadge(true)
+            }
+
+            notificationManager.createNotificationChannel(callsChannel)
+            Log.d(TAG, "Notification channels created")
+        }
     }
 
     private fun initializeTor() {

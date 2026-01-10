@@ -402,8 +402,8 @@ class WalletActivity : AppCompatActivity() {
                         val currentWallet = wallets.maxByOrNull { it.lastUsedAt }
 
                         withContext(Dispatchers.Main) {
-                            // If wallet has a Zcash address, it's a ZEC wallet
-                            if (currentWallet?.zcashAddress != null) {
+                            // If wallet has a Zcash address (unified or legacy), it's a ZEC wallet
+                            if (!currentWallet?.zcashUnifiedAddress.isNullOrEmpty() || !currentWallet?.zcashAddress.isNullOrEmpty()) {
                                 currencyLabel?.text = "ZEC"
                             } else {
                                 currencyLabel?.text = "SOL"
@@ -454,7 +454,7 @@ class WalletActivity : AppCompatActivity() {
                 val currentWallet = wallets.maxByOrNull { it.lastUsedAt }
 
                 // Check if this is a Zcash wallet or Solana wallet
-                val isZcashWallet = currentWallet?.zcashAddress != null && !currentWallet.zcashAddress.isEmpty()
+                val isZcashWallet = (!currentWallet?.zcashUnifiedAddress.isNullOrEmpty() || !currentWallet?.zcashAddress.isNullOrEmpty())
 
                 if (isZcashWallet) {
                     Log.d("WalletActivity", "Loading ZEC wallet balance")
@@ -816,9 +816,9 @@ class WalletActivity : AppCompatActivity() {
     private fun updateChainIcon(iconView: ImageView?, wallet: Wallet?) {
         if (iconView == null || wallet == null) return
 
-        // Determine wallet type: if it has a Zcash address and no Solana, it's ZEC
+        // Determine wallet type: if it has a Zcash address (unified or legacy) and no Solana, it's ZEC
         // If it has Solana address, it's SOL (default)
-        val isZcashWallet = !wallet.zcashAddress.isNullOrEmpty() && wallet.solanaAddress.isEmpty()
+        val isZcashWallet = (!wallet.zcashUnifiedAddress.isNullOrEmpty() || !wallet.zcashAddress.isNullOrEmpty()) && wallet.solanaAddress.isEmpty()
 
         if (isZcashWallet) {
             iconView.setImageResource(R.drawable.ic_zcash)
@@ -838,12 +838,10 @@ class WalletActivity : AppCompatActivity() {
                 // Filter out "main" wallet - it's hidden (used only for encryption keys)
                 val wallets = allWallets.filter { it.walletId != "main" }
 
-                withContext(Dispatchers.Main) {
-                    if (wallets.isEmpty()) {
-                        ThemedToast.show(this@WalletActivity, "No wallets found")
-                        return@withContext
-                    }
+                // Get current wallet to determine initial chain selection
+                val currentWallet = wallets.maxByOrNull { it.lastUsedAt }
 
+                withContext(Dispatchers.Main) {
                     // Create bottom sheet dialog
                     val bottomSheet = BottomSheetDialog(this@WalletActivity)
                     val view = layoutInflater.inflate(R.layout.bottom_sheet_wallet_selector, null)
@@ -871,38 +869,45 @@ class WalletActivity : AppCompatActivity() {
                         parentView?.setBackgroundResource(android.R.color.transparent)
                     }
 
-                    // Get container for wallet list
+                    // Get UI elements
                     val walletListContainer = view.findViewById<LinearLayout>(R.id.walletListContainer)
 
-                    // Add each wallet to the list
+                    // Show ALL wallets (no chain filtering)
                     for (wallet in wallets) {
                         val walletItemView = layoutInflater.inflate(R.layout.item_wallet_selector, walletListContainer, false)
 
-                        val walletName = walletItemView.findViewById<TextView>(R.id.walletName)
-                        val walletBalance = walletItemView.findViewById<TextView>(R.id.walletBalance)
-                        val settingsBtn = walletItemView.findViewById<View>(R.id.walletSettingsBtn)
+                            val walletName = walletItemView.findViewById<TextView>(R.id.walletName)
+                            val walletBalance = walletItemView.findViewById<TextView>(R.id.walletBalance)
+                            val settingsBtn = walletItemView.findViewById<View>(R.id.walletSettingsBtn)
 
-                        walletName.text = wallet.name
-                        walletBalance.text = "Loading..." // TODO: Load actual balance
+                            walletName.text = wallet.name
+                            walletBalance.text = "$0.00" // Will be updated with actual balance
 
-                        // Click on wallet item to switch
-                        walletItemView.setOnClickListener {
-                            switchToWallet(wallet)
-                            bottomSheet.dismiss()
+                            // Click on wallet item to switch (and set active if Zcash)
+                            walletItemView.setOnClickListener {
+                                val isZcashWallet = !wallet.zcashUnifiedAddress.isNullOrEmpty() || !wallet.zcashAddress.isNullOrEmpty()
+                                if (isZcashWallet) {
+                                    // For Zcash wallets, set as active and switch
+                                    setActiveZcashWallet(wallet.walletId)
+                                } else {
+                                    // For non-Zcash wallets, just switch
+                                    switchToWallet(wallet)
+                                }
+                                bottomSheet.dismiss()
+                            }
+
+                            // Click on settings button
+                            settingsBtn.setOnClickListener {
+                                val intent = Intent(this@WalletActivity, WalletSettingsActivity::class.java)
+                                intent.putExtra("WALLET_ID", wallet.walletId)
+                                intent.putExtra("WALLET_NAME", wallet.name)
+                                intent.putExtra("IS_MAIN_WALLET", wallet.walletId == "main")
+                                startActivity(intent)
+                                bottomSheet.dismiss()
+                            }
+
+                            walletListContainer.addView(walletItemView)
                         }
-
-                        // Click on settings button
-                        settingsBtn.setOnClickListener {
-                            val intent = Intent(this@WalletActivity, WalletSettingsActivity::class.java)
-                            intent.putExtra("WALLET_ID", wallet.walletId)
-                            intent.putExtra("WALLET_NAME", wallet.name)
-                            intent.putExtra("IS_MAIN_WALLET", wallet.walletId == "main")
-                            startActivity(intent)
-                            bottomSheet.dismiss()
-                        }
-
-                        walletListContainer.addView(walletItemView)
-                    }
 
                     bottomSheet.show()
                 }
@@ -942,6 +947,66 @@ class WalletActivity : AppCompatActivity() {
                 Log.e("WalletActivity", "Failed to switch wallet", e)
                 withContext(Dispatchers.Main) {
                     ThemedToast.show(this@WalletActivity, "Failed to switch wallet")
+                }
+            }
+        }
+    }
+
+    private fun setActiveZcashWallet(walletId: String) {
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                Log.i("WalletActivity", "Setting active Zcash wallet: $walletId")
+
+                // Get wallet from database
+                val keyManager = KeyManager.getInstance(this@WalletActivity)
+                val dbPassphrase = keyManager.getDatabasePassphrase()
+                val database = SecureLegionDatabase.getInstance(this@WalletActivity, dbPassphrase)
+                val wallet = database.walletDao().getWalletById(walletId)
+
+                if (wallet == null) {
+                    withContext(Dispatchers.Main) {
+                        ThemedToast.show(this@WalletActivity, "Wallet not found")
+                    }
+                    return@launch
+                }
+
+                withContext(Dispatchers.Main) {
+                    ThemedToast.show(this@WalletActivity, "Activating Zcash wallet...")
+                }
+
+                // Call ZcashService to set active wallet
+                val zcashService = ZcashService.getInstance(this@WalletActivity)
+                val result = zcashService.setActiveZcashWallet(walletId)
+
+                if (result.isSuccess) {
+                    Log.i("WalletActivity", "Successfully set active Zcash wallet: $walletId")
+
+                    // Update last used timestamp
+                    database.walletDao().updateLastUsed(walletId, System.currentTimeMillis())
+
+                    withContext(Dispatchers.Main) {
+                        // Update wallet name
+                        val walletNameText = findViewById<TextView>(R.id.walletNameText)
+                        walletNameText?.text = wallet.name
+
+                        // Update chain icon based on wallet type
+                        val walletChainIcon = findViewById<ImageView>(R.id.walletChainIcon)
+                        updateChainIcon(walletChainIcon, wallet)
+
+                        ThemedToast.show(this@WalletActivity, "Zcash wallet activated successfully!")
+                        // Reload wallet balance for the active wallet
+                        loadWalletBalance()
+                    }
+                } else {
+                    Log.e("WalletActivity", "Failed to set active Zcash wallet", result.exceptionOrNull())
+                    withContext(Dispatchers.Main) {
+                        ThemedToast.show(this@WalletActivity, "Failed to activate Zcash wallet: ${result.exceptionOrNull()?.message}")
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e("WalletActivity", "Error setting active Zcash wallet", e)
+                withContext(Dispatchers.Main) {
+                    ThemedToast.show(this@WalletActivity, "Error: ${e.message}")
                 }
             }
         }

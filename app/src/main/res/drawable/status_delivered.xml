@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="16dp"
+    android:height="16dp"
+    android:viewportWidth="16"
+    android:viewportHeight="16">
+
+    <!-- Filled white circle -->
+    <path
+        android:pathData="M8,8m-6,0a6,6 0,1,1 12,0a6,6 0,1,1 -12,0"
+        android:fillColor="#FFFFFF"/>
+
+    <!-- Double checkmark - transparent/cut out (use the bubble color) -->
+    <path
+        android:strokeWidth="1.5"
+        android:pathData="M3.5,8 L5.5,10 L9,6.5"
+        android:strokeColor="#1E90FF"
+        android:fillColor="@android:color/transparent"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"/>
+    <path
+        android:strokeWidth="1.5"
+        android:pathData="M6.5,8 L8.5,10 L12,6.5"
+        android:strokeColor="#1E90FF"
+        android:fillColor="@android:color/transparent"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"/>
+</vector>
