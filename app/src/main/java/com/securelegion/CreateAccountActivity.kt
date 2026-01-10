@@ -320,9 +320,61 @@ class CreateAccountActivity : AppCompatActivity() {
                     }
                 }
 
-                // Update loading state
+                // Voice onion address will be created automatically by TorService on first startup
+                // (Single Onion Services must be configured in torrc, not via ADD_ONION)
                 withContext(Dispatchers.Main) {
-                    showLoading("Uploading Contact Card...", "Connecting to IPFS network")
+                    showLoading("Creating account...", "Voice calling service will be set up on first launch")
+                }
+                Log.i("CreateAccount", "Voice onion will be created by TorService from torrc hostname file")
+                val voiceOnionAddress = "" // Will be populated by TorService on first launch
+
+                // Generate random PIN first
+                val cardManager = ContactCardManager(this@CreateAccountActivity)
+                val contactCardPin = cardManager.generateRandomPin()
+
+                // Create friend request .onion address (v2.0) - retry until success
+                var friendRequestOnion = ""
+                var friendRequestAttempt = 0
+                while (friendRequestOnion.isEmpty()) {
+                    try {
+                        friendRequestAttempt++
+                        withContext(Dispatchers.Main) {
+                            showLoading("Creating account...", "Setting up friend request service" + if (friendRequestAttempt > 1) " (attempt $friendRequestAttempt)" else "")
+                        }
+                        Log.d("CreateAccount", "Creating friend request .onion address (attempt $friendRequestAttempt)...")
+                        friendRequestOnion = keyManager.createFriendRequestOnion()
+                        Log.i("CreateAccount", "Friend request .onion: $friendRequestOnion")
+                    } catch (e: Exception) {
+                        Log.e("CreateAccount", "Failed to create friend request .onion (attempt $friendRequestAttempt): ${e.message}", e)
+                        if (friendRequestAttempt < 5) {
+                            Thread.sleep(2000) // Wait 2 seconds before retry
+                        } else {
+                            throw Exception("Failed to create friend request .onion after $friendRequestAttempt attempts: ${e.message}")
+                        }
+                    }
+                }
+
+                // Derive IPFS CID from seed (v2.0) - retry until success
+                var ipfsCid = ""
+                var ipfsCidAttempt = 0
+                while (ipfsCid.isEmpty()) {
+                    try {
+                        ipfsCidAttempt++
+                        withContext(Dispatchers.Main) {
+                            showLoading("Creating account...", "Generating identity CID" + if (ipfsCidAttempt > 1) " (attempt $ipfsCidAttempt)" else "")
+                        }
+                        Log.d("CreateAccount", "Deriving IPFS CID from seed (attempt $ipfsCidAttempt)...")
+                        ipfsCid = keyManager.deriveIPFSCID(mnemonic)
+                        keyManager.storeIPFSCID(ipfsCid)
+                        Log.i("CreateAccount", "IPFS CID: $ipfsCid")
+                    } catch (e: Exception) {
+                        Log.e("CreateAccount", "Failed to derive IPFS CID (attempt $ipfsCidAttempt): ${e.message}", e)
+                        if (ipfsCidAttempt < 5) {
+                            Thread.sleep(2000) // Wait 2 seconds before retry
+                        } else {
+                            throw Exception("Failed to derive IPFS CID after $ipfsCidAttempt attempts: ${e.message}")
+                        }
+                    }
                 }
 
                 // Create and upload contact card
@@ -331,57 +383,50 @@ class CreateAccountActivity : AppCompatActivity() {
                     displayName = username,
                     solanaPublicKey = keyManager.getSolanaPublicKey(),
                     x25519PublicKey = keyManager.getEncryptionPublicKey(),
+                    kyberPublicKey = keyManager.getKyberPublicKey(),
                     solanaAddress = keyManager.getSolanaAddress(),
-                    torOnionAddress = onionAddress,
+                    friendRequestOnion = friendRequestOnion,
+                    messagingOnion = onionAddress,
+                    voiceOnion = voiceOnionAddress,
+                    contactPin = contactCardPin,
+                    ipfsCid = ipfsCid,
                     timestamp = System.currentTimeMillis()
                 )
+                // Store contact card info in encrypted storage
+                keyManager.storeContactPin(contactCardPin)
+                keyManager.storeIPFSCID(ipfsCid)
+                // Note: friendRequestOnion already stored by createFriendRequestOnion()
+                keyManager.storeMessagingOnion(onionAddress)
 
-                // Generate random PIN
-                val cardManager = ContactCardManager(this@CreateAccountActivity)
-                val contactCardPin = cardManager.generateRandomPin()
-                val publicKey = keyManager.getSolanaAddress()
+                // Initialize internal wallet in database
+                val dbPassphrase = keyManager.getDatabasePassphrase()
+                val database = SecureLegionDatabase.getInstance(this@CreateAccountActivity, dbPassphrase)
+                val timestamp = System.currentTimeMillis()
+                val mainWallet = Wallet(
+                    walletId = "main",
+                    name = "Wallet 1",
+                    solanaAddress = keyManager.getSolanaAddress(),
+                    isMainWallet = true,
+                    createdAt = timestamp,
+                    lastUsedAt = timestamp
+                )
+                database.walletDao().insertWallet(mainWallet)
+                Log.i("CreateAccount", "Internal wallet initialized in database")
 
-                Log.d("CreateAccount", "Uploading contact card to IPFS...")
+                Log.i("CreateAccount", "Contact card created (local only, not uploaded)")
+                Log.i("CreateAccount", "CID: $ipfsCid (deterministic from seed)")
+                Log.i("CreateAccount", "PIN: $contactCardPin")
 
-                // Upload to IPFS with PIN encryption
-                val result = withContext(Dispatchers.IO) {
-                    cardManager.uploadContactCard(contactCard, contactCardPin, publicKey)
-                }
+                // Mark that seed phrase has NOT been confirmed yet
+                val setupPrefs = getSharedPreferences("account_setup", MODE_PRIVATE)
+                setupPrefs.edit().putBoolean("seed_phrase_confirmed", false).apply()
+                Log.i("CreateAccount", "Set seed_phrase_confirmed = false (user must confirm backup)")
 
-                if (result.isSuccess) {
-                    val (cid, size) = result.getOrThrow()
-
-                    // Store CID and PIN in encrypted storage
-                    keyManager.storeContactCardInfo(cid, contactCardPin)
-
-                    // Initialize internal wallet in database
-                    val dbPassphrase = keyManager.getDatabasePassphrase()
-                    val database = SecureLegionDatabase.getInstance(this@CreateAccountActivity, dbPassphrase)
-                    val timestamp = System.currentTimeMillis()
-                    val mainWallet = Wallet(
-                        walletId = "main",
-                        name = "Wallet 1",
-                        solanaAddress = keyManager.getSolanaAddress(),
-                        isMainWallet = true,
-                        createdAt = timestamp,
-                        lastUsedAt = timestamp
-                    )
-                    database.walletDao().insertWallet(mainWallet)
-                    Log.i("CreateAccount", "Internal wallet initialized in database")
-
-                    Log.i("CreateAccount", "Contact card uploaded successfully")
-                    Log.i("CreateAccount", "CID: $cid")
-                    Log.i("CreateAccount", "PIN: $contactCardPin")
-                    Log.i("CreateAccount", "Size: $size bytes")
-
-                    // Navigate to Account Created screen to show CID, PIN, and seed phrase
-                    val intent = Intent(this@CreateAccountActivity, AccountCreatedActivity::class.java)
-                    intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
-                    startActivity(intent)
-                    finish()
-                } else {
-                    throw result.exceptionOrNull() ?: Exception("Unknown error uploading contact card")
-                }
+                // Navigate to Account Created screen to show CID, PIN, and seed phrase
+                val intent = Intent(this@CreateAccountActivity, AccountCreatedActivity::class.java)
+                intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+                startActivity(intent)
+                finish()
 
             } catch (e: Exception) {
                 Log.e("CreateAccount", "Failed to create account", e)

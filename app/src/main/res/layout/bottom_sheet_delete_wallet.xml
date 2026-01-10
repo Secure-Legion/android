@@ -21,7 +21,7 @@
         android:layout_height="wrap_content"
         android:text="Delete Wallet"
         android:textSize="24sp"
-        android:textColor="#FF6B6B"
+        android:textColor="@color/text_white"
         android:fontFamily="@font/space_grotesk_bold"
         android:gravity="center"
         android:layout_marginBottom="8dp" />
@@ -35,6 +35,18 @@
         android:textSize="18sp"
         android:textColor="@color/text_white"
         android:fontFamily="@font/poppins_semibold"
+        android:gravity="center"
+        android:layout_marginBottom="8dp" />
+
+    <!-- Wallet Address -->
+    <TextView
+        android:id="@+id/walletAddressText"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="ADm9P...2eoLX5"
+        android:textSize="12sp"
+        android:textColor="#888888"
+        android:fontFamily="@font/poppins_regular"
         android:gravity="center"
         android:layout_marginBottom="24dp" />
 
@@ -56,16 +68,6 @@
             android:textSize="14sp"
             android:textColor="#CCCCCC"
             android:fontFamily="@font/poppins_regular"
-            android:lineSpacingMultiplier="1.3"
-            android:layout_marginBottom="12dp" />
-
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="Make sure you have backed up your seed phrase before proceeding. This action cannot be undone."
-            android:textSize="14sp"
-            android:textColor="#FF6B6B"
-            android:fontFamily="@font/poppins_medium"
             android:lineSpacingMultiplier="1.3" />
 
     </LinearLayout>

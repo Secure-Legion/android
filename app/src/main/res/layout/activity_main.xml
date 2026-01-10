@@ -130,7 +130,7 @@
 
     </androidx.constraintlayout.widget.ConstraintLayout>
 
-    <!-- Messages/Contacts Tabs -->
+    <!-- Messages/Groups/Contacts Tabs -->
     <LinearLayout
         android:id="@+id/tabsContainer"
         android:layout_width="match_parent"
@@ -149,6 +149,19 @@
             android:text="Messages"
             android:textSize="18sp"
             android:textColor="@color/text_white"
+            android:fontFamily="@font/space_grotesk_bold"
+            android:clickable="true"
+            android:focusable="true"
+            android:paddingEnd="24dp"
+            android:background="?attr/selectableItemBackgroundBorderless" />
+
+        <TextView
+            android:id="@+id/tabGroups"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Groups"
+            android:textSize="18sp"
+            android:textColor="@color/text_gray"
             android:fontFamily="@font/space_grotesk_bold"
             android:clickable="true"
             android:focusable="true"
@@ -199,6 +212,14 @@
                 android:background="#000000" />
 
         </LinearLayout>
+
+        <!-- Groups List Container -->
+        <include
+            android:id="@+id/groupsView"
+            layout="@layout/fragment_groups"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:visibility="gone" />
 
         <!-- Contacts View -->
         <include
@@ -345,9 +366,9 @@
 
         </LinearLayout>
 
-        <!-- Lock Nav Item -->
+        <!-- Phone Nav Item -->
         <LinearLayout
-            android:id="@+id/navLock"
+            android:id="@+id/navPhone"
             android:layout_width="0dp"
             android:layout_height="match_parent"
             android:layout_weight="1"
@@ -360,15 +381,15 @@
             <ImageView
                 android:layout_width="24dp"
                 android:layout_height="24dp"
-                android:src="@drawable/ic_lock"
+                android:src="@drawable/ic_call"
                 android:layout_marginBottom="4dp"
                 android:tint="@color/text_gray"
-                android:contentDescription="Lock" />
+                android:contentDescription="Phone" />
 
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="Lock"
+                android:text="Phone"
                 android:textSize="11sp"
                 android:textColor="@color/text_gray"
                 android:fontFamily="@font/poppins_medium" />

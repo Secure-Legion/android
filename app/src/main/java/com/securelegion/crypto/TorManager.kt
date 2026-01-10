@@ -47,6 +47,7 @@ class TorManager(private val context: Context) {
         private const val TAG = "TorManager"
         private const val PREFS_NAME = "tor_prefs"
         private const val KEY_ONION_ADDRESS = "onion_address"
+        private const val KEY_VOICE_ONION_ADDRESS = "voice_onion_address"
         private const val KEY_TOR_INITIALIZED = "tor_initialized"
         private const val DEFAULT_SERVICE_PORT = 9150 // Virtual port on .onion address
         private const val DEFAULT_LOCAL_PORT = 8080 // Local port where app listens
@@ -112,6 +113,21 @@ class TorManager(private val context: Context) {
                 // Read bridge settings
                 val bridgeConfig = getBridgeConfiguration()
 
+                // Detect device performance to set appropriate initial timeouts
+                // Slower devices (Android < 13 or low-end) need more conservative timeouts
+                val sdkInt = android.os.Build.VERSION.SDK_INT
+                val isSlowerDevice = sdkInt < 33 // Android 13+
+
+                // Set initial CircuitBuildTimeout based on device
+                // Tor will learn and adapt from this starting point
+                val initialCircuitTimeout = if (isSlowerDevice) {
+                    "CircuitBuildTimeout 45" // Slower devices: start with 45s
+                } else {
+                    "CircuitBuildTimeout 30" // Faster devices: start with 30s
+                }
+
+                Log.i(TAG, "Device: Android $sdkInt, using initial timeout: ${if (isSlowerDevice) "45s (slower device)" else "30s (faster device)"}")
+
                 // ALWAYS write torrc configuration (even if Tor is running)
                 // This ensures bridge configuration changes are applied on restart
                 torrc.writeText("""
@@ -121,6 +137,9 @@ class TorManager(private val context: Context) {
                     CookieAuthentication 1
                     ClientOnly 1
                     AvoidDiskWrites 1
+                    DormantCanceledByStartup 1
+                    LearnCircuitBuildTimeout 1
+                    $initialCircuitTimeout
                     $bridgeConfig
                 """.trimIndent())
 
@@ -200,13 +219,28 @@ class TorManager(private val context: Context) {
                 val rustStatus = RustBridge.initializeTor()
                 Log.d(TAG, "Rust TorManager initialized: $rustStatus")
 
-                // Re-register hidden service with Tor (must be done on every Tor start)
+                // Re-register hidden services with Tor (must be done on every Tor start)
                 val keyManager = KeyManager.getInstance(context)
                 val onionAddress = if (keyManager.isInitialized()) {
-                    Log.d(TAG, "Re-registering hidden service with Tor...")
+                    Log.d(TAG, "Re-registering messaging hidden service with Tor...")
                     val address = RustBridge.createHiddenService(DEFAULT_SERVICE_PORT, DEFAULT_LOCAL_PORT)
                     saveOnionAddress(address)
-                    Log.d(TAG, "Hidden service re-registered: $address")
+                    keyManager.storeMessagingOnion(address)  // Store in KeyManager too
+                    Log.d(TAG, "Messaging hidden service re-registered: $address")
+
+                    // Also re-register friend-request hidden service (v2.0)
+                    Log.d(TAG, "Re-registering friend-request hidden service with Tor...")
+                    val friendRequestOnion = RustBridge.createFriendRequestHiddenService(
+                        servicePort = 9151,
+                        localPort = 9151,
+                        directory = "friend_requests"
+                    )
+                    Log.d(TAG, "Friend-request hidden service re-registered: $friendRequestOnion")
+
+                    // Note: Voice hidden service is created later by TorService.startVoiceService()
+                    // after the voice streaming listener is started on localhost:9152
+                    Log.d(TAG, "Voice hidden service will be registered by TorService after voice listener starts")
+
                     address
                 } else {
                     Log.d(TAG, "Skipping hidden service creation - no account yet")
@@ -252,6 +286,117 @@ class TorManager(private val context: Context) {
      */
     fun saveOnionAddress(address: String) {
         prefs.edit().putString(KEY_ONION_ADDRESS, address).apply()
+    }
+
+    /**
+     * Get the device's voice .onion address for receiving voice calls
+     * @return voice .onion address or null if not initialized
+     */
+    fun getVoiceOnionAddress(): String? {
+        return prefs.getString(KEY_VOICE_ONION_ADDRESS, null)
+    }
+
+    /**
+     * Save the voice .onion address
+     */
+    fun saveVoiceOnionAddress(address: String) {
+        prefs.edit().putString(KEY_VOICE_ONION_ADDRESS, address).apply()
+    }
+
+    /**
+     * Start VOICE Tor instance (port 9052) with Single Onion Service configuration
+     * This is a separate Tor daemon specifically for voice hidden service
+     * Runs with HiddenServiceNonAnonymousMode 1 for reduced latency (3-hop instead of 6-hop)
+     * Should be called from TorService.startVoiceService() before creating voice hidden service
+     */
+    fun startVoiceTor(): Boolean {
+        return try {
+            Log.i(TAG, "Starting VOICE Tor instance (Single Onion Service mode)...")
+
+            // Check if voice Tor control port is already accessible
+            val alreadyRunning = try {
+                val testSocket = java.net.Socket()
+                testSocket.connect(java.net.InetSocketAddress("127.0.0.1", 9052), 500)
+                testSocket.close()
+                true
+            } catch (e: Exception) {
+                false
+            }
+
+            if (alreadyRunning) {
+                Log.i(TAG, "Voice Tor already running on port 9052")
+                // Initialize Rust voice control connection
+                val status = RustBridge.initializeVoiceTorControl()
+                Log.i(TAG, "Voice Tor control initialized: $status")
+                return true
+            }
+
+            // Create voice Tor data directory (separate from main Tor)
+            val voiceTorDataDir = File(context.filesDir, "voice_tor")
+            voiceTorDataDir.mkdirs()
+
+            // Create voice hidden service directory
+            val voiceHiddenServiceDir = File(voiceTorDataDir, "voice_hidden_service")
+            voiceHiddenServiceDir.mkdirs()
+
+            // Create voice torrc file with HiddenServiceDir configuration
+            val voiceTorrc = File(context.filesDir, "voice_torrc")
+            voiceTorrc.writeText("""
+                DataDirectory ${voiceTorDataDir.absolutePath}
+                ControlPort 127.0.0.1:9052
+                CookieAuthentication 1
+                SOCKSPort 0
+                AvoidDiskWrites 1
+                HiddenServiceNonAnonymousMode 1
+                HiddenServiceSingleHopMode 1
+                LearnCircuitBuildTimeout 1
+                CircuitBuildTimeout 30
+                HiddenServiceDir ${voiceHiddenServiceDir.absolutePath}
+                HiddenServicePort 9152 127.0.0.1:9152
+            """.trimIndent())
+
+            Log.i(TAG, "Voice torrc written to: ${voiceTorrc.absolutePath}")
+            Log.i(TAG, "Voice Tor config: Single Onion Service (3-hop, service location visible)")
+
+            // Start VoiceTorService (separate service for voice Tor)
+            val voiceIntent = Intent(context, com.securelegion.services.VoiceTorService::class.java)
+            voiceIntent.action = com.securelegion.services.VoiceTorService.ACTION_START
+            context.startService(voiceIntent)
+
+            Log.i(TAG, "VoiceTorService started, waiting for control port 9052...")
+
+            // Wait for voice Tor control port to be ready
+            var attempts = 0
+            val maxAttempts = 60 // 60 seconds max
+            var controlPortReady = false
+
+            while (attempts < maxAttempts && !controlPortReady) {
+                try {
+                    val testSocket = java.net.Socket()
+                    testSocket.connect(java.net.InetSocketAddress("127.0.0.1", 9052), 1000)
+                    testSocket.close()
+                    controlPortReady = true
+                    Log.i(TAG, "Voice Tor control port 9052 ready after ${attempts + 1} attempts")
+                } catch (e: Exception) {
+                    Thread.sleep(1000)
+                    attempts++
+                }
+            }
+
+            if (!controlPortReady) {
+                Log.e(TAG, "Voice Tor control port 9052 failed to become ready")
+                return false
+            }
+
+            // Initialize Rust voice control connection
+            val status = RustBridge.initializeVoiceTorControl()
+            Log.i(TAG, "✓ Voice Tor initialized successfully: $status")
+            true
+
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to start voice Tor: ${e.message}", e)
+            false
+        }
     }
 
     /**
@@ -347,9 +492,11 @@ class TorManager(private val context: Context) {
         contactX25519PublicKey: ByteArray,
         contactOnionAddress: String,
         encryptedMessage: ByteArray,
-        messageTypeByte: Byte
+        messageTypeByte: Byte,
+        pingId: String,
+        pingTimestamp: Long
     ): String {
-        return RustBridge.sendPing(contactEd25519PublicKey, contactX25519PublicKey, contactOnionAddress, encryptedMessage, messageTypeByte)
+        return RustBridge.sendPing(contactEd25519PublicKey, contactX25519PublicKey, contactOnionAddress, encryptedMessage, messageTypeByte, pingId, pingTimestamp)
     }
 
     /**
@@ -404,8 +551,24 @@ class TorManager(private val context: Context) {
                 "obfs4" -> {
                     Log.d(TAG, "Starting obfs4 transport...")
                     controller.start(IPtProxy.Obfs4, null)
-                    val port = controller.port(IPtProxy.Obfs4)
-                    Log.i(TAG, "Started obfs4 transport on port $port")
+
+                    // Wait for obfs4 to start and bind to a port
+                    var port = 0L
+                    var attempts = 0
+                    while (port == 0L && attempts < 30) {
+                        Thread.sleep(1000)
+                        port = controller.port(IPtProxy.Obfs4)
+                        attempts++
+                        if (port > 0) {
+                            Log.i(TAG, "✓ obfs4 transport started on port $port after ${attempts}s")
+                            break
+                        }
+                        Log.d(TAG, "Waiting for obfs4 to start... (${attempts}s)")
+                    }
+
+                    if (port == 0L) {
+                        Log.e(TAG, "✗ obfs4 failed to start after 30 seconds")
+                    }
                 }
                 "snowflake" -> {
                     Log.d(TAG, "Configuring snowflake transport...")
@@ -415,14 +578,46 @@ class TorManager(private val context: Context) {
                     controller.snowflakeIceServers = "stun:stun.l.google.com:19302,stun:stun.altar.com.pl:3478,stun:stun.antisip.com:3478"
                     Log.d(TAG, "Starting snowflake transport...")
                     controller.start(IPtProxy.Snowflake, null)
-                    val port = controller.port(IPtProxy.Snowflake)
-                    Log.i(TAG, "Started snowflake transport on port $port")
+
+                    // Wait for Snowflake to start and bind to a port
+                    var port = 0L
+                    var attempts = 0
+                    while (port == 0L && attempts < 30) {
+                        Thread.sleep(1000)
+                        port = controller.port(IPtProxy.Snowflake)
+                        attempts++
+                        if (port > 0) {
+                            Log.i(TAG, "✓ Snowflake transport started on port $port after ${attempts}s")
+                            break
+                        }
+                        Log.d(TAG, "Waiting for Snowflake to start... (${attempts}s)")
+                    }
+
+                    if (port == 0L) {
+                        Log.e(TAG, "✗ Snowflake failed to start after 30 seconds")
+                    }
                 }
                 "meek" -> {
                     Log.d(TAG, "Starting meek_lite transport...")
                     controller.start(IPtProxy.MeekLite, null)
-                    val port = controller.port(IPtProxy.MeekLite)
-                    Log.i(TAG, "Started meek_lite transport on port $port")
+
+                    // Wait for meek_lite to start and bind to a port
+                    var port = 0L
+                    var attempts = 0
+                    while (port == 0L && attempts < 30) {
+                        Thread.sleep(1000)
+                        port = controller.port(IPtProxy.MeekLite)
+                        attempts++
+                        if (port > 0) {
+                            Log.i(TAG, "✓ meek_lite transport started on port $port after ${attempts}s")
+                            break
+                        }
+                        Log.d(TAG, "Waiting for meek_lite to start... (${attempts}s)")
+                    }
+
+                    if (port == 0L) {
+                        Log.e(TAG, "✗ meek_lite failed to start after 30 seconds")
+                    }
                 }
             }
         } catch (e: Exception) {

@@ -8,5 +8,7 @@ data class Chat(
     val unreadCount: Int,
     val isOnline: Boolean,
     val avatar: String,
-    val securityBadge: String
+    val securityBadge: String,
+    val lastMessageStatus: Int = 0,  // 0 = none (received message), otherwise use Message.STATUS_* constants
+    val lastMessageIsSent: Boolean = false  // true if last message was sent by us
 )

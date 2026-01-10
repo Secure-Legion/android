@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="wrap_content"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:gravity="center"
+    android:paddingEnd="12dp">
+
+    <!-- Profile Circle with Remove X -->
+    <FrameLayout
+        android:layout_width="60dp"
+        android:layout_height="60dp">
+
+        <!-- Profile Circle -->
+        <FrameLayout
+            android:layout_width="60dp"
+            android:layout_height="60dp"
+            android:background="@drawable/profile_circle_bg">
+
+            <TextView
+                android:id="@+id/memberInitial"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:gravity="center"
+                android:text="A"
+                android:textColor="#FFFFFF"
+                android:textSize="22sp"
+                android:fontFamily="@font/poppins_bold" />
+
+        </FrameLayout>
+
+        <!-- Remove Button (X) -->
+        <ImageView
+            android:id="@+id/removeButton"
+            android:layout_width="22dp"
+            android:layout_height="22dp"
+            android:layout_gravity="top|end"
+            android:src="@android:drawable/ic_menu_close_clear_cancel"
+            android:background="@drawable/profile_circle_bg"
+            android:tint="#FF0000"
+            android:padding="2dp"
+            android:clickable="true"
+            android:focusable="true"
+            android:contentDescription="Remove member" />
+
+    </FrameLayout>
+
+    <!-- Member Name -->
+    <TextView
+        android:id="@+id/memberName"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="4dp"
+        android:text="Name"
+        android:textColor="#999999"
+        android:textSize="12sp"
+        android:maxLines="1"
+        android:ellipsize="end"
+        android:maxWidth="70dp"
+        android:fontFamily="@font/poppins_medium" />
+
+</LinearLayout>

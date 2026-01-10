@@ -7,18 +7,32 @@ import androidx.room.Room
 import androidx.room.RoomDatabase
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
+import com.securelegion.database.dao.CallHistoryDao
+import com.securelegion.database.dao.CallQualityLogDao
 import com.securelegion.database.dao.ContactDao
+import com.securelegion.database.dao.ContactKeyChainDao
+import com.securelegion.database.dao.GroupDao
+import com.securelegion.database.dao.GroupMemberDao
+import com.securelegion.database.dao.GroupMessageDao
 import com.securelegion.database.dao.MessageDao
+import com.securelegion.database.dao.PingInboxDao
 import com.securelegion.database.dao.ReceivedIdDao
 import com.securelegion.database.dao.UsedSignatureDao
 import com.securelegion.database.dao.WalletDao
+import com.securelegion.database.entities.CallHistory
+import com.securelegion.database.entities.CallQualityLog
 import com.securelegion.database.entities.Contact
+import com.securelegion.database.entities.ContactKeyChain
+import com.securelegion.database.entities.Group
+import com.securelegion.database.entities.GroupMember
+import com.securelegion.database.entities.GroupMessage
 import com.securelegion.database.entities.Message
+import com.securelegion.database.entities.PingInbox
 import com.securelegion.database.entities.ReceivedId
 import com.securelegion.database.entities.UsedSignature
 import com.securelegion.database.entities.Wallet
-import net.sqlcipher.database.SQLiteDatabase
-import net.sqlcipher.database.SupportFactory
+import net.zetetic.database.sqlcipher.SQLiteDatabase
+import net.zetetic.database.sqlcipher.SupportOpenHelperFactory
 
 /**
  * Encrypted SQLite database using SQLCipher + Room
@@ -33,8 +47,8 @@ import net.sqlcipher.database.SupportFactory
  * Database file location: /data/data/com.securelegion/databases/secure_legion.db
  */
 @Database(
-    entities = [Contact::class, Message::class, Wallet::class, ReceivedId::class, UsedSignature::class],
-    version = 17,
+    entities = [Contact::class, Message::class, Wallet::class, ReceivedId::class, UsedSignature::class, Group::class, GroupMember::class, GroupMessage::class, CallHistory::class, CallQualityLog::class, PingInbox::class, ContactKeyChain::class],
+    version = 29,
     exportSchema = false
 )
 abstract class SecureLegionDatabase : RoomDatabase() {
@@ -44,6 +58,13 @@ abstract class SecureLegionDatabase : RoomDatabase() {
     abstract fun walletDao(): WalletDao
     abstract fun receivedIdDao(): ReceivedIdDao
     abstract fun usedSignatureDao(): UsedSignatureDao
+    abstract fun groupDao(): GroupDao
+    abstract fun groupMemberDao(): GroupMemberDao
+    abstract fun groupMessageDao(): GroupMessageDao
+    abstract fun callHistoryDao(): CallHistoryDao
+    abstract fun callQualityLogDao(): CallQualityLogDao
+    abstract fun pingInboxDao(): PingInboxDao
+    abstract fun contactKeyChainDao(): ContactKeyChainDao
 
     companion object {
         private const val TAG = "SecureLegionDatabase"
@@ -294,6 +315,295 @@ abstract class SecureLegionDatabase : RoomDatabase() {
         }
 
         /**
+         * Migration from version 17 to 18: Add two .onion system fields for v2.0 contact system
+         */
+        private val MIGRATION_17_18 = object : Migration(17, 18) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                Log.i(TAG, "Migrating database from version 17 to 18")
+
+                // Add new fields for two .onion system
+                database.execSQL("ALTER TABLE contacts ADD COLUMN friendRequestOnion TEXT NOT NULL DEFAULT ''")
+                database.execSQL("ALTER TABLE contacts ADD COLUMN messagingOnion TEXT")
+                database.execSQL("ALTER TABLE contacts ADD COLUMN ipfsCid TEXT")
+                database.execSQL("ALTER TABLE contacts ADD COLUMN contactPin TEXT")
+
+                // Migrate existing data: torOnionAddress → messagingOnion
+                database.execSQL("UPDATE contacts SET messagingOnion = torOnionAddress WHERE torOnionAddress IS NOT NULL")
+
+                // Create new indices
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_contacts_friendRequestOnion ON contacts(friendRequestOnion)")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_contacts_messagingOnion ON contacts(messagingOnion)")
+
+                Log.i(TAG, "Migration completed: Added two .onion system (friendRequestOnion, messagingOnion, ipfsCid, contactPin)")
+            }
+        }
+
+        /**
+         * Migration from version 19 to 20: Add voiceOnion field for voice calling
+         */
+        private val MIGRATION_19_20 = object : Migration(19, 20) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                Log.i(TAG, "Migrating database from version 19 to 20")
+                database.execSQL("ALTER TABLE contacts ADD COLUMN voiceOnion TEXT")
+                Log.i(TAG, "Migration completed: Added voiceOnion column for voice calling")
+            }
+        }
+
+        /**
+         * Migration from version 21 to 22: Add call history table
+         */
+        private val MIGRATION_21_22 = object : Migration(21, 22) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                Log.i(TAG, "Migrating database from version 21 to 22")
+
+                // Create call_history table
+                database.execSQL("""
+                    CREATE TABLE IF NOT EXISTS call_history (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        contactId INTEGER NOT NULL,
+                        contactName TEXT NOT NULL,
+                        callId TEXT NOT NULL,
+                        timestamp INTEGER NOT NULL,
+                        type TEXT NOT NULL,
+                        duration INTEGER NOT NULL DEFAULT 0,
+                        missedReason TEXT
+                    )
+                """.trimIndent())
+
+                // Create index on timestamp for fast recent call queries
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_call_history_timestamp ON call_history(timestamp)")
+
+                // Create index on contactId for fast contact-specific queries
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_call_history_contactId ON call_history(contactId)")
+
+                Log.i(TAG, "Migration completed: Added call_history table")
+            }
+        }
+
+        /**
+         * Migration from version 22 to 23: Add profile picture support
+         */
+        private val MIGRATION_22_23 = object : Migration(22, 23) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                Log.i(TAG, "Migrating database from version 22 to 23")
+                // Add profilePictureBase64 column (nullable for contacts without pictures)
+                database.execSQL("ALTER TABLE contacts ADD COLUMN profilePictureBase64 TEXT")
+                Log.i(TAG, "Migration completed: Added profilePictureBase64 column for profile pictures")
+            }
+        }
+
+        /**
+         * Migration from version 23 to 24: Add call quality logs table
+         */
+        private val MIGRATION_23_24 = object : Migration(23, 24) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                Log.i(TAG, "Migrating database from version 23 to 24")
+
+                // Create call_quality_logs table
+                database.execSQL("""
+                    CREATE TABLE IF NOT EXISTS call_quality_logs (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        callId TEXT NOT NULL,
+                        contactName TEXT NOT NULL,
+                        timestamp INTEGER NOT NULL,
+                        durationSeconds INTEGER NOT NULL,
+                        qualityScore INTEGER NOT NULL,
+                        totalFrames INTEGER NOT NULL,
+                        latePercent REAL NOT NULL,
+                        plcPercent REAL NOT NULL,
+                        fecSuccessPercent REAL NOT NULL,
+                        outOfOrderPercent REAL NOT NULL,
+                        jitterBufferMs INTEGER NOT NULL,
+                        audioUnderruns INTEGER NOT NULL,
+                        circuitStatsJson TEXT NOT NULL
+                    )
+                """.trimIndent())
+
+                // Create index on timestamp for fast queries
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_call_quality_logs_timestamp ON call_quality_logs(timestamp)")
+
+                Log.i(TAG, "Migration completed: Added call_quality_logs table")
+            }
+        }
+
+        /**
+         * Migration from version 24 to 25: Add ping_inbox table for idempotent message delivery
+         */
+        private val MIGRATION_24_25 = object : Migration(24, 25) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                Log.i(TAG, "Migrating database from version 24 to 25")
+
+                // Create ping_inbox table
+                database.execSQL("""
+                    CREATE TABLE IF NOT EXISTS ping_inbox (
+                        pingId TEXT PRIMARY KEY NOT NULL,
+                        contactId INTEGER NOT NULL,
+                        state INTEGER NOT NULL,
+                        firstSeenAt INTEGER NOT NULL,
+                        lastUpdatedAt INTEGER NOT NULL,
+                        lastPingAt INTEGER NOT NULL,
+                        pingAckedAt INTEGER,
+                        pongSentAt INTEGER,
+                        msgAckedAt INTEGER,
+                        attemptCount INTEGER NOT NULL DEFAULT 1
+                    )
+                """.trimIndent())
+
+                // Create indices for common queries
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_ping_inbox_contactId_state ON ping_inbox(contactId, state)")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_ping_inbox_state ON ping_inbox(state)")
+
+                Log.i(TAG, "Migration completed: Added ping_inbox table for idempotent message delivery over Tor")
+            }
+        }
+
+        /**
+         * Migration from version 25 to 26: Add unique index on pingId for ultimate deduplication
+         */
+        private val MIGRATION_25_26 = object : Migration(25, 26) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                Log.i(TAG, "Migrating database from version 25 to 26")
+
+                // Add unique index on pingId (ultimate dedup authority)
+                // Note: Unique index on nullable column allows multiple NULLs (for sent messages)
+                database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_messages_pingId ON messages(pingId)")
+
+                Log.i(TAG, "Migration completed: Added unique index on pingId for deduplication")
+            }
+        }
+
+        /**
+         * Migration from version 26 to 27: Add contact_key_chains table for progressive ephemeral key evolution
+         */
+        private val MIGRATION_26_27 = object : Migration(26, 27) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                Log.i(TAG, "Migrating database from version 26 to 27")
+
+                // Create contact_key_chains table for per-message forward secrecy
+                database.execSQL("""
+                    CREATE TABLE IF NOT EXISTS contact_key_chains (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        contactId INTEGER NOT NULL,
+                        rootKeyBase64 TEXT NOT NULL,
+                        sendChainKeyBase64 TEXT NOT NULL,
+                        receiveChainKeyBase64 TEXT NOT NULL,
+                        sendCounter INTEGER NOT NULL DEFAULT 0,
+                        receiveCounter INTEGER NOT NULL DEFAULT 0,
+                        createdTimestamp INTEGER NOT NULL,
+                        lastEvolutionTimestamp INTEGER NOT NULL,
+                        FOREIGN KEY(contactId) REFERENCES contacts(id) ON DELETE CASCADE
+                    )
+                """.trimIndent())
+
+                // Create unique index on contactId (one key chain per contact)
+                database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_contact_key_chains_contactId ON contact_key_chains(contactId)")
+
+                Log.i(TAG, "Migration completed: Added contact_key_chains table for progressive ephemeral key evolution")
+            }
+        }
+
+        /**
+         * Migration from version 27 to 28: Add Kyber-1024 public key for post-quantum cryptography
+         */
+        private val MIGRATION_27_28 = object : Migration(27, 28) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                Log.i(TAG, "Migrating database from version 27 to 28")
+                // Add kyberPublicKeyBase64 column (nullable for backward compatibility)
+                database.execSQL("ALTER TABLE contacts ADD COLUMN kyberPublicKeyBase64 TEXT")
+                Log.i(TAG, "Migration completed: Added kyberPublicKeyBase64 column for post-quantum cryptography (ML-KEM-1024)")
+            }
+        }
+
+        /**
+         * Migration from version 28 to 29: Add per-wallet Zcash support and active wallet tracking
+         */
+        private val MIGRATION_28_29 = object : Migration(28, 29) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                Log.i(TAG, "Migrating database from version 28 to 29")
+                // Add Zcash per-wallet fields
+                database.execSQL("ALTER TABLE wallets ADD COLUMN zcashUnifiedAddress TEXT")
+                database.execSQL("ALTER TABLE wallets ADD COLUMN zcashAccountIndex INTEGER NOT NULL DEFAULT 0")
+                database.execSQL("ALTER TABLE wallets ADD COLUMN zcashBirthdayHeight INTEGER")
+                database.execSQL("ALTER TABLE wallets ADD COLUMN isActiveZcash INTEGER NOT NULL DEFAULT 0")
+                Log.i(TAG, "Migration completed: Added per-wallet Zcash support (zcashUnifiedAddress, zcashAccountIndex, zcashBirthdayHeight, isActiveZcash)")
+            }
+        }
+
+        /**
+         * Migration from version 20 to 21: Add group messaging tables
+         */
+        private val MIGRATION_20_21 = object : Migration(20, 21) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                Log.i(TAG, "Migrating database from version 20 to 21")
+
+                // Create groups table
+                database.execSQL("""
+                    CREATE TABLE IF NOT EXISTS groups (
+                        groupId TEXT PRIMARY KEY NOT NULL,
+                        name TEXT NOT NULL,
+                        encryptedGroupKeyBase64 TEXT NOT NULL,
+                        groupPin TEXT NOT NULL,
+                        groupIcon TEXT,
+                        createdAt INTEGER NOT NULL,
+                        lastActivityTimestamp INTEGER NOT NULL,
+                        isAdmin INTEGER NOT NULL DEFAULT 1,
+                        isMuted INTEGER NOT NULL DEFAULT 0,
+                        description TEXT
+                    )
+                """.trimIndent())
+                database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_groups_groupId ON groups(groupId)")
+
+                // Create group_members table
+                database.execSQL("""
+                    CREATE TABLE IF NOT EXISTS group_members (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        groupId TEXT NOT NULL,
+                        contactId INTEGER NOT NULL,
+                        isAdmin INTEGER NOT NULL DEFAULT 0,
+                        addedAt INTEGER NOT NULL,
+                        addedBy INTEGER,
+                        FOREIGN KEY(groupId) REFERENCES groups(groupId) ON DELETE CASCADE,
+                        FOREIGN KEY(contactId) REFERENCES contacts(id) ON DELETE CASCADE
+                    )
+                """.trimIndent())
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_group_members_groupId ON group_members(groupId)")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_group_members_contactId ON group_members(contactId)")
+                database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_group_members_groupId_contactId ON group_members(groupId, contactId)")
+
+                // Create group_messages table
+                database.execSQL("""
+                    CREATE TABLE IF NOT EXISTS group_messages (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        groupId TEXT NOT NULL,
+                        senderContactId INTEGER,
+                        senderName TEXT NOT NULL,
+                        messageId TEXT NOT NULL,
+                        encryptedContent TEXT NOT NULL,
+                        isSentByMe INTEGER NOT NULL,
+                        timestamp INTEGER NOT NULL,
+                        status INTEGER NOT NULL DEFAULT 0,
+                        signatureBase64 TEXT NOT NULL,
+                        nonceBase64 TEXT NOT NULL,
+                        messageType TEXT NOT NULL DEFAULT 'TEXT',
+                        voiceDuration INTEGER,
+                        voiceFilePath TEXT,
+                        attachmentType TEXT,
+                        encryptedAttachment TEXT,
+                        selfDestructSeconds INTEGER,
+                        FOREIGN KEY(groupId) REFERENCES groups(groupId) ON DELETE CASCADE,
+                        FOREIGN KEY(senderContactId) REFERENCES contacts(id) ON DELETE CASCADE
+                    )
+                """.trimIndent())
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_group_messages_groupId ON group_messages(groupId)")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_group_messages_senderContactId ON group_messages(senderContactId)")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_group_messages_timestamp ON group_messages(timestamp)")
+                database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_group_messages_messageId ON group_messages(messageId)")
+
+                Log.i(TAG, "Migration completed: Added groups, group_members, and group_messages tables for group messaging")
+            }
+        }
+
+        /**
          * Get database instance
          * @param context Application context
          * @param passphrase Encryption passphrase (should be derived from KeyManager)
@@ -346,11 +656,11 @@ abstract class SecureLegionDatabase : RoomDatabase() {
         private fun buildDatabase(context: Context, passphrase: ByteArray): SecureLegionDatabase {
             Log.i(TAG, "Building encrypted database with SQLCipher")
 
-            // Initialize SQLCipher
-            SQLiteDatabase.loadLibs(context)
+            // Initialize SQLCipher native library
+            System.loadLibrary("sqlcipher")
 
             // Create SQLCipher factory with passphrase
-            val factory = SupportFactory(passphrase)
+            val factory = SupportOpenHelperFactory(passphrase)
 
             return try {
                 Room.databaseBuilder(
@@ -359,7 +669,7 @@ abstract class SecureLegionDatabase : RoomDatabase() {
                     DATABASE_NAME
                 )
                     .openHelperFactory(factory)
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23, MIGRATION_23_24, MIGRATION_24_25, MIGRATION_25_26, MIGRATION_26_27, MIGRATION_27_28, MIGRATION_28_29)
                     .addCallback(object : RoomDatabase.Callback() {
                         override fun onCreate(db: SupportSQLiteDatabase) {
                             super.onCreate(db)
@@ -449,8 +759,8 @@ abstract class SecureLegionDatabase : RoomDatabase() {
                         SecureLegionDatabase::class.java,
                         DATABASE_NAME
                     )
-                        .openHelperFactory(SupportFactory(passphrase))
-                        .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17)
+                        .openHelperFactory(SupportOpenHelperFactory(passphrase))
+                        .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23, MIGRATION_23_24, MIGRATION_24_25, MIGRATION_25_26, MIGRATION_26_27, MIGRATION_27_28, MIGRATION_28_29)
                         .addCallback(object : RoomDatabase.Callback() {
                             override fun onCreate(db: SupportSQLiteDatabase) {
                                 super.onCreate(db)
@@ -489,12 +799,12 @@ abstract class SecureLegionDatabase : RoomDatabase() {
                 }
 
                 // Try to open database without passphrase (should fail if encrypted)
-                SQLiteDatabase.openDatabase(
-                    dbFile.absolutePath,
-                    "",
+                SQLiteDatabase.openOrCreateDatabase(
+                    dbFile,
+                    ByteArray(0),  // Empty passphrase - will fail if database is encrypted
                     null,
-                    SQLiteDatabase.OPEN_READONLY
-                )?.close()
+                    null
+                ).close()
 
                 Log.e(TAG, "WARNING: Database is NOT encrypted!")
                 return false

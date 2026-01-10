@@ -23,7 +23,11 @@
     <!-- Foreground Service for Tor (Ping-Pong Protocol) -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SYSTEM_EXEMPTED" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+
+    <!-- VPN Service for Tor Mode (Routes all device traffic through Tor) -->
+    <uses-permission android:name="android.permission.BIND_VPN_SERVICE" />
 
     <!-- Notifications (Android 13+) -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
@@ -56,6 +60,38 @@
             android:name=".ChatActivity"
             android:exported="false"
             android:windowSoftInputMode="adjustPan" />
+
+        <!-- Voice Calling Activities -->
+        <activity
+            android:name=".VoiceCallActivity"
+            android:exported="false"
+            android:screenOrientation="portrait"
+            android:launchMode="singleTop" />
+
+        <activity
+            android:name=".IncomingCallActivity"
+            android:exported="false"
+            android:screenOrientation="portrait"
+            android:showWhenLocked="true"
+            android:turnScreenOn="true"
+            android:excludeFromRecents="true" />
+
+        <activity
+            android:name=".CallLogActivity"
+            android:exported="false" />
+
+        <activity
+            android:name=".NewCallActivity"
+            android:exported="false"
+            android:windowSoftInputMode="adjustPan" />
+
+        <activity
+            android:name=".CallHistoryActivity"
+            android:exported="false" />
+
+        <activity
+            android:name=".DeveloperActivity"
+            android:exported="false" />
 
         <activity
             android:name=".ComposeActivity"
@@ -186,6 +222,24 @@
             android:exported="false" />
 
         <activity
+            android:name=".CreateGroupActivity"
+            android:exported="false"
+            android:windowSoftInputMode="adjustPan" />
+
+        <activity
+            android:name=".GroupProfileActivity"
+            android:exported="false" />
+
+        <activity
+            android:name=".GroupMembersActivity"
+            android:exported="false" />
+
+        <activity
+            android:name=".GroupChatActivity"
+            android:exported="false"
+            android:windowSoftInputMode="adjustResize" />
+
+        <activity
             android:name=".ManageTokensActivity"
             android:exported="false" />
 
@@ -242,6 +296,13 @@
                 android:value="Maintains Tor hidden service for secure P2P messaging" />
         </service>
 
+        <!-- Voice Tor service - Dedicated Tor instance for voice calling (Single Onion Service) -->
+        <service
+            android:name=".services.VoiceTorService"
+            android:enabled="true"
+            android:exported="false"
+            android:stopWithTask="false" />
+
         <!-- Download message service - Handles background message downloads -->
         <service
             android:name=".services.DownloadMessageService"
@@ -251,6 +312,18 @@
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="Downloads encrypted messages via Tor" />
+        </service>
+
+        <!-- Tor VPN Service - Routes all device traffic through Tor when enabled -->
+        <service
+            android:name=".services.TorVpnService"
+            android:enabled="true"
+            android:exported="false"
+            android:foregroundServiceType="systemExempted"
+            android:permission="android.permission.BIND_VPN_SERVICE">
+            <intent-filter>
+                <action android:name="android.net.VpnService" />
+            </intent-filter>
         </service>
 
         <!-- Broadcast receiver for TorService restart via AlarmManager -->

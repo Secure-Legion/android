@@ -3,6 +3,7 @@ package com.securelegion.database.entities
 import androidx.room.Entity
 import androidx.room.Index
 import androidx.room.PrimaryKey
+import android.util.Base64
 
 /**
  * Contact entity stored in encrypted SQLCipher database
@@ -12,7 +13,8 @@ import androidx.room.PrimaryKey
     tableName = "contacts",
     indices = [
         Index(value = ["solanaAddress"], unique = true),
-        Index(value = ["torOnionAddress"], unique = true)
+        Index(value = ["friendRequestOnion"], unique = false),  // NEW - not unique (can be empty for migrated)
+        Index(value = ["messagingOnion"], unique = false)       // NEW
     ]
 )
 data class Contact(
@@ -42,10 +44,56 @@ data class Contact(
     val x25519PublicKeyBase64: String,
 
     /**
-     * Tor v3 onion address with port (e.g., "abc123...xyz.onion:9050")
-     * Used for establishing direct P2P connections
+     * Kyber-1024 public key (1568 bytes) for post-quantum key encapsulation
+     * Used together with X25519 for hybrid quantum-resistant encryption
+     * Stored as Base64 for database compatibility
+     * Security: NIST FIPS 203 (ML-KEM-1024)
+     * Nullable for backward compatibility - will be populated during wallet initialization
      */
-    val torOnionAddress: String,
+    val kyberPublicKeyBase64: String? = null,
+
+    /**
+     * DEPRECATED - Tor v3 onion address (v1.0 single .onion)
+     * Kept for migration compatibility - use messagingOnion instead
+     */
+    @Deprecated("Use friendRequestOnion and messagingOnion instead")
+    val torOnionAddress: String? = null,
+
+    /**
+     * NEW (v2.0) - Public .onion address for friend requests (port 9151)
+     * Empty string for contacts from v1.0 (before migration)
+     */
+    val friendRequestOnion: String = "",
+
+    /**
+     * NEW (v2.0) - Private .onion address for messaging (port 8080)
+     * Same as old torOnionAddress for migrated contacts
+     */
+    val messagingOnion: String? = null,
+
+    /**
+     * NEW (v2.0) - Private .onion address for voice calls (port 9152)
+     * Separate from messaging onion for dedicated voice streaming
+     */
+    val voiceOnion: String? = null,
+
+    /**
+     * NEW (v2.0) - IPFS CID for their contact card (deterministic)
+     */
+    val ipfsCid: String? = null,
+
+    /**
+     * NEW (v2.0) - Their 10-digit PIN (encrypted in database)
+     * Format: XXX-XXX-XXXX
+     */
+    val contactPin: String? = null,
+
+    /**
+     * NEW (v2.1) - Profile picture as Base64-encoded JPEG
+     * Max 256KB, 512x512px, EXIF stripped for privacy
+     * Synced from ContactCard via IPFS
+     */
+    val profilePictureBase64: String? = null,
 
     /**
      * Unix timestamp when contact was added (milliseconds)
@@ -99,3 +147,22 @@ data class Contact(
         const val FRIENDSHIP_CONFIRMED = "CONFIRMED"
     }
 }
+
+/**
+ * Extension property to decode Ed25519 public key from Base64 to ByteArray
+ */
+val Contact.ed25519PublicKeyBytes: ByteArray
+    get() = Base64.decode(publicKeyBase64, Base64.NO_WRAP)
+
+/**
+ * Extension property to decode X25519 public key from Base64 to ByteArray
+ */
+val Contact.x25519PublicKeyBytes: ByteArray
+    get() = Base64.decode(x25519PublicKeyBase64, Base64.NO_WRAP)
+
+/**
+ * Extension property to decode Kyber-1024 public key from Base64 to ByteArray
+ * Returns null if Kyber key is not yet initialized
+ */
+val Contact.kyberPublicKeyBytes: ByteArray?
+    get() = kyberPublicKeyBase64?.let { Base64.decode(it, Base64.NO_WRAP) }

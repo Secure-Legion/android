@@ -109,7 +109,7 @@
         android:id="@+id/footerText"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:text="Secured by Tor Network"
+        android:text="Secured by Ping Pong"
         android:fontFamily="@font/poppins_medium"
         android:textSize="14sp"
         android:textColor="#999999"

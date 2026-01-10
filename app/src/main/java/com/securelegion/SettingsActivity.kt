@@ -1,20 +1,40 @@
 package com.securelegion
 
+import android.app.Activity
+import android.app.AlertDialog
 import android.content.Intent
+import android.net.VpnService
 import android.os.Bundle
 import android.util.Log
 import android.view.View
 import android.widget.LinearLayout
 import android.widget.TextView
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.widget.SwitchCompat
 import com.securelegion.crypto.KeyManager
+import com.securelegion.services.TorVpnService
 import com.securelegion.utils.BiometricAuthHelper
 import com.securelegion.utils.ThemedToast
 
 class SettingsActivity : BaseActivity() {
 
     private lateinit var biometricHelper: BiometricAuthHelper
+    private lateinit var torModeSwitch: SwitchCompat
+
+    // VPN permission launcher
+    private val vpnPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK) {
+            // Permission granted, start VPN service
+            startTorVpnService()
+        } else {
+            // Permission denied, turn off switch
+            torModeSwitch.isChecked = false
+            ThemedToast.show(this, "VPN permission denied")
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -26,6 +46,7 @@ class SettingsActivity : BaseActivity() {
         setupClickListeners()
         setupAutoWipeToggle()
         setupBiometricToggle()
+        setupTorModeToggle()
     }
 
     private fun setupClickListeners() {
@@ -62,6 +83,11 @@ class SettingsActivity : BaseActivity() {
         // Bridge
         findViewById<View>(R.id.bridgeItem).setOnClickListener {
             startActivity(Intent(this, BridgeActivity::class.java))
+        }
+
+        // Developer
+        findViewById<View>(R.id.developerItem).setOnClickListener {
+            startActivity(Intent(this, DeveloperActivity::class.java))
         }
 
         // Security Mode (includes auto-lock timer)
@@ -222,10 +248,73 @@ class SettingsActivity : BaseActivity() {
             finish()
         }
 
-        findViewById<View>(R.id.navLock).setOnClickListener {
-            val intent = Intent(this, LockActivity::class.java)
+        findViewById<View>(R.id.navPhone).setOnClickListener {
+            val intent = Intent(this, MainActivity::class.java)
+            intent.putExtra("SHOW_PHONE", true)
+            intent.flags = Intent.FLAG_ACTIVITY_CLEAR_TOP
             startActivity(intent)
             finish()
+        }
+    }
+
+    private fun setupTorModeToggle() {
+        torModeSwitch = findViewById(R.id.torModeSwitch)
+        val prefs = getSharedPreferences("tor_prefs", MODE_PRIVATE)
+
+        // Load current state
+        val isTorModeEnabled = TorVpnService.isRunning()
+        torModeSwitch.isChecked = isTorModeEnabled
+
+        // Handle toggle
+        torModeSwitch.setOnCheckedChangeListener { _, isChecked ->
+            if (isChecked) {
+                // User wants to enable Tor Mode - request VPN permission
+                requestVpnPermission()
+            } else {
+                // User wants to disable Tor Mode - stop VPN service
+                stopTorVpnService()
+            }
+        }
+    }
+
+    private fun requestVpnPermission() {
+        // Check if VPN permission is already granted
+        val prepareIntent = VpnService.prepare(this)
+        if (prepareIntent == null) {
+            // Permission already granted, start VPN immediately
+            startTorVpnService()
+        } else {
+            // Need to request permission
+            vpnPermissionLauncher.launch(prepareIntent)
+        }
+    }
+
+    private fun startTorVpnService() {
+        try {
+            Log.i("SettingsActivity", "Starting Tor VPN service...")
+            val intent = Intent(this, TorVpnService::class.java).apply {
+                action = TorVpnService.ACTION_START_VPN
+            }
+            startService(intent)
+            ThemedToast.show(this, "Tor Mode enabled - All traffic routed through Tor")
+        } catch (e: Exception) {
+            Log.e("SettingsActivity", "Failed to start Tor VPN", e)
+            ThemedToast.show(this, "Failed to start Tor Mode: ${e.message}")
+            torModeSwitch.isChecked = false
+        }
+    }
+
+    private fun stopTorVpnService() {
+        try {
+            Log.i("SettingsActivity", "Stopping Tor VPN service...")
+            val intent = Intent(this, TorVpnService::class.java).apply {
+                action = TorVpnService.ACTION_STOP_VPN
+            }
+            startService(intent)
+            ThemedToast.show(this, "Tor Mode disabled")
+        } catch (e: Exception) {
+            Log.e("SettingsActivity", "Failed to stop Tor VPN", e)
+            ThemedToast.show(this, "Failed to stop Tor Mode: ${e.message}")
         }
     }
 }

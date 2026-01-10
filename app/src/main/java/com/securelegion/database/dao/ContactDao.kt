@@ -43,9 +43,9 @@ interface ContactDao {
     suspend fun getContactBySolanaAddress(solanaAddress: String): Contact?
 
     /**
-     * Get contact by Tor onion address
+     * Get contact by Tor onion address (checks both friend-request and messaging onions)
      */
-    @Query("SELECT * FROM contacts WHERE torOnionAddress = :onionAddress")
+    @Query("SELECT * FROM contacts WHERE torOnionAddress = :onionAddress OR messagingOnion = :onionAddress")
     suspend fun getContactByOnionAddress(onionAddress: String): Contact?
 
     /**
@@ -109,6 +109,12 @@ interface ContactDao {
      */
     @Query("UPDATE contacts SET isBlocked = :isBlocked WHERE id = :contactId")
     suspend fun updateBlockedStatus(contactId: Long, isBlocked: Boolean)
+
+    /**
+     * Update contact profile photo
+     */
+    @Query("UPDATE contacts SET profilePictureBase64 = :photoBase64 WHERE id = :contactId")
+    suspend fun updateContactPhoto(contactId: Long, photoBase64: String?)
 
     /**
      * Get all distress contacts

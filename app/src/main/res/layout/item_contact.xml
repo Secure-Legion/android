@@ -13,24 +13,19 @@
     android:layout_marginBottom="8dp"
     android:gravity="center_vertical">
 
-    <!-- Profile Circle with Initial -->
-    <FrameLayout
+    <!-- Contact Avatar -->
+    <com.securelegion.views.AvatarView
+        android:id="@+id/contactAvatar"
         android:layout_width="56dp"
         android:layout_height="56dp"
-        android:background="@drawable/profile_circle_bg">
+        android:contentDescription="Contact Photo" />
 
-        <TextView
-            android:id="@+id/contactInitial"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_gravity="center"
-            android:text="W"
-            android:textSize="22sp"
-            android:textColor="#FFFFFF"
-            android:fontFamily="@font/space_grotesk_bold"
-            android:textStyle="bold" />
-
-    </FrameLayout>
+    <!-- Hidden for backward compatibility -->
+    <TextView
+        android:id="@+id/contactInitial"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:visibility="gone" />
 
     <!-- Contact Name -->
     <TextView

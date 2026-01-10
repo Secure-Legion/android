@@ -80,7 +80,7 @@ class ContactCardManager(private val context: Context) {
     }
 
     /**
-     * Download and decrypt contact card
+     * Download and decrypt contact card (v1.0 - IPFS only)
      * @param cid IPFS CID of encrypted contact card
      * @param pin 6-digit PIN for decryption
      * @return Decrypted ContactCard
@@ -119,10 +119,72 @@ class ContactCardManager(private val context: Context) {
     }
 
     /**
+     * Download contact card via Tor .onion address (v2.0)
+     * Uses HTTP GET through SOCKS5 to friend request .onion
+     * @param friendRequestOnion Friend request .onion address
+     * @param pin 6-digit PIN for decryption
+     * @return Decrypted ContactCard
+     */
+    suspend fun downloadContactCardViaTor(friendRequestOnion: String, pin: String): Result<ContactCard> {
+        return withContext(Dispatchers.IO) {
+            try {
+                validatePin(pin)
+
+                Log.d(TAG, "Downloading contact card via Tor from .onion: $friendRequestOnion")
+
+                // Build URL: http://friendrequest.onion:9151/contact-card
+                val url = "http://$friendRequestOnion:9151/contact-card"
+                Log.d(TAG, "GET $url")
+
+                // Download via Tor SOCKS5
+                val response = com.securelegion.crypto.RustBridge.httpGetViaTor(url)
+                    ?: throw Exception("HTTP GET failed - no response from .onion address")
+
+                Log.d(TAG, "Received response from .onion (${response.length} bytes)")
+
+                // Parse HTTP response to extract body (encrypted contact card)
+                val encrypted = parseHttpResponse(response)
+                Log.d(TAG, "Extracted encrypted contact card: ${encrypted.size} bytes")
+
+                // Decrypt with PIN
+                val decrypted = decryptWithPin(encrypted, pin)
+                Log.d(TAG, "Decrypted contact card: ${decrypted.length} bytes")
+
+                // Parse JSON to ContactCard
+                val contactCard = ContactCard.fromJson(decrypted)
+                Log.i(TAG, "Successfully downloaded contact card via Tor for: ${contactCard.displayName}")
+
+                Result.success(contactCard)
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to download contact card via Tor", e)
+                Result.failure(e)
+            }
+        }
+    }
+
+    /**
+     * Parse HTTP response to extract binary body (contact card)
+     * Handles both text and binary HTTP responses
+     */
+    private fun parseHttpResponse(response: String): ByteArray {
+        // Find double CRLF (end of headers)
+        val bodyStart = response.indexOf("\r\n\r\n")
+        if (bodyStart == -1) {
+            throw Exception("Invalid HTTP response - no headers delimiter")
+        }
+
+        // Extract body (everything after headers)
+        val body = response.substring(bodyStart + 4)
+
+        // Convert to bytes (contact card is binary encrypted data)
+        return body.toByteArray(StandardCharsets.ISO_8859_1)
+    }
+
+    /**
      * Encrypt data with PIN using libsodium (XSalsa20-Poly1305)
      * Format: [salt (16 bytes)][nonce (24 bytes)][ciphertext + MAC]
      */
-    private fun encryptWithPin(plaintext: String, pin: String): ByteArray {
+    fun encryptWithPin(plaintext: String, pin: String): ByteArray {
         // Generate random salt for Argon2id
         val salt = sodium.randomBytesBuf(PwHash.SALTBYTES)
 
@@ -171,7 +233,7 @@ class ContactCardManager(private val context: Context) {
      * Decrypt data with PIN using libsodium (XSalsa20-Poly1305)
      * Format: [salt (16 bytes)][nonce (24 bytes)][ciphertext + MAC]
      */
-    private fun decryptWithPin(encrypted: ByteArray, pin: String): String {
+    fun decryptWithPin(encrypted: ByteArray, pin: String): String {
         // Extract salt, nonce, and ciphertext
         if (encrypted.size < PwHash.SALTBYTES + SecretBox.NONCEBYTES + SecretBox.MACBYTES) {
             throw Exception("Invalid encrypted data: too short")
@@ -226,24 +288,28 @@ class ContactCardManager(private val context: Context) {
      * Validate PIN format (6 digits)
      */
     private fun validatePin(pin: String) {
-        if (!pin.matches(Regex("^\\d{6}$"))) {
-            throw IllegalArgumentException("PIN must be exactly 6 digits")
+        if (!pin.matches(Regex("^\\d{10}$"))) {
+            throw IllegalArgumentException("PIN must be exactly 10 digits")
         }
     }
 
     /**
-     * Generate random 6-digit PIN
+     * Generate random 10-digit PIN
      */
     fun generateRandomPin(): String {
-        val random = sodium.randomBytesBuf(4)
+        val random = sodium.randomBytesBuf(8)
 
-        // Convert to unsigned int and take modulo 1000000 to get 6 digits
-        val value = ((random[0].toInt() and 0xFF) shl 24) or
-                    ((random[1].toInt() and 0xFF) shl 16) or
-                    ((random[2].toInt() and 0xFF) shl 8) or
-                    (random[3].toInt() and 0xFF)
+        // Convert to unsigned long and take modulo 10000000000 to get 10 digits
+        val value = ((random[0].toLong() and 0xFF) shl 56) or
+                    ((random[1].toLong() and 0xFF) shl 48) or
+                    ((random[2].toLong() and 0xFF) shl 40) or
+                    ((random[3].toLong() and 0xFF) shl 32) or
+                    ((random[4].toLong() and 0xFF) shl 24) or
+                    ((random[5].toLong() and 0xFF) shl 16) or
+                    ((random[6].toLong() and 0xFF) shl 8) or
+                    (random[7].toLong() and 0xFF)
 
-        val pin = (Math.abs(value) % 1000000).toString().padStart(6, '0')
+        val pin = (Math.abs(value) % 10000000000L).toString().padStart(10, '0')
         return pin
     }
 }

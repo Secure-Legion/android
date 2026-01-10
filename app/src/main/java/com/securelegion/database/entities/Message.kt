@@ -22,7 +22,8 @@ import androidx.room.PrimaryKey
     indices = [
         Index(value = ["contactId"]),
         Index(value = ["timestamp"]),
-        Index(value = ["messageId"], unique = true)
+        Index(value = ["messageId"], unique = true),
+        Index(value = ["pingId"], unique = true)  // Ultimate dedup authority for received messages
     ]
 )
 data class Message(
@@ -120,8 +121,17 @@ data class Message(
     /**
      * Ping ID for Ping-Pong protocol
      * Used to match Pongs with Pings and track message delivery
+     * Generated once when message is created, never changes (prevents ghost pings)
      */
     val pingId: String? = null,
+
+    /**
+     * Ping timestamp (epoch milliseconds)
+     * Generated once when message is created, used with pingId to recreate same PingToken
+     * Retries re-send the EXACT SAME ciphertext bytes (no re-encryption on retry)
+     * This makes message identity stable and prevents nonce reuse vulnerabilities
+     */
+    val pingTimestamp: Long? = null,
 
     /**
      * Encrypted payload for sender-side storage

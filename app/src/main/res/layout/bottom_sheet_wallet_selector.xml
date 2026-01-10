@@ -13,18 +13,7 @@
         android:layout_height="5dp"
         android:layout_gravity="center_horizontal"
         android:background="#4A4A4A"
-        android:layout_marginBottom="16dp" />
-
-    <!-- Title -->
-    <TextView
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:text="Account"
-        android:textSize="22sp"
-        android:textColor="@color/text_white"
-        android:fontFamily="@font/space_grotesk_bold"
-        android:gravity="center"
-        android:paddingBottom="20dp" />
+        android:layout_marginBottom="20dp" />
 
     <!-- Wallet List Container -->
     <LinearLayout
