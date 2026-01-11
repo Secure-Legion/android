@@ -15,6 +15,81 @@
         android:background="#4A4A4A"
         android:layout_marginBottom="20dp" />
 
+    <!-- Chain Filter -->
+    <LinearLayout
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:layout_gravity="center_horizontal"
+        android:layout_marginBottom="24dp">
+
+        <!-- Solana Button -->
+        <LinearLayout
+            android:id="@+id/solanaChainButton"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:background="@drawable/wallet_dropdown_bg"
+            android:paddingStart="14dp"
+            android:paddingEnd="14dp"
+            android:paddingTop="10dp"
+            android:paddingBottom="10dp"
+            android:gravity="center_vertical"
+            android:layout_marginEnd="12dp"
+            android:clickable="true"
+            android:focusable="true">
+
+            <ImageView
+                android:layout_width="20dp"
+                android:layout_height="20dp"
+                android:src="@drawable/ic_solana"
+                android:layout_marginEnd="8dp"
+                android:contentDescription="Solana" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Solana"
+                android:textSize="14sp"
+                android:textColor="@color/text_white"
+                android:fontFamily="@font/poppins_medium" />
+
+        </LinearLayout>
+
+        <!-- Zcash Button -->
+        <LinearLayout
+            android:id="@+id/zcashChainButton"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:background="@drawable/wallet_dropdown_bg"
+            android:paddingStart="14dp"
+            android:paddingEnd="14dp"
+            android:paddingTop="10dp"
+            android:paddingBottom="10dp"
+            android:gravity="center_vertical"
+            android:clickable="true"
+            android:focusable="true">
+
+            <ImageView
+                android:layout_width="20dp"
+                android:layout_height="20dp"
+                android:src="@drawable/ic_zcash"
+                android:layout_marginEnd="8dp"
+                android:contentDescription="Zcash" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Zcash"
+                android:textSize="14sp"
+                android:textColor="@color/text_white"
+                android:fontFamily="@font/poppins_medium" />
+
+        </LinearLayout>
+
+    </LinearLayout>
+
     <!-- Wallet List Container -->
     <LinearLayout
         android:id="@+id/walletListContainer"
