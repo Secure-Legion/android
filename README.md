@@ -868,7 +868,7 @@ A: Zero analytics, zero telemetry, zero tracking. No data leaves your device exc
 **This software is in beta and not production-ready.**
 
 **Known Limitations:**
-- Security audit pending (scheduled for Q2 2025)
+- Security audit pending (scheduled for Q2 2026)
 - No reproducible builds yet (work in progress)
 - Limited testing on diverse devices and Android versions
 - Breaking changes may occur in major updates
