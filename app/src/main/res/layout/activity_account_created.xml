@@ -272,7 +272,7 @@
                 android:id="@+id/pinSubtitle"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="CID/PIN is located in your profile tab"
+                android:text="Friend request address and PIN is located in My Profile"
                 android:textSize="12sp"
                 android:textColor="#5C5C5C"
                 android:fontFamily="@font/poppins_regular"

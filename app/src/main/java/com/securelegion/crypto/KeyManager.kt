@@ -1468,10 +1468,10 @@ class KeyManager private constructor(context: Context) {
         try {
             Log.i(TAG, "Importing wallet from seed phrase: $walletId")
 
-            // Validate seed phrase (should be 12 words)
+            // Validate seed phrase (should be 12 or 24 words)
             val words = seedPhrase.trim().split("\\s+".toRegex())
-            if (words.size != 12) {
-                Log.e(TAG, "Invalid seed phrase: expected 12 words, got ${words.size}")
+            if (words.size != 12 && words.size != 24) {
+                Log.e(TAG, "Invalid seed phrase: expected 12 or 24 words, got ${words.size}")
                 return false
             }
 
@@ -1488,8 +1488,8 @@ class KeyManager private constructor(context: Context) {
             // Store Ed25519 keys
             val walletKeyAlias = "${KEYSTORE_ALIAS_PREFIX}wallet_${walletId}_ed25519"
             encryptedPrefs.edit {
-                putString(walletKeyAlias + "_private", android.util.Base64.encodeToString(keyPair.privateKey, android.util.Base64.NO_WRAP))
-                putString(walletKeyAlias + "_public", android.util.Base64.encodeToString(keyPair.publicKey, android.util.Base64.NO_WRAP))
+                putString(walletKeyAlias + "_private", bytesToHex(keyPair.privateKey))
+                putString(walletKeyAlias + "_public", bytesToHex(keyPair.publicKey))
             }
 
             Log.i(TAG, "Wallet imported successfully from seed phrase: $walletId")
@@ -1504,26 +1504,40 @@ class KeyManager private constructor(context: Context) {
     /**
      * Import Solana wallet from private key (base58 encoded)
      */
-    fun importSolanaWalletFromPrivateKey(walletId: String, privateKeyBase58: String): Boolean {
+    fun importSolanaWalletFromPrivateKey(walletId: String, privateKeyInput: String): Boolean {
         try {
             Log.i(TAG, "Importing Solana wallet from private key: $walletId")
 
-            // Decode base58 private key
+            // Decode private key - support both Base58 and JSON array formats
             val privateKeyBytes = try {
-                org.bitcoinj.core.Base58.decode(privateKeyBase58)
+                val trimmedInput = privateKeyInput.trim()
+
+                // Check if it's a JSON array format like [1,2,3,...]
+                if (trimmedInput.startsWith("[") && trimmedInput.endsWith("]")) {
+                    Log.d(TAG, "Detected JSON array format private key")
+                    val jsonArray = trimmedInput.substring(1, trimmedInput.length - 1)
+                    val byteValues = jsonArray.split(",").map { it.trim().toInt().toByte() }
+                    byteValues.toByteArray()
+                } else {
+                    // Assume Base58 format
+                    Log.d(TAG, "Attempting Base58 decode")
+                    org.bitcoinj.core.Base58.decode(trimmedInput)
+                }
             } catch (e: Exception) {
-                Log.e(TAG, "Invalid base58 private key", e)
+                Log.e(TAG, "Invalid private key format (not Base58 or JSON array)", e)
                 return false
             }
 
             // Solana uses Ed25519, private key should be 32 or 64 bytes
             val actualPrivateKey = if (privateKeyBytes.size == 64) {
                 // If 64 bytes, first 32 are the private key, last 32 are public key
+                Log.d(TAG, "64-byte key detected, using first 32 bytes")
                 privateKeyBytes.copyOfRange(0, 32)
             } else if (privateKeyBytes.size == 32) {
+                Log.d(TAG, "32-byte key detected")
                 privateKeyBytes
             } else {
-                Log.e(TAG, "Invalid private key size: ${privateKeyBytes.size}")
+                Log.e(TAG, "Invalid private key size: ${privateKeyBytes.size} bytes (expected 32 or 64)")
                 return false
             }
 
@@ -1533,8 +1547,8 @@ class KeyManager private constructor(context: Context) {
             // Store Ed25519 keys
             val walletKeyAlias = "${KEYSTORE_ALIAS_PREFIX}wallet_${walletId}_ed25519"
             encryptedPrefs.edit {
-                putString(walletKeyAlias + "_private", android.util.Base64.encodeToString(actualPrivateKey, android.util.Base64.NO_WRAP))
-                putString(walletKeyAlias + "_public", android.util.Base64.encodeToString(publicKey, android.util.Base64.NO_WRAP))
+                putString(walletKeyAlias + "_private", bytesToHex(actualPrivateKey))
+                putString(walletKeyAlias + "_public", bytesToHex(publicKey))
             }
 
             Log.i(TAG, "Solana wallet imported successfully from private key: $walletId")
@@ -1588,8 +1602,8 @@ class KeyManager private constructor(context: Context) {
             // Store Ed25519 keys
             val walletKeyAlias = "${KEYSTORE_ALIAS_PREFIX}wallet_${walletId}_ed25519"
             encryptedPrefs.edit {
-                putString(walletKeyAlias + "_private", android.util.Base64.encodeToString(actualPrivateKey, android.util.Base64.NO_WRAP))
-                putString(walletKeyAlias + "_public", android.util.Base64.encodeToString(publicKey, android.util.Base64.NO_WRAP))
+                putString(walletKeyAlias + "_private", bytesToHex(actualPrivateKey))
+                putString(walletKeyAlias + "_public", bytesToHex(publicKey))
             }
 
             Log.i(TAG, "Zcash wallet imported successfully from private key: $walletId")

@@ -76,7 +76,7 @@
             android:paddingBottom="32dp"
             android:gravity="center_horizontal">
 
-            <!-- Currency Dropdown Selector -->
+            <!-- Currency Display (non-clickable) -->
             <LinearLayout
                 android:id="@+id/currencyDropdown"
                 android:layout_width="270dp"
@@ -88,9 +88,7 @@
                 android:paddingTop="12dp"
                 android:paddingBottom="12dp"
                 android:gravity="center_vertical"
-                android:layout_marginBottom="32dp"
-                android:clickable="true"
-                android:focusable="true">
+                android:layout_marginBottom="32dp">
 
                 <ImageView
                     android:id="@+id/selectedCurrencyIcon"
@@ -109,14 +107,6 @@
                     android:textSize="16sp"
                     android:textColor="#FFFFFF"
                     android:fontFamily="@font/poppins_medium" />
-
-                <ImageView
-                    android:layout_width="20dp"
-                    android:layout_height="20dp"
-                    android:src="@drawable/ic_arrow_forward"
-                    android:rotation="90"
-                    android:tint="#888888"
-                    android:contentDescription="Dropdown" />
 
             </LinearLayout>
 
@@ -223,34 +213,14 @@
                         android:textColor="#888888"
                         android:fontFamily="@font/poppins_regular" />
 
-                    <LinearLayout
-                        android:id="@+id/walletNameDropdown"
+                    <TextView
+                        android:id="@+id/walletNameText"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:orientation="horizontal"
-                        android:gravity="center_vertical"
-                        android:clickable="true"
-                        android:focusable="true">
-
-                        <TextView
-                            android:id="@+id/walletNameText"
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:text="Wallet 1"
-                            android:textSize="12sp"
-                            android:textColor="#FFFFFF"
-                            android:fontFamily="@font/poppins_medium"
-                            android:layout_marginEnd="4dp" />
-
-                        <ImageView
-                            android:layout_width="16dp"
-                            android:layout_height="16dp"
-                            android:src="@drawable/ic_arrow_forward"
-                            android:rotation="90"
-                            android:tint="#888888"
-                            android:contentDescription="Dropdown" />
-
-                    </LinearLayout>
+                        android:text="Wallet 1"
+                        android:textSize="12sp"
+                        android:textColor="#FFFFFF"
+                        android:fontFamily="@font/poppins_medium" />
 
                 </LinearLayout>
 

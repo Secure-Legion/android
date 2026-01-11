@@ -834,24 +834,28 @@ class WalletActivity : AppCompatActivity() {
     }
 
     private fun updateVisibleTokens(wallet: Wallet?) {
-        // Determine wallet chain type
+        // Determine wallet chain type - if it has a Zcash address, it's a Zcash wallet
         val isZcashWallet = wallet?.let {
-            (!it.zcashUnifiedAddress.isNullOrEmpty() || !it.zcashAddress.isNullOrEmpty()) && it.solanaAddress.isEmpty()
+            !it.zcashUnifiedAddress.isNullOrEmpty() || !it.zcashAddress.isNullOrEmpty()
         } ?: false
 
         // Find token items in the layout
         val solTokenItem = findViewById<View>(R.id.solBalance)?.parent?.parent as? LinearLayout
         val zecTokenItem = findViewById<View>(R.id.zecBalance)?.parent?.parent as? LinearLayout
 
+        Log.d("WalletActivity", "Updating visible tokens - isZcashWallet: $isZcashWallet, wallet: ${wallet?.name}")
+
         // Show/hide tokens based on wallet type
         if (isZcashWallet) {
             // Zcash wallet - show only ZEC token
             solTokenItem?.visibility = View.GONE
             zecTokenItem?.visibility = View.VISIBLE
+            Log.d("WalletActivity", "Showing ZEC token, hiding SOL token")
         } else {
             // Solana wallet - show only SOL token
             solTokenItem?.visibility = View.VISIBLE
             zecTokenItem?.visibility = View.GONE
+            Log.d("WalletActivity", "Showing SOL token, hiding ZEC token")
         }
     }
 
@@ -864,7 +868,7 @@ class WalletActivity : AppCompatActivity() {
                 val allWallets = database.walletDao().getAllWallets()
 
                 // Filter out "main" wallet - it's hidden (used only for encryption keys)
-                val wallets = allWallets.filter { it.walletId != "main" }
+                var wallets = allWallets.filter { it.walletId != "main" }.toMutableList()
 
                 // Get current wallet to determine initial chain selection
                 val currentWallet = wallets.maxByOrNull { it.lastUsedAt }
@@ -908,14 +912,22 @@ class WalletActivity : AppCompatActivity() {
                     } ?: false
                     var selectedChain = if (isCurrentZcash) "ZCASH" else "SOLANA"
 
+                    // Track if we're currently showing initialization message
+                    var isShowingInitializing = false
+                    var initializingStartTime = 0L
+
+                    // Handler for auto-refresh polling
+                    val handler = android.os.Handler(android.os.Looper.getMainLooper())
+                    var pollRunnable: Runnable? = null
+
                     // Function to update chain button states
                     fun updateChainButtons() {
                         if (selectedChain == "SOLANA") {
-                            solanaChainButton.alpha = 1.0f
-                            zcashChainButton.alpha = 0.5f
+                            solanaChainButton.setBackgroundResource(R.drawable.swap_button_bg)
+                            zcashChainButton.setBackgroundResource(R.drawable.wallet_dropdown_bg)
                         } else {
-                            solanaChainButton.alpha = 0.5f
-                            zcashChainButton.alpha = 1.0f
+                            solanaChainButton.setBackgroundResource(R.drawable.wallet_dropdown_bg)
+                            zcashChainButton.setBackgroundResource(R.drawable.swap_button_bg)
                         }
                     }
 
@@ -932,15 +944,80 @@ class WalletActivity : AppCompatActivity() {
                             }
                         }
 
+                        // If no wallets exist for this chain, check if Zcash is still initializing
+                        if (filteredWallets.isEmpty()) {
+                            // Check if Zcash is still initializing (only for ZCASH chain)
+                            val isZcashInitializing = if (selectedChain == "ZCASH") {
+                                val zcashPrefs = getSharedPreferences("zcash_init", MODE_PRIVATE)
+                                zcashPrefs.getBoolean("initializing", false)
+                            } else {
+                                false
+                            }
+
+                            val createWalletView = layoutInflater.inflate(R.layout.item_wallet_selector, walletListContainer, false)
+
+                            val walletName = createWalletView.findViewById<TextView>(R.id.walletName)
+                            val walletBalance = createWalletView.findViewById<TextView>(R.id.walletBalance)
+                            val settingsBtn = createWalletView.findViewById<View>(R.id.walletSettingsBtn)
+
+                            if (isZcashInitializing) {
+                                walletName.text = "Initializing Zcash Wallet..."
+                                walletBalance.text = "Please wait, this may take a moment"
+                                settingsBtn.visibility = View.GONE
+                                createWalletView.isClickable = false
+                                createWalletView.alpha = 0.7f
+                                isShowingInitializing = true
+                                initializingStartTime = System.currentTimeMillis()
+                            } else {
+                                isShowingInitializing = false
+                                initializingStartTime = 0L
+                                walletName.text = "Create $selectedChain Wallet"
+                                walletBalance.text = "Tap to create new wallet"
+                                settingsBtn.visibility = View.GONE
+
+                                createWalletView.setOnClickListener {
+                                    val intent = Intent(this@WalletActivity, CreateWalletActivity::class.java)
+                                    intent.putExtra("SELECTED_CHAIN", selectedChain)
+                                    startActivity(intent)
+                                    bottomSheet.dismiss()
+                                }
+                            }
+
+                            walletListContainer.addView(createWalletView)
+                            return
+                        }
+
                         for (wallet in filteredWallets) {
                             val walletItemView = layoutInflater.inflate(R.layout.item_wallet_selector, walletListContainer, false)
 
                             val walletName = walletItemView.findViewById<TextView>(R.id.walletName)
                             val walletBalance = walletItemView.findViewById<TextView>(R.id.walletBalance)
+                            val walletAddress = walletItemView.findViewById<TextView>(R.id.walletAddress)
                             val settingsBtn = walletItemView.findViewById<View>(R.id.walletSettingsBtn)
+                            val walletIcon = walletItemView.findViewById<ImageView>(R.id.walletIcon)
 
                             walletName.text = wallet.name
                             walletBalance.text = "$0.00" // Will be updated with actual balance
+
+                            // Set chain-specific icon and address
+                            val isZcashWallet = !wallet.zcashUnifiedAddress.isNullOrEmpty() || !wallet.zcashAddress.isNullOrEmpty()
+                            if (isZcashWallet) {
+                                walletIcon.setImageResource(R.drawable.ic_zcash)
+                                val address = wallet.zcashUnifiedAddress ?: wallet.zcashAddress ?: ""
+                                walletAddress?.text = if (address.length > 15) {
+                                    "${address.take(5)}.....${address.takeLast(6)}"
+                                } else {
+                                    address
+                                }
+                            } else {
+                                walletIcon.setImageResource(R.drawable.ic_solana)
+                                val address = wallet.solanaAddress
+                                walletAddress?.text = if (address.length > 15) {
+                                    "${address.take(5)}.....${address.takeLast(6)}"
+                                } else {
+                                    address
+                                }
+                            }
 
                             // Click on wallet item to switch (and set active if Zcash)
                             walletItemView.setOnClickListener {
@@ -973,18 +1050,71 @@ class WalletActivity : AppCompatActivity() {
                     solanaChainButton.setOnClickListener {
                         selectedChain = "SOLANA"
                         updateChainButtons()
+                        pollRunnable?.let { handler.removeCallbacks(it) } // Stop polling
                         populateWalletList()
                     }
 
                     zcashChainButton.setOnClickListener {
                         selectedChain = "ZCASH"
                         updateChainButtons()
+                        pollRunnable?.let { handler.removeCallbacks(it) } // Stop any existing polling
                         populateWalletList()
+                        // Start polling if showing initialization message
+                        if (isShowingInitializing) {
+                            handler.postDelayed(pollRunnable!!, 2000)
+                        }
                     }
 
                     // Initialize chain buttons and wallet list
                     updateChainButtons()
                     populateWalletList()
+
+                    // Setup polling to auto-refresh when Zcash is initializing
+                    pollRunnable = object : Runnable {
+                        override fun run() {
+                            if (isShowingInitializing && selectedChain == "ZCASH") {
+                                // Check if initialization is complete
+                                val zcashPrefs = getSharedPreferences("zcash_init", MODE_PRIVATE)
+                                val stillInitializing = zcashPrefs.getBoolean("initializing", false)
+
+                                if (!stillInitializing) {
+                                    // Initialization complete! Reload wallets from database
+                                    lifecycleScope.launch(Dispatchers.IO) {
+                                        try {
+                                            val keyManager = KeyManager.getInstance(this@WalletActivity)
+                                            val dbPassphrase = keyManager.getDatabasePassphrase()
+                                            val database = SecureLegionDatabase.getInstance(this@WalletActivity, dbPassphrase)
+                                            val allWallets = database.walletDao().getAllWallets()
+                                            val updatedWallets = allWallets.filter { it.walletId != "main" }
+
+                                            withContext(Dispatchers.Main) {
+                                                // Update wallets list and refresh UI
+                                                wallets.clear()
+                                                wallets.addAll(updatedWallets)
+                                                populateWalletList()
+                                                Log.i("WalletActivity", "Auto-refreshed wallet list - Zcash initialization complete")
+                                            }
+                                        } catch (e: Exception) {
+                                            Log.e("WalletActivity", "Failed to reload wallets during polling", e)
+                                        }
+                                    }
+                                } else {
+                                    // Still initializing, check again in 2 seconds
+                                    handler.postDelayed(this, 2000)
+                                }
+                            }
+                        }
+                    }
+
+                    // Start polling if showing initialization message
+                    if (isShowingInitializing) {
+                        handler.postDelayed(pollRunnable!!, 2000)
+                    }
+
+                    // Stop polling when bottom sheet is dismissed
+                    bottomSheet.setOnDismissListener {
+                        pollRunnable?.let { handler.removeCallbacks(it) }
+                    }
 
                     bottomSheet.show()
                 }
@@ -1007,6 +1137,9 @@ class WalletActivity : AppCompatActivity() {
                 val dbPassphrase = keyManager.getDatabasePassphrase()
                 val database = SecureLegionDatabase.getInstance(this@WalletActivity, dbPassphrase)
                 database.walletDao().updateLastUsed(wallet.walletId, System.currentTimeMillis())
+
+                // Small delay to ensure database write completes before querying
+                kotlinx.coroutines.delay(50)
 
                 withContext(Dispatchers.Main) {
                     // Update wallet name
@@ -1051,7 +1184,13 @@ class WalletActivity : AppCompatActivity() {
                 }
 
                 withContext(Dispatchers.Main) {
-                    ThemedToast.show(this@WalletActivity, "Activating Zcash wallet...")
+                    // Show loading overlay with Zcash initialization message
+                    val walletNameText = findViewById<TextView>(R.id.walletNameText)
+                    walletNameText?.text = "Initializing Zcash Wallet..."
+
+                    // Update to show Zcash icon immediately
+                    val walletChainIcon = findViewById<ImageView>(R.id.walletChainIcon)
+                    walletChainIcon?.setImageResource(R.drawable.ic_zcash)
                 }
 
                 // Call ZcashService to set active wallet
@@ -1064,6 +1203,9 @@ class WalletActivity : AppCompatActivity() {
                     // Update last used timestamp
                     database.walletDao().updateLastUsed(walletId, System.currentTimeMillis())
 
+                    // Small delay to ensure database write completes
+                    kotlinx.coroutines.delay(50)
+
                     withContext(Dispatchers.Main) {
                         // Update wallet name
                         val walletNameText = findViewById<TextView>(R.id.walletNameText)
@@ -1073,7 +1215,9 @@ class WalletActivity : AppCompatActivity() {
                         val walletChainIcon = findViewById<ImageView>(R.id.walletChainIcon)
                         updateChainIcon(walletChainIcon, wallet)
 
-                        ThemedToast.show(this@WalletActivity, "Zcash wallet activated successfully!")
+                        // Update visible tokens based on wallet type
+                        updateVisibleTokens(wallet)
+
                         // Reload wallet balance for the active wallet
                         loadWalletBalance()
                     }

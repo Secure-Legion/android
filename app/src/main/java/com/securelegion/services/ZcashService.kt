@@ -236,6 +236,10 @@ class ZcashService(private val context: Context) {
     @Volatile
     private var activeWalletId: String? = null
 
+    // Birthday height of the currently initialized wallet
+    @Volatile
+    private var currentBirthdayHeight: Long? = null
+
     // Cached balance (updated automatically when synced)
     @Volatile
     private var cachedBalance: Double = 0.0
@@ -276,6 +280,8 @@ class ZcashService(private val context: Context) {
             } else {
                 BlockHeight.ofLatestCheckpoint(context, network)
             }
+            // Store birthday height for later retrieval
+            currentBirthdayHeight = birthday.value
             Log.d(TAG, "Using birthday block height: ${birthday.value}")
 
             // Create lightwalletd endpoint
@@ -500,6 +506,12 @@ class ZcashService(private val context: Context) {
      * Get currently active wallet ID
      */
     fun getActiveWalletId(): String? = activeWalletId
+
+    /**
+     * Get the birthday height of the currently initialized wallet
+     * @return Birthday height or null if not initialized
+     */
+    fun getBirthdayHeight(): Long? = currentBirthdayHeight
 
     /**
      * Initialize from active wallet on app startup

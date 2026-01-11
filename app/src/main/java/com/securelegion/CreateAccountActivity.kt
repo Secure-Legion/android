@@ -227,8 +227,8 @@ class CreateAccountActivity : AppCompatActivity() {
             try {
                 Log.d("CreateAccount", "Starting account creation...")
 
-                // Show loading overlay
-                showLoading("Creating Account...", "Generating secure keys")
+                // Show loading overlay (stays until completion)
+                // No need to update - keep simple "Creating Account..." message
 
                 // Generate 128-bit entropy for 12-word BIP39 mnemonic
                 val entropy = ByteArray(16) // 128 bits = 12 words
@@ -265,8 +265,11 @@ class CreateAccountActivity : AppCompatActivity() {
                 val walletAddress = keyManager.getSolanaAddress()
                 Log.i("CreateAccount", "Solana address: $walletAddress")
 
-                // Initialize Zcash wallet (async - will complete in background)
-                Log.i("CreateAccount", "Initializing Zcash wallet...")
+                // Initialize Zcash wallet (async - runs in background)
+                Log.i("CreateAccount", "Starting Zcash wallet initialization in background...")
+                val zcashPrefs = getSharedPreferences("zcash_init", MODE_PRIVATE)
+                zcashPrefs.edit().putBoolean("initializing", true).apply()
+
                 CoroutineScope(Dispatchers.IO).launch {
                     try {
                         val zcashService = com.securelegion.services.ZcashService.getInstance(this@CreateAccountActivity)
@@ -274,18 +277,49 @@ class CreateAccountActivity : AppCompatActivity() {
                         if (result.isSuccess) {
                             val zcashAddress = result.getOrNull()
                             Log.i("CreateAccount", "Zcash wallet initialized: $zcashAddress")
+
+                            // Create wallet entry in database now that initialization is complete
+                            if (zcashAddress != null) {
+                                val keyManager = KeyManager.getInstance(this@CreateAccountActivity)
+                                val dbPassphrase = keyManager.getDatabasePassphrase()
+                                val database = SecureLegionDatabase.getInstance(this@CreateAccountActivity, dbPassphrase)
+
+                                // Get birthday height from ZcashService
+                                val birthdayHeight = zcashService.getBirthdayHeight()
+                                Log.i("CreateAccount", "Zcash birthday height: $birthdayHeight")
+
+                                val zcashWalletId = "wallet_zcash_${System.currentTimeMillis()}"
+                                val defaultZcashWallet = Wallet(
+                                    walletId = zcashWalletId,
+                                    name = "Wallet 2",
+                                    solanaAddress = "",
+                                    zcashUnifiedAddress = zcashAddress,
+                                    zcashAccountIndex = 0,
+                                    zcashBirthdayHeight = birthdayHeight,
+                                    isActiveZcash = true,
+                                    isMainWallet = false,
+                                    createdAt = System.currentTimeMillis(),
+                                    lastUsedAt = System.currentTimeMillis() - 1
+                                )
+                                database.walletDao().insertWallet(defaultZcashWallet)
+
+                                // Store seed phrase for Zcash wallet
+                                keyManager.storeWalletSeed(zcashWalletId, mnemonic)
+                                Log.i("CreateAccount", "Zcash wallet entry created in database with birthday height: $birthdayHeight")
+                            }
                         } else {
                             Log.e("CreateAccount", "Failed to initialize Zcash wallet: ${result.exceptionOrNull()?.message}")
                         }
                     } catch (e: Exception) {
                         Log.e("CreateAccount", "Error initializing Zcash wallet", e)
+                    } finally {
+                        // Mark initialization as complete
+                        zcashPrefs.edit().putBoolean("initializing", false).apply()
+                        Log.i("CreateAccount", "Zcash initialization complete")
                     }
                 }
 
-                // Update loading state - creating hidden service
-                withContext(Dispatchers.Main) {
-                    showLoading("Setting up secure connection...", "Creating Tor hidden service")
-                }
+                // Creating hidden service (no loading update - keep "Creating Account..." message)
 
                 // Create hidden service and wait for it to complete
                 Log.i("CreateAccount", "Creating hidden service for account")
@@ -322,9 +356,6 @@ class CreateAccountActivity : AppCompatActivity() {
 
                 // Voice onion address will be created automatically by TorService on first startup
                 // (Single Onion Services must be configured in torrc, not via ADD_ONION)
-                withContext(Dispatchers.Main) {
-                    showLoading("Creating account...", "Voice calling service will be set up on first launch")
-                }
                 Log.i("CreateAccount", "Voice onion will be created by TorService from torrc hostname file")
                 val voiceOnionAddress = "" // Will be populated by TorService on first launch
 
@@ -338,9 +369,6 @@ class CreateAccountActivity : AppCompatActivity() {
                 while (friendRequestOnion.isEmpty()) {
                     try {
                         friendRequestAttempt++
-                        withContext(Dispatchers.Main) {
-                            showLoading("Creating account...", "Setting up friend request service" + if (friendRequestAttempt > 1) " (attempt $friendRequestAttempt)" else "")
-                        }
                         Log.d("CreateAccount", "Creating friend request .onion address (attempt $friendRequestAttempt)...")
                         friendRequestOnion = keyManager.createFriendRequestOnion()
                         Log.i("CreateAccount", "Friend request .onion: $friendRequestOnion")
@@ -360,9 +388,6 @@ class CreateAccountActivity : AppCompatActivity() {
                 while (ipfsCid.isEmpty()) {
                     try {
                         ipfsCidAttempt++
-                        withContext(Dispatchers.Main) {
-                            showLoading("Creating account...", "Generating identity CID" + if (ipfsCidAttempt > 1) " (attempt $ipfsCidAttempt)" else "")
-                        }
                         Log.d("CreateAccount", "Deriving IPFS CID from seed (attempt $ipfsCidAttempt)...")
                         ipfsCid = keyManager.deriveIPFSCID(mnemonic)
                         keyManager.storeIPFSCID(ipfsCid)
@@ -412,6 +437,23 @@ class CreateAccountActivity : AppCompatActivity() {
                 )
                 database.walletDao().insertWallet(mainWallet)
                 Log.i("CreateAccount", "Internal wallet initialized in database")
+
+                // Create default Solana wallet for user (separate from account wallet)
+                Log.d("CreateAccount", "Creating default Solana wallet...")
+                val (defaultSolWalletId, defaultSolAddress) = keyManager.generateNewWallet()
+                val defaultSolanaWallet = Wallet(
+                    walletId = defaultSolWalletId,
+                    name = "Wallet 1",
+                    solanaAddress = defaultSolAddress,
+                    isMainWallet = false,
+                    createdAt = timestamp,
+                    lastUsedAt = timestamp
+                )
+                database.walletDao().insertWallet(defaultSolanaWallet)
+                Log.i("CreateAccount", "Default Solana wallet created: $defaultSolAddress")
+
+                // Note: Zcash wallet will be created in background when initialization completes
+                Log.i("CreateAccount", "Zcash wallet will be created automatically when initialization finishes")
 
                 Log.i("CreateAccount", "Contact card created (local only, not uploaded)")
                 Log.i("CreateAccount", "CID: $ipfsCid (deterministic from seed)")

@@ -40,10 +40,8 @@ class ReceiveActivity : BaseActivity() {
         setContentView(R.layout.activity_receive)
 
         setupBottomNavigation()
-        setupCurrencySelector()
-        setupWalletSelector()
         setupAddressTypeToggle()
-        loadCurrentWalletName()
+        loadCurrentWallet()
 
         // Back button
         findViewById<View>(R.id.backButton).setOnClickListener {
@@ -82,26 +80,6 @@ class ReceiveActivity : BaseActivity() {
         }
     }
 
-    private fun setupCurrencySelector() {
-        val currencyDropdown = findViewById<View>(R.id.currencyDropdown)
-
-        currencyDropdown.setOnClickListener {
-            // Toggle between SOL and ZEC
-            if (selectedCurrency == "SOL") {
-                selectCurrency("ZEC")
-            } else {
-                selectCurrency("SOL")
-            }
-        }
-    }
-
-    private fun setupWalletSelector() {
-        val walletNameDropdown = findViewById<View>(R.id.walletNameDropdown)
-
-        walletNameDropdown?.setOnClickListener {
-            showWalletSelector()
-        }
-    }
 
     private fun setupAddressTypeToggle() {
         val unifiedButton = findViewById<Button>(R.id.unifiedAddressButton)
@@ -112,14 +90,14 @@ class ReceiveActivity : BaseActivity() {
             showTransparentAddress = false
             updateAddressTypeButtons()
             addressTypeLabel?.text = "For private SecureLegion transfers"
-            loadAddress()
+            loadZcashAddress()
         }
 
         transparentButton?.setOnClickListener {
             showTransparentAddress = true
             updateAddressTypeButtons()
             addressTypeLabel?.text = "For Kraken, Coinbase, and other exchanges"
-            loadAddress()
+            loadZcashAddress()
         }
     }
 
@@ -142,7 +120,7 @@ class ReceiveActivity : BaseActivity() {
         }
     }
 
-    private fun loadCurrentWalletName() {
+    private fun loadCurrentWallet() {
         lifecycleScope.launch(Dispatchers.IO) {
             try {
                 val keyManager = KeyManager.getInstance(this@ReceiveActivity)
@@ -155,187 +133,44 @@ class ReceiveActivity : BaseActivity() {
 
                 withContext(Dispatchers.Main) {
                     val walletNameText = findViewById<TextView>(R.id.walletNameText)
+                    val selectedIcon = findViewById<ImageView>(R.id.selectedCurrencyIcon)
+                    val selectedSymbol = findViewById<TextView>(R.id.selectedCurrencySymbol)
+                    val selectedName = findViewById<TextView>(R.id.selectedCurrencyName)
+
                     if (wallets.isNotEmpty()) {
                         // Get the most recently used wallet
                         val currentWallet = wallets.maxByOrNull { it.lastUsedAt }
                         walletNameText?.text = currentWallet?.name ?: "Wallet"
 
-                        // Detect wallet type and update currency selector
+                        // Detect wallet type and load address
                         if (currentWallet != null) {
-                            val currency = if (!currentWallet.zcashUnifiedAddress.isNullOrEmpty() || !currentWallet.zcashAddress.isNullOrEmpty()) {
-                                "ZEC"
+                            val isZcash = !currentWallet.zcashUnifiedAddress.isNullOrEmpty() || !currentWallet.zcashAddress.isNullOrEmpty()
+
+                            if (isZcash) {
+                                selectedCurrency = "ZEC"
+                                selectedIcon?.setImageResource(R.drawable.ic_zcash)
+                                selectedSymbol?.text = "ZEC"
+                                selectedName?.text = "Zcash"
+                                loadZcashAddress()
                             } else {
-                                "SOL"
+                                selectedCurrency = "SOL"
+                                selectedIcon?.setImageResource(R.drawable.ic_solana)
+                                selectedSymbol?.text = "SOL"
+                                selectedName?.text = "Solana"
+                                loadSolanaAddress()
                             }
-                            selectCurrency(currency)
                         }
                     } else {
                         walletNameText?.text = "No Wallet"
+                        findViewById<TextView>(R.id.depositAddress)?.text = "No wallet found"
                     }
                 }
             } catch (e: Exception) {
-                Log.e("ReceiveActivity", "Failed to load current wallet name", e)
+                Log.e("ReceiveActivity", "Failed to load current wallet", e)
             }
         }
     }
 
-    private fun showWalletSelector() {
-        lifecycleScope.launch(Dispatchers.IO) {
-            try {
-                val keyManager = KeyManager.getInstance(this@ReceiveActivity)
-                val dbPassphrase = keyManager.getDatabasePassphrase()
-                val database = SecureLegionDatabase.getInstance(this@ReceiveActivity, dbPassphrase)
-                val allWallets = database.walletDao().getAllWallets()
-
-                // Filter out "main" wallet - it's hidden (used only for encryption keys)
-                val wallets = allWallets.filter { it.walletId != "main" }
-
-                withContext(Dispatchers.Main) {
-                    if (wallets.isEmpty()) {
-                        ThemedToast.show(this@ReceiveActivity, "No wallets found")
-                        return@withContext
-                    }
-
-                    // Create bottom sheet dialog
-                    val bottomSheet = BottomSheetDialog(this@ReceiveActivity)
-                    val view = layoutInflater.inflate(R.layout.bottom_sheet_wallet_selector, null)
-
-                    // Set minimum height on the view itself
-                    val displayMetrics = resources.displayMetrics
-                    val screenHeight = displayMetrics.heightPixels
-                    val desiredHeight = (screenHeight * 0.6).toInt()
-                    view.minimumHeight = desiredHeight
-
-                    bottomSheet.setContentView(view)
-
-                    // Configure bottom sheet behavior
-                    bottomSheet.behavior.isDraggable = true
-                    bottomSheet.behavior.isFitToContents = true
-                    bottomSheet.behavior.skipCollapsed = true
-
-                    // Make all backgrounds transparent
-                    bottomSheet.window?.setBackgroundDrawableResource(android.R.color.transparent)
-                    bottomSheet.window?.findViewById<View>(com.google.android.material.R.id.design_bottom_sheet)?.setBackgroundResource(android.R.color.transparent)
-
-                    // Remove the white background box
-                    view.post {
-                        val parentView = view.parent as? View
-                        parentView?.setBackgroundResource(android.R.color.transparent)
-                    }
-
-                    // Get container for wallet list
-                    val walletListContainer = view.findViewById<LinearLayout>(R.id.walletListContainer)
-
-                    // Add each wallet to the list
-                    for (wallet in wallets) {
-                        val walletItemView = layoutInflater.inflate(R.layout.item_wallet_selector, walletListContainer, false)
-
-                        val walletName = walletItemView.findViewById<TextView>(R.id.walletName)
-                        val walletBalance = walletItemView.findViewById<TextView>(R.id.walletBalance)
-                        val settingsBtn = walletItemView.findViewById<View>(R.id.walletSettingsBtn)
-
-                        walletName.text = wallet.name
-                        walletBalance.text = "Loading..."
-
-                        // Click on wallet item to switch
-                        walletItemView.setOnClickListener {
-                            switchToWallet(wallet)
-                            bottomSheet.dismiss()
-                        }
-
-                        // Click on settings button
-                        settingsBtn.setOnClickListener {
-                            val intent = Intent(this@ReceiveActivity, WalletSettingsActivity::class.java)
-                            intent.putExtra("WALLET_ID", wallet.walletId)
-                            intent.putExtra("WALLET_NAME", wallet.name)
-                            intent.putExtra("IS_MAIN_WALLET", wallet.walletId == "main")
-                            startActivity(intent)
-                            bottomSheet.dismiss()
-                        }
-
-                        walletListContainer.addView(walletItemView)
-                    }
-
-                    bottomSheet.show()
-                }
-            } catch (e: Exception) {
-                Log.e("ReceiveActivity", "Failed to load wallets", e)
-                withContext(Dispatchers.Main) {
-                    ThemedToast.show(this@ReceiveActivity, "Failed to load wallets")
-                }
-            }
-        }
-    }
-
-    private fun switchToWallet(wallet: Wallet) {
-        lifecycleScope.launch(Dispatchers.IO) {
-            try {
-                Log.i("ReceiveActivity", "Switching to wallet: ${wallet.name}")
-
-                // Update last used timestamp
-                val keyManager = KeyManager.getInstance(this@ReceiveActivity)
-                val dbPassphrase = keyManager.getDatabasePassphrase()
-                val database = SecureLegionDatabase.getInstance(this@ReceiveActivity, dbPassphrase)
-                database.walletDao().updateLastUsed(wallet.walletId, System.currentTimeMillis())
-
-                withContext(Dispatchers.Main) {
-                    // Update wallet name
-                    val walletNameText = findViewById<TextView>(R.id.walletNameText)
-                    walletNameText?.text = wallet.name
-
-                    // Detect wallet type and update currency selector
-                    val currency = if (!wallet.zcashUnifiedAddress.isNullOrEmpty() || !wallet.zcashAddress.isNullOrEmpty()) {
-                        "ZEC"
-                    } else {
-                        "SOL"
-                    }
-                    selectCurrency(currency)
-                }
-            } catch (e: Exception) {
-                Log.e("ReceiveActivity", "Failed to switch wallet", e)
-                withContext(Dispatchers.Main) {
-                    ThemedToast.show(this@ReceiveActivity, "Failed to switch wallet")
-                }
-            }
-        }
-    }
-
-    private fun selectCurrency(currency: String) {
-        selectedCurrency = currency
-
-        val selectedIcon = findViewById<ImageView>(R.id.selectedCurrencyIcon)
-        val selectedSymbol = findViewById<TextView>(R.id.selectedCurrencySymbol)
-        val selectedName = findViewById<TextView>(R.id.selectedCurrencyName)
-
-        when (currency) {
-            "SOL" -> {
-                // Update selected currency display
-                selectedIcon.setImageResource(R.drawable.ic_solana)
-                selectedSymbol.text = "SOL"
-                selectedName.text = "Solana"
-
-                Log.d("ReceiveActivity", "Selected currency: Solana")
-            }
-            "ZEC" -> {
-                // Update selected currency display
-                selectedIcon.setImageResource(R.drawable.ic_zcash)
-                selectedSymbol.text = "ZEC"
-                selectedName.text = "Zcash"
-
-                Log.d("ReceiveActivity", "Selected currency: Zcash")
-            }
-        }
-
-        // Load the appropriate address
-        loadAddress()
-    }
-
-    private fun loadAddress() {
-        when (selectedCurrency) {
-            "SOL" -> loadSolanaAddress()
-            "ZEC" -> loadZcashAddress()
-        }
-    }
 
     private fun loadSolanaAddress() {
         lifecycleScope.launch(Dispatchers.IO) {

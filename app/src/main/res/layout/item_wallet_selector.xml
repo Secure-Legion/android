@@ -23,8 +23,7 @@
             android:layout_width="24dp"
             android:layout_height="24dp"
             android:layout_gravity="center"
-            android:src="@drawable/ic_wallet"
-            android:tint="@color/text_white" />
+            android:src="@drawable/ic_wallet" />
     </FrameLayout>
 
     <!-- Wallet Info -->
@@ -53,6 +52,17 @@
             android:fontFamily="@font/poppins_regular" />
 
     </LinearLayout>
+
+    <!-- Address Preview -->
+    <TextView
+        android:id="@+id/walletAddress"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="ADm9P.....2eoLX5"
+        android:textSize="12sp"
+        android:textColor="#888888"
+        android:fontFamily="@font/poppins_regular"
+        android:layout_marginEnd="12dp" />
 
     <!-- Edit Button with Background -->
     <FrameLayout

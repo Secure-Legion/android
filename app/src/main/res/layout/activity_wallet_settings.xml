@@ -362,7 +362,7 @@
                     <TextView
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="Export Private Key"
+                        android:text="Export Seed Phrase"
                         android:textSize="16sp"
                         android:textColor="@color/text_white" />
 
@@ -370,7 +370,7 @@
                         android:id="@+id/exportKeySubtext"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="View or export wallet private key"
+                        android:text="Export seed phrase for wallet"
                         android:textSize="12sp"
                         android:textColor="@color/text_gray"
                         android:layout_marginTop="2dp" />

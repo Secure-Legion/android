@@ -263,7 +263,7 @@
         <activity
             android:name=".ImportWalletActivity"
             android:exported="false"
-            android:windowSoftInputMode="adjustPan" />
+            android:windowSoftInputMode="adjustResize" />
 
         <activity
             android:name=".TransferDetailsActivity"

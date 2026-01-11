@@ -81,69 +81,87 @@
                 android:lineSpacingExtra="2dp"
                 android:layout_marginBottom="24dp" />
 
-            <!-- Wallet Type Selector -->
+            <!-- Chain Selector -->
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="WALLET TYPE"
+                android:text="SELECT CHAIN"
                 android:textSize="11sp"
                 android:textColor="@color/text_gray"
                 android:textAllCaps="true"
                 android:letterSpacing="0.1"
                 android:layout_marginBottom="12dp" />
 
-            <!-- Currency Dropdown -->
             <LinearLayout
-                android:id="@+id/currencyDropdown"
-                android:layout_width="match_parent"
+                android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:orientation="horizontal"
-                android:background="@drawable/settings_box_bg"
-                android:padding="16dp"
-                android:gravity="center_vertical"
-                android:clickable="true"
-                android:focusable="true"
                 android:layout_marginBottom="24dp">
 
-                <ImageView
-                    android:id="@+id/selectedCurrencyIcon"
-                    android:layout_width="32dp"
-                    android:layout_height="32dp"
-                    android:src="@drawable/ic_solana"
-                    android:layout_marginEnd="12dp"
-                    android:contentDescription="Selected Currency" />
-
+                <!-- Solana Button -->
                 <LinearLayout
-                    android:layout_width="0dp"
+                    android:id="@+id/solanaChainButton"
+                    android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:orientation="vertical">
+                    android:orientation="horizontal"
+                    android:background="@drawable/wallet_dropdown_bg"
+                    android:paddingStart="14dp"
+                    android:paddingEnd="14dp"
+                    android:paddingTop="10dp"
+                    android:paddingBottom="10dp"
+                    android:gravity="center_vertical"
+                    android:layout_marginEnd="12dp"
+                    android:clickable="true"
+                    android:focusable="true">
+
+                    <ImageView
+                        android:layout_width="20dp"
+                        android:layout_height="20dp"
+                        android:src="@drawable/ic_solana"
+                        android:layout_marginEnd="8dp"
+                        android:contentDescription="Solana" />
 
                     <TextView
-                        android:id="@+id/selectedCurrencyName"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:text="Solana"
-                        android:textSize="16sp"
-                        android:textColor="@color/text_white" />
-
-                    <TextView
-                        android:id="@+id/selectedCurrencySymbol"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="SOL"
-                        android:textSize="12sp"
-                        android:textColor="@color/text_gray"
-                        android:layout_marginTop="2dp" />
+                        android:textSize="14sp"
+                        android:textColor="@color/text_white"
+                        android:fontFamily="@font/poppins_medium" />
 
                 </LinearLayout>
 
-                <ImageView
-                    android:layout_width="20dp"
-                    android:layout_height="20dp"
-                    android:src="@drawable/ic_arrow_down"
-                    app:tint="@color/text_gray"
-                    android:contentDescription="Dropdown" />
+                <!-- Zcash Button -->
+                <LinearLayout
+                    android:id="@+id/zcashChainButton"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:background="@drawable/wallet_dropdown_bg"
+                    android:paddingStart="14dp"
+                    android:paddingEnd="14dp"
+                    android:paddingTop="10dp"
+                    android:paddingBottom="10dp"
+                    android:gravity="center_vertical"
+                    android:clickable="true"
+                    android:focusable="true">
+
+                    <ImageView
+                        android:layout_width="20dp"
+                        android:layout_height="20dp"
+                        android:src="@drawable/ic_zcash"
+                        android:layout_marginEnd="8dp"
+                        android:contentDescription="Zcash" />
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Zcash"
+                        android:textSize="14sp"
+                        android:textColor="@color/text_white"
+                        android:fontFamily="@font/poppins_medium" />
+
+                </LinearLayout>
 
             </LinearLayout>
 
@@ -174,32 +192,228 @@
                 android:maxLines="1"
                 android:layout_marginBottom="24dp" />
 
-            <!-- Private Key / Seed Phrase -->
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="PRIVATE KEY / SEED PHRASE"
-                android:textSize="11sp"
-                android:textColor="@color/text_gray"
-                android:textAllCaps="true"
-                android:letterSpacing="0.1"
-                android:layout_marginBottom="8dp" />
-
-            <EditText
-                android:id="@+id/privateKeyInput"
+            <!-- Solana Import Type Selector (only visible for Solana) -->
+            <LinearLayout
+                android:id="@+id/solanaImportTypeContainer"
                 android:layout_width="match_parent"
-                android:layout_height="120dp"
-                android:background="@drawable/settings_box_bg"
-                android:hint="Enter private key or 12-word seed phrase"
-                android:textColorHint="@color/text_gray"
-                android:textColor="@color/text_white"
-                android:textSize="14sp"
-                android:fontFamily="@font/poppins_regular"
-                android:padding="16dp"
-                android:inputType="textMultiLine"
-                android:gravity="top"
-                android:maxLines="5"
-                android:layout_marginBottom="16dp" />
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:visibility="visible">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="IMPORT TYPE"
+                    android:textSize="11sp"
+                    android:textColor="@color/text_gray"
+                    android:textAllCaps="true"
+                    android:letterSpacing="0.1"
+                    android:layout_marginBottom="12dp" />
+
+                <LinearLayout
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:layout_marginBottom="24dp">
+
+                    <!-- Seed Phrase Button -->
+                    <LinearLayout
+                        android:id="@+id/seedPhraseTypeButton"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal"
+                        android:background="@drawable/wallet_dropdown_bg"
+                        android:paddingStart="14dp"
+                        android:paddingEnd="14dp"
+                        android:paddingTop="10dp"
+                        android:paddingBottom="10dp"
+                        android:gravity="center_vertical"
+                        android:layout_marginEnd="12dp"
+                        android:clickable="true"
+                        android:focusable="true">
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="Seed Phrase"
+                            android:textSize="14sp"
+                            android:textColor="@color/text_white"
+                            android:fontFamily="@font/poppins_medium" />
+
+                    </LinearLayout>
+
+                    <!-- Private Key Button -->
+                    <LinearLayout
+                        android:id="@+id/privateKeyTypeButton"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal"
+                        android:background="@drawable/wallet_dropdown_bg"
+                        android:paddingStart="14dp"
+                        android:paddingEnd="14dp"
+                        android:paddingTop="10dp"
+                        android:paddingBottom="10dp"
+                        android:gravity="center_vertical"
+                        android:clickable="true"
+                        android:focusable="true">
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="Private Key"
+                            android:textSize="14sp"
+                            android:textColor="@color/text_white"
+                            android:fontFamily="@font/poppins_medium" />
+
+                    </LinearLayout>
+
+                </LinearLayout>
+
+            </LinearLayout>
+
+            <!-- Seed Phrase Input (Solana) -->
+            <LinearLayout
+                android:id="@+id/seedPhraseInputContainer"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:visibility="visible">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="SEED PHRASE"
+                    android:textSize="11sp"
+                    android:textColor="@color/text_gray"
+                    android:textAllCaps="true"
+                    android:letterSpacing="0.1"
+                    android:layout_marginBottom="8dp" />
+
+                <EditText
+                    android:id="@+id/seedPhraseInput"
+                    android:layout_width="match_parent"
+                    android:layout_height="120dp"
+                    android:background="@drawable/settings_box_bg"
+                    android:hint="Enter 12 or 24-word seed phrase of Solana wallet"
+                    android:textColorHint="@color/text_gray"
+                    android:textColor="@color/text_white"
+                    android:textSize="14sp"
+                    android:fontFamily="@font/poppins_regular"
+                    android:padding="16dp"
+                    android:inputType="textMultiLine"
+                    android:gravity="top"
+                    android:maxLines="5"
+                    android:layout_marginBottom="16dp" />
+
+            </LinearLayout>
+
+            <!-- Private Key Input (Solana) -->
+            <LinearLayout
+                android:id="@+id/privateKeyInputContainer"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:visibility="gone">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="PRIVATE KEY"
+                    android:textSize="11sp"
+                    android:textColor="@color/text_gray"
+                    android:textAllCaps="true"
+                    android:letterSpacing="0.1"
+                    android:layout_marginBottom="8dp" />
+
+                <EditText
+                    android:id="@+id/privateKeyInput"
+                    android:layout_width="match_parent"
+                    android:layout_height="120dp"
+                    android:background="@drawable/settings_box_bg"
+                    android:hint="Base58 string or JSON array [1,2,3,...]"
+                    android:textColorHint="@color/text_gray"
+                    android:textColor="@color/text_white"
+                    android:textSize="14sp"
+                    android:fontFamily="@font/poppins_regular"
+                    android:padding="16dp"
+                    android:inputType="textMultiLine"
+                    android:gravity="top"
+                    android:maxLines="5"
+                    android:layout_marginBottom="16dp" />
+
+            </LinearLayout>
+
+            <!-- Zcash Seed Phrase Input -->
+            <LinearLayout
+                android:id="@+id/zcashSeedPhraseInputContainer"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:visibility="gone">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="SEED PHRASE"
+                    android:textSize="11sp"
+                    android:textColor="@color/text_gray"
+                    android:textAllCaps="true"
+                    android:letterSpacing="0.1"
+                    android:layout_marginBottom="8dp" />
+
+                <EditText
+                    android:id="@+id/zcashSeedPhraseInput"
+                    android:layout_width="match_parent"
+                    android:layout_height="120dp"
+                    android:background="@drawable/settings_box_bg"
+                    android:hint="Enter 24-word seed phrase of Zcash wallet"
+                    android:textColorHint="@color/text_gray"
+                    android:textColor="@color/text_white"
+                    android:textSize="14sp"
+                    android:fontFamily="@font/poppins_regular"
+                    android:padding="16dp"
+                    android:inputType="textMultiLine"
+                    android:gravity="top"
+                    android:maxLines="5"
+                    android:layout_marginBottom="16dp" />
+
+            </LinearLayout>
+
+            <!-- Zcash Birthday Height Input -->
+            <LinearLayout
+                android:id="@+id/zcashBirthdayContainer"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:visibility="gone">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="BIRTHDAY HEIGHT (OPTIONAL)"
+                    android:textSize="11sp"
+                    android:textColor="@color/text_gray"
+                    android:textAllCaps="true"
+                    android:letterSpacing="0.1"
+                    android:layout_marginBottom="8dp" />
+
+                <EditText
+                    android:id="@+id/birthdayHeightInput"
+                    android:layout_width="match_parent"
+                    android:layout_height="56dp"
+                    android:background="@drawable/settings_box_bg"
+                    android:hint="Leave empty to use current height"
+                    android:textColorHint="@color/text_gray"
+                    android:textColor="@color/text_white"
+                    android:textSize="16sp"
+                    android:fontFamily="@font/poppins_regular"
+                    android:paddingStart="16dp"
+                    android:paddingEnd="16dp"
+                    android:inputType="number"
+                    android:maxLines="1"
+                    android:layout_marginBottom="16dp" />
+
+            </LinearLayout>
 
             <!-- Warning -->
             <LinearLayout

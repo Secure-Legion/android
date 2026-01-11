@@ -26,66 +26,147 @@
         android:gravity="center"
         android:layout_marginBottom="8dp" />
 
-    <!-- Warning Text -->
-    <TextView
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:text="Never share this with anyone!"
-        android:textSize="14sp"
-        android:textColor="#FF6B6B"
-        android:fontFamily="@font/poppins_medium"
-        android:gravity="center"
-        android:layout_marginBottom="24dp"
-        android:paddingStart="24dp"
-        android:paddingEnd="24dp" />
-
-    <!-- Seed Phrase Container -->
+    <!-- Wallet Address Preview -->
     <LinearLayout
+        android:id="@+id/walletAddressContainer"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:orientation="vertical"
+        android:orientation="horizontal"
         android:background="@drawable/settings_box_bg"
-        android:padding="20dp"
+        android:padding="16dp"
         android:layout_marginStart="24dp"
         android:layout_marginEnd="24dp"
-        android:layout_marginBottom="24dp">
+        android:layout_marginBottom="24dp"
+        android:gravity="center_vertical"
+        android:clickable="true"
+        android:focusable="true">
+
+        <ImageView
+            android:id="@+id/walletChainIcon"
+            android:layout_width="24dp"
+            android:layout_height="24dp"
+            android:src="@drawable/ic_solana"
+            android:layout_marginEnd="12dp"
+            android:contentDescription="Chain icon" />
 
         <TextView
-            android:layout_width="wrap_content"
+            android:id="@+id/walletAddressText"
+            android:layout_width="0dp"
             android:layout_height="wrap_content"
-            android:text="Your 12-word seed phrase:"
-            android:textSize="12sp"
-            android:textColor="#888888"
-            android:fontFamily="@font/poppins_regular"
-            android:layout_marginBottom="12dp" />
-
-        <TextView
-            android:id="@+id/seedPhraseText"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12"
-            android:textSize="16sp"
+            android:layout_weight="1"
+            android:text="0x1234...5678"
+            android:textSize="14sp"
             android:textColor="@color/text_white"
-            android:fontFamily="monospace"
-            android:lineSpacingMultiplier="1.4"
-            android:textIsSelectable="true" />
+            android:fontFamily="@font/poppins_medium"
+            android:layout_marginEnd="12dp" />
+
+        <ImageView
+            android:id="@+id/copyAddressIcon"
+            android:layout_width="20dp"
+            android:layout_height="20dp"
+            android:src="@drawable/ic_copy"
+            android:tint="@color/text_gray"
+            android:contentDescription="Copy address" />
 
     </LinearLayout>
 
-    <!-- Copy Button -->
-    <androidx.appcompat.widget.AppCompatButton
-        android:id="@+id/copyButton"
+    <!-- Info Label -->
+    <TextView
+        android:id="@+id/infoText"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Your 12-word seed phrase:"
+        android:textSize="12sp"
+        android:textColor="#888888"
+        android:fontFamily="@font/poppins_regular"
+        android:layout_marginStart="24dp"
+        android:layout_marginBottom="8dp" />
+
+    <!-- Seed Phrase Container with Copy Icon -->
+    <LinearLayout
+        android:id="@+id/seedPhraseContainer"
         android:layout_width="match_parent"
-        android:layout_height="56dp"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:background="@drawable/settings_box_bg"
+        android:padding="16dp"
         android:layout_marginStart="24dp"
         android:layout_marginEnd="24dp"
-        android:layout_marginBottom="12dp"
-        android:background="@drawable/wallet_action_button_bg"
-        android:fontFamily="@font/poppins_semibold"
-        android:text="Copy to Clipboard"
-        android:textAllCaps="false"
-        android:textColor="@color/text_white"
-        android:textSize="16sp" />
+        android:layout_marginBottom="24dp"
+        android:gravity="center_vertical"
+        android:clickable="true"
+        android:focusable="true">
+
+        <TextView
+            android:id="@+id/seedPhraseText"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12"
+            android:textSize="14sp"
+            android:textColor="@color/text_white"
+            android:fontFamily="monospace"
+            android:lineSpacingMultiplier="1.4"
+            android:layout_marginEnd="12dp" />
+
+        <ImageView
+            android:id="@+id/copySeedPhraseIcon"
+            android:layout_width="20dp"
+            android:layout_height="20dp"
+            android:src="@drawable/ic_copy"
+            android:tint="@color/text_gray"
+            android:contentDescription="Copy seed phrase" />
+
+    </LinearLayout>
+
+    <!-- Birthday Height Container (for Zcash) -->
+    <TextView
+        android:id="@+id/birthdayHeightLabel"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Birthday Height:"
+        android:textSize="12sp"
+        android:textColor="#888888"
+        android:fontFamily="@font/poppins_regular"
+        android:layout_marginStart="24dp"
+        android:layout_marginBottom="8dp"
+        android:visibility="gone" />
+
+    <LinearLayout
+        android:id="@+id/birthdayHeightContainer"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:background="@drawable/settings_box_bg"
+        android:padding="16dp"
+        android:layout_marginStart="24dp"
+        android:layout_marginEnd="24dp"
+        android:layout_marginBottom="24dp"
+        android:gravity="center_vertical"
+        android:clickable="true"
+        android:focusable="true"
+        android:visibility="gone">
+
+        <TextView
+            android:id="@+id/birthdayHeightText"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="2500000"
+            android:textSize="14sp"
+            android:textColor="@color/text_white"
+            android:fontFamily="@font/poppins_medium"
+            android:layout_marginEnd="12dp" />
+
+        <ImageView
+            android:id="@+id/copyBirthdayHeightIcon"
+            android:layout_width="20dp"
+            android:layout_height="20dp"
+            android:src="@drawable/ic_copy"
+            android:tint="@color/text_gray"
+            android:contentDescription="Copy birthday height" />
+
+    </LinearLayout>
 
     <!-- Close Button -->
     <androidx.appcompat.widget.AppCompatButton

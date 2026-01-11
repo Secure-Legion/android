@@ -173,45 +173,48 @@ class WalletSettingsActivity : AppCompatActivity() {
     private fun showWalletSelector() {
         lifecycleScope.launch(Dispatchers.IO) {
             try {
+                Log.d("WalletSettings", "Loading wallets...")
                 val keyManager = KeyManager.getInstance(this@WalletSettingsActivity)
                 val dbPassphrase = keyManager.getDatabasePassphrase()
                 val database = SecureLegionDatabase.getInstance(this@WalletSettingsActivity, dbPassphrase)
                 val allWallets = database.walletDao().getAllWallets()
+                Log.d("WalletSettings", "Found ${allWallets.size} total wallets")
 
-                // Filter by selected chain
-                val wallets = allWallets.filter { wallet ->
-                    wallet.walletId != "main" && when (selectedChain) {
-                        "SOLANA" -> wallet.solanaAddress.isNotEmpty()
-                        "ZCASH" -> !wallet.zcashUnifiedAddress.isNullOrEmpty() || !wallet.zcashAddress.isNullOrEmpty()
-                        else -> false
-                    }
-                }
+                // Filter out "main" wallet
+                val wallets = allWallets.filter { it.walletId != "main" }
+                Log.d("WalletSettings", "Found ${wallets.size} user wallets")
 
                 withContext(Dispatchers.Main) {
                     if (wallets.isEmpty()) {
-                        ThemedToast.show(this@WalletSettingsActivity, "No $selectedChain wallets found")
+                        ThemedToast.show(this@WalletSettingsActivity, "No wallets found")
                         return@withContext
                     }
 
-                    showWalletSelectorBottomSheet(wallets) { wallet ->
-                        // Update current wallet and set as active
-                        currentWallet = wallet
-                        updateCurrentWalletDisplay()
+                    try {
+                        Log.d("WalletSettings", "Showing wallet selector bottom sheet...")
+                        showWalletSelectorBottomSheet(wallets) { wallet ->
+                            // Update current wallet and set as active
+                            currentWallet = wallet
+                            updateCurrentWalletDisplay()
 
-                        // Update database to set as active
-                        lifecycleScope.launch(Dispatchers.IO) {
-                            try {
-                                database.walletDao().updateLastUsed(wallet.walletId, System.currentTimeMillis())
-                            } catch (e: Exception) {
-                                Log.e("WalletSettings", "Failed to update wallet", e)
+                            // Update database to set as active
+                            lifecycleScope.launch(Dispatchers.IO) {
+                                try {
+                                    database.walletDao().updateLastUsed(wallet.walletId, System.currentTimeMillis())
+                                } catch (e: Exception) {
+                                    Log.e("WalletSettings", "Failed to update wallet", e)
+                                }
                             }
                         }
+                    } catch (e: Exception) {
+                        Log.e("WalletSettings", "Failed to show bottom sheet", e)
+                        ThemedToast.show(this@WalletSettingsActivity, "Failed to show wallet selector: ${e.message}")
                     }
                 }
             } catch (e: Exception) {
                 Log.e("WalletSettings", "Failed to load wallets", e)
                 withContext(Dispatchers.Main) {
-                    ThemedToast.show(this@WalletSettingsActivity, "Failed to load wallets")
+                    ThemedToast.show(this@WalletSettingsActivity, "Failed to load wallets: ${e.message}")
                 }
             }
         }
@@ -224,18 +227,40 @@ class WalletSettingsActivity : AppCompatActivity() {
             return
         }
 
+        val isZcashWallet = !wallet.zcashUnifiedAddress.isNullOrEmpty() || !wallet.zcashAddress.isNullOrEmpty()
+
         lifecycleScope.launch(Dispatchers.IO) {
             try {
                 val keyManager = KeyManager.getInstance(this@WalletSettingsActivity)
-                val seedPhrase = keyManager.getWalletSeedPhrase(wallet.walletId)
 
-                if (seedPhrase != null) {
-                    withContext(Dispatchers.Main) {
-                        showExportKeyBottomSheet(seedPhrase)
+                if (isZcashWallet) {
+                    // For Zcash, only seed phrase available
+                    val seedPhrase = keyManager.getWalletSeedPhrase(wallet.walletId)
+                    if (seedPhrase != null) {
+                        val birthdayHeight = wallet.zcashBirthdayHeight ?: 0
+                        withContext(Dispatchers.Main) {
+                            showExportZcashWalletBottomSheet(seedPhrase, birthdayHeight)
+                        }
+                    } else {
+                        withContext(Dispatchers.Main) {
+                            ThemedToast.show(this@WalletSettingsActivity, "Wallet seed not found")
+                        }
                     }
                 } else {
+                    // For Solana, get both seed phrase and private key
+                    val seedPhrase = keyManager.getWalletSeedPhrase(wallet.walletId)
+                    val privateKeyBytes = keyManager.getWalletPrivateKey(wallet.walletId)
+                    val privateKey = privateKeyBytes?.let {
+                        // Export as Base58 (standard Solana format)
+                        org.bitcoinj.core.Base58.encode(it)
+                    }
+
                     withContext(Dispatchers.Main) {
-                        ThemedToast.show(this@WalletSettingsActivity, "Wallet seed not found")
+                        if (seedPhrase != null && privateKey != null) {
+                            showExportSolanaWalletBottomSheet(seedPhrase, privateKey)
+                        } else {
+                            ThemedToast.show(this@WalletSettingsActivity, "Failed to retrieve wallet credentials")
+                        }
                     }
                 }
             } catch (e: Exception) {
@@ -250,34 +275,34 @@ class WalletSettingsActivity : AppCompatActivity() {
     private fun showWalletSelectorForDelete() {
         lifecycleScope.launch(Dispatchers.IO) {
             try {
+                Log.d("WalletSettings", "Loading wallets for delete...")
                 val keyManager = KeyManager.getInstance(this@WalletSettingsActivity)
                 val dbPassphrase = keyManager.getDatabasePassphrase()
                 val database = SecureLegionDatabase.getInstance(this@WalletSettingsActivity, dbPassphrase)
                 val allWallets = database.walletDao().getAllWallets()
 
-                // Filter by selected chain
-                val wallets = allWallets.filter { wallet ->
-                    wallet.walletId != "main" && when (selectedChain) {
-                        "SOLANA" -> wallet.solanaAddress.isNotEmpty()
-                        "ZCASH" -> !wallet.zcashUnifiedAddress.isNullOrEmpty() || !wallet.zcashAddress.isNullOrEmpty()
-                        else -> false
-                    }
-                }
+                // Filter out "main" wallet
+                val wallets = allWallets.filter { it.walletId != "main" }
 
                 withContext(Dispatchers.Main) {
                     if (wallets.isEmpty()) {
-                        ThemedToast.show(this@WalletSettingsActivity, "No $selectedChain wallets found")
+                        ThemedToast.show(this@WalletSettingsActivity, "No wallets found")
                         return@withContext
                     }
 
-                    showWalletSelectorBottomSheet(wallets) { wallet ->
-                        showDeleteConfirmation(wallet)
+                    try {
+                        showWalletSelectorBottomSheet(wallets) { wallet ->
+                            showDeleteConfirmation(wallet)
+                        }
+                    } catch (e: Exception) {
+                        Log.e("WalletSettings", "Failed to show bottom sheet for delete", e)
+                        ThemedToast.show(this@WalletSettingsActivity, "Failed to show wallet selector: ${e.message}")
                     }
                 }
             } catch (e: Exception) {
-                Log.e("WalletSettings", "Failed to load wallets", e)
+                Log.e("WalletSettings", "Failed to load wallets for delete", e)
                 withContext(Dispatchers.Main) {
-                    ThemedToast.show(this@WalletSettingsActivity, "Failed to load wallets")
+                    ThemedToast.show(this@WalletSettingsActivity, "Failed to load wallets: ${e.message}")
                 }
             }
         }
@@ -289,66 +314,241 @@ class WalletSettingsActivity : AppCompatActivity() {
 
         bottomSheet.setContentView(view)
 
-        // Get container for wallet list
+        // Get UI elements
         val walletListContainer = view.findViewById<LinearLayout>(R.id.walletListContainer)
+        val solanaChainButton = view.findViewById<View>(R.id.solanaChainButton)
+        val zcashChainButton = view.findViewById<View>(R.id.zcashChainButton)
 
-        // Add each wallet to the list
-        for (wallet in wallets) {
-            val walletItemView = layoutInflater.inflate(R.layout.item_wallet_selector, walletListContainer, false)
+        // Track current selected chain
+        var currentSelectedChain = selectedChain
 
-            val walletName = walletItemView.findViewById<TextView>(R.id.walletName)
-            val walletBalance = walletItemView.findViewById<TextView>(R.id.walletBalance)
-            val settingsBtn = walletItemView.findViewById<View>(R.id.walletSettingsBtn)
-
-            walletName.text = wallet.name
-
-            // Show address preview instead of balance
-            val address = if (!wallet.zcashUnifiedAddress.isNullOrEmpty()) {
-                wallet.zcashUnifiedAddress
-            } else if (!wallet.zcashAddress.isNullOrEmpty()) {
-                wallet.zcashAddress
+        // Function to update chain button states
+        fun updateChainButtons() {
+            if (currentSelectedChain == "SOLANA") {
+                solanaChainButton.setBackgroundResource(R.drawable.swap_button_bg)
+                zcashChainButton.setBackgroundResource(R.drawable.wallet_dropdown_bg)
             } else {
-                wallet.solanaAddress
+                solanaChainButton.setBackgroundResource(R.drawable.wallet_dropdown_bg)
+                zcashChainButton.setBackgroundResource(R.drawable.swap_button_bg)
             }
-
-            val addressPreview = if (address.length > 15) {
-                "${address.take(6)}...${address.takeLast(6)}"
-            } else {
-                address
-            }
-            walletBalance.text = addressPreview
-
-            // Hide settings button since we're selecting
-            settingsBtn.visibility = View.GONE
-
-            // Click on wallet item to select it
-            walletItemView.setOnClickListener {
-                onSelect(wallet)
-                bottomSheet.dismiss()
-            }
-
-            walletListContainer.addView(walletItemView)
         }
+
+        // Function to populate wallet list based on selected chain
+        fun populateWalletList() {
+            walletListContainer.removeAllViews()
+
+            // Filter wallets by current selected chain
+            val filteredWallets = wallets.filter { wallet ->
+                when (currentSelectedChain) {
+                    "SOLANA" -> wallet.solanaAddress.isNotEmpty()
+                    "ZCASH" -> !wallet.zcashUnifiedAddress.isNullOrEmpty() || !wallet.zcashAddress.isNullOrEmpty()
+                    else -> false
+                }
+            }
+
+            // Add each wallet to the list
+            for (wallet in filteredWallets) {
+                val walletItemView = layoutInflater.inflate(R.layout.item_wallet_selector, walletListContainer, false)
+
+                val walletName = walletItemView.findViewById<TextView>(R.id.walletName)
+                val walletBalance = walletItemView.findViewById<TextView>(R.id.walletBalance)
+                val walletAddress = walletItemView.findViewById<TextView>(R.id.walletAddress)
+                val settingsBtn = walletItemView.findViewById<View>(R.id.walletSettingsBtn)
+                val walletIcon = walletItemView.findViewById<ImageView>(R.id.walletIcon)
+
+                walletName.text = wallet.name
+                walletBalance.text = "$0.00"
+
+                // Set chain-specific icon and address
+                val isZcashWallet = !wallet.zcashUnifiedAddress.isNullOrEmpty() || !wallet.zcashAddress.isNullOrEmpty()
+                if (isZcashWallet) {
+                    walletIcon.setImageResource(R.drawable.ic_zcash)
+                    val address = wallet.zcashUnifiedAddress ?: wallet.zcashAddress ?: ""
+                    walletAddress?.text = if (address.length > 15) {
+                        "${address.take(5)}.....${address.takeLast(6)}"
+                    } else {
+                        address
+                    }
+                } else {
+                    walletIcon.setImageResource(R.drawable.ic_solana)
+                    val address = wallet.solanaAddress
+                    walletAddress?.text = if (address.length > 15) {
+                        "${address.take(5)}.....${address.takeLast(6)}"
+                    } else {
+                        address
+                    }
+                }
+
+                // Hide settings button since we're selecting
+                settingsBtn.visibility = View.GONE
+
+                // Click on wallet item to select it
+                walletItemView.setOnClickListener {
+                    onSelect(wallet)
+                    bottomSheet.dismiss()
+                }
+
+                walletListContainer.addView(walletItemView)
+            }
+        }
+
+        // Chain button click listeners
+        solanaChainButton.setOnClickListener {
+            currentSelectedChain = "SOLANA"
+            updateChainButtons()
+            populateWalletList()
+        }
+
+        zcashChainButton.setOnClickListener {
+            currentSelectedChain = "ZCASH"
+            updateChainButtons()
+            populateWalletList()
+        }
+
+        // Initial population
+        updateChainButtons()
+        populateWalletList()
 
         bottomSheet.show()
     }
 
-    private fun showExportKeyBottomSheet(seedPhrase: String) {
+    private fun showExportSolanaWalletBottomSheet(seedPhrase: String, privateKey: String) {
         val bottomSheet = BottomSheetDialog(this)
         val view = layoutInflater.inflate(R.layout.bottom_sheet_private_key, null)
 
+        // Get UI elements
         val keyText = view.findViewById<TextView>(R.id.seedPhraseText)
-        keyText.text = seedPhrase
+        val infoText = view.findViewById<TextView>(R.id.infoText)
+        val walletAddressText = view.findViewById<TextView>(R.id.walletAddressText)
+        val walletChainIcon = view.findViewById<ImageView>(R.id.walletChainIcon)
+        val copyAddressIcon = view.findViewById<ImageView>(R.id.copyAddressIcon)
+        val copySeedPhraseIcon = view.findViewById<ImageView>(R.id.copySeedPhraseIcon)
+        val seedPhraseContainer = view.findViewById<View>(R.id.seedPhraseContainer)
 
-        view.findViewById<View>(R.id.copyButton).setOnClickListener {
+        // Set chain icon
+        walletChainIcon?.setImageResource(R.drawable.ic_solana)
+
+        // Set wallet address preview
+        val wallet = currentWallet
+        val address = wallet?.solanaAddress ?: ""
+        val addressPreview = if (address.length > 15) {
+            "${address.take(6)}...${address.takeLast(6)}"
+        } else {
+            address
+        }
+        walletAddressText?.text = addressPreview
+
+        // Copy address icon click
+        copyAddressIcon?.setOnClickListener {
+            val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+            val clip = ClipData.newPlainText("Wallet Address", address)
+            clipboard.setPrimaryClip(clip)
+            ThemedToast.show(this, "Wallet address copied to clipboard")
+        }
+
+        // Track current content (seed phrase or private key)
+        var showingSeedPhrase = true
+        var currentContent = seedPhrase
+
+        // Set initial content
+        keyText?.text = seedPhrase
+        infoText?.text = "Your 12-word seed phrase:"
+
+        // Copy icon click handler
+        copySeedPhraseIcon?.setOnClickListener {
+            val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+            val label = if (showingSeedPhrase) "Seed Phrase" else "Private Key"
+            val clip = ClipData.newPlainText(label, currentContent)
+            clipboard.setPrimaryClip(clip)
+            ThemedToast.show(this, "$label copied to clipboard")
+        }
+
+        // Container click to toggle
+        seedPhraseContainer?.setOnClickListener {
+            showingSeedPhrase = !showingSeedPhrase
+            if (showingSeedPhrase) {
+                currentContent = seedPhrase
+                keyText?.text = seedPhrase
+                infoText?.text = "Your 12-word seed phrase:"
+            } else {
+                currentContent = privateKey
+                keyText?.text = privateKey
+                infoText?.text = "Your private key:"
+            }
+        }
+
+        view.findViewById<View>(R.id.closeButton)?.setOnClickListener {
+            bottomSheet.dismiss()
+        }
+
+        bottomSheet.setContentView(view)
+        bottomSheet.setCancelable(true)
+        bottomSheet.show()
+    }
+
+    private fun showExportZcashWalletBottomSheet(seedPhrase: String, birthdayHeight: Long) {
+        val bottomSheet = BottomSheetDialog(this)
+        val view = layoutInflater.inflate(R.layout.bottom_sheet_private_key, null)
+
+        // Get UI elements
+        val keyText = view.findViewById<TextView>(R.id.seedPhraseText)
+        val infoText = view.findViewById<TextView>(R.id.infoText)
+        val walletAddressText = view.findViewById<TextView>(R.id.walletAddressText)
+        val walletChainIcon = view.findViewById<ImageView>(R.id.walletChainIcon)
+        val copyAddressIcon = view.findViewById<ImageView>(R.id.copyAddressIcon)
+        val copySeedPhraseIcon = view.findViewById<ImageView>(R.id.copySeedPhraseIcon)
+        val birthdayHeightLabel = view.findViewById<TextView>(R.id.birthdayHeightLabel)
+        val birthdayHeightContainer = view.findViewById<View>(R.id.birthdayHeightContainer)
+        val birthdayHeightText = view.findViewById<TextView>(R.id.birthdayHeightText)
+        val copyBirthdayHeightIcon = view.findViewById<ImageView>(R.id.copyBirthdayHeightIcon)
+
+        // Set chain icon
+        walletChainIcon?.setImageResource(R.drawable.ic_zcash)
+
+        // Set wallet address preview
+        val wallet = currentWallet
+        val address = wallet?.zcashUnifiedAddress ?: wallet?.zcashAddress ?: ""
+        val addressPreview = if (address.length > 15) {
+            "${address.take(6)}...${address.takeLast(6)}"
+        } else {
+            address
+        }
+        walletAddressText?.text = addressPreview
+
+        // Copy address icon click
+        copyAddressIcon?.setOnClickListener {
+            val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+            val clip = ClipData.newPlainText("Wallet Address", address)
+            clipboard.setPrimaryClip(clip)
+            ThemedToast.show(this, "Wallet address copied to clipboard")
+        }
+
+        // Set seed phrase
+        keyText?.text = seedPhrase
+        infoText?.text = "Your 24-word seed phrase:"
+
+        // Copy seed phrase icon click
+        copySeedPhraseIcon?.setOnClickListener {
             val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
             val clip = ClipData.newPlainText("Seed Phrase", seedPhrase)
             clipboard.setPrimaryClip(clip)
             ThemedToast.show(this, "Seed phrase copied to clipboard")
-            bottomSheet.dismiss()
         }
 
-        view.findViewById<View>(R.id.closeButton).setOnClickListener {
+        // Show birthday height section
+        birthdayHeightLabel?.visibility = View.VISIBLE
+        birthdayHeightContainer?.visibility = View.VISIBLE
+        birthdayHeightText?.text = birthdayHeight.toString()
+
+        // Copy birthday height icon click
+        copyBirthdayHeightIcon?.setOnClickListener {
+            val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+            val clip = ClipData.newPlainText("Birthday Height", birthdayHeight.toString())
+            clipboard.setPrimaryClip(clip)
+            ThemedToast.show(this, "Birthday height copied to clipboard")
+        }
+
+        view.findViewById<View>(R.id.closeButton)?.setOnClickListener {
             bottomSheet.dismiss()
         }
 
