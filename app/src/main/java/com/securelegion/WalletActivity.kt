@@ -798,9 +798,15 @@ class WalletActivity : AppCompatActivity() {
 
                         // Update chain icon based on wallet type
                         updateChainIcon(walletChainIcon, currentWallet)
+
+                        // Update visible tokens based on wallet type
+                        updateVisibleTokens(currentWallet)
                     } else {
                         walletNameText?.text = "----"
                         walletChainIcon?.setImageResource(R.drawable.ic_solana)
+
+                        // Show Solana tokens by default
+                        updateVisibleTokens(null)
                     }
                 }
             } catch (e: Exception) {
@@ -824,6 +830,28 @@ class WalletActivity : AppCompatActivity() {
             iconView.setImageResource(R.drawable.ic_zcash)
         } else {
             iconView.setImageResource(R.drawable.ic_solana)
+        }
+    }
+
+    private fun updateVisibleTokens(wallet: Wallet?) {
+        // Determine wallet chain type
+        val isZcashWallet = wallet?.let {
+            (!it.zcashUnifiedAddress.isNullOrEmpty() || !it.zcashAddress.isNullOrEmpty()) && it.solanaAddress.isEmpty()
+        } ?: false
+
+        // Find token items in the layout
+        val solTokenItem = findViewById<View>(R.id.solBalance)?.parent?.parent as? LinearLayout
+        val zecTokenItem = findViewById<View>(R.id.zecBalance)?.parent?.parent as? LinearLayout
+
+        // Show/hide tokens based on wallet type
+        if (isZcashWallet) {
+            // Zcash wallet - show only ZEC token
+            solTokenItem?.visibility = View.GONE
+            zecTokenItem?.visibility = View.VISIBLE
+        } else {
+            // Solana wallet - show only SOL token
+            solTokenItem?.visibility = View.VISIBLE
+            zecTokenItem?.visibility = View.GONE
         }
     }
 
@@ -871,10 +899,41 @@ class WalletActivity : AppCompatActivity() {
 
                     // Get UI elements
                     val walletListContainer = view.findViewById<LinearLayout>(R.id.walletListContainer)
+                    val solanaChainButton = view.findViewById<View>(R.id.solanaChainButton)
+                    val zcashChainButton = view.findViewById<View>(R.id.zcashChainButton)
 
-                    // Show ALL wallets (no chain filtering)
-                    for (wallet in wallets) {
-                        val walletItemView = layoutInflater.inflate(R.layout.item_wallet_selector, walletListContainer, false)
+                    // Determine initial chain selection based on current wallet
+                    val isCurrentZcash = currentWallet?.let {
+                        !it.zcashUnifiedAddress.isNullOrEmpty() || !it.zcashAddress.isNullOrEmpty()
+                    } ?: false
+                    var selectedChain = if (isCurrentZcash) "ZCASH" else "SOLANA"
+
+                    // Function to update chain button states
+                    fun updateChainButtons() {
+                        if (selectedChain == "SOLANA") {
+                            solanaChainButton.alpha = 1.0f
+                            zcashChainButton.alpha = 0.5f
+                        } else {
+                            solanaChainButton.alpha = 0.5f
+                            zcashChainButton.alpha = 1.0f
+                        }
+                    }
+
+                    // Function to populate wallet list based on selected chain
+                    fun populateWalletList() {
+                        walletListContainer.removeAllViews()
+
+                        // Filter wallets by selected chain
+                        val filteredWallets = wallets.filter { wallet ->
+                            when (selectedChain) {
+                                "SOLANA" -> wallet.solanaAddress.isNotEmpty()
+                                "ZCASH" -> !wallet.zcashUnifiedAddress.isNullOrEmpty() || !wallet.zcashAddress.isNullOrEmpty()
+                                else -> false
+                            }
+                        }
+
+                        for (wallet in filteredWallets) {
+                            val walletItemView = layoutInflater.inflate(R.layout.item_wallet_selector, walletListContainer, false)
 
                             val walletName = walletItemView.findViewById<TextView>(R.id.walletName)
                             val walletBalance = walletItemView.findViewById<TextView>(R.id.walletBalance)
@@ -908,6 +967,24 @@ class WalletActivity : AppCompatActivity() {
 
                             walletListContainer.addView(walletItemView)
                         }
+                    }
+
+                    // Chain button click handlers
+                    solanaChainButton.setOnClickListener {
+                        selectedChain = "SOLANA"
+                        updateChainButtons()
+                        populateWalletList()
+                    }
+
+                    zcashChainButton.setOnClickListener {
+                        selectedChain = "ZCASH"
+                        updateChainButtons()
+                        populateWalletList()
+                    }
+
+                    // Initialize chain buttons and wallet list
+                    updateChainButtons()
+                    populateWalletList()
 
                     bottomSheet.show()
                 }
@@ -939,6 +1016,9 @@ class WalletActivity : AppCompatActivity() {
                     // Update chain icon based on wallet type
                     val walletChainIcon = findViewById<ImageView>(R.id.walletChainIcon)
                     updateChainIcon(walletChainIcon, wallet)
+
+                    // Update visible tokens based on wallet type
+                    updateVisibleTokens(wallet)
 
                     // Reload balance for the new wallet
                     loadWalletBalance()

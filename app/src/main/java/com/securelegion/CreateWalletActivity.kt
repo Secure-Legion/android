@@ -203,6 +203,12 @@ class CreateWalletActivity : AppCompatActivity() {
                         accountIndex = 0,
                         birthdayHeight = null
                     )
+
+                    // Store seed phrase for Zcash wallet so it can be retrieved later
+                    if (seedPhrase != null) {
+                        keyManager.storeWalletSeed(walletId, seedPhrase)
+                        Log.i("CreateWallet", "Stored seed phrase for Zcash wallet: $walletId")
+                    }
                 }
 
                 // Display address

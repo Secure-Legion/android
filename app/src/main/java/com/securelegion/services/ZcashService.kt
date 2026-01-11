@@ -360,8 +360,13 @@ class ZcashService(private val context: Context) {
             stopSynchronizer()
 
             // Get seed phrase for this wallet
-            val seedPhrase = keyManager.getWalletSeedPhrase(walletId)
-                ?: return@withContext Result.failure(IllegalStateException("No seed phrase found for wallet: $walletId"))
+            // Try wallet-specific seed first, fall back to main wallet seed for Zcash wallets
+            val seedPhrase = try {
+                keyManager.getWalletSeedPhrase(walletId)
+            } catch (e: Exception) {
+                Log.w(TAG, "Wallet-specific seed not found, trying main wallet seed for Zcash")
+                keyManager.getMainWalletSeedForZcash()
+            } ?: return@withContext Result.failure(IllegalStateException("No seed phrase found for wallet: $walletId"))
 
             // Get wallet info from database
             val wallet = database.walletDao().getWalletById(walletId)
