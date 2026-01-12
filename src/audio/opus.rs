@@ -68,8 +68,8 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_opusEncoderCreate(
             return -1;
         }
 
-        // Set bitrate (MVP: 16kbps CBR for reduced latency/jitter)
-        let target_bitrate = if bitrate > 0 { bitrate } else { 16000 };
+        // Set bitrate (32kbps CBR for high quality over Tor)
+        let target_bitrate = if bitrate > 0 { bitrate } else { 32000 };
         if let Err(e) = crate::audio::opus_ctl::opus_set_bitrate(encoder_ptr, target_bitrate) {
             log::error!("Failed to set bitrate: error={}", e);
             opus_encoder_destroy(encoder_ptr);
@@ -83,18 +83,52 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_opusEncoderCreate(
             return -1;
         }
 
-        // Set expected packet loss percentage (15% for Tor)
-        if let Err(e) = crate::audio::opus_ctl::opus_set_packet_loss_perc(encoder_ptr, 15) {
+        // Set expected packet loss percentage (25% for Tor - aggressive FEC)
+        if let Err(e) = crate::audio::opus_ctl::opus_set_packet_loss_perc(encoder_ptr, 25) {
             log::error!("Failed to set packet loss percentage: error={}", e);
             opus_encoder_destroy(encoder_ptr);
             return -1;
         }
 
-        // Set DTX (Discontinuous Transmission) - silence suppression
-        let dtx_applied = match crate::audio::opus_ctl::opus_set_dtx(encoder_ptr, true) {
+        // Disable DTX (Discontinuous Transmission) - send continuous audio for smoother Tor streaming
+        let dtx_applied = match crate::audio::opus_ctl::opus_set_dtx(encoder_ptr, false) {
+            Ok(_) => false,
+            Err(e) => {
+                log::warn!("Failed to disable DTX: error={} (non-fatal)", e);
+                true  // Assume DTX stayed enabled on error
+            }
+        };
+
+        // Set signal type to VOICE (optimizes for speech characteristics)
+        let signal_applied = match crate::audio::opus_ctl::opus_set_signal(encoder_ptr, true) {
             Ok(_) => true,
             Err(e) => {
-                log::warn!("Failed to enable DTX: error={} (non-fatal)", e);
+                log::warn!("Failed to set VOICE signal: error={} (non-fatal)", e);
+                false
+            }
+        };
+
+        // Enable constrained VBR (prevents bitrate spikes over Tor)
+        let vbr_applied = match crate::audio::opus_ctl::opus_set_vbr(encoder_ptr, true) {
+            Ok(_) => {
+                // Enable constraint for predictable bandwidth
+                crate::audio::opus_ctl::opus_set_vbr_constraint(encoder_ptr, true).ok();
+                true
+            },
+            Err(e) => {
+                log::warn!("Failed to enable VBR: error={} (non-fatal)", e);
+                false
+            }
+        };
+
+        // Cap max bandwidth to WIDEBAND (8 kHz) for voice - saves bits
+        let bandwidth_applied = match crate::audio::opus_ctl::opus_set_max_bandwidth(
+            encoder_ptr,
+            1103 // OPUS_BANDWIDTH_WIDEBAND
+        ) {
+            Ok(_) => true,
+            Err(e) => {
+                log::warn!("Failed to set max bandwidth: error={} (non-fatal)", e);
                 false
             }
         };
@@ -108,10 +142,27 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_opusEncoderCreate(
             }
         };
 
+        // Validate encoder configuration
+        if let Err(e) = crate::audio::opus_ctl::validate_encoder_config(
+            encoder_ptr,
+            SAMPLE_RATE,
+            8000,   // min bitrate
+            128000  // max bitrate
+        ) {
+            log::error!("Encoder validation failed: {}", e);
+            opus_encoder_destroy(encoder_ptr);
+            return -1;
+        }
+
+        // Log final configuration
+        crate::audio::opus_ctl::log_encoder_config(encoder_ptr);
+
         log::info!(
-            "Opus encoder created: {}kbps | FEC=true | loss=15% | DTX={} | complexity={}",
+            "Opus encoder created: {}kbps | FEC=true | loss=25% | DTX={} | signal={} | VBR={} | BW=wideband | complexity={}",
             target_bitrate / 1000,
-            dtx_applied,
+            if dtx_applied { "ON" } else { "OFF" },
+            if signal_applied { "VOICE" } else { "AUTO" },
+            if vbr_applied { "constrained" } else { "CBR" },
             complexity_applied
         );
 

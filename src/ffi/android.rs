@@ -670,6 +670,38 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_createHiddenService(
     }, std::ptr::null_mut())
 }
 
+/// Clear all ephemeral hidden services
+/// This removes orphaned services from previous failed account creation attempts
+/// Returns the number of services deleted
+#[no_mangle]
+pub extern "C" fn Java_com_securelegion_crypto_RustBridge_clearAllEphemeralServices(
+    mut env: JNIEnv,
+    _class: JClass,
+) -> jint {
+    catch_panic!(env, {
+        let tor_manager = get_tor_manager();
+
+        // Run async clear operation using global runtime
+        let result = GLOBAL_RUNTIME.block_on(async {
+            let manager = tor_manager.lock().unwrap();
+            manager.clear_all_ephemeral_services().await
+        });
+
+        match result {
+            Ok(count) => {
+                log::info!("Cleared {} ephemeral service(s)", count);
+                count as jint
+            },
+            Err(e) => {
+                let error_msg = format!("Failed to clear ephemeral services: {}", e);
+                log::error!("{}", error_msg);
+                let _ = env.throw_new("java/lang/RuntimeException", error_msg);
+                -1
+            }
+        }
+    }, -1)
+}
+
 /// Create voice hidden service for voice calling (v2.0)
 /// Uses seed-derived voice service Ed25519 key from KeyManager
 /// Returns the .onion address (port 9152)

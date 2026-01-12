@@ -443,11 +443,11 @@ impl TorManager {
         let (actual_onion_address, is_new_service) = {
             let mut stream = control.lock().await;
 
-            // Create ephemeral hidden service (no Flags=Detach)
-            // This prevents collision errors and ensures computed address matches Tor's address
-            // Service is recreated on each app start with same deterministic address from seed
+            // Create ephemeral hidden service with Detach flag
+            // Detach allows the service to persist beyond the control connection and be deleted from any connection
+            // This fixes "service already registered" errors from crashed/orphaned services
             let command = format!(
-                "ADD_ONION ED25519-V3:{} Port={},127.0.0.1:{} Port=8080,127.0.0.1:8080 Port=9151,127.0.0.1:9151 Port=9153,127.0.0.1:9153\r\n",
+                "ADD_ONION ED25519-V3:{} Flags=Detach Port={},127.0.0.1:{} Port=8080,127.0.0.1:8080 Port=9151,127.0.0.1:9151 Port=9153,127.0.0.1:9153\r\n",
                 key_base64, service_port, local_port
             );
 
@@ -546,10 +546,11 @@ impl TorManager {
         let actual_onion_address = {
             let mut stream = control.lock().await;
 
-            // Create ephemeral voice hidden service with only port 9152
+            // Create ephemeral voice hidden service with Detach flag and only port 9152
             // Single Onion mode is configured in voice torrc (HiddenServiceNonAnonymousMode 1)
+            // Detach allows cleanup of orphaned services from previous crashes
             let command = format!(
-                "ADD_ONION ED25519-V3:{} Port=9152,127.0.0.1:9152\r\n",
+                "ADD_ONION ED25519-V3:{} Flags=Detach Port=9152,127.0.0.1:9152\r\n",
                 key_base64
             );
 
@@ -1002,6 +1003,68 @@ impl TorManager {
             handle.abort();
             log::info!("Hidden service listener stopped");
         }
+    }
+
+    /// Clear all ephemeral hidden services via Tor control port
+    /// This removes any orphaned services from previous failed account creation attempts
+    /// Returns the number of services deleted
+    pub async fn clear_all_ephemeral_services(&self) -> Result<u32, Box<dyn Error>> {
+        log::info!("Clearing all ephemeral hidden services...");
+
+        let control = self.control_stream.as_ref()
+            .ok_or("Control port not connected")?;
+
+        let mut stream = control.lock().await;
+
+        // Get list of all onion services
+        stream.write_all(b"GETINFO onions/current\r\n").await?;
+
+        let mut buf = vec![0u8; 4096];
+        let n = stream.read(&mut buf).await?;
+        let response = String::from_utf8_lossy(&buf[..n]);
+
+        log::info!("GETINFO onions/current response: {}", response);
+
+        // Parse service IDs from response
+        // Format: 250-onions/current=service1 service2 service3
+        let mut service_ids = Vec::new();
+        for line in response.lines() {
+            if line.contains("onions/current=") {
+                if let Some(services_str) = line.split("onions/current=").nth(1) {
+                    // Services are space-separated
+                    for service_id in services_str.split_whitespace() {
+                        service_ids.push(service_id.to_string());
+                    }
+                }
+            }
+        }
+
+        if service_ids.is_empty() {
+            log::info!("No ephemeral services found to clear");
+            return Ok(0);
+        }
+
+        log::info!("Found {} ephemeral service(s) to delete: {:?}", service_ids.len(), service_ids);
+
+        // Delete each service
+        let mut deleted_count = 0;
+        for service_id in &service_ids {
+            let del_command = format!("DEL_ONION {}\r\n", service_id);
+            stream.write_all(del_command.as_bytes()).await?;
+
+            let n = stream.read(&mut buf).await?;
+            let del_response = String::from_utf8_lossy(&buf[..n]);
+
+            if del_response.contains("250 OK") {
+                log::info!("✓ Deleted ephemeral service: {}", service_id);
+                deleted_count += 1;
+            } else {
+                log::warn!("Failed to delete service {}: {}", service_id, del_response);
+            }
+        }
+
+        log::info!("Cleared {} ephemeral service(s)", deleted_count);
+        Ok(deleted_count)
     }
 
     /// Start SOCKS proxy (C Tor always runs SOCKS on 9050, so this is a no-op)
