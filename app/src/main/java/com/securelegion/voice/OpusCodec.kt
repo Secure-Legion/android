@@ -7,35 +7,38 @@ import java.nio.ByteOrder
 /**
  * OpusCodec wraps the native Rust Opus encoder/decoder for voice calls.
  *
- * Configuration for low-latency voice over Tor:
+ * Optimized configuration for voice over Tor (40ms frames):
  * - Sample rate: 48 kHz (Opus native rate)
  * - Channels: 1 (mono)
- * - Frame size: 20ms (960 samples at 48kHz)
- * - Bitrate: 24 kbps (good quality for voice, ~60 KB/s with overhead)
+ * - Frame size: 40ms (1920 samples at 48kHz)
+ * - Bitrate: 32 kbps (high quality for voice)
  * - Application: VOIP (optimized for speech)
+ * - Signal: VOICE (optimized for speech characteristics)
+ * - FEC: Enabled with 25% expected packet loss
+ * - DTX: Disabled (continuous transmission for smoother streaming over Tor)
  *
- * Expected bandwidth: ~3 KB/s per circuit with 20ms frames
- * With 3 circuits: ~9 KB/s total upstream/downstream
+ * Expected bandwidth: ~5 KB/s per circuit with 40ms frames
+ * With 3 circuits: ~15 KB/s total upstream/downstream
  */
 class OpusCodec {
     companion object {
-        // Opus configuration constants
+        // Opus configuration constants (40ms frames for Tor)
         const val SAMPLE_RATE = 48000          // 48 kHz (Opus native)
         const val CHANNELS = 1                 // Mono
-        const val FRAME_SIZE_MS = 20           // 20ms frames
-        const val FRAME_SIZE_SAMPLES = 960     // 20ms at 48kHz = 960 samples
-        const val BITRATE = 24000              // 24 kbps
+        const val FRAME_SIZE_MS = 40           // 40ms frames (better for Tor latency)
+        const val FRAME_SIZE_SAMPLES = 1920    // 40ms at 48kHz = 1920 samples
+        const val BITRATE = 32000              // 32 kbps (high quality)
         const val MAX_PACKET_SIZE = 4000       // Maximum Opus packet size
 
         // PCM format
         const val PCM_BIT_DEPTH = 16           // 16-bit signed PCM
-        const val PCM_FRAME_SIZE_BYTES = FRAME_SIZE_SAMPLES * CHANNELS * (PCM_BIT_DEPTH / 8) // 1920 bytes
+        const val PCM_FRAME_SIZE_BYTES = FRAME_SIZE_SAMPLES * CHANNELS * (PCM_BIT_DEPTH / 8) // 3840 bytes
 
-        // FIX #3: FEC (Forward Error Correction) configuration for Tor voice calls
-        // These values improve recovery from burst packet loss common on Tor
+        // FEC (Forward Error Correction) configuration for Tor voice calls
+        // Aggressive settings for high packet loss tolerance
         const val ENABLE_FEC = true            // Enable in-band FEC
-        const val PACKET_LOSS_PERC = 20        // Expected packet loss % (hint to encoder: 20-25%)
-        // Note: Consider FRAME_SIZE_MS = 10 for shorter frames if CPU allows (better burst recovery)
+        const val PACKET_LOSS_PERC = 25        // Expected packet loss % (25% for Tor)
+        const val DTX_ENABLED = false          // DTX disabled (continuous transmission)
     }
 
     private var encoderHandle: Long = 0
@@ -252,10 +255,11 @@ class OpusCodec {
      * @return Approximate bytes per second
      */
     fun getExpectedBandwidth(): Int {
-        // 20ms frames = 50 frames/second
-        // Each frame ~60 bytes average (24 kbps / 8 / 50)
-        // Plus VoiceFrame overhead (30 bytes header)
-        // = ~90 bytes/frame * 50 = 4500 bytes/sec = ~4.5 KB/s per circuit
-        return 4500
+        // 40ms frames = 25 frames/second
+        // Audio payload avg ~160 bytes/frame at ~32 kbps (VBR varies; FEC can increase)
+        // Plus VoiceFrame overhead (~30 bytes header)
+        // ≈ ~190 bytes/frame * 25 = ~4750 bytes/sec ≈ ~4.75 KB/s per circuit (typical)
+        // Note: Actual bandwidth may spike to ~6 KB/s with high FEC overhead during loss bursts
+        return 4750
     }
 }

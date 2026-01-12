@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="horizontal"
+    android:background="@drawable/wallet_token_bg"
+    android:padding="16dp"
+    android:layout_marginBottom="12dp"
+    android:gravity="center_vertical"
+    android:clickable="true"
+    android:focusable="true">
+
+    <!-- Token Icon -->
+    <ImageView
+        android:id="@+id/tokenIcon"
+        android:layout_width="32dp"
+        android:layout_height="32dp"
+        android:src="@drawable/ic_solana"
+        android:layout_marginEnd="12dp"
+        android:contentDescription="Token Icon" />
+
+    <!-- Token Info -->
+    <LinearLayout
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="1"
+        android:orientation="vertical">
+
+        <TextView
+            android:id="@+id/tokenName"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Solana"
+            android:textSize="15sp"
+            android:textColor="@color/text_white"
+            android:fontFamily="@font/poppins_medium" />
+
+        <TextView
+            android:id="@+id/tokenSymbol"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="SOL"
+            android:textSize="12sp"
+            android:textColor="#888888"
+            android:fontFamily="@font/poppins_regular" />
+
+    </LinearLayout>
+
+    <!-- Token Balance -->
+    <TextView
+        android:id="@+id/tokenBalance"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="0.0"
+        android:textSize="14sp"
+        android:textColor="@color/text_white"
+        android:fontFamily="@font/poppins_medium" />
+
+</LinearLayout>

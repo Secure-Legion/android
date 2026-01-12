@@ -70,9 +70,9 @@ class SolanaService(private val context: Context) {
 
     // Configure OkHttpClient to use Tor SOCKS5 proxy for privacy
     private val client = OkHttpClient.Builder()
-        .connectTimeout(30, TimeUnit.SECONDS)
-        .readTimeout(30, TimeUnit.SECONDS)
-        .writeTimeout(30, TimeUnit.SECONDS)
+        .connectTimeout(60, TimeUnit.SECONDS)  // Increased for blockchain API delays
+        .readTimeout(60, TimeUnit.SECONDS)      // Increased for transaction fetching
+        .writeTimeout(60, TimeUnit.SECONDS)
         .proxy(Proxy(Proxy.Type.SOCKS, InetSocketAddress("127.0.0.1", 9050)))
         .build()
 
@@ -175,31 +175,50 @@ class SolanaService(private val context: Context) {
         limit: Int = 10
     ): Result<List<TransactionInfo>> = withContext(Dispatchers.IO) {
         try {
-            Log.d(TAG, "Fetching recent transactions for: $publicKey")
+            Log.d(TAG, "=== START FETCHING RECENT TRANSACTIONS ===")
+            Log.d(TAG, "Wallet Address: $publicKey")
+            Log.d(TAG, "Limit: $limit")
 
             // First get transaction signatures
+            Log.d(TAG, "Step 1: Fetching transaction signatures...")
             val signaturesResult = getSignaturesForAddress(publicKey, limit)
             if (signaturesResult.isFailure) {
-                return@withContext Result.failure(signaturesResult.exceptionOrNull()!!)
+                val error = signaturesResult.exceptionOrNull()!!
+                Log.e(TAG, "Step 1 FAILED: ${error.message}", error)
+                return@withContext Result.failure(error)
             }
 
             val signatures = signaturesResult.getOrNull() ?: emptyList()
+            Log.i(TAG, "Step 1 SUCCESS: Found ${signatures.size} signatures")
+
+            if (signatures.isEmpty()) {
+                Log.w(TAG, "No transaction signatures found for this address")
+                return@withContext Result.success(emptyList())
+            }
+
+            Log.d(TAG, "Step 2: Fetching details for ${signatures.size} transactions...")
             val transactions = mutableListOf<TransactionInfo>()
 
             // For each signature, get transaction details
-            for (signature in signatures) {
+            for ((index, signature) in signatures.withIndex()) {
                 try {
+                    Log.d(TAG, "Fetching transaction ${index + 1}/${signatures.size}: ${signature.take(8)}...")
                     val txResult = getTransaction(signature, publicKey)
                     if (txResult.isSuccess) {
-                        txResult.getOrNull()?.let { transactions.add(it) }
+                        txResult.getOrNull()?.let {
+                            transactions.add(it)
+                            Log.d(TAG, "  ✓ Transaction ${index + 1} loaded: ${it.type} ${it.amount} SOL")
+                        }
+                    } else {
+                        Log.w(TAG, "  ✗ Transaction ${index + 1} failed: ${txResult.exceptionOrNull()?.message}")
                     }
                 } catch (e: Exception) {
-                    Log.w(TAG, "Failed to get transaction $signature: ${e.message}")
+                    Log.w(TAG, "  ✗ Failed to get transaction $signature: ${e.message}", e)
                     // Continue with other transactions
                 }
             }
 
-            Log.i(TAG, "Loaded ${transactions.size} transactions")
+            Log.i(TAG, "=== COMPLETED: Loaded ${transactions.size}/${signatures.size} transactions ===")
             Result.success(transactions)
 
         } catch (e: Exception) {

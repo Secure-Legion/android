@@ -42,12 +42,11 @@ class SplashActivity : AppCompatActivity() {
             WindowManager.LayoutParams.FLAG_SECURE
         )
 
-        // Make status bar white with dark icons
+        // Keep status bar dark gray (matches splash screen theme)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            @Suppress("DEPRECATION")
-            window.statusBarColor = android.graphics.Color.WHITE
-            @Suppress("DEPRECATION")
-            window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR
+            window.statusBarColor = android.graphics.Color.parseColor("#1C1C1C")
+            // Dark icons on light background (removed for dark theme)
+            // window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR
         }
 
         // Request notification permission on Android 13+

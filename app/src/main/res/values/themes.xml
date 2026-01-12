@@ -112,4 +112,23 @@
         <item name="android:fontFamily">@font/poppins_regular</item>
         <item name="android:textAllCaps">false</item>
     </style>
+
+    <!-- Splash Screen Theme - Android 12+ system splash screen -->
+    <style name="Theme.SecureLegion.Splash" parent="Theme.SplashScreen">
+        <!-- Full gray background (like Session) -->
+        <item name="windowSplashScreenBackground">#1C1C1C</item>
+
+        <!-- Centered logo (no white circle) -->
+        <item name="windowSplashScreenAnimatedIcon">@drawable/secure_logo_new</item>
+
+        <!-- Make logo bigger (default is too small) -->
+        <item name="windowSplashScreenIconBackgroundColor">#1C1C1C</item>
+
+        <!-- Status bar color -->
+        <item name="android:statusBarColor">#1C1C1C</item>
+        <item name="android:navigationBarColor">#000000</item>
+
+        <!-- Post-splash theme (your regular theme) -->
+        <item name="postSplashScreenTheme">@style/Theme.SecureLegion</item>
+    </style>
 </resources>

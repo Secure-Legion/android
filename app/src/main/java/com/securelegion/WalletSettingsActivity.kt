@@ -357,7 +357,7 @@ class WalletSettingsActivity : AppCompatActivity() {
                 val walletIcon = walletItemView.findViewById<ImageView>(R.id.walletIcon)
 
                 walletName.text = wallet.name
-                walletBalance.text = "$0.00"
+                walletBalance.text = "Loading..."
 
                 // Set chain-specific icon and address
                 val isZcashWallet = !wallet.zcashUnifiedAddress.isNullOrEmpty() || !wallet.zcashAddress.isNullOrEmpty()
@@ -376,6 +376,41 @@ class WalletSettingsActivity : AppCompatActivity() {
                         "${address.take(5)}.....${address.takeLast(6)}"
                     } else {
                         address
+                    }
+                }
+
+                // Load balance for this wallet
+                lifecycleScope.launch(Dispatchers.IO) {
+                    try {
+                        if (isZcashWallet) {
+                            val zcashService = com.securelegion.services.ZcashService.getInstance(this@WalletSettingsActivity)
+                            val balanceResult = zcashService.getBalance()
+
+                            withContext(Dispatchers.Main) {
+                                if (balanceResult.isSuccess) {
+                                    val balance = balanceResult.getOrNull() ?: 0.0
+                                    walletBalance.text = String.format("%.6f ZEC", balance).trimEnd('0').trimEnd('.')
+                                } else {
+                                    walletBalance.text = "0 ZEC"
+                                }
+                            }
+                        } else {
+                            val solanaService = com.securelegion.services.SolanaService(this@WalletSettingsActivity)
+                            val balanceResult = solanaService.getBalance(wallet.solanaAddress)
+
+                            withContext(Dispatchers.Main) {
+                                if (balanceResult.isSuccess) {
+                                    val balance = balanceResult.getOrNull() ?: 0.0
+                                    walletBalance.text = String.format("%.6f SOL", balance).trimEnd('0').trimEnd('.')
+                                } else {
+                                    walletBalance.text = "0 SOL"
+                                }
+                            }
+                        }
+                    } catch (e: Exception) {
+                        withContext(Dispatchers.Main) {
+                            walletBalance.text = "Error"
+                        }
                     }
                 }
 
@@ -454,6 +489,50 @@ class WalletSettingsActivity : AppCompatActivity() {
         keyText?.text = seedPhrase
         infoText?.text = "Your 12-word seed phrase:"
 
+        // Get type selector buttons
+        val seedPhraseButton = view.findViewById<View>(R.id.seedPhraseTypeButton)
+        val privateKeyButton = view.findViewById<View>(R.id.privateKeyTypeButton)
+        val exportTypeContainer = view.findViewById<View>(R.id.exportTypeContainer)
+
+        // Show export type selector for Solana
+        exportTypeContainer?.visibility = View.VISIBLE
+
+        // Function to update button states
+        fun updateTypeButtons() {
+            if (showingSeedPhrase) {
+                seedPhraseButton?.setBackgroundResource(R.drawable.swap_button_bg)
+                privateKeyButton?.setBackgroundResource(R.drawable.wallet_dropdown_bg)
+            } else {
+                seedPhraseButton?.setBackgroundResource(R.drawable.wallet_dropdown_bg)
+                privateKeyButton?.setBackgroundResource(R.drawable.swap_button_bg)
+            }
+        }
+
+        // Initialize button states
+        updateTypeButtons()
+
+        // Seed Phrase button click
+        seedPhraseButton?.setOnClickListener {
+            if (!showingSeedPhrase) {
+                showingSeedPhrase = true
+                currentContent = seedPhrase
+                keyText?.text = seedPhrase
+                infoText?.text = "Your 12-word seed phrase:"
+                updateTypeButtons()
+            }
+        }
+
+        // Private Key button click
+        privateKeyButton?.setOnClickListener {
+            if (showingSeedPhrase) {
+                showingSeedPhrase = false
+                currentContent = privateKey
+                keyText?.text = privateKey
+                infoText?.text = "Your private key (Base58):"
+                updateTypeButtons()
+            }
+        }
+
         // Copy icon click handler
         copySeedPhraseIcon?.setOnClickListener {
             val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
@@ -461,20 +540,6 @@ class WalletSettingsActivity : AppCompatActivity() {
             val clip = ClipData.newPlainText(label, currentContent)
             clipboard.setPrimaryClip(clip)
             ThemedToast.show(this, "$label copied to clipboard")
-        }
-
-        // Container click to toggle
-        seedPhraseContainer?.setOnClickListener {
-            showingSeedPhrase = !showingSeedPhrase
-            if (showingSeedPhrase) {
-                currentContent = seedPhrase
-                keyText?.text = seedPhrase
-                infoText?.text = "Your 12-word seed phrase:"
-            } else {
-                currentContent = privateKey
-                keyText?.text = privateKey
-                infoText?.text = "Your private key:"
-            }
         }
 
         view.findViewById<View>(R.id.closeButton)?.setOnClickListener {

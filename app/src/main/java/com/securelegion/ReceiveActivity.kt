@@ -39,7 +39,6 @@ class ReceiveActivity : BaseActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_receive)
 
-        setupBottomNavigation()
         setupAddressTypeToggle()
         loadCurrentWallet()
 
@@ -56,15 +55,14 @@ class ReceiveActivity : BaseActivity() {
 
         // Copy address button
         findViewById<View>(R.id.copyAddressButton).setOnClickListener {
-            val address = findViewById<TextView>(R.id.depositAddress).text.toString()
-
-            if (address.isEmpty() || address == "Loading...") {
+            // Use the full currentAddress instead of the truncated display text
+            if (currentAddress.isEmpty() || currentAddress == "Loading...") {
                 ThemedToast.show(this, "No address to copy")
                 return@setOnClickListener
             }
 
             val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-            val clip = ClipData.newPlainText("Wallet Address", address)
+            val clip = ClipData.newPlainText("Wallet Address", currentAddress)
             clipboard.setPrimaryClip(clip)
 
             ThemedToast.show(this, "Address copied to clipboard")
@@ -78,25 +76,34 @@ class ReceiveActivity : BaseActivity() {
                 ThemedToast.show(this, "No QR code to share")
             }
         }
+
+        // Wallet settings button
+        findViewById<View>(R.id.walletSettingsButton).setOnClickListener {
+            val intent = Intent(this, WalletSettingsActivity::class.java)
+            startActivity(intent)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                overrideActivityTransition(Activity.OVERRIDE_TRANSITION_OPEN, 0, 0)
+            } else {
+                @Suppress("DEPRECATION")
+                overridePendingTransition(0, 0)
+            }
+        }
     }
 
 
     private fun setupAddressTypeToggle() {
         val unifiedButton = findViewById<Button>(R.id.unifiedAddressButton)
         val transparentButton = findViewById<Button>(R.id.transparentAddressButton)
-        val addressTypeLabel = findViewById<TextView>(R.id.addressTypeLabel)
 
         unifiedButton?.setOnClickListener {
             showTransparentAddress = false
             updateAddressTypeButtons()
-            addressTypeLabel?.text = "For private SecureLegion transfers"
             loadZcashAddress()
         }
 
         transparentButton?.setOnClickListener {
             showTransparentAddress = true
             updateAddressTypeButtons()
-            addressTypeLabel?.text = "For Kraken, Coinbase, and other exchanges"
             loadZcashAddress()
         }
     }
@@ -133,9 +140,7 @@ class ReceiveActivity : BaseActivity() {
 
                 withContext(Dispatchers.Main) {
                     val walletNameText = findViewById<TextView>(R.id.walletNameText)
-                    val selectedIcon = findViewById<ImageView>(R.id.selectedCurrencyIcon)
-                    val selectedSymbol = findViewById<TextView>(R.id.selectedCurrencySymbol)
-                    val selectedName = findViewById<TextView>(R.id.selectedCurrencyName)
+                    val walletChainIcon = findViewById<ImageView>(R.id.walletChainIcon)
 
                     if (wallets.isNotEmpty()) {
                         // Get the most recently used wallet
@@ -148,15 +153,11 @@ class ReceiveActivity : BaseActivity() {
 
                             if (isZcash) {
                                 selectedCurrency = "ZEC"
-                                selectedIcon?.setImageResource(R.drawable.ic_zcash)
-                                selectedSymbol?.text = "ZEC"
-                                selectedName?.text = "Zcash"
+                                walletChainIcon?.setImageResource(R.drawable.ic_zcash)
                                 loadZcashAddress()
                             } else {
                                 selectedCurrency = "SOL"
-                                selectedIcon?.setImageResource(R.drawable.ic_solana)
-                                selectedSymbol?.text = "SOL"
-                                selectedName?.text = "Solana"
+                                walletChainIcon?.setImageResource(R.drawable.ic_solana)
                                 loadSolanaAddress()
                             }
                         }
@@ -202,18 +203,18 @@ class ReceiveActivity : BaseActivity() {
 
                 if (solanaAddress != null) {
                     withContext(Dispatchers.Main) {
-                        // Update address text
-                        findViewById<TextView>(R.id.depositAddress).text = solanaAddress
+                        // Store full address
+                        currentAddress = solanaAddress
 
-                        // Update short address
+                        // Update address text with truncated version
                         val shortAddress = if (solanaAddress.length > 16) {
-                            "${solanaAddress.take(5)}...${solanaAddress.takeLast(6)}"
+                            "${solanaAddress.take(5)}.....${solanaAddress.takeLast(6)}"
                         } else {
                             solanaAddress
                         }
-                        findViewById<TextView>(R.id.walletAddressShort)?.text = shortAddress
+                        findViewById<TextView>(R.id.depositAddress).text = shortAddress
 
-                        // Generate QR code
+                        // Generate QR code with full address
                         generateQRCode(solanaAddress)
 
                         Log.i("ReceiveActivity", "Loaded Solana address: $solanaAddress")
@@ -277,15 +278,6 @@ class ReceiveActivity : BaseActivity() {
                 val transparentAddress = zcashService.getTransparentAddress()
                 Log.d("ReceiveActivity", "Transparent address from KeyManager: $transparentAddress")
 
-                // Show debug toast
-                withContext(Dispatchers.Main) {
-                    if (transparentAddress == null) {
-                        ThemedToast.show(this@ReceiveActivity, "DEBUG: No transparent address found! It was not generated.")
-                    } else {
-                        ThemedToast.show(this@ReceiveActivity, "DEBUG: Found transparent address: ${transparentAddress.take(10)}...")
-                    }
-                }
-
                 // Determine which address to display
                 val displayAddress = if (showTransparentAddress && transparentAddress != null) {
                     Log.d("ReceiveActivity", "Showing transparent address")
@@ -303,18 +295,18 @@ class ReceiveActivity : BaseActivity() {
                         // Show address type toggle
                         showAddressTypeToggle()
 
-                        // Update address text
-                        findViewById<TextView>(R.id.depositAddress).text = displayAddress
+                        // Store full address
+                        currentAddress = displayAddress
 
-                        // Update short address
+                        // Update address text with truncated version
                         val shortAddress = if (displayAddress.length > 16) {
-                            "${displayAddress.take(5)}...${displayAddress.takeLast(6)}"
+                            "${displayAddress.take(5)}.....${displayAddress.takeLast(6)}"
                         } else {
                             displayAddress
                         }
-                        findViewById<TextView>(R.id.walletAddressShort)?.text = shortAddress
+                        findViewById<TextView>(R.id.depositAddress).text = shortAddress
 
-                        // Generate QR code
+                        // Generate QR code with full address
                         generateQRCode(displayAddress)
 
                         Log.i("ReceiveActivity", "Loaded Zcash address (${if (showTransparentAddress) "transparent" else "unified"}): $displayAddress")
@@ -340,13 +332,11 @@ class ReceiveActivity : BaseActivity() {
 
     private fun showAddressTypeToggle() {
         findViewById<View>(R.id.addressTypeSelector)?.visibility = View.VISIBLE
-        findViewById<TextView>(R.id.addressTypeLabel)?.visibility = View.VISIBLE
         updateAddressTypeButtons()
     }
 
     private fun hideAddressTypeToggle() {
         findViewById<View>(R.id.addressTypeSelector)?.visibility = View.GONE
-        findViewById<TextView>(R.id.addressTypeLabel)?.visibility = View.GONE
     }
 
     private fun generateQRCode(text: String) {
@@ -412,59 +402,6 @@ class ReceiveActivity : BaseActivity() {
         } catch (e: Exception) {
             Log.e("ReceiveActivity", "Failed to share QR code", e)
             ThemedToast.show(this, "Failed to share QR code")
-        }
-    }
-
-    private fun setupBottomNavigation() {
-        findViewById<View>(R.id.navMessages).setOnClickListener {
-            val intent = Intent(this, MainActivity::class.java)
-            intent.flags = Intent.FLAG_ACTIVITY_CLEAR_TOP
-            startActivity(intent)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                overrideActivityTransition(Activity.OVERRIDE_TRANSITION_OPEN, 0, 0)
-            } else {
-                @Suppress("DEPRECATION")
-                overridePendingTransition(0, 0)
-            }
-            finish()
-        }
-
-        findViewById<View>(R.id.navWallet).setOnClickListener {
-            val intent = Intent(this, MainActivity::class.java)
-            intent.putExtra("SHOW_WALLET", true)
-            intent.flags = Intent.FLAG_ACTIVITY_CLEAR_TOP
-            startActivity(intent)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                overrideActivityTransition(Activity.OVERRIDE_TRANSITION_OPEN, 0, 0)
-            } else {
-                @Suppress("DEPRECATION")
-                overridePendingTransition(0, 0)
-            }
-            finish()
-        }
-
-        findViewById<View>(R.id.navAddFriend).setOnClickListener {
-            val intent = Intent(this, AddFriendActivity::class.java)
-            startActivity(intent)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                overrideActivityTransition(Activity.OVERRIDE_TRANSITION_OPEN, 0, 0)
-            } else {
-                @Suppress("DEPRECATION")
-                overridePendingTransition(0, 0)
-            }
-            finish()
-        }
-
-        findViewById<View>(R.id.navLock).setOnClickListener {
-            val intent = Intent(this, LockActivity::class.java)
-            startActivity(intent)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                overrideActivityTransition(Activity.OVERRIDE_TRANSITION_OPEN, 0, 0)
-            } else {
-                @Suppress("DEPRECATION")
-                overridePendingTransition(0, 0)
-            }
-            finish()
         }
     }
 }

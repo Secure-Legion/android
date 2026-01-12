@@ -346,10 +346,44 @@ class CreateAccountActivity : AppCompatActivity() {
                             throw Exception("Tor bootstrap timeout")
                         }
 
-                        Log.d("CreateAccount", "Creating hidden service...")
-                        val address = com.securelegion.crypto.RustBridge.createHiddenService(9150, 8080)
-                        torManager.saveOnionAddress(address)
-                        Log.i("CreateAccount", "Hidden service created: $address")
+                        // First, clear any orphaned ephemeral services from previous failed attempts
+                        // This prevents "service already registered" errors in Tor
+                        try {
+                            Log.d("CreateAccount", "Clearing orphaned ephemeral hidden services...")
+                            val clearedCount = com.securelegion.crypto.RustBridge.clearAllEphemeralServices()
+                            Log.i("CreateAccount", "Cleared $clearedCount orphaned service(s)")
+                        } catch (e: Exception) {
+                            Log.w("CreateAccount", "Failed to clear ephemeral services (continuing anyway): ${e.message}")
+                        }
+
+                        // Retry hidden service creation with exponential backoff
+                        var createAttempt = 0
+                        val maxCreateAttempts = 5
+                        var address: String? = null
+                        var lastError: Exception? = null
+
+                        while (createAttempt < maxCreateAttempts && address == null) {
+                            try {
+                                createAttempt++
+                                Log.d("CreateAccount", "Creating hidden service (attempt $createAttempt/$maxCreateAttempts)...")
+                                address = com.securelegion.crypto.RustBridge.createHiddenService(9150, 8080)
+                                torManager.saveOnionAddress(address)
+                                Log.i("CreateAccount", "Hidden service created: $address")
+                            } catch (e: Exception) {
+                                lastError = e
+                                Log.e("CreateAccount", "Failed to create hidden service (attempt $createAttempt): ${e.message}", e)
+                                if (createAttempt < maxCreateAttempts) {
+                                    val delayMs = 2000L * createAttempt // Exponential backoff: 2s, 4s, 6s, 8s
+                                    Log.d("CreateAccount", "Waiting ${delayMs}ms before retry...")
+                                    Thread.sleep(delayMs)
+                                }
+                            }
+                        }
+
+                        if (address == null) {
+                            throw Exception("Failed to create hidden service after $maxCreateAttempts attempts: ${lastError?.message}")
+                        }
+
                         address
                     }
                 }

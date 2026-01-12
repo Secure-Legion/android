@@ -22,7 +22,7 @@
     <TextView
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="Confirm Send Request"
+        android:text="Confirm Transaction"
         android:textSize="22sp"
         android:textColor="#FFFFFF"
         android:fontFamily="@font/space_grotesk_bold"
@@ -30,16 +30,35 @@
         android:layout_marginBottom="24dp" />
 
     <!-- Amount Display -->
-    <TextView
-        android:id="@+id/confirmSendAmount"
+    <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:fontFamily="@font/space_grotesk_bold"
-        android:text="0.5 SOL"
-        android:textColor="#C0C0C0"
-        android:textSize="42sp"
+        android:orientation="vertical"
         android:gravity="center"
-        android:layout_marginBottom="24dp" />
+        android:layout_marginBottom="24dp">
+
+        <TextView
+            android:id="@+id/confirmSendAmount"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:fontFamily="@font/space_grotesk_bold"
+            android:text="0.5 SOL"
+            android:textColor="#C0C0C0"
+            android:textSize="42sp"
+            android:gravity="center" />
+
+        <TextView
+            android:id="@+id/confirmSendAmountUSD"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:fontFamily="@font/poppins_regular"
+            android:text="≈ $75.00 USD"
+            android:textColor="#666666"
+            android:textSize="16sp"
+            android:gravity="center"
+            android:layout_marginTop="4dp" />
+
+    </LinearLayout>
 
     <!-- Details Card -->
     <LinearLayout
@@ -50,7 +69,7 @@
         android:padding="16dp"
         android:layout_marginBottom="24dp">
 
-        <!-- To -->
+        <!-- Recipient Address -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -62,7 +81,7 @@
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
                 android:fontFamily="@font/poppins_regular"
-                android:text="To"
+                android:text="To Address"
                 android:textColor="#888888"
                 android:textSize="14sp" />
 
@@ -71,33 +90,7 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:fontFamily="@font/poppins_medium"
-                android:text="Alex"
-                android:textColor="@color/text_white"
-                android:textSize="14sp" />
-        </LinearLayout>
-
-        <!-- Recipient -->
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginBottom="12dp"
-            android:orientation="horizontal">
-
-            <TextView
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:fontFamily="@font/poppins_regular"
-                android:text="Recipient"
-                android:textColor="#888888"
-                android:textSize="14sp" />
-
-            <TextView
-                android:id="@+id/confirmSendRecipient"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:fontFamily="@font/poppins_medium"
-                android:text="Alex"
+                android:text="ADm9P.....2eoLX5"
                 android:textColor="@color/text_white"
                 android:textSize="14sp" />
         </LinearLayout>
@@ -128,7 +121,7 @@
                 android:textSize="14sp" />
         </LinearLayout>
 
-        <!-- Currency -->
+        <!-- Network -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -140,7 +133,7 @@
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
                 android:fontFamily="@font/poppins_regular"
-                android:text="Currency"
+                android:text="Network"
                 android:textColor="#888888"
                 android:textSize="14sp" />
 
@@ -149,7 +142,7 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:fontFamily="@font/poppins_medium"
-                android:text="SOL"
+                android:text="Solana"
                 android:textColor="@color/text_white"
                 android:textSize="14sp" />
         </LinearLayout>
@@ -185,21 +178,21 @@
     <TextView
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="They will need to accept this payment request before the transfer is completed."
+        android:text="This transaction cannot be reversed. Please verify all details before sending."
         android:textSize="12sp"
         android:textColor="#666666"
         android:fontFamily="@font/poppins_regular"
         android:gravity="center"
         android:layout_marginBottom="24dp" />
 
-    <!-- Confirm Button -->
+    <!-- Send Button -->
     <androidx.appcompat.widget.AppCompatButton
         android:id="@+id/confirmSendButton"
         android:layout_width="match_parent"
         android:layout_height="56dp"
         android:background="@drawable/wallet_action_button_bg"
         android:fontFamily="@font/poppins_semibold"
-        android:text="Send Request"
+        android:text="Send"
         android:textAllCaps="false"
         android:textColor="@color/text_white"
         android:textSize="16sp"

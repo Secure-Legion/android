@@ -62,6 +62,8 @@
     <ScrollView
         android:layout_width="match_parent"
         android:layout_height="0dp"
+        android:fillViewport="false"
+        android:scrollbars="vertical"
         app:layout_constraintTop_toBottomOf="@id/header"
         app:layout_constraintBottom_toTopOf="@id/importButton">
 
@@ -70,16 +72,6 @@
             android:layout_height="wrap_content"
             android:orientation="vertical"
             android:padding="24dp">
-
-            <!-- Instructions -->
-            <TextView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="Import an existing wallet using a private key or seed phrase. Make sure to keep your keys secure."
-                android:textSize="14sp"
-                android:textColor="@color/text_gray"
-                android:lineSpacingExtra="2dp"
-                android:layout_marginBottom="24dp" />
 
             <!-- Chain Selector -->
             <TextView
@@ -292,7 +284,7 @@
                 <EditText
                     android:id="@+id/seedPhraseInput"
                     android:layout_width="match_parent"
-                    android:layout_height="120dp"
+                    android:layout_height="180dp"
                     android:background="@drawable/settings_box_bg"
                     android:hint="Enter 12 or 24-word seed phrase of Solana wallet"
                     android:textColorHint="@color/text_gray"
@@ -300,9 +292,11 @@
                     android:textSize="14sp"
                     android:fontFamily="@font/poppins_regular"
                     android:padding="16dp"
-                    android:inputType="textMultiLine"
+                    android:inputType="textMultiLine|textNoSuggestions"
                     android:gravity="top"
-                    android:maxLines="5"
+                    android:maxLines="8"
+                    android:scrollbars="vertical"
+                    android:importantForAutofill="no"
                     android:layout_marginBottom="16dp" />
 
             </LinearLayout>
@@ -328,7 +322,7 @@
                 <EditText
                     android:id="@+id/privateKeyInput"
                     android:layout_width="match_parent"
-                    android:layout_height="120dp"
+                    android:layout_height="180dp"
                     android:background="@drawable/settings_box_bg"
                     android:hint="Base58 string or JSON array [1,2,3,...]"
                     android:textColorHint="@color/text_gray"
@@ -336,9 +330,11 @@
                     android:textSize="14sp"
                     android:fontFamily="@font/poppins_regular"
                     android:padding="16dp"
-                    android:inputType="textMultiLine"
+                    android:inputType="textMultiLine|textNoSuggestions"
                     android:gravity="top"
-                    android:maxLines="5"
+                    android:maxLines="8"
+                    android:scrollbars="vertical"
+                    android:importantForAutofill="no"
                     android:layout_marginBottom="16dp" />
 
             </LinearLayout>
@@ -364,7 +360,7 @@
                 <EditText
                     android:id="@+id/zcashSeedPhraseInput"
                     android:layout_width="match_parent"
-                    android:layout_height="120dp"
+                    android:layout_height="180dp"
                     android:background="@drawable/settings_box_bg"
                     android:hint="Enter 24-word seed phrase of Zcash wallet"
                     android:textColorHint="@color/text_gray"
@@ -372,9 +368,11 @@
                     android:textSize="14sp"
                     android:fontFamily="@font/poppins_regular"
                     android:padding="16dp"
-                    android:inputType="textMultiLine"
+                    android:inputType="textMultiLine|textNoSuggestions"
                     android:gravity="top"
-                    android:maxLines="5"
+                    android:maxLines="8"
+                    android:scrollbars="vertical"
+                    android:importantForAutofill="no"
                     android:layout_marginBottom="16dp" />
 
             </LinearLayout>

@@ -42,7 +42,7 @@
                 android:layout_width="24dp"
                 android:layout_height="24dp"
                 android:src="@android:drawable/sym_action_chat"
-                android:tint="@color/text_gray"
+                android:tint="#888888"
                 android:layout_marginBottom="4dp"
                 android:contentDescription="Messages" />
 
@@ -56,9 +56,39 @@
 
         </LinearLayout>
 
-        <!-- Wallet Nav Item -->
+        <!-- Accounts Nav Item -->
         <LinearLayout
-            android:id="@+id/navWallet"
+            android:id="@+id/navAccounts"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:orientation="vertical"
+            android:gravity="center"
+            android:background="@drawable/nav_item_ripple"
+            android:clickable="true"
+            android:focusable="true">
+
+            <ImageView
+                android:layout_width="28dp"
+                android:layout_height="28dp"
+                android:src="@drawable/ic_money"
+                android:layout_marginBottom="4dp"
+                android:tint="@color/text_gray"
+                android:contentDescription="Accounts" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Accounts"
+                android:textSize="11sp"
+                android:textColor="@color/text_gray"
+                android:fontFamily="@font/poppins_medium" />
+
+        </LinearLayout>
+
+        <!-- New Wallet Nav Item -->
+        <LinearLayout
+            android:id="@+id/navNewWallet"
             android:layout_width="0dp"
             android:layout_height="match_parent"
             android:layout_weight="1"
@@ -72,23 +102,23 @@
                 android:layout_width="24dp"
                 android:layout_height="24dp"
                 android:src="@drawable/ic_wallet"
-                android:layout_marginBottom="4dp"
                 android:tint="@color/text_gray"
-                android:contentDescription="Wallet" />
+                android:layout_marginBottom="4dp"
+                android:contentDescription="New Wallet" />
 
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="Wallet"
+                android:text="New Wallet"
                 android:textSize="11sp"
                 android:textColor="@color/text_gray"
                 android:fontFamily="@font/poppins_medium" />
 
         </LinearLayout>
 
-        <!-- Add Friend Nav Item -->
+        <!-- Recent Nav Item -->
         <LinearLayout
-            android:id="@+id/navAddFriend"
+            android:id="@+id/navRecent"
             android:layout_width="0dp"
             android:layout_height="match_parent"
             android:layout_weight="1"
@@ -99,47 +129,16 @@
             android:focusable="true">
 
             <ImageView
-                android:layout_width="24dp"
-                android:layout_height="24dp"
-                android:src="@drawable/ic_add_friend"
-                android:tint="@color/text_gray"
+                android:layout_width="28dp"
+                android:layout_height="28dp"
+                android:src="@drawable/ic_clock"
                 android:layout_marginBottom="4dp"
-                android:contentDescription="Add Friend" />
+                android:contentDescription="Recent" />
 
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="Add Friend"
-                android:textSize="11sp"
-                android:textColor="@color/text_gray"
-                android:fontFamily="@font/poppins_medium" />
-
-        </LinearLayout>
-
-        <!-- Lock Nav Item -->
-        <LinearLayout
-            android:id="@+id/navLock"
-            android:layout_width="0dp"
-            android:layout_height="match_parent"
-            android:layout_weight="1"
-            android:orientation="vertical"
-            android:gravity="center"
-            android:background="@drawable/nav_item_ripple"
-            android:clickable="true"
-            android:focusable="true">
-
-            <ImageView
-                android:layout_width="24dp"
-                android:layout_height="24dp"
-                android:src="@drawable/ic_lock"
-                android:layout_marginBottom="4dp"
-                android:tint="@color/text_gray"
-                android:contentDescription="Lock" />
-
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="Lock"
+                android:text="Recent"
                 android:textSize="11sp"
                 android:textColor="@color/text_gray"
                 android:fontFamily="@font/poppins_medium" />

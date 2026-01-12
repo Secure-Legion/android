@@ -569,8 +569,8 @@ class SendMoneyActivity : AppCompatActivity() {
         }
 
         val confirmAmount = view.findViewById<TextView>(R.id.confirmSendAmount)
+        val confirmAmountUSD = view.findViewById<TextView>(R.id.confirmSendAmountUSD)
         val confirmTo = view.findViewById<TextView>(R.id.confirmSendTo)
-        val confirmRecipient = view.findViewById<TextView>(R.id.confirmSendRecipient)
         val confirmFromWallet = view.findViewById<TextView>(R.id.confirmSendFromWallet)
         val confirmCurrency = view.findViewById<TextView>(R.id.confirmSendCurrency)
         val confirmNetworkFee = view.findViewById<TextView>(R.id.confirmSendNetworkFee)
@@ -579,7 +579,6 @@ class SendMoneyActivity : AppCompatActivity() {
 
         confirmAmount.text = formattedAmount
         confirmTo.text = recipientName.text
-        confirmRecipient.text = recipientName.text
         confirmFromWallet.text = currentWalletName
         confirmCurrency.text = selectedToken
 

@@ -12,7 +12,7 @@
         android:layout_width="140dp"
         android:layout_height="141dp"
         android:src="@drawable/secure_logo_new"
-        android:layout_marginTop="80dp"
+        android:layout_marginTop="120dp"
         android:contentDescription="Secure Legion Logo"
         app:layout_constraintTop_toTopOf="parent"
         app:layout_constraintStart_toStartOf="parent"

@@ -293,6 +293,13 @@ object RustBridge {
     external fun createHiddenService(servicePort: Int = 9150, localPort: Int = 9150): String
 
     /**
+     * Clear all ephemeral hidden services from Tor control port
+     * This removes orphaned services from previous failed account creation attempts
+     * @return The number of services deleted, or -1 on error
+     */
+    external fun clearAllEphemeralServices(): Int
+
+    /**
      * Get the current hidden service .onion address (if created)
      * @return The .onion address or null if not created yet
      */
