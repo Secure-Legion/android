@@ -136,6 +136,14 @@ interface MessageDao {
     suspend fun getMessageByPingId(pingId: String): Message?
 
     /**
+     * Get all sent messages with pending Pings for a contact
+     * Used to replace SharedPreferences-based PendingPing queue
+     * Returns messages that have pingId set and are sent by us (isSentByMe = true)
+     */
+    @Query("SELECT * FROM messages WHERE contactId = :contactId AND isSentByMe = 1 AND pingId IS NOT NULL ORDER BY timestamp ASC")
+    suspend fun getPendingPingsForContact(contactId: Long): List<Message>
+
+    /**
      * Delete all messages for a contact
      */
     @Query("DELETE FROM messages WHERE contactId = :contactId")

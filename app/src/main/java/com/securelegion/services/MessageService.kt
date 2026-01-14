@@ -520,7 +520,7 @@ class MessageService(private val context: Context) {
                 encryptedContent = plaintext, // Store plaintext for now (will encrypt in future)
                 isSentByMe = true,
                 timestamp = currentTime,
-                status = Message.STATUS_PENDING, // Changed: Start as PING_SENT, not PENDING
+                status = Message.STATUS_PING_SENT, // Start as PING_SENT so pollForPongsAndSendMessages() can find it
                 signatureBase64 = signatureBase64,
                 nonceBase64 = nonceBase64,
                 selfDestructAt = selfDestructAt,
@@ -620,27 +620,62 @@ class MessageService(private val context: Context) {
             // Get our keypair for signing
             val ourPrivateKey = keyManager.getSigningKeyBytes()
 
-            // Get recipient's X25519 public key (for encryption)
-            val recipientX25519PublicKey = Base64.decode(contact.x25519PublicKeyBase64, Base64.NO_WRAP)
-
             // Create the payment request payload (JSON with quote)
             val paymentRequestPayload = """{"type":"PAYMENT_REQUEST","quote":${quote.rawJson}}"""
 
-            // Encrypt the payment request
-            Log.d(TAG, "Encrypting payment request...")
-            val encryptedBytes = RustBridge.encryptMessage(paymentRequestPayload, recipientX25519PublicKey)
+            // Get key chain for this contact (for progressive ephemeral key evolution)
+            Log.d(TAG, "SEND KEY CHAIN LOAD: Loading key chain from database...")
+            Log.d(TAG, "  contactId=$contactId (${contact.displayName})")
+            val keyChain = KeyChainManager.getKeyChain(context, contactId)
+                ?: throw Exception("Key chain not found for contact ${contact.displayName} (ID: $contactId)")
+            Log.d(TAG, "SEND KEY CHAIN LOAD: Loaded from database successfully")
+            Log.d(TAG, "  sendCounter=${keyChain.sendCounter} <- will use this for encryption")
 
-            // Prepend metadata byte (0x0A = PAYMENT_REQUEST) so receiver can identify message type
-            // This is similar to how VOICE messages prepend 0x01 + duration
-            val payloadWithMetadata = ByteArray(1 + encryptedBytes.size)
-            payloadWithMetadata[0] = 0x0A.toByte() // PAYMENT_REQUEST type
-            System.arraycopy(encryptedBytes, 0, payloadWithMetadata, 1, encryptedBytes.size)
-            val encryptedBase64 = Base64.encodeToString(payloadWithMetadata, Base64.NO_WRAP)
+            // ATOMIC ENCRYPTION + KEY EVOLUTION
+            // Encrypts and evolves key in one indivisible operation to prevent desync
+            // Wire format: [version:1][sequence:8][nonce:24][ciphertext][tag:16]
+            Log.d(TAG, "SEND KEY EVOLUTION: About to encrypt and evolve send chain key")
+            Log.d(TAG, "  contactId=$contactId (${contact.displayName})")
+            Log.d(TAG, "  Current sendCounter=${keyChain.sendCounter}")
+            Log.d(TAG, "  Will encrypt with sequence ${keyChain.sendCounter}")
+            val result = RustBridge.encryptMessageWithEvolution(
+                paymentRequestPayload,
+                keyChain.sendChainKeyBytes,
+                keyChain.sendCounter
+            )
+            val encryptedBytes = result.ciphertext
+            Log.d(TAG, "SEND KEY EVOLUTION: Encryption complete, encrypted ${encryptedBytes.size} bytes")
 
-            Log.d(TAG, "Payment request encrypted: ${encryptedBytes.size} bytes")
+            // Save evolved key to database (key evolution happened atomically in Rust)
+            Log.d(TAG, "SEND KEY EVOLUTION: Updating database with new sendCounter=${keyChain.sendCounter + 1}")
+            database.contactKeyChainDao().updateSendChainKey(
+                contactId = contactId,
+                newSendChainKeyBase64 = android.util.Base64.encodeToString(result.evolvedChainKey, android.util.Base64.NO_WRAP),
+                newSendCounter = keyChain.sendCounter + 1,
+                timestamp = System.currentTimeMillis()
+            )
+            // VERIFY the update actually persisted
+            val verifyKeyChain = database.contactKeyChainDao().getKeyChainByContactId(contactId)
+            Log.d(TAG, "SEND VERIFICATION: After update, database shows sendCounter=${verifyKeyChain?.sendCounter}")
+            if (verifyKeyChain?.sendCounter != keyChain.sendCounter + 1) {
+                Log.e(TAG, "SEND ERROR: Counter update did NOT persist! Expected ${keyChain.sendCounter + 1}, got ${verifyKeyChain?.sendCounter}")
+            } else {
+                Log.d(TAG, "SEND: Counter update verified successfully")
+            }
+            Log.d(TAG, "Payment request encrypted with sequence ${keyChain.sendCounter}")
 
-            // Generate nonce (first 24 bytes of encrypted data)
-            val nonce = encryptedBytes.take(24).toByteArray()
+            // Get our X25519 public key for sender identification
+            val ourX25519PublicKey = keyManager.getEncryptionPublicKey()
+
+            // Wire format: [X25519:32][version:1][sequence:8][nonce:24][ciphertext][tag:16]
+            // NOTE: Wire protocol type byte (0x0A) is added by android.rs sendPing()
+            val encryptedWithMetadata = ourX25519PublicKey + encryptedBytes
+            Log.d(TAG, "  Total with metadata: ${encryptedWithMetadata.size} bytes (X25519 + encrypted)")
+
+            val encryptedBase64 = Base64.encodeToString(encryptedWithMetadata, Base64.NO_WRAP)
+
+            // Extract nonce from wire format (bytes 9-32, after version and sequence)
+            val nonce = encryptedBytes.sliceArray(9 until 33)
             val nonceBase64 = Base64.encodeToString(nonce, Base64.NO_WRAP)
 
             // Sign the message
@@ -761,24 +796,45 @@ class MessageService(private val context: Context) {
             // Get our keypair for signing
             val ourPrivateKey = keyManager.getSigningKeyBytes()
 
-            // Get recipient's X25519 public key (for encryption)
-            val recipientX25519PublicKey = Base64.decode(contact.x25519PublicKeyBase64, Base64.NO_WRAP)
-
             // Create the payment confirmation payload
             val paymentConfirmPayload = """{"type":"PAYMENT_SENT","quote_id":"${originalQuote.quoteId}","tx_signature":"$txSignature","amount":${originalQuote.amount},"token":"${originalQuote.token}"}"""
 
-            // Encrypt the payment confirmation
-            Log.d(TAG, "Encrypting payment confirmation...")
-            val encryptedBytes = RustBridge.encryptMessage(paymentConfirmPayload, recipientX25519PublicKey)
+            // Get key chain for this contact
+            Log.d(TAG, "SEND KEY CHAIN LOAD: Loading key chain from database for payment confirmation...")
+            Log.d(TAG, "  contactId=$contactId (${contact.displayName})")
+            val keyChain = KeyChainManager.getKeyChain(context, contactId)
+                ?: throw Exception("Key chain not found for contact ${contact.displayName}")
+            Log.d(TAG, "  sendCounter=${keyChain.sendCounter}")
 
-            // Prepend metadata byte (0x0B = PAYMENT_SENT) so receiver can identify message type
-            val payloadWithMetadata = ByteArray(1 + encryptedBytes.size)
-            payloadWithMetadata[0] = 0x0B.toByte() // PAYMENT_SENT type
-            System.arraycopy(encryptedBytes, 0, payloadWithMetadata, 1, encryptedBytes.size)
-            val encryptedBase64 = Base64.encodeToString(payloadWithMetadata, Base64.NO_WRAP)
+            // ATOMIC ENCRYPTION + KEY EVOLUTION
+            Log.d(TAG, "SEND KEY EVOLUTION: Encrypting payment confirmation with sequence ${keyChain.sendCounter}")
+            val result = RustBridge.encryptMessageWithEvolution(
+                paymentConfirmPayload,
+                keyChain.sendChainKeyBytes,
+                keyChain.sendCounter
+            )
+            val encryptedBytes = result.ciphertext
+            Log.d(TAG, "SEND KEY EVOLUTION: Payment confirmation encrypted: ${encryptedBytes.size} bytes")
 
-            // Generate nonce
-            val nonce = encryptedBytes.take(24).toByteArray()
+            // Save evolved key to database
+            database.contactKeyChainDao().updateSendChainKey(
+                contactId = contactId,
+                newSendChainKeyBase64 = android.util.Base64.encodeToString(result.evolvedChainKey, android.util.Base64.NO_WRAP),
+                newSendCounter = keyChain.sendCounter + 1,
+                timestamp = System.currentTimeMillis()
+            )
+            Log.d(TAG, "SEND: Updated sendCounter to ${keyChain.sendCounter + 1}")
+
+            // Get our X25519 public key for sender identification
+            val ourX25519PublicKey = keyManager.getEncryptionPublicKey()
+
+            // Wire format: [X25519:32][version:1][sequence:8][nonce:24][ciphertext][tag:16]
+            // NOTE: Wire protocol type byte (0x0B) is added by android.rs sendPing()
+            val encryptedWithMetadata = ourX25519PublicKey + encryptedBytes
+            val encryptedBase64 = Base64.encodeToString(encryptedWithMetadata, Base64.NO_WRAP)
+
+            // Extract nonce from wire format (bytes 9-32, after version and sequence)
+            val nonce = encryptedBytes.sliceArray(9 until 33)
             val nonceBase64 = Base64.encodeToString(nonce, Base64.NO_WRAP)
 
             // Sign the message
@@ -879,21 +935,46 @@ class MessageService(private val context: Context) {
             val messageId = "pay_accept_${originalQuote.quoteId}_${System.currentTimeMillis()}"
 
             val ourPrivateKey = keyManager.getSigningKeyBytes()
-            val recipientX25519PublicKey = Base64.decode(contact.x25519PublicKeyBase64, Base64.NO_WRAP)
 
             // Create the payment acceptance payload with receive address
             val paymentAcceptPayload = """{"type":"PAYMENT_ACCEPTED","quote_id":"${originalQuote.quoteId}","receive_address":"$receiveAddress","amount":${originalQuote.amount},"token":"${originalQuote.token}"}"""
 
-            Log.d(TAG, "Encrypting payment acceptance...")
-            val encryptedBytes = RustBridge.encryptMessage(paymentAcceptPayload, recipientX25519PublicKey)
+            // Get key chain for this contact
+            Log.d(TAG, "SEND KEY CHAIN LOAD: Loading key chain from database for payment acceptance...")
+            Log.d(TAG, "  contactId=$contactId (${contact.displayName})")
+            val keyChain = KeyChainManager.getKeyChain(context, contactId)
+                ?: throw Exception("Key chain not found for contact ${contact.displayName}")
+            Log.d(TAG, "  sendCounter=${keyChain.sendCounter}")
 
-            // Prepend metadata byte (0x0C = PAYMENT_ACCEPTED) so receiver can identify message type
-            val payloadWithMetadata = ByteArray(1 + encryptedBytes.size)
-            payloadWithMetadata[0] = 0x0C.toByte() // PAYMENT_ACCEPTED type
-            System.arraycopy(encryptedBytes, 0, payloadWithMetadata, 1, encryptedBytes.size)
-            val encryptedBase64 = Base64.encodeToString(payloadWithMetadata, Base64.NO_WRAP)
+            // ATOMIC ENCRYPTION + KEY EVOLUTION
+            Log.d(TAG, "SEND KEY EVOLUTION: Encrypting payment acceptance with sequence ${keyChain.sendCounter}")
+            val result = RustBridge.encryptMessageWithEvolution(
+                paymentAcceptPayload,
+                keyChain.sendChainKeyBytes,
+                keyChain.sendCounter
+            )
+            val encryptedBytes = result.ciphertext
+            Log.d(TAG, "SEND KEY EVOLUTION: Payment acceptance encrypted: ${encryptedBytes.size} bytes")
 
-            val nonce = encryptedBytes.take(24).toByteArray()
+            // Save evolved key to database
+            database.contactKeyChainDao().updateSendChainKey(
+                contactId = contactId,
+                newSendChainKeyBase64 = android.util.Base64.encodeToString(result.evolvedChainKey, android.util.Base64.NO_WRAP),
+                newSendCounter = keyChain.sendCounter + 1,
+                timestamp = System.currentTimeMillis()
+            )
+            Log.d(TAG, "SEND: Updated sendCounter to ${keyChain.sendCounter + 1}")
+
+            // Get our X25519 public key for sender identification
+            val ourX25519PublicKey = keyManager.getEncryptionPublicKey()
+
+            // Wire format: [X25519:32][version:1][sequence:8][nonce:24][ciphertext][tag:16]
+            // NOTE: Wire protocol type byte (0x0C) is added by android.rs sendPing()
+            val encryptedWithMetadata = ourX25519PublicKey + encryptedBytes
+            val encryptedBase64 = Base64.encodeToString(encryptedWithMetadata, Base64.NO_WRAP)
+
+            // Extract nonce from wire format (bytes 9-32, after version and sequence)
+            val nonce = encryptedBytes.sliceArray(9 until 33)
             val nonceBase64 = Base64.encodeToString(nonce, Base64.NO_WRAP)
 
             val messageData = (messageId + receiveAddress + System.currentTimeMillis()).toByteArray()
@@ -997,7 +1078,7 @@ class MessageService(private val context: Context) {
             Log.d(TAG, "Message from: ${contact.displayName}")
 
             // Get key chain for this contact (for progressive ephemeral key evolution)
-            Log.d(TAG, "Decrypting message with key evolution...")
+            Log.d(TAG, "Decrypting message with skipped key support...")
             val keyChain = KeyChainManager.getKeyChain(context, contact.id)
             if (keyChain == null) {
                 Log.e(TAG, "❌ DECRYPTION FAILED: Key chain not found for contact ${contact.id} (${contact.displayName})")
@@ -1009,92 +1090,159 @@ class MessageService(private val context: Context) {
             // Log current key chain state for debugging
             Log.d(TAG, "📊 Key chain state: sendCounter=${keyChain.sendCounter}, receiveCounter=${keyChain.receiveCounter}")
 
-            // Decrypt using current receive chain key and counter (ATOMIC key evolution)
             // Wire format: [version:1][sequence:8][nonce:24][ciphertext][tag:16]
             val encryptedBytes = Base64.decode(encryptedData, Base64.NO_WRAP)
 
-            // Extract sequence from wire format for logging
+            // Extract sequence from wire format
             val messageSequence = if (encryptedBytes.size >= 9) {
                 java.nio.ByteBuffer.wrap(encryptedBytes.sliceArray(1..8)).long
             } else {
-                -1L
+                Log.e(TAG, "❌ DECRYPTION FAILED: Ciphertext too short (${encryptedBytes.size} bytes)")
+                return@withContext Result.failure(Exception("Ciphertext too short"))
             }
 
-            if (messageSequence >= 0) {
-                Log.d(TAG, "📨 Message sequence: $messageSequence (expecting: ${keyChain.receiveCounter})")
-            }
+            val receiveCounter = keyChain.receiveCounter
+            Log.d(TAG, "📨 Message sequence: $messageSequence (expecting: $receiveCounter)")
 
-            // Try to decrypt with windowed sequence acceptance
-            val result = try {
-                RustBridge.decryptMessageWithEvolution(
-                    encryptedBytes,
-                    keyChain.receiveChainKeyBytes,
-                    keyChain.receiveCounter
-                )
-            } catch (e: Exception) {
-                val errorMsg = e.message ?: ""
+            // MAX_SKIP security limit to prevent memory exhaustion attacks
+            val MAX_SKIP = 100L
 
-                when {
-                    errorMsg.contains("Out of order") -> {
-                        // Message is valid but out of order - buffer it
-                        Log.w(TAG, "⏳ OUT OF ORDER: Buffering message seq=$messageSequence (expected=${keyChain.receiveCounter})")
+            // Skipped message key algorithm: Four distinct paths
+            val decryptedData: String
+            val newReceiveCounter: Long
+            val newReceiveChainKey: ByteArray
 
-                        val contactBuffer = messageBuffer.getOrPut(contact.id) {
-                            java.util.concurrent.ConcurrentHashMap()
-                        }
+            when {
+                // PATH 1: Past message (n < Nr) - check skipped keys table
+                messageSequence < receiveCounter -> {
+                    Log.d(TAG, "📥 PAST MESSAGE: seq=$messageSequence < receiveCounter=$receiveCounter")
+                    Log.d(TAG, "   Checking skipped_message_keys table...")
 
-                        contactBuffer[messageSequence] = BufferedMessage(
-                            sequence = messageSequence,
-                            encryptedData = encryptedData,
-                            senderPublicKey = senderPublicKey,
-                            senderOnionAddress = senderOnionAddress,
-                            messageType = messageType,
-                            voiceDuration = voiceDuration,
-                            selfDestructAt = selfDestructAt,
-                            requiresReadReceipt = requiresReadReceipt,
-                            pingId = pingId,
-                            timestamp = System.currentTimeMillis()
+                    val skippedKey = database.skippedMessageKeyDao().getKey(contact.id, messageSequence)
+                    if (skippedKey == null) {
+                        Log.e(TAG, "❌ SKIPPED KEY NOT FOUND: seq=$messageSequence (too old or never skipped)")
+                        return@withContext Result.failure(Exception("Message key not found - message too old"))
+                    }
+
+                    Log.d(TAG, "✓ Found skipped key for seq=$messageSequence, attempting decryption...")
+
+                    // Decrypt using stored message key (no chain key evolution)
+                    val plaintext = RustBridge.decryptWithMessageKey(encryptedBytes, skippedKey.messageKey)
+                    if (plaintext == null) {
+                        Log.e(TAG, "❌ DECRYPTION FAILED: Invalid message key for seq=$messageSequence")
+                        return@withContext Result.failure(Exception("Decryption failed with skipped key"))
+                    }
+
+                    decryptedData = plaintext
+
+                    // Delete used key immediately (forward secrecy)
+                    database.skippedMessageKeyDao().deleteKey(contact.id, messageSequence)
+                    Log.d(TAG, "✓ Deleted used skipped key for seq=$messageSequence")
+
+                    // Chain key state unchanged (past message doesn't affect current state)
+                    newReceiveCounter = receiveCounter
+                    newReceiveChainKey = keyChain.receiveChainKeyBytes
+                }
+
+                // PATH 2: Gap too large (n - Nr > MAX_SKIP) - reject
+                messageSequence - receiveCounter > MAX_SKIP -> {
+                    Log.e(TAG, "⚠️ SEQUENCE TOO FAR: seq=$messageSequence, receiveCounter=$receiveCounter, gap=${messageSequence - receiveCounter} > MAX_SKIP=$MAX_SKIP")
+                    return@withContext Result.failure(Exception("Sequence too far ahead - possible desync or attack"))
+                }
+
+                // PATH 3: Future message (n > Nr) - derive and store skipped keys
+                messageSequence > receiveCounter -> {
+                    Log.d(TAG, "⏭️ FUTURE MESSAGE: seq=$messageSequence > receiveCounter=$receiveCounter")
+                    Log.d(TAG, "   Deriving ${messageSequence - receiveCounter} skipped message keys for gap [${receiveCounter}..${messageSequence - 1}]")
+
+                    var currentChainKey = keyChain.receiveChainKeyBytes
+                    val skippedKeys = mutableListOf<com.securelegion.database.entities.SkippedMessageKey>()
+
+                    // Derive and store message keys for skipped sequences [Nr..n-1]
+                    for (seq in receiveCounter until messageSequence) {
+                        // Derive message key from current chain key
+                        val messageKey = RustBridge.deriveMessageKey(currentChainKey)
+                            ?: throw Exception("Failed to derive message key for sequence $seq")
+
+                        // Store skipped key for this sequence
+                        skippedKeys.add(
+                            com.securelegion.database.entities.SkippedMessageKey(
+                                id = "${contact.id}_$seq",
+                                contactId = contact.id,
+                                sequence = seq,
+                                messageKey = messageKey,
+                                timestamp = System.currentTimeMillis()
+                            )
                         )
 
-                        Log.d(TAG, "   Buffered. Waiting for seq=${keyChain.receiveCounter}. Buffer size: ${contactBuffer.size}")
-                        return@withContext Result.failure(Exception("Message buffered - out of order"))
+                        // Evolve chain key to next state
+                        currentChainKey = RustBridge.evolveChainKey(currentChainKey)
+                            ?: throw Exception("Failed to evolve chain key at sequence $seq")
                     }
 
-                    errorMsg.contains("Replay attack") -> {
-                        // Sequence < expected - replay attack
-                        Log.e(TAG, "🚨 REPLAY ATTACK: $errorMsg")
-                        return@withContext Result.failure(Exception("Replay attack detected"))
+                    // Bulk insert skipped keys
+                    database.skippedMessageKeyDao().insertAll(skippedKeys)
+                    Log.d(TAG, "✓ Stored ${skippedKeys.size} skipped message keys")
+
+                    // currentChainKey is now at sequence n (current message)
+                    // Derive message key for current message
+                    val currentMessageKey = RustBridge.deriveMessageKey(currentChainKey)
+                        ?: throw Exception("Failed to derive message key for sequence $messageSequence")
+
+                    // Decrypt current message using derived key
+                    val plaintext = RustBridge.decryptWithMessageKey(encryptedBytes, currentMessageKey)
+                    if (plaintext == null) {
+                        Log.e(TAG, "❌ DECRYPTION FAILED: Message key invalid for seq=$messageSequence")
+                        return@withContext Result.failure(Exception("Decryption failed after skipping"))
                     }
 
-                    errorMsg.contains("Sequence too far") -> {
-                        // Sequence >= expected + 100 - too far ahead
-                        Log.e(TAG, "⚠️ SEQUENCE TOO FAR: $errorMsg")
-                        return@withContext Result.failure(Exception("Sequence too far ahead - possible desync"))
+                    decryptedData = plaintext
+
+                    // Evolve chain key once more for next expected message
+                    val evolvedChainKey = RustBridge.evolveChainKey(currentChainKey)
+                        ?: throw Exception("Failed to evolve chain key after decrypting sequence $messageSequence")
+
+                    // Update state: receiveCounter = n + 1
+                    newReceiveCounter = messageSequence + 1
+                    newReceiveChainKey = evolvedChainKey
+                    Log.d(TAG, "✓ Decrypted message seq=$messageSequence, updated receiveCounter=$newReceiveCounter")
+                }
+
+                // PATH 4: In-order message (n == Nr) - normal flow
+                else -> {
+                    Log.d(TAG, "✅ IN-ORDER MESSAGE: seq=$messageSequence == receiveCounter=$receiveCounter")
+
+                    // Normal decryption with atomic key evolution
+                    val result = RustBridge.decryptMessageWithEvolution(
+                        encryptedBytes,
+                        keyChain.receiveChainKeyBytes,
+                        receiveCounter
+                    )
+
+                    if (result == null) {
+                        Log.e(TAG, "❌ DECRYPTION FAILED: RustBridge returned null")
+                        return@withContext Result.failure(Exception("Failed to decrypt message"))
                     }
 
-                    else -> {
-                        // Other decryption errors
-                        Log.e(TAG, "❌ DECRYPTION FAILED: $errorMsg")
-                        return@withContext Result.failure(Exception("Failed to decrypt message: $errorMsg"))
-                    }
+                    decryptedData = result.plaintext
+
+                    // Update state: receiveCounter = n + 1
+                    newReceiveCounter = receiveCounter + 1
+                    newReceiveChainKey = result.evolvedChainKey
+                    Log.d(TAG, "✓ Decrypted in-order message, updated receiveCounter=$newReceiveCounter")
                 }
             }
 
-            if (result == null) {
-                Log.e(TAG, "❌ DECRYPTION FAILED: RustBridge returned null unexpectedly")
-                return@withContext Result.failure(Exception("Failed to decrypt message - null result"))
+            // Save updated chain key state to database (only if changed)
+            if (newReceiveCounter != receiveCounter) {
+                database.contactKeyChainDao().updateReceiveChainKey(
+                    contactId = contact.id,
+                    newReceiveChainKeyBase64 = android.util.Base64.encodeToString(newReceiveChainKey, android.util.Base64.NO_WRAP),
+                    newReceiveCounter = newReceiveCounter,
+                    timestamp = System.currentTimeMillis()
+                )
+                Log.d(TAG, "💾 Saved updated key chain state: receiveCounter=$newReceiveCounter")
             }
-
-            val decryptedData = result.plaintext
-
-            // Save evolved key to database (key evolution happened atomically in Rust)
-            database.contactKeyChainDao().updateReceiveChainKey(
-                contactId = contact.id,
-                newReceiveChainKeyBase64 = android.util.Base64.encodeToString(result.evolvedChainKey, android.util.Base64.NO_WRAP),
-                newReceiveCounter = keyChain.receiveCounter + 1,
-                timestamp = System.currentTimeMillis()
-            )
-            Log.d(TAG, "Message decrypted with sequence ${keyChain.receiveCounter}")
 
             // Extract nonce from wire format (bytes 9-32, after version and sequence)
             val nonce = encryptedBytes.sliceArray(9 until 33)
@@ -1328,8 +1476,8 @@ class MessageService(private val context: Context) {
 
             Log.i(TAG, "$messageType message received and saved: ${message.messageId}")
 
-            // Process any buffered out-of-order messages that are now sequential
-            processBufferedMessages(contact.id, database)
+            // Note: Out-of-order messages are now handled by skipped message key algorithm
+            // No buffering needed - late messages decrypt using stored keys
 
             Result.success(message.copy(id = savedMessageId))
 

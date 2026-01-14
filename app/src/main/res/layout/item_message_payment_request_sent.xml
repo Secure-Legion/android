@@ -98,13 +98,12 @@
                         android:textColor="#FFD93D"
                         android:textSize="12sp" />
 
-                    <TextView
+                    <ImageView
                         android:id="@+id/messageStatus"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="✓"
-                        android:textColor="#888888"
-                        android:textSize="12sp" />
+                        android:layout_width="16dp"
+                        android:layout_height="16dp"
+                        android:src="@drawable/status_sent"
+                        android:contentDescription="Message status" />
 
                 </LinearLayout>
 

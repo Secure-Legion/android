@@ -29,7 +29,6 @@
             android:layout_height="14dp"
             android:layout_marginStart="4dp"
             android:src="@drawable/ic_check"
-            app:tint="#999999"
             android:contentDescription="Message status" />
     </LinearLayout>
 
@@ -56,37 +55,77 @@
             android:orientation="horizontal"
             android:padding="12dp"
             android:gravity="center_vertical"
+            android:minWidth="196dp"
             android:maxWidth="260dp">
 
-        <!-- Play/Pause button -->
-        <ImageView
-            android:id="@+id/playButton"
-            android:layout_width="36dp"
-            android:layout_height="36dp"
-            android:src="@drawable/ic_play"
-            app:tint="#FFFFFF"
-            android:background="?attr/selectableItemBackgroundBorderless"
-            android:padding="6dp"
-            android:contentDescription="Play voice message" />
+        <!-- Play/Pause button with white circle background -->
+        <FrameLayout
+            android:layout_width="24dp"
+            android:layout_height="24dp">
+
+            <View
+                android:layout_width="24dp"
+                android:layout_height="24dp"
+                android:background="@drawable/voice_play_button_circle" />
+
+            <ImageView
+                android:id="@+id/playButton"
+                android:layout_width="24dp"
+                android:layout_height="24dp"
+                android:src="@drawable/ic_play_blue"
+                android:padding="5dp"
+                android:contentDescription="Play voice message" />
+        </FrameLayout>
 
         <LinearLayout
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
-            android:orientation="vertical"
+            android:orientation="horizontal"
             android:layout_marginStart="8dp"
-            android:layout_marginEnd="4dp">
+            android:layout_marginEnd="4dp"
+            android:gravity="center_vertical">
 
-            <!-- Waveform / Progress bar -->
-            <ProgressBar
-                android:id="@+id/progressBar"
-                android:layout_width="match_parent"
-                android:layout_height="3dp"
-                style="?android:attr/progressBarStyleHorizontal"
-                android:progressTint="#FFFFFF"
-                android:progressBackgroundTint="#80FFFFFF"
-                android:max="100"
-                android:progress="0" />
+            <!-- Waveform with progress overlay -->
+            <FrameLayout
+                android:layout_width="0dp"
+                android:layout_height="24dp"
+                android:layout_weight="1">
+
+                <!-- Background waveform (dimmed) -->
+                <ImageView
+                    android:id="@+id/waveformView"
+                    android:layout_width="match_parent"
+                    android:layout_height="24dp"
+                    android:src="@drawable/waveform_bars"
+                    android:scaleType="fitXY"
+                    android:alpha="0.3"
+                    android:contentDescription="Voice waveform" />
+
+                <!-- Progress overlay -->
+                <FrameLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="24dp">
+
+                    <ImageView
+                        android:id="@+id/waveformProgress"
+                        android:layout_width="match_parent"
+                        android:layout_height="24dp"
+                        android:src="@drawable/waveform_bars"
+                        android:scaleType="fitXY"
+                        android:contentDescription="Waveform progress" />
+
+                    <!-- Progress bar for clipping -->
+                    <ProgressBar
+                        android:id="@+id/progressBar"
+                        android:layout_width="match_parent"
+                        android:layout_height="0dp"
+                        style="?android:attr/progressBarStyleHorizontal"
+                        android:max="100"
+                        android:progress="0"
+                        android:visibility="invisible" />
+                </FrameLayout>
+            </FrameLayout>
 
             <!-- Duration / Current time -->
             <TextView
@@ -96,7 +135,7 @@
                 android:text="0:00"
                 android:textColor="#FFFFFF"
                 android:textSize="11sp"
-                android:layout_marginTop="4dp" />
+                android:layout_marginStart="8dp" />
         </LinearLayout>
 
     </LinearLayout>

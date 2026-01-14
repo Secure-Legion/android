@@ -165,6 +165,178 @@ object RustBridge {
      */
     external fun deriveMessageKey(chainKey: ByteArray): ByteArray
 
+    /**
+     * Derive receive chain key for a specific sender sequence (out-of-order decryption)
+     * Two-stage derivation: direction key + evolution to sender's sequence
+     * Allows decrypting messages from any past sequence (fixes "Cache miss" errors)
+     * @param rootKey 32-byte root key (same for both parties)
+     * @param senderSequence The sequence number the sender used to encrypt
+     * @param ourOnion Our .onion address (for direction mapping)
+     * @param theirOnion Their .onion address (for direction mapping)
+     * @return 32-byte chain key at sender's sequence (for decrypting their message), or null on error
+     */
+    external fun deriveReceiveKeyAtSequence(
+        rootKey: ByteArray,
+        senderSequence: Long,
+        ourOnion: String,
+        theirOnion: String
+    ): ByteArray?
+
+    // ==================== PROTOCOL SECURITY FIXES (FIX #6, #7, #9) ====================
+
+    /**
+     * FIX #6: Deferred encryption result for two-phase ratchet commit
+     * Contains both ciphertext and uncommitted next ratchet state
+     */
+    data class DeferredEncryptionResult(
+        val ciphertext: ByteArray,
+        val nextChainKey: ByteArray,
+        val nextSequence: Long
+    )
+
+    /**
+     * FIX #6: Committed ratchet state after PING_ACK
+     * Contains the new chain key and sequence to commit
+     */
+    data class CommittedRatchet(
+        val nextChainKey: ByteArray,
+        val nextSequence: Long
+    )
+
+    /**
+     * FIX #6 Phase 1: Encrypt message with deferred ratchet commitment
+     * Encrypts the message but does NOT modify the chain key yet
+     * Returns both ciphertext and the UNCOMMITTED next ratchet state
+     *
+     * CRITICAL: This prevents crypto desync when message sends fail
+     *
+     * @param plaintext Message to encrypt
+     * @param chainKey Current chain key (NOT modified)
+     * @param sequence Current sequence number
+     * @return JSON string: {"ciphertext":"base64","nextChainKey":"base64","nextSequence":123}
+     */
+    external fun encryptMessageDeferred(
+        plaintext: String,
+        chainKey: ByteArray,
+        sequence: Long
+    ): String
+
+    /**
+     * FIX #6: Store pending ratchet advancement
+     * After encrypting with deferred mode, store the uncommitted ratchet state
+     * Will be committed when PING_ACK arrives, or rolled back on failure
+     *
+     * @param contactId Contact identifier
+     * @param messageId Message identifier
+     * @param nextChainKey The next chain key from encryptMessageDeferred
+     * @param nextSequence The next sequence from encryptMessageDeferred
+     * @return True if stored successfully
+     */
+    external fun storePendingRatchetAdvancement(
+        contactId: String,
+        messageId: String,
+        nextChainKey: ByteArray,
+        nextSequence: Long
+    ): Boolean
+
+    /**
+     * FIX #6 Phase 2: Commit ratchet advancement after PING_ACK received
+     * Call this when PING_ACK arrives to finalize the ratchet advancement
+     * Returns the stored next ratchet state so caller can update their chain key
+     *
+     * @param contactId Contact identifier
+     * @return JSON string: {"nextChainKey":"base64","nextSequence":123}, or null if not found
+     */
+    external fun commitRatchetAdvancement(contactId: String): String?
+
+    /**
+     * FIX #6: Rollback pending ratchet advancement
+     * Call this when message send fails (no PING_ACK received within timeout)
+     * This discards the uncommitted ratchet state, keeping the old chain key
+     *
+     * @param contactId Contact identifier
+     * @return True if rollback succeeded
+     */
+    external fun rollbackRatchetAdvancement(contactId: String): Boolean
+
+    /**
+     * FIX #9: Check if PING is a replay attack
+     * Uses Blake3 hash of PING wire bytes + sender pubkey for deduplication
+     * LRU cache of 10,000 entries prevents memory exhaustion
+     *
+     * @param senderPubkey Sender's Ed25519 public key (32 bytes)
+     * @param pingBytes Full PING wire bytes (will be hashed)
+     * @return True if PING is NEW (should process), False if REPLAY (should drop)
+     */
+    external fun checkPingReplay(
+        senderPubkey: ByteArray,
+        pingBytes: ByteArray
+    ): Boolean
+
+    /**
+     * FIX #7: Validate ACK ordering
+     * Enforces state machine: PING_ACK → PONG_ACK → MESSAGE_ACK
+     * Rejects out-of-order ACKs to prevent protocol violations
+     *
+     * @param contactId Contact identifier
+     * @param ackType ACK type: 0=PING_ACK, 1=PONG_ACK, 2=MESSAGE_ACK
+     * @return True if ACK is valid and accepted, False if rejected
+     */
+    external fun validateAckOrdering(
+        contactId: String,
+        ackType: Int
+    ): Boolean
+
+    /**
+     * FIX #7: Reset ACK state for a contact
+     * Call this after completing a message exchange to reset the state machine
+     *
+     * @param contactId Contact identifier
+     */
+    external fun resetAckState(contactId: String)
+
+    /**
+     * Kotlin wrapper for encryptMessageDeferred with JSON parsing
+     * Parses the JSON result into a DeferredEncryptionResult object
+     */
+    fun encryptMessageDeferredParsed(
+        plaintext: String,
+        chainKey: ByteArray,
+        sequence: Long
+    ): DeferredEncryptionResult {
+        val jsonStr = encryptMessageDeferred(plaintext, chainKey, sequence)
+        val json = org.json.JSONObject(jsonStr)
+
+        val ciphertext = android.util.Base64.decode(
+            json.getString("ciphertext"),
+            android.util.Base64.NO_WRAP
+        )
+        val nextChainKey = android.util.Base64.decode(
+            json.getString("nextChainKey"),
+            android.util.Base64.NO_WRAP
+        )
+        val nextSequence = json.getLong("nextSequence")
+
+        return DeferredEncryptionResult(ciphertext, nextChainKey, nextSequence)
+    }
+
+    /**
+     * Kotlin wrapper for commitRatchetAdvancement with JSON parsing
+     * Returns null if no pending ratchet found
+     */
+    fun commitRatchetAdvancementParsed(contactId: String): CommittedRatchet? {
+        val jsonStr = commitRatchetAdvancement(contactId) ?: return null
+        val json = org.json.JSONObject(jsonStr)
+
+        val nextChainKey = android.util.Base64.decode(
+            json.getString("nextChainKey"),
+            android.util.Base64.NO_WRAP
+        )
+        val nextSequence = json.getLong("nextSequence")
+
+        return CommittedRatchet(nextChainKey, nextSequence)
+    }
+
     // ==================== NATIVE JNI FUNCTIONS (PRIVATE) ====================
 
     /**
@@ -244,6 +416,19 @@ object RustBridge {
 
         return DecryptionResult(plaintext, evolvedKey)
     }
+
+    /**
+     * Decrypt message using a pre-derived message key
+     * Used for decrypting skipped messages that arrive out-of-order
+     *
+     * @param ciphertext Encrypted message with wire format header
+     * @param messageKey Pre-derived 32-byte message key for this specific sequence
+     * @return Decrypted plaintext string, or null if decryption fails
+     */
+    external fun decryptWithMessageKey(
+        ciphertext: ByteArray,
+        messageKey: ByteArray
+    ): String?
 
     // ==================== TOR NETWORK & MESSAGING ====================
 

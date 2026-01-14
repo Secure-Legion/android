@@ -70,7 +70,7 @@ class DuressPinActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_duress_pin)
 
-        setupBottomNavigation()
+        // setupBottomNavigation() // REMOVED: This layout doesn't have bottom nav
         setupBackButton()
 
         wipePhoneSwitch = findViewById(R.id.wipePhoneSwitch)

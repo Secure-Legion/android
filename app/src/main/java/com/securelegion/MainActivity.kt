@@ -50,6 +50,7 @@ import com.securelegion.voice.VoiceCallManager
 import com.securelegion.voice.crypto.VoiceCallCrypto
 import com.securelegion.workers.SelfDestructWorker
 import com.securelegion.workers.MessageRetryWorker
+import com.securelegion.workers.SkippedKeyCleanupWorker
 import com.securelegion.database.entities.ed25519PublicKeyBytes
 import com.securelegion.database.entities.x25519PublicKeyBytes
 import java.util.UUID
@@ -211,6 +212,7 @@ class MainActivity : BaseActivity() {
         setupClickListeners()
         scheduleSelfDestructWorker()
         scheduleMessageRetryWorker()
+        scheduleSkippedKeyCleanupWorker()
 
 
         // Start Tor foreground service (shows notification and handles Ping-Pong protocol)
@@ -339,6 +341,26 @@ class MainActivity : BaseActivity() {
     private fun scheduleMessageRetryWorker() {
         MessageRetryWorker.schedule(this)
         Log.d("MainActivity", "Message retry worker scheduled")
+    }
+
+    /**
+     * Schedule skipped key cleanup worker
+     * Runs daily to delete skipped message keys older than 30 days (TTL)
+     */
+    private fun scheduleSkippedKeyCleanupWorker() {
+        // Schedule periodic work to clean up old skipped message keys
+        // Runs every 24 hours in background
+        val workRequest = PeriodicWorkRequestBuilder<SkippedKeyCleanupWorker>(
+            24, TimeUnit.HOURS
+        ).build()
+
+        WorkManager.getInstance(this).enqueueUniquePeriodicWork(
+            SkippedKeyCleanupWorker.WORK_NAME,
+            ExistingPeriodicWorkPolicy.KEEP, // Don't restart if already scheduled
+            workRequest
+        )
+
+        Log.d("MainActivity", "Skipped key cleanup worker scheduled (daily)")
     }
 
     /**
@@ -540,7 +562,9 @@ class MainActivity : BaseActivity() {
 
                             val messageStatus = if (lastMessage != null && lastMessage.isSentByMe) lastMessage.status else 0
                             val isSent = lastMessage?.isSentByMe ?: false
-                            Log.d("MainActivity", "📊 Contact ${contact.displayName}: status=$messageStatus, isSent=$isSent, messageId=${lastMessage?.messageId}")
+                            val pingDelivered = lastMessage?.pingDelivered ?: false
+                            val messageDelivered = lastMessage?.messageDelivered ?: false
+                            Log.d("MainActivity", "📊 Contact ${contact.displayName}: status=$messageStatus, isSent=$isSent, pingDelivered=$pingDelivered, messageDelivered=$messageDelivered, messageId=${lastMessage?.messageId}")
 
                             val chat = Chat(
                                 id = contact.id.toString(),
@@ -552,7 +576,9 @@ class MainActivity : BaseActivity() {
                                 avatar = contact.displayName.firstOrNull()?.toString()?.uppercase() ?: "?",
                                 securityBadge = "",
                                 lastMessageStatus = messageStatus,
-                                lastMessageIsSent = isSent
+                                lastMessageIsSent = isSent,
+                                lastMessagePingDelivered = pingDelivered,
+                                lastMessageMessageDelivered = messageDelivered
                             )
                             val timestamp = if (lastMessage != null) lastMessage.timestamp else System.currentTimeMillis()
                             chatsList.add(Pair(chat, timestamp))

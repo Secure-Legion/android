@@ -120,9 +120,10 @@ class SolanaService(private val context: Context) {
                 // Check for RPC error
                 if (jsonResponse.has("error")) {
                     val error = jsonResponse.getJSONObject("error")
+                    val errorCode = error.optInt("code", -1)
                     val errorMessage = error.optString("message", "Unknown RPC error")
-                    Log.e(TAG, "RPC error: $errorMessage")
-                    return@withContext Result.failure(IOException("RPC error: $errorMessage"))
+                    Log.e(TAG, "getBalance RPC error $errorCode: $errorMessage")
+                    return@withContext Result.failure(IOException("RPC error $errorCode: $errorMessage"))
                 }
 
                 // Extract balance in lamports
@@ -264,10 +265,19 @@ class SolanaService(private val context: Context) {
                 val jsonResponse = JSONObject(responseBody)
 
                 if (jsonResponse.has("error")) {
-                    return Result.failure(IOException("RPC error"))
+                    val error = jsonResponse.getJSONObject("error")
+                    val errorCode = error.optInt("code", -1)
+                    val errorMessage = error.optString("message", "Unknown RPC error")
+                    Log.e(TAG, "getTransaction RPC error $errorCode: $errorMessage")
+                    return Result.failure(IOException("RPC error $errorCode: $errorMessage"))
                 }
 
-                val result = jsonResponse.getJSONObject("result")
+                val result = jsonResponse.optJSONObject("result")
+                if (result == null) {
+                    Log.w(TAG, "Transaction not found or unavailable (result is null)")
+                    return Result.failure(IOException("Transaction data unavailable"))
+                }
+
                 val blockTime = result.optLong("blockTime", 0L)
                 val meta = result.optJSONObject("meta")
                 val transaction = result.optJSONObject("transaction")
@@ -385,9 +395,10 @@ class SolanaService(private val context: Context) {
                 // Check for RPC error
                 if (jsonResponse.has("error")) {
                     val error = jsonResponse.getJSONObject("error")
+                    val errorCode = error.optInt("code", -1)
                     val errorMessage = error.optString("message", "Unknown RPC error")
-                    Log.e(TAG, "RPC error: $errorMessage")
-                    return@withContext Result.failure(IOException("RPC error: $errorMessage"))
+                    Log.e(TAG, "getTokenAccounts RPC error $errorCode: $errorMessage")
+                    return@withContext Result.failure(IOException("RPC error $errorCode: $errorMessage"))
                 }
 
                 // Parse token accounts
@@ -405,7 +416,12 @@ class SolanaService(private val context: Context) {
 
                         val mint = info.getString("mint")
                         val tokenAmount = info.getJSONObject("tokenAmount")
-                        val uiAmount = tokenAmount.getDouble("uiAmount")
+                        val uiAmount = if (tokenAmount.isNull("uiAmount")) {
+                            // Fallback to parsing uiAmountString if uiAmount is null
+                            tokenAmount.optString("uiAmountString", "0.0").toDoubleOrNull() ?: 0.0
+                        } else {
+                            tokenAmount.getDouble("uiAmount")
+                        }
                         val decimals = tokenAmount.getInt("decimals")
 
                         // Get token symbol from known mints
@@ -491,9 +507,10 @@ class SolanaService(private val context: Context) {
                 // Check for RPC error
                 if (jsonResponse.has("error")) {
                     val error = jsonResponse.getJSONObject("error")
+                    val errorCode = error.optInt("code", -1)
                     val errorMessage = error.optString("message", "Unknown RPC error")
-                    Log.e(TAG, "RPC error: $errorMessage")
-                    return@withContext Result.failure(IOException("RPC error: $errorMessage"))
+                    Log.e(TAG, "getSignaturesForAddress RPC error $errorCode: $errorMessage")
+                    return@withContext Result.failure(IOException("RPC error $errorCode: $errorMessage"))
                 }
 
                 // Extract signatures
@@ -847,7 +864,11 @@ class SolanaService(private val context: Context) {
                 val jsonResponse = JSONObject(responseBody)
 
                 if (jsonResponse.has("error")) {
-                    return Result.failure(IOException("RPC error"))
+                    val error = jsonResponse.getJSONObject("error")
+                    val errorCode = error.optInt("code", -1)
+                    val errorMessage = error.optString("message", "Unknown RPC error")
+                    Log.e(TAG, "getRecentBlockhash RPC error $errorCode: $errorMessage")
+                    return Result.failure(IOException("RPC error $errorCode: $errorMessage"))
                 }
 
                 val result = jsonResponse.getJSONObject("result")

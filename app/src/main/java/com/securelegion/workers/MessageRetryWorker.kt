@@ -123,20 +123,26 @@ class MessageRetryWorker(
             val database = SecureLegionDatabase.getInstance(applicationContext, dbPassphrase)
             val messageService = MessageService(applicationContext)
 
-            // Get all messages waiting for Pong
-            val pendingMessages = database.messageDao().getMessagesAwaitingPong()
+            // Get messages that never sent their initial PING (STATUS_PENDING or STATUS_FAILED)
+            val newPendingMessages = database.messageDao().getPendingMessages()
 
-            if (pendingMessages.isEmpty()) {
+            // Get messages waiting for Pong (STATUS_PING_SENT)
+            val awaitingPongMessages = database.messageDao().getMessagesAwaitingPong()
+
+            // Combine both lists
+            val allPendingMessages = (newPendingMessages + awaitingPongMessages).distinctBy { it.id }
+
+            if (allPendingMessages.isEmpty()) {
                 Log.d(TAG, "No pending messages to retry")
                 return@withContext 0
             }
 
-            Log.d(TAG, "Found ${pendingMessages.size} pending message(s)")
+            Log.d(TAG, "Found ${allPendingMessages.size} pending message(s) (${newPendingMessages.size} never sent, ${awaitingPongMessages.size} awaiting pong)")
 
             val currentTime = System.currentTimeMillis()
             var retriedCount = 0
 
-            for (message in pendingMessages) {
+            for (message in allPendingMessages) {
                 // ============ ACK-BASED FLOW CONTROL ============
                 // Check ACKs in reverse order to determine what action to take
 

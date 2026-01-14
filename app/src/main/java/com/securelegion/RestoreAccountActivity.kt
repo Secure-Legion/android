@@ -257,8 +257,8 @@ class RestoreAccountActivity : AppCompatActivity() {
                         // Continue anyway - Solana will still work
                     }
 
-                    // Step 8: Create messaging .onion address (old v1.0 hidden service)
-                    Log.i("RestoreAccount", "Creating messaging hidden service...")
+                    // Step 8: Create messaging .onion address (deterministic from seed)
+                    Log.i("RestoreAccount", "Restoring messaging hidden service from seed...")
                     val torManager = com.securelegion.crypto.TorManager.getInstance(this@RestoreAccountActivity)
                     val messagingOnion = withContext(Dispatchers.IO) {
                         // Wait for Tor to be ready
@@ -276,10 +276,44 @@ class RestoreAccountActivity : AppCompatActivity() {
                             throw Exception("Tor bootstrap timeout")
                         }
 
-                        Log.d("RestoreAccount", "Creating messaging hidden service...")
-                        val address = com.securelegion.crypto.RustBridge.createHiddenService(9150, 8080)
-                        torManager.saveOnionAddress(address)
-                        Log.i("RestoreAccount", "Messaging hidden service created: $address")
+                        // Clear any orphaned ephemeral services from previous failed attempts
+                        // This prevents "service already registered" errors in Tor
+                        try {
+                            Log.d("RestoreAccount", "Clearing orphaned ephemeral hidden services...")
+                            val clearedCount = com.securelegion.crypto.RustBridge.clearAllEphemeralServices()
+                            Log.i("RestoreAccount", "Cleared $clearedCount orphaned service(s)")
+                        } catch (e: Exception) {
+                            Log.w("RestoreAccount", "Failed to clear ephemeral services (continuing anyway): ${e.message}")
+                        }
+
+                        // Retry hidden service creation with exponential backoff
+                        var createAttempt = 0
+                        val maxCreateAttempts = 5
+                        var address: String? = null
+                        var lastError: Exception? = null
+
+                        while (createAttempt < maxCreateAttempts && address == null) {
+                            try {
+                                createAttempt++
+                                Log.d("RestoreAccount", "Restoring hidden service from seed (attempt $createAttempt/$maxCreateAttempts)...")
+                                address = com.securelegion.crypto.RustBridge.createHiddenService(9150, 8080)
+                                torManager.saveOnionAddress(address)
+                                Log.i("RestoreAccount", "Hidden service restored from seed: $address")
+                            } catch (e: Exception) {
+                                lastError = e
+                                Log.e("RestoreAccount", "Failed to restore hidden service (attempt $createAttempt): ${e.message}", e)
+                                if (createAttempt < maxCreateAttempts) {
+                                    val delayMs = 2000L * createAttempt // Exponential backoff: 2s, 4s, 6s, 8s
+                                    Log.d("RestoreAccount", "Waiting ${delayMs}ms before retry...")
+                                    Thread.sleep(delayMs)
+                                }
+                            }
+                        }
+
+                        if (address == null) {
+                            throw Exception("Failed to restore hidden service after $maxCreateAttempts attempts: ${lastError?.message}")
+                        }
+
                         address
                     }
 

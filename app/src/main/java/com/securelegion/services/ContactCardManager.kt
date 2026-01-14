@@ -132,8 +132,8 @@ class ContactCardManager(private val context: Context) {
 
                 Log.d(TAG, "Downloading contact card via Tor from .onion: $friendRequestOnion")
 
-                // Build URL: http://friendrequest.onion:9151/contact-card
-                val url = "http://$friendRequestOnion:9151/contact-card"
+                // Build URL: http://friendrequest.onion:9152/contact-card
+                val url = "http://$friendRequestOnion:9152/contact-card"
                 Log.d(TAG, "GET $url")
 
                 // Download via Tor SOCKS5

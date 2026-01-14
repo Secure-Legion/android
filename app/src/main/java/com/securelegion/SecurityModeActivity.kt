@@ -16,7 +16,7 @@ class SecurityModeActivity : BaseActivity() {
         setContentView(R.layout.activity_security_mode)
 
         setupClickListeners()
-        setupBottomNavigation()
+        // setupBottomNavigation() // REMOVED: This layout doesn't have bottom nav
         setupAutoLock()
         setupIncomingCallsToggle()
     }

@@ -376,8 +376,15 @@ class AddFriendActivity : BaseActivity() {
             // Handle status badge click
             requestStatus.setOnClickListener {
                 if (friendRequest.direction == com.securelegion.models.PendingFriendRequest.DIRECTION_OUTGOING) {
-                    // Outgoing request - resend using saved ContactCard
-                    resendFriendRequest(friendRequest)
+                    // Outgoing request - show confirmation dialog before resending
+                    android.app.AlertDialog.Builder(this@AddFriendActivity)
+                        .setTitle("Resend Friend Request?")
+                        .setMessage("Send another friend request to ${friendRequest.displayName}?")
+                        .setPositiveButton("Resend") { _, _ ->
+                            resendFriendRequest(friendRequest)
+                        }
+                        .setNegativeButton("Cancel", null)
+                        .show()
                 } else {
                     // Incoming request - auto-fill CID for acceptance
                     val cidInput = findViewById<EditText>(R.id.cidInput)

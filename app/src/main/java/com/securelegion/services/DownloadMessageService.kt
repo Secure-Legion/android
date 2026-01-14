@@ -45,7 +45,7 @@ class DownloadMessageService : Service() {
         }
     }
 
-    private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+    private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var notificationManager: NotificationManager? = null
 
     override fun onCreate() {
@@ -70,8 +70,11 @@ class DownloadMessageService : Service() {
 
         // Set download-in-progress flag to prevent notification spam
         val downloadStatusPrefs = getSharedPreferences("download_status", MODE_PRIVATE)
-        downloadStatusPrefs.edit().putBoolean("downloading_$contactId", true).apply()
-        Log.d(TAG, "Set download-in-progress flag for contact $contactId, ping $pingId")
+        downloadStatusPrefs.edit()
+            .putBoolean("downloading_$contactId", true)
+            .putLong("download_start_time_$contactId", System.currentTimeMillis())
+            .apply()
+        Log.d(TAG, "Set download-in-progress flag and start time for contact $contactId, ping $pingId")
 
         // Launch download in background
         serviceScope.launch {
@@ -147,20 +150,75 @@ class DownloadMessageService : Service() {
             }
         }
 
-        // Load specific pending ping from queue
-        val prefs = getSharedPreferences("pending_pings", MODE_PRIVATE)
-        val queue = com.securelegion.models.PendingPing.loadQueueForContact(prefs, contactId)
-        val pendingPing = queue.find { it.pingId == pingId }
+        // STEP 3 FIX: Load ping data from DATABASE first (more reliable than SharedPreferences)
+        // SharedPreferences can be lost on app restart/force-kill, so prioritize database
+        val keyManager = KeyManager.getInstance(this@DownloadMessageService)
+        val dbPassphrase = keyManager.getDatabasePassphrase()
+        val database = SecureLegionDatabase.getInstance(this@DownloadMessageService, dbPassphrase)
 
-        if (pendingPing == null) {
+        // Query database for message with this pingId
+        val message = withContext(Dispatchers.IO) {
+            database.messageDao().getMessageByPingId(pingId)
+        }
+
+        // Also get contact info for metadata
+        val contact = withContext(Dispatchers.IO) {
+            database.contactDao().getContactById(contactId)
+        }
+
+        if (contact == null) {
             downloadCompleted = true
             watchdogJob.cancel()
-            Log.e(TAG, "Ping $pingId not found in queue for contact $contactId")
-            showFailureNotification(contactName, "Message not found in queue")
+            Log.e(TAG, "Contact $contactId not found in database")
+            showFailureNotification(contactName, "Contact not found")
             return
         }
 
-        Log.i(TAG, "Found pending ping in queue: ${pendingPing.senderName}")
+        // Extract ping metadata from database message
+        val pingWireBytes: String?
+        val pingTimestamp: Long
+        val senderOnion: String
+        val connectionId: Long
+
+        if (message != null && message.pingWireBytes != null) {
+            // SUCCESS: Found ping data in database (most reliable)
+            Log.i(TAG, "✓ Found ping data in DATABASE for pingId=$pingId")
+            pingWireBytes = message.pingWireBytes
+            pingTimestamp = message.pingTimestamp ?: message.timestamp
+            senderOnion = contact.messagingOnion ?: contact.torOnionAddress ?: ""
+            connectionId = -1L  // Connection ID not stored in DB (doesn't matter, connections expire quickly)
+        } else {
+            // FALLBACK: Try SharedPreferences for backward compatibility
+            Log.w(TAG, "Ping data not in database, falling back to SharedPreferences (legacy path)")
+            val prefs = getSharedPreferences("pending_pings", MODE_PRIVATE)
+            val queue = com.securelegion.models.PendingPing.loadQueueForContact(prefs, contactId)
+            val pendingPing = queue.find { it.pingId == pingId }
+
+            if (pendingPing == null) {
+                downloadCompleted = true
+                watchdogJob.cancel()
+                Log.e(TAG, "Ping $pingId not found in database OR SharedPreferences for contact $contactId")
+                showFailureNotification(contactName, "Message not found")
+                return
+            }
+
+            // Extract from SharedPreferences PendingPing object (legacy)
+            pingWireBytes = pendingPing.encryptedPingData
+            pingTimestamp = pendingPing.timestamp
+            senderOnion = pendingPing.senderOnionAddress
+            connectionId = pendingPing.connectionId
+            Log.i(TAG, "Found pending ping in SharedPreferences (legacy): ${pendingPing.senderName}")
+        }
+
+        if (pingWireBytes == null) {
+            downloadCompleted = true
+            watchdogJob.cancel()
+            Log.e(TAG, "Ping wire bytes missing for pingId=$pingId")
+            showFailureNotification(contactName, "Message data corrupted")
+            return
+        }
+
+        Log.i(TAG, "✓ Ping metadata loaded successfully for contact $contactName")
 
         // No download lock needed - ACK-based system prevents duplicates via DB checks
 
@@ -236,23 +294,40 @@ class DownloadMessageService : Service() {
         updateNotification(contactName, "[1/4] Preparing download...")
         Log.i(TAG, "========== STAGE 1/4: PREPARING ==========")
 
-        // Restore Ping from PendingPing object
+        // Restore Ping from wire bytes (either from database or SharedPreferences)
         // This is CRITICAL - if restoration fails, the Ping session is unrecoverable
         val restoredPingId = try {
-            Log.d(TAG, "Restoring Ping from queue")
-            val encryptedPingWire = android.util.Base64.decode(pendingPing.encryptedPingData, android.util.Base64.NO_WRAP)
+            Log.d(TAG, "Restoring Ping from wire bytes (pingId=$pingId)")
+            val encryptedPingWire = android.util.Base64.decode(pingWireBytes, android.util.Base64.NO_WRAP)
 
             withContext(Dispatchers.IO) {
                 com.securelegion.crypto.RustBridge.decryptIncomingPing(encryptedPingWire)
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to restore Ping from queue - Ping session is unrecoverable", e)
+            Log.e(TAG, "Failed to restore Ping - Ping session is unrecoverable", e)
             downloadCompleted = true
             watchdogJob.cancel()
 
-            // Remove this unrecoverable ping from queue
-            com.securelegion.models.PendingPing.removeFromQueue(prefs, contactId, pingId, synchronous = true)
-            Log.w(TAG, "Removed unrecoverable ping from queue: $pingId")
+            // Clean up both database and SharedPreferences (best-effort, non-critical)
+            withContext(Dispatchers.IO) {
+                try {
+                    if (message != null) {
+                        database.messageDao().deleteMessageById(message.id)
+                        Log.d(TAG, "Deleted unrecoverable message from database")
+                    }
+                } catch (cleanupError: Exception) {
+                    Log.w(TAG, "Failed to clean up database (non-critical)", cleanupError)
+                }
+            }
+
+            // Also try SharedPreferences cleanup for backward compatibility
+            try {
+                val prefs = getSharedPreferences("pending_pings", MODE_PRIVATE)
+                com.securelegion.models.PendingPing.removeFromQueue(prefs, contactId, pingId, synchronous = true)
+                Log.d(TAG, "Removed unrecoverable ping from SharedPreferences queue")
+            } catch (cleanupError: Exception) {
+                Log.w(TAG, "Failed to clean up SharedPreferences (non-critical)", cleanupError)
+            }
 
             showFailureNotification(contactName, "Message expired. Ask sender to resend.")
             return
@@ -263,25 +338,72 @@ class DownloadMessageService : Service() {
             downloadCompleted = true
             watchdogJob.cancel()
 
-            // Remove this corrupted ping from queue
-            com.securelegion.models.PendingPing.removeFromQueue(prefs, contactId, pingId, synchronous = true)
-            Log.w(TAG, "Removed corrupted ping from queue: $pingId")
+            // Clean up both database and SharedPreferences (best-effort, non-critical)
+            withContext(Dispatchers.IO) {
+                try {
+                    if (message != null) {
+                        database.messageDao().deleteMessageById(message.id)
+                        Log.d(TAG, "Deleted corrupted message from database")
+                    }
+                } catch (cleanupError: Exception) {
+                    Log.w(TAG, "Failed to clean up database (non-critical)", cleanupError)
+                }
+            }
+
+            // Also try SharedPreferences cleanup for backward compatibility
+            try {
+                val prefs = getSharedPreferences("pending_pings", MODE_PRIVATE)
+                com.securelegion.models.PendingPing.removeFromQueue(prefs, contactId, pingId, synchronous = true)
+                Log.d(TAG, "Removed corrupted ping from SharedPreferences queue")
+            } catch (cleanupError: Exception) {
+                Log.w(TAG, "Failed to clean up SharedPreferences (non-critical)", cleanupError)
+            }
 
             showFailureNotification(contactName, "Message corrupted. Ask sender to resend.")
             return
         }
 
         Log.i(TAG, "Successfully restored Ping: $pingId")
+        Log.i(TAG, "Sender onion: $senderOnion")
+        Log.i(TAG, "Connection ID: ${if (connectionId != -1L) connectionId else "not available (using new connection)"}")
+        Log.i(TAG, "Ping timestamp: ${java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date(pingTimestamp))}")
 
-        // Get sender's .onion address from PendingPing
-        val senderOnion = pendingPing.senderOnionAddress
+        // FIX #5: PING Expiration Check - reject PINGs older than 7 days
+        val pingAge = System.currentTimeMillis() - pingTimestamp
+        val PING_EXPIRY_MS = 7 * 24 * 60 * 60 * 1000L // 7 days (allows offline messaging)
 
-        // Get connection ID from PendingPing
-        val connectionId = pendingPing.connectionId
+        if (pingAge > PING_EXPIRY_MS) {
+            val ageHours = pingAge / (60 * 60 * 1000)
+            val ageDays = ageHours / 24
+            Log.w(TAG, "⚠️  Rejecting expired PING from $contactName (age: ${ageDays}d ${ageHours % 24}h, limit: 7 days)")
+            downloadCompleted = true
+            watchdogJob.cancel()
 
-        Log.i(TAG, "Ping ID: $pingId")
-        Log.i(TAG, "Sender: $senderOnion")
-        Log.i(TAG, "Connection ID: ${if (connectionId != -1L) connectionId else "not available"}")
+            // Clean up expired ping from both database and SharedPreferences
+            withContext(Dispatchers.IO) {
+                try {
+                    if (message != null) {
+                        database.messageDao().deleteMessageById(message.id)
+                        Log.d(TAG, "Deleted expired message from database")
+                    }
+                } catch (cleanupError: Exception) {
+                    Log.w(TAG, "Failed to clean up expired message from database (non-critical)", cleanupError)
+                }
+            }
+
+            try {
+                val prefs = getSharedPreferences("pending_pings", MODE_PRIVATE)
+                com.securelegion.models.PendingPing.removeFromQueue(prefs, contactId, pingId, synchronous = true)
+                Log.d(TAG, "Removed expired ping from SharedPreferences queue")
+            } catch (cleanupError: Exception) {
+                Log.w(TAG, "Failed to clean up expired ping from SharedPreferences (non-critical)", cleanupError)
+            }
+
+            showFailureNotification(contactName, "Message expired (older than 7 days). Ask sender to resend.")
+            return
+        }
+
+        Log.i(TAG, "✓ PING age check passed (age: ${pingAge / 1000}s, limit: ${PING_EXPIRY_MS / 1000}s)")
 
         // STAGE 2: Creating response
         updateNotification(contactName, "[2/4] Creating response...")
@@ -304,8 +426,13 @@ class DownloadMessageService : Service() {
         // STAGE 3: Sending response and waiting for message
         Log.i(TAG, "========== STAGE 3/4: DOWNLOADING MESSAGE ==========")
 
-        // Update ping state to DOWNLOADING
-        com.securelegion.models.PendingPing.updateState(prefs, contactId, pingId, com.securelegion.models.PingState.DOWNLOADING, synchronous = true)
+        // Update ping state to DOWNLOADING (SharedPreferences - backward compatibility, non-critical)
+        try {
+            val prefs = getSharedPreferences("pending_pings", MODE_PRIVATE)
+            com.securelegion.models.PendingPing.updateState(prefs, contactId, pingId, com.securelegion.models.PingState.DOWNLOADING, synchronous = true)
+        } catch (e: Exception) {
+            Log.d(TAG, "Failed to update SharedPrefs state (non-critical, backward compatibility)")
+        }
         broadcastStateUpdate(contactId)
 
         // DUAL-PATH APPROACH: Try instant reply first, then fall back to listener
@@ -315,7 +442,6 @@ class DownloadMessageService : Service() {
         // PATH 1: Try sending Pong on original connection (instant messaging)
         // But only if connection is fresh (< 30 seconds old) AND still alive - stale/broken connections will timeout
         if (connectionId != -1L) {
-            val pingTimestamp = pendingPing.timestamp
             val connectionAge = System.currentTimeMillis() - pingTimestamp
 
             // Check 1: Connection age (< 30s)
@@ -388,13 +514,7 @@ class DownloadMessageService : Service() {
             return
         }
 
-        // Clean up Rust Ping session immediately after successful Pong send to prevent memory leak
-        try {
-            com.securelegion.crypto.RustBridge.removePingSession(pingId)
-            Log.d(TAG, "✓ Cleaned up Rust Ping session for pingId: $pingId")
-        } catch (e: Exception) {
-            Log.w(TAG, "Failed to clean up Ping session (non-critical)", e)
-        }
+        // NOTE: Ping session cleanup moved to AFTER MESSAGE_ACK is sent (prevents orphaned messages)
 
         // If instant message was received, skip polling entirely
         var messageReceived = instantMessageReceived
@@ -466,7 +586,7 @@ class DownloadMessageService : Service() {
 
         // Send MESSAGE_ACK to sender after successfully receiving the message
         // connectionId not available here (polling path), so pass -1L
-        sendMessageAck(contactId, contactName, -1L)
+        sendMessageAck(contactId, contactName, -1L, pingId)
 
         // Dismiss the pending message notification
         val notificationManager = getSystemService(android.app.NotificationManager::class.java)
@@ -474,9 +594,14 @@ class DownloadMessageService : Service() {
         notificationManager?.cancel(notificationId)
         Log.i(TAG, "Dismissed pending message notification (ID: $notificationId)")
 
-        // Remove ping from queue - message is now in DB
-        Log.i(TAG, "⚡ Removing ping ${pingId.take(8)} from queue (message received via listener)")
-        com.securelegion.models.PendingPing.removeFromQueue(prefs, contactId, pingId, synchronous = true)
+        // Remove ping from SharedPreferences queue (backward compatibility, non-critical)
+        try {
+            val prefs = getSharedPreferences("pending_pings", MODE_PRIVATE)
+            com.securelegion.models.PendingPing.removeFromQueue(prefs, contactId, pingId, synchronous = true)
+            Log.i(TAG, "⚡ Removed ping ${pingId.take(8)} from SharedPrefs queue (backward compatibility)")
+        } catch (e: Exception) {
+            Log.d(TAG, "Failed to remove from SharedPrefs queue (non-critical, backward compatibility)")
+        }
 
         // Broadcast to ChatActivity to refresh
         val intent = Intent("com.securelegion.MESSAGE_RECEIVED")
@@ -659,12 +784,14 @@ class DownloadMessageService : Service() {
                     }
                     // Skip byte 1 (internal type 0x01), extract duration from bytes 2-5
                     val durationBytes = messageBytes.copyOfRange(2, 6)
-                    voiceDuration = (
+                    val parsedDuration = (
                         ((durationBytes[0].toInt() and 0xFF) shl 24) or
                         ((durationBytes[1].toInt() and 0xFF) shl 16) or
                         ((durationBytes[2].toInt() and 0xFF) shl 8) or
                         (durationBytes[3].toInt() and 0xFF)
                     )
+                    // Sanity clamp: 0-3600 seconds (1 hour max)
+                    voiceDuration = parsedDuration.coerceIn(0, 3600)
                     // Extract X25519 key from bytes 6-37 (32 bytes)
                     senderX25519PublicKey = messageBytes.copyOfRange(6, 38)
                     // Extract encrypted audio from byte 38 onward
@@ -681,6 +808,19 @@ class DownloadMessageService : Service() {
                     senderX25519PublicKey = messageBytes.copyOfRange(1, 33)
                     encryptedPayload = messageBytes.copyOfRange(33, messageBytes.size)
                     voiceDuration = null
+                }
+                0x0A, 0x0B, 0x0C -> {
+                    // PAYMENT messages: [0x0A/0x0B/0x0C][X25519 32 bytes][Encrypted Payment Data]
+                    // 0x0A = PAYMENT_REQUEST, 0x0B = PAYMENT_SENT, 0x0C = PAYMENT_ACCEPTED
+                    // Minimum: 1 (type) + 32 (X25519) + 1 (version) + 8 (seq) + 24 (nonce) + 16 (tag) = 82 bytes
+                    if (messageBytes.size < 82) {
+                        Log.e(TAG, "PAYMENT message blob too small: ${messageBytes.size} bytes (need at least 82)")
+                        return
+                    }
+                    senderX25519PublicKey = messageBytes.copyOfRange(1, 33)
+                    encryptedPayload = messageBytes.copyOfRange(33, messageBytes.size)
+                    voiceDuration = null
+                    Log.d(TAG, "Payment message type: 0x${String.format("%02X", typeByte)}")
                 }
                 else -> {
                     Log.e(TAG, "Unknown message type: 0x${String.format("%02X", typeByte)}")
@@ -719,7 +859,7 @@ class DownloadMessageService : Service() {
                     com.securelegion.models.PendingPing.removeFromQueue(prefs, contactId, pingId, synchronous = true)
 
                     // Send MESSAGE_ACK
-                    sendMessageAck(contactId, contactName, connectionId)
+                    sendMessageAck(contactId, contactName, connectionId, pingId)
 
                     // Broadcast to refresh UI
                     val intent = Intent("com.securelegion.MESSAGE_RECEIVED")
@@ -739,7 +879,7 @@ class DownloadMessageService : Service() {
                 com.securelegion.models.PendingPing.removeFromQueue(prefs, contactId, pingId, synchronous = true)
 
                 // Send MESSAGE_ACK (idempotent)
-                sendMessageAck(contactId, contactName, connectionId)
+                sendMessageAck(contactId, contactName, connectionId, pingId)
 
                 // Broadcast to refresh UI
                 val intent = Intent("com.securelegion.MESSAGE_RECEIVED")
@@ -834,10 +974,19 @@ class DownloadMessageService : Service() {
                         Log.i(TAG, "✓ Broadcast sent to refresh UI")
 
                         // Send MESSAGE_ACK ("I stored the message")
-                        CoroutineScope(Dispatchers.IO).launch {
+                        serviceScope.launch(Dispatchers.IO) {
                             try {
-                                sendMessageAck(contactId, contactName, connectionId)
+                                sendMessageAck(contactId, contactName, connectionId, pingId)
                                 Log.i(TAG, "✓ MESSAGE_ACK sent")
+
+                                // Clean up Rust Ping session AFTER MESSAGE_ACK sent successfully
+                                // This prevents orphaned messages if there's a delay between Pong and MESSAGE
+                                try {
+                                    com.securelegion.crypto.RustBridge.removePingSession(pingId)
+                                    Log.d(TAG, "✓ Cleaned up Rust Ping session for pingId: $pingId")
+                                } catch (cleanupError: Exception) {
+                                    Log.w(TAG, "Failed to clean up Ping session (non-critical)", cleanupError)
+                                }
                             } catch (e: Exception) {
                                 Log.w(TAG, "MESSAGE_ACK failed (non-critical): ${e.message}")
                             }
@@ -848,7 +997,7 @@ class DownloadMessageService : Service() {
                         if (errorMessage?.contains("Duplicate message") == true) {
                             Log.w(TAG, "Message already downloaded - treating as success")
                             // Message was already downloaded, so clear the notification and send ACK
-                            sendMessageAck(contactId, contactName, connectionId)
+                            sendMessageAck(contactId, contactName, connectionId, pingId)
                             val notificationManager = getSystemService(android.app.NotificationManager::class.java)
                             notificationManager?.cancel(contactId.toInt() + 20000)
                         } else {
@@ -890,7 +1039,7 @@ class DownloadMessageService : Service() {
                                     senderPublicKey = senderPublicKey,
                                     senderOnionAddress = contact.messagingOnion ?: contact.torOnionAddress ?: "",
                                     messageType = com.securelegion.database.entities.Message.MESSAGE_TYPE_VOICE,
-                                    voiceDuration = voiceDuration!!,
+                                    voiceDuration = voiceDuration ?: 0,  // Safe default instead of crash
                                     pingId = pingId
                                 )
 
@@ -920,7 +1069,7 @@ class DownloadMessageService : Service() {
                         Log.i(TAG, "✓ Broadcast sent to refresh UI")
 
                         // Send MESSAGE_ACK to sender
-                        sendMessageAck(contactId, contactName, connectionId)
+                        sendMessageAck(contactId, contactName, connectionId, pingId)
                         // Dismiss the pending message notification
                         val notificationManager = getSystemService(android.app.NotificationManager::class.java)
                         notificationManager?.cancel(contactId.toInt() + 20000)
@@ -929,7 +1078,7 @@ class DownloadMessageService : Service() {
                         if (errorMessage?.contains("Duplicate message") == true) {
                             Log.w(TAG, "Message already downloaded - treating as success")
                             // Message was already downloaded, so clear the notification and send ACK
-                            sendMessageAck(contactId, contactName, connectionId)
+                            sendMessageAck(contactId, contactName, connectionId, pingId)
                             val notificationManager = getSystemService(android.app.NotificationManager::class.java)
                             notificationManager?.cancel(contactId.toInt() + 20000)
                         } else {
@@ -1000,7 +1149,7 @@ class DownloadMessageService : Service() {
                         Log.i(TAG, "✓ Broadcast sent to refresh UI")
 
                         // Send MESSAGE_ACK to sender
-                        sendMessageAck(contactId, contactName, connectionId)
+                        sendMessageAck(contactId, contactName, connectionId, pingId)
                         // Dismiss the pending message notification
                         val notificationManager = getSystemService(android.app.NotificationManager::class.java)
                         notificationManager?.cancel(contactId.toInt() + 20000)
@@ -1009,7 +1158,7 @@ class DownloadMessageService : Service() {
                         if (errorMessage?.contains("Duplicate message") == true) {
                             Log.w(TAG, "Message already downloaded - treating as success")
                             // Message was already downloaded, so clear the notification and send ACK
-                            sendMessageAck(contactId, contactName, connectionId)
+                            sendMessageAck(contactId, contactName, connectionId, pingId)
                             val notificationManager = getSystemService(android.app.NotificationManager::class.java)
                             notificationManager?.cancel(contactId.toInt() + 20000)
                         } else {
@@ -1023,8 +1172,10 @@ class DownloadMessageService : Service() {
                     Log.d(TAG, "Processing PAYMENT_REQUEST message...")
 
                     val messageService = MessageService(this@DownloadMessageService)
-                    val encryptedWire = senderX25519PublicKey + encryptedPayload
-                    val encryptedBase64 = android.util.Base64.encodeToString(encryptedWire, android.util.Base64.NO_WRAP)
+                    // Pass encrypted payload directly - it's already in the correct wire format
+                    // Wire format: [version:1][sequence:8][nonce:24][ciphertext][tag:16]
+                    // DON'T prepend X25519 key - that's not part of the key chain evolution format
+                    val encryptedBase64 = android.util.Base64.encodeToString(encryptedPayload, android.util.Base64.NO_WRAP)
 
                     val result = messageService.receiveMessage(
                         encryptedData = encryptedBase64,
@@ -1048,14 +1199,14 @@ class DownloadMessageService : Service() {
                         sendBroadcast(intent)
                         Log.i(TAG, "✓ Broadcast sent to refresh UI")
 
-                        sendMessageAck(contactId, contactName, connectionId)
+                        sendMessageAck(contactId, contactName, connectionId, pingId)
                         val notificationManager = getSystemService(android.app.NotificationManager::class.java)
                         notificationManager?.cancel(contactId.toInt() + 20000)
                     } else {
                         val errorMessage = result.exceptionOrNull()?.message
                         if (errorMessage?.contains("Duplicate message") == true) {
                             Log.w(TAG, "Message already downloaded - treating as success")
-                            sendMessageAck(contactId, contactName, connectionId)
+                            sendMessageAck(contactId, contactName, connectionId, pingId)
                             val notificationManager = getSystemService(android.app.NotificationManager::class.java)
                             notificationManager?.cancel(contactId.toInt() + 20000)
                         } else {
@@ -1069,8 +1220,8 @@ class DownloadMessageService : Service() {
                     Log.d(TAG, "Processing PAYMENT_SENT message...")
 
                     val messageService = MessageService(this@DownloadMessageService)
-                    val encryptedWire = senderX25519PublicKey + encryptedPayload
-                    val encryptedBase64 = android.util.Base64.encodeToString(encryptedWire, android.util.Base64.NO_WRAP)
+                    // Pass encrypted payload directly - DON'T prepend X25519 key
+                    val encryptedBase64 = android.util.Base64.encodeToString(encryptedPayload, android.util.Base64.NO_WRAP)
 
                     val result = messageService.receiveMessage(
                         encryptedData = encryptedBase64,
@@ -1094,14 +1245,14 @@ class DownloadMessageService : Service() {
                         sendBroadcast(intent)
                         Log.i(TAG, "✓ Broadcast sent to refresh UI")
 
-                        sendMessageAck(contactId, contactName, connectionId)
+                        sendMessageAck(contactId, contactName, connectionId, pingId)
                         val notificationManager = getSystemService(android.app.NotificationManager::class.java)
                         notificationManager?.cancel(contactId.toInt() + 20000)
                     } else {
                         val errorMessage = result.exceptionOrNull()?.message
                         if (errorMessage?.contains("Duplicate message") == true) {
                             Log.w(TAG, "Message already downloaded - treating as success")
-                            sendMessageAck(contactId, contactName, connectionId)
+                            sendMessageAck(contactId, contactName, connectionId, pingId)
                             val notificationManager = getSystemService(android.app.NotificationManager::class.java)
                             notificationManager?.cancel(contactId.toInt() + 20000)
                         } else {
@@ -1115,8 +1266,8 @@ class DownloadMessageService : Service() {
                     Log.d(TAG, "Processing PAYMENT_ACCEPTED message...")
 
                     val messageService = MessageService(this@DownloadMessageService)
-                    val encryptedWire = senderX25519PublicKey + encryptedPayload
-                    val encryptedBase64 = android.util.Base64.encodeToString(encryptedWire, android.util.Base64.NO_WRAP)
+                    // Pass encrypted payload directly - DON'T prepend X25519 key
+                    val encryptedBase64 = android.util.Base64.encodeToString(encryptedPayload, android.util.Base64.NO_WRAP)
 
                     val result = messageService.receiveMessage(
                         encryptedData = encryptedBase64,
@@ -1140,14 +1291,14 @@ class DownloadMessageService : Service() {
                         sendBroadcast(intent)
                         Log.i(TAG, "✓ Broadcast sent to refresh UI")
 
-                        sendMessageAck(contactId, contactName, connectionId)
+                        sendMessageAck(contactId, contactName, connectionId, pingId)
                         val notificationManager = getSystemService(android.app.NotificationManager::class.java)
                         notificationManager?.cancel(contactId.toInt() + 20000)
                     } else {
                         val errorMessage = result.exceptionOrNull()?.message
                         if (errorMessage?.contains("Duplicate message") == true) {
                             Log.w(TAG, "Message already downloaded - treating as success")
-                            sendMessageAck(contactId, contactName, connectionId)
+                            sendMessageAck(contactId, contactName, connectionId, pingId)
                             val notificationManager = getSystemService(android.app.NotificationManager::class.java)
                             notificationManager?.cancel(contactId.toInt() + 20000)
                         } else {
@@ -1169,8 +1320,9 @@ class DownloadMessageService : Service() {
     /**
      * Send MESSAGE_ACK to sender after successfully downloading message
      * @param connectionId Connection ID for instant ACK (or -1L if not available)
+     * @param pingId The actual pingId to ACK (must match the downloaded message)
      */
-    private suspend fun sendMessageAck(contactId: Long, contactName: String, connectionId: Long) {
+    private suspend fun sendMessageAck(contactId: Long, contactName: String, connectionId: Long, pingId: String) {
         try {
             val keyManager = KeyManager.getInstance(this@DownloadMessageService)
             val dbPassphrase = keyManager.getDatabasePassphrase()
@@ -1183,28 +1335,15 @@ class DownloadMessageService : Service() {
                 return
             }
 
-            // Get the most recent message from this contact (just received)
-            val messages = database.messageDao().getMessagesForContact(contactId)
-            if (messages.isEmpty()) {
-                Log.w(TAG, "No messages found for contact $contactId - cannot send MESSAGE_ACK")
+            // Use the pingId parameter directly (no DB query needed - prevents ACKing wrong message)
+            Log.d(TAG, "Sending MESSAGE_ACK with retry for pingId=$pingId to $contactName")
+
+            // Validate onion address is not empty
+            val onionAddress = contact.messagingOnion ?: contact.torOnionAddress
+            if (onionAddress.isNullOrBlank()) {
+                Log.e(TAG, "No onion address for contactId=$contactId; cannot send MESSAGE_ACK")
                 return
             }
-
-            // Get the most recent message
-            val latestMessage = messages.maxByOrNull { it.timestamp }
-            if (latestMessage == null) {
-                Log.w(TAG, "Could not determine latest message for contact $contactId")
-                return
-            }
-
-            // Use pingId instead of messageId because pingId is the same on both sender and receiver
-            val pingId = latestMessage.pingId
-            if (pingId == null) {
-                Log.w(TAG, "Message ${latestMessage.messageId} has no pingId - cannot send MESSAGE_ACK")
-                return
-            }
-
-            Log.d(TAG, "Sending MESSAGE_ACK with retry for pingId=$pingId (messageId=${latestMessage.messageId}) to $contactName")
 
             val senderX25519Pubkey = android.util.Base64.decode(contact.x25519PublicKeyBase64, android.util.Base64.NO_WRAP)
             val senderEd25519Pubkey = android.util.Base64.decode(contact.publicKeyBase64, android.util.Base64.NO_WRAP)
@@ -1230,7 +1369,7 @@ class DownloadMessageService : Service() {
                         }
 
                         if (ackSuccess) {
-                            Log.i(TAG, "✓ MESSAGE_ACK sent successfully on existing connection for messageId=${latestMessage.messageId} (attempt ${attempt + 1})")
+                            Log.i(TAG, "✓ MESSAGE_ACK sent successfully on existing connection for pingId=$pingId (attempt ${attempt + 1})")
                             return // Success!
                         }
 
@@ -1249,7 +1388,7 @@ class DownloadMessageService : Service() {
                     }
 
                     if (ackSuccess) {
-                        Log.i(TAG, "✓ MESSAGE_ACK sent successfully via new connection for messageId=${latestMessage.messageId} (attempt ${attempt + 1})")
+                        Log.i(TAG, "✓ MESSAGE_ACK sent successfully via new connection for pingId=$pingId (attempt ${attempt + 1})")
                         return // Success!
                     }
 
@@ -1260,7 +1399,7 @@ class DownloadMessageService : Service() {
                         kotlinx.coroutines.delay(delayMs)
                         delayMs *= 2 // Exponential backoff: 1s, 2s, 4s
                     } else {
-                        Log.e(TAG, "✗ MESSAGE_ACK send FAILED after $maxRetries attempts for messageId=${latestMessage.messageId}")
+                        Log.e(TAG, "✗ MESSAGE_ACK send FAILED after $maxRetries attempts for pingId=$pingId")
                         Log.e(TAG, "→ Sender will retry MESSAGE, which is acceptable")
                     }
 

@@ -20,7 +20,7 @@ class DevicePasswordActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_device_password)
 
-        setupBottomNavigation()
+        // setupBottomNavigation() // REMOVED: This layout doesn't have bottom nav
         setupBackButton()
 
         // Change Password button

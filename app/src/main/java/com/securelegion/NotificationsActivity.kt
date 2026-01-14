@@ -44,7 +44,7 @@ class NotificationsActivity : AppCompatActivity() {
 
         setupBackButton()
         loadSettings()
-        setupBottomNavigation()
+        // setupBottomNavigation() // REMOVED: This layout doesn't have bottom nav
         setupToggleSwitches()
     }
 

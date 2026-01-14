@@ -60,6 +60,52 @@ class TorManager(private val context: Context) {
                 instance ?: TorManager(context.applicationContext).also { instance = it }
             }
         }
+
+        /**
+         * Wait for Tor to generate hostname file and validate .onion address
+         * Prevents timing bugs where we try to read before Tor finishes
+         * @param hsDir Hidden service directory
+         * @param timeoutMs Timeout in milliseconds (default 60s)
+         * @return Valid .onion address
+         * @throws RuntimeException if timeout or invalid address
+         */
+        private fun waitForValidHostname(hsDir: File, timeoutMs: Long = 60_000): String {
+            val hostname = File(hsDir, "hostname")
+            val start = System.currentTimeMillis()
+            var lastBootstrapStatus = -1
+
+            while (System.currentTimeMillis() - start < timeoutMs) {
+                // Log Tor bootstrap progress while waiting
+                try {
+                    val status = RustBridge.getBootstrapStatus()
+                    if (status != lastBootstrapStatus && status >= 0) {
+                        Log.d(TAG, "Waiting for hidden service... Tor bootstrap: $status%")
+                        lastBootstrapStatus = status
+                    }
+                } catch (e: Exception) {
+                    // Ignore bootstrap status errors
+                }
+
+                if (hostname.exists()) {
+                    try {
+                        val txt = hostname.readText().trim()
+                        // Validate: must end with .onion and be at least 20 chars (v3 onions are 56 chars)
+                        if (txt.endsWith(".onion") && txt.length >= 20) {
+                            Log.i(TAG, "✓ Valid .onion address found: $txt (after ${System.currentTimeMillis() - start}ms)")
+                            return txt
+                        } else {
+                            Log.w(TAG, "Invalid .onion address format: $txt (length: ${txt.length})")
+                        }
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Error reading hostname file: ${e.message}")
+                    }
+                }
+
+                Thread.sleep(250) // Check every 250ms
+            }
+
+            throw RuntimeException("Hidden service hostname not ready after ${timeoutMs}ms: ${hsDir.absolutePath}")
+        }
     }
 
     /**
@@ -106,6 +152,22 @@ class TorManager(private val context: Context) {
                 torDataDir = File(context.filesDir, "tor")
                 torDataDir?.mkdirs()
 
+                // Create persistent hidden service directories (create-once, reuse forever)
+                // This prevents "550 Onion address collision" errors on reconnect
+                val messagingHiddenServiceDir = File(torDataDir, "messaging_hidden_service")
+                messagingHiddenServiceDir.mkdirs()
+                // Set explicit permissions for Android compatibility
+                messagingHiddenServiceDir.setReadable(true, true)
+                messagingHiddenServiceDir.setWritable(true, true)
+                messagingHiddenServiceDir.setExecutable(true, true)
+
+                val friendRequestHiddenServiceDir = File(torDataDir, "friend_request_hidden_service")
+                friendRequestHiddenServiceDir.mkdirs()
+                // Set explicit permissions for Android compatibility
+                friendRequestHiddenServiceDir.setReadable(true, true)
+                friendRequestHiddenServiceDir.setWritable(true, true)
+                friendRequestHiddenServiceDir.setExecutable(true, true)
+
                 // Get the torrc file location that TorService expects
                 val torrc = TorService.getTorrc(context)
                 torrc.parentFile?.mkdirs()
@@ -128,9 +190,11 @@ class TorManager(private val context: Context) {
 
                 Log.i(TAG, "Device: Android $sdkInt, using initial timeout: ${if (isSlowerDevice) "45s (slower device)" else "30s (faster device)"}")
 
-                // ALWAYS write torrc configuration (even if Tor is running)
-                // This ensures bridge configuration changes are applied on restart
-                torrc.writeText("""
+                // Generate torrc content
+                // PERSISTENT HIDDEN SERVICES (not ephemeral):
+                // Keys are generated once and stored in HiddenServiceDir
+                // Tor reuses the same keys on every restart (no collision errors)
+                val torrcContent = """
                     DataDirectory ${torDataDir!!.absolutePath}
                     SocksPort 127.0.0.1:9050
                     ControlPort 127.0.0.1:9051
@@ -140,15 +204,47 @@ class TorManager(private val context: Context) {
                     DormantCanceledByStartup 1
                     LearnCircuitBuildTimeout 1
                     $initialCircuitTimeout
+                    HiddenServiceDir ${messagingHiddenServiceDir.absolutePath}
+                    HiddenServicePort $DEFAULT_SERVICE_PORT 127.0.0.1:$DEFAULT_LOCAL_PORT
+                    HiddenServicePort 8080 127.0.0.1:8080
+                    HiddenServicePort 9151 127.0.0.1:9151
+                    HiddenServicePort 9153 127.0.0.1:9153
+                    HiddenServiceDir ${friendRequestHiddenServiceDir.absolutePath}
+                    HiddenServicePort 9152 127.0.0.1:8081
                     $bridgeConfig
-                """.trimIndent())
+                """.trimIndent()
+
+                // Only write torrc if content changed (avoid unnecessary rewrites)
+                val needsUpdate = !torrc.exists() || torrc.readText() != torrcContent
+                if (needsUpdate) {
+                    torrc.writeText(torrcContent)
+                    Log.d(TAG, "Torrc updated: ${torrc.absolutePath}")
+                } else {
+                    Log.d(TAG, "Torrc unchanged, skipping write: ${torrc.absolutePath}")
+                }
 
                 Log.d(TAG, "Torrc written to: ${torrc.absolutePath}")
                 if (bridgeConfig.isNotEmpty()) {
                     Log.i(TAG, "Bridge configuration applied: ${bridgeConfig.lines().first()}")
                 }
 
-                if (!alreadyRunning) {
+                if (!alreadyRunning || needsUpdate) {
+                    // If Tor is running but torrc changed, restart it to pick up new config
+                    if (alreadyRunning && needsUpdate) {
+                        Log.i(TAG, "Torrc configuration changed - restarting Tor to apply changes...")
+                        try {
+                            // Stop TorService first
+                            val stopIntent = Intent(context, TorService::class.java)
+                            context.stopService(stopIntent)
+
+                            // Give Tor time to shut down
+                            Thread.sleep(2000)
+                            Log.d(TAG, "TorService stopped")
+                        } catch (e: Exception) {
+                            Log.w(TAG, "Error stopping TorService: ${e.message}")
+                        }
+                    }
+
                     Log.d(TAG, "Starting TorService...")
 
                     // Start TorService as an Android Service
@@ -158,7 +254,7 @@ class TorManager(private val context: Context) {
 
                     Log.d(TAG, "TorService started, waiting for control port to be ready...")
                 } else {
-                    Log.d(TAG, "Tor control port already accessible, torrc updated")
+                    Log.d(TAG, "Tor already running and torrc unchanged")
                 }
 
                 // Wait for Tor control port to be ready (poll until we can connect)
@@ -219,23 +315,38 @@ class TorManager(private val context: Context) {
                 val rustStatus = RustBridge.initializeTor()
                 Log.d(TAG, "Rust TorManager initialized: $rustStatus")
 
-                // Re-register hidden services with Tor (must be done on every Tor start)
+                // Read persistent hidden service .onion addresses from filesystem
+                // Tor automatically creates/reuses keys in HiddenServiceDir on startup
                 val keyManager = KeyManager.getInstance(context)
                 val onionAddress = if (keyManager.isInitialized()) {
-                    Log.d(TAG, "Re-registering messaging hidden service with Tor...")
-                    val address = RustBridge.createHiddenService(DEFAULT_SERVICE_PORT, DEFAULT_LOCAL_PORT)
-                    saveOnionAddress(address)
-                    keyManager.storeMessagingOnion(address)  // Store in KeyManager too
-                    Log.d(TAG, "Messaging hidden service re-registered: $address")
+                    // Wait for Tor to generate/load hidden service keys with validation
+                    Log.d(TAG, "Waiting for Tor to generate/load persistent hidden service keys...")
 
-                    // Also re-register friend-request hidden service (v2.0)
-                    Log.d(TAG, "Re-registering friend-request hidden service with Tor...")
-                    val friendRequestOnion = RustBridge.createFriendRequestHiddenService(
-                        servicePort = 9151,
-                        localPort = 9151,
-                        directory = "friend_requests"
-                    )
-                    Log.d(TAG, "Friend-request hidden service re-registered: $friendRequestOnion")
+                    val address = try {
+                        waitForValidHostname(messagingHiddenServiceDir, timeoutMs = 60_000)
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Failed to get messaging hidden service address", e)
+                        throw e
+                    }
+
+                    // Sanity check: if we already had a stored onion, verify it matches
+                    val storedOnion = getOnionAddress()
+                    if (storedOnion != null && storedOnion != address) {
+                        Log.w(TAG, "⚠️ Stored onion differs from filesystem! Stored: $storedOnion, Filesystem: $address")
+                        Log.w(TAG, "Using filesystem onion (Tor's source of truth)")
+                    }
+
+                    saveOnionAddress(address)
+                    keyManager.storeMessagingOnion(address)
+                    Log.i(TAG, "✓ Messaging hidden service ready (persistent): $address")
+
+                    // Read friend-request .onion address with validation
+                    try {
+                        val friendRequestOnion = waitForValidHostname(friendRequestHiddenServiceDir, timeoutMs = 60_000)
+                        Log.i(TAG, "✓ Friend-request hidden service ready (persistent): $friendRequestOnion")
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Friend-request hidden service not ready: ${e.message}")
+                    }
 
                     // Note: Voice hidden service is created later by TorService.startVoiceService()
                     // after the voice streaming listener is started on localhost:9152
@@ -243,7 +354,7 @@ class TorManager(private val context: Context) {
 
                     address
                 } else {
-                    Log.d(TAG, "Skipping hidden service creation - no account yet")
+                    Log.d(TAG, "Skipping hidden service read - no account yet")
                     null
                 }
 
@@ -422,6 +533,9 @@ class TorManager(private val context: Context) {
     /**
      * Create hidden service if account exists but service doesn't
      * Called after account creation to set up the hidden service
+     *
+     * With persistent hidden services (HiddenServiceDir in torrc), Tor automatically
+     * creates and manages the keys. This function just reads the .onion address.
      */
     fun createHiddenServiceIfNeeded() {
         Thread {
@@ -430,14 +544,14 @@ class TorManager(private val context: Context) {
                 if (existingAddress == null) {
                     val keyManager = KeyManager.getInstance(context)
                     if (keyManager.isInitialized()) {
-                        // Wait for Tor to be fully bootstrapped before creating hidden service
-                        Log.d(TAG, "Waiting for Tor to be ready before creating hidden service...")
+                        // Wait for Tor to be fully bootstrapped before reading hidden service
+                        Log.d(TAG, "Waiting for Tor to be ready before reading hidden service...")
                         val maxAttempts = 30 // 30 seconds max
                         var attempts = 0
                         while (attempts < maxAttempts) {
                             val status = RustBridge.getBootstrapStatus()
                             if (status >= 100) {
-                                Log.d(TAG, "Tor bootstrapped - creating hidden service...")
+                                Log.d(TAG, "Tor bootstrapped - reading hidden service...")
                                 break
                             }
                             Log.d(TAG, "Tor still bootstrapping ($status%)...")
@@ -450,10 +564,26 @@ class TorManager(private val context: Context) {
                             return@Thread
                         }
 
-                        Log.d(TAG, "Creating hidden service after account creation...")
-                        val address = RustBridge.createHiddenService(DEFAULT_SERVICE_PORT, DEFAULT_LOCAL_PORT)
+                        // Read persistent hidden service .onion address from filesystem
+                        val messagingHiddenServiceDir = File(torDataDir, "messaging_hidden_service")
+
+                        val address = try {
+                            waitForValidHostname(messagingHiddenServiceDir, timeoutMs = 60_000)
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Failed to get messaging hidden service address: ${e.message}")
+                            return@Thread
+                        }
+
+                        // Sanity check: verify address matches stored onion
+                        val storedOnion = getOnionAddress()
+                        if (storedOnion != null && storedOnion != address) {
+                            Log.w(TAG, "⚠️ Stored onion differs from filesystem! Stored: $storedOnion, Filesystem: $address")
+                            Log.w(TAG, "Using filesystem onion (Tor's source of truth)")
+                        }
+
                         saveOnionAddress(address)
-                        Log.d(TAG, "Hidden service created: $address")
+                        keyManager.storeMessagingOnion(address)
+                        Log.i(TAG, "✓ Messaging hidden service read (persistent): $address")
 
                         // Start listener if not already started
                         if (!listenerStarted) {
@@ -467,13 +597,13 @@ class TorManager(private val context: Context) {
                             }
                         }
                     } else {
-                        Log.w(TAG, "Account not initialized yet, cannot create hidden service")
+                        Log.w(TAG, "Account not initialized yet, cannot read hidden service")
                     }
                 } else {
                     Log.d(TAG, "Hidden service already exists: $existingAddress")
                 }
             } catch (e: Exception) {
-                Log.e(TAG, "Failed to create hidden service", e)
+                Log.e(TAG, "Failed to read hidden service", e)
             }
         }.start()
     }
@@ -713,8 +843,63 @@ class TorManager(private val context: Context) {
 
     /**
      * Clear all Tor data (for account wipe)
+     * Deletes persistent hidden service keys so new identity is created
+     * IMPORTANT: Stop TorService before calling this to avoid file locks
      */
     fun clearData() {
+        Log.i(TAG, "Clearing all Tor data for account wipe...")
+
+        // Clear preferences first
         prefs.edit().clear().apply()
+
+        // Stop listeners to release file handles
+        try {
+            RustBridge.stopListeners()
+            Log.d(TAG, "Stopped Rust listeners")
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to stop listeners: ${e.message}")
+        }
+
+        // Give Tor a moment to close file handles
+        Thread.sleep(500)
+
+        // Delete persistent hidden service directories
+        // This ensures a fresh .onion address is generated on next account creation
+        try {
+            val messagingHiddenServiceDir = File(torDataDir, "messaging_hidden_service")
+            if (messagingHiddenServiceDir.exists()) {
+                val deleted = messagingHiddenServiceDir.deleteRecursively()
+                if (deleted) {
+                    Log.i(TAG, "✓ Deleted persistent messaging hidden service directory")
+                } else {
+                    Log.e(TAG, "✗ Failed to delete messaging hidden service directory (may be locked)")
+                }
+            }
+
+            val friendRequestHiddenServiceDir = File(torDataDir, "friend_request_hidden_service")
+            if (friendRequestHiddenServiceDir.exists()) {
+                val deleted = friendRequestHiddenServiceDir.deleteRecursively()
+                if (deleted) {
+                    Log.i(TAG, "✓ Deleted persistent friend-request hidden service directory")
+                } else {
+                    Log.e(TAG, "✗ Failed to delete friend-request hidden service directory (may be locked)")
+                }
+            }
+
+            // Also delete voice hidden service if it exists
+            val voiceTorDataDir = File(context.filesDir, "voice_tor")
+            if (voiceTorDataDir.exists()) {
+                val deleted = voiceTorDataDir.deleteRecursively()
+                if (deleted) {
+                    Log.i(TAG, "✓ Deleted voice Tor data directory")
+                } else {
+                    Log.w(TAG, "✗ Failed to delete voice Tor directory (may be locked)")
+                }
+            }
+
+            Log.i(TAG, "Tor data wipe complete - fresh .onion will be generated on next account creation")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to delete hidden service directories", e)
+        }
     }
 }

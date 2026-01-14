@@ -234,6 +234,7 @@ class MessageAdapter(
         val voiceBubble: LinearLayout = view.findViewById(R.id.voiceBubble)
         val playButton: ImageView = view.findViewById(R.id.playButton)
         val progressBar: android.widget.ProgressBar = view.findViewById(R.id.progressBar)
+        val waveformProgress: ImageView = view.findViewById(R.id.waveformProgress)
         val durationText: TextView = view.findViewById(R.id.durationText)
         val timestampText: TextView = view.findViewById(R.id.timestampText)
         val statusIcon: ImageView = view.findViewById(R.id.statusIcon)
@@ -244,6 +245,7 @@ class MessageAdapter(
         val voiceBubble: LinearLayout = view.findViewById(R.id.voiceBubble)
         val playButton: ImageView = view.findViewById(R.id.playButton)
         val progressBar: android.widget.ProgressBar = view.findViewById(R.id.progressBar)
+        val waveformProgress: ImageView = view.findViewById(R.id.waveformProgress)
         val durationText: TextView = view.findViewById(R.id.durationText)
         val timestampText: TextView = view.findViewById(R.id.timestampText)
         val messageCheckbox: CheckBox = view.findViewById(R.id.messageCheckbox)
@@ -453,7 +455,7 @@ class MessageAdapter(
 
     private fun bindSentMessage(holder: SentMessageViewHolder, message: Message, position: Int) {
         holder.messageText.text = message.encryptedContent
-        holder.messageStatus.setImageResource(getStatusIcon(message.status))
+        holder.messageStatus.setImageResource(getStatusIcon(message))
 
         // Show timestamp header if this is the first message or date changed
         if (shouldShowTimestampHeader(position)) {
@@ -678,19 +680,13 @@ class MessageAdapter(
         holder.durationText.text = formatDuration(duration)
         holder.timestampText.text = formatTime(message.timestamp)
 
-        // Set status icon
-        val statusDrawable = when (message.status) {
-            Message.STATUS_PENDING, Message.STATUS_PING_SENT -> R.drawable.ic_timer
-            Message.STATUS_SENT, Message.STATUS_DELIVERED -> R.drawable.ic_check
-            Message.STATUS_FAILED -> R.drawable.ic_delete
-            else -> R.drawable.ic_check
-        }
-        holder.statusIcon.setImageResource(statusDrawable)
+        // Set status icon (same as text messages - circle system)
+        holder.statusIcon.setImageResource(getStatusIcon(message))
 
         // Set play/pause icon based on current playback state
         val isPlaying = currentlyPlayingMessageId == message.messageId
         holder.playButton.setImageResource(
-            if (isPlaying) R.drawable.ic_pause else R.drawable.ic_play
+            if (isPlaying) R.drawable.ic_pause_blue else R.drawable.ic_play_blue
         )
 
         // Handle selection mode
@@ -726,17 +722,24 @@ class MessageAdapter(
             holder.messageCheckbox.visibility = View.GONE
             holder.messageCheckbox.setOnCheckedChangeListener(null)
             holder.voiceBubble.setOnClickListener(null)
-            holder.voiceBubble.setOnLongClickListener(null)
 
             // Enable play button in normal mode
             holder.playButton.isEnabled = true
             holder.playButton.setOnClickListener {
                 onVoicePlayClick?.invoke(message)
             }
+
+            // Enable long-press to show popup menu
+            holder.voiceBubble.setOnLongClickListener {
+                showMessagePopupMenu(it, message)
+                true
+            }
         }
 
         // Reset progress
         holder.progressBar.progress = 0
+        holder.waveformProgress.scaleX = 0f
+        holder.waveformProgress.pivotX = 0f
     }
 
     private fun bindVoiceReceivedMessage(holder: VoiceReceivedMessageViewHolder, message: Message, position: Int) {
@@ -747,7 +750,7 @@ class MessageAdapter(
         // Set play/pause icon based on current playback state
         val isPlaying = currentlyPlayingMessageId == message.messageId
         holder.playButton.setImageResource(
-            if (isPlaying) R.drawable.ic_pause else R.drawable.ic_play
+            if (isPlaying) R.drawable.ic_pause_blue else R.drawable.ic_play_blue
         )
 
         // Handle selection mode
@@ -783,17 +786,24 @@ class MessageAdapter(
             holder.messageCheckbox.visibility = View.GONE
             holder.messageCheckbox.setOnCheckedChangeListener(null)
             holder.voiceBubble.setOnClickListener(null)
-            holder.voiceBubble.setOnLongClickListener(null)
 
             // Enable play button in normal mode
             holder.playButton.isEnabled = true
             holder.playButton.setOnClickListener {
                 onVoicePlayClick?.invoke(message)
             }
+
+            // Enable long-press to show popup menu
+            holder.voiceBubble.setOnLongClickListener {
+                showMessagePopupMenu(it, message)
+                true
+            }
         }
 
         // Reset progress
         holder.progressBar.progress = 0
+        holder.waveformProgress.scaleX = 0f
+        holder.waveformProgress.pivotX = 0f
     }
 
     private fun bindImageSentMessage(holder: ImageSentMessageViewHolder, message: Message, position: Int) {
@@ -807,7 +817,7 @@ class MessageAdapter(
             }
         }
 
-        holder.messageStatus.setImageResource(getStatusIcon(message.status))
+        holder.messageStatus.setImageResource(getStatusIcon(message))
 
         // Show timestamp header if this is the first message or date changed
         if (shouldShowTimestampHeader(position)) {
@@ -965,8 +975,8 @@ class MessageAdapter(
         }
         holder.paymentStatus.setTextColor(statusColor)
 
-        // Set message status
-        holder.messageStatus.setImageResource(getStatusIcon(message.status))
+        // Set message status icon (circle with checkmarks) based on ACK flags
+        holder.messageStatus.setImageResource(getStatusIcon(message))
 
         // Show timestamp header if needed
         if (shouldShowTimestampHeader(position)) {
@@ -1396,15 +1406,13 @@ class MessageAdapter(
         return sdf.format(Date(timestamp))
     }
 
-    private fun getStatusIcon(status: Int): Int {
-        return when (status) {
-            Message.STATUS_PENDING -> R.drawable.status_pending  // Empty circle
-            Message.STATUS_PING_SENT -> R.drawable.status_sent     // Circle with 1 checkmark
-            Message.STATUS_SENT -> R.drawable.status_sent     // Circle with 1 checkmark
-            Message.STATUS_DELIVERED -> R.drawable.status_delivered // Solid circle with 2 checkmarks
-            Message.STATUS_READ -> R.drawable.status_delivered    // Solid circle with 2 checkmarks
-            Message.STATUS_FAILED -> R.drawable.status_failed   // Red circle with X
-            else -> R.drawable.status_sent  // Default to single checkmark
+    private fun getStatusIcon(message: Message): Int {
+        // Check ACK flags instead of status to show accurate delivery state
+        return when {
+            message.status == Message.STATUS_FAILED -> R.drawable.status_failed  // Red circle with X
+            message.messageDelivered -> R.drawable.status_delivered  // Solid circle with 2 checkmarks (message downloaded by receiver)
+            message.pingDelivered -> R.drawable.status_sent  // Circle with 1 checkmark (PING_ACK received, receiver notified)
+            else -> R.drawable.status_pending  // Empty circle (no PING_ACK yet, receiver may be offline)
         }
     }
 
@@ -1596,5 +1604,91 @@ class MessageAdapter(
         }
 
         popup.show()
+    }
+
+    /**
+     * Update voice message playback progress
+     * @param messageId The ID of the currently playing message
+     * @param currentTime Current playback time in milliseconds
+     * @param totalDuration Total duration in milliseconds
+     */
+    fun updateVoiceProgress(messageId: String, currentTime: Int, totalDuration: Int) {
+        val progress = if (totalDuration > 0) {
+            ((currentTime.toFloat() / totalDuration.toFloat()) * 100).toInt().coerceIn(0, 100)
+        } else {
+            0
+        }
+
+        // Find the position of this message
+        val position = messages.indexOfFirst { it.messageId == messageId }
+        if (position == -1) return
+
+        // Get the ViewHolder for this position
+        val holder = recyclerView?.findViewHolderForAdapterPosition(position)
+
+        when (holder) {
+            is VoiceSentMessageViewHolder -> {
+                // Update progress bar
+                holder.progressBar.progress = progress
+
+                // Clip waveform progress using scaleX
+                val scale = progress / 100f
+                holder.waveformProgress.scaleX = scale
+                holder.waveformProgress.pivotX = 0f  // Scale from left
+
+                // Update time display
+                holder.durationText.text = formatDuration(currentTime / 1000)
+            }
+            is VoiceReceivedMessageViewHolder -> {
+                // Update progress bar
+                holder.progressBar.progress = progress
+
+                // Clip waveform progress using scaleX
+                val scale = progress / 100f
+                holder.waveformProgress.scaleX = scale
+                holder.waveformProgress.pivotX = 0f  // Scale from left
+
+                // Update time display
+                holder.durationText.text = formatDuration(currentTime / 1000)
+            }
+        }
+    }
+
+    /**
+     * Reset voice message progress when playback stops
+     */
+    fun resetVoiceProgress(messageId: String) {
+        val position = messages.indexOfFirst { it.messageId == messageId }
+        if (position == -1) return
+
+        val message = messages[position]
+        val holder = recyclerView?.findViewHolderForAdapterPosition(position)
+
+        when (holder) {
+            is VoiceSentMessageViewHolder -> {
+                holder.progressBar.progress = 0
+                holder.waveformProgress.scaleX = 0f
+                holder.waveformProgress.pivotX = 0f
+                holder.durationText.text = formatDuration(message.voiceDuration ?: 0)
+            }
+            is VoiceReceivedMessageViewHolder -> {
+                holder.progressBar.progress = 0
+                holder.waveformProgress.scaleX = 0f
+                holder.waveformProgress.pivotX = 0f
+                holder.durationText.text = formatDuration(message.voiceDuration ?: 0)
+            }
+        }
+    }
+
+    private var recyclerView: RecyclerView? = null
+
+    override fun onAttachedToRecyclerView(recyclerView: RecyclerView) {
+        super.onAttachedToRecyclerView(recyclerView)
+        this.recyclerView = recyclerView
+    }
+
+    override fun onDetachedFromRecyclerView(recyclerView: RecyclerView) {
+        super.onDetachedFromRecyclerView(recyclerView)
+        this.recyclerView = null
     }
 }

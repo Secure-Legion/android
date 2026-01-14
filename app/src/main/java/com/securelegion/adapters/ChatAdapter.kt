@@ -58,15 +58,12 @@ class ChatAdapter(
         // Show message status indicator (only for sent messages)
         if (chat.lastMessageIsSent) {
             holder.chatMessageStatus.visibility = View.VISIBLE
-            val statusIcon = when (chat.lastMessageStatus) {
-                0 -> R.drawable.status_pending  // STATUS_PENDING (before any acks)
-                1 -> R.drawable.status_pending  // STATUS_PENDING
-                2 -> R.drawable.status_sent     // STATUS_PING_SENT
-                3 -> R.drawable.status_sent     // STATUS_SENT
-                4 -> R.drawable.status_delivered // STATUS_DELIVERED
-                5 -> R.drawable.status_delivered // STATUS_READ
-                6 -> R.drawable.status_failed    // STATUS_FAILED
-                else -> R.drawable.status_sent
+            // Check ACK flags instead of status to show accurate delivery state
+            val statusIcon = when {
+                chat.lastMessageStatus == 6 -> R.drawable.status_failed  // STATUS_FAILED
+                chat.lastMessageMessageDelivered -> R.drawable.status_delivered  // MESSAGE_ACK received (2 checkmarks)
+                chat.lastMessagePingDelivered -> R.drawable.status_sent  // PING_ACK received (1 checkmark)
+                else -> R.drawable.status_pending  // No PING_ACK yet (empty circle)
             }
             holder.chatMessageStatus.setImageResource(statusIcon)
         } else {

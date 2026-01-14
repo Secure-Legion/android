@@ -616,6 +616,9 @@ class ChatActivity : BaseActivity() {
             layoutManager = LinearLayoutManager(this@ChatActivity)
             adapter = messageAdapter
 
+            // Disable change animations to prevent flicker when pending messages become real messages
+            (itemAnimator as? androidx.recyclerview.widget.SimpleItemAnimator)?.supportsChangeAnimations = false
+
             // Add scroll listener to hide revealed timestamps when scrolling
             addOnScrollListener(object : RecyclerView.OnScrollListener() {
                 override fun onScrollStateChanged(recyclerView: RecyclerView, newState: Int) {
@@ -1279,11 +1282,14 @@ class ChatActivity : BaseActivity() {
             voicePlayer.pause()
             currentlyPlayingMessageId = null
             messageAdapter.setCurrentlyPlayingMessageId(null)
+            messageAdapter.resetVoiceProgress(message.messageId)
             Log.d(TAG, "Paused voice message")
         } else {
             // Stop any currently playing message
             if (currentlyPlayingMessageId != null) {
+                val previousMessageId = currentlyPlayingMessageId
                 voicePlayer.stop()
+                messageAdapter.resetVoiceProgress(previousMessageId!!)
             }
 
             try {
@@ -1300,9 +1306,13 @@ class ChatActivity : BaseActivity() {
                     filePath = tempPlayablePath,
                     onCompletion = {
                         Log.d(TAG, "Voice message playback completed")
+                        val completedMessageId = currentlyPlayingMessageId
                         currentlyPlayingMessageId = null
                         runOnUiThread {
                             messageAdapter.setCurrentlyPlayingMessageId(null)
+                            if (completedMessageId != null) {
+                                messageAdapter.resetVoiceProgress(completedMessageId)
+                            }
                         }
                         // Securely delete temporary playable file
                         try {
@@ -1313,8 +1323,10 @@ class ChatActivity : BaseActivity() {
                         }
                     },
                     onProgress = { currentPos, duration ->
-                        // Optionally update progress bar in real-time
-                        // Would need to pass ViewHolder reference to update progress
+                        // Update waveform progress in real-time
+                        runOnUiThread {
+                            messageAdapter.updateVoiceProgress(message.messageId, currentPos, duration)
+                        }
                     }
                 )
                 currentlyPlayingMessageId = message.messageId
@@ -1537,16 +1549,26 @@ class ChatActivity : BaseActivity() {
                 if (autoPongPingIds.isNotEmpty()) {
                     Log.i(TAG, "🔵 Auto-PONG pings for typing indicator: ${autoPongPingIds.map { it.take(8) }}")
                 }
+                // Check if user is at bottom before updating (to avoid force-scrolling)
+                val layoutManager = messagesRecyclerView.layoutManager as? LinearLayoutManager
+                val lastVisiblePosition = layoutManager?.findLastCompletelyVisibleItemPosition() ?: -1
+                val oldItemCount = messageAdapter.itemCount
+                val wasAtBottom = lastVisiblePosition >= (oldItemCount - 1)
+
                 messageAdapter.updateMessages(
                     messages,
                     pendingPingsToShow,
                     downloadingPingIds,  // Pass downloading state to adapter
                     autoPongPingIds      // Pass auto-downloading pings to show typing indicator
                 )
-                messagesRecyclerView.post {
-                    val totalItems = messages.size + pendingPingsToShow.size
-                    if (totalItems > 0) {
-                        messagesRecyclerView.scrollToPosition(totalItems - 1)
+
+                // Only auto-scroll if user was already at bottom (prevents force-scroll during reading)
+                if (wasAtBottom) {
+                    messagesRecyclerView.post {
+                        val totalItems = messages.size + pendingPingsToShow.size
+                        if (totalItems > 0) {
+                            messagesRecyclerView.scrollToPosition(totalItems - 1)
+                        }
                     }
                 }
             }
