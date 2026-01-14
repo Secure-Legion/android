@@ -3,6 +3,8 @@ pub mod signing;
 pub mod key_exchange;
 pub mod hashing;
 pub mod pqc;
+pub mod replay_cache;
+pub mod ack_state;
 
 pub use encryption::{
     encrypt_message,
@@ -12,6 +14,7 @@ pub use encryption::{
     derive_message_key,
     encrypt_message_with_evolution,
     decrypt_message_with_evolution,
+    derive_receive_key_at_sequence,
 };
 pub use signing::{sign_data, verify_signature, generate_keypair};
 pub use key_exchange::{derive_shared_secret, generate_ephemeral_key};

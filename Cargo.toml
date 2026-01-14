@@ -23,6 +23,8 @@ sha3 = "0.10"
 hkdf = "0.12"
 hmac = "0.12"
 sha2 = "0.10"
+blake3 = "1.5"  # For PING hashing and replay detection
+subtle = "2.5"  # For constant-time comparison
 
 # Post-Quantum Cryptography (NIST FIPS 203)
 pqc_kyber = { version = "0.7", features = ["kyber1024"] }  # ML-KEM-1024 implementation
@@ -62,6 +64,7 @@ uuid = { version = "1.6", features = ["v4"] }
 
 # Sync primitives
 once_cell = "1.19"
+lru = "0.12"  # For replay cache (LRU eviction policy)
 
 # Async runtime (for Ping-Pong protocol and Tor control)
 tokio = { version = "1.35", features = ["sync", "time", "macros", "rt-multi-thread", "net", "io-util", "process", "io-std"] }

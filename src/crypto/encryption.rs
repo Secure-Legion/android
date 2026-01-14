@@ -242,6 +242,76 @@ pub fn derive_incoming_chain_key(root_key: &[u8; 32]) -> Result<[u8; 32]> {
     Ok(chain_key)
 }
 
+/// Derive receive chain key for a specific sender sequence (out-of-order decryption)
+///
+/// This implements two-stage derivation:
+/// 1. Derive direction key from root (sender's perspective)
+/// 2. Evolve N times to reach sender's sequence
+///
+/// This allows decrypting messages from ANY past sequence, fixing out-of-order delivery.
+///
+/// # Arguments
+/// * `root_key` - 32-byte root key (same for both parties)
+/// * `sender_sequence` - The sequence number the sender used to encrypt
+/// * `our_onion` - Our .onion address (for direction mapping)
+/// * `their_onion` - Their .onion address (for direction mapping)
+///
+/// # Returns
+/// 32-byte chain key at sender's sequence (for decrypting their message)
+///
+/// # Example
+/// ```
+/// // They encrypted with sequence 10, we're at sequence 15
+/// // We need to derive the key they used at sequence 10
+/// let key = derive_receive_key_at_sequence(&root_key, 10, our_onion, their_onion)?;
+/// let plaintext = decrypt_message(ciphertext, &key)?;
+/// ```
+pub fn derive_receive_key_at_sequence(
+    root_key: &[u8; 32],
+    sender_sequence: u64,
+    our_onion: &str,
+    their_onion: &str,
+) -> Result<[u8; 32]> {
+    // Max sequence gap protection (prevent DoS)
+    const MAX_SEQUENCE_GAP: u64 = 10_000;
+    if sender_sequence > MAX_SEQUENCE_GAP {
+        return Err(EncryptionError::SequenceTooFar {
+            received: sender_sequence,
+            expected: 0,
+            max: MAX_SEQUENCE_GAP,
+        });
+    }
+
+    // STAGE 1: Derive direction key (sender's perspective)
+    // Sender used their SEND chain, which is our RECEIVE chain
+    let direction_key = if our_onion < their_onion {
+        // They used outgoing (0x03) to send to us
+        derive_outgoing_chain_key(root_key)?
+    } else {
+        // They used incoming (0x04) to send to us
+        derive_incoming_chain_key(root_key)?
+    };
+
+    // STAGE 2: Evolve to sender's sequence
+    // Start from direction key and evolve N times
+    let mut key = direction_key;
+    for _ in 0..sender_sequence {
+        // Each evolution: HMAC(key, 0x01)
+        let new_key = {
+            type HmacSha256 = Hmac<Sha256>;
+            let mut mac = <HmacSha256 as Mac>::new_from_slice(&key)
+                .map_err(|_| EncryptionError::InvalidKeyLength)?;
+            mac.update(&[0x01]);
+            let result = mac.finalize();
+            let evolved: [u8; 32] = result.into_bytes().into();
+            evolved
+        };
+        key = new_key;
+    }
+
+    Ok(key)
+}
+
 /// Encrypt message with key evolution (for messaging)
 ///
 /// ATOMIC OPERATION: Encrypts and evolves key in one indivisible operation
@@ -380,6 +450,189 @@ pub fn decrypt_message_with_evolution(
         plaintext,
         evolved_chain_key: new_chain_key,
     })
+}
+
+// ==================== TWO-PHASE RATCHET COMMIT (Fix #6) ====================
+
+use std::sync::Mutex;
+use once_cell::sync::Lazy;
+use std::collections::HashMap;
+
+/// Result of deferred encryption (ratchet not yet committed)
+#[derive(Debug, Clone)]
+pub struct DeferredEncryptionResult {
+    pub ciphertext: Vec<u8>,
+    pub next_chain_key: [u8; 32],  // Next key, but not committed yet
+    pub next_sequence: u64,
+}
+
+/// Encrypt message WITHOUT committing ratchet advancement
+///
+/// This is Phase 1 of two-phase commit protocol.
+/// The chain key is evolved locally but NOT persisted.
+/// Call `commit_ratchet_advancement()` after PING_ACK received.
+///
+/// # Arguments
+/// * `plaintext` - Message to encrypt
+/// * `chain_key` - Current chain key (NOT mutated)
+/// * `sequence` - Current sequence number
+///
+/// # Returns
+/// DeferredEncryptionResult with ciphertext and next state (uncommitted)
+pub fn encrypt_message_deferred(
+    plaintext: &[u8],
+    chain_key: &[u8; 32],  // Immutable borrow - does NOT modify
+    sequence: u64,
+) -> Result<DeferredEncryptionResult> {
+    // Derive message key from current chain key
+    let message_key = derive_message_key(chain_key)?;
+
+    // Evolve chain key forward (provides forward secrecy)
+    // Create mutable copy for evolution
+    let mut chain_key_copy = *chain_key;
+    let next_chain_key = evolve_chain_key(&mut chain_key_copy)?;
+    let next_sequence = sequence + 1;
+
+    // Encrypt with derived message key
+    let cipher = XChaCha20Poly1305::new_from_slice(&message_key)
+        .map_err(|_| EncryptionError::InvalidKeyLength)?;
+
+    // Generate random nonce
+    let mut nonce_bytes = [0u8; 24];
+    OsRng.fill_bytes(&mut nonce_bytes);
+    let nonce = XNonce::from_slice(&nonce_bytes);
+
+    // Encrypt
+    let ciphertext = cipher
+        .encrypt(nonce, plaintext)
+        .map_err(|_| EncryptionError::EncryptionFailed)?;
+
+    // Build wire format: [version][sequence][nonce][ciphertext]
+    let mut encrypted_message = Vec::with_capacity(1 + 8 + 24 + ciphertext.len());
+    encrypted_message.push(0x01); // Version 1
+    encrypted_message.extend_from_slice(&sequence.to_be_bytes());
+    encrypted_message.extend_from_slice(&nonce_bytes);
+    encrypted_message.extend_from_slice(&ciphertext);
+
+    // Return deferred result (ratchet NOT committed yet)
+    Ok(DeferredEncryptionResult {
+        ciphertext: encrypted_message,
+        next_chain_key,
+        next_sequence,
+    })
+}
+
+/// Pending ratchet advancement waiting for PING_ACK
+#[derive(Clone)]
+struct PendingRatchetAdvancement {
+    contact_id: String,           // Contact identifier (pubkey or onion)
+    message_id: String,            // Message ID (for tracking)
+    next_chain_key: [u8; 32],      // Next chain key (uncommitted)
+    next_sequence: u64,            // Next sequence number (uncommitted)
+    created_at: std::time::SystemTime,
+}
+
+/// Global storage for pending ratchet advancements
+static PENDING_RATCHETS: Lazy<Mutex<HashMap<String, PendingRatchetAdvancement>>> =
+    Lazy::new(|| Mutex::new(HashMap::new()));
+
+/// Store a pending ratchet advancement (waiting for PING_ACK)
+///
+/// # Arguments
+/// * `contact_id` - Unique contact identifier (pubkey or onion address)
+/// * `message_id` - Message ID (for tracking which message this ratchet belongs to)
+/// * `next_chain_key` - The evolved chain key (not yet committed)
+/// * `next_sequence` - The next sequence number (not yet committed)
+pub fn store_pending_ratchet_advancement(
+    contact_id: &str,
+    message_id: &str,
+    next_chain_key: [u8; 32],
+    next_sequence: u64,
+) -> Result<()> {
+    let mut pending = PENDING_RATCHETS.lock()
+        .map_err(|_| EncryptionError::EncryptionFailed)?;
+
+    let advancement = PendingRatchetAdvancement {
+        contact_id: contact_id.to_string(),
+        message_id: message_id.to_string(),
+        next_chain_key,
+        next_sequence,
+        created_at: std::time::SystemTime::now(),
+    };
+
+    pending.insert(contact_id.to_string(), advancement);
+
+    log::info!("✓ Stored pending ratchet advancement for contact {}, message {}",
+        contact_id, message_id);
+
+    Ok(())
+}
+
+/// Commit ratchet advancement after PING_ACK received (Phase 2)
+///
+/// This is called by Kotlin after PING_ACK arrives.
+/// Returns the next chain key and sequence to persist in database.
+///
+/// # Arguments
+/// * `contact_id` - Contact identifier (must match store_pending_ratchet_advancement)
+///
+/// # Returns
+/// (next_chain_key, next_sequence) to persist, or None if no pending advancement
+pub fn commit_ratchet_advancement(
+    contact_id: &str,
+) -> Result<Option<([u8; 32], u64)>> {
+    let mut pending = PENDING_RATCHETS.lock()
+        .map_err(|_| EncryptionError::EncryptionFailed)?;
+
+    if let Some(advancement) = pending.remove(contact_id) {
+        log::info!("✓ Committed ratchet advancement for contact {}, message {}",
+            contact_id, advancement.message_id);
+
+        Ok(Some((advancement.next_chain_key, advancement.next_sequence)))
+    } else {
+        log::warn!("⚠️  No pending ratchet advancement found for contact {}", contact_id);
+        Ok(None)
+    }
+}
+
+/// Rollback/discard pending ratchet advancement (if send permanently fails)
+///
+/// Call this if message is deleted before receiving PING_ACK.
+///
+/// # Arguments
+/// * `contact_id` - Contact identifier
+pub fn rollback_ratchet_advancement(contact_id: &str) -> Result<()> {
+    let mut pending = PENDING_RATCHETS.lock()
+        .map_err(|_| EncryptionError::EncryptionFailed)?;
+
+    if let Some(advancement) = pending.remove(contact_id) {
+        log::info!("✓ Rolled back ratchet advancement for contact {}, message {}",
+            contact_id, advancement.message_id);
+    }
+
+    Ok(())
+}
+
+/// Clean up expired pending ratchet advancements (older than 5 minutes)
+pub fn cleanup_expired_pending_ratchets() -> Result<()> {
+    let mut pending = PENDING_RATCHETS.lock()
+        .map_err(|_| EncryptionError::EncryptionFailed)?;
+
+    let now = std::time::SystemTime::now();
+    const MAX_AGE: std::time::Duration = std::time::Duration::from_secs(300); // 5 minutes
+
+    pending.retain(|contact_id, advancement| {
+        if let Ok(age) = now.duration_since(advancement.created_at) {
+            if age > MAX_AGE {
+                log::warn!("⚠️  Expired pending ratchet for contact {} (age: {:?})",
+                    contact_id, age);
+                return false;
+            }
+        }
+        true
+    });
+
+    Ok(())
 }
 
 #[cfg(test)]

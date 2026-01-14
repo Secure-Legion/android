@@ -11,6 +11,7 @@ use crate::crypto::{
     decrypt_message, encrypt_message, generate_keypair, sign_data,
     verify_signature, derive_root_key, evolve_chain_key, derive_message_key,
     encrypt_message_with_evolution, decrypt_message_with_evolution,
+    derive_receive_key_at_sequence,
 };
 use crate::network::{TorManager, PENDING_CONNECTIONS};
 use crate::audio::voice_streaming::{VoiceStreamingListener, VoicePacket};
@@ -4661,6 +4662,77 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_evolveChainKey(
     }, std::ptr::null_mut())
 }
 
+/// Derive receive chain key for a specific sender sequence (out-of-order decryption)
+/// @param rootKey 32-byte root key (same for both parties)
+/// @param senderSequence The sequence number the sender used to encrypt
+/// @param ourOnion Our .onion address (for direction mapping)
+/// @param theirOnion Their .onion address (for direction mapping)
+/// @return 32-byte chain key at sender's sequence (for decrypting their message)
+#[no_mangle]
+pub extern "C" fn Java_com_securelegion_crypto_RustBridge_deriveReceiveKeyAtSequence(
+    mut env: JNIEnv,
+    _class: JClass,
+    root_key: JByteArray,
+    sender_sequence: jlong,
+    our_onion: JString,
+    their_onion: JString,
+) -> jbyteArray {
+    catch_panic!(env, {
+        // Parse root key
+        let root_key_vec = match jbytearray_to_vec(&mut env, root_key) {
+            Ok(v) => v,
+            Err(e) => {
+                let _ = env.throw_new("java/lang/IllegalArgumentException", e);
+                return std::ptr::null_mut();
+            }
+        };
+
+        if root_key_vec.len() != 32 {
+            let _ = env.throw_new("java/lang/IllegalArgumentException", "Root key must be 32 bytes");
+            return std::ptr::null_mut();
+        }
+
+        let root_key_array: [u8; 32] = root_key_vec.try_into().unwrap();
+
+        // Parse onion addresses
+        let our_onion_str = match jstring_to_string(&mut env, our_onion) {
+            Ok(s) => s,
+            Err(e) => {
+                let _ = env.throw_new("java/lang/IllegalArgumentException", e);
+                return std::ptr::null_mut();
+            }
+        };
+
+        let their_onion_str = match jstring_to_string(&mut env, their_onion) {
+            Ok(s) => s,
+            Err(e) => {
+                let _ = env.throw_new("java/lang/IllegalArgumentException", e);
+                return std::ptr::null_mut();
+            }
+        };
+
+        // Derive key at sequence
+        match derive_receive_key_at_sequence(
+            &root_key_array,
+            sender_sequence as u64,
+            &our_onion_str,
+            &their_onion_str,
+        ) {
+            Ok(key) => match vec_to_jbytearray(&mut env, &key[..]) {
+                Ok(arr) => arr.into_raw(),
+                Err(e) => {
+                    let _ = env.throw_new("java/lang/RuntimeException", e);
+                    std::ptr::null_mut()
+                }
+            },
+            Err(e) => {
+                let _ = env.throw_new("java/lang/RuntimeException", format!("{}", e));
+                std::ptr::null_mut()
+            }
+        }
+    }, std::ptr::null_mut())
+}
+
 /// Derive ephemeral message key from chain key
 /// @param chainKey Current 32-byte chain key
 /// @return 32-byte message key for encrypting/decrypting this message
@@ -5072,6 +5144,347 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_decryptMessageWithEvol
         }
     }, std::ptr::null_mut())
 }
+
+/// Decrypt message using a pre-derived message key (for skipped messages)
+/// Wire format: [version:1][sequence:8][nonce:24][ciphertext+tag]
+/// This is used for decrypting messages that arrived out-of-order after their key was pre-derived
+#[no_mangle]
+pub extern "C" fn Java_com_securelegion_crypto_RustBridge_decryptWithMessageKey(
+    mut env: JNIEnv,
+    _class: JClass,
+    ciphertext: JByteArray,
+    message_key: JByteArray,
+) -> jstring {
+    catch_panic!(env, {
+        let ciphertext_vec = match jbytearray_to_vec(&mut env, ciphertext) {
+            Ok(v) => v,
+            Err(e) => {
+                let _ = env.throw_new("java/lang/IllegalArgumentException", e);
+                return std::ptr::null_mut();
+            }
+        };
+
+        let message_key_vec = match jbytearray_to_vec(&mut env, message_key) {
+            Ok(v) => v,
+            Err(e) => {
+                let _ = env.throw_new("java/lang/IllegalArgumentException", e);
+                return std::ptr::null_mut();
+            }
+        };
+
+        if message_key_vec.len() != 32 {
+            let _ = env.throw_new("java/lang/IllegalArgumentException", "Message key must be 32 bytes");
+            return std::ptr::null_mut();
+        }
+
+        // Wire format: [version:1][sequence:8][nonce:24][ciphertext+tag]
+        if ciphertext_vec.len() < 33 {
+            let _ = env.throw_new("java/lang/IllegalArgumentException", "Ciphertext too short");
+            return std::ptr::null_mut();
+        }
+
+        // Extract nonce (bytes 9-32, after version and sequence)
+        let nonce: [u8; 24] = match ciphertext_vec[9..33].try_into() {
+            Ok(n) => n,
+            Err(_) => {
+                let _ = env.throw_new("java/lang/IllegalArgumentException", "Invalid nonce length");
+                return std::ptr::null_mut();
+            }
+        };
+
+        // Ciphertext + tag is everything after nonce
+        let encrypted_payload = &ciphertext_vec[33..];
+
+        // Decrypt using XChaCha20-Poly1305
+        use chacha20poly1305::{
+            aead::{Aead, KeyInit},
+            XChaCha20Poly1305, XNonce,
+        };
+
+        let cipher = XChaCha20Poly1305::new_from_slice(&message_key_vec)
+            .map_err(|e| format!("Failed to create cipher: {}", e))
+            .unwrap();
+
+        let nonce_obj = XNonce::from_slice(&nonce);
+
+        match cipher.decrypt(nonce_obj, encrypted_payload) {
+            Ok(plaintext_bytes) => {
+                match String::from_utf8(plaintext_bytes) {
+                    Ok(plaintext_str) => {
+                        match env.new_string(&plaintext_str) {
+                            Ok(jstr) => jstr.into_raw(),
+                            Err(e) => {
+                                let _ = env.throw_new("java/lang/RuntimeException", format!("Failed to create Java string: {}", e));
+                                std::ptr::null_mut()
+                            }
+                        }
+                    },
+                    Err(e) => {
+                        let _ = env.throw_new("java/lang/RuntimeException", format!("Invalid UTF-8: {}", e));
+                        std::ptr::null_mut()
+                    }
+                }
+            },
+            Err(e) => {
+                let _ = env.throw_new("java/lang/RuntimeException", format!("Decryption failed: {}", e));
+                std::ptr::null_mut()
+            }
+        }
+    }, std::ptr::null_mut())
+}
+
+// ==================== PROTOCOL SECURITY FIXES (FIX #6, #7, #9) ====================
+
+use crate::crypto::encryption::{encrypt_message_deferred, store_pending_ratchet_advancement, commit_ratchet_advancement, rollback_ratchet_advancement};
+use crate::crypto::replay_cache::check_ping_replay;
+use crate::crypto::ack_state::{validate_and_record_ack, reset_ack_state};
+
+/// FIX #6: Encrypt message with deferred ratchet commitment (Phase 1)
+/// Returns JSON: {"ciphertext": "base64", "nextChainKey": "base64", "nextSequence": 123}
+#[no_mangle]
+pub extern "C" fn Java_com_securelegion_crypto_RustBridge_encryptMessageDeferred(
+    mut env: JNIEnv,
+    _class: JClass,
+    plaintext: JString,
+    chain_key_bytes: JByteArray,
+    sequence: jlong,
+) -> jstring {
+    catch_panic!(env, {
+        let plaintext_str = match jstring_to_string(&mut env, plaintext) {
+            Ok(s) => s,
+            Err(e) => {
+                let _ = env.throw_new("java/lang/IllegalArgumentException", e);
+                return std::ptr::null_mut();
+            }
+        };
+
+        let chain_key_vec = match jbytearray_to_vec(&mut env, chain_key_bytes) {
+            Ok(v) => v,
+            Err(e) => {
+                let _ = env.throw_new("java/lang/IllegalArgumentException", e);
+                return std::ptr::null_mut();
+            }
+        };
+
+        if chain_key_vec.len() != 32 {
+            let _ = env.throw_new("java/lang/IllegalArgumentException", "Chain key must be 32 bytes");
+            return std::ptr::null_mut();
+        }
+
+        let mut chain_key_array = [0u8; 32];
+        chain_key_array.copy_from_slice(&chain_key_vec);
+
+        match encrypt_message_deferred(plaintext_str.as_bytes(), &chain_key_array, sequence as u64) {
+            Ok(result) => {
+                let json = serde_json::json!({
+                    "ciphertext": base64::encode(&result.ciphertext),
+                    "nextChainKey": base64::encode(&result.next_chain_key),
+                    "nextSequence": result.next_sequence
+                });
+
+                match env.new_string(json.to_string()) {
+                    Ok(s) => s.into_raw(),
+                    Err(e) => {
+                        let _ = env.throw_new("java/lang/RuntimeException", format!("Failed to create JSON: {}", e));
+                        std::ptr::null_mut()
+                    }
+                }
+            }
+            Err(e) => {
+                let _ = env.throw_new("java/lang/RuntimeException", format!("Encryption failed: {}", e));
+                std::ptr::null_mut()
+            }
+        }
+    }, std::ptr::null_mut())
+}
+
+/// FIX #6: Store pending ratchet advancement (after encryption but before PING_ACK)
+#[no_mangle]
+pub extern "C" fn Java_com_securelegion_crypto_RustBridge_storePendingRatchetAdvancement(
+    mut env: JNIEnv,
+    _class: JClass,
+    contact_id: JString,
+    message_id: JString,
+    next_chain_key: JByteArray,
+    next_sequence: jlong,
+) -> jboolean {
+    catch_panic!(env, {
+        let contact_id_str = match jstring_to_string(&mut env, contact_id) {
+            Ok(s) => s,
+            Err(_) => return 0
+        };
+
+        let message_id_str = match jstring_to_string(&mut env, message_id) {
+            Ok(s) => s,
+            Err(_) => return 0
+        };
+
+        let chain_key_vec = match jbytearray_to_vec(&mut env, next_chain_key) {
+            Ok(v) => v,
+            Err(_) => return 0
+        };
+
+        if chain_key_vec.len() != 32 {
+            return 0;
+        }
+
+        let mut chain_key_array = [0u8; 32];
+        chain_key_array.copy_from_slice(&chain_key_vec);
+
+        match store_pending_ratchet_advancement(&contact_id_str, &message_id_str, chain_key_array, next_sequence as u64) {
+            Ok(_) => 1,
+            Err(_) => 0
+        }
+    }, 0)
+}
+
+/// FIX #6: Commit ratchet advancement after PING_ACK received (Phase 2)
+/// Returns JSON: {"nextChainKey": "base64", "nextSequence": 123} or null if no pending
+#[no_mangle]
+pub extern "C" fn Java_com_securelegion_crypto_RustBridge_commitRatchetAdvancement(
+    mut env: JNIEnv,
+    _class: JClass,
+    contact_id: JString,
+) -> jstring {
+    catch_panic!(env, {
+        let contact_id_str = match jstring_to_string(&mut env, contact_id) {
+            Ok(s) => s,
+            Err(e) => {
+                let _ = env.throw_new("java/lang/IllegalArgumentException", e);
+                return std::ptr::null_mut();
+            }
+        };
+
+        match commit_ratchet_advancement(&contact_id_str) {
+            Ok(Some((next_key, next_seq))) => {
+                let json = serde_json::json!({
+                    "nextChainKey": base64::encode(&next_key),
+                    "nextSequence": next_seq
+                });
+
+                match env.new_string(json.to_string()) {
+                    Ok(s) => s.into_raw(),
+                    Err(_) => std::ptr::null_mut()
+                }
+            }
+            Ok(None) => {
+                std::ptr::null_mut()
+            }
+            Err(e) => {
+                let _ = env.throw_new("java/lang/RuntimeException", format!("Commit failed: {}", e));
+                std::ptr::null_mut()
+            }
+        }
+    }, std::ptr::null_mut())
+}
+
+/// FIX #6: Rollback pending ratchet advancement (if send permanently fails)
+#[no_mangle]
+pub extern "C" fn Java_com_securelegion_crypto_RustBridge_rollbackRatchetAdvancement(
+    mut env: JNIEnv,
+    _class: JClass,
+    contact_id: JString,
+) -> jboolean {
+    catch_panic!(env, {
+        let contact_id_str = match jstring_to_string(&mut env, contact_id) {
+            Ok(s) => s,
+            Err(_) => return 0
+        };
+
+        match rollback_ratchet_advancement(&contact_id_str) {
+            Ok(_) => 1,
+            Err(_) => 0
+        }
+    }, 0)
+}
+
+/// FIX #9: Check if PING is a replay attack
+/// Returns true if PING should be processed (not a replay)
+/// Returns false if PING is a duplicate (should be dropped)
+#[no_mangle]
+pub extern "C" fn Java_com_securelegion_crypto_RustBridge_checkPingReplay(
+    mut env: JNIEnv,
+    _class: JClass,
+    sender_pubkey: JByteArray,
+    ping_bytes: JByteArray,
+) -> jboolean {
+    catch_panic!(env, {
+        let pubkey_vec = match jbytearray_to_vec(&mut env, sender_pubkey) {
+            Ok(v) => v,
+            Err(_) => return 0
+        };
+
+        let ping_vec = match jbytearray_to_vec(&mut env, ping_bytes) {
+            Ok(v) => v,
+            Err(_) => return 0
+        };
+
+        if pubkey_vec.len() != 32 {
+            return 0;
+        }
+
+        let mut pubkey = [0u8; 32];
+        pubkey.copy_from_slice(&pubkey_vec);
+
+        let ping_hash = blake3::hash(&ping_vec);
+        let ping_hash_array: [u8; 32] = *ping_hash.as_bytes();
+
+        if check_ping_replay(pubkey, ping_hash_array) {
+            1  // Not a replay - process it
+        } else {
+            0  // Replay detected - drop it
+        }
+    }, 0)
+}
+
+/// FIX #7: Validate ACK ordering according to protocol rules
+/// @param contactId Contact identifier
+/// @param ackType 0=PING_ACK, 1=PONG_ACK, 2=MESSAGE_ACK
+/// @return true if ACK is valid, false if it violates ordering
+#[no_mangle]
+pub extern "C" fn Java_com_securelegion_crypto_RustBridge_validateAckOrdering(
+    mut env: JNIEnv,
+    _class: JClass,
+    contact_id: JString,
+    ack_type: jint,
+) -> jboolean {
+    catch_panic!(env, {
+        let contact_id_str = match jstring_to_string(&mut env, contact_id) {
+            Ok(s) => s,
+            Err(_) => return 0
+        };
+
+        let ack_type_u8 = match ack_type {
+            0 | 1 | 2 => ack_type as u8,
+            _ => return 0
+        };
+
+        if validate_and_record_ack(&contact_id_str, ack_type_u8) {
+            1  // Valid
+        } else {
+            0  // Invalid
+        }
+    }, 0)
+}
+
+/// FIX #7: Reset ACK state for a contact (after completing message exchange)
+#[no_mangle]
+pub extern "C" fn Java_com_securelegion_crypto_RustBridge_resetAckState(
+    mut env: JNIEnv,
+    _class: JClass,
+    contact_id: JString,
+) {
+    catch_panic!(env, {
+        let contact_id_str = match jstring_to_string(&mut env, contact_id) {
+            Ok(s) => s,
+            Err(_) => return
+        };
+
+        reset_ack_state(&contact_id_str);
+    }, ())
+}
+
+// ==================== END PROTOCOL SECURITY FIXES ====================
 
 // ==================== DELIVERY ACK (CONFIRMATION) ====================
 

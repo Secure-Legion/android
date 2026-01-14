@@ -455,13 +455,37 @@ impl TorManager {
 
             let mut buf = vec![0u8; 2048];
             let n = stream.read(&mut buf).await?;
-            let response = String::from_utf8_lossy(&buf[..n]);
+            let mut response = String::from_utf8_lossy(&buf[..n]).to_string();
 
             log::info!("ADD_ONION response: {}", response);
 
             // Check if service was created successfully
             if !response.contains("250 OK") {
-                return Err(format!("Failed to create hidden service: {}", response).into());
+                // If collision detected, delete the existing service and retry
+                if response.contains("550") && response.contains("collision") {
+                    log::warn!("Onion address collision detected - attempting to delete existing service and retry...");
+
+                    // Delete the colliding service
+                    let del_command = format!("DEL_ONION {}\r\n", onion_addr);
+                    stream.write_all(del_command.as_bytes()).await?;
+
+                    let mut del_buf = vec![0u8; 2048];
+                    let del_n = stream.read(&mut del_buf).await?;
+                    let del_response = String::from_utf8_lossy(&del_buf[..del_n]);
+                    log::info!("DEL_ONION response: {}", del_response);
+
+                    // Retry ADD_ONION
+                    stream.write_all(command.as_bytes()).await?;
+                    let retry_n = stream.read(&mut buf).await?;
+                    response = String::from_utf8_lossy(&buf[..retry_n]).to_string();
+                    log::info!("ADD_ONION retry response: {}", response);
+
+                    if !response.contains("250 OK") {
+                        return Err(format!("Failed to create hidden service after cleanup: {}", response).into());
+                    }
+                } else {
+                    return Err(format!("Failed to create hidden service: {}", response).into());
+                }
             }
 
             // Successfully created new service - extract the actual ServiceID from Tor's response
