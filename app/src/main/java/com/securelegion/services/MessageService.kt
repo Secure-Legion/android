@@ -72,6 +72,108 @@ class MessageService(private val context: Context) {
             java.security.SecureRandom().nextBytes(nonce)
             return nonce.joinToString("") { "%02x".format(it) }
         }
+
+        /**
+         * Generate a cryptographically random 64-bit nonce for message ID determinism
+         *
+         * CRITICAL: This is generated ONCE at message creation and NEVER regenerated.
+         * It is stored in the Message entity and reused for every retry, ensuring:
+         * - Same plaintext + same contacts = same messageId (stable identity)
+         * - Retries resend the EXACT SAME message (no ghost duplicates)
+         * - Crash recovery reconstructs the same ID (deterministic)
+         *
+         * Why: If messageNonce is regenerated on retry, the messageId changes,
+         * creating ghost duplicates. The receiver thinks each retry is a new message.
+         *
+         * @return Random 64-bit long (8 bytes of entropy)
+         */
+        fun generateMessageNonce(): Long {
+            return java.security.SecureRandom().nextLong()
+        }
+
+        /**
+         * Generate a stable, deterministic message ID from message metadata
+         *
+         * ==================== PHASE 1.2: SORTED PUBKEYS ====================
+         * For 1-to-1 chats, both Alice and Bob MUST derive the same conversationId.
+         * This requires sorted pubkeys in the hash input.
+         *
+         * SCENARIO (why this matters):
+         * Alice sends to Bob:
+         *   Alice computes: conversationId = sort([AlicePubKey, BobPubKey])
+         *   → "AlicePubKey|BobPubKey" (alphabetically sorted)
+         *
+         * Bob receives from Alice:
+         *   Bob computes: conversationId = sort([AlicePubKey, BobPubKey])
+         *   → "AlicePubKey|BobPubKey" (SAME order, because it's sorted)
+         *
+         * WITHOUT SORTING (broken):
+         *   Alice: conversationId = "AlicePubKey|BobPubKey"
+         *   Bob: conversationId = "BobPubKey|AlicePubKey" ← DIFFERENT!
+         *   → Two separate threads, broken dedup, "why do I see two chats?" bug
+         *
+         * Hash inputs (in this exact order for consistent ordering):
+         * v1 || conversationId || senderEd25519 || recipientEd25519 || plaintextHash || messageNonce
+         *
+         * Where:
+         * - v1: Version string ("v1")
+         * - conversationId: SORTED pair of Ed25519 public keys (this is PHASE 1.2)
+         * - senderEd25519: Base64-encoded Ed25519 public key of sender
+         * - recipientEd25519: Base64-encoded Ed25519 public key of recipient
+         * - plaintextHash: SHA-256 hash of plaintext content (hex-encoded)
+         * - messageNonce: The 64-bit random nonce (stored in Message entity)
+         *
+         * Why no timestamp:
+         * Timestamp breaks crash recovery. After app crash/recreate, we load the
+         * Message from DB using the stored messageNonce and recompute the ID.
+         * If timestamp was in the hash, the ID would be different (broken determinism).
+         *
+         * Why messageNonce:
+         * Ensures this message (even if retried 100 times with same plaintext)
+         * has a unique ID that's ALWAYS the same across retries.
+         *
+         * MANDATORY INVARIANT (DO NOT BREAK):
+         * - conversationId MUST be computed from SORTED public keys
+         * - sort() must use lexicographic (string) ordering
+         * - Both sender and receiver independently compute same conversationId
+         * - This ensures dedup works across both devices
+         *
+         * @param plaintext The message content
+         * @param senderEd25519Base64 The sender's Ed25519 public key (Base64)
+         * @param recipientEd25519Base64 The recipient's Ed25519 public key (Base64)
+         * @param messageNonce The per-message random nonce (generated once at creation)
+         * @return Deterministic messageId (Base64-encoded, 32 chars)
+         */
+        fun generateDeterministicMessageId(
+            plaintext: String,
+            senderEd25519Base64: String,
+            recipientEd25519Base64: String,
+            messageNonce: Long
+        ): String {
+            // Compute SHA-256(plaintext)
+            val plaintextHash = MessageDigest.getInstance("SHA-256")
+                .digest(plaintext.toByteArray())
+                .joinToString("") { "%02x".format(it) }
+
+            // PHASE 1.2: SORTED PUBKEYS (MANDATORY)
+            // Sort keys lexicographically to ensure Alice and Bob derive the same conversationId
+            // Alice: sort([AlicePubKey, BobPubKey]) → "AlicePubKey|BobPubKey"
+            // Bob:   sort([AlicePubKey, BobPubKey]) → "AlicePubKey|BobPubKey" (SAME!)
+            // Without sorting: Alice gets "A|B", Bob gets "B|A" → TWO SEPARATE THREADS
+            // DO NOT REMOVE SORTING or 1-to-1 chats will break
+            val sortedKeys = listOf(senderEd25519Base64, recipientEd25519Base64).sorted()
+            val conversationId = sortedKeys.joinToString("|")
+
+            // Hash input: v1 || conversationId || senderEd25519 || recipientEd25519 || plaintextHash || messageNonce
+            val hashInput = "v1||$conversationId||$senderEd25519Base64||$recipientEd25519Base64||$plaintextHash||$messageNonce"
+
+            // Compute SHA-256(hashInput)
+            val messageIdHash = MessageDigest.getInstance("SHA-256")
+                .digest(hashInput.toByteArray())
+
+            // Base64-encode and take first 32 characters (256 bits / 8 * 4 = 128 chars, so 32 is reasonable)
+            return android.util.Base64.encodeToString(messageIdHash, android.util.Base64.NO_WRAP).take(32)
+        }
     }
 
     private val keyManager = KeyManager.getInstance(context)
@@ -105,12 +207,25 @@ class MessageService(private val context: Context) {
 
             Log.d(TAG, "Sending voice to: ${contact.displayName} (${contact.torOnionAddress})")
 
-            // Generate unique message ID
-            val messageId = UUID.randomUUID().toString()
-
-            // Get our keypair for signing
+            // Get our keypair for signing (needed for messageId determinism)
             val ourPublicKey = keyManager.getSigningPublicKey()
             val ourPrivateKey = keyManager.getSigningKeyBytes()
+            val ourPublicKeyBase64 = android.util.Base64.encodeToString(ourPublicKey, android.util.Base64.NO_WRAP)
+
+            // PHASE 1.1: STABLE IDENTITY
+            // Generate message nonce ONCE (never regenerated on retry)
+            val messageNonce = generateMessageNonce()
+
+            // Generate STABLE messageId for voice message
+            // Convert audio bytes to string for hashing (same as encryption input)
+            val audioAsString = String(audioBytes, Charsets.ISO_8859_1)
+            val messageId = generateDeterministicMessageId(
+                plaintext = audioAsString,
+                senderEd25519Base64 = ourPublicKeyBase64,
+                recipientEd25519Base64 = contact.publicKeyBase64,
+                messageNonce = messageNonce
+            )
+            Log.d(TAG, "Generated deterministic messageId for voice: $messageId (from nonce: $messageNonce)")
 
             // Get key chain for this contact (for progressive ephemeral key evolution)
             Log.d(TAG, "SEND KEY CHAIN LOAD (VOICE): Loading key chain from database...")
@@ -204,6 +319,7 @@ class MessageService(private val context: Context) {
                 status = Message.STATUS_PENDING,
                 signatureBase64 = signatureBase64,
                 nonceBase64 = nonceBase64,
+                messageNonce = messageNonce,        // CRITICAL: Stored once, reused on all retries
                 selfDestructAt = selfDestructAt,
                 requiresReadReceipt = false, // Voice messages don't need read receipts
                 pingId = pingId,
@@ -280,12 +396,24 @@ class MessageService(private val context: Context) {
 
             Log.d(TAG, "Sending image to: ${contact.displayName} (${contact.torOnionAddress})")
 
-            // Generate unique message ID
-            val messageId = UUID.randomUUID().toString()
-
-            // Get our keypair for signing
+            // Get our keypair for signing (needed for messageId determinism)
             val ourPublicKey = keyManager.getSigningPublicKey()
             val ourPrivateKey = keyManager.getSigningKeyBytes()
+            val ourPublicKeyBase64 = android.util.Base64.encodeToString(ourPublicKey, android.util.Base64.NO_WRAP)
+
+            // PHASE 1.1: STABLE IDENTITY
+            // Generate message nonce ONCE (never regenerated on retry)
+            val messageNonce = generateMessageNonce()
+
+            // Generate STABLE messageId for image message
+            // Use the original image Base64 for hashing (before encryption)
+            val messageId = generateDeterministicMessageId(
+                plaintext = imageBase64,
+                senderEd25519Base64 = ourPublicKeyBase64,
+                recipientEd25519Base64 = contact.publicKeyBase64,
+                messageNonce = messageNonce
+            )
+            Log.d(TAG, "Generated deterministic messageId for image: $messageId (from nonce: $messageNonce)")
 
             // Get key chain for this contact (for progressive ephemeral key evolution)
             Log.d(TAG, "Encrypting image message with key evolution...")
@@ -357,6 +485,7 @@ class MessageService(private val context: Context) {
                 status = Message.STATUS_PENDING,
                 signatureBase64 = signatureBase64,
                 nonceBase64 = nonceBase64,
+                messageNonce = messageNonce,        // CRITICAL: Stored once, reused on all retries
                 selfDestructAt = selfDestructAt,
                 requiresReadReceipt = false, // Image messages don't need read receipts
                 pingId = pingId,
@@ -435,12 +564,26 @@ class MessageService(private val context: Context) {
 
             Log.d(TAG, "Sending to: ${contact.displayName} (${contact.torOnionAddress})")
 
-            // Generate unique message ID
-            val messageId = UUID.randomUUID().toString()
-
-            // Get our keypair for signing
+            // Get our keypair for signing (needed for messageId determinism)
             val ourPublicKey = keyManager.getSigningPublicKey()
             val ourPrivateKey = keyManager.getSigningKeyBytes()
+            val ourPublicKeyBase64 = android.util.Base64.encodeToString(ourPublicKey, android.util.Base64.NO_WRAP)
+
+            // PHASE 1.1: STABLE IDENTITY
+            // Generate message nonce ONCE (never regenerated on retry)
+            // This nonce is stored in DB and reused for all retries/resends
+            val messageNonce = generateMessageNonce()
+
+            // Generate STABLE messageId using deterministic hash
+            // Formula: SHA-256(v1 || conversationId || senderEd25519 || recipientEd25519 || plaintextHash || messageNonce)
+            // Returns same ID if plaintext + contacts + nonce are same (guarantees dedup on retry)
+            val messageId = generateDeterministicMessageId(
+                plaintext = plaintext,
+                senderEd25519Base64 = ourPublicKeyBase64,
+                recipientEd25519Base64 = contact.publicKeyBase64,
+                messageNonce = messageNonce
+            )
+            Log.d(TAG, "Generated deterministic messageId: $messageId (from nonce: $messageNonce)")
 
             // Get key chain for this contact (for progressive ephemeral key evolution)
             Log.d(TAG, "SEND KEY CHAIN LOAD: Loading key chain from database...")
@@ -523,13 +666,14 @@ class MessageService(private val context: Context) {
                 status = Message.STATUS_PING_SENT, // Start as PING_SENT so pollForPongsAndSendMessages() can find it
                 signatureBase64 = signatureBase64,
                 nonceBase64 = nonceBase64,
+                messageNonce = messageNonce,        // CRITICAL: Stored once, reused on all retries
                 selfDestructAt = selfDestructAt,
                 requiresReadReceipt = enableReadReceipt,
                 pingId = pingId,                    // Generated ONCE, used for all retries
                 pingTimestamp = pingTimestamp,      // Generated ONCE with pingId
-                encryptedPayload = encryptedBase64, // NEW: Store encrypted payload to send after Pong
-                retryCount = 0,                     // NEW: Initialize retry counter
-                lastRetryTimestamp = currentTime   // NEW: Track when we last attempted
+                encryptedPayload = encryptedBase64, // Store encrypted payload to send after Pong
+                retryCount = 0,                     // Initialize retry counter
+                lastRetryTimestamp = currentTime   // Track when we last attempted
             )
 
             val durationText = selfDestructDurationMs?.let { duration ->
@@ -691,6 +835,11 @@ class MessageService(private val context: Context) {
             val pingTimestamp = currentTime
             Log.d(TAG, "Generated Ping ID for payment request: $pingId")
 
+            // PHASE 1.1: STABLE IDENTITY
+            // Generate message nonce ONCE (never regenerated on retry)
+            // For payment messages, messageId is stable (pay_req_${quoteId}), but we still need nonce for retries
+            val messageNonce = generateMessageNonce()
+
             // Create message entity with PAYMENT_REQUEST type
             val message = Message(
                 contactId = contactId,
@@ -702,6 +851,7 @@ class MessageService(private val context: Context) {
                 status = Message.STATUS_PENDING,
                 signatureBase64 = signatureBase64,
                 nonceBase64 = nonceBase64,
+                messageNonce = messageNonce,        // CRITICAL: Stored once, reused on all retries
                 pingId = pingId,
                 pingTimestamp = pingTimestamp,
                 encryptedPayload = encryptedBase64,
@@ -846,6 +996,10 @@ class MessageService(private val context: Context) {
             val pingId = generatePingId()  // 24-byte nonce as hex string
             val pingTimestamp = currentTime
 
+            // PHASE 1.1: STABLE IDENTITY
+            // Generate message nonce ONCE (never regenerated on retry)
+            val messageNonce = generateMessageNonce()
+
             // Create message entity with PAYMENT_SENT type
             val message = Message(
                 contactId = contactId,
@@ -857,6 +1011,7 @@ class MessageService(private val context: Context) {
                 status = Message.STATUS_PENDING,
                 signatureBase64 = signatureBase64,
                 nonceBase64 = nonceBase64,
+                messageNonce = messageNonce,        // CRITICAL: Stored once, reused on all retries
                 pingId = pingId,
                 pingTimestamp = pingTimestamp,
                 encryptedPayload = encryptedBase64,
@@ -932,7 +1087,13 @@ class MessageService(private val context: Context) {
 
             Log.d(TAG, "Sending payment acceptance to: ${contact.displayName}")
 
-            val messageId = "pay_accept_${originalQuote.quoteId}_${System.currentTimeMillis()}"
+            // PHASE 1.1: STABLE IDENTITY
+            // Generate message nonce ONCE (never regenerated on retry)
+            val messageNonce = generateMessageNonce()
+
+            // Fixed: Remove timestamp from messageId for determinism
+            // Use only quote.quoteId + nonce to ensure same message ID across retries
+            val messageId = "pay_accept_${originalQuote.quoteId}"
 
             val ourPrivateKey = keyManager.getSigningKeyBytes()
 
@@ -995,6 +1156,7 @@ class MessageService(private val context: Context) {
                 status = Message.STATUS_PENDING,
                 signatureBase64 = signatureBase64,
                 nonceBase64 = nonceBase64,
+                messageNonce = messageNonce,        // CRITICAL: Stored once, reused on all retries
                 pingId = pingId,
                 pingTimestamp = pingTimestamp,
                 encryptedPayload = encryptedBase64,
@@ -1066,6 +1228,11 @@ class MessageService(private val context: Context) {
     ): Result<Message> = withContext(Dispatchers.IO) {
         try {
             Log.d(TAG, "Receiving $messageType message from: $senderOnionAddress")
+
+            // PHASE 1.2: Get our public key for deterministic messageId calculation
+            // Both sender and receiver must compute same ID using SORTED pubkeys
+            val ourPublicKeyBase64 = android.util.Base64.encodeToString(keyManager.getSigningPublicKey(), android.util.Base64.NO_WRAP)
+            val senderPublicKeyBase64 = android.util.Base64.encodeToString(senderPublicKey, android.util.Base64.NO_WRAP)
 
             // Get database instance
             val dbPassphrase = keyManager.getDatabasePassphrase()
@@ -1248,6 +1415,10 @@ class MessageService(private val context: Context) {
             val nonce = encryptedBytes.sliceArray(9 until 33)
             val nonceBase64 = Base64.encodeToString(nonce, Base64.NO_WRAP)
 
+            // PHASE 1.1: STABLE IDENTITY
+            // Generate message nonce ONCE for received messages (used for dedup + retry stability)
+            val messageNonce = generateMessageNonce()
+
             // Handle based on message type
             val message = when (messageType) {
                 Message.MESSAGE_TYPE_VOICE -> {
@@ -1258,9 +1429,17 @@ class MessageService(private val context: Context) {
                     val voiceRecorder = com.securelegion.utils.VoiceRecorder(context)
                     val voiceFilePath = voiceRecorder.saveVoiceMessage(audioBytes, voiceDuration ?: 0)
 
-                    // Generate message ID from voice file hash + sender (for deduplication)
-                    // NOTE: Don't use nonce - each retry has a new nonce but same content
-                    val messageId = generateMessageId(android.util.Base64.encodeToString(audioBytes, android.util.Base64.NO_WRAP), senderOnionAddress)
+                    // PHASE 1.2: Generate deterministic messageId using SORTED pubkeys
+                    // Sender computed: generateDeterministicMessageId(audio, senderKey, recipientKey, nonce)
+                    // Receiver computes: generateDeterministicMessageId(audio, senderKey, ourKey, nonce) with SORTED keys
+                    // sort([senderKey, ourKey]) == sort([ourKey, senderKey]) ← ensures same ID on both sides
+                    val audioAsString = String(audioBytes, Charsets.ISO_8859_1)
+                    val messageId = generateDeterministicMessageId(
+                        plaintext = audioAsString,
+                        senderEd25519Base64 = senderPublicKeyBase64,
+                        recipientEd25519Base64 = ourPublicKeyBase64,
+                        messageNonce = messageNonce  // Use the nonce we generated for this received message
+                    )
 
                     // Check for duplicate
                     if (database.messageDao().messageExists(messageId)) {
@@ -1280,6 +1459,7 @@ class MessageService(private val context: Context) {
                         status = Message.STATUS_DELIVERED,
                         signatureBase64 = "",
                         nonceBase64 = nonceBase64,
+                        messageNonce = messageNonce,        // CRITICAL: Stored once, reused on all retries
                         selfDestructAt = selfDestructAt,
                         requiresReadReceipt = requiresReadReceipt,
                         pingId = pingId
@@ -1290,8 +1470,13 @@ class MessageService(private val context: Context) {
                     val imageBytes = decryptedData.toByteArray(Charsets.ISO_8859_1)
                     val imageBase64 = Base64.encodeToString(imageBytes, Base64.NO_WRAP)
 
-                    // Generate message ID from image hash + sender (for deduplication)
-                    val messageId = generateMessageId(imageBase64, senderOnionAddress)
+                    // PHASE 1.2: Generate deterministic messageId using SORTED pubkeys
+                    val messageId = generateDeterministicMessageId(
+                        plaintext = imageBase64,
+                        senderEd25519Base64 = senderPublicKeyBase64,
+                        recipientEd25519Base64 = ourPublicKeyBase64,
+                        messageNonce = messageNonce
+                    )
 
                     // Check for duplicate
                     if (database.messageDao().messageExists(messageId)) {
@@ -1311,6 +1496,7 @@ class MessageService(private val context: Context) {
                         status = Message.STATUS_DELIVERED,
                         signatureBase64 = "",
                         nonceBase64 = nonceBase64,
+                        messageNonce = messageNonce,        // CRITICAL: Stored once, reused on all retries
                         selfDestructAt = selfDestructAt,
                         requiresReadReceipt = requiresReadReceipt,
                         pingId = pingId
@@ -1348,6 +1534,7 @@ class MessageService(private val context: Context) {
                         status = Message.STATUS_DELIVERED,
                         signatureBase64 = "",
                         nonceBase64 = nonceBase64,
+                        messageNonce = messageNonce,        // CRITICAL: Stored once, reused on all retries
                         selfDestructAt = selfDestructAt,
                         requiresReadReceipt = requiresReadReceipt,
                         pingId = pingId
@@ -1388,6 +1575,7 @@ class MessageService(private val context: Context) {
                         status = Message.STATUS_DELIVERED,
                         signatureBase64 = "",
                         nonceBase64 = nonceBase64,
+                        messageNonce = messageNonce,        // CRITICAL: Stored once, reused on all retries
                         selfDestructAt = selfDestructAt,
                         requiresReadReceipt = requiresReadReceipt,
                         pingId = pingId
@@ -1423,6 +1611,7 @@ class MessageService(private val context: Context) {
                         status = Message.STATUS_DELIVERED,
                         signatureBase64 = "",
                         nonceBase64 = nonceBase64,
+                        messageNonce = messageNonce,        // CRITICAL: Stored once, reused on all retries
                         selfDestructAt = selfDestructAt,
                         requiresReadReceipt = requiresReadReceipt,
                         pingId = pingId
@@ -1432,10 +1621,14 @@ class MessageService(private val context: Context) {
                     // Text message (default)
                     val plaintext = decryptedData
 
-                    // Generate message ID from ENCRYPTED payload (prevents duplicate plaintext blocking)
-                    // Encrypted payload includes random nonce, so identical plaintexts get different IDs
-                    val messageIdHash = java.security.MessageDigest.getInstance("SHA-256").digest(encryptedBytes)
-                    val messageId = "blob_" + Base64.encodeToString(messageIdHash, Base64.NO_WRAP).take(28)
+                    // PHASE 1.2: Generate deterministic messageId using SORTED pubkeys
+                    // This matches the sender's computation exactly, enabling dedup
+                    val messageId = generateDeterministicMessageId(
+                        plaintext = plaintext,
+                        senderEd25519Base64 = senderPublicKeyBase64,
+                        recipientEd25519Base64 = ourPublicKeyBase64,
+                        messageNonce = messageNonce
+                    )
 
                     // Check for duplicate
                     if (database.messageDao().messageExists(messageId)) {
@@ -1453,6 +1646,7 @@ class MessageService(private val context: Context) {
                         status = Message.STATUS_DELIVERED,
                         signatureBase64 = "",
                         nonceBase64 = nonceBase64,
+                        messageNonce = messageNonce,        // CRITICAL: Stored once, reused on all retries
                         selfDestructAt = selfDestructAt,
                         requiresReadReceipt = requiresReadReceipt,
                         pingId = pingId

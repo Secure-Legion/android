@@ -206,10 +206,9 @@ class TorManager(private val context: Context) {
                     $initialCircuitTimeout
                     HiddenServiceDir ${messagingHiddenServiceDir.absolutePath}
                     HiddenServicePort $DEFAULT_SERVICE_PORT 127.0.0.1:$DEFAULT_LOCAL_PORT
-                    HiddenServicePort 8080 127.0.0.1:8080
-                    HiddenServicePort 9151 127.0.0.1:9151
                     HiddenServicePort 9153 127.0.0.1:9153
                     HiddenServiceDir ${friendRequestHiddenServiceDir.absolutePath}
+                    HiddenServicePort 9151 127.0.0.1:9151
                     HiddenServicePort 9152 127.0.0.1:8081
                     $bridgeConfig
                 """.trimIndent()
@@ -343,6 +342,7 @@ class TorManager(private val context: Context) {
                     // Read friend-request .onion address with validation
                     try {
                         val friendRequestOnion = waitForValidHostname(friendRequestHiddenServiceDir, timeoutMs = 60_000)
+                        keyManager.storeFriendRequestOnion(friendRequestOnion)
                         Log.i(TAG, "✓ Friend-request hidden service ready (persistent): $friendRequestOnion")
                     } catch (e: Exception) {
                         Log.w(TAG, "Friend-request hidden service not ready: ${e.message}")

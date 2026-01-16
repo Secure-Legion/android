@@ -560,16 +560,8 @@ class TorService : Service() {
             // Start polling for incoming taps
             startTapPoller()
 
-            // PHASE 4: Start friend request listener (separate channel to avoid interference)
-            Log.d(TAG, "Starting friend request listener...")
-            val friendRequestSuccess = RustBridge.startFriendRequestListener()
-            if (friendRequestSuccess) {
-                Log.i(TAG, "Friend request listener started successfully")
-            } else {
-                Log.w(TAG, "Friend request listener already running")
-            }
-
             // Start polling for incoming friend requests
+            // Both share port 9151, routed by message type in Rust
             startFriendRequestPoller()
 
             // PONGs arrive at main listener (port 8080) and are routed by message type
@@ -3114,6 +3106,8 @@ class TorService : Service() {
                     }
 
                     // Create message entity (store plaintext in encryptedContent field for now)
+                    // PHASE 1.1: Generate messageNonce for received messages
+                    val messageNonce = java.security.SecureRandom().nextLong()
                     val message = com.securelegion.database.entities.Message(
                         contactId = contact.id,
                         messageId = messageId,
@@ -3134,6 +3128,7 @@ class TorService : Service() {
                         status = com.securelegion.database.entities.Message.STATUS_DELIVERED,
                         signatureBase64 = "", // TODO: Verify signature
                         nonceBase64 = "", // Not needed for already-decrypted messages
+                        messageNonce = messageNonce,        // CRITICAL: Stored once, reused on all retries
                         paymentQuoteJson = paymentQuoteJson,
                         paymentToken = paymentToken,
                         paymentAmount = paymentAmount,
@@ -4219,6 +4214,8 @@ class TorService : Service() {
                 // PRIMARY deduplication via ReceivedId table above is sufficient
                 // No secondary check needed - this was blocking rapid identical messages
 
+                // PHASE 1.1: Generate messageNonce for received messages
+                val messageNonce = java.security.SecureRandom().nextLong()
                 val message = com.securelegion.database.entities.Message(
                     contactId = contact.id,
                     messageId = deterministicMessageId,
@@ -4228,6 +4225,7 @@ class TorService : Service() {
                     status = com.securelegion.database.entities.Message.STATUS_DELIVERED,
                     signatureBase64 = "",
                     nonceBase64 = "",
+                    messageNonce = messageNonce,        // CRITICAL: Stored once, reused on all retries
                     isRead = false,
                     requiresReadReceipt = true,
                     selfDestructAt = null,
