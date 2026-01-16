@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <selector xmlns:android="http://schemas.android.com/apk/res/android">
-    <!-- Selected state (white circle with inner dot) -->
-    <item android:state_selected="true">
+    <!-- Checked state (white circle with inner dot) -->
+    <item android:state_checked="true">
         <layer-list>
             <!-- Outer circle -->
             <item>
@@ -19,7 +19,7 @@
             </item>
         </layer-list>
     </item>
-    <!-- Unselected state (empty circle with white border) -->
+    <!-- Unchecked state (empty circle with white border) -->
     <item>
         <shape android:shape="oval">
             <stroke android:width="2dp" android:color="#FFFFFF"/>

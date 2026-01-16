@@ -9,6 +9,7 @@ import com.goterl.lazysodium.LazySodiumAndroid
 import com.goterl.lazysodium.SodiumAndroid
 import com.goterl.lazysodium.interfaces.Sign
 import org.web3j.crypto.MnemonicUtils
+import java.io.File
 import java.math.BigInteger
 import java.security.MessageDigest
 import org.bouncycastle.jce.provider.BouncyCastleProvider
@@ -145,12 +146,20 @@ class KeyManager private constructor(context: Context) {
         try {
             Log.d(TAG, "Creating friend request .onion address")
 
-            // Call Rust native function to create hidden service
-            // Friend request .onion uses wire protocol (0x07/0x08) on port 9151
+            // Get the persistent directory path that matches torrc configuration
+            // This must be the same directory torrc uses: appContext.filesDir/tor/friend_request_hidden_service
+            val torDataDir = File(appContext.filesDir, "tor")
+            val friendRequestHiddenServiceDir = File(torDataDir, "friend_request_hidden_service")
+
+            // Ensure directory exists
+            friendRequestHiddenServiceDir.mkdirs()
+
+            // Call Rust native function to generate/read persistent keys and derive .onion address
+            // This does NOT start Tor - it just creates the keypair and derives the address locally
             val onionAddress = RustBridge.createFriendRequestHiddenService(
-                servicePort = 9151,  // Public port for friend requests
-                localPort = 9151,    // Local wire protocol listener (TorService tap listener)
-                directory = "friend_requests"
+                servicePort = 9151,  // Public port for friend requests (not used in new implementation)
+                localPort = 9151,    // Local wire protocol listener (not used in new implementation)
+                directory = friendRequestHiddenServiceDir.absolutePath  // Full path to persistent directory
             )
 
             if (onionAddress.isEmpty()) {
