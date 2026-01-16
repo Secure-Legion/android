@@ -1298,13 +1298,6 @@ class AddFriendActivity : BaseActivity() {
             try {
                 Log.d(TAG, "Resending friend request to ${pendingRequest.displayName}")
 
-                // Check if Tor is ready before attempting to send
-                if (!com.securelegion.services.TorService.isMessagingReady()) {
-                    Log.w(TAG, "Tor not ready - cannot resend friend request")
-                    ThemedToast.showLong(this@AddFriendActivity, "Tor not ready. Please wait and try again.")
-                    return@launch
-                }
-
                 // Additional check: verify SOCKS proxy is actually running
                 val socksRunning = withContext(Dispatchers.IO) {
                     com.securelegion.crypto.RustBridge.isSocksProxyRunning()

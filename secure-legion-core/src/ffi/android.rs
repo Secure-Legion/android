@@ -1956,24 +1956,47 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendFriendRequest(
         };
 
         const FRIEND_REQUEST_PORT: u16 = 9151; // Friend request .onion port (wire protocol)
+        const FALLBACK_PORT: u16 = 8080; // Fallback to main listener if 9151 fails
 
+        // Try port 9151 first
         let result = runtime.block_on(async {
             let manager = tor_manager.lock().unwrap();
             let mut conn = manager.connect(&recipient_onion_str, FRIEND_REQUEST_PORT).await?;
             manager.send(&mut conn, &wire_message).await?;
 
-            log::info!("Friend request sent successfully to {}", recipient_onion_str);
+            log::info!("Friend request sent successfully to {} on port {}", recipient_onion_str, FRIEND_REQUEST_PORT);
             Ok::<(), Box<dyn std::error::Error>>(())
         });
 
         match result {
             Ok(_) => {
-                log::info!("Friend request sent successfully to {}", recipient_onion_str);
+                log::info!("Friend request sent successfully to {} on port {}", recipient_onion_str, FRIEND_REQUEST_PORT);
                 1 // success
             }
             Err(e) => {
-                log::error!("Failed to send friend request to {}: {}", recipient_onion_str, e);
-                0 // failure
+                log::warn!("Port {} failed: {}. Trying fallback port {}...", FRIEND_REQUEST_PORT, e, FALLBACK_PORT);
+
+                // Fallback to port 8080
+                let fallback_result = runtime.block_on(async {
+                    let manager = tor_manager.lock().unwrap();
+                    let mut conn = manager.connect(&recipient_onion_str, FALLBACK_PORT).await?;
+                    manager.send(&mut conn, &wire_message).await?;
+
+                    log::info!("Friend request sent successfully to {} on fallback port {}", recipient_onion_str, FALLBACK_PORT);
+                    Ok::<(), Box<dyn std::error::Error>>(())
+                });
+
+                match fallback_result {
+                    Ok(_) => {
+                        log::info!("Friend request sent successfully via fallback port {}", FALLBACK_PORT);
+                        1 // success
+                    }
+                    Err(fallback_err) => {
+                        log::error!("Failed to send friend request to {} (tried both port {} and {}): {}",
+                            recipient_onion_str, FRIEND_REQUEST_PORT, FALLBACK_PORT, fallback_err);
+                        0 // failure
+                    }
+                }
             }
         }
     }, 0)
@@ -2031,27 +2054,78 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendFriendRequestAccep
         };
 
         const FRIEND_REQUEST_PORT: u16 = 9151; // Friend request .onion port (wire protocol)
+        const FALLBACK_PORT: u16 = 8080; // Fallback to main listener if 9151 fails
 
+        // Try port 9151 first
         let result = runtime.block_on(async {
             let manager = tor_manager.lock().unwrap();
             let mut conn = manager.connect(&recipient_onion_str, FRIEND_REQUEST_PORT).await?;
             manager.send(&mut conn, &wire_message).await?;
 
-            log::info!("Friend request acceptance sent successfully to {}", recipient_onion_str);
+            log::info!("Friend request acceptance sent successfully to {} on port {}", recipient_onion_str, FRIEND_REQUEST_PORT);
             Ok::<(), Box<dyn std::error::Error>>(())
         });
 
         match result {
             Ok(_) => {
-                log::info!("Friend request acceptance sent successfully to {}", recipient_onion_str);
+                log::info!("Friend request acceptance sent successfully to {} on port {}", recipient_onion_str, FRIEND_REQUEST_PORT);
                 1 // success
             }
             Err(e) => {
-                log::error!("Failed to send friend request acceptance to {}: {}", recipient_onion_str, e);
-                0 // failure
+                log::warn!("Port {} failed: {}. Trying fallback port {}...", FRIEND_REQUEST_PORT, e, FALLBACK_PORT);
+
+                // Fallback to port 8080
+                let fallback_result = runtime.block_on(async {
+                    let manager = tor_manager.lock().unwrap();
+                    let mut conn = manager.connect(&recipient_onion_str, FALLBACK_PORT).await?;
+                    manager.send(&mut conn, &wire_message).await?;
+
+                    log::info!("Friend request acceptance sent successfully to {} on fallback port {}", recipient_onion_str, FALLBACK_PORT);
+                    Ok::<(), Box<dyn std::error::Error>>(())
+                });
+
+                match fallback_result {
+                    Ok(_) => {
+                        log::info!("Friend request acceptance sent successfully via fallback port {}", FALLBACK_PORT);
+                        1 // success
+                    }
+                    Err(fallback_err) => {
+                        log::error!("Failed to send friend request acceptance to {} (tried both port {} and {}): {}",
+                            recipient_onion_str, FRIEND_REQUEST_PORT, FALLBACK_PORT, fallback_err);
+                        0 // failure
+                    }
+                }
             }
         }
     }, 0)
+}
+
+/// Reset TorManager singleton state
+/// WARNING: Must stop all listeners first before calling this
+/// Used when wiping account data to prevent stale control port connections
+#[no_mangle]
+pub extern "C" fn Java_com_securelegion_crypto_RustBridge_resetTorManager(
+    mut env: JNIEnv,
+    _class: JClass,
+) {
+    catch_panic!(env, {
+        log::warn!("Resetting TorManager singleton...");
+
+        // Create new TorManager instance
+        match TorManager::new() {
+            Ok(new_manager) => {
+                // Replace global instance
+                let tor_manager = get_tor_manager();
+                let mut manager = tor_manager.lock().unwrap();
+                *manager = new_manager;
+                log::info!("TorManager reset complete - fresh state initialized");
+            }
+            Err(e) => {
+                log::error!("Failed to reset TorManager: {}", e);
+                let _ = env.throw_new("java/lang/RuntimeException", format!("TorManager reset failed: {}", e));
+            }
+        }
+    }, ())
 }
 
 /// Send ACK on an existing connection (fire-and-forget)
@@ -2144,7 +2218,7 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_startTapListener(
     port: jint,
 ) -> jboolean {
     catch_panic!(env, {
-        log::info!("Starting tap listener on port {}", port);
+        log::info!("Starting multiplexed listener on port {} (TAP + FRIEND_REQUEST)", port);
 
         let tor_manager = get_tor_manager();
 
@@ -2156,31 +2230,40 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_startTapListener(
 
         match result {
             Ok(mut receiver) => {
-                // Create channel for tap messages (converting from (u64, Vec<u8>) to just Vec<u8>)
-                let (tx, rx) = mpsc::unbounded_channel::<Vec<u8>>();
+                // Create channel for tap messages
+                let (tap_tx, tap_rx) = mpsc::unbounded_channel::<Vec<u8>>();
+                // Create channel for friend request messages
+                let (fr_tx, fr_rx) = mpsc::unbounded_channel::<Vec<u8>>();
 
-                // Store receiver globally
-                let _ = GLOBAL_TAP_RECEIVER.set(Arc::new(Mutex::new(rx)));
+                // Store receivers globally
+                let _ = GLOBAL_TAP_RECEIVER.set(Arc::new(Mutex::new(tap_rx)));
+                let _ = GLOBAL_FRIEND_REQUEST_RECEIVER.set(Arc::new(Mutex::new(fr_rx)));
 
-                // Spawn task to receive from TorManager and forward to tap channel
+                // Store friend request sender in global FRIEND_REQUEST_TX for routing in tor.rs
+                let fr_tx_arc = Arc::new(std::sync::Mutex::new(fr_tx.clone()));
+                let _ = crate::network::tor::FRIEND_REQUEST_TX.set(fr_tx_arc);
+                log::info!("Friend request channel initialized successfully (shared port {})", port);
+
+                // Spawn task to receive from TorManager and route by message type
                 GLOBAL_RUNTIME.spawn(async move {
                     while let Some((_connection_id, tap_bytes)) = receiver.recv().await {
-                        log::info!("Received tap via listener: {} bytes", tap_bytes.len());
+                        log::info!("Received message via multiplexed listener: {} bytes", tap_bytes.len());
 
-                        // Send to tap channel
-                        if let Err(e) = tx.send(tap_bytes) {
-                            log::error!("Failed to send tap to channel: {}", e);
-                            break;
+                        // Send to tap channel (friend requests already routed by tor.rs)
+                        if let Err(e) = tap_tx.send(tap_bytes) {
+                            log::error!("Failed to send to TAP channel: {}", e);
+                            // Don't break - keep listener alive even if one message fails
+                            continue;
                         }
                     }
-                    log::warn!("Tap listener receiver closed");
+                    log::warn!("Multiplexed listener receiver closed");
                 });
 
-                log::info!("Tap listener started on port {}", port);
+                log::info!("Multiplexed listener started on port {} - routing TAP and FRIEND_REQUEST by message type", port);
                 1 // success
             }
             Err(e) => {
-                log::error!("Failed to start tap listener: {}", e);
+                log::error!("Failed to start multiplexed listener: {}", e);
                 0 // failure
             }
         }

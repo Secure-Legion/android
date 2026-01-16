@@ -8,6 +8,77 @@ import androidx.room.PrimaryKey
 /**
  * Message entity stored in encrypted SQLCipher database
  * Represents an encrypted message sent or received from a contact
+ *
+ * ==================== PHASE 1.1: STABLE IDENTITY ====================
+ * This entity ensures messages have stable identity across retries and crashes
+ * by using deterministic ID generation based on stable inputs (not timestamps).
+ *
+ * ==================== PHASE 1.2: SORTED PUBKEYS (1-TO-1 CHATS) ====================
+ * For 1-to-1 messaging, BOTH Alice and Bob must derive the same conversationId.
+ * This requires lexicographically sorted public keys in the messageId hash.
+ *
+ * SCENARIO:
+ * Alice sends to Bob:
+ *   - Alice computes: conversationId = sort([AlicePubKey, BobPubKey])
+ *   - Result: "AlicePubKey|BobPubKey" (alphabetically sorted)
+ *
+ * Bob receives from Alice:
+ *   - Bob computes: conversationId = sort([AlicePubKey, BobPubKey])
+ *   - Result: "AlicePubKey|BobPubKey" (SAME conversationId!)
+ *   - Both derive same messageId → dedup works → ONE thread, not two
+ *
+ * WITHOUT SORTING (BROKEN):
+ *   - Alice: conversationId = "AlicePubKey|BobPubKey"
+ *   - Bob: conversationId = "BobPubKey|AlicePubKey" (DIFFERENT!)
+ *   - → Two separate threads, broken dedup, "why do I see two chats?" bug
+ *   - → ACKs and messages don't line up
+ *
+ * Critical Fields:
+ * - messageNonce: Random 64-bit nonce generated ONCE at creation, NEVER regenerated
+ * - messageId: Deterministic hash from (SORTED sender+recipient + plaintext + nonce)
+ * - pingId: Random nonce for ping-pong protocol, stored with pingWireBytes for exact replay
+ *
+ * Why It Matters:
+ * If messageNonce changes on retry, messageId changes → receiver gets ghost duplicates.
+ * If messageId uses timestamp, crash recovery reconstructs different ID → desync.
+ * If conversationId is not sorted, Alice and Bob get different IDs → two separate threads.
+ * If retry doesn't reuse pingWireBytes/pingId, ghost pings appear.
+ *
+ * Invariants (DO NOT BREAK):
+ * 1. messageNonce is set ONCE at creation and NEVER regenerated
+ * 2. messageId never changes (stable across crashes, retries, app reinstalls)
+ * 3. conversationId is ALWAYS computed from SORTED public keys (lexicographic order)
+ * 4. Retries load from DB and reuse stored messageNonce/pingId/pingWireBytes
+ * 5. messageId hash formula: SHA256(v1 || SORTED_conversationId || senderPub || recipientPub || plaintextHash || messageNonce)
+ * 6. NO timestamp in messageId hash (breaks determinism after crash)
+ *
+ * Implementation Details (PHASE 1.2):
+ *
+ * SENDER PATH (sendMessage):
+ *   1. Generate: messageNonce = SecureRandom.nextLong()
+ *   2. Compute: conversationId = sort([ourKey, theirKey])
+ *   3. Calculate: messageId = SHA256(v1 || conversationId || ourKey || theirKey || plaintextHash || messageNonce)
+ *   4. Store: messageNonce in DB (never changes)
+ *   5. Retry: Load from DB, recompute same messageId (uses stored messageNonce)
+ *
+ * RECEIVER PATH (receiveMessage):
+ *   1. Receive: senderPublicKey as ByteArray parameter
+ *   2. Generate: messageNonce = SecureRandom.nextLong() (local dedup only)
+ *   3. Compute: conversationId = sort([senderKey, ourKey])
+ *   4. Calculate: messageId = SHA256(v1 || conversationId || senderKey || ourKey || plaintextHash || messageNonce)
+ *      NOTE: sort([senderKey, ourKey]) == sort([ourKey, senderKey])
+ *      → Both sender and receiver get SAME messageId!
+ *   5. Check: Database for duplicate (dedup blocks retries)
+ *   6. Store: messageNonce in DB (for consistency)
+ *
+ * Testing:
+ * - Send message, kill app, restart → same message (not duplicate) [PHASE 1.1]
+ * - Retry same message 100 times → all retries use identical messageId [PHASE 1.1]
+ * - Receive duplicate message → database dedup check blocks it [PHASE 1.1]
+ * - Alice sends to Bob, Bob receives → both compute same conversationId [PHASE 1.2]
+ * - Message dedup works on both sender and receiver side [PHASE 1.2]
+ * - No two separate chat threads (sorted pubkeys prevent this) [PHASE 1.2]
+ * - ACKs and messages line up correctly [PHASE 1.2]
  */
 @Entity(
     tableName = "messages",
@@ -74,6 +145,22 @@ data class Message(
      */
     val nonceBase64: String,
 
+    /**
+     * Message nonce for deterministic ID generation (CRITICAL for retry dedup)
+     *
+     * HARD CONSTRAINT: Generated ONCE at message creation, NEVER regenerated
+     *
+     * Used in messageId hash calculation:
+     * messageId = SHA-256(v1 || conversationId || senderPub || recipientPub || plaintextHash || messageNonce)
+     *
+     * This ensures:
+     * - Retry with same DB row = same messageId = dedup
+     * - App crash/recreate = same messageId = dedup
+     * - Never use System.currentTimeMillis() in ID - breaks crash recovery
+     *
+     * If this field is NULL, retries will generate NEW IDs = GHOST DUPLICATES
+     */
+    val messageNonce: Long,
     /**
      * Message type
      * "TEXT" = text message, "VOICE" = voice clip

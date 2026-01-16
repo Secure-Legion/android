@@ -113,6 +113,11 @@ class ChatActivity : BaseActivity() {
     // Track pings that are being auto-downloaded (hide from UI for seamless experience)
     private val autoPongPingIds = mutableSetOf<String>()
 
+    // Debouncing for loadMessages() to prevent rapid refresh bursts (coalesce within 150ms)
+    private val loadMessagesHandler = Handler(Looper.getMainLooper())
+    private var pendingLoadMessagesRunnable: Runnable? = null
+    private val LOAD_MESSAGES_DEBOUNCE_MS = 150L
+
     // Voice recording
     private lateinit var voiceRecorder: VoiceRecorder
     private lateinit var voicePlayer: VoicePlayer
@@ -195,38 +200,10 @@ class ChatActivity : BaseActivity() {
                     val receivedContactId = intent.getLongExtra("CONTACT_ID", -1L)
                     Log.d(TAG, "MESSAGE_RECEIVED broadcast: received contactId=$receivedContactId, current contactId=$contactId")
                     if (receivedContactId == contactId) {
-                        Log.i(TAG, "New message for current contact - reloading messages")
+                        Log.i(TAG, "New message for current contact - reloading messages (debounced)")
 
-                        // Launch coroutine immediately to avoid blocking broadcast receiver
-                        lifecycleScope.launch(Dispatchers.Main) {
-                            // Check if download complete by checking both pending pings and download service flag
-                            val prefs = getSharedPreferences("pending_pings", MODE_PRIVATE)
-                            val downloadStatusPrefs = getSharedPreferences("download_status", MODE_PRIVATE)
-
-                            val pendingPings = withContext(Dispatchers.IO) {
-                                com.securelegion.models.PendingPing.loadQueueForContact(prefs, contactId)
-                            }
-                            val isDownloadFlagSet = downloadStatusPrefs.getBoolean("downloading_$contactId", false)
-                            val downloadStartTime = downloadStatusPrefs.getLong("download_start_time_$contactId", 0L)
-
-                            // Check if download is stale (started more than 2 minutes ago)
-                            val DOWNLOAD_TIMEOUT_MS = 120_000L // 2 minutes
-                            val isStale = if (downloadStartTime > 0) {
-                                System.currentTimeMillis() - downloadStartTime > DOWNLOAD_TIMEOUT_MS
-                            } else {
-                                false
-                            }
-
-                            val isDownloadServiceRunning = isDownloadFlagSet && !isStale
-
-                            if (pendingPings.isEmpty() && !isDownloadServiceRunning) {
-                                isDownloadInProgress = false  // Download complete, pings cleared
-                                Log.d(TAG, "Download completed - clearing download flag")
-                            }
-
-                            // Reload messages - state machine handles atomic swap automatically
-                            loadMessages()
-                        }
+                        // Use debounced reload to coalesce rapid messages
+                        loadMessagesDebounced()
                     } else {
                         Log.d(TAG, "Message for different contact, ignoring")
                     }
@@ -285,21 +262,17 @@ class ChatActivity : BaseActivity() {
                                         }
                                     }
 
-                                    // Load messages (auto-downloading pings are already hidden)
-                                    loadMessages()
+                                    // Load messages (auto-downloading pings are already hidden) - use debounced to coalesce
+                                    loadMessagesDebounced()
                                 }
                             }
                         } else {
                             Log.d(TAG, "NEW_PING for current contact during download - ignoring to prevent ghost")
                         }
                     } else if (receivedContactId != -1L) {
-                        // NEW_PING for different contact - reload to update UI
-                        Log.i(TAG, "New Ping for different contact - reloading")
-                        runOnUiThread {
-                            lifecycleScope.launch {
-                                loadMessages()
-                            }
-                        }
+                        // NEW_PING for different contact - reload to update UI (debounced)
+                        Log.i(TAG, "New Ping for different contact - reloading (debounced)")
+                        loadMessagesDebounced()
                     }
                 }
                 "com.securelegion.DOWNLOAD_FAILED" -> {
@@ -307,14 +280,10 @@ class ChatActivity : BaseActivity() {
                     Log.w(TAG, "DOWNLOAD_FAILED broadcast: received contactId=$receivedContactId, current contactId=$contactId")
 
                     if (receivedContactId == contactId) {
-                        // Download failed for current contact - reset flag and refresh UI
-                        Log.w(TAG, "Download failed - resetting download flag and refreshing UI")
+                        // Download failed for current contact - reset flag and refresh UI (debounced)
+                        Log.w(TAG, "Download failed - resetting download flag and refreshing UI (debounced)")
                         isDownloadInProgress = false
-                        runOnUiThread {
-                            lifecycleScope.launch {
-                                loadMessages()
-                            }
-                        }
+                        loadMessagesDebounced()
                     }
                 }
             }
@@ -386,29 +355,8 @@ class ChatActivity : BaseActivity() {
 
         Log.d(TAG, "Opening chat with: $contactName (ID: $contactId)")
 
-        // Check if there's an active download for this contact (set by DownloadMessageService)
-        val downloadStatusPrefs = getSharedPreferences("download_status", MODE_PRIVATE)
-        val isDownloadFlagSet = downloadStatusPrefs.getBoolean("downloading_$contactId", false)
-        val downloadStartTime = downloadStatusPrefs.getLong("download_start_time_$contactId", 0L)
-
-        // Check if download is stale (started more than 2 minutes ago)
-        val DOWNLOAD_TIMEOUT_MS = 120_000L // 2 minutes
-        val isStale = if (downloadStartTime > 0) {
-            System.currentTimeMillis() - downloadStartTime > DOWNLOAD_TIMEOUT_MS
-        } else {
-            false
-        }
-
-        isDownloadInProgress = isDownloadFlagSet && !isStale
-        if (isDownloadInProgress) {
-            Log.d(TAG, "Active download detected for contact $contactId - preserving download state")
-        } else if (isStale) {
-            Log.w(TAG, "Stale download flag detected on onCreate - clearing it")
-            downloadStatusPrefs.edit()
-                .putBoolean("downloading_$contactId", false)
-                .remove("download_start_time_$contactId")
-                .apply()
-        }
+        // Download state will be determined from database (pending pings with DOWNLOADING/DECRYPTING state)
+        // No need to check SharedPreferences - database is source of truth
 
         // Migrate old pending ping format to queue format (one-time)
         com.securelegion.utils.PendingPingMigration.migrateIfNeeded(this)
@@ -515,30 +463,7 @@ class ChatActivity : BaseActivity() {
         super.onResume()
         Log.d(TAG, "onResume called")
 
-        // Check if download is still in progress (in case user tapped notification multiple times)
-        val downloadStatusPrefs = getSharedPreferences("download_status", MODE_PRIVATE)
-        val isDownloadFlagSet = downloadStatusPrefs.getBoolean("downloading_$contactId", false)
-        val downloadStartTime = downloadStatusPrefs.getLong("download_start_time_$contactId", 0L)
-
-        // Check if download is stale (started more than 2 minutes ago)
-        val DOWNLOAD_TIMEOUT_MS = 120_000L // 2 minutes
-        val isStale = if (downloadStartTime > 0) {
-            System.currentTimeMillis() - downloadStartTime > DOWNLOAD_TIMEOUT_MS
-        } else {
-            false
-        }
-
-        val isDownloadServiceRunning = isDownloadFlagSet && !isStale
-        if (isDownloadServiceRunning && !isDownloadInProgress) {
-            isDownloadInProgress = true
-            Log.d(TAG, "Download service detected on resume - updating download flag")
-        } else if (isStale && isDownloadFlagSet) {
-            Log.w(TAG, "Stale download flag detected on resume - clearing it")
-            downloadStatusPrefs.edit()
-                .putBoolean("downloading_$contactId", false)
-                .remove("download_start_time_$contactId")
-                .apply()
-        }
+        // Download state is derived from database on loadMessages() - no need to check SharedPreferences
 
         // Notify TorService that app is in foreground (fast bandwidth updates)
         com.securelegion.services.TorService.setForegroundState(true)
@@ -612,12 +537,16 @@ class ChatActivity : BaseActivity() {
         // Fetch initial prices
         fetchCryptoPrices()
 
+        // Enable stable IDs BEFORE attaching adapter (must be done before observers register)
+        messageAdapter.setHasStableIds(true)
+
         messagesRecyclerView.apply {
             layoutManager = LinearLayoutManager(this@ChatActivity)
             adapter = messageAdapter
 
-            // Disable change animations to prevent flicker when pending messages become real messages
-            (itemAnimator as? androidx.recyclerview.widget.SimpleItemAnimator)?.supportsChangeAnimations = false
+            // PHASE 1.1/1.2: Stable IDs now working, re-enable animations
+            // DiffUtil with stable messageIds = smooth item transitions
+            itemAnimator = androidx.recyclerview.widget.DefaultItemAnimator()
 
             // Add scroll listener to hide revealed timestamps when scrolling
             addOnScrollListener(object : RecyclerView.OnScrollListener() {
@@ -1343,6 +1272,28 @@ class ChatActivity : BaseActivity() {
         }
     }
 
+    /**
+     * Debounced wrapper for loadMessages() - coalesces rapid calls into a single refresh within 150ms
+     * Prevents flicker from multiple loadMessages() triggers (broadcasts, callbacks, etc.)
+     */
+    private fun loadMessagesDebounced() {
+        // Cancel any pending loadMessages call
+        pendingLoadMessagesRunnable?.let {
+            loadMessagesHandler.removeCallbacks(it)
+        }
+
+        // Create new runnable that calls loadMessages in a coroutine
+        val runnable = Runnable {
+            lifecycleScope.launch {
+                loadMessages()
+            }
+        }
+
+        // Store reference and schedule with debounce delay
+        pendingLoadMessagesRunnable = runnable
+        loadMessagesHandler.postDelayed(runnable, LOAD_MESSAGES_DEBOUNCE_MS)
+    }
+
     private suspend fun loadMessages() {
         try {
             Log.d(TAG, "Loading messages for contact: $contactId")
@@ -1382,30 +1333,10 @@ class ChatActivity : BaseActivity() {
             val prefs = getSharedPreferences("pending_pings", MODE_PRIVATE)
             var allPendingPings = com.securelegion.models.PendingPing.loadQueueFromDatabase(database, prefs, contactId.toLong())
 
-            // Reset stale DOWNLOADING/DECRYPTING states back to PENDING
-            // This handles cases where the download service was killed (device shutdown, force stop, etc.)
-            // BUT: Don't reset if there's an active download service running!
-            val downloadStatusPrefs = getSharedPreferences("download_status", MODE_PRIVATE)
-            val isDownloadServiceRunning = downloadStatusPrefs.getBoolean("downloading_$contactId", false)
-            val downloadStartTime = downloadStatusPrefs.getLong("download_start_time_$contactId", 0L)
-
-            // Check if download is stale (started more than 2 minutes ago)
-            val DOWNLOAD_TIMEOUT_MS = 120_000L // 2 minutes
-            val isStale = if (downloadStartTime > 0) {
-                System.currentTimeMillis() - downloadStartTime > DOWNLOAD_TIMEOUT_MS
-            } else {
-                false
-            }
-
-            if (isStale) {
-                Log.w(TAG, "Download timeout detected (started ${(System.currentTimeMillis() - downloadStartTime) / 1000}s ago) - clearing stale flag")
-                downloadStatusPrefs.edit()
-                    .putBoolean("downloading_$contactId", false)
-                    .remove("download_start_time_$contactId")
-                    .apply()
-            }
-
-            if (!isDownloadServiceRunning || isStale) {
+            // Don't auto-reset DOWNLOADING/DECRYPTING states - let database guide the UI
+            // If download service restarts, it will update the state
+            // If it stays stuck, user can manually trigger download again
+            if (false) {  // Disabled stale state reset
                 val staleStates = allPendingPings.filter {
                     it.state == com.securelegion.models.PingState.DOWNLOADING ||
                     it.state == com.securelegion.models.PingState.DECRYPTING
@@ -1535,13 +1466,6 @@ class ChatActivity : BaseActivity() {
             if (pendingCount == 0 && downloadingPingIds.isEmpty() && isDownloadInProgress) {
                 Log.d(TAG, "All downloads complete (ping_inbox confirms no pending) - resetting isDownloadInProgress")
                 isDownloadInProgress = false
-
-                // Also clear the SharedPreferences flag
-                val downloadStatusPrefs = getSharedPreferences("download_status", MODE_PRIVATE)
-                downloadStatusPrefs.edit()
-                    .putBoolean("downloading_$contactId", false)
-                    .remove("download_start_time_$contactId")
-                    .apply()
             }
 
             withContext(Dispatchers.Main) {
@@ -1550,8 +1474,9 @@ class ChatActivity : BaseActivity() {
                     Log.i(TAG, "🔵 Auto-PONG pings for typing indicator: ${autoPongPingIds.map { it.take(8) }}")
                 }
                 // Check if user is at bottom before updating (to avoid force-scrolling)
+                // Use findLastVisibleItemPosition() for more reliable detection - treats partially visible items as "at bottom"
                 val layoutManager = messagesRecyclerView.layoutManager as? LinearLayoutManager
-                val lastVisiblePosition = layoutManager?.findLastCompletelyVisibleItemPosition() ?: -1
+                val lastVisiblePosition = layoutManager?.findLastVisibleItemPosition() ?: -1
                 val oldItemCount = messageAdapter.itemCount
                 val wasAtBottom = lastVisiblePosition >= (oldItemCount - 1)
 
@@ -1615,9 +1540,6 @@ class ChatActivity : BaseActivity() {
                     }
                 )
 
-                // Reload again after Tor send completes to update status indicator
-                loadMessages()
-
                 if (result.isFailure) {
                     Log.e(TAG, "Failed to send message", result.exceptionOrNull())
                 }
@@ -1664,13 +1586,8 @@ class ChatActivity : BaseActivity() {
         )
         Log.d(TAG, "Updated ping state to DOWNLOADING in SharedPreferences before UI refresh")
 
-        // Set download-in-progress flag to prevent duplicate service starts
-        val downloadStatusPrefs = getSharedPreferences("download_status", MODE_PRIVATE)
-        downloadStatusPrefs.edit()
-            .putBoolean("downloading_$contactId", true)
-            .putLong("download_start_time_$contactId", System.currentTimeMillis())
-            .apply()
-        Log.d(TAG, "Set download flag with timestamp")
+        // Mark that a download is in progress (in-memory tracking only, no SharedPreferences)
+        downloadingPingIds.add(pingId)
 
         // Immediately update UI to show "Downloading..." status
         lifecycleScope.launch {

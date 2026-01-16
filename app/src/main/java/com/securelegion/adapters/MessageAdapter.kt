@@ -21,6 +21,8 @@ import android.widget.LinearLayout
 import android.widget.PopupMenu
 import android.widget.TextView
 import androidx.cardview.widget.CardView
+import androidx.recyclerview.widget.DiffUtil
+import androidx.recyclerview.widget.ListAdapter
 import androidx.recyclerview.widget.RecyclerView
 import com.securelegion.R
 import com.securelegion.crypto.NLx402Manager
@@ -32,9 +34,82 @@ import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 
+/**
+ * Sealed class for list items in chat - combines messages and pending pings into one list
+ * DiffUtil will efficiently compute changes between lists of these items
+ */
+sealed class ChatListItem {
+    data class MessageItem(val message: Message) : ChatListItem() {
+        override fun getStableId() = "msg_${message.messageId}".hashCode().toLong() and 0x7FFFFFFFL
+    }
+
+    data class PendingPingItem(
+        val ping: com.securelegion.models.PendingPing,
+        val isDownloading: Boolean = false,
+        val isAutoDownloading: Boolean = false
+    ) : ChatListItem() {
+        override fun getStableId() = "ping_${ping.pingId}".hashCode().toLong() and 0x7FFFFFFFL
+    }
+
+    abstract fun getStableId(): Long
+}
+
+/**
+ * DiffUtil callback for efficiently computing changes between chat lists
+ * Compares items by ID and content to enable smooth animations and no flicker
+ */
+private object ChatListItemDiffCallback : DiffUtil.ItemCallback<ChatListItem>() {
+    override fun areItemsTheSame(oldItem: ChatListItem, newItem: ChatListItem): Boolean {
+        // Items are the same if they have the same stable ID (message ID or ping ID)
+        return when {
+            oldItem is ChatListItem.MessageItem && newItem is ChatListItem.MessageItem ->
+                oldItem.message.messageId == newItem.message.messageId
+            oldItem is ChatListItem.PendingPingItem && newItem is ChatListItem.PendingPingItem ->
+                oldItem.ping.pingId == newItem.ping.pingId
+            else -> false
+        }
+    }
+
+    override fun areContentsTheSame(oldItem: ChatListItem, newItem: ChatListItem): Boolean {
+        // Content is the same if all relevant fields are identical
+        return when {
+            oldItem is ChatListItem.MessageItem && newItem is ChatListItem.MessageItem ->
+                // Compare all fields that affect display
+                oldItem.message.messageId == newItem.message.messageId &&
+                oldItem.message.encryptedContent == newItem.message.encryptedContent &&
+                oldItem.message.status == newItem.message.status &&
+                oldItem.message.isSentByMe == newItem.message.isSentByMe
+            oldItem is ChatListItem.PendingPingItem && newItem is ChatListItem.PendingPingItem ->
+                // Compare all fields that affect display
+                oldItem.ping.pingId == newItem.ping.pingId &&
+                oldItem.ping.state == newItem.ping.state &&
+                oldItem.isDownloading == newItem.isDownloading &&
+                oldItem.isAutoDownloading == newItem.isAutoDownloading
+            else -> false
+        }
+    }
+
+    override fun getChangePayload(oldItem: ChatListItem, newItem: ChatListItem): Any? {
+        // Return payload to enable partial updates (only update changed fields)
+        return when {
+            oldItem is ChatListItem.MessageItem && newItem is ChatListItem.MessageItem -> {
+                if (oldItem.message.status != newItem.message.status) {
+                    "status_changed"  // Only update status icon, not entire row
+                } else null
+            }
+            oldItem is ChatListItem.PendingPingItem && newItem is ChatListItem.PendingPingItem -> {
+                if (oldItem.ping.state != newItem.ping.state) {
+                    "state_changed"  // Update pending state
+                } else if (oldItem.isDownloading != newItem.isDownloading) {
+                    "downloading_changed"  // Update download status
+                } else null
+            }
+            else -> null
+        }
+    }
+}
+
 class MessageAdapter(
-    private var messages: List<Message> = emptyList(),
-    private var pendingPings: List<com.securelegion.models.PendingPing> = emptyList(),
     private var downloadingPingIds: Set<String> = emptySet(),  // Track which pings are being downloaded
     private var autoPongPingIds: Set<String> = emptySet(),  // Track auto-downloading pings (show typing indicator)
     private val onDownloadClick: ((String) -> Unit)? = null,  // Now passes ping ID
@@ -46,7 +121,7 @@ class MessageAdapter(
     private val onPaymentDetailsClick: ((Message) -> Unit)? = null,  // Click on completed payment (for details)
     private val onPriceRefreshClick: ((Message, TextView, TextView) -> Unit)? = null,  // Refresh price callback
     private val onDeleteMessage: ((Message) -> Unit)? = null  // Delete single message callback
-) : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
+) : ListAdapter<ChatListItem, RecyclerView.ViewHolder>(ChatListItemDiffCallback) {
 
     companion object {
         private const val TAG = "MessageAdapter"
@@ -78,19 +153,34 @@ class MessageAdapter(
     private val ellipsisAnimations = mutableMapOf<TextView, Runnable>()
     private val ellipsisHandler = Handler(Looper.getMainLooper())
 
+    override fun getItemId(position: Int): Long {
+        // Return stable IDs for DiffUtil - prevents bubble jumping
+        return if (position < currentList.size) {
+            currentList[position].getStableId()
+        } else {
+            RecyclerView.NO_ID
+        }
+    }
+
     fun setSelectionMode(enabled: Boolean) {
         isSelectionMode = enabled
         if (!enabled) {
             selectedMessages.clear()
         }
-        notifyDataSetChanged()
+        // Update all items to show/hide selection checkboxes
+        if (itemCount > 0) {
+            notifyItemRangeChanged(0, itemCount)
+        }
     }
 
     fun getSelectedMessageIds(): Set<String> = selectedMessages.toSet()
 
     fun clearSelection() {
         selectedMessages.clear()
-        notifyDataSetChanged()
+        // Update all items since checkboxes may be unchecked
+        if (itemCount > 0) {
+            notifyItemRangeChanged(0, itemCount)
+        }
     }
 
     /**
@@ -315,29 +405,38 @@ class MessageAdapter(
     }
 
     override fun getItemViewType(position: Int): Int {
-        Log.d(TAG, "getItemViewType() called for position $position (messages.size=${messages.size})")
-        // Check if this is in the pending messages range (after regular messages)
-        if (position >= messages.size) {
-            Log.d(TAG, "  -> VIEW_TYPE_PENDING")
-            return VIEW_TYPE_PENDING
+        Log.d(TAG, "getItemViewType() called for position $position (currentList.size=${currentList.size})")
+
+        if (position >= currentList.size) {
+            Log.e(TAG, "getItemViewType: position $position >= currentList.size ${currentList.size}")
+            return VIEW_TYPE_SENT  // Fallback
         }
 
-        val message = messages[position]
+        val item = currentList[position]
 
-        val viewType = when {
-            message.messageType == Message.MESSAGE_TYPE_VOICE && message.isSentByMe -> VIEW_TYPE_VOICE_SENT
-            message.messageType == Message.MESSAGE_TYPE_VOICE && !message.isSentByMe -> VIEW_TYPE_VOICE_RECEIVED
-            message.messageType == Message.MESSAGE_TYPE_IMAGE && message.isSentByMe -> VIEW_TYPE_IMAGE_SENT
-            message.messageType == Message.MESSAGE_TYPE_IMAGE && !message.isSentByMe -> VIEW_TYPE_IMAGE_RECEIVED
-            message.messageType == Message.MESSAGE_TYPE_PAYMENT_REQUEST && message.isSentByMe -> VIEW_TYPE_PAYMENT_REQUEST_SENT
-            message.messageType == Message.MESSAGE_TYPE_PAYMENT_REQUEST && !message.isSentByMe -> VIEW_TYPE_PAYMENT_REQUEST_RECEIVED
-            message.messageType == Message.MESSAGE_TYPE_PAYMENT_SENT && message.isSentByMe -> VIEW_TYPE_PAYMENT_SENT
-            message.messageType == Message.MESSAGE_TYPE_PAYMENT_SENT && !message.isSentByMe -> VIEW_TYPE_PAYMENT_RECEIVED
-            message.isSentByMe -> VIEW_TYPE_SENT
-            else -> VIEW_TYPE_RECEIVED
+        return when (item) {
+            is ChatListItem.PendingPingItem -> {
+                Log.d(TAG, "  -> VIEW_TYPE_PENDING (ping: ${item.ping.pingId.take(8)})")
+                VIEW_TYPE_PENDING
+            }
+            is ChatListItem.MessageItem -> {
+                val message = item.message
+                val viewType = when {
+                    message.messageType == Message.MESSAGE_TYPE_VOICE && message.isSentByMe -> VIEW_TYPE_VOICE_SENT
+                    message.messageType == Message.MESSAGE_TYPE_VOICE && !message.isSentByMe -> VIEW_TYPE_VOICE_RECEIVED
+                    message.messageType == Message.MESSAGE_TYPE_IMAGE && message.isSentByMe -> VIEW_TYPE_IMAGE_SENT
+                    message.messageType == Message.MESSAGE_TYPE_IMAGE && !message.isSentByMe -> VIEW_TYPE_IMAGE_RECEIVED
+                    message.messageType == Message.MESSAGE_TYPE_PAYMENT_REQUEST && message.isSentByMe -> VIEW_TYPE_PAYMENT_REQUEST_SENT
+                    message.messageType == Message.MESSAGE_TYPE_PAYMENT_REQUEST && !message.isSentByMe -> VIEW_TYPE_PAYMENT_REQUEST_RECEIVED
+                    message.messageType == Message.MESSAGE_TYPE_PAYMENT_SENT && message.isSentByMe -> VIEW_TYPE_PAYMENT_SENT
+                    message.messageType == Message.MESSAGE_TYPE_PAYMENT_SENT && !message.isSentByMe -> VIEW_TYPE_PAYMENT_RECEIVED
+                    message.isSentByMe -> VIEW_TYPE_SENT
+                    else -> VIEW_TYPE_RECEIVED
+                }
+                Log.d(TAG, "  -> viewType=$viewType (type=${message.messageType}, sentByMe=${message.isSentByMe})")
+                viewType
+            }
         }
-        Log.d(TAG, "  -> viewType=$viewType (type=${message.messageType}, sentByMe=${message.isSentByMe})")
-        return viewType
     }
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): RecyclerView.ViewHolder {
@@ -405,46 +504,47 @@ class MessageAdapter(
 
     override fun onBindViewHolder(holder: RecyclerView.ViewHolder, position: Int) {
         Log.d(TAG, "onBindViewHolder() called for position=$position, holder type=${holder.javaClass.simpleName}")
+        val item = getItem(position)
         when (holder) {
             is SentMessageViewHolder -> {
                 Log.d(TAG, "  -> Binding SentMessageViewHolder")
-                val message = messages[position]
+                val message = (item as ChatListItem.MessageItem).message
                 bindSentMessage(holder, message, position)
             }
             is ReceivedMessageViewHolder -> {
-                val message = messages[position]
+                val message = (item as ChatListItem.MessageItem).message
                 bindReceivedMessage(holder, message, position)
             }
             is VoiceSentMessageViewHolder -> {
-                val message = messages[position]
+                val message = (item as ChatListItem.MessageItem).message
                 bindVoiceSentMessage(holder, message, position)
             }
             is VoiceReceivedMessageViewHolder -> {
-                val message = messages[position]
+                val message = (item as ChatListItem.MessageItem).message
                 bindVoiceReceivedMessage(holder, message, position)
             }
             is ImageSentMessageViewHolder -> {
-                val message = messages[position]
+                val message = (item as ChatListItem.MessageItem).message
                 bindImageSentMessage(holder, message, position)
             }
             is ImageReceivedMessageViewHolder -> {
-                val message = messages[position]
+                val message = (item as ChatListItem.MessageItem).message
                 bindImageReceivedMessage(holder, message, position)
             }
             is PaymentRequestSentViewHolder -> {
-                val message = messages[position]
+                val message = (item as ChatListItem.MessageItem).message
                 bindPaymentRequestSent(holder, message, position)
             }
             is PaymentRequestReceivedViewHolder -> {
-                val message = messages[position]
+                val message = (item as ChatListItem.MessageItem).message
                 bindPaymentRequestReceived(holder, message, position)
             }
             is PaymentSentViewHolder -> {
-                val message = messages[position]
+                val message = (item as ChatListItem.MessageItem).message
                 bindPaymentSent(holder, message, position)
             }
             is PaymentReceivedViewHolder -> {
-                val message = messages[position]
+                val message = (item as ChatListItem.MessageItem).message
                 bindPaymentReceived(holder, message, position)
             }
             is PendingMessageViewHolder -> {
@@ -570,8 +670,8 @@ class MessageAdapter(
 
     private fun bindPendingMessage(holder: PendingMessageViewHolder, position: Int) {
         // Get the specific pending ping for this position
-        val pendingIndex = position - messages.size
-        val pendingPing = pendingPings[pendingIndex]
+        val item = getItem(position)
+        val pendingPing = (item as ChatListItem.PendingPingItem).ping
         val timestamp = pendingPing.timestamp
 
         // Check if this is an auto-downloading ping (show typing indicator)
@@ -1345,20 +1445,16 @@ class MessageAdapter(
     private fun shouldShowTimestampHeader(position: Int): Boolean {
         if (position == 0) return true
 
-        val currentTimestamp = if (position >= messages.size) {
-            // This is a pending ping
-            val pendingIndex = position - messages.size
-            pendingPings[pendingIndex].timestamp
-        } else {
-            messages[position].timestamp
+        val currentItem = getItem(position)
+        val currentTimestamp = when (currentItem) {
+            is ChatListItem.MessageItem -> currentItem.message.timestamp
+            is ChatListItem.PendingPingItem -> currentItem.ping.timestamp
         }
 
-        val previousTimestamp = if (position - 1 >= messages.size) {
-            // Previous was also a pending ping
-            val pendingIndex = position - 1 - messages.size
-            pendingPings[pendingIndex].timestamp
-        } else {
-            messages[position - 1].timestamp
+        val previousItem = getItem(position - 1)
+        val previousTimestamp = when (previousItem) {
+            is ChatListItem.MessageItem -> previousItem.message.timestamp
+            is ChatListItem.PendingPingItem -> previousItem.ping.timestamp
         }
 
         // Show header if date changed
@@ -1416,12 +1512,6 @@ class MessageAdapter(
         }
     }
 
-    override fun getItemCount(): Int {
-        val count = messages.size + pendingPings.size
-        Log.d(TAG, "getItemCount() called: messages=${messages.size}, pending=${pendingPings.size}, total=$count")
-        return count
-    }
-
     override fun onViewRecycled(holder: RecyclerView.ViewHolder) {
         super.onViewRecycled(holder)
 
@@ -1435,7 +1525,10 @@ class MessageAdapter(
 
     fun setCurrentlyPlayingMessageId(messageId: String?) {
         currentlyPlayingMessageId = messageId
-        notifyDataSetChanged() // Update all voice message icons
+        // Update all items to refresh voice message play/pause icons
+        if (itemCount > 0) {
+            notifyItemRangeChanged(0, itemCount)
+        }
     }
 
     /**
@@ -1470,106 +1563,37 @@ class MessageAdapter(
         newDownloadingPingIds: Set<String> = emptySet(),
         newAutoPongPingIds: Set<String> = emptySet()
     ) {
-        Log.d(TAG, "updateMessages() called: old=${messages.size}, new=${newMessages.size}, pending=${newPendingPings.size}")
-        // Stop all running ellipsis animations (views will be recycled)
+        Log.d(TAG, "updateMessages() called: messages=${newMessages.size}, pending=${newPendingPings.size}")
+
+        // Stop all running ellipsis animations
         ellipsisAnimations.keys.toList().forEach { textView ->
             stopEllipsisAnimation(textView)
         }
 
-        // Track old state
-        val oldMessageCount = messages.size
-        val oldPendingCount = pendingPings.size
-        val oldTotalCount = oldMessageCount + oldPendingCount
-        Log.d(TAG, "  Old state: messages=$oldMessageCount, pending=$oldPendingCount, total=$oldTotalCount")
-
-        // Update state
-        messages = newMessages
-        pendingPings = newPendingPings
+        // Update state variables
         downloadingPingIds = newDownloadingPingIds
         autoPongPingIds = newAutoPongPingIds
 
-        // Track new state
-        val newMessageCount = newMessages.size
-        val newPendingCount = newPendingPings.size
-        val newTotalCount = newMessageCount + newPendingCount
-        Log.d(TAG, "  New state: messages=$newMessageCount, pending=$newPendingCount, total=$newTotalCount")
+        // Build combined list of ChatListItem objects for DiffUtil to process atomically
+        // This replaces all the manual notify logic - DiffUtil computes the optimal diff
+        val combinedList = mutableListOf<ChatListItem>()
 
-        // Reset swipe state
-        currentSwipeRevealedPosition = -1
+        // Add all messages
+        combinedList.addAll(newMessages.map { ChatListItem.MessageItem(it) })
 
-        // Notify RecyclerView about specific changes to avoid crashes
-        Log.d(TAG, "  Deciding notification strategy...")
-        when {
-            // Pending pings removed (after downloads or deletions)
-            oldPendingCount > 0 && newPendingCount == 0 -> {
-                Log.d(TAG, "  Strategy: Pending pings removed")
-                // ATOMIC SWAP case: Total count stayed the same (ping became message)
-                // Use notifyDataSetChanged to avoid animation gap
-                if (newTotalCount == oldTotalCount) {
-                    Log.d(TAG, "    -> notifyDataSetChanged() [ATOMIC SWAP]")
-                    notifyDataSetChanged()
-                } else {
-                    // Normal case: notify about changes
-                    if (newMessageCount != oldMessageCount) {
-                        Log.d(TAG, "    -> notifyItemRangeChanged(0, $newMessageCount)")
-                        notifyItemRangeChanged(0, newMessageCount)
-                    }
-                    // Remove all pending items
-                    Log.d(TAG, "    -> notifyItemRangeRemoved($oldMessageCount, $oldPendingCount)")
-                    notifyItemRangeRemoved(oldMessageCount, oldPendingCount)
-                }
-            }
-            // Pending pings added
-            oldPendingCount == 0 && newPendingCount > 0 -> {
-                Log.d(TAG, "  Strategy: Pending pings added")
-                // Notify about message changes if any
-                if (newMessageCount != oldMessageCount) {
-                    Log.d(TAG, "    -> notifyItemRangeChanged(0, $oldMessageCount)")
-                    notifyItemRangeChanged(0, oldMessageCount)
-                }
-                // Insert new pending items at the end
-                Log.d(TAG, "    -> notifyItemRangeInserted($newMessageCount, $newPendingCount)")
-                notifyItemRangeInserted(newMessageCount, newPendingCount)
-            }
-            // Pending count changed
-            newPendingCount != oldPendingCount -> {
-                Log.d(TAG, "  Strategy: Pending count changed")
-                // Update messages if count changed
-                if (newMessageCount != oldMessageCount) {
-                    val minCount = kotlin.math.min(newMessageCount, oldMessageCount)
-                    Log.d(TAG, "    -> notifyItemRangeChanged(0, $minCount)")
-                    notifyItemRangeChanged(0, minCount)
-                }
-                // Handle pending changes
-                if (newPendingCount > oldPendingCount) {
-                    val insertPos = oldMessageCount + oldPendingCount
-                    val insertCount = newPendingCount - oldPendingCount
-                    Log.d(TAG, "    -> notifyItemRangeInserted($insertPos, $insertCount)")
-                    notifyItemRangeInserted(insertPos, insertCount)
-                } else {
-                    val removePos = oldMessageCount + newPendingCount
-                    val removeCount = oldPendingCount - newPendingCount
-                    Log.d(TAG, "    -> notifyItemRangeRemoved($removePos, $removeCount)")
-                    notifyItemRangeRemoved(removePos, removeCount)
-                }
-            }
-            // Just messages changed
-            newMessageCount > oldMessageCount -> {
-                Log.d(TAG, "  Strategy: Messages increased ($oldMessageCount -> $newMessageCount)")
-                Log.d(TAG, "    -> notifyItemRangeInserted($oldMessageCount, ${newMessageCount - oldMessageCount})")
-                notifyItemRangeInserted(oldMessageCount, newMessageCount - oldMessageCount)
-            }
-            newMessageCount < oldMessageCount -> {
-                Log.d(TAG, "  Strategy: Messages decreased ($oldMessageCount -> $newMessageCount)")
-                Log.d(TAG, "    -> notifyItemRangeRemoved($newMessageCount, ${oldMessageCount - newMessageCount})")
-                notifyItemRangeRemoved(newMessageCount, oldMessageCount - newMessageCount)
-            }
-            else -> {
-                Log.d(TAG, "  Strategy: Same count, update all ($newTotalCount items)")
-                Log.d(TAG, "    -> notifyItemRangeChanged(0, $newTotalCount)")
-                notifyItemRangeChanged(0, newTotalCount)
-            }
-        }
+        // Add all pending pings with their download states
+        combinedList.addAll(newPendingPings.map { ping ->
+            ChatListItem.PendingPingItem(
+                ping = ping,
+                isDownloading = ping.pingId in newDownloadingPingIds,
+                isAutoDownloading = ping.pingId in newAutoPongPingIds
+            )
+        })
+
+        Log.d(TAG, "  Submitting combined list with ${combinedList.size} total items to DiffUtil")
+
+        // Let DiffUtil compute the optimal changes atomically
+        submitList(combinedList)
     }
 
     /**
@@ -1620,7 +1644,9 @@ class MessageAdapter(
         }
 
         // Find the position of this message
-        val position = messages.indexOfFirst { it.messageId == messageId }
+        val position = currentList.indexOfFirst { item ->
+            (item as? ChatListItem.MessageItem)?.message?.messageId == messageId
+        }
         if (position == -1) return
 
         // Get the ViewHolder for this position
@@ -1658,10 +1684,14 @@ class MessageAdapter(
      * Reset voice message progress when playback stops
      */
     fun resetVoiceProgress(messageId: String) {
-        val position = messages.indexOfFirst { it.messageId == messageId }
+        // Find position in current list
+        val position = currentList.indexOfFirst { item ->
+            (item as? ChatListItem.MessageItem)?.message?.messageId == messageId
+        }
         if (position == -1) return
 
-        val message = messages[position]
+        val item = getItem(position)
+        val message = (item as ChatListItem.MessageItem).message
         val holder = recyclerView?.findViewHolderForAdapterPosition(position)
 
         when (holder) {
