@@ -2029,6 +2029,14 @@ class MessageService(private val context: Context) {
                     val updatedMessage = message.copy(pingWireBytes = wireBytes)
                     database.messageDao().updateMessage(updatedMessage)
                     Log.d(TAG, "✓ Stored wire bytes for backup retry")
+
+                    // VERIFY the update persisted (fix for race condition)
+                    val verifyMessage = database.messageDao().getMessageByPingId(message.pingId ?: "")
+                    if (verifyMessage?.pingWireBytes != null) {
+                        Log.d(TAG, "✓ VERIFIED wire bytes persisted to database for pingId=${message.pingId?.take(8)}")
+                    } else {
+                        Log.w(TAG, "⚠ WARNING: Wire bytes NOT persisted to database! Fallback to SharedPreferences may occur")
+                    }
                 }
             }
 

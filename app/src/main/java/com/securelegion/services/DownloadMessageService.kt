@@ -45,6 +45,10 @@ class DownloadMessageService : Service() {
         }
     }
 
+    // Queue for handling multiple downloads sequentially (not in parallel)
+    private val downloadQueue = mutableListOf<Triple<Long, String, String>>()
+    private var isProcessingQueue = false
+
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var notificationManager: NotificationManager? = null
 
@@ -68,41 +72,67 @@ class DownloadMessageService : Service() {
         // Start foreground with initial notification
         startForeground(NOTIFICATION_ID, createNotification(contactName, "Preparing download..."))
 
-        // Set download-in-progress flag to prevent notification spam
-        val downloadStatusPrefs = getSharedPreferences("download_status", MODE_PRIVATE)
-        downloadStatusPrefs.edit()
-            .putBoolean("downloading_$contactId", true)
-            .putLong("download_start_time_$contactId", System.currentTimeMillis())
-            .apply()
-        Log.d(TAG, "Set download-in-progress flag and start time for contact $contactId, ping $pingId")
+        // Queue the download (will process sequentially)
+        synchronized(downloadQueue) {
+            downloadQueue.add(Triple(contactId, contactName, pingId))
+            Log.d(TAG, "Queued download: $contactName (pingId=${pingId.take(8)}...) - Queue size: ${downloadQueue.size}")
 
-        // Launch download in background
-        serviceScope.launch {
-            try {
-                downloadMessage(contactId, contactName, pingId)
-            } catch (e: Exception) {
-                Log.e(TAG, "Download failed", e)
-
-                showFailureNotification(contactName, e.message ?: "Unknown error")
-
-                // Broadcast download failure to ChatActivity
-                val failureIntent = Intent("com.securelegion.DOWNLOAD_FAILED")
-                failureIntent.setPackage(packageName)
-                failureIntent.putExtra("CONTACT_ID", contactId)
-                sendBroadcast(failureIntent)
-                Log.d(TAG, "Sent DOWNLOAD_FAILED broadcast")
-            } finally {
-                // Clear download-in-progress flag and timestamp
-                downloadStatusPrefs.edit()
-                    .putBoolean("downloading_$contactId", false)
-                    .remove("download_start_time_$contactId")
-                    .apply()
-                Log.d(TAG, "Cleared download-in-progress flag and timestamp for contact $contactId")
-                stopSelf()
+            // If not already processing, start processing the queue
+            if (!isProcessingQueue) {
+                processDownloadQueue()
             }
         }
 
         return START_NOT_STICKY
+    }
+
+    /**
+     * Process download queue sequentially (one download at a time)
+     */
+    private fun processDownloadQueue() {
+        isProcessingQueue = true
+        serviceScope.launch {
+            while (true) {
+                val (contactId, contactName, pingId) = synchronized(downloadQueue) {
+                    if (downloadQueue.isEmpty()) {
+                        isProcessingQueue = false
+                        Log.d(TAG, "Download queue empty - stopping service")
+                        stopSelf()
+                        return@launch
+                    }
+                    downloadQueue.removeAt(0)
+                }
+
+                // Set download-in-progress flag
+                val downloadStatusPrefs = getSharedPreferences("download_status", MODE_PRIVATE)
+                downloadStatusPrefs.edit()
+                    .putBoolean("downloading_$contactId", true)
+                    .putLong("download_start_time_$contactId", System.currentTimeMillis())
+                    .apply()
+                Log.d(TAG, "Processing download from queue: $contactName (pingId=${pingId.take(8)}...) - Remaining: ${synchronized(downloadQueue) { downloadQueue.size }}")
+
+                try {
+                    downloadMessage(contactId, contactName, pingId)
+                } catch (e: Exception) {
+                    Log.e(TAG, "Download failed", e)
+                    showFailureNotification(contactName, e.message ?: "Unknown error", pingId, contactId)
+
+                    // Broadcast download failure to ChatActivity
+                    val failureIntent = Intent("com.securelegion.DOWNLOAD_FAILED")
+                    failureIntent.setPackage(packageName)
+                    failureIntent.putExtra("CONTACT_ID", contactId)
+                    sendBroadcast(failureIntent)
+                    Log.d(TAG, "Sent DOWNLOAD_FAILED broadcast")
+                } finally {
+                    // Clear download-in-progress flag
+                    downloadStatusPrefs.edit()
+                        .putBoolean("downloading_$contactId", false)
+                        .remove("download_start_time_$contactId")
+                        .apply()
+                    Log.d(TAG, "Cleared download-in-progress flag for contact $contactId")
+                }
+            }
+        }
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -144,7 +174,7 @@ class DownloadMessageService : Service() {
                     Log.e(TAG, "  Tor Status: Error - ${e.message}")
                 }
 
-                showFailureNotification(contactName, "Download timed out (45s). Check connection.")
+                showFailureNotification(contactName, "Download timed out (45s). Check connection.", pingId, currentContactId)
 
                 // Don't cancel service here - let the main download timeout handle it
             }
@@ -170,7 +200,7 @@ class DownloadMessageService : Service() {
             downloadCompleted = true
             watchdogJob.cancel()
             Log.e(TAG, "Contact $contactId not found in database")
-            showFailureNotification(contactName, "Contact not found")
+            showFailureNotification(contactName, "Contact not found", pingId, contactId)
             return
         }
 
@@ -198,7 +228,7 @@ class DownloadMessageService : Service() {
                 downloadCompleted = true
                 watchdogJob.cancel()
                 Log.e(TAG, "Ping $pingId not found in database OR SharedPreferences for contact $contactId")
-                showFailureNotification(contactName, "Message not found")
+                showFailureNotification(contactName, "Message not found", pingId, contactId)
                 return
             }
 
@@ -214,7 +244,7 @@ class DownloadMessageService : Service() {
             downloadCompleted = true
             watchdogJob.cancel()
             Log.e(TAG, "Ping wire bytes missing for pingId=$pingId")
-            showFailureNotification(contactName, "Message data corrupted")
+            showFailureNotification(contactName, "Message data corrupted", pingId, contactId)
             return
         }
 
@@ -247,7 +277,7 @@ class DownloadMessageService : Service() {
             Log.e(TAG, "Pre-flight check failed: $errorMsg")
             downloadCompleted = true
             watchdogJob.cancel()
-            showFailureNotification(contactName, errorMsg)
+            showFailureNotification(contactName, errorMsg, pingId, contactId)
             return
         }
         Log.i(TAG, "  ✓ Tor bootstrap: 100%")
@@ -267,7 +297,7 @@ class DownloadMessageService : Service() {
             Log.e(TAG, "Pre-flight check failed: $errorMsg")
             downloadCompleted = true
             watchdogJob.cancel()
-            showFailureNotification(contactName, errorMsg)
+            showFailureNotification(contactName, errorMsg, pingId, contactId)
             return
         }
         Log.i(TAG, "  ✓ SOCKS proxy: running")
@@ -329,7 +359,7 @@ class DownloadMessageService : Service() {
                 Log.w(TAG, "Failed to clean up SharedPreferences (non-critical)", cleanupError)
             }
 
-            showFailureNotification(contactName, "Message expired. Ask sender to resend.")
+            showFailureNotification(contactName, "Message expired. Ask sender to resend.", pingId, contactId)
             return
         }
 
@@ -359,7 +389,7 @@ class DownloadMessageService : Service() {
                 Log.w(TAG, "Failed to clean up SharedPreferences (non-critical)", cleanupError)
             }
 
-            showFailureNotification(contactName, "Message corrupted. Ask sender to resend.")
+            showFailureNotification(contactName, "Message corrupted. Ask sender to resend.", pingId, contactId)
             return
         }
 
@@ -399,7 +429,7 @@ class DownloadMessageService : Service() {
                 Log.w(TAG, "Failed to clean up expired ping from SharedPreferences (non-critical)", cleanupError)
             }
 
-            showFailureNotification(contactName, "Message expired (older than 7 days). Ask sender to resend.")
+            showFailureNotification(contactName, "Message expired (older than 7 days). Ask sender to resend.", pingId, contactId)
             return
         }
 
@@ -417,7 +447,7 @@ class DownloadMessageService : Service() {
 
         if (pongBytes == null) {
             Log.e(TAG, "Failed to create Pong")
-            showFailureNotification(contactName, "Failed to create response")
+            showFailureNotification(contactName, "Failed to create response", pingId, contactId)
             return
         }
 
@@ -425,6 +455,27 @@ class DownloadMessageService : Service() {
 
         // STAGE 3: Sending response and waiting for message
         Log.i(TAG, "========== STAGE 3/4: DOWNLOADING MESSAGE ==========")
+
+        // DEDUPLICATION GUARD: Check if PONG was already sent for this pingId
+        // Prevents MainActivity and DownloadMessageService from sending duplicate PONGs
+        // This is a read-based check; atomic CAS would require separate UPDATE query
+        val alreadySentPong = withContext(Dispatchers.IO) {
+            try {
+                val keyManager = com.securelegion.crypto.KeyManager.getInstance(this@DownloadMessageService)
+                val dbPassphrase = keyManager.getDatabasePassphrase()
+                val database = SecureLegionDatabase.getInstance(this@DownloadMessageService, dbPassphrase)
+                val pingInbox = database.pingInboxDao().getByPingId(pingId)
+                // If state >= PONG_SENT, another instance already sent PONG
+                pingInbox?.state != null && pingInbox.state >= com.securelegion.database.entities.PingInbox.STATE_PONG_SENT
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to check if PONG already sent (proceeding with send anyway): ${e.message}")
+                false
+            }
+        }
+
+        if (alreadySentPong) {
+            Log.i(TAG, "⊘ PONG already sent for pingId=${pingId.take(8)}... (deduplication guard) - skipping send, proceeding to polling")
+        }
 
         // Update ping state to DOWNLOADING (SharedPreferences - backward compatibility, non-critical)
         try {
@@ -436,10 +487,14 @@ class DownloadMessageService : Service() {
         broadcastStateUpdate(contactId)
 
         // DUAL-PATH APPROACH: Try instant reply first, then fall back to listener
-        var pongSent = false
+        // If PONG already sent (alreadySentPong=true), skip sending and proceed directly to polling
+        var pongSent = alreadySentPong  // Pre-set to true if already sent
         var instantMessageReceived = false
 
-        // PATH 1: Try sending Pong on original connection (instant messaging)
+        if (!alreadySentPong) {
+            // Only attempt to send PONG if not already sent
+
+            // PATH 1: Try sending Pong on original connection (instant messaging)
         // But only if connection is fresh (< 30 seconds old) AND still alive - stale/broken connections will timeout
         if (connectionId != -1L) {
             val connectionAge = System.currentTimeMillis() - pingTimestamp
@@ -492,25 +547,26 @@ class DownloadMessageService : Service() {
             }
         }
 
-        // PATH 2: If instant path failed, fall back to listener (delayed messaging)
-        if (!pongSent) {
-            Log.d(TAG, "Falling back to listener-based Pong delivery (delayed download)...")
-            updateNotification(contactName, "[3/4] Downloading... (may take 30s)")
-            pongSent = withContext(Dispatchers.IO) {
-                try {
-                    com.securelegion.crypto.RustBridge.sendPongToListener(senderOnion, pongBytes)
-                } catch (e: Exception) {
-                    Log.e(TAG, "✗ Failed to send Pong to listener", e)
-                    // Note: Peer connection failures are normal when peer is offline
-                    // Don't report as Tor failure - only restart Tor when Tor daemon itself is broken
-                    false
+            // PATH 2: If instant path failed, fall back to listener (delayed messaging)
+            if (!pongSent) {
+                Log.d(TAG, "Falling back to listener-based Pong delivery (delayed download)...")
+                updateNotification(contactName, "[3/4] Downloading... (may take 30s)")
+                pongSent = withContext(Dispatchers.IO) {
+                    try {
+                        com.securelegion.crypto.RustBridge.sendPongToListener(senderOnion, pongBytes)
+                    } catch (e: Exception) {
+                        Log.e(TAG, "✗ Failed to send Pong to listener", e)
+                        // Note: Peer connection failures are normal when peer is offline
+                        // Don't report as Tor failure - only restart Tor when Tor daemon itself is broken
+                        false
+                    }
                 }
             }
-        }
+        }  // Close if (!alreadySentPong) block
 
         if (!pongSent) {
             Log.e(TAG, "✗ Pong send failed")
-            showFailureNotification(contactName, "Failed to send response")
+            showFailureNotification(contactName, "Failed to send response", pingId, contactId)
             return
         }
 
@@ -568,7 +624,7 @@ class DownloadMessageService : Service() {
 
             if (!messageReceived) {
                 Log.w(TAG, "✗ Timeout waiting for message")
-                showFailureNotification(contactName, "Message delivery timed out")
+                showFailureNotification(contactName, "Message delivery timed out", pingId, contactId)
                 return
             }
 
@@ -715,7 +771,7 @@ class DownloadMessageService : Service() {
         notificationManager?.notify(NOTIFICATION_ID, notification)
     }
 
-    private fun showFailureNotification(contactName: String, error: String) {
+    private fun showFailureNotification(contactName: String, error: String, pingId: String? = null, contactId: Long = -1L) {
         val notification = NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("Download failed")
             .setContentText("Failed to download message from $contactName: $error")
@@ -724,6 +780,45 @@ class DownloadMessageService : Service() {
             .build()
 
         notificationManager?.notify(NOTIFICATION_ID, notification)
+
+        // Reset message status so lock button reappears in UI for retry
+        if (pingId != null && contactId > 0) {
+            serviceScope.launch(Dispatchers.IO) {
+                try {
+                    // CRITICAL: Reset PingState in SharedPreferences back to PENDING so lock button reappears
+                    val prefs = getSharedPreferences("pending_pings", MODE_PRIVATE)
+                    com.securelegion.models.PendingPing.updateState(
+                        prefs,
+                        contactId,
+                        pingId,
+                        com.securelegion.models.PingState.PENDING,
+                        synchronous = true
+                    )
+                    Log.d(TAG, "✓ Reset PingState back to PENDING (lock button will reappear) for pingId=${pingId.take(8)}...")
+
+                    val keyManager = KeyManager.getInstance(this@DownloadMessageService)
+                    val dbPassphrase = keyManager.getDatabasePassphrase()
+                    val database = SecureLegionDatabase.getInstance(this@DownloadMessageService, dbPassphrase)
+
+                    // Find message by pingId and reset its status back to PONG_SENT (needs MESSAGE)
+                    val message = database.messageDao().getMessageByPingId(pingId)
+                    if (message != null) {
+                        val MESSAGE_STATUS_PONG_SENT = 6  // Status waiting for message blob
+                        database.messageDao().updateMessageStatus(message.id, MESSAGE_STATUS_PONG_SENT)
+                        Log.d(TAG, "✓ Reset message status back to PONG_SENT (retry ready) for pingId=${pingId.take(8)}...")
+                    }
+
+                    // Broadcast UI update so lock button reappears
+                    val intent = Intent("com.securelegion.MESSAGE_RECEIVED")
+                    intent.setPackage(packageName)
+                    intent.putExtra("CONTACT_ID", contactId)
+                    sendBroadcast(intent)
+                    Log.d(TAG, "✓ Broadcast sent to refresh UI and show lock button for retry")
+                } catch (e: Exception) {
+                    Log.w(TAG, "Failed to reset message status on download failure: ${e.message}")
+                }
+            }
+        }
     }
 
     /**
@@ -1357,8 +1452,15 @@ class DownloadMessageService : Service() {
                 try {
                     var ackSuccess = false
 
-                    // PATH 1: Try sending ACK on existing connection (instant, avoids SOCKS5 issues)
-                    if (connectionId >= 0) {
+                    // ARCHITECTURAL DECISION: All ACKs MUST go to peer's messaging .onion, NOT on incoming connection.
+                    // Connection reuse optimization is disabled because:
+                    //   1. Incoming connections are ephemeral (closed after message received)
+                    //   2. Reusing non-existent connections fails with "Connection not found"
+                    //   3. Sending ACKs as new outgoing messages to peer's .onion is reliable
+                    //   4. Clean architecture > micro-optimization
+                    //
+                    // Connection reuse code preserved but disabled:
+                    if (false && connectionId >= 0) {
                         ackSuccess = withContext(Dispatchers.IO) {
                             com.securelegion.crypto.RustBridge.sendAckOnConnection(
                                 connectionId,
@@ -1376,7 +1478,10 @@ class DownloadMessageService : Service() {
                         Log.d(TAG, "Connection closed, falling back to new connection for MESSAGE_ACK (attempt ${attempt + 1})")
                     }
 
-                    // PATH 2: Connection closed or not available, fall back to opening new connection
+                    // All ACKs now use peer's messaging .onion
+                    Log.d(TAG, "Sending MESSAGE_ACK via new connection to peer's messaging .onion (connection reuse disabled)")
+
+                    // PATH 2 (always used): Open new connection to peer's messaging .onion
                     ackSuccess = withContext(Dispatchers.IO) {
                         com.securelegion.crypto.RustBridge.sendDeliveryAck(
                             pingId,
