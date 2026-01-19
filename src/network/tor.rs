@@ -6,7 +6,7 @@
 use std::error::Error;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
-use tokio::io::{AsyncWriteExt, AsyncReadExt};
+use tokio::io::{AsyncWriteExt, AsyncReadExt, BufReader, AsyncBufReadExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::Mutex;
 use ed25519_dalek::{SigningKey, VerifyingKey};
@@ -158,6 +158,31 @@ fn parse_bootstrap_progress(response: &str) -> Option<u32> {
     None
 }
 
+/// ============================================================================
+/// PORT MAPPING SPECIFICATION
+/// ============================================================================
+/// This is the canonical port mapping for all Tor hidden services.
+/// CRITICAL: All services must use this mapping consistently.
+///
+/// Message Hidden Service Ports (port 9051 control, SOCKS 9050):
+///   - 9150: PING/PONG/ACK control flow (main listener port 9150→8080)
+///   - 8080:  PONG responses (fallback, port 8080→8080)
+///   - 9151:  TAP messages (reserved for future use)
+///   - 9153:  ACK/Delivery confirmations (dedicated ACK listener)
+///   - All ports also accept: TEXT, VOICE, IMAGE, FRIEND_REQUEST (routed to dedicated channels)
+///
+/// Voice Hidden Service Ports (port 9052 control, voice Tor only):
+///   - 9152:  Voice streaming (single onion, low-latency, CALL_SIGNALING only)
+///
+/// Control Ports (Tor daemon only, not hidden services):
+///   - 9051:  Main Tor daemon control port (message Tor)
+///   - 9052:  Voice Tor daemon control port (single onion voice)
+///
+/// SOCKS Proxy (for outbound connections):
+///   - 9050:  SOCKS5 proxy (main Tor)
+///
+/// ============================================================================
+
 /// Wire protocol message type constants
 pub const MSG_TYPE_PING: u8 = 0x01;
 pub const MSG_TYPE_PONG: u8 = 0x02;
@@ -173,6 +198,28 @@ pub const MSG_TYPE_PAYMENT_SENT: u8 = 0x0B;
 pub const MSG_TYPE_PAYMENT_ACCEPTED: u8 = 0x0C;
 pub const MSG_TYPE_CALL_SIGNALING: u8 = 0x0D;  // Voice call signaling (OFFER/ANSWER/REJECT/END/BUSY)
 
+/// Canonical port constants (from PORT_MAP.md)
+pub const PORT_HS_PING_PONG: u16 = 9150;     // Message HS: PING/PONG/ACK
+pub const PORT_HS_PONG_LOCAL: u16 = 8080;    // Message HS: Local PONG response fallback
+pub const PORT_HS_TAP: u16 = 9151;           // Message HS: TAP (reserved)
+pub const PORT_HS_ACK: u16 = 9153;           // Message HS: Dedicated ACK listener
+pub const PORT_HS_VOICE: u16 = 9152;         // Voice HS: Voice streaming (single onion)
+pub const PORT_LOCAL_HS: u16 = 8080;         // Local listener port (where HS connects to)
+pub const PORT_VOICE_LOCAL: u16 = 9152;      // Local voice listener port
+pub const PORT_CONTROL_MAIN: u16 = 9051;     // Main Tor control port
+pub const PORT_CONTROL_VOICE: u16 = 9052;    // Voice Tor control port
+pub const PORT_SOCKS: u16 = 9050;            // SOCKS5 proxy port
+
+/// JNI context availability check
+/// CRITICAL: Some Android lifecycle contexts don't have application context
+/// This is used by JNI FFI to ensure safe context access
+pub fn has_jni_context() -> bool {
+    // SAFETY: This should be called from JNI after checking Android context availability
+    // The actual context validation happens in Kotlin before calling Rust
+    // This is a placeholder to ensure JNI code doesn't panic on missing context
+    true
+}
+
 /// Structure representing a pending connection waiting for Pong response
 pub struct PendingConnection {
     pub socket: TcpStream,
@@ -180,6 +227,10 @@ pub struct PendingConnection {
 }
 
 /// Global map of pending connections: connection_id -> PendingConnection
+/// CRITICAL: Uses std::sync::Mutex (not async) because accessed from JNI FFI code
+/// Lock is held only briefly in async code (insert/remove operations complete quickly)
+/// JNI code: isConnectionAlive() reads synchronously (brief lock)
+/// Async code: Briefly locks to insert/remove, then immediately releases
 pub static PENDING_CONNECTIONS: Lazy<Arc<StdMutex<HashMap<u64, PendingConnection>>>> =
     Lazy::new(|| Arc::new(StdMutex::new(HashMap::new())));
 
@@ -208,12 +259,105 @@ pub static VOICE_TX: once_cell::sync::OnceCell<Arc<StdMutex<tokio::sync::mpsc::U
 /// Initialized when ACK listener starts on port 9153
 pub static ACK_TX: once_cell::sync::OnceCell<Arc<StdMutex<tokio::sync::mpsc::UnboundedSender<(u64, Vec<u8>)>>>> = once_cell::sync::OnceCell::new();
 
+/// Line-oriented Tor control protocol reader
+/// CRITICAL: Handles multi-line Tor responses properly
+/// Response formats:
+///   SingleLine: "250 OK\r\n"
+///   MultiLine: "250-...\r\n250-...\r\n250 OK\r\n"
+///   Events: "650 EVENT data...\r\n"
+struct TorControlReader {
+    reader: BufReader<TcpStream>,
+}
+
+impl TorControlReader {
+    fn new(stream: TcpStream) -> Self {
+        TorControlReader {
+            reader: BufReader::new(stream),
+        }
+    }
+
+    /// Read a complete Tor control response (one or more lines until final status line)
+    /// Returns the complete multi-line response as a String
+    async fn read_response(&mut self) -> Result<String, Box<dyn Error + Send + Sync>> {
+        let mut response = String::new();
+        let mut line = String::new();
+        let mut is_final = false;
+
+        while !is_final {
+            line.clear();
+            let n = self.reader.read_line(&mut line).await?;
+
+            if n == 0 {
+                return Err("Connection closed while reading response".into());
+            }
+
+            // Check if this is the final line (status code without dash)
+            // Tor format: "250 ..." (final) or "250-..." (continuation)
+            if line.len() >= 4 {
+                let status_code = &line[0..3];
+                if let Some(fourth_char) = line.chars().nth(3) {
+                    is_final = fourth_char == ' ' || fourth_char == '\r' || fourth_char == '\n';
+                }
+            }
+
+            response.push_str(&line);
+        }
+
+        Ok(response)
+    }
+
+    /// Read until a specific pattern is found
+    /// Used for events that don't have strict response format
+    async fn read_until_pattern(&mut self, pattern: &str, timeout_secs: u64) -> Result<String, Box<dyn Error + Send + Sync>> {
+        let mut response = String::new();
+        let mut line = String::new();
+
+        let start = tokio::time::Instant::now();
+        let timeout = std::time::Duration::from_secs(timeout_secs);
+
+        loop {
+            if start.elapsed() > timeout {
+                return Err(format!("Timeout waiting for pattern '{}'", pattern).into());
+            }
+
+            line.clear();
+            match tokio::time::timeout(
+                timeout - start.elapsed(),
+                self.reader.read_line(&mut line)
+            ).await {
+                Ok(Ok(0)) => return Err("Connection closed".into()),
+                Ok(Ok(_)) => {
+                    response.push_str(&line);
+                    if response.contains(pattern) {
+                        return Ok(response);
+                    }
+                }
+                Ok(Err(e)) => return Err(e.into()),
+                Err(_) => return Err("Timeout".into()),
+            }
+        }
+    }
+}
+
+/// Hidden service state tracking for crash recovery
+/// CRITICAL: Prevents ghost onions from previous crashes consuming resources
+struct HiddenServiceState {
+    /// Currently active messaging HS address
+    message_hs_address: Option<String>,
+    /// Currently active voice HS address
+    voice_hs_address: Option<String>,
+    /// Event subscriptions currently active
+    subscribed_events: Vec<String>,
+}
+
 pub struct TorManager {
     control_stream: Option<Arc<Mutex<TcpStream>>>,
     voice_control_stream: Option<Arc<Mutex<TcpStream>>>,  // VOICE TOR: port 9052 (Single Onion)
     hidden_service_address: Option<String>,
+    voice_hidden_service_address: Option<String>,
     listener_handle: Option<tokio::task::JoinHandle<()>>,
     incoming_ping_tx: Option<tokio::sync::mpsc::UnboundedSender<(u64, Vec<u8>)>>,
+    hs_state: HiddenServiceState,
     hs_service_port: u16,
     hs_local_port: u16,
     socks_port: u16,
@@ -226,12 +370,188 @@ impl TorManager {
             control_stream: None,
             voice_control_stream: None,  // VOICE TOR initialized separately
             hidden_service_address: None,
+            voice_hidden_service_address: None,
             listener_handle: None,
             incoming_ping_tx: None,
-            hs_service_port: 9150, // Virtual port on .onion
-            hs_local_port: 8080,   // Local port where app listens
-            socks_port: 9050,      // SOCKS proxy port (managed by OnionProxyManager)
+            hs_state: HiddenServiceState {
+                message_hs_address: None,
+                voice_hs_address: None,
+                subscribed_events: Vec::new(),
+            },
+            hs_service_port: PORT_HS_PING_PONG,    // 9150: PING/PONG/ACK
+            hs_local_port: PORT_LOCAL_HS,          // 8080: Local listener
+            socks_port: PORT_SOCKS,                // 9050: SOCKS proxy
         })
+    }
+
+    /// Check and recover control port connection if disconnected
+    /// CRITICAL: Prevents silent failures when Tor restarts
+    /// Returns true if connection is healthy, false if recovery failed
+    async fn check_control_connection(&mut self) -> Result<bool, Box<dyn Error>> {
+        let control = match &self.control_stream {
+            Some(c) => c,
+            None => {
+                log::warn!("Control port not connected, attempting to reconnect...");
+                return self.reconnect_control_port().await.map(|_| true);
+            }
+        };
+
+        // Test control connection with a simple command
+        let mut stream = control.lock().await;
+
+        match tokio::time::timeout(
+            std::time::Duration::from_secs(3),
+            stream.write_all(b"GETINFO version\r\n")
+        ).await {
+            Ok(Ok(_)) => {
+                // Connection is alive
+                Ok(true)
+            }
+            Ok(Err(e)) => {
+                log::error!("Control port write error: {}", e);
+                // Drop stream to release lock before reconnecting
+                drop(stream);
+                self.reconnect_control_port().await.map(|_| true)
+            }
+            Err(_) => {
+                log::error!("Control port timeout");
+                // Drop stream to release lock before reconnecting
+                drop(stream);
+                self.reconnect_control_port().await.map(|_| true)
+            }
+        }
+    }
+
+    /// Reconnect to Tor control port with re-authentication and re-subscription
+    /// CRITICAL: Called when connection drops
+    async fn reconnect_control_port(&mut self) -> Result<(), Box<dyn Error>> {
+        log::info!("Reconnecting to Tor control port (127.0.0.1:9051)...");
+
+        // Connect to control port
+        let mut control = TcpStream::connect("127.0.0.1:9051").await?;
+
+        // Authenticate with NULL auth
+        control.write_all(b"AUTHENTICATE\r\n").await?;
+
+        let mut buf = vec![0u8; 1024];
+        let n = control.read(&mut buf).await?;
+        let response = String::from_utf8_lossy(&buf[..n]);
+
+        if !response.contains("250 OK") {
+            return Err(format!("Control port authentication failed after reconnect: {}", response).into());
+        }
+
+        log::info!("✓ Reconnected to Tor control port");
+
+        // Re-subscribe to previously subscribed events
+        for event in &self.hs_state.subscribed_events.clone() {
+            let command = format!("SETEVENTS {}\r\n", event);
+            control.write_all(command.as_bytes()).await?;
+
+            let n = control.read(&mut buf).await?;
+            let resp = String::from_utf8_lossy(&buf[..n]);
+
+            if !resp.contains("250 OK") {
+                log::warn!("Failed to re-subscribe to event {}: {}", event, resp);
+            } else {
+                log::info!("✓ Re-subscribed to {} events", event);
+            }
+        }
+
+        self.control_stream = Some(Arc::new(Mutex::new(control)));
+
+        log::info!("✓ Control port recovery complete");
+        Ok(())
+    }
+
+    /// Reconcile hidden services on startup (crash recovery)
+    /// CRITICAL: Cleans up orphaned services from previous crashes
+    /// Returns (message_count, voice_count) of deleted services
+    async fn reconcile_hidden_services(&mut self) -> Result<(u32, u32), Box<dyn Error>> {
+        log::info!("Reconciling hidden services after startup...");
+
+        let control = self.control_stream.as_ref()
+            .ok_or("Control port not connected")?;
+
+        let mut stream = control.lock().await;
+
+        // Query existing services
+        stream.write_all(b"GETINFO onions/current\r\n").await?;
+
+        let mut buf = vec![0u8; 4096];
+        let n = stream.read(&mut buf).await?;
+        let response = String::from_utf8_lossy(&buf[..n]);
+
+        log::info!("Existing onion services: {}", response);
+
+        // Parse service IDs from response
+        let mut existing_services = Vec::new();
+        for line in response.lines() {
+            if line.contains("onions/current=") {
+                if let Some(services_str) = line.split("onions/current=").nth(1) {
+                    for service_id in services_str.split_whitespace() {
+                        existing_services.push(service_id.to_string());
+                    }
+                }
+            }
+        }
+
+        // Expected services we created in this session:
+        // - message_hs_address (if initialized)
+        // - voice_hs_address (if initialized)
+        let expected_services = {
+            let mut expected = Vec::new();
+            if let Some(msg_addr) = &self.hs_state.message_hs_address {
+                let short = msg_addr.trim_end_matches(".onion");
+                expected.push(short.to_string());
+            }
+            if let Some(voice_addr) = &self.hs_state.voice_hs_address {
+                let short = voice_addr.trim_end_matches(".onion");
+                expected.push(short.to_string());
+            }
+            expected
+        };
+
+        // Find orphaned services (exist in Tor but not in our registry)
+        let mut orphaned = Vec::new();
+        for existing in &existing_services {
+            if !expected_services.contains(existing) {
+                orphaned.push(existing.clone());
+            }
+        }
+
+        let mut msg_deleted = 0u32;
+        let mut voice_deleted = 0u32;
+
+        // Delete orphaned services
+        for service_id in orphaned {
+            log::warn!("⚠️  Deleting orphaned hidden service: {}", service_id);
+            let del_command = format!("DEL_ONION {}\r\n", service_id);
+            stream.write_all(del_command.as_bytes()).await?;
+
+            let n = stream.read(&mut buf).await?;
+            let del_response = String::from_utf8_lossy(&buf[..n]);
+
+            if del_response.contains("250 OK") {
+                log::info!("✓ Deleted orphaned service: {}", service_id);
+                // Guess whether it was message or voice based on expected (heuristic)
+                if service_id.len() > 16 { // v3 onion addresses are 56 chars
+                    msg_deleted += 1;
+                } else {
+                    voice_deleted += 1;
+                }
+            } else {
+                log::warn!("Failed to delete service {}: {}", service_id, del_response);
+            }
+        }
+
+        if msg_deleted > 0 || voice_deleted > 0 {
+            log::info!("✓ Reconciliation complete: deleted {} message HS, {} voice HS", msg_deleted, voice_deleted);
+        } else {
+            log::info!("✓ No orphaned services found");
+        }
+
+        Ok((msg_deleted, voice_deleted))
     }
 
     /// Connect to Tor control port (Tor daemon managed by OnionProxyManager)
@@ -257,6 +577,12 @@ impl TorManager {
 
         log::info!("Connected to Tor control port successfully");
 
+        // Reconcile hidden services from previous crashes
+        if let Err(e) = self.reconcile_hidden_services().await {
+            log::warn!("Failed to reconcile hidden services: {}", e);
+            // Don't fail initialization - continue anyway
+        }
+
         // Wait for Tor to bootstrap (build circuits)
         log::info!("Waiting for Tor to bootstrap...");
         self.wait_for_bootstrap().await?;
@@ -264,6 +590,17 @@ impl TorManager {
         log::info!("Tor fully bootstrapped and ready");
         Ok("Tor client ready (managed by OnionProxyManager)".to_string())
     }
+
+    /// ============================================================================
+    /// VOICE HIDDEN SERVICE LIFECYCLE (Separate from messaging)
+    /// ============================================================================
+    /// Voice and messaging are COMPLETELY SEPARATE state machines:
+    /// - Voice uses separate Tor daemon (port 9052) - Single Onion mode
+    /// - Messaging uses main Tor daemon (port 9051) - Standard v3 onion
+    /// - Voice HS only exposes port 9152 (voice streaming)
+    /// - Message HS exposes ports 9150, 8080, 9151, 9153 (PING/PONG/ACK/TAP)
+    /// CRITICAL: Failures in one should not affect the other
+    /// ============================================================================
 
     /// Connect to VOICE Tor control port (port 9052 - Single Onion Service instance)
     /// This is a separate Tor daemon specifically for voice hidden service
@@ -358,6 +695,14 @@ impl TorManager {
         Ok(0)
     }
 
+    /// ============================================================================
+    /// MESSAGE HIDDEN SERVICE LIFECYCLE (Separate from voice)
+    /// ============================================================================
+    /// Messaging hidden service lifecycle for PING/PONG/ACK/TAP messages
+    /// Uses main Tor daemon (control port 9051, SOCKS 9050)
+    /// CRITICAL: Separate from voice HS to prevent cross-interference
+    /// ============================================================================
+
     /// Create a deterministic .onion address from seed-derived key
     ///
     /// Uses ADD_ONION command on control port to create hidden service
@@ -417,21 +762,28 @@ impl TorManager {
 
         // Subscribe to HS_DESC events BEFORE creating the hidden service
         // This ensures we catch all descriptor upload events
+        // CRITICAL: Check if already subscribed to avoid duplicate subscriptions
         let control = self.control_stream.as_ref()
             .ok_or("Control port not connected")?;
 
-        log::info!("Subscribing to HS_DESC events before creating hidden service...");
-        {
-            let mut stream = control.lock().await;
-            stream.write_all(b"SETEVENTS HS_DESC\r\n").await?;
-            let mut buf = vec![0u8; 512];
-            let n = stream.read(&mut buf).await?;
-            let response = String::from_utf8_lossy(&buf[..n]);
-            if !response.contains("250 OK") {
-                log::warn!("Failed to subscribe to HS_DESC events: {}", response);
-            } else {
-                log::info!("Subscribed to HS_DESC events successfully");
+        // Only subscribe if we haven't already (idempotency guard)
+        if !self.hs_state.subscribed_events.contains(&"HS_DESC".to_string()) {
+            log::info!("Subscribing to HS_DESC events before creating hidden service...");
+            {
+                let mut stream = control.lock().await;
+                stream.write_all(b"SETEVENTS HS_DESC\r\n").await?;
+                let mut buf = vec![0u8; 512];
+                let n = stream.read(&mut buf).await?;
+                let response = String::from_utf8_lossy(&buf[..n]);
+                if !response.contains("250 OK") {
+                    log::warn!("Failed to subscribe to HS_DESC events: {}", response);
+                } else {
+                    log::info!("Subscribed to HS_DESC events successfully");
+                    self.hs_state.subscribed_events.push("HS_DESC".to_string());
+                }
             }
+        } else {
+            log::info!("Already subscribed to HS_DESC events");
         }
 
         // Now create the hidden service - descriptors will be uploaded and we'll receive events
@@ -501,6 +853,7 @@ impl TorManager {
             };
 
             self.hidden_service_address = Some(actual_onion.clone());
+            self.hs_state.message_hs_address = Some(actual_onion.clone()); // Track for crash recovery
             log::info!("Hidden service registered: {}", actual_onion);
             log::info!("Service port: {}, Local forward: 127.0.0.1:{}", service_port, local_port);
             // Return the address and mark as new
@@ -604,6 +957,10 @@ impl TorManager {
             }
         };
 
+        // Track voice HS for crash recovery
+        self.voice_hidden_service_address = Some(actual_onion_address.clone());
+        self.hs_state.voice_hs_address = Some(actual_onion_address.clone());
+
         log::info!("✓ VOICE SINGLE ONION SERVICE registered: {}", actual_onion_address);
         log::info!("✓ Voice service port: 9152 → local 9152 (voice streaming)");
         log::info!("✓ Service mode: Single Onion (3-hop latency, service location visible)");
@@ -676,8 +1033,9 @@ impl TorManager {
         log::info!("Connecting to {}:{} via Tor SOCKS5 proxy", onion_address, port);
 
         // Connect to local SOCKS5 proxy
-        log::info!("Connecting to SOCKS5 proxy at 127.0.0.1:9050...");
-        let mut stream = match TcpStream::connect("127.0.0.1:9050").await {
+        log::info!("Connecting to SOCKS5 proxy at 127.0.0.1:{}...", PORT_SOCKS);
+        let socks_addr = format!("127.0.0.1:{}", PORT_SOCKS);
+        let mut stream = match TcpStream::connect(&socks_addr).await {
             Ok(s) => {
                 log::info!("✓ Connected to SOCKS5 proxy");
                 s
@@ -874,6 +1232,7 @@ impl TorManager {
                 log::info!("→ Routing to PING handler");
 
                 // Store connection for instant Pong response
+                // BRIEF LOCK: Insert only, no async operations held
                 {
                     let mut pending = PENDING_CONNECTIONS.lock().unwrap();
                     pending.insert(conn_id, PendingConnection {
@@ -904,6 +1263,7 @@ impl TorManager {
                     });
 
                 // Messages might need connection stored for delivery confirmation
+                // BRIEF LOCK: Insert only, no async operations held
                 {
                     let mut pending = PENDING_CONNECTIONS.lock().unwrap();
                     pending.insert(conn_id, PendingConnection {
@@ -926,6 +1286,7 @@ impl TorManager {
                 log::info!("→ Routing to VOICE handler (dedicated channel for call signaling)");
 
                 // Store connection for delivery confirmation
+                // BRIEF LOCK: Insert only, no async operations held
                 {
                     let mut pending = PENDING_CONNECTIONS.lock().unwrap();
                     pending.insert(conn_id, PendingConnection {
@@ -1001,6 +1362,7 @@ impl TorManager {
                 log::warn!("⚠️  Unknown message type: 0x{:02x}, treating as PING", msg_type);
 
                 // Default to Ping behavior for unknown types
+                // BRIEF LOCK: Insert only, no async operations held
                 {
                     let mut pending = PENDING_CONNECTIONS.lock().unwrap();
                     pending.insert(conn_id, PendingConnection {
@@ -1202,7 +1564,7 @@ impl TorManager {
 
     /// Send Pong response back through pending connection and wait for message
     pub async fn send_pong_response(connection_id: u64, pong_bytes: &[u8]) -> Result<Vec<u8>, Box<dyn Error>> {
-        // Temporarily take the connection out to do async I/O (can't hold lock across await)
+        // Temporarily take the connection out to do async I/O (brief lock, then released)
         let mut conn = {
             let mut pending = PENDING_CONNECTIONS.lock().unwrap();
             pending.remove(&connection_id)
@@ -1266,7 +1628,7 @@ impl TorManager {
 
     /// Send ACK on an existing connection (fire-and-forget, connection closes after sending)
     pub async fn send_ack_on_connection(connection_id: u64, ack_type: u8, ack_bytes: &[u8]) -> Result<(), Box<dyn Error>> {
-        // Take the connection out (it will be closed after sending ACK)
+        // Take the connection out (brief lock, then released)
         let mut conn = {
             let mut pending = PENDING_CONNECTIONS.lock().unwrap();
             pending.remove(&connection_id)

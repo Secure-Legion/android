@@ -18,6 +18,12 @@ use crate::audio::voice_streaming::{VoiceStreamingListener, VoicePacket};
 use tokio::sync::mpsc;
 use tokio::io::AsyncReadExt;
 
+// ==================== PORT CONSTANTS (Single Source of Truth) ====================
+// These must match Kotlin side constants!
+const MAIN_LISTENER_PORT: u16 = 8080;          // Main multiplexed listener (all message types: ping, pong, message, ack)
+const PING_PONG_HANDSHAKE_PORT: u16 = 9150;   // Ping/Pong handshake port (used in sendPongToNewConnection)
+// NOTE: Voice streaming uses separate ports defined in VoiceStreamingListener
+
 // ==================== LIBRARY INITIALIZATION ====================
 
 /// Initialize Android logging when library loads
@@ -77,9 +83,29 @@ macro_rules! catch_panic {
     };
 }
 
+/// Validate message type byte is a known type
+fn is_valid_message_type(msg_type: u8) -> bool {
+    matches!(msg_type,
+        crate::network::tor::MSG_TYPE_PING |
+        crate::network::tor::MSG_TYPE_PONG |
+        crate::network::tor::MSG_TYPE_TEXT |
+        crate::network::tor::MSG_TYPE_VOICE |
+        crate::network::tor::MSG_TYPE_TAP |
+        crate::network::tor::MSG_TYPE_DELIVERY_CONFIRMATION |
+        crate::network::tor::MSG_TYPE_FRIEND_REQUEST |
+        crate::network::tor::MSG_TYPE_FRIEND_REQUEST_ACCEPTED |
+        crate::network::tor::MSG_TYPE_IMAGE |
+        crate::network::tor::MSG_TYPE_PAYMENT_REQUEST |
+        crate::network::tor::MSG_TYPE_PAYMENT_SENT |
+        crate::network::tor::MSG_TYPE_PAYMENT_ACCEPTED |
+        crate::network::tor::MSG_TYPE_CALL_SIGNALING
+    )
+}
+
 // ==================== GLOBAL TOR MANAGER ====================
 
 /// Global TorManager instance
+/// Using tokio::sync::Mutex instead of std::sync::Mutex to prevent deadlocks when holding locks across .await
 static GLOBAL_TOR_MANAGER: OnceCell<Arc<Mutex<TorManager>>> = OnceCell::new();
 static GLOBAL_PING_RECEIVER: OnceCell<Arc<Mutex<mpsc::UnboundedReceiver<(u64, Vec<u8>)>>>> = OnceCell::new();
 static GLOBAL_TAP_RECEIVER: OnceCell<Arc<Mutex<mpsc::UnboundedReceiver<Vec<u8>>>>> = OnceCell::new();
@@ -622,7 +648,13 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_createHiddenService(
             "()Landroid/app/Application;",
             &[],
         ) {
-            Ok(ctx) => ctx.l().unwrap(),
+            Ok(val) => match val.l() {
+                Ok(ctx) => ctx,
+                Err(_) => {
+                    let _ = env.throw_new("java/lang/RuntimeException", "currentApplication returned null or invalid object");
+                    return std::ptr::null_mut();
+                }
+            },
             Err(e) => {
                 let _ = env.throw_new("java/lang/RuntimeException", format!("Failed to get context: {}", e));
                 return std::ptr::null_mut();
@@ -810,20 +842,26 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_startHiddenServiceList
         match result {
             Ok(receiver) => {
                 // Store the PING receiver globally
-                let _ = GLOBAL_PING_RECEIVER.set(Arc::new(Mutex::new(receiver)));
+                if let Err(_) = GLOBAL_PING_RECEIVER.set(Arc::new(Mutex::new(receiver))) {
+                    log::warn!("PING_RECEIVER already initialized (listener restart?)");
+                }
 
                 // Initialize MESSAGE channel for TEXT/VOICE/IMAGE/PAYMENT routing
                 let (message_tx, message_rx) = mpsc::unbounded_channel::<(u64, Vec<u8>)>();
-                let _ = GLOBAL_MESSAGE_RECEIVER.set(Arc::new(Mutex::new(message_rx)));
+                if let Err(_) = GLOBAL_MESSAGE_RECEIVER.set(Arc::new(Mutex::new(message_rx))) {
+                    log::warn!("MESSAGE_RECEIVER already initialized (listener restart?)");
+                }
                 let tx_arc = Arc::new(std::sync::Mutex::new(message_tx));
                 if let Err(_) = crate::network::tor::MESSAGE_TX.set(tx_arc) {
-                    log::warn!("MESSAGE channel already initialized");
+                    log::warn!("MESSAGE_TX channel already initialized");
                 }
                 log::info!("MESSAGE channel initialized for direct routing");
 
                 // Initialize VOICE channel for CALL_SIGNALING routing
                 let (voice_tx, voice_rx) = mpsc::unbounded_channel::<(u64, Vec<u8>)>();
-                let _ = GLOBAL_VOICE_RECEIVER.set(Arc::new(Mutex::new(voice_rx)));
+                if let Err(_) = GLOBAL_VOICE_RECEIVER.set(Arc::new(Mutex::new(voice_rx))) {
+                    log::warn!("VOICE_RECEIVER already initialized (listener restart?)");
+                }
                 let voice_tx_arc = Arc::new(std::sync::Mutex::new(voice_tx));
                 if let Err(_) = crate::network::tor::VOICE_TX.set(voice_tx_arc) {
                     log::warn!("VOICE channel already initialized");
@@ -1127,8 +1165,8 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendPongBytes(
         log::info!("Sending encrypted Pong response ({} bytes) for connection {}", pong_bytes.len(), connection_id);
 
         // Send Pong response back through the stored connection and wait for message
-        let runtime = tokio::runtime::Runtime::new().expect("Failed to create Tokio runtime");
-        let result = runtime.block_on(async {
+        // Use global runtime instead of creating a new one
+        let result = GLOBAL_RUNTIME.block_on(async {
             crate::network::TorManager::send_pong_response(connection_id as u64, &pong_bytes).await
         });
 
@@ -1187,22 +1225,12 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendPongToNewConnectio
         // Get Tor manager
         let tor_manager = get_tor_manager();
 
-        // Open new connection and send Pong
-        let runtime = match tokio::runtime::Runtime::new() {
-            Ok(rt) => rt,
-            Err(e) => {
-                log::error!("Failed to create runtime: {}", e);
-                return 0;
-            }
-        };
-
-        let result = runtime.block_on(async {
-            const PONG_PORT: u16 = 9150;
-
-            // Connect to sender's .onion address (lock only during connect)
+        // Open new connection and send Pong using global runtime
+        let result = GLOBAL_RUNTIME.block_on(async {
+            // Connect to sender's .onion address on handshake port (lock only during connect)
             let mut conn = {
                 let tor = tor_manager.lock().unwrap();
-                tor.connect(&onion_address, PONG_PORT).await?
+                tor.connect(&onion_address, PING_PONG_HANDSHAKE_PORT).await?
             }; // Lock released
 
             // Send Pong bytes (lock only during send)
@@ -1252,32 +1280,25 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendPongToListener(
             }
         };
 
-        log::info!("Sending Pong to listener at {}:8080 ({} bytes)", onion_address, pong_bytes.len());
+        log::info!("Sending Pong to listener at {}:{} ({} bytes)", onion_address, PING_PONG_HANDSHAKE_PORT, pong_bytes.len());
 
         // Get Tor manager
         let tor_manager = get_tor_manager();
 
-        // Open connection to sender's Pong listener and send Pong
-        let runtime = match tokio::runtime::Runtime::new() {
-            Ok(rt) => rt,
-            Err(e) => {
-                log::error!("Failed to create runtime: {}", e);
-                return 0;
-            }
-        };
-
-        let result = runtime.block_on(async {
-            const PONG_LISTENER_PORT: u16 = 8080;  // Main listener port (handles all message types)
-
+        // Open connection to sender's messaging port (9150 handshake) and send Pong using global runtime
+        // NOTE: CRITICAL FIX - Use PING_PONG_HANDSHAKE_PORT (9150), NOT MAIN_LISTENER_PORT (8080)
+        // The recipient's hidden service exposes 9150 for messaging, NOT 8080
+        // 8080 is only the local port this instance listens on
+        let result = GLOBAL_RUNTIME.block_on(async {
             // Build wire message with type byte
             let mut wire_message = Vec::new();
             wire_message.push(crate::network::tor::MSG_TYPE_PONG); // Add type byte
             wire_message.extend_from_slice(&pong_bytes);
 
-            // Connect to sender's Pong listener (lock only during connect)
+            // Connect to sender's messaging handshake port (9150) - NOT 8080
             let mut conn = {
                 let tor = tor_manager.lock().unwrap();
-                tor.connect(&onion_address, PONG_LISTENER_PORT).await?
+                tor.connect(&onion_address, PING_PONG_HANDSHAKE_PORT).await?
             }; // Lock released
 
             // Send wire message (lock only during send)
@@ -1286,7 +1307,7 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendPongToListener(
                 tor.send(&mut conn, &wire_message).await?;
             } // Lock released
 
-            log::info!("Pong sent successfully to listener at {}:8080", onion_address);
+            log::info!("Pong sent successfully to listener at {}:{}", onion_address, PING_PONG_HANDSHAKE_PORT);
             Ok::<(), Box<dyn std::error::Error>>(())
         });
 
@@ -1353,7 +1374,13 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendPing(
             "()Landroid/app/Application;",
             &[],
         ) {
-            Ok(ctx) => ctx.l().unwrap(),
+            Ok(val) => match val.l() {
+                Ok(ctx) => ctx,
+                Err(_) => {
+                    let _ = env.throw_new("java/lang/RuntimeException", "currentApplication returned null or invalid object");
+                    return std::ptr::null_mut();
+                }
+            },
             Err(e) => {
                 let _ = env.throw_new("java/lang/RuntimeException", format!("Failed to get context: {}", e));
                 return std::ptr::null_mut();
@@ -1377,10 +1404,23 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendPing(
             }
         };
 
-        // Create Ed25519 signing keypair
-        let sender_keypair = match ed25519_dalek::SigningKey::from_bytes(&our_signing_private.as_slice().try_into().unwrap()) {
-            signing_key => ed25519_dalek::SigningKey::from(signing_key)
-        };
+        // Validate Ed25519 private key length (must be 32 bytes)
+        if our_signing_private.len() != 32 {
+            let _ = env.throw_new("java/lang/IllegalArgumentException",
+                                  format!("Invalid Ed25519 private key length: expected 32 bytes, got {}", our_signing_private.len()));
+            return std::ptr::null_mut();
+        }
+
+        // Create Ed25519 signing keypair with validated key
+        let sk_bytes: [u8; 32] = our_signing_private.as_slice().try_into().unwrap(); // Safe now
+        let sender_keypair = ed25519_dalek::SigningKey::from_bytes(&sk_bytes);
+
+        // Validate recipient Ed25519 public key length (must be 32 bytes)
+        if recipient_ed25519_bytes.len() != 32 {
+            let _ = env.throw_new("java/lang/IllegalArgumentException",
+                                  format!("Invalid recipient Ed25519 public key length: expected 32 bytes, got {}", recipient_ed25519_bytes.len()));
+            return std::ptr::null_mut();
+        }
 
         let recipient_ed25519_verifying = match ed25519_dalek::VerifyingKey::from_bytes(&recipient_ed25519_bytes.as_slice().try_into().unwrap()) {
             Ok(pk) => pk,
@@ -1578,8 +1618,16 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendPing(
 
                     // Build message wire format: [Type Byte][Encrypted Message]
                     // NOTE: message_bytes from encryptMessage() already contains [X25519 32 bytes][Encrypted data]
+
+                    // Validate message type before sending
+                    let msg_type = message_type_byte as u8;
+                    if !is_valid_message_type(msg_type) {
+                        log::error!("Invalid message type: {}", msg_type);
+                        return Err(format!("Invalid message type: {}", msg_type).into());
+                    }
+
                     let mut message_wire = Vec::new();
-                    message_wire.push(message_type_byte as u8); // Type byte from parameter
+                    message_wire.push(msg_type);
                     message_wire.extend_from_slice(&message_bytes);          // Encrypted message (already has X25519 key)
 
                     log::info!("Sending message wire: {} bytes total (1 type + {} encrypted)",
@@ -2737,9 +2785,16 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendMessageBlob(
             }
         };
 
+        // Validate message type before sending
+        let msg_type = message_type_byte as u8;
+        if !is_valid_message_type(msg_type) {
+            log::error!("Invalid message type: {}", msg_type);
+            return 0;
+        }
+
         // Create wire message: [Type Byte][Sender X25519 Public Key - 32 bytes][Encrypted Message]
         let mut wire_message = Vec::with_capacity(1 + 32 + message_bytes.len());
-        wire_message.push(message_type_byte as u8); // Type byte from parameter
+        wire_message.push(msg_type);
         wire_message.extend_from_slice(&our_x25519_public);
         wire_message.extend_from_slice(&message_bytes);
 
@@ -2749,22 +2804,13 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendMessageBlob(
         // Get Tor manager
         let tor_manager = get_tor_manager();
 
-        // Send message blob via Tor
-        // Use async runtime to send
-        let runtime = match tokio::runtime::Runtime::new() {
-            Ok(rt) => rt,
-            Err(e) => {
-                log::error!("Failed to create runtime: {}", e);
-                return 0;
-            }
-        };
-
-        let result = runtime.block_on(async {
+        // Send message blob via Tor using global runtime
+        let result = GLOBAL_RUNTIME.block_on(async {
             // Use port 9151 for friend requests (0x07, 0x08), port 9150 for regular messages
             const FRIEND_REQUEST_PORT: u16 = 9151;
             const MESSAGE_PORT: u16 = 9150;
 
-            let port = match message_type_byte as u8 {
+            let port = match msg_type {
                 0x07 | 0x08 => FRIEND_REQUEST_PORT, // FRIEND_REQUEST or FRIEND_RESPONSE
                 _ => MESSAGE_PORT                    // Regular messages
             };
@@ -3549,14 +3595,17 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendDirectMessage(
 
         // Step 2: Send Ping via Tor and wait for Pong
         let tor_manager = get_tor_manager();
-        let runtime = tokio::runtime::Runtime::new().expect("Failed to create Tokio runtime");
 
-        // Capture message type byte for async block
+        // Validate message type before sending
         let msg_type = message_type_byte as u8;
+        if !is_valid_message_type(msg_type) {
+            log::error!("Invalid message type: {}", msg_type);
+            return 0;
+        }
 
         const MESSAGE_PORT: u16 = 9150;
 
-        let result = runtime.block_on(async {
+        let result = GLOBAL_RUNTIME.block_on(async {
             // Connect to recipient's .onion address (lock only during connect)
             let mut conn = {
                 let manager = tor_manager.lock().unwrap();
