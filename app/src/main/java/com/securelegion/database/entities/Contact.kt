@@ -134,7 +134,14 @@ data class Contact(
      * PENDING_SENT: You added them, waiting for them to add you back
      * CONFIRMED: Mutual friends - both have added each other, can message
      */
-    val friendshipStatus: String = FRIENDSHIP_PENDING_SENT
+    val friendshipStatus: String = FRIENDSHIP_PENDING_SENT,
+
+    /**
+     * Whether this contact needs a TAP (I'm online) signal
+     * Set to true when we want to trigger convergence (ACK sending + message retry)
+     * Cleared after TAP is successfully sent
+     */
+    val needsTapSync: Boolean = false
 ) {
     companion object {
         // Trust levels

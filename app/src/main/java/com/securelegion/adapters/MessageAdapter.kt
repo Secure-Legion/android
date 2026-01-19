@@ -78,7 +78,11 @@ private object ChatListItemDiffCallback : DiffUtil.ItemCallback<ChatListItem>() 
                 oldItem.message.messageId == newItem.message.messageId &&
                 oldItem.message.encryptedContent == newItem.message.encryptedContent &&
                 oldItem.message.status == newItem.message.status &&
-                oldItem.message.isSentByMe == newItem.message.isSentByMe
+                oldItem.message.isSentByMe == newItem.message.isSentByMe &&
+                // Compare delivery status fields so ACK arrivals trigger UI updates
+                oldItem.message.pingDelivered == newItem.message.pingDelivered &&
+                oldItem.message.pongDelivered == newItem.message.pongDelivered &&
+                oldItem.message.messageDelivered == newItem.message.messageDelivered
             oldItem is ChatListItem.PendingPingItem && newItem is ChatListItem.PendingPingItem ->
                 // Compare all fields that affect display
                 oldItem.ping.pingId == newItem.ping.pingId &&
@@ -93,8 +97,11 @@ private object ChatListItemDiffCallback : DiffUtil.ItemCallback<ChatListItem>() 
         // Return payload to enable partial updates (only update changed fields)
         return when {
             oldItem is ChatListItem.MessageItem && newItem is ChatListItem.MessageItem -> {
-                if (oldItem.message.status != newItem.message.status) {
-                    "status_changed"  // Only update status icon, not entire row
+                if (oldItem.message.status != newItem.message.status ||
+                    oldItem.message.pingDelivered != newItem.message.pingDelivered ||
+                    oldItem.message.pongDelivered != newItem.message.pongDelivered ||
+                    oldItem.message.messageDelivered != newItem.message.messageDelivered) {
+                    "status_changed"  // Only update status icon, not entire row (handles ACK updates)
                 } else null
             }
             oldItem is ChatListItem.PendingPingItem && newItem is ChatListItem.PendingPingItem -> {

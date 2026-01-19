@@ -5,25 +5,26 @@ import android.util.Log
 import androidx.work.*
 import com.securelegion.crypto.KeyManager
 import com.securelegion.database.SecureLegionDatabase
-import com.securelegion.database.entities.Message
 import com.securelegion.services.MessageService
+import com.securelegion.models.AckState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.util.concurrent.TimeUnit
-import kotlin.math.min
-import kotlin.math.pow
 
 /**
- * Background worker for retrying pending messages with exponential backoff
+ * MessageRetryWorker
  *
- * This worker:
- * 1. Checks for messages with STATUS_PING_SENT
- * 2. Calculates next retry time using exponential backoff
- * 3. Retries sending Pings for messages that are due
- * 4. Polls for Pongs and sends message blobs when Pongs arrive
+ * RESPONSIBILITY (STRICT):
+ * - Retry sending PING packets ONLY
  *
- * Runs every 15 minutes in the background (Android minimum for PeriodicWorkRequest)
- * For fast retries immediately after sending, use ImmediateRetryWorker
+ * THIS WORKER DOES NOT:
+ * - Poll for PONGs
+ * - Send message blobs
+ * - Advance protocol stages
+ * - Act as Wake logic
+ *
+ * Wake/TAP triggers scheduling.
+ * Protocol advancement happens elsewhere.
  */
 class MessageRetryWorker(
     context: Context,
@@ -33,222 +34,244 @@ class MessageRetryWorker(
     companion object {
         private const val TAG = "MessageRetryWorker"
         private const val WORK_NAME = "message_retry_work"
-
-        // Worker runs every 15 minutes (Android minimum for PeriodicWorkRequest)
-        // For fast retries, use ImmediateRetryWorker instead
         private const val REPEAT_INTERVAL_MINUTES = 15L
 
         /**
-         * Schedule the periodic retry worker
-         * This handles background polling and long-term retries.
-         * For immediate retries after sending, use ImmediateRetryWorker.
+         * Periodic background retry (long-term recovery)
          */
         fun schedule(context: Context) {
             val constraints = Constraints.Builder()
                 .setRequiredNetworkType(NetworkType.CONNECTED)
                 .build()
 
-            val retryWork = PeriodicWorkRequestBuilder<MessageRetryWorker>(
+            val work = PeriodicWorkRequestBuilder<MessageRetryWorker>(
                 REPEAT_INTERVAL_MINUTES,
                 TimeUnit.MINUTES
             )
                 .setConstraints(constraints)
-                .setBackoffCriteria(
-                    BackoffPolicy.EXPONENTIAL,
-                    WorkRequest.MIN_BACKOFF_MILLIS,
-                    TimeUnit.MILLISECONDS
-                )
                 .build()
 
             WorkManager.getInstance(context).enqueueUniquePeriodicWork(
                 WORK_NAME,
                 ExistingPeriodicWorkPolicy.KEEP,
-                retryWork
+                work
             )
 
-            Log.i(TAG, "Scheduled periodic message retry worker (every $REPEAT_INTERVAL_MINUTES minutes)")
+            Log.i(TAG, "Scheduled periodic MessageRetryWorker")
         }
 
         /**
-         * Cancel the retry worker
+         * Immediate retry for a specific contact (triggered by TAP)
          */
+        fun scheduleForContact(context: Context, contactId: Long) {
+            val constraints = Constraints.Builder()
+                .setRequiredNetworkType(NetworkType.CONNECTED)
+                .build()
+
+            val data = workDataOf("CONTACT_ID" to contactId)
+
+            val work = OneTimeWorkRequestBuilder<MessageRetryWorker>()
+                .setInputData(data)
+                .setConstraints(constraints)
+                .build()
+
+            WorkManager.getInstance(context).enqueueUniqueWork(
+                "message_retry_contact_$contactId",
+                ExistingWorkPolicy.REPLACE,
+                work
+            )
+
+            Log.i(TAG, "Scheduled MessageRetryWorker for contact $contactId")
+        }
+
         fun cancel(context: Context) {
             WorkManager.getInstance(context).cancelUniqueWork(WORK_NAME)
-            Log.i(TAG, "Cancelled message retry worker")
+            Log.i(TAG, "Cancelled MessageRetryWorker")
         }
     }
 
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
         try {
-            Log.d(TAG, "Starting message retry cycle")
+            val contactId = inputData.getLong("CONTACT_ID", -1L)
+            val isContactSpecific = contactId != -1L
 
-            val messageService = MessageService(applicationContext)
+            Log.d(
+                TAG,
+                "Starting MessageRetryWorker (contactSpecific=$isContactSpecific)"
+            )
 
-            // Step 1: Poll for Pongs and send message blobs
-            Log.d(TAG, "Polling for Pongs...")
-            val pongResult = messageService.pollForPongsAndSendMessages()
-            if (pongResult.isSuccess) {
-                val sentCount = pongResult.getOrNull() ?: 0
-                if (sentCount > 0) {
-                    Log.i(TAG, "Sent $sentCount message blobs after receiving Pongs")
-                }
+            val retried = if (isContactSpecific) {
+                retryPendingPingsForContact(contactId)
             } else {
-                Log.e(TAG, "Failed to poll for Pongs: ${pongResult.exceptionOrNull()?.message}")
+                retryPendingPings()
             }
 
-            // Step 2: Retry sending Pings for messages that are due
-            Log.d(TAG, "Checking for messages to retry...")
-            val retriedCount = retryPendingPings()
-            if (retriedCount > 0) {
-                Log.i(TAG, "Retried $retriedCount Ping(s)")
+            if (retried > 0) {
+                Log.i(TAG, "Retried $retried PING(s)")
             }
 
-            Log.d(TAG, "Message retry cycle complete")
             Result.success()
-
         } catch (e: Exception) {
-            Log.e(TAG, "Message retry worker failed", e)
+            Log.e(TAG, "MessageRetryWorker failed", e)
             Result.retry()
         }
     }
 
     /**
-     * Retry sending Pings for messages that are due based on exponential backoff
-     * @return Number of Pings retried
+     * Retry pending messages (phase-aware)
+     *
+     * CRITICAL: Bug #7 - Phase-Aware Retry Logic
+     * Different retry actions based on ACK state:
+     * - NONE: Retry PING packet
+     * - PING_ACKED: Poll for PONG reply
+     * - PONG_ACKED: Send message blob (sender only)
+     * - MESSAGE_ACKED: Skip (already delivered)
      */
     private suspend fun retryPendingPings(): Int = withContext(Dispatchers.IO) {
-        try {
-            val keyManager = KeyManager.getInstance(applicationContext)
-            val dbPassphrase = keyManager.getDatabasePassphrase()
-            val database = SecureLegionDatabase.getInstance(applicationContext, dbPassphrase)
-            val messageService = MessageService(applicationContext)
+        val keyManager = KeyManager.getInstance(applicationContext)
+        val dbPassphrase = keyManager.getDatabasePassphrase()
+        val database = SecureLegionDatabase.getInstance(applicationContext, dbPassphrase)
+        val messageService = MessageService(applicationContext)
+        val ackTracker = MessageService.getAckTracker()
 
-            // Get messages that never sent their initial PING (STATUS_PENDING or STATUS_FAILED)
-            val newPendingMessages = database.messageDao().getPendingMessages()
+        val now = System.currentTimeMillis()
 
-            // Get messages waiting for Pong (STATUS_PING_SENT)
-            val awaitingPongMessages = database.messageDao().getMessagesAwaitingPong()
+        // HARD GATE:
+        // - Message not fully delivered
+        // - Retry time elapsed
+        // - Give up after 7 days
+        val messages = database.messageDao().getMessagesNeedingRetry(
+            currentTimeMs = now,
+            giveupAfterDays = 7
+        ).filter { !it.messageDelivered }  // Changed from !pingDelivered to !messageDelivered
 
-            // Combine both lists
-            val allPendingMessages = (newPendingMessages + awaitingPongMessages).distinctBy { it.id }
+        var retriedCount = 0
 
-            if (allPendingMessages.isEmpty()) {
-                Log.d(TAG, "No pending messages to retry")
-                return@withContext 0
-            }
+        for (message in messages) {
+            val contact = database.contactDao().getContactById(message.contactId) ?: continue
 
-            Log.d(TAG, "Found ${allPendingMessages.size} pending message(s) (${newPendingMessages.size} never sent, ${awaitingPongMessages.size} awaiting pong)")
+            // Check current ACK state to determine what phase needs retry
+            val ackState = ackTracker.getState(message.messageId)
 
-            val currentTime = System.currentTimeMillis()
-            var retriedCount = 0
+            Log.d(TAG, "Retrying message ${message.messageId} (phase: $ackState)")
 
-            for (message in allPendingMessages) {
-                // ============ ACK-BASED FLOW CONTROL ============
-                // Check ACKs in reverse order to determine what action to take
-
-                // PHASE 4: MESSAGE_ACK received → Fully delivered, skip
-                if (message.messageDelivered) {
-                    Log.d(TAG, "✓ MESSAGE_ACK received - message ${message.messageId} fully delivered, skip")
-                    continue
-                }
-
-                // PHASE 3: PONG_ACK received → Receiver is downloading, wait for MESSAGE_ACK
-                if (message.pongDelivered) {
-                    Log.d(TAG, "✓ PONG_ACK received - receiver downloading ${message.messageId}, skip")
-                    continue
-                }
-
-                // PHASE 2: PING_ACK received → Check for Pong, don't retry Ping
-                if (message.pingDelivered) {
-                    Log.d(TAG, "✓ PING_ACK received - checking for Pong for ${message.messageId}")
-                    // Poll for Pong (receiver may have TAP'd and sent Pong)
-                    val pongResult = messageService.pollForPongsAndSendMessages()
-                    if (pongResult.isSuccess) {
-                        val sentCount = pongResult.getOrNull() ?: 0
-                        if (sentCount > 0) {
-                            Log.i(TAG, "✓ Pong received and message blob sent!")
-                            retriedCount++
-                        }
-                    }
-                    // Don't retry Ping - it was already delivered
-                    continue
-                }
-
-                // PHASE 1: No PING_ACK → Retry Ping using exponential backoff
-                val nextRetryTime = calculateNextRetryTime(message)
-
-                if (currentTime >= nextRetryTime) {
-                    // Time to retry!
-                    Log.d(TAG, "Retrying Ping for message ${message.messageId} (attempt ${message.retryCount + 1})")
-
-                    // Use stored wire bytes to prevent generating new Ping ID (ghost ping fix)
-                    val contact = database.contactDao().getContactById(message.contactId)
-                    val retrySuccess = if (message.pingWireBytes != null && contact != null) {
-                        Log.i(TAG, "Resending Ping with stored wire bytes (same Ping ID: ${message.pingId})")
-                        try {
+            val success = try {
+                when (ackState) {
+                    AckState.NONE, AckState.PING_ACKED -> {
+                        // Phase 1: PING not received or not acknowledged - retry PING packet
+                        Log.d(TAG, "  → Retrying PING for ${message.messageId}")
+                        if (message.pingWireBytes != null) {
                             com.securelegion.crypto.RustBridge.resendPingWithWireBytes(
                                 message.pingWireBytes!!,
                                 contact.messagingOnion ?: contact.torOnionAddress ?: ""
                             )
-                        } catch (e: Exception) {
-                            Log.e(TAG, "Failed to resend Ping with wire bytes", e)
-                            false
+                        } else {
+                            messageService.sendPingForMessage(message).isSuccess
                         }
-                    } else {
-                        // Fallback: No wire bytes stored (old message), regenerate Ping
-                        Log.w(TAG, "No wire bytes stored, falling back to sendPingForMessage (may create ghost ping)")
-                        val result = messageService.sendPingForMessage(message)
-                        result.isSuccess
                     }
+                    AckState.PONG_ACKED -> {
+                        // Phase 2: PONG received but message blob not sent - poll for PONG and advance
+                        Log.d(TAG, "  → PONG received, polling for message download ${message.messageId}")
+                        messageService.pollForPongsAndSendMessages()
+                        true  // Assume poll was scheduled successfully
+                    }
+                    AckState.MESSAGE_ACKED -> {
+                        // Phase 3: Message fully delivered - skip retry
+                        Log.d(TAG, "  → Message already delivered, skipping ${message.messageId}")
+                        true  // Skip, don't count as retry
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to retry message ${message.messageId} in phase $ackState", e)
+                false
+            }
 
-                    if (retrySuccess) {
-                        // Update retry counter and timestamp
-                        val updatedMessage = message.copy(
-                            retryCount = message.retryCount + 1,
-                            lastRetryTimestamp = currentTime
-                        )
-                        database.messageDao().updateMessage(updatedMessage)
-                        retriedCount++
-                        Log.d(TAG, "✓ Ping retry successful for message ${message.messageId} (same Ping ID, no ghost ping)")
-                    } else {
-                        Log.w(TAG, "Ping retry failed for message ${message.messageId}")
-                        // Update retry counter even on failure
-                        val updatedMessage = message.copy(
-                            retryCount = message.retryCount + 1,
-                            lastRetryTimestamp = currentTime
-                        )
-                        database.messageDao().updateMessage(updatedMessage)
+            // Always schedule next retry (even on failure)
+            MessageService.scheduleRetry(database, message)
+
+            if (success) {
+                retriedCount++
+                Log.d(TAG, "✓ Retry sent for ${message.messageId} (phase: $ackState)")
+            }
+        }
+
+        retriedCount
+    }
+
+    /**
+     * Retry messages for a specific contact (TAP-triggered, phase-aware)
+     *
+     * CRITICAL: Bug #7 - Phase-Aware Retry Logic
+     * When TAP ACK is received, we retry all pending messages for that contact,
+     * but only retry the missing phase based on ACK state.
+     */
+    private suspend fun retryPendingPingsForContact(contactId: Long): Int =
+        withContext(Dispatchers.IO) {
+
+            val keyManager = KeyManager.getInstance(applicationContext)
+            val dbPassphrase = keyManager.getDatabasePassphrase()
+            val database = SecureLegionDatabase.getInstance(applicationContext, dbPassphrase)
+            val messageService = MessageService(applicationContext)
+            val ackTracker = MessageService.getAckTracker()
+
+            val now = System.currentTimeMillis()
+
+            val messages = database.messageDao().getMessagesNeedingRetry(
+                currentTimeMs = now,
+                giveupAfterDays = 7
+            ).filter {
+                it.contactId == contactId && !it.messageDelivered  // Changed from !pingDelivered
+            }
+
+            var retriedCount = 0
+
+            for (message in messages) {
+                val contact = database.contactDao().getContactById(message.contactId) ?: continue
+
+                // Check current ACK state to determine what phase needs retry
+                val ackState = ackTracker.getState(message.messageId)
+
+                Log.d(TAG, "Retrying message ${message.messageId} for contact $contactId (phase: $ackState)")
+
+                val success = try {
+                    when (ackState) {
+                        AckState.NONE, AckState.PING_ACKED -> {
+                            // Phase 1: PING not received - retry PING packet
+                            Log.d(TAG, "  → Retrying PING for ${message.messageId}")
+                            if (message.pingWireBytes != null) {
+                                com.securelegion.crypto.RustBridge.resendPingWithWireBytes(
+                                    message.pingWireBytes!!,
+                                    contact.messagingOnion ?: contact.torOnionAddress ?: ""
+                                )
+                            } else {
+                                messageService.sendPingForMessage(message).isSuccess
+                            }
+                        }
+                        AckState.PONG_ACKED -> {
+                            // Phase 2: PONG received - poll for PONG and send message
+                            Log.d(TAG, "  → TAP triggered, polling for message download ${message.messageId}")
+                            messageService.pollForPongsAndSendMessages()
+                            true
+                        }
+                        AckState.MESSAGE_ACKED -> {
+                            // Phase 3: Message fully delivered - skip retry
+                            Log.d(TAG, "  → Message already delivered, skipping ${message.messageId}")
+                            true
+                        }
                     }
-                } else {
-                    val waitTime = (nextRetryTime - currentTime) / 1000
-                    Log.d(TAG, "Message ${message.messageId} not due yet (retry in ${waitTime}s)")
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to retry message ${message.messageId} in phase $ackState", e)
+                    false
+                }
+
+                MessageService.scheduleRetry(database, message)
+
+                if (success) {
+                    retriedCount++
+                    Log.d(TAG, "✓ Retry sent for ${message.messageId} (phase: $ackState)")
                 }
             }
 
             retriedCount
-
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to retry pending Pings", e)
-            0
         }
-    }
-
-    /**
-     * Calculate next retry time using exponential backoff
-     * Formula: initial_delay * (multiplier ^ retry_count)
-     * Capped at MAX_RETRY_DELAY_MS
-     */
-    private fun calculateNextRetryTime(message: Message): Long {
-        val lastRetry = message.lastRetryTimestamp ?: message.timestamp
-        val retryCount = message.retryCount
-
-        // Calculate delay using exponential backoff
-        val delay = (Message.INITIAL_RETRY_DELAY_MS *
-            Message.RETRY_BACKOFF_MULTIPLIER.pow(retryCount.toDouble())).toLong()
-
-        // Cap at maximum delay
-        val cappedDelay = min(delay, Message.MAX_RETRY_DELAY_MS)
-
-        return lastRetry + cappedDelay
-    }
 }

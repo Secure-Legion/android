@@ -209,7 +209,12 @@ class VoicePlayer(private val context: Context) {
         val tempDir = File(context.cacheDir, "voice_temp")
         tempDir.mkdirs()
 
-        val tempFile = File(tempDir, "voice_$messageId.m4a")
+        // Sanitize messageId to remove any path separators
+        val sanitizedId = messageId.replace("/", "_").replace("\\", "_")
+        val tempFile = File(tempDir, "voice_$sanitizedId.m4a")
+
+        // Ensure parent directories exist before writing
+        tempFile.parentFile?.mkdirs()
         tempFile.writeBytes(audioBytes)
 
         Log.d(TAG, "Loaded audio from bytes: ${tempFile.absolutePath} (${audioBytes.size} bytes)")

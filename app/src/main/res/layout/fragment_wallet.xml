@@ -124,7 +124,7 @@
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:layout_weight="1"
-                    android:text="$12,500"
+                    android:text="$0.00"
                     android:textSize="28sp"
                     android:textColor="#FFFFFF"
                     android:fontFamily="@font/space_grotesk_bold" />

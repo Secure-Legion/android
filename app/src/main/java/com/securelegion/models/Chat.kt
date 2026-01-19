@@ -1,16 +1,19 @@
 package com.securelegion.models
 
+/**
+ * Represents a chat conversation with a contact
+ */
 data class Chat(
     val id: String,
     val nickname: String,
-    val lastMessage: String,
-    val time: String,
-    val unreadCount: Int,
-    val isOnline: Boolean,
-    val avatar: String,
-    val securityBadge: String,
-    val lastMessageStatus: Int = 0,  // 0 = none (received message), otherwise use Message.STATUS_* constants
-    val lastMessageIsSent: Boolean = false,  // true if last message was sent by us
-    val lastMessagePingDelivered: Boolean = false,  // true if PING_ACK received for last sent message
-    val lastMessageMessageDelivered: Boolean = false  // true if MESSAGE_ACK received for last sent message
+    val unreadCount: Int = 0,
+    val isOnline: Boolean = false,
+    val avatar: String = "",
+    val securityBadge: String = "",
+    val lastMessage: String = "",
+    val time: String = "",
+    val lastMessageStatus: Int = 0,
+    val lastMessageIsSent: Boolean = false,
+    val lastMessagePingDelivered: Boolean = false,
+    val lastMessageMessageDelivered: Boolean = false
 )

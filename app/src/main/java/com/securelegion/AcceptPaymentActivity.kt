@@ -139,7 +139,7 @@ class AcceptPaymentActivity : AppCompatActivity() {
         val divisor = Math.pow(10.0, decimals.toDouble())
         val humanAmount = paymentAmount.toDouble() / divisor
 
-        amountDisplay.text = String.format("%.4f %s", humanAmount, paymentToken)
+        amountDisplay.text = String.format(java.util.Locale.US, "%.4f %s", humanAmount, paymentToken)
 
         // Expiry
         val expiryTime = intent.getLongExtra(EXTRA_EXPIRY_TIME, 0)

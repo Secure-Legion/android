@@ -379,9 +379,11 @@ class IncomingCallActivity : AppCompatActivity() {
         finish() // Close incoming call screen immediately
     }
 
+    @Suppress("GestureBackNavigation")  // Handled via declineCall()
     override fun onBackPressed() {
         // Decline call on back press
         declineCall()
+        super.onBackPressed()
     }
 
     override fun onDestroy() {

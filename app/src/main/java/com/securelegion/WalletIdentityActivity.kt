@@ -380,10 +380,11 @@ class WalletIdentityActivity : AppCompatActivity() {
     }
 
     private fun loadUsername() {
+        val usernameTextView = findViewById<TextView>(R.id.usernameText)
+
         try {
             val keyManager = KeyManager.getInstance(this)
             val username = keyManager.getUsername()
-            val usernameTextView = findViewById<TextView>(R.id.usernameText)
 
             if (username != null) {
                 usernameTextView.text = "@$username"
@@ -399,7 +400,7 @@ class WalletIdentityActivity : AppCompatActivity() {
             }
         } catch (e: Exception) {
             Log.e("WalletIdentity", "Failed to load username", e)
-            findViewById<TextView>(R.id.usernameText).text = "@USER"
+            usernameTextView.text = "@USER"
         }
     }
 

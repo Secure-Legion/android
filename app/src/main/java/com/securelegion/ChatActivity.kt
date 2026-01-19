@@ -448,7 +448,7 @@ class ChatActivity : BaseActivity() {
             lifecyclePrefs.edit()
                 .putLong("last_pause_timestamp", 0L)
                 .putBoolean("waiting_for_camera_gallery", false)
-                .commit()  // Use commit() not apply() - must be synchronous before super.onResume()
+                .commit()  // Intentional: must be synchronous before onResume() completes
             Log.d(TAG, "Cleared pause timestamp after camera/gallery - preventing auto-lock")
             isWaitingForCameraGallery = false
         }

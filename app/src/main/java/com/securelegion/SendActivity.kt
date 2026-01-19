@@ -86,6 +86,11 @@ class SendActivity : BaseActivity() {
 
         // Auto-focus amount input to show keyboard
         val balanceAmountInput = findViewById<EditText>(R.id.balanceAmount)
+        val recipientAddressInput = findViewById<EditText>(R.id.recipientAddressInput)
+        val toggleCurrencyButton = findViewById<View>(R.id.toggleCurrencyDisplay)
+        val backButton = findViewById<View>(R.id.backButton)
+        val nextButton = findViewById<View>(R.id.nextButton)
+
         balanceAmountInput?.requestFocus()
 
         // Show keyboard automatically
@@ -95,12 +100,12 @@ class SendActivity : BaseActivity() {
         }, 200)
 
         // Toggle currency display (USD <-> Token)
-        findViewById<View>(R.id.toggleCurrencyDisplay)?.setOnClickListener {
+        toggleCurrencyButton?.setOnClickListener {
             toggleCurrencyDisplay()
         }
 
         // Back button
-        findViewById<View>(R.id.backButton).setOnClickListener {
+        backButton?.setOnClickListener {
             finish()
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
                 overrideActivityTransition(Activity.OVERRIDE_TRANSITION_CLOSE, 0, 0)
@@ -111,9 +116,9 @@ class SendActivity : BaseActivity() {
         }
 
         // Next button - shows send confirmation
-        findViewById<View>(R.id.nextButton)?.setOnClickListener {
-            val recipientAddress = findViewById<EditText>(R.id.recipientAddressInput).text.toString()
-            val amountText = findViewById<EditText>(R.id.balanceAmount)?.text.toString() ?: "0"
+        nextButton?.setOnClickListener {
+            val recipientAddress = recipientAddressInput?.text.toString() ?: ""
+            val amountText = balanceAmountInput?.text.toString() ?: "0"
 
             // Parse the amount
             var amount = amountText.toDoubleOrNull() ?: 0.0

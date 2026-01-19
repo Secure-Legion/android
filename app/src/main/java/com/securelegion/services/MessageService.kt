@@ -10,6 +10,9 @@ import com.securelegion.crypto.NLx402Manager
 import com.securelegion.crypto.RustBridge
 import com.securelegion.database.SecureLegionDatabase
 import com.securelegion.database.entities.Message
+import com.securelegion.models.AckState
+import com.securelegion.models.AckStateTracker
+import com.securelegion.models.OutOfOrderBuffer
 import com.securelegion.database.entities.ed25519PublicKeyBytes
 import com.securelegion.database.entities.x25519PublicKeyBytes
 import com.securelegion.database.entities.sendChainKeyBytes
@@ -17,9 +20,11 @@ import com.securelegion.database.entities.receiveChainKeyBytes
 import com.securelegion.voice.CallSignaling
 import com.securelegion.voice.VoiceCallManager
 import com.securelegion.IncomingCallActivity
-import com.securelegion.workers.ImmediateRetryWorker
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
 import org.json.JSONObject
 import java.security.MessageDigest
 import java.util.UUID
@@ -41,6 +46,18 @@ class MessageService(private val context: Context) {
         private const val TAG = "MessageService"
 
         /**
+         * ACK State Tracker - Enforces strict ACK ordering per message
+         * CRITICAL: Prevents out-of-order ACKs from causing permanent crypto desync
+         *
+         * State machine: NONE -> PING_ACKED -> PONG_ACKED -> MESSAGE_ACKED
+         * Only valid transitions are allowed; all others are silently dropped
+         *
+         * THREAD SAFETY: Internally uses ConcurrentHashMap and CopyOnWriteArraySet
+         * Safely accessed from TorService background thread, MessageRetryWorker, and UI threads
+         */
+        private val ackTracker = AckStateTracker()
+
+        /**
          * Buffered out-of-order message waiting for gap to fill
          */
         data class BufferedMessage(
@@ -57,10 +74,33 @@ class MessageService(private val context: Context) {
         )
 
         /**
-         * Buffer for out-of-order messages per contact
+         * Buffer for out-of-order messages per contact (legacy, deprecated)
          * Key: contactId, Value: Map of sequence -> BufferedMessage
+         *
+         * THREAD SAFETY: Uses ConcurrentHashMap for thread-safe concurrent access
          */
         private val messageBuffer = java.util.concurrent.ConcurrentHashMap<Long, java.util.concurrent.ConcurrentHashMap<Long, BufferedMessage>>()
+
+        /**
+         * Gap timeout buffers per contact
+         * Detects and handles permanent message loss (gaps exceeding MAX_SKIP)
+         * Key: contactId, Value: OutOfOrderBuffer instance
+         *
+         * CRITICAL: Prevents unbounded memory growth and conversation hangs
+         * when messages are permanently lost (don't arrive within gap timeout)
+         *
+         * THREAD SAFETY: Uses ConcurrentHashMap with OutOfOrderBuffer instances
+         * that internally use CopyOnWriteArrayList and @Volatile fields
+         * Safely accessed from message receive path and gap timeout checks
+         */
+        private val gapTimeoutBuffers = java.util.concurrent.ConcurrentHashMap<Long, OutOfOrderBuffer>()
+
+        /**
+         * Get the shared ACK State Tracker instance
+         * Used by TorService to check ACK validity before processing
+         * Ensures all ACKs go through the state machine (prevents duplicates and out-of-order)
+         */
+        fun getAckTracker(): AckStateTracker = ackTracker
 
         /**
          * Generate a cryptographically random 24-byte nonce for ping ID
@@ -173,6 +213,75 @@ class MessageService(private val context: Context) {
 
             // Base64-encode and take first 32 characters (256 bits / 8 * 4 = 128 chars, so 32 is reasonable)
             return android.util.Base64.encodeToString(messageIdHash, android.util.Base64.NO_WRAP).take(32)
+        }
+
+        /**
+         * Schedule retry for a message
+         * Used by MessageRetryWorker to track retry attempts
+         * Increments retry count and updates last retry timestamp with exponential backoff
+         * Persists the updated message to the database (suspend operation)
+         *
+         * @param database The SecureLegion database for persistence
+         * @param message The message to retry
+         */
+        suspend fun scheduleRetry(database: SecureLegionDatabase, message: Message) {
+            try {
+                // Calculate exponential backoff
+                val retryCount = message.retryCount + 1
+                val initialDelay = Message.INITIAL_RETRY_DELAY_MS
+                val backoffExponent = (retryCount - 1).toDouble()
+                val nextRetryDelay = (initialDelay * Math.pow(Message.RETRY_BACKOFF_MULTIPLIER, backoffExponent)).toLong()
+
+                val updatedMessage = message.copy(
+                    retryCount = retryCount,
+                    lastRetryTimestamp = System.currentTimeMillis()
+                )
+
+                // Update in database
+                database.messageDao().updateMessage(updatedMessage)
+                Log.d(TAG, "Scheduled retry #$retryCount for message ${message.messageId}, next retry in ${nextRetryDelay}ms")
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to schedule retry for message ${message.messageId}", e)
+            }
+        }
+
+        /**
+         * Get or create the gap timeout buffer for a contact
+         * Used to detect and handle permanent message loss
+         */
+        fun getGapTimeoutBuffer(contactId: Long): OutOfOrderBuffer {
+            return gapTimeoutBuffers.getOrPut(contactId) {
+                OutOfOrderBuffer(gapTimeoutSeconds = 30L)
+            }
+        }
+
+        /**
+         * Clear gap timeout buffer when contact/thread is deleted
+         * Prevents memory leaks from deleted contacts
+         */
+        fun clearGapTimeoutBuffer(contactId: Long) {
+            gapTimeoutBuffers.remove(contactId)?.apply {
+                clear()
+                Log.d(TAG, "Cleared gap timeout buffer for contact $contactId")
+            }
+        }
+
+        /**
+         * Check for gap timeouts on all contacts
+         * Called periodically to detect and handle permanent message loss
+         */
+        fun checkAllGapTimeouts(): Map<Long, List<LongRange>> {
+            val lostGaps = mutableMapOf<Long, List<LongRange>>()
+
+            gapTimeoutBuffers.forEach { (contactId, buffer) ->
+                val lostRanges = buffer.checkForGapTimeout()
+                if (lostRanges.isNotEmpty()) {
+                    lostGaps[contactId] = lostRanges
+                    Log.w(TAG, "⚠️ Gap timeout detected for contact $contactId: ${lostRanges.size} gaps")
+                }
+            }
+
+            return lostGaps
         }
     }
 
@@ -357,9 +466,6 @@ class MessageService(private val context: Context) {
                 Log.w(TAG, "Immediate Ping send failed, retry worker will retry: ${e.message}")
             }
 
-            // Schedule fast retry worker for this message (5s intervals)
-            ImmediateRetryWorker.scheduleForMessage(context, messageId)
-            Log.d(TAG, "Scheduled immediate retry worker for message $messageId")
 
             Result.success(savedMessage)
 
@@ -523,9 +629,6 @@ class MessageService(private val context: Context) {
                 Log.w(TAG, "Immediate Ping send failed, retry worker will retry: ${e.message}")
             }
 
-            // Schedule fast retry worker for this message (5s intervals)
-            ImmediateRetryWorker.scheduleForMessage(context, messageId)
-            Log.d(TAG, "Scheduled immediate retry worker for message $messageId")
 
             Result.success(savedMessage)
 
@@ -716,9 +819,6 @@ class MessageService(private val context: Context) {
                 Log.w(TAG, "Immediate Ping send failed, retry worker will retry: ${e.message}")
             }
 
-            // Schedule fast retry worker for this message (5s intervals)
-            ImmediateRetryWorker.scheduleForMessage(context, messageId)
-            Log.d(TAG, "Scheduled immediate retry worker for message $messageId")
 
             Result.success(savedMessage)
 
@@ -900,7 +1000,6 @@ class MessageService(private val context: Context) {
             }
 
             // Schedule fast retry worker for this message (5s intervals)
-            ImmediateRetryWorker.scheduleForMessage(context, messageId)
             Log.d(TAG, "Scheduled immediate retry worker for payment request $messageId")
 
             Result.success(savedMessage)
@@ -1053,7 +1152,6 @@ class MessageService(private val context: Context) {
             }
 
             // Schedule retry worker
-            ImmediateRetryWorker.scheduleForMessage(context, messageId)
 
             Log.i(TAG, "Payment confirmation sent: $messageId")
             Result.success(savedMessage)
@@ -1194,7 +1292,6 @@ class MessageService(private val context: Context) {
                 Log.w(TAG, "Immediate Ping send failed for payment acceptance: ${e.message}")
             }
 
-            ImmediateRetryWorker.scheduleForMessage(context, messageId)
 
             Log.i(TAG, "Payment acceptance sent: $messageId")
             Result.success(savedMessage)
@@ -1682,6 +1779,123 @@ class MessageService(private val context: Context) {
     }
 
     /**
+     * Handle incoming ACK with strict ordering enforcement
+     *
+     * CRITICAL: This enforces the ACK state machine to prevent permanent crypto desync:
+     * NONE -> PING_ACKED -> PONG_ACKED -> MESSAGE_ACKED
+     *
+     * Out-of-order ACKs are silently dropped (logged as warnings).
+     * Duplicate ACKs are detected and ignored (idempotency guard).
+     *
+     * @param messageId The message ID this ACK is for
+     * @param ackType The type of ACK ("PING_ACK", "PONG_ACK", "MESSAGE_ACK")
+     * @param contactId The contact ID (for logging and updates)
+     * @return true if ACK was accepted and state advanced, false if rejected
+     */
+    suspend fun handleIncomingAck(
+        messageId: String,
+        ackType: String,
+        contactId: Long
+    ): Boolean = withContext(Dispatchers.IO) {
+        try {
+            Log.d(TAG, "Processing ACK: msg=$messageId type=$ackType contact=$contactId")
+
+            // Let state machine validate ordering
+            if (!ackTracker.processAck(messageId, ackType)) {
+                Log.w(TAG, "ACK rejected (invalid ordering or duplicate): $messageId/$ackType")
+                return@withContext false
+            }
+
+            val currentState = ackTracker.getState(messageId)
+            Log.d(TAG, "ACK accepted, state now: $currentState")
+
+            // Update database based on new state
+            try {
+                val keyManager = KeyManager.getInstance(context)
+                val dbPassphrase = keyManager.getDatabasePassphrase()
+                val database = SecureLegionDatabase.getInstance(context, dbPassphrase)
+
+                // Look up the message to update
+                val message = database.messageDao().getMessageByMessageId(messageId)
+                if (message != null) {
+                    // Create updated message based on new state
+                    val updatedMessage = when (currentState) {
+                        AckState.PING_ACKED -> {
+                            // Ping acknowledged - mark pingDelivered
+                            message.copy(pingDelivered = true)
+                        }
+                        AckState.PONG_ACKED -> {
+                            // Pong acknowledged - mark pongDelivered
+                            message.copy(pongDelivered = true)
+                        }
+                        AckState.MESSAGE_ACKED -> {
+                            // Full delivery - mark messageDelivered and status = DELIVERED
+                            message.copy(
+                                messageDelivered = true,
+                                status = Message.STATUS_DELIVERED
+                            )
+                        }
+                        else -> null // NONE state - no update needed
+                    }
+
+                    // Save updated message if state changed
+                    if (updatedMessage != null) {
+                        database.messageDao().updateMessage(updatedMessage)
+                        Log.d(TAG, "✓ Updated message status: $currentState for $messageId")
+
+                        // Broadcast UI update for all delivery status changes
+                        if (currentState == AckState.PING_ACKED || currentState == AckState.PONG_ACKED || currentState == AckState.MESSAGE_ACKED) {
+                            val intent = Intent("com.securelegion.MESSAGE_RECEIVED")
+                            intent.setPackage(context.packageName)
+                            intent.putExtra("CONTACT_ID", contactId)
+                            context.sendBroadcast(intent)
+                            val statusDesc = when(currentState) {
+                                AckState.PING_ACKED -> "PING_ACK"
+                                AckState.PONG_ACKED -> "PONG_ACK"
+                                AckState.MESSAGE_ACKED -> "MESSAGE_ACK"
+                                else -> "UNKNOWN"
+                            }
+                            Log.d(TAG, "✓ Broadcast MESSAGE_RECEIVED for $statusDesc (contact $contactId)")
+                        }
+                    }
+                } else {
+                    Log.w(TAG, "Could not find message for ACK: $messageId")
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to update message state for ACK: $ackType on $messageId", e)
+                // Don't return failure - ACK was processed by state machine, DB update is secondary
+            }
+
+            return@withContext true
+
+        } catch (e: Exception) {
+            Log.e(TAG, "Error handling ACK: $ackType for message: $messageId", e)
+            return@withContext false
+        }
+    }
+
+    /**
+     * Get the current ACK state for a message (for testing/debugging)
+     */
+    fun getAckState(messageId: String): AckState {
+        return ackTracker.getState(messageId)
+    }
+
+    /**
+     * Clear ACK state for a message (called when message deleted)
+     */
+    fun clearAckState(messageId: String) {
+        ackTracker.clear(messageId)
+    }
+
+    /**
+     * Clear ACK state for all messages in a thread (called when thread deleted)
+     */
+    fun clearAckStateForThread(messageIds: List<String>) {
+        ackTracker.clearByThread(messageIds)
+    }
+
+    /**
      * Handle incoming call signaling messages (CALL_OFFER, CALL_ANSWER, etc.)
      * This intercepts call-related messages before they go to the database
      *
@@ -2110,7 +2324,7 @@ class MessageService(private val context: Context) {
                 Log.d(TAG, "pollForPong($pingId) returned: $pongReceived")
 
                 if (pongReceived) {
-                    Log.i(TAG, "✓ Pong received for Ping ID $pingId! Sending message blob...")
+                    Log.i(TAG, "✓ Pong received for Ping ID $pingId! Sending PONG_ACK and message blob...")
 
                     // Get contact for .onion address
                     val contact = database.contactDao().getContactById(message.contactId)
@@ -2119,59 +2333,32 @@ class MessageService(private val context: Context) {
                         continue
                     }
 
-                    // Get stored encrypted payload
-                    val encryptedPayload = message.encryptedPayload
-                    if (encryptedPayload == null) {
-                        Log.e(TAG, "No encrypted payload stored for message ${message.id}")
-                        continue
-                    }
-
-                    // Decode Base64 payload
-                    val encryptedBytes = Base64.decode(encryptedPayload, Base64.NO_WRAP)
-
-                    // Convert message type to wire protocol type byte
-                    val messageTypeByte: Byte = when (message.messageType) {
-                        Message.MESSAGE_TYPE_VOICE -> 0x04.toByte()           // VOICE
-                        Message.MESSAGE_TYPE_IMAGE -> 0x09.toByte()           // IMAGE
-                        Message.MESSAGE_TYPE_PAYMENT_REQUEST -> 0x0A.toByte() // PAYMENT_REQUEST
-                        Message.MESSAGE_TYPE_PAYMENT_SENT -> 0x0B.toByte()    // PAYMENT_SENT
-                        Message.MESSAGE_TYPE_PAYMENT_ACCEPTED -> 0x0C.toByte() // PAYMENT_ACCEPTED
-                        else -> 0x03.toByte()                                  // TEXT (default)
-                    }
-
-                    // Send message blob
-                    val success = RustBridge.sendMessageBlob(
-                        contact.messagingOnion ?: contact.torOnionAddress ?: "",
-                        encryptedBytes,
-                        messageTypeByte
-                    )
-
-                    if (success) {
-                        // Update message status to SENT
-                        database.messageDao().updateMessageStatus(message.id, Message.STATUS_SENT)
-                        Log.i(TAG, "Message blob sent successfully: ${message.messageId}")
-
-                        // Clean up Rust Pong session immediately to prevent memory leak
+                    // CRITICAL FIX: Send PONG_ACK BEFORE MESSAGE (ordering milestone)
+                    // Protocol: Sender receives PONG → sends PONG_ACK → then sends MESSAGE
+                    // Make this async so it doesn't block the polling loop, but enforce ordering with retries
+                    kotlinx.coroutines.CoroutineScope(Dispatchers.IO).launch {
                         try {
-                            RustBridge.removePongSession(pingId)
-                            Log.d(TAG, "✓ Cleaned up Rust Pong session for pingId: $pingId")
+                            val pongAckSent = sendPongAckWithRetry(
+                                itemId = pingId,
+                                contact = contact,
+                                maxRetries = 3
+                            )
+
+                            if (pongAckSent) {
+                                // Update persistent state: mark PONG_ACK as sent
+                                val messageWithPongAck = message.copy(pongDelivered = true)
+                                database.messageDao().updateMessage(messageWithPongAck)
+                                Log.i(TAG, "✓ Marked PONG_ACK sent for message ${message.messageId}")
+
+                                // NOW send message blob (after PONG_ACK confirmed)
+                                sendMessageBlobAfterPongAck(message, contact, pingId)
+                            } else {
+                                Log.w(TAG, "✗ Failed to send PONG_ACK for message ${message.messageId}, MESSAGE send skipped (will retry)")
+                                // MessageRetryWorker will retry the entire flow
+                            }
                         } catch (e: Exception) {
-                            Log.w(TAG, "Failed to clean up Pong session (non-critical)", e)
+                            Log.e(TAG, "Exception in PONG_ACK sequence: ${e.message}")
                         }
-
-                        // Cancel immediate retry worker (message sent successfully)
-                        ImmediateRetryWorker.cancelForMessage(context, message.messageId)
-                        Log.d(TAG, "Cancelled immediate retry worker for ${message.messageId}")
-
-                        sentCount++
-                    } else {
-                        Log.e(TAG, "Failed to send message blob for ${message.messageId}")
-                        // Increment retry counter
-                        val updatedMessage = message.copy(
-                            retryCount = message.retryCount + 1,
-                            lastRetryTimestamp = System.currentTimeMillis()
-                        )
-                        database.messageDao().updateMessage(updatedMessage)
                     }
                 }
             }
@@ -2230,6 +2417,117 @@ class MessageService(private val context: Context) {
         // Clean up empty buffers
         if (contactBuffer.isEmpty()) {
             messageBuffer.remove(contactId)
+        }
+    }
+
+    /**
+     * Send PONG_ACK with bounded retry (similar to AckWorker pattern)
+     * This is called asynchronously to avoid blocking message sending
+     *
+     * @return true if PONG_ACK was successfully sent, false if all retries failed
+     */
+    private suspend fun sendPongAckWithRetry(
+        itemId: String,
+        contact: com.securelegion.database.entities.Contact,
+        maxRetries: Int = 3
+    ): Boolean {
+        repeat(maxRetries) { attempt ->
+            try {
+                val success = com.securelegion.crypto.RustBridge.sendDeliveryAck(
+                    itemId = itemId,
+                    ackType = "PONG_ACK",
+                    recipientEd25519Pubkey = android.util.Base64.decode(contact.publicKeyBase64, android.util.Base64.NO_WRAP),
+                    recipientX25519Pubkey = android.util.Base64.decode(contact.x25519PublicKeyBase64, android.util.Base64.NO_WRAP),
+                    recipientOnion = contact.messagingOnion ?: contact.torOnionAddress ?: ""
+                )
+
+                if (success) {
+                    Log.i(TAG, "✓ Sent PONG_ACK for itemId=${itemId.take(8)}...")
+                    return true
+                }
+
+                if (attempt < maxRetries - 1) {
+                    kotlinx.coroutines.delay(1000L * (attempt + 1))
+                }
+
+            } catch (e: Exception) {
+                Log.e(TAG, "Exception sending PONG_ACK (attempt ${attempt + 1}/$maxRetries): ${e.message}")
+                if (attempt < maxRetries - 1) {
+                    kotlinx.coroutines.delay(1000L * (attempt + 1))
+                }
+            }
+        }
+
+        return false
+    }
+
+    /**
+     * Send message blob after PONG_ACK has been confirmed
+     * This is extracted as a helper to keep the main loop clean
+     *
+     * @param message The message to send
+     * @param contact The recipient contact
+     * @param pingId The ping ID (for session cleanup)
+     */
+    private suspend fun sendMessageBlobAfterPongAck(
+        message: com.securelegion.database.entities.Message,
+        contact: com.securelegion.database.entities.Contact,
+        pingId: String
+    ) {
+        try {
+            val dbPassphrase = keyManager.getDatabasePassphrase()
+            val database = SecureLegionDatabase.getInstance(context, dbPassphrase)
+
+            // Get stored encrypted payload
+            val encryptedPayload = message.encryptedPayload
+            if (encryptedPayload == null) {
+                Log.e(TAG, "No encrypted payload stored for message ${message.id}")
+                return
+            }
+
+            // Decode Base64 payload
+            val encryptedBytes = android.util.Base64.decode(encryptedPayload, android.util.Base64.NO_WRAP)
+
+            // Convert message type to wire protocol type byte
+            val messageTypeByte: Byte = when (message.messageType) {
+                com.securelegion.database.entities.Message.MESSAGE_TYPE_VOICE -> 0x04.toByte()           // VOICE
+                com.securelegion.database.entities.Message.MESSAGE_TYPE_IMAGE -> 0x09.toByte()           // IMAGE
+                com.securelegion.database.entities.Message.MESSAGE_TYPE_PAYMENT_REQUEST -> 0x0A.toByte() // PAYMENT_REQUEST
+                com.securelegion.database.entities.Message.MESSAGE_TYPE_PAYMENT_SENT -> 0x0B.toByte()    // PAYMENT_SENT
+                com.securelegion.database.entities.Message.MESSAGE_TYPE_PAYMENT_ACCEPTED -> 0x0C.toByte() // PAYMENT_ACCEPTED
+                else -> 0x03.toByte()                                                                      // TEXT (default)
+            }
+
+            // Send message blob
+            val success = com.securelegion.crypto.RustBridge.sendMessageBlob(
+                contact.messagingOnion ?: contact.torOnionAddress ?: "",
+                encryptedBytes,
+                messageTypeByte
+            )
+
+            if (success) {
+                // Update message status to SENT
+                database.messageDao().updateMessageStatus(message.id, com.securelegion.database.entities.Message.STATUS_SENT)
+                Log.i(TAG, "Message blob sent successfully: ${message.messageId}")
+
+                // Clean up Rust Pong session immediately to prevent memory leak
+                try {
+                    com.securelegion.crypto.RustBridge.removePongSession(pingId)
+                    Log.d(TAG, "✓ Cleaned up Rust Pong session for pingId: $pingId")
+                } catch (e: Exception) {
+                    Log.w(TAG, "Failed to clean up Pong session (non-critical)", e)
+                }
+            } else {
+                Log.e(TAG, "Failed to send message blob for ${message.messageId}")
+                // Increment retry counter
+                val updatedMessage = message.copy(
+                    retryCount = message.retryCount + 1,
+                    lastRetryTimestamp = System.currentTimeMillis()
+                )
+                database.messageDao().updateMessage(updatedMessage)
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error sending message blob after PONG_ACK: ${e.message}", e)
         }
     }
 }

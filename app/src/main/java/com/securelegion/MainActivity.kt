@@ -652,9 +652,26 @@ class MainActivity : BaseActivity() {
                 val database = SecureLegionDatabase.getInstance(this@MainActivity, dbPassphrase)
 
                 withContext(Dispatchers.IO) {
-                    // Get all messages for this contact to check for voice files
+                    // Get all messages for this contact to check for voice files and ACK state
                     val messages = database.messageDao().getMessagesForContact(chat.id.toLong())
+                    val messageIds = messages.map { it.messageId }
 
+                    // ==================== PHASE 1: Clear All ACK State & Gap Buffers ====================
+                    // CRITICAL: Prevent message resurrection via ACK state machine
+                    // Must clear BEFORE deleting messages from database
+                    try {
+                        val messageService = com.securelegion.services.MessageService(this@MainActivity)
+                        messageService.clearAckStateForThread(messageIds)
+                        Log.d("MainActivity", "✓ Cleared ACK state for ${messageIds.size} messages")
+
+                        // Also clear gap timeout buffer to free memory
+                        com.securelegion.services.MessageService.clearGapTimeoutBuffer(chat.id.toLong())
+                        Log.d("MainActivity", "✓ Cleared gap timeout buffer")
+                    } catch (e: Exception) {
+                        Log.e("MainActivity", "Failed to clear ACK state or gap buffer", e)
+                    }
+
+                    // ==================== PHASE 2: Securely Wipe Files ====================
                     // Securely wipe any voice message audio files
                     messages.forEach { message ->
                         if (message.messageType == com.securelegion.database.entities.Message.MESSAGE_TYPE_VOICE &&
@@ -671,9 +688,28 @@ class MainActivity : BaseActivity() {
                         }
                     }
 
+                    // ==================== PHASE 3: Clear Received ID Tracking ====================
+                    // Clean up deduplication entries for all message types (Ping, Pong, Message)
+                    try {
+                        messages.forEach { message ->
+                            if (message.pingId != null) {
+                                // Delete tracking entries for this message's phases
+                                database.receivedIdDao().deleteById(message.pingId)           // Ping ID
+                                database.receivedIdDao().deleteById("pong_${message.pingId}") // Pong ID
+                                database.receivedIdDao().deleteById(message.messageId)        // Message ID
+                            }
+                        }
+                        Log.d("MainActivity", "✓ Cleared ReceivedId entries for ${messageIds.size} messages")
+                    } catch (e: Exception) {
+                        Log.e("MainActivity", "Failed to clear ReceivedId entries", e)
+                    }
+
+                    // ==================== PHASE 4: Delete Messages from Database ====================
                     // Delete all messages from database
                     database.messageDao().deleteMessagesForContact(chat.id.toLong())
+                    Log.d("MainActivity", "✓ Deleted ${messages.size} messages from database")
 
+                    // ==================== PHASE 5: VACUUM Database ====================
                     // VACUUM database to compact and remove deleted records
                     try {
                         database.openHelper.writableDatabase.execSQL("VACUUM")

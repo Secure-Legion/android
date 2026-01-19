@@ -15,6 +15,7 @@ import com.securelegion.database.dao.GroupDao
 import com.securelegion.database.dao.GroupMemberDao
 import com.securelegion.database.dao.GroupMessageDao
 import com.securelegion.database.dao.MessageDao
+import com.securelegion.database.dao.PendingFriendRequestDao
 import com.securelegion.database.dao.PingInboxDao
 import com.securelegion.database.dao.ReceivedIdDao
 import com.securelegion.database.dao.SkippedMessageKeyDao
@@ -28,6 +29,7 @@ import com.securelegion.database.entities.Group
 import com.securelegion.database.entities.GroupMember
 import com.securelegion.database.entities.GroupMessage
 import com.securelegion.database.entities.Message
+import com.securelegion.database.entities.PendingFriendRequest
 import com.securelegion.database.entities.PingInbox
 import com.securelegion.database.entities.ReceivedId
 import com.securelegion.database.entities.SkippedMessageKey
@@ -49,8 +51,8 @@ import net.zetetic.database.sqlcipher.SupportOpenHelperFactory
  * Database file location: /data/data/com.securelegion/databases/secure_legion.db
  */
 @Database(
-    entities = [Contact::class, Message::class, Wallet::class, ReceivedId::class, UsedSignature::class, Group::class, GroupMember::class, GroupMessage::class, CallHistory::class, CallQualityLog::class, PingInbox::class, ContactKeyChain::class, SkippedMessageKey::class],
-    version = 31,
+    entities = [Contact::class, Message::class, Wallet::class, ReceivedId::class, UsedSignature::class, Group::class, GroupMember::class, GroupMessage::class, CallHistory::class, CallQualityLog::class, PingInbox::class, ContactKeyChain::class, SkippedMessageKey::class, PendingFriendRequest::class],
+    version = 32,
     exportSchema = false
 )
 abstract class SecureLegionDatabase : RoomDatabase() {
@@ -68,6 +70,7 @@ abstract class SecureLegionDatabase : RoomDatabase() {
     abstract fun pingInboxDao(): PingInboxDao
     abstract fun contactKeyChainDao(): ContactKeyChainDao
     abstract fun skippedMessageKeyDao(): SkippedMessageKeyDao
+    abstract fun pendingFriendRequestDao(): PendingFriendRequestDao
 
     companion object {
         private const val TAG = "SecureLegionDatabase"
@@ -590,6 +593,46 @@ abstract class SecureLegionDatabase : RoomDatabase() {
         }
 
         /**
+         * Migration from version 31 to 32: Add pending_friend_requests table for friend request retry infrastructure
+         */
+        private val MIGRATION_31_32 = object : Migration(31, 32) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                Log.i(TAG, "Migrating database from version 31 to 32")
+
+                // Create pending_friend_requests table for tracking friend request state
+                database.execSQL("""
+                    CREATE TABLE IF NOT EXISTS pending_friend_requests (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        recipientOnion TEXT NOT NULL,
+                        recipientPin TEXT,
+                        phase INTEGER NOT NULL,
+                        direction TEXT NOT NULL,
+                        needsRetry INTEGER NOT NULL DEFAULT 0,
+                        isCompleted INTEGER NOT NULL DEFAULT 0,
+                        isFailed INTEGER NOT NULL DEFAULT 0,
+                        lastSentAt INTEGER,
+                        nextRetryAt INTEGER NOT NULL DEFAULT 0,
+                        retryCount INTEGER NOT NULL DEFAULT 0,
+                        phase1PayloadJson TEXT,
+                        phase2PayloadBase64 TEXT,
+                        contactCardJson TEXT,
+                        hybridSharedSecretBase64 TEXT,
+                        createdAt INTEGER NOT NULL,
+                        completedAt INTEGER,
+                        contactId INTEGER
+                    )
+                """.trimIndent())
+
+                // Create indices for common queries
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_pending_friend_requests_recipientOnion ON pending_friend_requests(recipientOnion)")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_pending_friend_requests_phase ON pending_friend_requests(phase)")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_pending_friend_requests_needsRetry ON pending_friend_requests(needsRetry)")
+
+                Log.i(TAG, "Migration completed: Added pending_friend_requests table for friend request retry infrastructure")
+            }
+        }
+
+        /**
          * Migration from version 20 to 21: Add group messaging tables
          */
         private val MIGRATION_20_21 = object : Migration(20, 21) {
@@ -729,7 +772,7 @@ abstract class SecureLegionDatabase : RoomDatabase() {
                     DATABASE_NAME
                 )
                     .openHelperFactory(factory)
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23, MIGRATION_23_24, MIGRATION_24_25, MIGRATION_25_26, MIGRATION_26_27, MIGRATION_27_28, MIGRATION_28_29, MIGRATION_29_30, MIGRATION_30_31)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23, MIGRATION_23_24, MIGRATION_24_25, MIGRATION_25_26, MIGRATION_26_27, MIGRATION_27_28, MIGRATION_28_29, MIGRATION_29_30, MIGRATION_30_31, MIGRATION_31_32)
                     .addCallback(object : RoomDatabase.Callback() {
                         override fun onCreate(db: SupportSQLiteDatabase) {
                             super.onCreate(db)
@@ -820,7 +863,7 @@ abstract class SecureLegionDatabase : RoomDatabase() {
                         DATABASE_NAME
                     )
                         .openHelperFactory(SupportOpenHelperFactory(passphrase))
-                        .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23, MIGRATION_23_24, MIGRATION_24_25, MIGRATION_25_26, MIGRATION_26_27, MIGRATION_27_28, MIGRATION_28_29, MIGRATION_29_30, MIGRATION_30_31)
+                        .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23, MIGRATION_23_24, MIGRATION_24_25, MIGRATION_25_26, MIGRATION_26_27, MIGRATION_27_28, MIGRATION_28_29, MIGRATION_29_30, MIGRATION_30_31, MIGRATION_31_32)
                         .addCallback(object : RoomDatabase.Callback() {
                             override fun onCreate(db: SupportSQLiteDatabase) {
                                 super.onCreate(db)

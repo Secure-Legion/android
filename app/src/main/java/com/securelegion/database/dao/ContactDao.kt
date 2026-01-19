@@ -139,4 +139,20 @@ interface ContactDao {
      */
     @Query("SELECT EXISTS(SELECT 1 FROM contacts WHERE solanaAddress = :solanaAddress)")
     suspend fun contactExists(solanaAddress: String): Boolean
+
+    /**
+     * Get all contacts that need TAP sync (needsTapSync = true)
+     * Used by TapSyncWorker to send "I'm online" signals
+     * @return List of contacts needing TAP synchronization
+     */
+    @Query("SELECT * FROM contacts WHERE needsTapSync = 1 AND isBlocked = 0")
+    suspend fun getContactsNeedingTapSync(): List<Contact>
+
+    /**
+     * Mark TAP as sent for a contact (set needsTapSync to false)
+     * Called after successfully sending TAP to the contact
+     * @param contactId The contact ID
+     */
+    @Query("UPDATE contacts SET needsTapSync = 0 WHERE id = :contactId")
+    suspend fun markTapSent(contactId: Long)
 }

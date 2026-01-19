@@ -1028,11 +1028,13 @@ class VoiceCallActivity : BaseActivity() {
         }
     }
 
+    @Suppress("GestureBackNavigation")  // Minimize call to background instead of ending
     override fun onBackPressed() {
         // Back button should minimize app, not end call (like real phone apps)
         // Call continues in background, user can return via ongoing notification
         moveTaskToBack(true)
         Log.d(TAG, "Back button pressed - minimizing to background (call continues)")
+        super.onBackPressed()
     }
 
     override fun onDestroy() {

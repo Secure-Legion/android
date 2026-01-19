@@ -188,4 +188,27 @@ interface MessageDao {
     @Query("UPDATE messages SET paymentStatus = :status, txSignature = :txSignature WHERE messageId = :messageId")
     suspend fun updatePaymentStatus(messageId: String, status: String, txSignature: String)
 
+    /**
+     * Get messages that need retry (sent by us, not yet delivered, not too old)
+     * Used by MessageRetryWorker for periodic retry
+     * @param currentTimeMs Current time in milliseconds
+     * @param giveupAfterDays Give up on messages older than this many days
+     * @return List of messages needing retry
+     */
+    @Query("""
+        SELECT * FROM messages
+        WHERE isSentByMe = 1
+        AND status < 2
+        AND timestamp > :currentTimeMs - (:giveupAfterDays * 24 * 60 * 60 * 1000)
+        ORDER BY timestamp ASC
+    """)
+    suspend fun getMessagesNeedingRetry(currentTimeMs: Long, giveupAfterDays: Long = 7): List<Message>
+
+    /**
+     * Mark PING as delivered when PING_ACK is successfully sent
+     * Updates the message status to reflect ACK confirmation
+     */
+    @Query("UPDATE messages SET status = 2 WHERE pingId = :pingId")
+    suspend fun markPingDelivered(pingId: String)
+
 }

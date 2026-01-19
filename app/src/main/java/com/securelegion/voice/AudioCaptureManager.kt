@@ -73,6 +73,7 @@ class AudioCaptureManager(
      * Initialize AudioRecord for microphone capture
      * Must call this before startCapture()
      */
+    @Suppress("MissingPermission")  // Permission check via require() above
     fun initialize() {
         require(hasPermission()) { "RECORD_AUDIO permission not granted" }
 
