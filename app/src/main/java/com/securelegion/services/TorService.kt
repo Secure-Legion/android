@@ -30,11 +30,11 @@ import com.securelegion.R
 import com.securelegion.crypto.TorManager
 import com.securelegion.crypto.RustBridge
 import com.securelegion.crypto.KeyChainManager
+import com.securelegion.models.AckStateTracker
 import com.securelegion.database.entities.sendChainKeyBytes
 import com.securelegion.database.entities.receiveChainKeyBytes
 import com.securelegion.database.entities.rootKeyBytes
 import com.securelegion.utils.ThemedToast
-import com.securelegion.workers.ImmediateRetryWorker
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -1821,15 +1821,37 @@ class TorService : Service() {
      */
     private fun handleIncomingAck(itemId: String, ackType: String) {
         try {
-            // PONG_ACK is received by the receiver (who sent the PONG)
-            // The receiver has no outgoing message to update - they're waiting to receive one
-            // PONG_ACK just means the sender got their PONG and will send the message blob soon
-            if (ackType == "PONG_ACK") {
-                Log.i(TAG, "✓ Received PONG_ACK - sender acknowledged PONG, expecting message blob soon (pingId: ${itemId.take(8)}...)")
-                return
-            }
+            // CRITICAL: PONG_ACK must go through the state machine!
+            // Previously, PONG_ACK was being ignored (early return), causing state to stay PING_ACKED
+            // This made MESSAGE_ACK fail validation (trying PING_ACKED → MESSAGE_ACK instead of PONG_ACKED → MESSAGE_ACK)
+            //
+            // PONG_ACK is received by the sender after sending PING
+            // The sender waits for receiver's PONG, then ACKs with PONG_ACK before sending message blob
+            // This ACK must update the state machine: PING_ACKED → PONG_ACKED
 
             CoroutineScope(Dispatchers.IO).launch {
+                // RECEIVER-SIDE SKIP: Short-circuit PONG_ACK on receiver
+                // If this device is the receiver (pingId exists in ping_inbox), skip processing.
+                // PONG_ACK is sent by sender to receiver, but receiver has no action to take.
+                // The message row doesn't exist yet on receiver (sender hasn't sent MESSAGE_ACK),
+                // so this is expected behavior, not an error.
+                if (ackType == "PONG_ACK") {
+                    try {
+                        val keyManager = com.securelegion.crypto.KeyManager.getInstance(this@TorService)
+                        val dbPassphrase = keyManager.getDatabasePassphrase()
+                        val database = com.securelegion.database.SecureLegionDatabase.getInstance(this@TorService, dbPassphrase)
+
+                        val isReceiver = database.pingInboxDao().exists(itemId)
+                        if (isReceiver) {
+                            Log.v(TAG, "⊘ Receiver ignoring inbound PONG_ACK for pingId=$itemId (expected behavior)")
+                            return@launch
+                        }
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Error checking ping_inbox for PONG_ACK skip: ${e.message}")
+                        // Continue with normal processing if skip check fails (may be sender-side PONG_ACK)
+                    }
+                }
+
                 // Retry finding the message up to 5 times with exponential backoff
                 // This handles the race condition where ACK arrives before DB update completes
                 var retryCount = 0
@@ -1845,8 +1867,8 @@ class TorService : Service() {
                         val dbPassphrase = keyManager.getDatabasePassphrase()
                         val database = com.securelegion.database.SecureLegionDatabase.getInstance(this@TorService, dbPassphrase)
 
-                        // For PING_ACK, TAP_ACK, PONG_ACK, MESSAGE_ACK: lookup by pingId
-                        // (Currently all ACKs use pingId for lookup)
+                        // For PING_ACK, PONG_ACK, TAP_ACK, MESSAGE_ACK: lookup by pingId
+                        // (Currently all ACKs use pingId for lookup, except PONG_ACK which may not have a message)
                         message = if (lookupByPingId) {
                             database.messageDao().getMessageByPingId(itemId)
                         } else {
@@ -1874,6 +1896,18 @@ class TorService : Service() {
                     val database = com.securelegion.database.SecureLegionDatabase.getInstance(this@TorService, dbPassphrase)
 
                     if (message != null) {
+                        // CRITICAL: Check ACK state machine BEFORE processing
+                        // This prevents duplicate ACKs from changing state and ensures strict ordering
+                        val ackTracker = MessageService.getAckTracker()
+                        if (!ackTracker.processAck(message.messageId, ackType)) {
+                            // ACK was rejected (duplicate or out-of-order)
+                            Log.w(TAG, "✗ ACK rejected by state machine: ${message.messageId}/$ackType (duplicate or out-of-order)")
+                            return@launch
+                        }
+
+                        // ACK accepted by state machine - safe to process
+                        Log.d(TAG, "✓ ACK accepted by state machine: ${message.messageId}/$ackType")
+
                         // Update appropriate field based on ACK type
                         val updatedMessage = when (ackType) {
                             "PING_ACK" -> {
@@ -1937,6 +1971,13 @@ class TorService : Service() {
                                     status = com.securelegion.database.entities.Message.STATUS_DELIVERED
                                 )
                             }
+                            "PONG_ACK" -> {
+                                // PONG_ACK is state machine transition: PING_ACKED → PONG_ACKED
+                                // The sender has received PONG from receiver and will now send message blob
+                                // No database update needed - state machine already processed
+                                Log.i(TAG, "✓ Received PONG_ACK for message ${message.messageId} - sender will now send message blob")
+                                message.copy(pongDelivered = true)
+                            }
                             "TAP_ACK" -> {
                                 Log.i(TAG, "✓ Received TAP_ACK - contact ${message.contactId} confirmed online! Triggering retry for all pending messages")
 
@@ -1998,17 +2039,14 @@ class TorService : Service() {
                             database.messageDao().updateMessage(updatedMessage)
                             Log.i(TAG, "✓ Updated message ${message.messageId} for $ackType")
 
-                            // Cancel immediate retry worker if MESSAGE_ACK (message fully delivered)
-                            if (ackType == "MESSAGE_ACK") {
-                                ImmediateRetryWorker.cancelForMessage(this@TorService, message.messageId)
-                                Log.d(TAG, "Cancelled immediate retry worker for ${message.messageId}")
-
-                                // Broadcast to update sender's UI (show double checkmarks)
+                            // Broadcast to update sender's UI for delivery status changes
+                            if (ackType == "PONG_ACK" || ackType == "MESSAGE_ACK") {
                                 val intent = Intent("com.securelegion.MESSAGE_RECEIVED")
                                 intent.setPackage(packageName)
                                 intent.putExtra("CONTACT_ID", message.contactId)
                                 sendBroadcast(intent)
-                                Log.i(TAG, "✓ Broadcast MESSAGE_RECEIVED to update sender UI for contact ${message.contactId}")
+                                val statusDesc = if (ackType == "PONG_ACK") "PONG received" else "delivered"
+                                Log.i(TAG, "✓ Broadcast MESSAGE_RECEIVED to update sender UI ($statusDesc) for contact ${message.contactId}")
                             }
                         }
                     } else {
@@ -5033,6 +5071,7 @@ class TorService : Service() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             registerReceiver(vpnBroadcastReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
         } else {
+            @Suppress("UnspecifiedRegisterReceiverFlag")  // RECEIVER_NOT_EXPORTED not available in API < 31
             registerReceiver(vpnBroadcastReceiver, filter)
         }
         Log.d(TAG, "VPN broadcast receiver registered")
@@ -5425,6 +5464,7 @@ class TorService : Service() {
      * Schedule recurring alarm to check if service is running
      * Provides redundancy beyond START_STICKY for aggressive battery optimization
      */
+    @Suppress("MissingPermission")  // SCHEDULE_EXACT_ALARM declared in manifest
     private fun scheduleServiceRestart() {
         try {
             alarmManager = getSystemService(Context.ALARM_SERVICE) as AlarmManager
