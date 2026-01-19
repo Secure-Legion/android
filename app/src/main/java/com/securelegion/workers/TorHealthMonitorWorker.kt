@@ -255,18 +255,77 @@ class TorHealthMonitorWorker(
     }
 
     /**
-     * Test if we can reach our own .onion service on port 9150
-     * This verifies that Tor circuits are working end-to-end
+     * Test if Tor can route to an onion via SOCKS5 CONNECT
+     * This verifies circuits work end-to-end (not just SOCKS listening)
+     *
+     * SOCKS5 protocol:
+     * 1. Connect to SOCKS5 server (127.0.0.1:9050)
+     * 2. Auth handshake (no auth required)
+     * 3. Send CONNECT request with onion address + port
+     * 4. If server responds with REP=0, circuit works
+     *
+     * This catches failures like:
+     * - SOCKS5 up but rendezvous fails (status 5)
+     * - Target onion offline
+     * - Tor unable to build circuit
      */
     private suspend fun checkCircuitToOnion(onionAddress: String, port: Int): Boolean {
         return withContext(Dispatchers.IO) {
             try {
-                // In a real implementation, this would connect through Tor SOCKS proxy
-                // For now, attempt a direct socket test (simplified)
                 val socket = Socket()
-                socket.connect(InetSocketAddress(onionAddress, port), 3000)
+                socket.soTimeout = 3000  // 3s timeout for SOCKS handshake
+                socket.connect(InetSocketAddress(SOCKS_HOST, SOCKS_PORT), 2000)
+
+                val output = socket.getOutputStream()
+                val input = socket.getInputStream()
+
+                // SOCKS5 auth handshake: no auth required
+                output.write(byteArrayOf(0x05, 0x01, 0x00))  // VER=5, NMETHODS=1, METHOD=0
+                output.flush()
+
+                val authResp = ByteArray(2)
+                if (input.read(authResp) != 2) {
+                    socket.close()
+                    return@withContext false
+                }
+
+                if (authResp[0] != 0x05.toByte() || authResp[1] != 0x00.toByte()) {
+                    socket.close()
+                    return@withContext false
+                }
+
+                // SOCKS5 CONNECT request to onion
+                val onionBytes = onionAddress.toByteArray()
+                val connectReq = ByteArray(6 + onionBytes.size)
+                connectReq[0] = 0x05  // VER
+                connectReq[1] = 0x01  // CMD=CONNECT
+                connectReq[2] = 0x00  // RSV
+                connectReq[3] = 0x03  // ATYP=DOMAINNAME
+                connectReq[4] = onionBytes.size.toByte()  // domain length
+                onionBytes.copyInto(connectReq, 5)
+                connectReq[5 + onionBytes.size] = (port shr 8).toByte()      // port high byte
+                connectReq[6 + onionBytes.size] = (port and 0xFF).toByte()    // port low byte
+
+                output.write(connectReq)
+                output.flush()
+
+                // Read CONNECT response
+                val connectResp = ByteArray(4 + 256)  // max domain response
+                val bytesRead = input.read(connectResp)
                 socket.close()
-                true
+
+                // Response: VER=5, REP (0=success, others=fail), RSV=0, ATYP, ADDR, PORT
+                if (bytesRead < 4) {
+                    return@withContext false
+                }
+
+                val isSuccess = connectResp[0] == 0x05.toByte() && connectResp[1] == 0x00.toByte()
+                if (!isSuccess) {
+                    val repCode = connectResp[1].toInt() and 0xFF
+                    Log.d(TAG, "Circuit test to $onionAddress:$port failed: SOCKS5 status $repCode")
+                }
+
+                isSuccess
             } catch (e: Exception) {
                 Log.d(TAG, "Circuit test to $onionAddress:$port failed: ${e.message}")
                 false
