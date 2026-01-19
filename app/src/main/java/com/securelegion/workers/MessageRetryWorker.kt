@@ -7,6 +7,7 @@ import com.securelegion.crypto.KeyManager
 import com.securelegion.database.SecureLegionDatabase
 import com.securelegion.services.MessageService
 import com.securelegion.models.AckState
+import com.securelegion.utils.TorHealthHelper
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.util.concurrent.TimeUnit
@@ -118,7 +119,7 @@ class MessageRetryWorker(
     }
 
     /**
-     * Retry pending messages (phase-aware)
+     * Retry pending messages (phase-aware, Tor-health-aware)
      *
      * CRITICAL: Bug #7 - Phase-Aware Retry Logic
      * Different retry actions based on ACK state:
@@ -126,6 +127,9 @@ class MessageRetryWorker(
      * - PING_ACKED: Poll for PONG reply
      * - PONG_ACKED: Send message blob (sender only)
      * - MESSAGE_ACKED: Skip (already delivered)
+     *
+     * NEVER DELETES messages - just updates error and schedules next retry
+     * with exponential backoff: 2s, 5s, 10s, 20s, 40s, 2m, 5m, 10m (cap)
      */
     private suspend fun retryPendingPings(): Int = withContext(Dispatchers.IO) {
         val keyManager = KeyManager.getInstance(applicationContext)
@@ -136,14 +140,21 @@ class MessageRetryWorker(
 
         val now = System.currentTimeMillis()
 
+        // CRITICAL GATE: Check Tor health before attempting any sends
+        if (TorHealthHelper.isTorUnavailable(applicationContext)) {
+            val status = TorHealthHelper.getStatusString(applicationContext)
+            Log.w(TAG, "Tor unavailable ($status), skipping message retries")
+            return@withContext 0
+        }
+
         // HARD GATE:
         // - Message not fully delivered
         // - Retry time elapsed
-        // - Give up after 7 days
+        // - Keep retrying indefinitely (no 7-day limit)
         val messages = database.messageDao().getMessagesNeedingRetry(
             currentTimeMs = now,
-            giveupAfterDays = 7
-        ).filter { !it.messageDelivered }  // Changed from !pingDelivered to !messageDelivered
+            giveupAfterDays = 365  // Extended from 7 days to 1 year (indefinite for practical purposes)
+        ).filter { !it.messageDelivered }
 
         var retriedCount = 0
 
@@ -153,7 +164,7 @@ class MessageRetryWorker(
             // Check current ACK state to determine what phase needs retry
             val ackState = ackTracker.getState(message.messageId)
 
-            Log.d(TAG, "Retrying message ${message.messageId} (phase: $ackState)")
+            Log.d(TAG, "Retrying message ${message.messageId} (phase: $ackState, retryCount=${message.retryCount})")
 
             val success = try {
                 when (ackState) {
@@ -182,28 +193,36 @@ class MessageRetryWorker(
                     }
                 }
             } catch (e: Exception) {
-                Log.e(TAG, "Failed to retry message ${message.messageId} in phase $ackState", e)
+                val errorMsg = e.message?.take(256) ?: "Unknown error"
+                Log.e(TAG, "Failed to retry message ${message.messageId} in phase $ackState: $errorMsg", e)
                 false
             }
 
-            // Always schedule next retry (even on failure)
-            MessageService.scheduleRetry(database, message)
-
             if (success) {
                 retriedCount++
-                Log.d(TAG, "✓ Retry sent for ${message.messageId} (phase: $ackState)")
+                Log.d(TAG, "Retry sent for ${message.messageId} (phase: $ackState)")
+            } else {
+                // On failure: update message with error and schedule next retry with exponential backoff
+                val nextRetryMs = calculateNextRetryTime(message.retryCount, now)
+                val errorMsg = "Retry attempt ${message.retryCount + 1} failed (phase: $ackState)"
+                updateMessageRetryState(database, message, errorMsg, nextRetryMs)
             }
+
+            // Always schedule next retry (even on success, for indefinite retries)
+            MessageService.scheduleRetry(database, message)
         }
 
         retriedCount
     }
 
     /**
-     * Retry messages for a specific contact (TAP-triggered, phase-aware)
+     * Retry messages for a specific contact (TAP-triggered, phase-aware, Tor-health-aware)
      *
      * CRITICAL: Bug #7 - Phase-Aware Retry Logic
      * When TAP ACK is received, we retry all pending messages for that contact,
      * but only retry the missing phase based on ACK state.
+     *
+     * Never deletes messages - updates with error and next retry time
      */
     private suspend fun retryPendingPingsForContact(contactId: Long): Int =
         withContext(Dispatchers.IO) {
@@ -216,11 +235,18 @@ class MessageRetryWorker(
 
             val now = System.currentTimeMillis()
 
+            // CRITICAL GATE: Check Tor health before attempting any sends
+            if (TorHealthHelper.isTorUnavailable(applicationContext)) {
+                val status = TorHealthHelper.getStatusString(applicationContext)
+                Log.w(TAG, "Tor unavailable ($status), skipping contact retry for $contactId")
+                return@withContext 0
+            }
+
             val messages = database.messageDao().getMessagesNeedingRetry(
                 currentTimeMs = now,
-                giveupAfterDays = 7
+                giveupAfterDays = 365  // Extended from 7 days to 1 year (indefinite for practical purposes)
             ).filter {
-                it.contactId == contactId && !it.messageDelivered  // Changed from !pingDelivered
+                it.contactId == contactId && !it.messageDelivered
             }
 
             var retriedCount = 0
@@ -231,7 +257,7 @@ class MessageRetryWorker(
                 // Check current ACK state to determine what phase needs retry
                 val ackState = ackTracker.getState(message.messageId)
 
-                Log.d(TAG, "Retrying message ${message.messageId} for contact $contactId (phase: $ackState)")
+                Log.d(TAG, "Retrying message ${message.messageId} for contact $contactId (phase: $ackState, retryCount=${message.retryCount})")
 
                 val success = try {
                     when (ackState) {
@@ -260,18 +286,71 @@ class MessageRetryWorker(
                         }
                     }
                 } catch (e: Exception) {
-                    Log.e(TAG, "Failed to retry message ${message.messageId} in phase $ackState", e)
+                    val errorMsg = e.message?.take(256) ?: "Unknown error"
+                    Log.e(TAG, "Failed to retry message ${message.messageId} in phase $ackState: $errorMsg", e)
                     false
                 }
 
-                MessageService.scheduleRetry(database, message)
-
                 if (success) {
                     retriedCount++
-                    Log.d(TAG, "✓ Retry sent for ${message.messageId} (phase: $ackState)")
+                    Log.d(TAG, "Retry sent for ${message.messageId} (phase: $ackState)")
+                } else {
+                    // On failure: update message with error and schedule next retry with exponential backoff
+                    val nextRetryMs = calculateNextRetryTime(message.retryCount, now)
+                    val errorMsg = "Contact retry attempt ${message.retryCount + 1} failed (phase: $ackState)"
+                    updateMessageRetryState(database, message, errorMsg, nextRetryMs)
                 }
+
+                MessageService.scheduleRetry(database, message)
             }
 
             retriedCount
         }
+
+    /**
+     * Calculate next retry time with exponential backoff
+     * Schedule: 2s, 5s, 10s, 20s, 40s, 2m, 5m, 10m (cap)
+     */
+    private fun calculateNextRetryTime(retryCount: Int, nowMs: Long): Long {
+        val delayMs = when (retryCount) {
+            0 -> 2000L          // First retry: 2 seconds
+            1 -> 5000L          // Second: 5 seconds
+            2 -> 10000L         // Third: 10 seconds
+            3 -> 20000L         // Fourth: 20 seconds
+            4 -> 40000L         // Fifth: 40 seconds
+            5 -> 120000L        // Sixth: 2 minutes
+            6 -> 300000L        // Seventh: 5 minutes
+            else -> 600000L     // Eighth+: 10 minutes (cap)
+        }
+        return nowMs + delayMs
+    }
+
+    /**
+     * Update message retry state without deleting it
+     * Stores error message and schedules next retry time
+     */
+    private suspend fun updateMessageRetryState(
+        database: SecureLegionDatabase,
+        message: com.securelegion.database.entities.Message,
+        errorMsg: String,
+        nextRetryMs: Long
+    ) = withContext(Dispatchers.IO) {
+        try {
+            val sanitizedError = errorMsg
+                .replace("\n", " ")
+                .replace("\r", " ")
+                .take(256)
+
+            val updated = message.copy(
+                retryCount = message.retryCount + 1,
+                lastRetryTimestamp = System.currentTimeMillis(),
+                nextRetryAtMs = nextRetryMs,
+                lastError = sanitizedError
+            )
+            database.messageDao().updateMessage(updated)
+            Log.d(TAG, "Updated message ${message.messageId} retry state: attempt ${updated.retryCount}, next retry at $nextRetryMs")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to update message retry state: ${e.message}", e)
+        }
+    }
 }

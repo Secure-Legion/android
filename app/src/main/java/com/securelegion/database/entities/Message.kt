@@ -239,6 +239,20 @@ data class Message(
     val lastRetryTimestamp: Long? = null,
 
     /**
+     * Next scheduled retry time (Unix milliseconds)
+     * Calculated from retryCount and lastRetryTimestamp using exponential backoff
+     * null = message delivered or not yet attempted
+     */
+    val nextRetryAtMs: Long? = null,
+
+    /**
+     * Last error message from failed send attempt
+     * Helps diagnose why message delivery failed (max 256 chars, no newlines)
+     * null = no error
+     */
+    val lastError: String? = null,
+
+    /**
      * Tracks if Ping was successfully delivered to receiver
      * true = receiver has the Ping (lock icon showing), stop retrying
      * false = delivery failed (receiver offline), keep retrying

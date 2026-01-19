@@ -217,6 +217,15 @@ class TorService : Service() {
         }
 
         /**
+         * Request Tor restart (idempotent, safe to call multiple times)
+         * Used by TorHealthMonitorWorker when Tor health degrades
+         */
+        fun requestRestart(reason: String) {
+            Log.i(TAG, "Restart requested: $reason")
+            instance?.restartTor()
+        }
+
+        /**
          * Report a SOCKS failure from MessageService or other components
          * TorService will track failures and automatically restart Tor if needed
          */
@@ -4556,6 +4565,19 @@ class TorService : Service() {
         // Stop foreground service
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
+    }
+
+    /**
+     * Restart Tor daemon (idempotent)
+     * Used by TorHealthMonitorWorker for auto-recovery
+     */
+    private fun restartTor() {
+        Log.i(TAG, "Restarting Tor daemon...")
+        stopTorService()
+        // Give it a moment before restarting
+        Handler(Looper.getMainLooper()).postDelayed({
+            startTorService()
+        }, 1000)  // 1 second delay
     }
 
     private fun createNotificationChannel() {
