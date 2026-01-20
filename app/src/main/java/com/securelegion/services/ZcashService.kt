@@ -25,17 +25,14 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
-import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONObject
 import org.bouncycastle.crypto.digests.RIPEMD160Digest
 import org.web3j.crypto.Bip32ECKeyPair
 import org.web3j.crypto.MnemonicUtils
+import com.securelegion.network.OkHttpProvider
 import java.io.IOException
-import java.net.InetSocketAddress
-import java.net.Proxy
 import java.security.MessageDigest
-import java.util.concurrent.TimeUnit
 
 /**
  * Zcash Service
@@ -55,13 +52,8 @@ class ZcashService(private val context: Context) {
 
     private val keyManager = KeyManager.getInstance(context)
 
-    // Configure OkHttpClient to use Tor SOCKS5 proxy for privacy (price fetching, etc.)
-    private val client = OkHttpClient.Builder()
-        .connectTimeout(30, TimeUnit.SECONDS)
-        .readTimeout(30, TimeUnit.SECONDS)
-        .writeTimeout(30, TimeUnit.SECONDS)
-        .proxy(Proxy(Proxy.Type.SOCKS, InetSocketAddress("127.0.0.1", 9050)))
-        .build()
+    // Get OkHttpClient from centralized provider (supports connection reset on network changes)
+    private val client get() = OkHttpProvider.getZcashClient()
 
     companion object {
         private const val TAG = "ZcashService"

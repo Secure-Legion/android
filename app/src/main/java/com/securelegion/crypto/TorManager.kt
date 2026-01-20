@@ -6,9 +6,7 @@ import android.content.SharedPreferences
 import android.util.Log
 import okhttp3.OkHttpClient
 import org.torproject.jni.TorService
-import java.net.InetSocketAddress
-import java.net.Proxy
-import java.util.concurrent.TimeUnit
+import com.securelegion.network.OkHttpProvider
 import java.io.File
 import IPtProxy.Controller
 import IPtProxy.IPtProxy
@@ -114,10 +112,16 @@ class TorManager(private val context: Context) {
      * Prevents concurrent initializations - queues callbacks if already initializing
      */
     fun initializeAsync(onComplete: (Boolean, String?) -> Unit) {
+        // LOG WHO IS CALLING THIS (stack trace)
+        val caller = Thread.currentThread().stackTrace.getOrNull(3)?.let {
+            "${it.className}.${it.methodName}:${it.lineNumber}"
+        } ?: "unknown"
+        Log.w(TAG, "========== initializeAsync() CALLED FROM: $caller ==========")
+
         synchronized(this) {
             // If currently initializing, queue the callback
             if (isInitializing) {
-                Log.d(TAG, "Tor initialization already in progress, queuing callback")
+                Log.d(TAG, "Tor initialization already in progress, queuing callback (called from $caller)")
                 initCallbacks.add(onComplete)
                 return
             }
@@ -194,11 +198,15 @@ class TorManager(private val context: Context) {
                 // PERSISTENT HIDDEN SERVICES (not ephemeral):
                 // Keys are generated once and stored in HiddenServiceDir
                 // Tor reuses the same keys on every restart (no collision errors)
+                //
+                // NOTE: Guardian Project's TorService uses /app_TorService/data as DataDirectory
+                // Do NOT specify DataDirectory here - let TorService manage it
                 val torrcContent = """
-                    DataDirectory ${torDataDir!!.absolutePath}
-                    SocksPort 127.0.0.1:9050
-                    ControlPort 127.0.0.1:9051
                     CookieAuthentication 1
+                    ControlPort 127.0.0.1:9051
+                    MetricsPort 127.0.0.1:9035
+                    MetricsPortPolicy accept 127.0.0.1
+                    SocksPort 127.0.0.1:9050
                     ClientOnly 1
                     AvoidDiskWrites 1
                     DormantCanceledByStartup 1
@@ -244,14 +252,17 @@ class TorManager(private val context: Context) {
                         }
                     }
 
-                    Log.d(TAG, "Starting TorService...")
+                    Log.w(TAG, "========== STARTING GUARDIAN PROJECT TOR DAEMON (org.torproject.jni.TorService) ==========")
 
                     // Start TorService as an Android Service
+                    // NOTE: Guardian Project TorService is a third-party library that handles its own
+                    // foreground service lifecycle. Use regular startService() to avoid crashes.
                     val intent = Intent(context, TorService::class.java)
                     intent.action = "org.torproject.android.intent.action.START"
                     context.startService(intent)
 
-                    Log.d(TAG, "TorService started, waiting for control port to be ready...")
+                    Log.w(TAG, "========== GUARDIAN PROJECT TOR DAEMON START COMMAND SENT ==========")
+                    Log.d(TAG, "Waiting for control port to be ready...")
                 } else {
                     Log.d(TAG, "Tor already running and torrc unchanged")
                 }
@@ -454,8 +465,9 @@ class TorManager(private val context: Context) {
             val voiceTorrc = File(context.filesDir, "voice_torrc")
             voiceTorrc.writeText("""
                 DataDirectory ${voiceTorDataDir.absolutePath}
-                ControlPort 127.0.0.1:9052
                 CookieAuthentication 1
+                CookieAuthFile ${voiceTorDataDir.absolutePath}/control_auth_cookie
+                ControlPort 127.0.0.1:9052
                 SOCKSPort 0
                 AvoidDiskWrites 1
                 HiddenServiceNonAnonymousMode 1
@@ -470,9 +482,15 @@ class TorManager(private val context: Context) {
             Log.i(TAG, "Voice Tor config: Single Onion Service (3-hop, service location visible)")
 
             // Start VoiceTorService (separate service for voice Tor)
+            // CRITICAL: Use startForegroundService() for Android 8+ to avoid BackgroundServiceStartNotAllowedException
             val voiceIntent = Intent(context, com.securelegion.services.VoiceTorService::class.java)
             voiceIntent.action = com.securelegion.services.VoiceTorService.ACTION_START
-            context.startService(voiceIntent)
+
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                context.startForegroundService(voiceIntent)
+            } else {
+                context.startService(voiceIntent)
+            }
 
             Log.i(TAG, "VoiceTorService started, waiting for control port 9052...")
 
@@ -654,14 +672,10 @@ class TorManager(private val context: Context) {
      * Use this for all HTTP/HTTPS requests to preserve network anonymity
      *
      * @return OkHttpClient with Tor SOCKS proxy at 127.0.0.1:9050
+     * Note: This returns a shared client instance from OkHttpProvider (supports connection reset)
      */
     fun getTorProxyClient(): OkHttpClient {
-        return OkHttpClient.Builder()
-            .proxy(Proxy(Proxy.Type.SOCKS, InetSocketAddress("127.0.0.1", 9050)))
-            .connectTimeout(30, TimeUnit.SECONDS) // Tor routing is slower
-            .readTimeout(30, TimeUnit.SECONDS)
-            .writeTimeout(30, TimeUnit.SECONDS)
-            .build()
+        return OkHttpProvider.getGenericClient()
     }
 
     /**

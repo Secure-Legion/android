@@ -6,14 +6,11 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.MultipartBody
-import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
+import com.securelegion.network.OkHttpProvider
 import java.io.IOException
-import java.net.InetSocketAddress
-import java.net.Proxy
-import java.util.concurrent.TimeUnit
 import android.util.Base64
 
 /**
@@ -38,13 +35,8 @@ class CrustService(
         private const val CRUST_PIN_SERVICE = "https://pin.crustcode.com/psa"
     }
 
-    // Configure OkHttpClient to use Tor SOCKS5 proxy for privacy
-    private val client = OkHttpClient.Builder()
-        .connectTimeout(30, TimeUnit.SECONDS)
-        .readTimeout(30, TimeUnit.SECONDS)
-        .writeTimeout(30, TimeUnit.SECONDS)
-        .proxy(Proxy(Proxy.Type.SOCKS, InetSocketAddress("127.0.0.1", 9050)))
-        .build()
+    // Get OkHttpClient from centralized provider (supports connection reset on network changes)
+    private val client get() = OkHttpProvider.getCrustClient()
 
     /**
      * Create Crust authentication header

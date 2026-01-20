@@ -96,6 +96,10 @@
             android:exported="false" />
 
         <activity
+            android:name=".TorHealthActivity"
+            android:exported="false" />
+
+        <activity
             android:name=".ComposeActivity"
             android:exported="false"
             android:windowSoftInputMode="adjustPan" />
@@ -303,7 +307,12 @@
             android:name=".services.VoiceTorService"
             android:enabled="true"
             android:exported="false"
-            android:stopWithTask="false" />
+            android:foregroundServiceType="specialUse"
+            android:stopWithTask="false">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Maintains dedicated Tor instance for low-latency voice calls" />
+        </service>
 
         <!-- Download message service - Handles background message downloads -->
         <service

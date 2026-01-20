@@ -476,7 +476,7 @@ class SplashActivity : AppCompatActivity() {
                         }
                     }
 
-                    // Update status display (scale 0-100% to 0-75% for combined progress)
+                    // Update status display (direct 1:1 mapping with bootstrap %)
                     runOnUiThread {
                         val progressBar = findViewById<ProgressBar>(R.id.torProgressBar)
                         if (status < 0) {
@@ -484,79 +484,31 @@ class SplashActivity : AppCompatActivity() {
                             updateStatus("Starting Tor...")
                             progressBar?.progress = 0
                         } else {
-                            // Scale bootstrap 0-100% to 0-75% (reserve 75-100% for service checks)
-                            val scaledProgress = (status * 0.75).toInt()
-                            Log.d("SplashActivity", "UI: Updating progress to $scaledProgress% (raw=$status%)")
-                            updateStatus("Connecting to Tor network... ($scaledProgress%)")
-                            progressBar?.progress = scaledProgress
+                            Log.d("SplashActivity", "UI: Updating progress to $status%")
+                            updateStatus("Connecting to Tor network... ($status%)")
+                            progressBar?.progress = status
                         }
                     }
 
-                    // After bootstrap, either proceed (first-time) or wait for listeners (existing account)
+                    // Once bootstrap complete, proceed immediately (don't wait for listeners)
                     if (bootstrapComplete) {
-                        if (isFirstTimeSetup) {
-                            // First-time setup: just proceed to lock/account screen
-                            // Hidden service will be created after account creation
-                            Log.i("SplashActivity", "✓ First-time setup - proceeding without listeners")
-                            runOnUiThread {
-                                val progressBar = findViewById<ProgressBar>(R.id.torProgressBar)
-                                progressBar?.progress = 100
-                                updateStatus("Connected to Tor!")
-                                Handler(Looper.getMainLooper()).postDelayed({
-                                    navigateToLock()
-                                }, 500)
-                            }
-                            return@Thread
-                        } else {
-                            // Existing account: wait for messaging to be ready
-                            // Start TorService if not already running (ensures it's in this process)
-                            if (!TorService.isRunning()) {
-                                Log.i("SplashActivity", "Starting TorService...")
-                                runOnUiThread {
-                                    val progressBar = findViewById<ProgressBar>(R.id.torProgressBar)
-                                    progressBar?.progress = 80 // 75% → 80% when starting service
-                                    updateStatus("Starting services... (80%)")
-                                }
-                                TorService.start(this@SplashActivity)
-                            }
+                        Log.i("SplashActivity", "✓ Tor bootstrap complete - proceeding to app")
 
-                            if (TorService.isMessagingReady()) {
-                                Log.i("SplashActivity", "✓ Messaging fully ready - listeners active")
-                                runOnUiThread {
-                                    val progressBar = findViewById<ProgressBar>(R.id.torProgressBar)
-                                    progressBar?.progress = 90 // 90% when messaging ready
-                                    updateStatus("Verifying services... (90%)")
-                                    // Run health checks with progress updates (90-100%)
-                                    Handler(Looper.getMainLooper()).postDelayed({
-                                        checkTorStatus()
-                                    }, 200)
-                                }
-                                return@Thread
-                            } else {
-                                // Still waiting for listeners - increment from 80% to 89% smoothly (don't loop back)
-                                val waitProgress = kotlin.math.min(80 + (attempts / 4), 89) // Cap at 89% to avoid loop
-                                runOnUiThread {
-                                    val progressBar = findViewById<ProgressBar>(R.id.torProgressBar)
-                                    progressBar?.progress = waitProgress
-                                    updateStatus("Starting services... ($waitProgress%)")
-                                }
-                                Log.d("SplashActivity", "Waiting for listeners... (attempt $attempts, progress $waitProgress%)")
-
-                                // If we've been waiting too long (20 seconds), just proceed anyway
-                                if (attempts > 80) { // 80 attempts * 250ms = 20 seconds
-                                    Log.w("SplashActivity", "Listener wait timeout after 20s - proceeding anyway")
-                                    runOnUiThread {
-                                        val progressBar = findViewById<ProgressBar>(R.id.torProgressBar)
-                                        progressBar?.progress = 90
-                                        updateStatus("Verifying services... (90%)")
-                                        Handler(Looper.getMainLooper()).postDelayed({
-                                            checkTorStatus()
-                                        }, 200)
-                                    }
-                                    return@Thread
-                                }
-                            }
+                        // Start TorService in background (it will finish initialization while user uses app)
+                        if (!TorService.isRunning()) {
+                            Log.i("SplashActivity", "Starting TorService in background...")
+                            TorService.start(this@SplashActivity)
                         }
+
+                        runOnUiThread {
+                            val progressBar = findViewById<ProgressBar>(R.id.torProgressBar)
+                            progressBar?.progress = 100
+                            updateStatus("Connected!")
+                            Handler(Looper.getMainLooper()).postDelayed({
+                                navigateToLock()
+                            }, 300)
+                        }
+                        return@Thread
                     }
 
                     Thread.sleep(250) // Check every 250ms for smoother UI updates

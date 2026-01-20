@@ -238,9 +238,11 @@ class GroupChatActivity : BaseActivity() {
                     messageAdapter.submitList(messages)
                     Log.i(TAG, "Loaded ${messages.size} messages for group: $groupName")
 
-                    // Scroll to bottom if there are messages
+                    // Smooth scroll to bottom to show new messages
                     if (messages.isNotEmpty()) {
-                        messagesRecyclerView.scrollToPosition(messages.size - 1)
+                        messagesRecyclerView.post {
+                            messagesRecyclerView.smoothScrollToPosition(messages.size - 1)
+                        }
                     }
                 }
 

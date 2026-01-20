@@ -35,14 +35,23 @@ import com.securelegion.database.entities.sendChainKeyBytes
 import com.securelegion.database.entities.receiveChainKeyBytes
 import com.securelegion.database.entities.rootKeyBytes
 import com.securelegion.utils.ThemedToast
+import com.securelegion.workers.TorHealthMonitorWorker
+import com.securelegion.network.TransportGate
+import com.securelegion.network.TorProbe
+import com.securelegion.network.TorRehydrator
+import com.securelegion.network.NetworkWatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.newSingleThreadContext
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlin.coroutines.resume
 import java.io.File
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.min
 
 /**
@@ -71,16 +80,17 @@ class TorService : Service() {
     private var isAckPollerRunning = false
     private var isListenerRunning = false
 
-    // Network monitoring
-    private var connectivityManager: ConnectivityManager? = null
-    private var networkCallback: ConnectivityManager.NetworkCallback? = null
-    private var hasNetworkConnection = false
-
     // AlarmManager for service restart
     private var alarmManager: AlarmManager? = null
 
     // Reconnection state
     private var isReconnecting = false
+
+    // Transport gate (blocks all Tor operations during network switch)
+    private lateinit var gate: TransportGate
+    private lateinit var probe: TorProbe
+    private lateinit var rehydrator: TorRehydrator
+    private var networkWatcher: NetworkWatcher? = null
     private var reconnectAttempts = 0
     private var lastReconnectTime = 0L
     private val reconnectHandler = Handler(Looper.getMainLooper())
@@ -117,17 +127,613 @@ class TorService : Service() {
     private var currentUploadSpeed = 0L    // bytes per second
     private val bandwidthHandler = Handler(Looper.getMainLooper())
     private var bandwidthUpdateRunnable: Runnable? = null
-    private var torConnected = false
     private var listenersReady = false
     private var isAppInForeground = false
     private val BANDWIDTH_UPDATE_FAST = 5000L      // 5 seconds when app open (matches VPN update interval)
     private val BANDWIDTH_UPDATE_SLOW = 10000L     // 10 seconds when app closed (saves battery)
+
+    // ==================== TOR STATE MACHINE ====================
+
+    /**
+     * Tor connection state machine
+     * Replaces scattered boolean flags with a clean state machine
+     */
+    enum class TorState {
+        OFF,            // Tor is not running
+        STARTING,       // initializeTor() called, waiting for bootstrap to begin
+        BOOTSTRAPPING,  // Bootstrap in progress (0-99%)
+        RUNNING,        // Bootstrap complete (100%), fully operational
+        STOPPING,       // stopTor() called, shutting down
+        ERROR           // Failed to start or encountered fatal error
+    }
+
+    @Volatile private var torState: TorState = TorState.OFF
+    @Volatile private var bootstrapPercent: Int = 0
+    @Volatile private var lastBootstrapProgressMs: Long = 0L  // When bootstrap % last increased
+    @Volatile private var currentSocksPort: Int = 9050
+    @Volatile private var lastRestartMs: Long = 0L  // Debounce network change restarts
+    private var bootstrapWatchdogJob: kotlinx.coroutines.Job? = null
+
+    // Network change tracking (only restart on actual network changes, not capability changes)
+    @Volatile private var lastNetworkIsWifi: Boolean? = null  // null = no network yet
+    @Volatile private var lastNetworkIsIpv6Only: Boolean? = null
+    @Volatile private var lastNetworkHasInternet: Boolean? = null  // Track internet connectivity state
+    @Volatile private var lastNetworkChangeMs: Long = 0L  // Time of last network change (for stabilization window)
+    @Volatile private var lastTorUnstableAt: Long = System.currentTimeMillis()  // Time when Tor became unstable (restart/network change/gate close)
+
+    // Lifecycle management (prevent repeated resets)
+    private val startupCompleted = AtomicBoolean(false)  // Latch: only run startup setup once
+    @Volatile private var lastGlobalResetAt: Long = 0L  // Rate limiter: prevent reset spam
+
+    // Tor health metrics (from MetricsPort)
+    private var metricsHealthJob: kotlinx.coroutines.Job? = null
+    private var socksHealthJob: kotlinx.coroutines.Job? = null
+    @Volatile private var circuitEstablished: Double? = null  // tor_circuit_established (0 or 1)
+    @Volatile private var networkLiveness: Double? = null     // tor_network_liveness (0 or 1)
+    @Volatile private var lastHealthyMs: Long = 0L            // When circuits were last healthy
+    @Volatile private var consecutiveHealthyPolls: Int = 0    // Hysteresis: require 2 healthy polls before opening gate
+    @Volatile private var metricsAvailable: Boolean = true    // Track if metrics endpoint works
+    @Volatile private var consecutiveRestarts: Int = 0        // Track restart attempts for backoff
+    @Volatile private var lastRestartAttemptMs: Long = 0L     // Time of last restart attempt
+
+    /**
+     * Update Tor state and log transition
+     */
+    private fun setState(newState: TorState, reason: String? = null) {
+        val oldState = torState
+        torState = newState
+        val msg = "Tor state: $oldState → $newState${reason?.let { " ($it)" } ?: ""}"
+        Log.i(TAG, msg)
+
+        // Update legacy torConnected flag for backward compatibility
+        // TODO: Remove this once all code uses torState directly
+        @Suppress("DEPRECATION")
+        torConnected = (newState == TorState.RUNNING)
+
+        // Broadcast state change to UI if needed
+        // TODO: Add StateFlow/LiveData for UI observation
+    }
+
+    /**
+     * Check if Tor is ready for operations (fully bootstrapped)
+     */
+    private fun isTorReady(): Boolean {
+        return torState == TorState.RUNNING && bootstrapPercent >= 100
+    }
+
+    @Deprecated("Use torState instead", ReplaceWith("torState == TorState.RUNNING"))
+    private var torConnected: Boolean
+        get() = torState == TorState.RUNNING
+        set(value) {
+            // For backward compatibility during migration
+            if (value && torState != TorState.RUNNING) {
+                setState(TorState.RUNNING, "legacy setter")
+            } else if (!value && torState == TorState.RUNNING) {
+                setState(TorState.OFF, "legacy setter")
+            }
+        }
+
+    /**
+     * Monitor bootstrap progress and update state
+     * Polls RustBridge.getBootstrapStatus() until bootstrap completes
+     */
+    private fun startBootstrapMonitor() {
+        serviceScope.launch {
+            while (torState == TorState.STARTING || torState == TorState.BOOTSTRAPPING) {
+                try {
+                    val percent = RustBridge.getBootstrapStatus()
+
+                    if (percent > bootstrapPercent) {
+                        bootstrapPercent = percent
+                        lastBootstrapProgressMs = SystemClock.elapsedRealtime()  // Track actual progress
+
+                        Log.d(TAG, "Bootstrap progress: $percent%")
+                        updateNotification("Connecting to Tor ($percent%)...")
+
+                        // Transition to BOOTSTRAPPING on first progress
+                        if (torState == TorState.STARTING && percent > 0) {
+                            setState(TorState.BOOTSTRAPPING, "bootstrap=$percent%")
+                        }
+
+                        // Transition to RUNNING when complete
+                        if (percent >= 100 && torState != TorState.RUNNING) {
+                            setState(TorState.RUNNING, "bootstrap complete")
+                            onTorReady()
+                            return@launch  // Exit monitor loop
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error checking bootstrap status", e)
+                }
+
+                kotlinx.coroutines.delay(1000)  // Poll every second
+            }
+        }
+    }
+
+    /**
+     * Watchdog to detect stalled bootstrap and force restart
+     * Monitors bootstrapPercent progress (not just logs) and restarts if stalled
+     */
+    private fun startBootstrapWatchdog() {
+        bootstrapWatchdogJob?.cancel()
+        bootstrapWatchdogJob = serviceScope.launch {
+            while (torState == TorState.STARTING || torState == TorState.BOOTSTRAPPING) {
+                kotlinx.coroutines.delay(5000)  // Check every 5 seconds
+
+                // Track actual bootstrap progress, not log activity
+                // Tor can be quiet even when working, but % must increase
+                val stalledMs = SystemClock.elapsedRealtime() - lastBootstrapProgressMs
+                if (stalledMs > 60_000) {  // 60 second timeout
+                    Log.w(TAG, "Bootstrap stalled (no progress for ${stalledMs}ms, stuck at $bootstrapPercent%) → restarting Tor")
+                    restartTor("bootstrap stalled at $bootstrapPercent%")
+                    return@launch
+                }
+            }
+        }
+    }
+
+    /**
+     * Called when Tor reaches RUNNING state
+     * Uses startup-once pattern to avoid repeated resets
+     */
+    private fun onTorReady() {
+        Log.w(TAG, "========== ✓ onTorReady() CALLED - BOOTSTRAP 100% ==========")
+
+        // CRITICAL: Set legacy torConnected flag for compatibility with SplashActivity
+        // SplashActivity checks isMessagingReady() which needs both torConnected AND listenersReady
+        torConnected = true
+        running = true
+        isServiceRunning = true
+        Log.w(TAG, "Set torConnected=true, running=true, isServiceRunning=true")
+
+        // Start services ONCE (latch prevents repeated resets)
+        Log.w(TAG, "Calling ensureStartedOnce() to start listeners...")
+        ensureStartedOnce()
+
+        // Send TAPs to all contacts
+        Log.w(TAG, "Sending taps to all contacts...")
+        sendTapsToAllContacts()
+
+        // Update notification
+        updateNotification("Connected to Tor")
+        Log.w(TAG, "========== onTorReady() COMPLETE ==========")
+    }
+
+    /**
+     * Startup-once latch: Only run listener/poller setup once
+     * Prevents aggressive resets on every bootstrap=100% event
+     */
+    private fun ensureStartedOnce() {
+        if (!startupCompleted.compareAndSet(false, true)) {
+            Log.w(TAG, "========== Startup already completed - skipping repeated initialization ==========")
+            return
+        }
+
+        Log.w(TAG, "========== FIRST-TIME STARTUP - Initializing listeners and pollers ==========")
+
+        // Ensure SOCKS proxy is running
+        Log.w(TAG, "Ensuring SOCKS proxy is running...")
+        ensureSocksProxyRunning()
+
+        // Start incoming listener if not already running
+        if (!isListenerRunning) {
+            Log.w(TAG, "Listener not running - starting incoming listener...")
+            startIncomingListener()
+        } else {
+            Log.w(TAG, "Listener already running - skipping")
+        }
+
+        // Start bandwidth monitoring
+        Log.w(TAG, "Starting bandwidth monitoring...")
+        startBandwidthMonitoring()
+
+        Log.w(TAG, "========== ✓ STARTUP COMPLETED - listeners and pollers initialized ==========")
+    }
+
+    /**
+     * Check if global reset is allowed (rate-limited to once per 10 minutes)
+     */
+    private fun canGlobalReset(now: Long): Boolean {
+        val minIntervalMs = 10 * 60_000L  // 10 minutes
+        return (now - lastGlobalResetAt) > minIntervalMs
+    }
+
+    /**
+     * EMERGENCY ONLY: Reset all network connections after Tor state changes
+     * This is VERY aggressive and should be rate-limited
+     * Only call this as last resort after sustained local health check failures
+     */
+    private fun resetNetworkConnections() {
+        val now = SystemClock.elapsedRealtime()
+        if (!canGlobalReset(now)) {
+            Log.w(TAG, "Global reset suppressed (rate-limited, last reset ${(now - lastGlobalResetAt) / 1000}s ago)")
+            return
+        }
+
+        Log.w(TAG, "=== GLOBAL RESET - Resetting all network connections (rate-limited) ===")
+
+        // 1. Reset all OkHttp clients (clears connection pools and cancels in-flight requests)
+        // CRITICAL: This is rate-limited to once per 30 seconds (see OkHttpProvider)
+        com.securelegion.network.OkHttpProvider.reset("Global network reset after sustained health check failures")
+
+        // 2. Stop and restart all persistent onion listeners
+        try {
+            Log.d(TAG, "Stopping persistent onion listeners...")
+            RustBridge.stopListeners()  // Stops message listeners (port 8080, 9153)
+            isListenerRunning = false
+
+            // Give sockets time to close
+            Thread.sleep(250)
+
+            Log.d(TAG, "Restarting persistent onion listeners...")
+            startIncomingListener()  // Restart message listeners
+        } catch (e: Exception) {
+            Log.e(TAG, "Error resetting onion listeners", e)
+        }
+
+        // 3. Reset voice call listener (if VoiceTorService is running)
+        // Note: VoiceTorService runs independently, manages its own lifecycle
+
+        // 4. Kick retry workers to attempt pending messages
+        serviceScope.launch {
+            try {
+                val messageService = MessageService(this@TorService)
+                val result = messageService.pollForPongsAndSendMessages()
+                if (result.isSuccess) {
+                    val sentCount = result.getOrNull() ?: 0
+                    if (sentCount > 0) {
+                        Log.i(TAG, "Network reset: Sent $sentCount pending messages")
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error retrying messages after network reset", e)
+            }
+        }
+
+        // Update rate limiter timestamp
+        lastGlobalResetAt = now
+        Log.i(TAG, "=== GLOBAL RESET COMPLETE ===")
+    }
+
+    // ==================== TOR HEALTH MONITORING (MetricsPort) ====================
+
+    /**
+     * Start Tor health monitoring via MetricsPort
+     * Polls metrics every 3 seconds and feeds health signals into gate + restart logic
+     */
+    private fun startMetricsHealthMonitor() {
+        metricsHealthJob?.cancel()
+        metricsHealthJob = serviceScope.launch(Dispatchers.IO) {
+            Log.i(TAG, "Starting Tor health monitor (MetricsPort)")
+
+            while (isActive) {
+                try {
+                    val metricsText = fetchMetrics()
+
+                    if (metricsText != null) {
+                        metricsAvailable = true
+
+                        // Parse critical health metrics
+                        val established = parsePrometheusGauge(metricsText, "tor_circuit_established")
+                        val liveness = parsePrometheusGauge(metricsText, "tor_network_liveness")
+
+                        // CRITICAL: Check if metrics are actually present
+                        if (established == null && liveness == null) {
+                            Log.e(TAG, "⚠️ MetricsPort endpoint responded but tor_circuit_established and tor_network_liveness NOT FOUND!")
+                            Log.e(TAG, "This Tor build may not export these metrics. Falling back to ControlPort-based health.")
+                            Log.e(TAG, "Available metrics (first 30 lines):")
+                            metricsText.lineSequence().take(30).forEach { line ->
+                                Log.e(TAG, "  $line")
+                            }
+                            metricsAvailable = false
+                        }
+
+                        // Update state and handle health changes
+                        onTorHealthSample(established, liveness)
+                    } else {
+                        Log.w(TAG, "Failed to fetch Tor metrics (endpoint not reachable)")
+                        metricsAvailable = false
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error polling Tor metrics", e)
+                    metricsAvailable = false
+                }
+
+                kotlinx.coroutines.delay(3000)  // Poll every 3 seconds
+            }
+        }
+    }
+
+    /**
+     * Fetch metrics from Tor MetricsPort (localhost, no proxy)
+     */
+    private suspend fun fetchMetrics(): String? = withContext(Dispatchers.IO) {
+        try {
+            // Use plain HTTP client (no Tor proxy) for localhost metrics
+            val client = okhttp3.OkHttpClient.Builder()
+                .proxy(java.net.Proxy.NO_PROXY)
+                .connectTimeout(2, java.util.concurrent.TimeUnit.SECONDS)
+                .readTimeout(2, java.util.concurrent.TimeUnit.SECONDS)
+                .build()
+
+            val request = okhttp3.Request.Builder()
+                .url("http://127.0.0.1:9035/metrics")
+                .get()
+                .build()
+
+            client.newCall(request).execute().use { response ->
+                if (response.isSuccessful) {
+                    response.body?.string()
+                } else {
+                    null
+                }
+            }
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    /**
+     * Parse Prometheus gauge metric
+     * Handles both simple format (name value) and labeled format (name{...} value)
+     */
+    private fun parsePrometheusGauge(metrics: String, metricName: String): Double? {
+        val line = metrics.lineSequence()
+            .firstOrNull { it.startsWith(metricName) && !it.startsWith("#") }
+            ?: return null
+
+        return line.substringAfterLast(' ').toDoubleOrNull()
+    }
+
+    /**
+     * Handle Tor health sample from MetricsPort
+     * Falls back to ControlPort-based health when MetricsPort unavailable
+     */
+    private fun onTorHealthSample(established: Double?, liveness: Double?) {
+        // Update metrics state
+        circuitEstablished = established
+        networkLiveness = liveness
+
+        // FALLBACK: If MetricsPort metrics aren't available, derive health from ControlPort
+        val isHealthy = if (metricsAvailable && established != null && liveness != null) {
+            // MetricsPort available: use ground truth
+            established == 1.0 && liveness == 1.0
+        } else {
+            // MetricsPort unavailable: fall back to ControlPort-based health
+            // Require BOTH bootstrap complete AND circuits established
+            val bootstrapComplete = bootstrapPercent >= 100
+            val circuitsEstablished = RustBridge.getCircuitEstablished() == 1
+            val torRunning = torState == TorState.RUNNING
+            bootstrapComplete && circuitsEstablished && torRunning
+        }
+
+        if (isHealthy) {
+            lastHealthyMs = SystemClock.elapsedRealtime()
+            consecutiveHealthyPolls++
+
+            // Reset restart backoff counters when health returns
+            if (consecutiveRestarts > 0) {
+                Log.i(TAG, "Tor health recovered → resetting restart backoff counter (was $consecutiveRestarts)")
+                consecutiveRestarts = 0
+            }
+
+            // HYSTERESIS: Require 3 consecutive healthy polls before opening gate
+            // This ensures circuit stability (not just momentary bootstrap=100%)
+            if (consecutiveHealthyPolls >= 3 && torState == TorState.RUNNING && !gate.isOpenNow()) {
+                val healthSource = if (metricsAvailable) "MetricsPort" else "ControlPort fallback"
+                Log.i(TAG, "✓ Tor health confirmed via $healthSource (3 consecutive healthy polls) → opening gate")
+                gate.open()
+            }
+        } else {
+            // Reset consecutive counter immediately on unhealthy
+            consecutiveHealthyPolls = 0
+
+            // Log unhealthy state for debugging
+            if (metricsAvailable) {
+                if (established != 1.0) {
+                    Log.w(TAG, "Tor health: no established circuits (tor_circuit_established=${established ?: "null"})")
+                }
+                if (liveness != 1.0) {
+                    Log.w(TAG, "Tor health: network not live (tor_network_liveness=${liveness ?: "null"})")
+                }
+            } else {
+                val circuitsEstablished = RustBridge.getCircuitEstablished()
+                Log.w(TAG, "Tor health: ControlPort fallback unhealthy (bootstrap=$bootstrapPercent%, circuits=$circuitsEstablished, state=$torState)")
+            }
+
+            // CRITICAL FIX: Only close gate if SOCKS proxy itself is unreachable
+            // DO NOT close gate on:
+            // - Circuits temporarily at 0 (normal during rotation/churn)
+            // - Bootstrap < 100% (normal during restart)
+            // - Network liveness flapping (momentary Tor behavior)
+            //
+            // Gate closure must ONLY reflect: "Can we connect to 127.0.0.1:9050?"
+            // NOT: "Can we reach arbitrary .onion addresses right now?"
+            //
+            // Stream-level failures (SOCKS status 1/4/6) are NORMAL and retryable.
+            if (gate.isOpenNow()) {
+                // Verify SOCKS proxy is actually dead before closing gate
+                val socksReachable = RustBridge.isSocksProxyRunning()
+
+                if (!socksReachable) {
+                    Log.e(TAG, "⚠️ SOCKS proxy UNREACHABLE (127.0.0.1:9050) → closing gate")
+                    gate.close()
+                    lastTorUnstableAt = System.currentTimeMillis()
+                } else {
+                    // SOCKS is alive - DO NOT close gate even if circuits=0 or bootstrap<100%
+                    // This is normal Tor behavior (circuit rotation, guard changes, descriptor delays)
+                    Log.w(TAG, "Tor metrics unhealthy BUT SOCKS proxy reachable → gate stays OPEN (stream failures are retryable)")
+                }
+            }
+
+            // CRITICAL: Don't restart in a loop if network is truly down
+            // Use exponential backoff to prevent battery drain on hostile networks
+            val unhealthyMs = SystemClock.elapsedRealtime() - lastHealthyMs
+
+            // Calculate backoff delay based on restart attempts
+            // 30s, 2m, 5m, 10m (capped)
+            val backoffDelays = longArrayOf(30_000, 120_000, 300_000, 600_000)
+            val backoffIndex = min(consecutiveRestarts, backoffDelays.size - 1)
+            val requiredUnhealthyMs = backoffDelays[backoffIndex]
+
+            if (unhealthyMs > requiredUnhealthyMs && torState == TorState.RUNNING) {
+                // Check if Android reports no network connectivity
+                val hasNetwork = try {
+                    val connectivityManager = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+                    val activeNetwork = connectivityManager.activeNetwork
+                    val capabilities = connectivityManager.getNetworkCapabilities(activeNetwork)
+                    capabilities?.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED) == true
+                } catch (e: Exception) {
+                    false
+                }
+
+                if (!hasNetwork) {
+                    Log.w(TAG, "Tor unhealthy for ${unhealthyMs}ms BUT Android reports no network → skipping restart")
+                } else {
+                    val timeSinceLastAttempt = SystemClock.elapsedRealtime() - lastRestartAttemptMs
+
+                    // Enforce backoff delay between restart attempts
+                    if (timeSinceLastAttempt < requiredUnhealthyMs) {
+                        Log.d(TAG, "Tor unhealthy but backoff in effect (${timeSinceLastAttempt}ms / ${requiredUnhealthyMs}ms)")
+                    } else {
+                        consecutiveRestarts++
+                        lastRestartAttemptMs = SystemClock.elapsedRealtime()
+
+                        Log.w(TAG, "Tor unhealthy for ${unhealthyMs}ms → restarting (attempt #$consecutiveRestarts, next backoff: ${backoffDelays[min(consecutiveRestarts, backoffDelays.size - 1)] / 1000}s)")
+
+                        serviceScope.launch {
+                            restartTor("metrics unhealthy: circuits=${established ?: "null"}, liveness=${liveness ?: "null"}")
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * Stop Tor health monitor
+     */
+    private fun stopMetricsHealthMonitor() {
+        metricsHealthJob?.cancel()
+        metricsHealthJob = null
+        Log.i(TAG, "Tor health monitor stopped")
+    }
+
+    /**
+     * Monitor SOCKS proxy health and auto-restart if it dies
+     * Checks every 5 seconds, restarts immediately if dead
+     *
+     * CRITICAL: SOCKS failures (status 1) mean the proxy itself is down,
+     * not just that a remote host is unreachable. This needs aggressive monitoring.
+     */
+    private fun startSocksHealthMonitor() {
+        socksHealthJob?.cancel()
+        socksHealthJob = serviceScope.launch(Dispatchers.IO) {
+            Log.i(TAG, "Starting SOCKS proxy health monitor (5s interval)")
+
+            // Monitor SOCKS in all active states (STARTING, BOOTSTRAPPING, RUNNING)
+            // SOCKS starts in STARTING state, so we need to monitor it from the beginning
+            while (isActive && torState != TorState.OFF && torState != TorState.STOPPING && torState != TorState.ERROR) {
+                try {
+                    val socksAlive = RustBridge.isSocksProxyRunning()
+
+                    if (!socksAlive) {
+                        Log.w(TAG, "⚠️ SOCKS proxy DEAD - restarting immediately...")
+
+                        // Try to restart
+                        val restarted = RustBridge.startSocksProxy()
+                        if (restarted) {
+                            Log.i(TAG, "✓ SOCKS proxy restarted successfully")
+                        } else {
+                            Log.e(TAG, "✗ SOCKS proxy restart FAILED")
+                        }
+                    } else {
+                        Log.d(TAG, "SOCKS proxy health check: alive")
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error checking SOCKS proxy health", e)
+                }
+
+                kotlinx.coroutines.delay(5000)  // Check every 5 seconds
+            }
+
+            Log.i(TAG, "SOCKS health monitor stopped (torState=$torState)")
+        }
+    }
+
+    private fun stopSocksHealthMonitor() {
+        socksHealthJob?.cancel()
+        socksHealthJob = null
+        Log.i(TAG, "SOCKS health monitor stopped")
+    }
+
+    // ==================== SOCKS PROXY MANAGEMENT ====================
+
+    /**
+     * Start SOCKS proxy (single attempt)
+     * TODO: Port retry removed until RustBridge.startSocksProxy() accepts port parameter
+     * To implement port retry:
+     * 1. Add port parameter to Rust FFI: startSocksProxy(port: u16)
+     * 2. Update torrc SOCKSPort dynamically
+     * 3. Restore retry loop here
+     */
+    private suspend fun startSocksProxy(): Boolean = withContext(Dispatchers.IO) {
+        Log.w(TAG, "========== ATTEMPTING TO START SOCKS PROXY ==========")
+        try {
+            val success = RustBridge.startSocksProxy()
+            if (success) {
+                Log.w(TAG, "========== ✓ SOCKS PROXY STARTED ON PORT 9050 ==========")
+                return@withContext true
+            } else {
+                Log.e(TAG, "========== ✗ SOCKS PROXY FAILED TO START ==========")
+                return@withContext false
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "========== ✗ SOCKS START ERROR: ${e.message} ==========", e)
+            return@withContext false
+        }
+    }
 
     // VPN bandwidth (received from TorVpnService)
     private var vpnBytesReceived = 0L
     private var vpnBytesSent = 0L
     private var vpnActive = false
     private var vpnBroadcastReceiver: android.content.BroadcastReceiver? = null
+
+    // ========== ControlPort Event Monitoring (MVP) ==========
+
+    // Event ring buffer: last 50 events for debugging
+    private data class TorEvent(
+        val timestamp: Long,
+        val eventType: String,
+        val circId: String,
+        val reason: String,
+        val address: String,
+        val severity: String,
+        val message: String,
+        val progress: Int
+    )
+
+    private val eventRingBuffer = mutableListOf<TorEvent>()
+    private val MAX_EVENTS = 50
+
+    // Circuit failure tracking (for fast restart)
+    private var circFailureCount = 0
+    private var circFailureWindowStart = 0L
+    private val CIRC_FAILURE_THRESHOLD = 5  // Restart if 5 CIRC_FAILED in 10 seconds
+    private val CIRC_FAILURE_WINDOW = 10000L  // 10 second window
+
+    // HS descriptor failure tracking (for backoff)
+    private var hsDescFailureCount = 0
+    private var hsDescFailureWindowStart = 0L
+    private val HS_DESC_FAILURE_THRESHOLD = 3  // Mark unhealthy if 3 failures in 30 seconds
+    private val HS_DESC_FAILURE_WINDOW = 30000L  // 30 second window
+    private var hsDescHealthy = true
+
+    // HS descriptor upload deduplication (Tor uploads to 3 HSDirs, we only log first one)
+    private val lastHsDescUpload = mutableMapOf<String, Long>()
+    private val HS_DESC_DEDUPE_WINDOW_MS = 5000L  // 5 seconds
 
     companion object {
         private const val TAG = "TorService"
@@ -137,6 +743,12 @@ class TorService : Service() {
         private const val CHANNEL_NAME = "Tor Hidden Service"
         private const val AUTH_CHANNEL_ID = "message_auth_channel_v2"  // Changed to v2 to recreate with sound
         private const val AUTH_CHANNEL_NAME = "Friend Requests & Messages"
+
+        // Network stabilization window - wait after network change before listener rebind
+        private const val NETWORK_STABILIZATION_WINDOW_MS = 45_000L  // 45 seconds
+
+        // Tor warm-up window - wait after Tor instability before sending traffic
+        private const val TOR_WARMUP_WINDOW_MS = 20_000L  // 20 seconds
 
         const val ACTION_START_TOR = "com.securelegion.action.START_TOR"
         const val ACTION_STOP_TOR = "com.securelegion.action.STOP_TOR"
@@ -167,6 +779,24 @@ class TorService : Service() {
         fun isRunning(): Boolean = running
 
         fun isTorConnected(): Boolean = torConnected
+
+        /**
+         * Get transport gate for network resilience checks
+         * All Tor operations must call awaitOpen() before proceeding
+         */
+        fun getTransportGate(): TransportGate? = instance?.gate
+
+        /**
+         * Check if Tor is warmed up and ready for traffic
+         * Returns null if TorService not running, otherwise returns remaining warmup time in ms
+         * (0 = ready, >0 = still warming up)
+         */
+        fun getTorWarmupRemainingMs(): Long? {
+            val service = instance ?: return null
+            val warmupMs = System.currentTimeMillis() - service.lastTorUnstableAt
+            val remaining = TOR_WARMUP_WINDOW_MS - warmupMs
+            return if (remaining > 0) remaining else 0
+        }
 
         /**
          * Notify service when app goes to foreground/background
@@ -219,10 +849,14 @@ class TorService : Service() {
         /**
          * Request Tor restart (idempotent, safe to call multiple times)
          * Used by TorHealthMonitorWorker when Tor health degrades
+         *
+         * FIXED: Now routes to NEW state machine restart, not old daemon restart
          */
         fun requestRestart(reason: String) {
-            Log.i(TAG, "Restart requested: $reason")
-            instance?.restartTor()
+            Log.i(TAG, "Restart requested from worker: $reason")
+            instance?.serviceScope?.launch {
+                instance?.restartTor("worker: $reason")
+            }
         }
 
         /**
@@ -250,9 +884,6 @@ class TorService : Service() {
         // Create notification channel
         createNotificationChannel()
 
-        // Setup network monitoring
-        setupNetworkMonitoring()
-
         // Register VPN bandwidth broadcast receiver
         setupVpnBroadcastReceiver()
 
@@ -264,19 +895,68 @@ class TorService : Service() {
         ).apply {
             setReferenceCounted(false)
         }
+
+        // Initialize transport gate system (network resilience)
+        gate = TransportGate()
+        probe = TorProbe()  // Still used for periodic health checks
+        rehydrator = TorRehydrator(
+            onRebindRequest = { handleRebindRequest() },
+            scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
+        )
+
+        // Start network watcher to detect Wi-Fi ↔ LTE switches and other network events
+        networkWatcher = NetworkWatcher(this) { event ->
+            handleNetworkEvent(event)
+        }
+        networkWatcher!!.start()
+
+        // Register Tor ControlPort event callback for fast reaction
+        registerTorEventCallback()
+
+        Log.i(TAG, "Transport gate system initialized")
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         Log.d(TAG, "onStartCommand: ${intent?.action}")
 
+        // CRITICAL: Call startForeground() IMMEDIATELY to avoid ForegroundServiceDidNotStartInTimeException
+        // Android requires this within 5 seconds when service is started with startForegroundService()
+        // We must call this BEFORE launching any coroutines or async work
+        if (intent?.action != ACTION_STOP_TOR && intent?.action != ACTION_NOTIFICATION_DELETED &&
+            intent?.action != ACTION_ACCEPT_MESSAGE && intent?.action != ACTION_DECLINE_MESSAGE &&
+            intent?.action != "com.securelegion.action.REPORT_SOCKS_FAILURE") {
+
+            // Start foreground IMMEDIATELY (before any async work)
+            val notification = createNotification("Starting Tor...")
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                startForeground(
+                    NOTIFICATION_ID,
+                    notification,
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
+                )
+            } else {
+                startForeground(NOTIFICATION_ID, notification)
+            }
+            Log.i(TAG, "startForeground() called immediately in onStartCommand")
+        }
+
         when (intent?.action) {
-            ACTION_START_TOR -> startTorService()
-            ACTION_STOP_TOR -> stopTorService()
+            ACTION_START_TOR -> {
+                // Start using new state machine
+                serviceScope.launch { startTor() }
+            }
+            ACTION_STOP_TOR -> {
+                // Stop using new state machine
+                serviceScope.launch { stopTor() }
+            }
             ACTION_NOTIFICATION_DELETED -> handleNotificationDeleted()
             ACTION_ACCEPT_MESSAGE -> handleAcceptMessage(intent)
             ACTION_DECLINE_MESSAGE -> handleDeclineMessage(intent)
             "com.securelegion.action.REPORT_SOCKS_FAILURE" -> handleSocksFailure()
-            else -> startTorService() // Default to starting
+            else -> {
+                // Default: start using new state machine
+                serviceScope.launch { startTor() }
+            }
         }
 
         // Service should restart if killed by system
@@ -373,13 +1053,162 @@ class TorService : Service() {
         notificationManager.cancel(connectionId.toInt())
     }
 
-    private fun startTorService() {
-        if (isServiceRunning) {
-            Log.d(TAG, "Tor service already running")
+    // ==================== REFACTORED TOR START/STOP/RESTART ====================
+
+    /**
+     * Start Tor with proper state machine
+     * Replaces old startTorService() with cleaner implementation
+     */
+    private suspend fun startTor() {
+        Log.w(TAG, "========== startTor() CALLED (torState=$torState) ==========")
+
+        // Guard: Don't start if already starting/running
+        if (torState == TorState.STARTING || torState == TorState.BOOTSTRAPPING || torState == TorState.RUNNING) {
+            Log.d(TAG, "startTor(): Already in state $torState, skipping")
             return
         }
 
-        Log.i(TAG, "Starting Tor foreground service (SDK ${Build.VERSION.SDK_INT})")
+        setState(TorState.STARTING, "user requested")
+        bootstrapPercent = 0
+        lastBootstrapProgressMs = SystemClock.elapsedRealtime()  // Reset watchdog timer
+        lastHealthyMs = SystemClock.elapsedRealtime()  // Reset health timer
+
+        try {
+            // Start bootstrap listener (Rust side)
+            RustBridge.startBootstrapListener()
+
+            // Start bootstrap monitor (polls getBootstrapStatus)
+            startBootstrapMonitor()
+
+            // Start watchdog (detects stalled bootstrap)
+            startBootstrapWatchdog()
+
+            // Start health monitor (polls MetricsPort for circuit health)
+            startMetricsHealthMonitor()
+
+            // Start SOCKS health monitor (detects dead proxy, auto-restarts)
+            startSocksHealthMonitor()
+
+            // Initialize Tor (async, converts callback to suspend)
+            val onionAddress = suspendCancellableCoroutine<String?> { continuation ->
+                torManager.initializeAsync { success, address ->
+                    if (success && address != null) {
+                        continuation.resume(address)
+                    } else {
+                        continuation.resume(null)
+                    }
+                }
+            }
+
+            if (onionAddress != null) {
+                Log.i(TAG, "Tor hidden service initialized: $onionAddress")
+
+                // Start SOCKS proxy
+                val socksStarted = startSocksProxy()
+                if (!socksStarted) {
+                    Log.e(TAG, "Failed to start SOCKS proxy")
+                    setState(TorState.ERROR, "SOCKS failed")
+                    return
+                }
+
+                // Bootstrap monitor will transition to RUNNING when ready
+                // onTorReady() will be called automatically
+            } else {
+                Log.e(TAG, "Tor initialization returned null onion address")
+                setState(TorState.ERROR, "init failed")
+                scheduleReconnect()
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error starting Tor", e)
+            setState(TorState.ERROR, e.message ?: "unknown")
+            scheduleReconnect()
+        }
+    }
+
+    /**
+     * Stop Tor cleanly
+     */
+    private suspend fun stopTor() {
+        if (torState == TorState.OFF || torState == TorState.STOPPING) {
+            Log.d(TAG, "stopTor(): Already stopped/stopping")
+            return
+        }
+
+        setState(TorState.STOPPING, "user requested")
+        bootstrapWatchdogJob?.cancel()
+        stopMetricsHealthMonitor()
+        stopSocksHealthMonitor()
+
+        try {
+            // Stop SOCKS proxy
+            withContext(Dispatchers.IO) {
+                try {
+                    if (RustBridge.isSocksProxyRunning()) {
+                        RustBridge.stopSocksProxy()
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "Error stopping SOCKS proxy", e)
+                }
+            }
+
+            // Note: We don't stop torManager here because it manages
+            // the hidden service which should stay alive for incoming connections
+            // Only the SOCKS proxy is stopped
+
+            setState(TorState.OFF, "stopped")
+        } catch (e: Exception) {
+            Log.e(TAG, "Error stopping Tor", e)
+            setState(TorState.OFF, "stopped with errors")
+        }
+    }
+
+    /**
+     * Restart Tor (clean stop + start) with debouncing
+     * Prevents restart spam during network transitions
+     * Allows restart from STARTING/BOOTSTRAPPING/RUNNING (watchdog needs this)
+     */
+    private suspend fun restartTor(reason: String) {
+        // Guard 1: Only restart from states that can be restarted
+        val allowedStates = setOf(TorState.STARTING, TorState.BOOTSTRAPPING, TorState.RUNNING)
+        if (torState !in allowedStates) {
+            Log.d(TAG, "Ignoring restart request (state=$torState not in $allowedStates): $reason")
+            return
+        }
+
+        // Guard 2: Debounce restarts (min 5 seconds between restarts)
+        val now = SystemClock.elapsedRealtime()
+        val timeSinceLastRestart = now - lastRestartMs
+        if (timeSinceLastRestart < 5_000) {
+            Log.d(TAG, "Ignoring restart request (too soon: ${timeSinceLastRestart}ms): $reason")
+            return
+        }
+
+        Log.w(TAG, "Restarting Tor from state=$torState: $reason")
+        lastRestartMs = now
+        lastTorUnstableAt = System.currentTimeMillis()  // Mark Tor as unstable
+
+        stopTor()
+        kotlinx.coroutines.delay(250)  // Brief delay to let cleanup finish
+        startTor()
+    }
+
+    // ==================== OLD IMPLEMENTATION (DISABLED) ====================
+
+    /**
+     * OLD IMPLEMENTATION (DISABLED) - Legacy Tor service start
+     *
+     * WHY DISABLED: Was called from onStartCommand and legacy restartTor().
+     *               Mixed old service lifecycle with new state machine.
+     *               onStartCommand now calls startTor() directly.
+     */
+    @Deprecated("Use startTor() instead", level = DeprecationLevel.ERROR)
+    private fun startTorService() {
+        Log.w(TAG, "========== OLD startTorService() CALLED BUT DISABLED ==========")
+        Log.w(TAG, "onStartCommand should call startTor() directly now")
+        // DISABLED - onStartCommand now uses startTor() through serviceScope.launch
+
+        // Rest of old function kept for service/notification setup
+        // TODO: Move foreground service setup to onCreate() or separate function
 
         // Start as foreground service with notification IMMEDIATELY to avoid ANR
         val notification = createNotification("Connecting to Tor...")
@@ -437,10 +1266,8 @@ class TorService : Service() {
                             // Ensure SOCKS proxy is running for outgoing connections
                             ensureSocksProxyRunning()
 
-                            // Test SOCKS connectivity immediately after login
-                            updateNotification("Testing connection...")
-                            Thread.sleep(2000) // Give SOCKS proxy time to fully initialize
-                            testSocksConnectivityAtStartup()
+                            // REMOVED: testSocksConnectivityAtStartup() - was forcing restarts on normal failures
+                            // Tor health is handled by state machine, not end-to-end external tests
 
                             // Start listening for incoming Ping tokens
                             startIncomingListener()
@@ -545,14 +1372,25 @@ class TorService : Service() {
             Log.d(TAG, "Starting hidden service listener on port 8080...")
             val success = RustBridge.startHiddenServiceListener(8080)
             if (success) {
-                Log.i(TAG, "Hidden service listener started successfully")
+                Log.i(TAG, "✓ Hidden service listener started successfully on port 8080")
                 isListenerRunning = true
             } else {
-                Log.w(TAG, "Listener already running (started by TorManager)")
-                isListenerRunning = true
+                // CRITICAL: Rust listener start FAILED (bind error, not idempotency)
+                // DO NOT mark as running, DO NOT start pollers, DO NOT open gate
+                Log.e(TAG, "✗ FATAL: Hidden service listener FAILED to start on port 8080")
+                Log.e(TAG, "  Check Rust logs for bind errors (EADDRINUSE, permission denied, etc.)")
+                Log.e(TAG, "  Messaging will NOT work until listener starts successfully")
+
+                // Schedule retry after delay
+                serviceScope.launch {
+                    kotlinx.coroutines.delay(5000)  // Wait 5 seconds before retry
+                    Log.w(TAG, "Retrying listener start after failure...")
+                    startIncomingListener()
+                }
+                return  // EXIT - do not continue with pollers/gate
             }
 
-            // Start polling for incoming Pings, MESSAGEs, and VOICE (whether we started the listener or it's already running)
+            // Start polling for incoming Pings, MESSAGEs, and VOICE (only if listener started successfully)
             startPingPoller()
             startMessagePoller()
             startVoicePoller()
@@ -577,6 +1415,9 @@ class TorService : Service() {
             // Start polling for incoming pongs from main listener queue
             startPongPoller()
 
+            // Schedule periodic Tor health monitor (detect failures, trigger auto-restart)
+            TorHealthMonitorWorker.schedulePeriodicCheck(this)
+
             // Start periodic session cleanup (5-minute intervals)
             startSessionCleanup()
 
@@ -589,6 +1430,10 @@ class TorService : Service() {
                 listenersReady = true
                 Log.i(TAG, "✓ All listeners, pollers, and SOCKS proxy (9050) ready - messaging enabled")
 
+                // Open transport gate - allow all Tor operations to proceed
+                gate.open()
+                Log.i(TAG, "Transport gate opened - Tor is fully operational")
+
                 // Start bandwidth monitoring now that Tor is fully operational
                 startBandwidthMonitoring()
 
@@ -597,6 +1442,9 @@ class TorService : Service() {
             } else {
                 Log.w(TAG, "SOCKS proxy not running - messaging may not work for outgoing messages")
                 listenersReady = true // Still mark as ready since incoming works
+
+                // Open gate anyway - outgoing may still work if listener is running
+                gate.open()
 
                 // Start bandwidth monitoring anyway
                 startBandwidthMonitoring()
@@ -626,6 +1474,48 @@ class TorService : Service() {
             listenersReady = true
             Log.w(TAG, "Listeners ready with some errors - messaging may be limited")
         }
+    }
+
+    /**
+     * Handle rebind request from TorRehydrator (called on network changes)
+     *
+     * Design: Only rebind if gate is closed OR circuits are unhealthy
+     * Don't destroy working circuits just because network changed
+     *
+     * Stabilization window: After network change, wait 45s before any listener restart
+     * This prevents flapping when circuits briefly dip to 0 during transitions
+     */
+    private suspend fun handleRebindRequest() {
+        Log.i(TAG, "=== REBIND REQUEST FROM REHYDRATOR ===")
+
+        // Check if we're in stabilization window (45s after last network change)
+        val now = System.currentTimeMillis()
+        val timeSinceNetworkChangeMs = now - lastNetworkChangeMs
+        if (timeSinceNetworkChangeMs < NETWORK_STABILIZATION_WINDOW_MS) {
+            Log.i(TAG, "In stabilization window (${timeSinceNetworkChangeMs}ms / ${NETWORK_STABILIZATION_WINDOW_MS}ms) - allowing Tor to settle, no rebind")
+            return
+        }
+
+        // Check Tor health via MetricsPort (no external probes)
+        val bootstrapPercent = RustBridge.getBootstrapStatus()
+        val circuitsEstablished = RustBridge.getCircuitEstablished()
+        val isTorHealthy = bootstrapPercent == 100 && circuitsEstablished >= 1
+
+        // If gate is open AND Tor is healthy → no rebind needed
+        if (gate.isOpenNow() && isTorHealthy) {
+            Log.i(TAG, "Gate open + Tor healthy (bootstrap=$bootstrapPercent%, circuits=$circuitsEstablished) - no rebind needed")
+            return
+        }
+
+        // If gate is closed but Tor unhealthy → wait for Tor to recover
+        if (!isTorHealthy) {
+            Log.w(TAG, "Tor not healthy (bootstrap=$bootstrapPercent%, circuits=$circuitsEstablished) - waiting for recovery, no rebind")
+            return
+        }
+
+        // Gate is closed but Tor is healthy → reopen gate (no listener restart needed)
+        Log.i(TAG, "Gate closed but Tor healthy - reopening gate without listener restart")
+        gate.open()
     }
 
     private fun startPingPoller() {
@@ -4516,68 +5406,32 @@ class TorService : Service() {
         }
     }
 
+    @Deprecated("Use stopTor() instead", level = DeprecationLevel.ERROR)
     private fun stopTorService() {
-        Log.i(TAG, "Stopping Tor service and Tor daemon")
-
-        isServiceRunning = false
-        running = false
-        listenersReady = false
-        torConnected = false
-
-        // Stop bandwidth monitoring
-        stopBandwidthMonitoring()
-
-        // Stop all listeners
-        try {
-            RustBridge.stopListeners()
-            Log.d(TAG, "Stopped all listeners")
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to stop listeners", e)
-        }
-
-        // Check if this is a bridge configuration change
-        val prefs = getSharedPreferences("tor_settings", MODE_PRIVATE)
-        val bridgeConfigChanged = prefs.getBoolean("bridge_config_changed", false)
-
-        if (bridgeConfigChanged) {
-            // Reset TorManager state to force re-initialization
-            Log.i(TAG, "Bridge config changed - resetting TorManager state")
-            torManager.resetInitializationState()
-        }
-
-        // Stop Tor daemon via JNI
-        try {
-            val stopIntent = Intent(this, org.torproject.jni.TorService::class.java)
-            stopIntent.action = "org.torproject.android.intent.action.STOP"
-            startService(stopIntent)
-            Log.i(TAG, "Sent stop command to Tor daemon")
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to stop Tor daemon", e)
-        }
-
-        // Release wake lock
-        wakeLock?.let {
-            if (it.isHeld) {
-                it.release()
-            }
-        }
-
-        // Stop foreground service
-        stopForeground(STOP_FOREGROUND_REMOVE)
-        stopSelf()
+        Log.w(TAG, "========== OLD stopTorService() CALLED BUT DISABLED ==========")
+        Log.w(TAG, "This was the legacy daemon lifecycle - now using stopTor() instead")
+        // DISABLED - Part of OLD IMPLEMENTATION that bypassed state machine
+        // Use the new state machine: stopTor()
     }
 
     /**
      * Restart Tor daemon (idempotent)
      * Used by TorHealthMonitorWorker for auto-recovery
      */
+    /**
+     * OLD IMPLEMENTATION (DISABLED) - Legacy daemon restart
+     *
+     * WHY DISABLED: This was the restart function the worker called (no args).
+     *               It does stopTorService() + postDelayed + startTorService() which bypasses
+     *               all the state machine guards in the new restartTor(reason).
+     *
+     * FIXED: Worker now calls restartTor(reason) through serviceScope.launch()
+     */
     private fun restartTor() {
-        Log.i(TAG, "Restarting Tor daemon...")
-        stopTorService()
-        // Give it a moment before restarting
-        Handler(Looper.getMainLooper()).postDelayed({
-            startTorService()
-        }, 1000)  // 1 second delay
+        Log.w(TAG, "========== OLD restartTor() CALLED BUT DISABLED ==========")
+        Log.w(TAG, "This was the legacy daemon restart - now using restartTor(reason) instead")
+        Log.w(TAG, "If you see this, something is still calling the old function signature")
+        // DISABLED - do nothing
     }
 
     private fun createNotificationChannel() {
@@ -4953,28 +5807,82 @@ class TorService : Service() {
 
     // ==================== NETWORK MONITORING ====================
 
-    private fun setupNetworkMonitoring() {
-        connectivityManager = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
-
-        val networkRequest = NetworkRequest.Builder()
-            .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
-            .build()
-
-        networkCallback = object : ConnectivityManager.NetworkCallback() {
-            override fun onAvailable(network: Network) {
+    /**
+     * Handle network events from NetworkWatcher
+     */
+    private suspend fun handleNetworkEvent(event: NetworkWatcher.NetworkEvent) {
+        when (event) {
+            is NetworkWatcher.NetworkEvent.Available -> {
                 Log.i(TAG, "Network available - checking if reconnection needed")
-                hasNetworkConnection = true
+                Log.d(TAG, "  Internet: ${event.hasInternet}, WiFi: ${event.isWifi}, IPv6-only: ${event.isIpv6Only}")
 
-                // If we were disconnected, attempt immediate reconnection
-                // attemptReconnect() will call sendTapsToAllContacts() after successful reconnection
-                if (!torConnected && !isReconnecting) {
+                if (event.isIpv6Only) {
+                    Log.w(TAG, "Network is IPv6-only - may affect Tor relay selection")
+                }
+
+                // SKIP rehydration on first network detection (startup)
+                val isFirstNetwork = lastNetworkIsWifi == null
+                if (isFirstNetwork) {
+                    Log.w(TAG, "========== FIRST NETWORK (STARTUP) - skipping rehydration ==========")
+                } else {
+                    // GATE CHECK: Only rehydrate if gate is CLOSED
+                    // If gate is OPEN → transport is verified healthy, no need to rebind
+                    if (gate.isOpenNow()) {
+                        Log.i(TAG, "Network change detected BUT gate is OPEN → skipping rehydration (transport verified)")
+                    } else {
+                        // Trigger rehydration for network switch (cleans up stale circuits)
+                        Log.i(TAG, "Network change detected and gate CLOSED → triggering rehydration")
+                        lastNetworkChangeMs = System.currentTimeMillis()
+                        lastTorUnstableAt = System.currentTimeMillis()  // Mark Tor as unstable
+                        rehydrator.onNetworkChanged()
+                    }
+                }
+
+                // IMPORTANT: Only restart Tor when transport type (WiFi ↔ Cellular) or IPv6 status changes
+                // Ignore capability-only changes (validated, metered, etc.) to prevent unnecessary restarts
+                val transportChanged = lastNetworkIsWifi != null && lastNetworkIsWifi != event.isWifi
+                val ipv6StatusChanged = lastNetworkIsIpv6Only != null && lastNetworkIsIpv6Only != event.isIpv6Only
+
+                if (transportChanged || ipv6StatusChanged) {
+                    Log.w(TAG, "Network path changed: transport=${if (transportChanged) "YES (${lastNetworkIsWifi} → ${event.isWifi})" else "no"}, " +
+                              "ipv6=${if (ipv6StatusChanged) "YES (${lastNetworkIsIpv6Only} → ${event.isIpv6Only})" else "no"}")
+
+                    // Update tracking
+                    lastNetworkIsWifi = event.isWifi
+                    lastNetworkIsIpv6Only = event.isIpv6Only
+                    lastNetworkChangeMs = System.currentTimeMillis()
+                    lastTorUnstableAt = System.currentTimeMillis()  // Mark Tor as unstable
+
+                    // FIX 5: DO NOT restart Tor on network path changes
+                    // Tor will handle network transitions via circuit rotation (NEWNYM)
+                    // SOCKS is sacred - only restart on process death or explicit user stop
+                    // Let fall through to rehydrator logic (gated on TransportGate)
+                    Log.i(TAG, "Network path changed - letting Tor handle circuit rotation (no SOCKS restart)")
+                    // Continue to rehydrator logic below (do NOT return early)
+                } else if (lastNetworkIsWifi == null) {
+                    // First network detection - just track it, DON'T trigger rehydration
+                    Log.w(TAG, "========== FIRST NETWORK DETECTED (STARTUP) - WiFi=${event.isWifi}, IPv6-only=${event.isIpv6Only}, Internet=${event.hasInternet} ==========")
+                    Log.w(TAG, "NOT triggering rehydration on first network (startup stabilization)")
+                    lastNetworkIsWifi = event.isWifi
+                    lastNetworkIsIpv6Only = event.isIpv6Only
+                    lastNetworkHasInternet = event.hasInternet
+                    lastNetworkChangeMs = System.currentTimeMillis()
+                    // DON'T mark as unstable on first detection
+                    // DON'T call rehydrator.onNetworkChanged()
+                    return  // Exit early to prevent further processing
+                } else {
+                    // Network available but no transport/IPv6 change - ignore (capability update only)
+                    Log.d(TAG, "Network capability change (no transport switch) - ignoring")
+                }
+
+                // If we were disconnected, attempt immediate reconnection after rehydration
+                if (!torConnected && !isReconnecting && event.hasInternet) {
                     Log.i(TAG, "Network restored - attempting immediate Tor reconnection")
                     reconnectHandler.post {
                         attemptReconnect()
                     }
-                } else if (torConnected) {
+                } else if (torConnected && event.hasInternet) {
                     // Tor thinks it's connected - wait for Tor circuits to rebuild before sending TAPs
-                    // This handles the case where airplane mode didn't trigger onLost() fast enough
                     Log.i(TAG, "Network restored while Tor still connected - waiting 45 seconds for Tor circuits to stabilize")
 
                     reconnectHandler.postDelayed({
@@ -4985,7 +5893,6 @@ class TorService : Service() {
                         CoroutineScope(Dispatchers.IO).launch {
                             try {
                                 val messageService = MessageService(this@TorService)
-                                // This will check both STATUS_PENDING and STATUS_PING_SENT messages
                                 val pongResult = messageService.pollForPongsAndSendMessages()
                                 if (pongResult.isSuccess) {
                                     val sentCount = pongResult.getOrNull() ?: 0
@@ -5001,76 +5908,108 @@ class TorService : Service() {
                 }
             }
 
-            override fun onLost(network: Network) {
+            is NetworkWatcher.NetworkEvent.Lost -> {
                 Log.w(TAG, "Network lost")
-                hasNetworkConnection = false
                 torConnected = false
                 updateNotification("Network disconnected")
-            }
-        }
 
-        try {
-            connectivityManager?.registerNetworkCallback(networkRequest, networkCallback!!)
-            Log.d(TAG, "Network monitoring registered")
-
-            // Check initial network state
-            val activeNetwork = connectivityManager?.activeNetwork
-            val capabilities = connectivityManager?.getNetworkCapabilities(activeNetwork)
-            hasNetworkConnection = capabilities?.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) == true
-            Log.d(TAG, "Initial network state: ${if (hasNetworkConnection) "connected" else "disconnected"}")
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to register network callback", e)
-        }
-
-        // Also listen for airplane mode changes (NetworkCallback doesn't always fire for this)
-        val airplaneModeFilter = IntentFilter(Intent.ACTION_AIRPLANE_MODE_CHANGED)
-        registerReceiver(object : BroadcastReceiver() {
-            override fun onReceive(context: Context?, intent: Intent?) {
-                if (intent?.action == Intent.ACTION_AIRPLANE_MODE_CHANGED) {
-                    val isAirplaneModeOn = intent.getBooleanExtra("state", false)
-                    Log.i(TAG, "Airplane mode changed: ${if (isAirplaneModeOn) "ON" else "OFF"}")
-
-                    // Give the system a moment to settle
-                    reconnectHandler.postDelayed({
-                        // Check actual network state
-                        val network = connectivityManager?.activeNetwork
-                        val caps = connectivityManager?.getNetworkCapabilities(network)
-                        val hasInternet = caps?.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) == true
-
-                        if (!isAirplaneModeOn && hasInternet && torConnected) {
-                            // Airplane mode turned OFF and network is back
-                            // Wait 45 seconds for Tor circuits to rebuild before sending TAPs
-                            Log.i(TAG, "Airplane mode disabled - network restored, waiting 45 seconds for Tor circuits to stabilize before sending TAPs")
-
-                            reconnectHandler.postDelayed({
-                                Log.i(TAG, "Tor circuits should be ready - sending TAPs now")
-                                sendTapsToAllContacts()
-
-                                // Also retry pending messages
-                                CoroutineScope(Dispatchers.IO).launch {
-                                    try {
-                                        val messageService = MessageService(this@TorService)
-                                        val pongResult = messageService.pollForPongsAndSendMessages()
-                                        if (pongResult.isSuccess) {
-                                            val sentCount = pongResult.getOrNull() ?: 0
-                                            if (sentCount > 0) {
-                                                Log.i(TAG, "Airplane mode restored: Sent $sentCount pending messages")
-                                            }
-                                        }
-                                    } catch (e: Exception) {
-                                        Log.e(TAG, "Error checking pending messages after airplane mode", e)
-                                    }
-                                }
-                            }, 45000) // 45 second delay for Tor circuit stabilization
-                        } else if (isAirplaneModeOn) {
-                            Log.w(TAG, "Airplane mode enabled - network unavailable")
-                            hasNetworkConnection = false
-                        }
-                    }, 2000) // 2 second delay to let network stabilize
+                // GATE CHECK: Only rehydrate if gate is CLOSED
+                // Network LOST is a special case - but if gate is OPEN, SOCKS is still reachable
+                if (gate.isOpenNow()) {
+                    Log.i(TAG, "Network lost BUT gate is OPEN → skipping rehydration (SOCKS still reachable)")
+                } else {
+                    // Trigger rehydration to clean up dead circuits
+                    Log.i(TAG, "Network lost and gate CLOSED → triggering rehydration")
+                    lastNetworkChangeMs = System.currentTimeMillis()
+                    lastTorUnstableAt = System.currentTimeMillis()  // Mark Tor as unstable
+                    rehydrator.onNetworkChanged()
                 }
             }
-        }, airplaneModeFilter)
-        Log.d(TAG, "Airplane mode monitoring registered")
+
+            is NetworkWatcher.NetworkEvent.CapabilitiesChanged -> {
+                Log.i(TAG, "Network capabilities changed")
+                Log.d(TAG, "  Internet: ${event.hasInternet}, WiFi: ${event.isWifi}, IPv6-only: ${event.isIpv6Only}")
+
+                if (event.isIpv6Only) {
+                    Log.w(TAG, "Network switched to IPv6-only")
+                }
+
+                // Only trigger rehydration on REAL changes (transport/internet flip)
+                // Don't trigger on capability noise (validated, metered, etc.)
+                val transportChanged =
+                    (lastNetworkIsWifi != null && event.isWifi != lastNetworkIsWifi) ||
+                    (lastNetworkIsIpv6Only != null && event.isIpv6Only != lastNetworkIsIpv6Only)
+
+                val internetFlip =
+                    (lastNetworkHasInternet != null && event.hasInternet != lastNetworkHasInternet)
+
+                // Update last-known state FIRST (before triggering)
+                lastNetworkIsWifi = event.isWifi
+                lastNetworkIsIpv6Only = event.isIpv6Only
+                lastNetworkHasInternet = event.hasInternet
+
+                if (transportChanged || internetFlip) {
+                    // GATE CHECK: Only rehydrate if gate is CLOSED
+                    if (gate.isOpenNow()) {
+                        Log.w(TAG, "Capabilities changed meaningfully BUT gate is OPEN → skipping rehydration (transport verified)")
+                    } else {
+                        Log.w(TAG, "Capabilities changed meaningfully and gate CLOSED → triggering rehydration")
+                        lastNetworkChangeMs = System.currentTimeMillis()
+                        lastTorUnstableAt = System.currentTimeMillis()
+                        rehydrator.onNetworkChanged()
+                    }
+                } else {
+                    Log.d(TAG, "Capabilities noise (metered/validated/etc) - ignoring")
+                }
+            }
+
+            is NetworkWatcher.NetworkEvent.AirplaneModeChanged -> {
+                Log.i(TAG, "Airplane mode: ${if (event.isEnabled) "ON" else "OFF"}")
+
+                if (!event.isEnabled && event.hasInternet && torConnected) {
+                    // Airplane mode turned OFF and network is back
+                    Log.i(TAG, "Airplane mode disabled - waiting 45 seconds for Tor circuits to stabilize")
+
+                    reconnectHandler.postDelayed({
+                        Log.i(TAG, "Tor circuits should be ready - sending TAPs now")
+                        sendTapsToAllContacts()
+
+                        // Also retry pending messages
+                        CoroutineScope(Dispatchers.IO).launch {
+                            try {
+                                val messageService = MessageService(this@TorService)
+                                val pongResult = messageService.pollForPongsAndSendMessages()
+                                if (pongResult.isSuccess) {
+                                    val sentCount = pongResult.getOrNull() ?: 0
+                                    if (sentCount > 0) {
+                                        Log.i(TAG, "Airplane mode restored: Sent $sentCount pending messages")
+                                    }
+                                }
+                            } catch (e: Exception) {
+                                Log.e(TAG, "Error checking pending messages after airplane mode", e)
+                            }
+                        }
+                    }, 45000) // 45 second delay for Tor circuit stabilization
+                }
+            }
+
+            is NetworkWatcher.NetworkEvent.ScreenOn,
+            is NetworkWatcher.NetworkEvent.ScreenOff,
+            is NetworkWatcher.NetworkEvent.DozeModeChanged -> {
+                Log.i(TAG, "Power state changed - ignoring (no rebind)")
+                // Screen/Doze events do NOT mean network path changed
+                // These fire constantly during normal use and at startup
+                // DO NOT trigger rehydration
+            }
+
+            is NetworkWatcher.NetworkEvent.WifiApStateChanged,
+            is NetworkWatcher.NetworkEvent.WifiP2pChanged -> {
+                Log.i(TAG, "WiFi AP/P2P changed - ignoring (no rebind)")
+                // Wi-Fi Direct / hotspot state churns frequently and fires at boot
+                // It's not a reliable signal that Tor path needs rebinding
+                // DO NOT trigger rehydration
+            }
+        }
     }
 
     private fun setupVpnBroadcastReceiver() {
@@ -5105,7 +6044,7 @@ class TorService : Service() {
         try {
             val isInitialized = torManager.isInitialized()
 
-            if (!isInitialized && hasNetworkConnection && !isReconnecting) {
+            if (!isInitialized && hasNetworkConnection() && !isReconnecting) {
                 Log.w(TAG, "Health check failed: Tor not initialized but network available - attempting reconnect")
                 if (torConnected) {
                     torConnected = false
@@ -5138,15 +6077,15 @@ class TorService : Service() {
                     updateNotification("Connected to Tor")
                 }
 
-                // Test SOCKS connectivity even when connected
-                testSocksConnectivity()
+                // REMOVED: testSocksConnectivity() - was end-to-end test causing restart loops
+                // Tor health is determined by bootstrap state + local control port, NOT external reachability
 
                 // Ensure incoming listener is running when connected
                 if (!isListenerRunning) {
                     Log.w(TAG, "Health check: Listener not running but Tor is connected - restarting listener")
                     startIncomingListener()
                 }
-            } else if (!hasNetworkConnection) {
+            } else if (!hasNetworkConnection()) {
                 Log.d(TAG, "Health check: No network connection available")
                 torConnected = false
             }
@@ -5250,41 +6189,26 @@ class TorService : Service() {
      * Test SOCKS connectivity immediately after login - more aggressive than regular health check
      * Forces immediate Tor restart if connection is broken
      */
+    /**
+     * OLD IMPLEMENTATION (DISABLED) - Test SOCKS connectivity at startup
+     *
+     * WHY DISABLED: Called forceTorRestart() on end-to-end test failures (check.torproject.org)
+     *               This created restart loops when external reachability failed (normal on Tor).
+     *               Bootstrap state + local control port are sufficient for Tor health.
+     */
     private fun testSocksConnectivityAtStartup() {
-        Thread {
-            try {
-                Log.i(TAG, "Testing SOCKS connectivity at startup...")
-
-                // Check if proxy is running
-                if (!RustBridge.isSocksProxyRunning()) {
-                    Log.e(TAG, "Startup SOCKS test: Proxy not running - forcing restart")
-                    updateNotification("Connection failed - Restarting...")
-                    forceTorRestart()
-                    return@Thread
-                }
-
-                // Test actual connectivity through the proxy
-                val testResult = RustBridge.testSocksConnectivity()
-                if (!testResult) {
-                    Log.e(TAG, "Startup SOCKS test: Connection test failed - forcing restart")
-                    updateNotification("Connection broken - Restarting...")
-                    forceTorRestart()
-                } else {
-                    Log.i(TAG, "✓ Startup SOCKS test: Connection verified successfully")
-                    socksFailureCount = 0
-                    lastSocksFailureTime = 0L
-                    updateNotification("Connected to Tor")
-                }
-            } catch (e: Exception) {
-                Log.e(TAG, "Startup SOCKS test failed with exception - forcing restart", e)
-                updateNotification("Connection error - Restarting...")
-                forceTorRestart()
-            }
-        }.start()
+        Log.w(TAG, "testSocksConnectivityAtStartup() called but DISABLED")
+        Log.w(TAG, "Old behavior: tested check.torproject.org and restarted on failure")
+        Log.w(TAG, "New behavior: Tor health determined by bootstrap state, not external tests")
+        // DISABLED - do nothing
     }
 
     /**
-     * Handle SOCKS failure - track failures and force Tor restart if threshold exceeded
+     * Handle SOCKS failure - LOG ONLY (escalation disabled to prevent restart loops)
+     *
+     * OLD BEHAVIOR: escalated to forceTorRestart() on threshold
+     * WHY REMOVED: End-to-end reachability failures (check.torproject.org) are normal on Tor
+     *              and should NOT trigger full Tor restarts. Peer unreachability ≠ Tor broken.
      */
     private fun handleSocksFailure() {
         val currentTime = System.currentTimeMillis()
@@ -5297,90 +6221,29 @@ class TorService : Service() {
         socksFailureCount++
         lastSocksFailureTime = currentTime
 
-        Log.w(TAG, "SOCKS failure reported ($socksFailureCount/$SOCKS_FAILURE_THRESHOLD)")
+        Log.w(TAG, "SOCKS failure reported ($socksFailureCount/$SOCKS_FAILURE_THRESHOLD) - LOG ONLY (escalation disabled)")
 
-        if (socksFailureCount >= SOCKS_FAILURE_THRESHOLD) {
-            Log.e(TAG, "SOCKS failure threshold exceeded - forcing Tor restart")
-            updateNotification("Restarting Tor (connectivity issues)...")
-            forceTorRestart()
-        } else {
-            // Try restarting just the SOCKS proxy first
-            Log.i(TAG, "Attempting SOCKS proxy restart (failure $socksFailureCount/$SOCKS_FAILURE_THRESHOLD)")
-            Thread {
-                try {
-                    if (RustBridge.isSocksProxyRunning()) {
-                        RustBridge.stopSocksProxy()
-                        Thread.sleep(1000)
-                    }
-                    RustBridge.startSocksProxy()
-                } catch (e: Exception) {
-                    Log.e(TAG, "Failed to restart SOCKS proxy", e)
-                }
-            }.start()
-        }
+        // ESCALATION DISABLED - this was causing restart loops
+        // Tor state machine (RUNNING/DEGRADED) handles lifecycle, not end-to-end reachability tests
     }
 
     /**
-     * Force a complete Tor restart when SOCKS proxy is broken
+     * OLD IMPLEMENTATION (DISABLED) - Force a complete Tor restart when SOCKS proxy is broken
+     *
+     * WHY DISABLED: This is the core "nuke it from orbit" loop that causes restart spirals.
+     *               End-to-end reachability failures trigger this, but they're normal on Tor.
+     *               The new state machine (restartTor(reason)) handles actual Tor failures properly.
+     *
+     * THIS FUNCTION IS NOW LOG-ONLY TO STOP RESTART LOOPS.
      */
     private fun forceTorRestart() {
-        Log.i(TAG, "========== FORCING TOR RESTART ==========")
+        Log.w(TAG, "========== forceTorRestart() CALLED BUT DISABLED ==========")
+        Log.w(TAG, "This was the old restart loop mechanism - now using restartTor(reason) instead")
+        Log.w(TAG, "If you're seeing this, check what called forceTorRestart() and remove that caller")
 
-        Thread {
-            try {
-                // Stop everything
-                isPingPollerRunning = false
-                isTapPollerRunning = false
-
-                // Stop SOCKS proxy
-                if (RustBridge.isSocksProxyRunning()) {
-                    Log.d(TAG, "Stopping SOCKS proxy...")
-                    RustBridge.stopSocksProxy()
-                }
-
-                // Stop hidden service listener
-                Log.d(TAG, "Stopping listeners...")
-                RustBridge.stopListeners()
-
-                // Mark as disconnected and not ready
-                torConnected = false
-                listenersReady = false
-
-                // Wait a moment for cleanup
-                Thread.sleep(2000)
-
-                // Reset failure counters
-                socksFailureCount = 0
-                reconnectAttempts = 0
-                isReconnecting = false
-
-                // Reinitialize Tor from scratch
-                Log.i(TAG, "Reinitializing Tor connection...")
-                updateNotification("Reconnecting to Tor...")
-
-                torManager.initializeAsync { success, onionAddress ->
-                    if (success && onionAddress != null) {
-                        Log.i(TAG, "✓ Tor restarted successfully: $onionAddress")
-                        torConnected = true
-
-                        // Restart everything
-                        ensureSocksProxyRunning()
-                        startIncomingListener()
-                        sendTapsToAllContacts()
-
-                        updateNotification("Connected to Tor")
-                    } else {
-                        Log.e(TAG, "✗ Tor restart failed - will retry via health check")
-                        updateNotification("Connection failed - Retrying...")
-                        scheduleReconnect()
-                    }
-                }
-            } catch (e: Exception) {
-                Log.e(TAG, "Error during forced Tor restart", e)
-                updateNotification("Restart failed - Retrying...")
-                scheduleReconnect()
-            }
-        }.start()
+        // DISABLED - do nothing
+        // Old behavior: stopped everything, reinitialize torManager, restart listeners
+        // New behavior: use restartTor(reason) with proper state machine guards instead
     }
 
     // ==================== RECONNECTION LOGIC ====================
@@ -5391,7 +6254,7 @@ class TorService : Service() {
             return
         }
 
-        if (!hasNetworkConnection) {
+        if (!hasNetworkConnection()) {
             Log.d(TAG, "No network connection - waiting for network to become available")
             updateNotification("Waiting for network...")
             return
@@ -5568,12 +6431,8 @@ class TorService : Service() {
         reconnectHandler.removeCallbacksAndMessages(null)
         bandwidthHandler.removeCallbacksAndMessages(null)
 
-        // Unregister network callback
-        try {
-            networkCallback?.let { connectivityManager?.unregisterNetworkCallback(it) }
-        } catch (e: Exception) {
-            Log.e(TAG, "Error unregistering network callback", e)
-        }
+        // Stop NetworkWatcher
+        networkWatcher?.stop()
 
         // Unregister VPN broadcast receiver
         try {
@@ -5766,6 +6625,207 @@ class TorService : Service() {
             } catch (e: Exception) {
                 Log.e(TAG, "Error executing payment transfer", e)
             }
+        }
+    }
+
+    // ========== ControlPort Event Monitoring ==========
+
+    /**
+     * Register Tor event callback to receive ControlPort events
+     * Enables fast reaction to circuit failures and HS descriptor issues
+     */
+    private fun registerTorEventCallback() {
+        try {
+            RustBridge.setTorEventCallback(object : RustBridge.TorEventCallback {
+                override fun onTorEvent(
+                    eventType: String,
+                    circId: String,
+                    reason: String,
+                    address: String,
+                    severity: String,
+                    message: String,
+                    progress: Int
+                ) {
+                    handleTorEvent(eventType, circId, reason, address, severity, message, progress)
+                }
+            })
+            Log.i(TAG, "✓ Tor event callback registered")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to register Tor event callback", e)
+        }
+    }
+
+    /**
+     * Handle incoming Tor ControlPort events
+     * - Logs all events to ring buffer
+     * - Reacts to CIRC_FAILED (early restart)
+     * - Reacts to HS_DESC failures (mark unhealthy)
+     */
+    private fun handleTorEvent(
+        eventType: String,
+        circId: String,
+        reason: String,
+        address: String,
+        severity: String,
+        message: String,
+        progress: Int
+    ) {
+        val now = System.currentTimeMillis()
+
+        // Add to ring buffer (last 50 events)
+        synchronized(eventRingBuffer) {
+            eventRingBuffer.add(
+                TorEvent(
+                    timestamp = now,
+                    eventType = eventType,
+                    circId = circId,
+                    reason = reason,
+                    address = address,
+                    severity = severity,
+                    message = message,
+                    progress = progress
+                )
+            )
+
+            // Keep only last 50 events
+            if (eventRingBuffer.size > MAX_EVENTS) {
+                eventRingBuffer.removeAt(0)
+            }
+        }
+
+        // React to specific events
+        when (eventType) {
+            "CIRC_FAILED" -> handleCircuitFailed(circId, reason, now)
+            "HS_DESC_FAILED" -> handleHsDescFailed(address, reason, now)
+            "HS_DESC_UPLOADED" -> handleHsDescUploaded(address, now)
+            else -> {
+                // Just log other events
+                Log.d(TAG, "Tor event: $eventType")
+            }
+        }
+    }
+
+    /**
+     * Handle CIRC_FAILED event
+     * If we see 5 circuit failures in 10 seconds → restart Tor immediately
+     */
+    /**
+     * Handle CIRC_FAILED event (INFORMATIONAL ONLY)
+     *
+     * CRITICAL: Circuit failures are NORMAL Tor behavior and do NOT indicate transport failure.
+     * Circuits routinely timeout/close/rebuild - this is expected on mobile networks.
+     *
+     * Per severity model:
+     * - CIRC events → INFO level (no action)
+     * - Excessive churn (>20 in 60s) → NEWNYM (rate-limited)
+     * - Never restart Tor on circuit events alone
+     *
+     * Health is derived from MetricsPort (bootstrap + circuits), NOT from events.
+     */
+    private fun handleCircuitFailed(circId: String, reason: String, now: Long) {
+        Log.i(TAG, "Circuit event: FAILED $circId (reason: $reason) [INFORMATIONAL ONLY]")
+
+        // ALL circuit events are informational - just count them
+        // Do NOT treat as failures or trigger restarts
+
+        // Reset window if too old
+        if (now - circFailureWindowStart > 60000L) {  // 60 second window
+            circFailureCount = 0
+            circFailureWindowStart = now
+        }
+
+        circFailureCount++
+
+        // Log threshold for visibility
+        if (circFailureCount == 10) {
+            Log.i(TAG, "Circuit churn: 10 failures in 60s (normal Tor behavior, monitoring)")
+        }
+
+        // NEWNYM is the ONLY allowed soft action for excessive churn
+        // Never restart Tor based on circuit events
+        if (circFailureCount >= 20) {
+            Log.w(TAG, "Excessive circuit churn: $circFailureCount failures in 60s → issuing NEWNYM (rate-limited)")
+
+            // Reset counter
+            circFailureCount = 0
+            circFailureWindowStart = now
+
+            // Issue NEWNYM via ControlPort (rate-limited at Tor level)
+            serviceScope.launch(Dispatchers.IO) {
+                try {
+                    val result = RustBridge.sendNewnym()
+                    if (result) {
+                        Log.i(TAG, "✓ NEWNYM signal sent to Tor (will rotate guards)")
+                    } else {
+                        Log.w(TAG, "NEWNYM failed or rate-limited by Tor")
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error sending NEWNYM", e)
+                }
+            }
+        }
+    }
+
+    /**
+     * Handle HS_DESC_FAILED event
+     * If we see 3 descriptor upload failures in 30 seconds → mark HS unhealthy
+     */
+    private fun handleHsDescFailed(address: String, reason: String, now: Long) {
+        Log.w(TAG, "HS descriptor UPLOAD FAILED: $address (reason: $reason)")
+
+        // Reset window if too old
+        if (now - hsDescFailureWindowStart > HS_DESC_FAILURE_WINDOW) {
+            hsDescFailureCount = 0
+            hsDescFailureWindowStart = now
+        }
+
+        hsDescFailureCount++
+
+        Log.d(TAG, "HS descriptor failures: $hsDescFailureCount in window")
+
+        // If threshold exceeded → mark HS unhealthy (stop aggressive retries)
+        if (hsDescFailureCount >= HS_DESC_FAILURE_THRESHOLD) {
+            hsDescHealthy = false
+            Log.w(TAG, "⚠️ $hsDescFailureCount HS descriptor failures → marking HS unhealthy (will reduce retry rate)")
+        }
+    }
+
+    /**
+     * Handle HS_DESC_UPLOADED event
+     * Reset HS health counter when descriptor uploads successfully
+     */
+    private fun handleHsDescUploaded(address: String, now: Long) {
+        // Deduplicate: Tor uploads each descriptor to 3 HSDirs (normal redundancy)
+        // Only log first upload per address within 5-second window
+        val lastUpload = lastHsDescUpload[address] ?: 0L
+        if (now - lastUpload < HS_DESC_DEDUPE_WINDOW_MS) {
+            return  // Skip duplicate log
+        }
+        lastHsDescUpload[address] = now
+
+        Log.i(TAG, "HS descriptor UPLOADED: $address")
+
+        // Reset HS health tracking
+        if (!hsDescHealthy || hsDescFailureCount > 0) {
+            Log.i(TAG, "✓ HS descriptor upload successful → marking HS healthy")
+            hsDescHealthy = true
+            hsDescFailureCount = 0
+            hsDescFailureWindowStart = now
+        }
+    }
+
+    /**
+     * Check if network connection is available
+     * Returns true if device has validated network connectivity
+     */
+    private fun hasNetworkConnection(): Boolean {
+        return try {
+            val connectivityManager = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+            val activeNetwork = connectivityManager.activeNetwork
+            val capabilities = connectivityManager.getNetworkCapabilities(activeNetwork)
+            capabilities?.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED) == true
+        } catch (e: Exception) {
+            false
         }
     }
 }
