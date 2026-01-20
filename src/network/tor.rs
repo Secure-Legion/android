@@ -5,7 +5,7 @@
 
 use std::error::Error;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicU8, AtomicU32, Ordering};
 use tokio::io::{AsyncWriteExt, AsyncReadExt, BufReader, AsyncBufReadExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::Mutex;
@@ -18,10 +18,57 @@ use once_cell::sync::Lazy;
 /// Global bootstrap status (0-100%) - updated by event listener
 pub static BOOTSTRAP_STATUS: AtomicU32 = AtomicU32::new(0);
 
+/// Circuit established status (0 = no circuits, 1 = circuits established)
+/// Updated by event listener polling GETINFO status/circuit-established
+pub static CIRCUIT_ESTABLISHED: AtomicU8 = AtomicU8::new(0);
+
 /// Get bootstrap status from the global atomic (fast, no control port query)
 /// This is updated in real-time by the event listener
 pub fn get_bootstrap_status_fast() -> u32 {
     BOOTSTRAP_STATUS.load(Ordering::SeqCst)
+}
+
+/// Get circuit established status from the global atomic (fast, no control port query)
+/// Returns 0 (no circuits) or 1 (circuits established)
+pub fn get_circuit_established_fast() -> u8 {
+    CIRCUIT_ESTABLISHED.load(Ordering::SeqCst)
+}
+
+/// Tor event types for ControlPort event monitoring
+#[derive(Debug, Clone)]
+pub enum TorEventType {
+    Bootstrap { progress: u32 },
+    CircuitBuilt { circ_id: String },
+    CircuitFailed { circ_id: String, reason: String },
+    CircuitClosed { circ_id: String, reason: String },
+    HsDescUploaded { address: String },
+    HsDescUploadFailed { address: String, reason: String },
+    StatusGeneral { severity: String, message: String },
+}
+
+/// Callback type for forwarding events to Kotlin
+/// This will be called from the event listener thread
+type TorEventCallback = Arc<dyn Fn(TorEventType) + Send + Sync>;
+
+/// Global event callback (set by Kotlin via FFI)
+static GLOBAL_TOR_EVENT_CALLBACK: Lazy<StdMutex<Option<TorEventCallback>>> = Lazy::new(|| StdMutex::new(None));
+
+/// Register a callback to receive Tor events
+/// Called from FFI layer (android.rs) to set the Kotlin callback
+pub fn register_tor_event_callback<F>(callback: F)
+where
+    F: Fn(TorEventType) + Send + Sync + 'static,
+{
+    let mut cb = GLOBAL_TOR_EVENT_CALLBACK.lock().unwrap();
+    *cb = Some(Arc::new(callback));
+    log::info!("Tor event callback registered");
+}
+
+/// Forward event to Kotlin callback (if registered)
+fn forward_tor_event(event: TorEventType) {
+    if let Some(ref callback) = *GLOBAL_TOR_EVENT_CALLBACK.lock().unwrap() {
+        callback(event);
+    }
 }
 
 /// Start the bootstrap event listener on a separate control port connection
@@ -88,19 +135,23 @@ async fn bootstrap_event_listener_task() -> Result<(), Box<dyn Error + Send + Sy
 
     log::info!("Event listener: Authenticated to control port");
 
-    // Subscribe to STATUS_CLIENT events for bootstrap progress
-    control.write_all(b"SETEVENTS STATUS_CLIENT\r\n").await?;
+    // Subscribe to multiple events for comprehensive monitoring
+    // STATUS_CLIENT: Bootstrap progress
+    // CIRC: Circuit lifecycle (build/extend/fail/close)
+    // HS_DESC: Onion service descriptor upload/download events
+    // STATUS_GENERAL: General Tor state changes
+    control.write_all(b"SETEVENTS STATUS_CLIENT CIRC HS_DESC STATUS_GENERAL\r\n").await?;
     let n = control.read(&mut buf).await?;
     let response = String::from_utf8_lossy(&buf[..n]);
 
     if !response.contains("250 OK") {
         log::error!("Event listener: Failed to subscribe to events: {}", response);
-        return Err("Failed to subscribe to STATUS_CLIENT events".into());
+        return Err("Failed to subscribe to events".into());
     }
 
-    log::info!("Event listener: Subscribed to STATUS_CLIENT events");
+    log::info!("Event listener: Subscribed to STATUS_CLIENT, CIRC, HS_DESC, STATUS_GENERAL events");
 
-    // Also get initial bootstrap status
+    // Get initial bootstrap status
     control.write_all(b"GETINFO status/bootstrap-phase\r\n").await?;
     let n = control.read(&mut buf).await?;
     let response = String::from_utf8_lossy(&buf[..n]);
@@ -111,33 +162,104 @@ async fn bootstrap_event_listener_task() -> Result<(), Box<dyn Error + Send + Sy
         log::info!("Event listener: Initial bootstrap status: {}%", progress);
     }
 
+    // Get initial circuit-established status
+    control.write_all(b"GETINFO status/circuit-established\r\n").await?;
+    let n = control.read(&mut buf).await?;
+    let response = String::from_utf8_lossy(&buf[..n]);
+    let circuits_established = if response.contains("circuit-established=1") { 1 } else { 0 };
+    CIRCUIT_ESTABLISHED.store(circuits_established, Ordering::SeqCst);
+    log::info!("Event listener: Initial circuit-established: {}", circuits_established);
+
     // Now continuously read events
     log::info!("Event listener: Listening for bootstrap events...");
     let mut event_buf = vec![0u8; 4096];
+    let mut poll_interval = tokio::time::interval(Duration::from_secs(5));
 
     loop {
-        match control.read(&mut event_buf).await {
-            Ok(0) => {
-                log::info!("Event listener: Control connection closed");
-                break;
-            }
-            Ok(n) => {
-                let event = String::from_utf8_lossy(&event_buf[..n]);
+        tokio::select! {
+            // Poll circuit-established every 5 seconds
+            _ = poll_interval.tick() => {
+                // Poll circuit-established status
+                if let Err(e) = control.write_all(b"GETINFO status/circuit-established\r\n").await {
+                    log::error!("Event listener: Failed to query circuit-established: {}", e);
+                    break;
+                }
 
-                // Check for bootstrap progress event
-                // Format: 650 STATUS_CLIENT NOTICE BOOTSTRAP PROGRESS=XX TAG=... SUMMARY="..."
-                if event.contains("BOOTSTRAP") && event.contains("PROGRESS=") {
-                    if let Some(progress) = parse_bootstrap_progress(&event) {
-                        let old_value = BOOTSTRAP_STATUS.swap(progress, Ordering::SeqCst);
-                        if progress != old_value {
-                            log::info!("Bootstrap progress: {}%", progress);
-                        }
+                let n = match control.read(&mut buf).await {
+                    Ok(n) => n,
+                    Err(e) => {
+                        log::error!("Event listener: Failed to read circuit-established response: {}", e);
+                        break;
                     }
+                };
+
+                let response = String::from_utf8_lossy(&buf[..n]);
+                let new_status = if response.contains("circuit-established=1") { 1 } else { 0 };
+                let old_status = CIRCUIT_ESTABLISHED.swap(new_status, Ordering::SeqCst);
+
+                if new_status != old_status {
+                    log::info!("Circuit established status changed: {} → {}", old_status, new_status);
                 }
             }
-            Err(e) => {
-                log::error!("Event listener: Read error: {}", e);
-                break;
+
+            // Read and parse ControlPort events
+            read_result = control.read(&mut event_buf) => {
+                match read_result {
+                    Ok(0) => {
+                        log::info!("Event listener: Control connection closed");
+                        break;
+                    }
+                    Ok(n) => {
+                        let event_text = String::from_utf8_lossy(&event_buf[..n]);
+
+                        // Parse events line by line (can receive multiple events in one read)
+                        for line in event_text.lines() {
+                            if line.is_empty() {
+                                continue;
+                            }
+
+                            // Parse and forward event to Kotlin
+                            if let Some(event) = parse_tor_event(line) {
+                                // Special handling for bootstrap to update atomic
+                                if let TorEventType::Bootstrap { progress } = event {
+                                    let old_value = BOOTSTRAP_STATUS.swap(progress, Ordering::SeqCst);
+                                    if progress != old_value {
+                                        log::info!("Bootstrap progress: {}%", progress);
+                                    }
+                                    forward_tor_event(event);
+                                } else {
+                                    // Log other events
+                                    match &event {
+                                        TorEventType::CircuitBuilt { circ_id } => {
+                                            log::info!("Circuit BUILT: {}", circ_id);
+                                        }
+                                        TorEventType::CircuitFailed { circ_id, reason } => {
+                                            log::warn!("Circuit FAILED: {} (reason: {})", circ_id, reason);
+                                        }
+                                        TorEventType::CircuitClosed { circ_id, reason } => {
+                                            log::info!("Circuit CLOSED: {} (reason: {})", circ_id, reason);
+                                        }
+                                        TorEventType::HsDescUploaded { address } => {
+                                            log::info!("HS descriptor UPLOADED: {}", address);
+                                        }
+                                        TorEventType::HsDescUploadFailed { address, reason } => {
+                                            log::warn!("HS descriptor UPLOAD FAILED: {} (reason: {})", address, reason);
+                                        }
+                                        TorEventType::StatusGeneral { severity, message } => {
+                                            log::info!("STATUS_GENERAL [{}]: {}", severity, message);
+                                        }
+                                        _ => {}
+                                    }
+                                    forward_tor_event(event);
+                                }
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        log::error!("Event listener: Read error: {}", e);
+                        break;
+                    }
+                }
             }
         }
     }
@@ -153,6 +275,98 @@ fn parse_bootstrap_progress(response: &str) -> Option<u32> {
             if let Ok(percentage) = percentage_str.parse::<u32>() {
                 return Some(percentage);
             }
+        }
+    }
+    None
+}
+
+/// Parse ControlPort events and return TorEventType
+/// Events come in format: "650 EVENT_TYPE [params]"
+fn parse_tor_event(event_line: &str) -> Option<TorEventType> {
+    // Skip if not an event (650 is async event code)
+    if !event_line.starts_with("650 ") {
+        return None;
+    }
+
+    // BOOTSTRAP event: 650 STATUS_CLIENT NOTICE BOOTSTRAP PROGRESS=XX TAG=... SUMMARY="..."
+    if event_line.contains("BOOTSTRAP") && event_line.contains("PROGRESS=") {
+        if let Some(progress) = parse_bootstrap_progress(event_line) {
+            return Some(TorEventType::Bootstrap { progress });
+        }
+    }
+
+    // CIRC events: 650 CIRC <CircuitID> <Status> [<Path>] [BUILD_FLAGS=...] [PURPOSE=...] [REASON=...]
+    // Status: LAUNCHED, BUILT, EXTENDED, FAILED, CLOSED
+    if event_line.starts_with("650 CIRC ") {
+        let parts: Vec<&str> = event_line.split_whitespace().collect();
+        if parts.len() >= 3 {
+            let circ_id = parts[2].to_string();
+            let status = parts.get(3).unwrap_or(&"");
+
+            match *status {
+                "BUILT" => {
+                    return Some(TorEventType::CircuitBuilt { circ_id });
+                }
+                "FAILED" => {
+                    // Extract REASON=XXX if present
+                    let reason = extract_param(event_line, "REASON=")
+                        .unwrap_or_else(|| "UNKNOWN".to_string());
+                    return Some(TorEventType::CircuitFailed { circ_id, reason });
+                }
+                "CLOSED" => {
+                    let reason = extract_param(event_line, "REASON=")
+                        .unwrap_or_else(|| "UNKNOWN".to_string());
+                    return Some(TorEventType::CircuitClosed { circ_id, reason });
+                }
+                _ => {} // Ignore LAUNCHED, EXTENDED, etc.
+            }
+        }
+    }
+
+    // HS_DESC events: 650 HS_DESC <Action> <HSAddress> <AuthType> <HsDir> [<DescriptorID>] [REASON=...]
+    // Action: UPLOAD, UPLOADED, FAILED, RECEIVED, etc.
+    if event_line.starts_with("650 HS_DESC ") {
+        let parts: Vec<&str> = event_line.split_whitespace().collect();
+        if parts.len() >= 4 {
+            let action = parts[2];
+            let address = parts.get(3).unwrap_or(&"").to_string();
+
+            match action {
+                "UPLOADED" => {
+                    return Some(TorEventType::HsDescUploaded { address });
+                }
+                "FAILED" => {
+                    let reason = extract_param(event_line, "REASON=")
+                        .unwrap_or_else(|| "UNKNOWN".to_string());
+                    return Some(TorEventType::HsDescUploadFailed { address, reason });
+                }
+                _ => {} // Ignore UPLOAD, RECEIVED, etc.
+            }
+        }
+    }
+
+    // STATUS_GENERAL events: 650 STATUS_GENERAL <Severity> <Action> <Arguments>
+    if event_line.starts_with("650 STATUS_GENERAL ") {
+        let parts: Vec<&str> = event_line.splitn(4, ' ').collect();
+        if parts.len() >= 4 {
+            let severity = parts[2].to_string();
+            let message = parts[3].to_string();
+            return Some(TorEventType::StatusGeneral { severity, message });
+        }
+    }
+
+    None
+}
+
+/// Extract parameter value from event line (e.g., REASON=XXX)
+fn extract_param(line: &str, param: &str) -> Option<String> {
+    if let Some(param_start) = line.find(param) {
+        let value_start = param_start + param.len();
+        let value = &line[value_start..];
+        // Take until next space or end of line
+        let value = value.split_whitespace().next().unwrap_or("");
+        if !value.is_empty() {
+            return Some(value.to_string());
         }
     }
     None
@@ -361,6 +575,7 @@ pub struct TorManager {
     hs_service_port: u16,
     hs_local_port: u16,
     socks_port: u16,
+    bound_port: Option<u16>,  // Track currently bound port for idempotency check
 }
 
 impl TorManager {
@@ -381,6 +596,7 @@ impl TorManager {
             hs_service_port: PORT_HS_PING_PONG,    // 9150: PING/PONG/ACK
             hs_local_port: PORT_LOCAL_HS,          // 8080: Local listener
             socks_port: PORT_SOCKS,                // 9050: SOCKS proxy
+            bound_port: None,  // No port bound initially
         })
     }
 
@@ -760,31 +976,10 @@ impl TorManager {
         let expanded_key = signing_key.to_keypair_bytes();
         let key_base64 = base64::encode(&expanded_key);
 
-        // Subscribe to HS_DESC events BEFORE creating the hidden service
-        // This ensures we catch all descriptor upload events
-        // CRITICAL: Check if already subscribed to avoid duplicate subscriptions
+        // NOTE: HS_DESC event subscription is handled by the main event listener (spawn_event_listener)
+        // No need to subscribe again here - would cause duplicate events
         let control = self.control_stream.as_ref()
             .ok_or("Control port not connected")?;
-
-        // Only subscribe if we haven't already (idempotency guard)
-        if !self.hs_state.subscribed_events.contains(&"HS_DESC".to_string()) {
-            log::info!("Subscribing to HS_DESC events before creating hidden service...");
-            {
-                let mut stream = control.lock().await;
-                stream.write_all(b"SETEVENTS HS_DESC\r\n").await?;
-                let mut buf = vec![0u8; 512];
-                let n = stream.read(&mut buf).await?;
-                let response = String::from_utf8_lossy(&buf[..n]);
-                if !response.contains("250 OK") {
-                    log::warn!("Failed to subscribe to HS_DESC events: {}", response);
-                } else {
-                    log::info!("Subscribed to HS_DESC events successfully");
-                    self.hs_state.subscribed_events.push("HS_DESC".to_string());
-                }
-            }
-        } else {
-            log::info!("Already subscribed to HS_DESC events");
-        }
 
         // Now create the hidden service - descriptors will be uploaded and we'll receive events
         // IMPORTANT: Expose FOUR ports for Ping-Pong-Tap-ACK protocol:
@@ -1142,25 +1337,56 @@ impl TorManager {
     }
 
     /// Start listening for incoming connections on the hidden service
+    ///
+    /// CRITICAL FIXES:
+    /// 1. Idempotency: Skip restart if already running on requested port
+    /// 2. Await stop_listener() to ensure port is released before rebind
+    /// 3. Retry on EADDRINUSE with exponential backoff (bounded)
+    /// 4. Detailed logging at each fallible step
     pub async fn start_listener(&mut self, local_port: Option<u16>) -> Result<tokio::sync::mpsc::UnboundedReceiver<(u64, Vec<u8>)>, Box<dyn Error>> {
         let port = local_port.unwrap_or(self.hs_local_port);
+
+        // ✅ IDEMPOTENCY: If already running on same port, return success (NO-OP)
+        if self.listener_handle.is_some() && self.bound_port == Some(port) {
+            log::info!("✓ Listener already running on port {}, returning success (idempotent NO-OP)", port);
+
+            // Create dummy channel to satisfy return type
+            // FFI wrapper will try to store it in GLOBAL_PING_RECEIVER (already set),
+            // OnceCell will reject it, and FFI returns true to Kotlin
+            let (_tx, rx) = tokio::sync::mpsc::unbounded_channel();
+            return Ok(rx);
+        }
+
+        // If port changed or not running, stop existing listener
+        // if self.listener_handle.is_some() {
+        //     log::info!("Listener running on different port, stopping before restart...");
+        //     self.stop_listener().await;
+        // }
+
         let bind_addr = format!("127.0.0.1:{}", port);
+        log::info!("Starting hidden service listener on {} (requested port: {})", bind_addr, port);
 
-        log::info!("Starting hidden service listener on {}", bind_addr);
+        // BIND WITH RETRY: Handle EADDRINUSE with exponential backoff
+        log::info!("Creating TCP socket...");
+        let listener = self.bind_with_retry(&bind_addr).await
+            .map_err(|e| {
+                log::error!("✗ FATAL: Failed to bind listener on {}: {:?}", bind_addr, e);
+                e
+            })?;
 
-        // Use TcpSocket to set SO_REUSEADDR before binding
-        let socket = tokio::net::TcpSocket::new_v4()?;
-        socket.set_reuseaddr(true)?;
-        socket.bind(bind_addr.parse()?)?;
-        let listener = socket.listen(1024)?;
+        log::info!("✓ Successfully bound to {}", bind_addr);
+
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
-
         let incoming_tx = tx.clone();
         self.incoming_ping_tx = Some(tx);
 
+        // Clone bind_addr for the async move block
+        let bind_addr_for_task = bind_addr.clone();
+
         // Spawn listener task
+        log::info!("Spawning listener accept loop...");
         let handle = tokio::spawn(async move {
-            log::info!("Listener task started, waiting for connections...");
+            log::info!("✓ Listener task started, waiting for connections on {}...", bind_addr_for_task);
 
             loop {
                 match listener.accept().await {
@@ -1190,10 +1416,78 @@ impl TorManager {
         });
 
         self.listener_handle = Some(handle);
+        self.bound_port = Some(port);
 
-        log::info!("Hidden service listener started on {}", bind_addr);
+        log::info!("✓ Hidden service listener FULLY STARTED on {}", bind_addr);
 
         Ok(rx)
+    }
+
+    /// Bind to address with retry on EADDRINUSE (exponential backoff, bounded)
+    ///
+    /// This handles the race condition where stop_listener() awaits task cancellation
+    /// but the OS hasn't fully released the port yet (TIME_WAIT, kernel cleanup delay, etc.)
+    async fn bind_with_retry(&self, bind_addr: &str) -> Result<TcpListener, Box<dyn Error>> {
+        use std::io;
+        use tokio::time::{sleep, Duration};
+
+        let addr: std::net::SocketAddr = bind_addr.parse()?;
+        let mut delay_ms = 25u64;
+        const MAX_ATTEMPTS: u32 = 8;
+
+        for attempt in 1..=MAX_ATTEMPTS {
+            log::info!("Bind attempt {}/{} to {}", attempt, MAX_ATTEMPTS, addr);
+
+            // Try binding with SO_REUSEADDR
+            match tokio::net::TcpSocket::new_v4() {
+                Ok(socket) => {
+                    log::debug!("  ✓ TcpSocket::new_v4() succeeded");
+
+                    if let Err(e) = socket.set_reuseaddr(true) {
+                        log::error!("  ✗ set_reuseaddr() failed: {:?}", e);
+                        return Err(e.into());
+                    }
+                    log::debug!("  ✓ SO_REUSEADDR set");
+
+                    match socket.bind(addr) {
+                        Ok(_) => {
+                            log::info!("  ✓ bind() succeeded on attempt {}", attempt);
+                            match socket.listen(1024) {
+                                Ok(listener) => {
+                                    log::info!("  ✓ listen() succeeded, returning TcpListener");
+                                    return Ok(listener);
+                                }
+                                Err(e) => {
+                                    log::error!("  ✗ listen() failed: {:?}", e);
+                                    return Err(e.into());
+                                }
+                            }
+                        }
+                        Err(e) if e.kind() == io::ErrorKind::AddrInUse => {
+                            if attempt < MAX_ATTEMPTS {
+                                log::warn!("  ✗ bind() EADDRINUSE (attempt {}), retrying in {}ms...", attempt, delay_ms);
+                                sleep(Duration::from_millis(delay_ms)).await;
+                                delay_ms = (delay_ms * 2).min(500);  // Exponential backoff, cap at 500ms
+                                continue;
+                            } else {
+                                log::error!("  ✗ FATAL: bind() EADDRINUSE after {} attempts, giving up", MAX_ATTEMPTS);
+                                return Err(format!("bind({}) exhausted {} retry attempts (EADDRINUSE)", addr, MAX_ATTEMPTS).into());
+                            }
+                        }
+                        Err(e) => {
+                            log::error!("  ✗ bind() failed with non-EADDRINUSE error: {:?}", e);
+                            return Err(e.into());
+                        }
+                    }
+                }
+                Err(e) => {
+                    log::error!("  ✗ TcpSocket::new_v4() failed: {:?}", e);
+                    return Err(e.into());
+                }
+            }
+        }
+
+        Err(format!("bind_with_retry: unreachable (exhausted {} attempts)", MAX_ATTEMPTS).into())
     }
 
     /// Handle incoming connection (receive Ping token)
@@ -1383,11 +1677,33 @@ impl TorManager {
         self.hidden_service_address.clone()
     }
 
-    /// Stop the hidden service listener
-    pub fn stop_listener(&mut self) {
+    /// Stop the hidden service listener (async to ensure proper cleanup)
+    ///
+    /// CRITICAL: This awaits the aborted task to ensure the TCP socket is fully released
+    /// before returning. Without this, immediate rebind fails with EADDRINUSE.
+    pub async fn stop_listener(&mut self) {
         if let Some(handle) = self.listener_handle.take() {
+            log::info!("Aborting hidden service listener task...");
             handle.abort();
-            log::info!("Hidden service listener stopped");
+
+            // CRITICAL: Await the handle to ensure task is fully dropped and socket is released
+            // This prevents EADDRINUSE when rebinding immediately after
+            match handle.await {
+                Ok(_) => log::info!("Hidden service listener exited cleanly"),
+                Err(e) if e.is_cancelled() => log::info!("Hidden service listener aborted (cancelled)"),
+                Err(e) => log::warn!("Hidden service listener aborted with error: {:?}", e),
+            }
+
+            // Clear bound port tracking
+            self.bound_port = None;
+        }
+
+        // Close all pending connections (forces fresh circuits on restart)
+        let mut pending = PENDING_CONNECTIONS.lock().unwrap();
+        let count = pending.len();
+        if count > 0 {
+            log::info!("Closing {} pending connection(s) with stale circuits", count);
+            pending.clear();  // Dropping TcpStream closes the socket
         }
     }
 
@@ -1464,9 +1780,56 @@ impl TorManager {
         log::info!("SOCKS proxy is managed by C Tor daemon");
     }
 
-    /// Check if SOCKS proxy is running (always true with C Tor)
+    /// Check if SOCKS proxy is running by attempting a handshake
+    ///
+    /// CRITICAL: This does NOT try to CONNECT (which requires circuits).
+    /// It only tests if the SOCKS proxy is listening and accepting connections.
     pub fn is_socks_proxy_running(&self) -> bool {
-        true
+        use std::net::TcpStream;
+        use std::io::{Write, Read};
+        use std::time::Duration;
+
+        match TcpStream::connect_timeout(
+            &std::net::SocketAddr::from(([127, 0, 0, 1], self.socks_port)),
+            Duration::from_millis(500)
+        ) {
+            Ok(mut stream) => {
+                // Set read timeout so we don't block forever
+                if let Err(e) = stream.set_read_timeout(Some(Duration::from_millis(500))) {
+                    log::warn!("SOCKS health: Failed to set read timeout: {}", e);
+                    return false;
+                }
+
+                // Send SOCKS5 version + auth request: [version=5, n_methods=1, method=0 (no auth)]
+                let handshake = [0x05, 0x01, 0x00];
+                if let Err(e) = stream.write_all(&handshake) {
+                    log::warn!("SOCKS health: Failed to send handshake: {}", e);
+                    return false;
+                }
+
+                // Read response: [version=5, chosen_method]
+                let mut response = [0u8; 2];
+                match stream.read_exact(&mut response) {
+                    Ok(_) => {
+                        if response[0] == 0x05 && response[1] == 0x00 {
+                            log::debug!("SOCKS health: ✓ Proxy reachable and accepting connections (127.0.0.1:{})", self.socks_port);
+                            true
+                        } else {
+                            log::warn!("SOCKS health: ✗ Unexpected handshake response: {:?}", response);
+                            false
+                        }
+                    }
+                    Err(e) => {
+                        log::warn!("SOCKS health: ✗ Failed to read handshake response: {}", e);
+                        false
+                    }
+                }
+            }
+            Err(e) => {
+                log::warn!("SOCKS health: ✗ Cannot connect to 127.0.0.1:{} - {}", self.socks_port, e);
+                false
+            }
+        }
     }
 
     /// Test Tor health using control port (privacy-preserving approach)
@@ -1662,6 +2025,51 @@ impl TorManager {
     /// Receive data from a Tor connection
     pub async fn receive(&self, conn: &mut TorConnection, _max_len: usize) -> Result<Vec<u8>, Box<dyn Error>> {
         conn.receive().await
+    }
+
+    /// Send NEWNYM signal to Tor via ControlPort
+    /// Rotates Tor guards and circuits (rate-limited by Tor itself, ~10 seconds)
+    /// Returns true on success, false if control port unavailable or command failed
+    pub async fn send_newnym(&self) -> bool {
+        let control = match self.control_stream.as_ref() {
+            Some(c) => c,
+            None => {
+                log::warn!("Cannot send NEWNYM - control port not connected");
+                return false;
+            }
+        };
+
+        let mut stream = control.lock().await;
+
+        // Send SIGNAL NEWNYM command
+        if let Err(e) = stream.write_all(b"SIGNAL NEWNYM\r\n").await {
+            log::error!("Failed to send NEWNYM command: {}", e);
+            return false;
+        }
+
+        // Read response
+        let mut buf = vec![0u8; 1024];
+        let n = match stream.read(&mut buf).await {
+            Ok(n) => n,
+            Err(e) => {
+                log::error!("Failed to read NEWNYM response: {}", e);
+                return false;
+            }
+        };
+
+        let response = String::from_utf8_lossy(&buf[..n]);
+
+        // Check for success (250 OK) or rate-limiting (551)
+        if response.contains("250 OK") {
+            log::info!("✓ NEWNYM signal sent successfully (Tor will rotate guards)");
+            true
+        } else if response.contains("551") {
+            log::warn!("NEWNYM rate-limited by Tor (too soon since last NEWNYM)");
+            false
+        } else {
+            log::error!("NEWNYM command failed: {}", response.trim());
+            false
+        }
     }
 }
 

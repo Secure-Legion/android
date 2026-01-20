@@ -1,5 +1,5 @@
 use jni::objects::{JByteArray, JClass, JObject, JString, GlobalRef};
-use jni::sys::{jboolean, jbyte, jbyteArray, jint, jlong, jstring, jobjectArray};
+use jni::sys::{jboolean, jbyte, jbyteArray, jint, jlong, jstring, jobjectArray, JNI_TRUE, JNI_FALSE};
 use jni::JNIEnv;
 use std::panic;
 use std::sync::{Arc, Mutex};
@@ -125,6 +125,14 @@ static GLOBAL_VOICE_CALLBACK: OnceCell<Mutex<Option<GlobalRef>>> = OnceCell::new
 /// Global Voice Signaling Callback (v2.0)
 /// Stores a global reference to the Kotlin callback object for signaling messages (CALL_OFFER, CALL_ANSWER, etc)
 static GLOBAL_VOICE_SIGNALING_CALLBACK: OnceCell<Mutex<Option<GlobalRef>>> = OnceCell::new();
+
+/// Global Tor Event Callback
+/// Stores a global reference to the Kotlin callback object for ControlPort events (CIRC, HS_DESC, etc)
+static GLOBAL_TOR_EVENT_CALLBACK: OnceCell<Mutex<Option<GlobalRef>>> = OnceCell::new();
+
+/// Global JavaVM for Tor event callbacks
+/// Stored once at registration time, used to attach threads for event forwarding
+static GLOBAL_TOR_EVENT_JVM: OnceCell<jni::JavaVM> = OnceCell::new();
 
 /// Global Tokio runtime for async operations
 /// This runtime persists for the lifetime of the process, allowing spawned tasks to continue running
@@ -887,8 +895,12 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_stopHiddenServiceListe
 ) {
     catch_panic!(env, {
         let tor_manager = get_tor_manager();
-        let mut manager = tor_manager.lock().unwrap();
-        manager.stop_listener();
+
+        // stop_listener is now async, need to await it
+        GLOBAL_RUNTIME.block_on(async {
+            let mut manager = tor_manager.lock().unwrap();
+            manager.stop_listener().await;
+        });
     }, ())
 }
 
@@ -985,16 +997,42 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_stopListeners(
         log::info!("Stopping all listeners...");
 
         let tor_manager = get_tor_manager();
-        let mut manager = tor_manager.lock().unwrap();
 
-        // Stop the hidden service listener
-        manager.stop_listener();
+        // Stop the hidden service listener (now async)
+        GLOBAL_RUNTIME.block_on(async {
+            let mut manager = tor_manager.lock().unwrap();
+            manager.stop_listener().await;
+        });
 
         // Note: TAP listener and PING listener are managed through global channels
         // They will naturally stop when no longer polled
 
         log::info!("All listeners stopped");
     }, ())
+}
+
+/// Send NEWNYM signal to Tor via ControlPort
+/// Rotates Tor guards and circuits (rate-limited by Tor itself)
+/// Returns true on success, false if failed or rate-limited
+#[no_mangle]
+pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendNewnym(
+    mut env: JNIEnv,
+    _class: JClass,
+) -> jboolean {
+    catch_panic!(env, {
+        let tor_manager = get_tor_manager();
+
+        let result = GLOBAL_RUNTIME.block_on(async {
+            let manager = tor_manager.lock().unwrap();
+            manager.send_newnym().await
+        });
+
+        if result {
+            JNI_TRUE
+        } else {
+            JNI_FALSE
+        }
+    }, JNI_FALSE)
 }
 
 /// Poll for an incoming Ping token (non-blocking)
@@ -2318,6 +2356,25 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_startTapListener(
     }, 0)
 }
 
+/// Stop the TAP listener
+#[no_mangle]
+pub extern "C" fn Java_com_securelegion_crypto_RustBridge_stopTapListener(
+    mut env: JNIEnv,
+    _class: JClass,
+) {
+    catch_panic!(env, {
+        let tor_manager = get_tor_manager();
+
+        // stop_listener is now async
+        GLOBAL_RUNTIME.block_on(async {
+            let mut manager = tor_manager.lock().unwrap();
+            manager.stop_listener().await;
+        });
+
+        log::info!("TAP listener stopped");
+    }, ())
+}
+
 /// Poll for an incoming tap (non-blocking)
 #[no_mangle]
 pub extern "C" fn Java_com_securelegion_crypto_RustBridge_pollIncomingTap(
@@ -2949,9 +3006,34 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendHttpToVoiceOnion(
 static STORED_PINGS: Lazy<Arc<Mutex<HashMap<String, crate::network::PingToken>>>> =
     Lazy::new(|| Arc::new(Mutex::new(HashMap::new())));
 
+/// Detect if wire message has type-byte prefix (backward compatible)
+///
+/// Known types: 0x01 (Ping), 0x02 (Pong), 0x03 (Text), 0x04 (Voice), 0x05 (Tap), etc.
+/// Returns (offset, has_type_byte):
+/// - (1, true) if wire_bytes[0] is a known message type
+/// - (0, false) if wire_bytes[0] is NOT a type byte (legacy format)
+fn detect_wire_format(wire_bytes: &[u8]) -> (usize, bool) {
+    if wire_bytes.is_empty() {
+        return (0, false);
+    }
+
+    let first_byte = wire_bytes[0];
+    let is_known_type = matches!(
+        first_byte,
+        0x01..=0x0D // MSG_TYPE_PING through MSG_TYPE_CALL_SIGNALING
+    );
+
+    if is_known_type {
+        (1, true)  // Skip type byte, this is new format
+    } else {
+        (0, false) // No type byte, this is legacy format
+    }
+}
+
 /// Decrypt an incoming encrypted Ping token
 ///
-/// Wire format: [Sender X25519 Public Key - 32 bytes][Encrypted Ping Token]
+/// Wire format: [Optional Type Byte 0x01][Sender X25519 Public Key - 32 bytes][Encrypted Ping Token]
+/// Backward compatible: detects if type byte is present automatically
 /// Returns: Ping ID (String) that can be passed to respondToPing
 #[no_mangle]
 pub extern "C" fn Java_com_securelegion_crypto_RustBridge_decryptIncomingPing(
@@ -2969,19 +3051,25 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_decryptIncomingPing(
             }
         };
 
-        // Wire format: [Sender X25519 Pubkey - 32 bytes][Encrypted Token]
-        if wire_bytes.len() < 32 {
+        // Detect wire format (backward compatible with/without type byte)
+        let (offset, has_type) = detect_wire_format(&wire_bytes);
+        let min_len = offset + 32;  // offset + pubkey (32 bytes)
+
+        if wire_bytes.len() < min_len {
+            log::warn!("Ping wire format detected: has_type={}, offset={}, actual_len={}, min_required={}",
+                       has_type, offset, wire_bytes.len(), min_len);
             let _ = env.throw_new("java/lang/IllegalArgumentException", "Wire message too short");
             return std::ptr::null_mut();
         }
 
-        // Extract sender's X25519 public key (first 32 bytes)
-        let sender_x25519_pubkey = &wire_bytes[0..32];
+        // Extract sender's X25519 public key (skip type byte if present)
+        let sender_x25519_pubkey = &wire_bytes[offset..offset + 32];
 
-        // Extract encrypted Ping token (rest of bytes)
-        let encrypted_ping = &wire_bytes[32..];
+        // Extract encrypted Ping token (rest of bytes after type + pubkey)
+        let encrypted_ping = &wire_bytes[offset + 32..];
 
-        log::info!("Decrypting incoming Ping: {} bytes encrypted data", encrypted_ping.len());
+        log::info!("Decrypting incoming Ping: wire_fmt_has_type={}, offset={}, encrypted_len={} bytes",
+                   has_type, offset, encrypted_ping.len());
 
         // Get KeyManager to access our X25519 private key
         let context = match env.call_static_method(
@@ -3302,16 +3390,23 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_decryptIncomingPong(
             }
         };
 
-        if wire_bytes.len() < 32 {
+        // Detect wire format (backward compatible with/without type byte)
+        let (offset, has_type) = detect_wire_format(&wire_bytes);
+        let min_len = offset + 32;  // offset + pubkey (32 bytes)
+
+        if wire_bytes.len() < min_len {
+            log::warn!("Pong wire format detected: has_type={}, offset={}, actual_len={}, min_required={}",
+                       has_type, offset, wire_bytes.len(), min_len);
             let _ = env.throw_new("java/lang/IllegalArgumentException", "Wire message too short - missing X25519 pubkey");
             return std::ptr::null_mut();
         }
 
-        // Extract sender's X25519 public key (first 32 bytes)
-        let sender_x25519_bytes: [u8; 32] = wire_bytes[0..32].try_into().unwrap();
-        let encrypted_pong = &wire_bytes[32..];
+        // Extract sender's X25519 public key (skip type byte if present)
+        let sender_x25519_bytes: [u8; 32] = wire_bytes[offset..offset + 32].try_into().unwrap();
+        let encrypted_pong = &wire_bytes[offset + 32..];
 
-        log::info!("Attempting to decrypt incoming Pong ({} bytes encrypted data)", encrypted_pong.len());
+        log::info!("Attempting to decrypt incoming Pong: wire_fmt_has_type={}, offset={}, encrypted_len={} bytes",
+                   has_type, offset, encrypted_pong.len());
 
         // Get KeyManager for our X25519 private key
         let context = match env.call_static_method(
@@ -3798,6 +3893,136 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_getBootstrapStatus(
         log::debug!("Tor bootstrap status: {}%", percentage);
         percentage as jint
     }, -1 as jint)
+}
+
+/// Get circuit established status (0 = no circuits, 1 = circuits established)
+/// Fast atomic read, updated every 5 seconds by ControlPort polling
+#[no_mangle]
+pub extern "C" fn Java_com_securelegion_crypto_RustBridge_getCircuitEstablished(
+    mut env: JNIEnv,
+    _class: JClass,
+) -> jint {
+    catch_panic!(env, {
+        // Read from the global atomic (polled every 5s from ControlPort)
+        let status = crate::network::tor::get_circuit_established_fast();
+        log::debug!("Circuit established status: {}", status);
+        status as jint
+    }, 0 as jint)
+}
+
+/// Register Tor event callback handler
+/// Receives ControlPort events (CIRC, HS_DESC, STATUS_GENERAL, etc)
+/// Callback signature: onTorEvent(eventType: String, circId: String, reason: String, address: String, severity: String, message: String, progress: Int)
+#[no_mangle]
+pub extern "C" fn Java_com_securelegion_crypto_RustBridge_setTorEventCallback(
+    mut env: JNIEnv,
+    _class: JClass,
+    callback: JObject,
+) {
+    catch_panic!(env, {
+        // Create global reference to callback object
+        let global_callback = env.new_global_ref(callback)
+            .expect("Failed to create global reference to Tor event callback");
+
+        // Store callback in global
+        let callback_storage = GLOBAL_TOR_EVENT_CALLBACK.get_or_init(|| Mutex::new(None));
+        *callback_storage.lock().unwrap() = Some(global_callback);
+
+        // Store JavaVM globally for 'static lifetime (get_or_init ensures it's only set once)
+        let jvm = env.get_java_vm().expect("Failed to get JavaVM");
+        GLOBAL_TOR_EVENT_JVM.get_or_init(|| jvm);
+
+        log::info!("Tor event callback registered");
+
+        // Register the callback with the tor module
+        crate::network::tor::register_tor_event_callback(move |event| {
+            // Forward event to Kotlin via JNI callback
+            if let Err(e) = invoke_tor_event_callback(event) {
+                log::error!("Failed to invoke Tor event callback: {}", e);
+            }
+        });
+    }, ())
+}
+
+/// Helper function to invoke Kotlin callback with Tor event data
+/// Must be called from Rust thread (not JNI thread)
+fn invoke_tor_event_callback(event: crate::network::tor::TorEventType) -> Result<(), Box<dyn std::error::Error>> {
+    use crate::network::tor::TorEventType;
+
+    // 1) Get JavaVM from global storage ('static lifetime, no mutex needed)
+    let jvm = match GLOBAL_TOR_EVENT_JVM.get() {
+        Some(vm) => vm,
+        None => {
+            // JVM not initialized yet
+            return Ok(());
+        }
+    };
+
+    // 2) Attach to current thread (attach guard must live for entire function)
+    let mut env = jvm.attach_current_thread()?;
+
+    // 3) Clone GlobalRef out of callback storage (avoid holding lock during call_method)
+    let callback: jni::objects::GlobalRef = {
+        let callback_storage = GLOBAL_TOR_EVENT_CALLBACK.get_or_init(|| Mutex::new(None));
+        let guard = callback_storage.lock().unwrap();
+        match guard.as_ref() {
+            Some(cb) => cb.clone(),
+            None => return Ok(()),
+        }
+    }; // Lock dropped here
+
+    let callback_obj = callback.as_obj();
+
+    // Prepare event data based on type
+    let (event_type, circ_id, reason, address, severity, message, progress) = match event {
+        TorEventType::Bootstrap { progress } => {
+            ("BOOTSTRAP".to_string(), "".to_string(), "".to_string(), "".to_string(), "".to_string(), "".to_string(), progress as i32)
+        }
+        TorEventType::CircuitBuilt { circ_id } => {
+            ("CIRC_BUILT".to_string(), circ_id, "".to_string(), "".to_string(), "".to_string(), "".to_string(), 0)
+        }
+        TorEventType::CircuitFailed { circ_id, reason } => {
+            ("CIRC_FAILED".to_string(), circ_id, reason, "".to_string(), "".to_string(), "".to_string(), 0)
+        }
+        TorEventType::CircuitClosed { circ_id, reason } => {
+            ("CIRC_CLOSED".to_string(), circ_id, reason, "".to_string(), "".to_string(), "".to_string(), 0)
+        }
+        TorEventType::HsDescUploaded { address } => {
+            ("HS_DESC_UPLOADED".to_string(), "".to_string(), "".to_string(), address, "".to_string(), "".to_string(), 0)
+        }
+        TorEventType::HsDescUploadFailed { address, reason } => {
+            ("HS_DESC_FAILED".to_string(), "".to_string(), reason, address, "".to_string(), "".to_string(), 0)
+        }
+        TorEventType::StatusGeneral { severity, message } => {
+            ("STATUS_GENERAL".to_string(), "".to_string(), "".to_string(), "".to_string(), severity, message, 0)
+        }
+    };
+
+    // Convert to JString
+    let j_event_type = env.new_string(event_type)?;
+    let j_circ_id = env.new_string(circ_id)?;
+    let j_reason = env.new_string(reason)?;
+    let j_address = env.new_string(address)?;
+    let j_severity = env.new_string(severity)?;
+    let j_message = env.new_string(message)?;
+
+    // Call Kotlin callback: onTorEvent(eventType, circId, reason, address, severity, message, progress)
+    env.call_method(
+        callback_obj,
+        "onTorEvent",
+        "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;I)V",
+        &[
+            (&j_event_type).into(),
+            (&j_circ_id).into(),
+            (&j_reason).into(),
+            (&j_address).into(),
+            (&j_severity).into(),
+            (&j_message).into(),
+            progress.into(),
+        ],
+    )?;
+
+    Ok(())
 }
 
 // ==================== PING-PONG PROTOCOL (Socket.IO) ====================
@@ -5919,16 +6144,22 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_decryptAndStoreAckFrom
             }
         };
 
-        if wire_bytes.len() < 32 {
-            log::error!("ACK wire too short: {} bytes", wire_bytes.len());
+        // Detect wire format (backward compatible with/without type byte)
+        let (offset, has_type) = detect_wire_format(&wire_bytes);
+        let min_len = offset + 32;  // offset + pubkey (32 bytes)
+
+        if wire_bytes.len() < min_len {
+            log::error!("ACK wire format detected: has_type={}, offset={}, actual_len={}, min_required={}",
+                       has_type, offset, wire_bytes.len(), min_len);
             return std::ptr::null_mut();
         }
 
-        // Extract sender's X25519 public key (first 32 bytes)
-        let sender_x25519_pubkey: [u8; 32] = wire_bytes[0..32].try_into().unwrap();
-        let encrypted_ack = &wire_bytes[32..];
+        // Extract sender's X25519 public key (skip type byte if present)
+        let sender_x25519_pubkey: [u8; 32] = wire_bytes[offset..offset + 32].try_into().unwrap();
+        let encrypted_ack = &wire_bytes[offset + 32..];
 
-        log::info!("Decrypting ACK from sender X25519: {}", hex::encode(&sender_x25519_pubkey));
+        log::info!("Decrypting ACK: wire_fmt_has_type={}, offset={}, sender_x25519={}, encrypted_len={}",
+                   has_type, offset, hex::encode(&sender_x25519_pubkey), encrypted_ack.len());
 
         // Get our X25519 private key from KeyManager
         let context = match env.call_static_method(
