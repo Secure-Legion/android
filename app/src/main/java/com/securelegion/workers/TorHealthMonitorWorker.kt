@@ -19,14 +19,28 @@ import java.util.concurrent.TimeUnit
 /**
  * Periodic Tor health monitor
  *
- * Runs every 60 seconds to detect and recover from Tor failures automatically.
- * Implements a state machine that:
+ * Runs every 60 seconds to detect and recover from Tor PROCESS failures only.
  *
- * - Detects SOCKS5 failures immediately
- * - Tracks bootstrap progress
- * - Tests circuit reachability (self-onion check)
- * - Triggers auto-restart with exponential backoff
- * - Respects warmup windows after restart
+ * DESIGN PRINCIPLE:
+ * - Only restart on process-level failures (SOCKS down, bootstrap stuck)
+ * - NEVER restart on circuit-level failures (they are normal Tor behavior)
+ *
+ * Health checks:
+ * 1. SOCKS5 reachability (127.0.0.1:9050 socket connect)
+ * 2. Bootstrap progress (assume 100% if SOCKS responds)
+ * 3. Circuit test (TELEMETRY ONLY - never triggers restart)
+ *
+ * What is HEALTHY:
+ * - SOCKS port responding + bootstrap complete
+ *
+ * What is UNHEALTHY (restart):
+ * - SOCKS port not responding for >N checks
+ * - Bootstrap stuck < 100% (future implementation)
+ *
+ * What is NOT a failure:
+ * - Circuit timeouts (CIRC_CLOSED TIMEOUT)
+ * - Onion unreachable (REP=6, HS descriptor delay)
+ * - Rendezvous failures
  *
  * CRITICAL: Uses monotonic time (elapsedRealtime) for all calculations
  */
@@ -83,11 +97,14 @@ class TorHealthMonitorWorker(
     /**
      * Main health check logic
      *
-     * State machine:
-     * 1. Check SOCKS5 reachability (fast fail)
-     * 2. Check bootstrap progress
-     * 3. Test self-onion circuit (if SOCKS OK)
-     * 4. Determine next state + trigger restart if needed
+     * NEW DESIGN (restart loop fixed):
+     * 1. Check SOCKS5 reachability (fast fail) → restart if down
+     * 2. Check bootstrap progress → wait if < 100%
+     * 3. Test self-onion circuit (TELEMETRY ONLY) → never restart
+     * 4. If SOCKS OK + bootstrap 100% → HEALTHY (always)
+     *
+     * CRITICAL: Only restart on process-level failures (SOCKS down).
+     * Circuit failures are NORMAL and do not trigger restarts.
      */
     private suspend fun checkTorHealth(): TorHealthSnapshot {
         val current = getTorHealthSnapshot()
@@ -132,93 +149,46 @@ class TorHealthMonitorWorker(
 
         Log.d(TAG, "Bootstrap complete (100%)")
 
-        // PHASE 3: Circuit test (self-onion check)
-        // Try to connect to own .onion service on port 9150 (your unified listener port)
+        // PHASE 3: Circuit test (TELEMETRY ONLY - NEVER TRIGGERS RESTART)
+        //
+        // CRITICAL DESIGN CHANGE (per deep-dive analysis):
+        // Circuit failures (REP=6, TTL expired, onion offline, HS descriptor delays, timeouts)
+        // are NORMAL Tor behavior and do NOT indicate local Tor is broken.
+        //
+        // Restarting Tor based on circuit failures creates a restart loop:
+        // - Normal circuit churn → onion CONNECT fails
+        // - Worker restarts Tor → tears down listeners/SOCKS/OkHttp
+        // - Restart causes MORE circuit churn
+        // - Loop repeats
+        //
+        // NEW LOGIC:
+        // - If SOCKS reachable AND bootstrap=100% → Tor is HEALTHY (period)
+        // - Circuit test is telemetry only (log but don't escalate)
+        // - Only restart on process-level failures (SOCKS down, bootstrap stuck)
+        //
         val ownOnion = getTorOnionAddress()
-        if (ownOnion.isEmpty()) {
-            Log.w(TAG, "Own onion address not available, skipping circuit test")
-            // Can't test circuit, but SOCKS is OK and bootstrap is ready → assume HEALTHY
-            return current.copy(
-                status = TorHealthStatus.HEALTHY,
-                lastOkElapsedMs = now,
-                lastCheckElapsedMs = now,
-                failCount = 0,
-                lastError = "",
-                lastStatusChangeElapsedMs = if (current.status != TorHealthStatus.HEALTHY) now else current.lastStatusChangeElapsedMs
-            )
+        if (ownOnion.isNotEmpty()) {
+            // Run circuit test for telemetry (helps diagnose HS descriptor issues)
+            val circuitWorking = checkCircuitToOnion(ownOnion, 9150)
+            if (circuitWorking) {
+                Log.i(TAG, "Circuit telemetry: Can reach own .onion:9150 ✓")
+            } else {
+                Log.i(TAG, "Circuit telemetry: Cannot reach own .onion:9150 (normal - descriptor delay, circuit churn, or listener not ready)")
+            }
+        } else {
+            Log.d(TAG, "Circuit telemetry: Skipped (own onion not available)")
         }
 
-        val circuitWorking = checkCircuitToOnion(ownOnion, 9150)
-
-        if (circuitWorking) {
-            Log.i(TAG, "Circuit test passed (can reach own .onion:9150)")
-            return current.copy(
-                status = TorHealthStatus.HEALTHY,
-                lastOkElapsedMs = now,
-                lastCheckElapsedMs = now,
-                failCount = 0,
-                lastError = "",
-                lastStatusChangeElapsedMs = if (current.status != TorHealthStatus.HEALTHY) now else current.lastStatusChangeElapsedMs
-            )
-        }
-
-        Log.w(TAG, "Circuit test failed (cannot reach own .onion)")
-
-        // PHASE 4: Circuit failed - determine if DEGRADED or UNHEALTHY
-        // REFINEMENT A: Respect warmup window after restart
-        val timeSinceLastRestart = now - current.lastRestartElapsedMs
-        if (timeSinceLastRestart < WARMUP_WINDOW_MS && current.status == TorHealthStatus.RECOVERING) {
-            Log.d(TAG, "In warmup window after restart (${timeSinceLastRestart}ms / ${WARMUP_WINDOW_MS}ms), staying RECOVERING")
-            return current.copy(
-                failCount = 0,  // Reset count while warming up
-                lastCheckElapsedMs = now,
-                lastError = "Warming up after restart..."
-            )
-        }
-
-        // Check if Tor was recently healthy enough to restart
-        val timeSinceLastOk = now - current.lastOkElapsedMs
-        if (timeSinceLastOk < TIME_SINCE_OK_THRESHOLD_MS) {
-            // Tor was good recently and circuit just started failing → transient issue
-            Log.d(TAG, "Circuit failing but Tor was OK recently (${timeSinceLastOk}ms ago), DEGRADED")
-            val newFailCount = current.failCount + 1
-            return current.copy(
-                status = TorHealthStatus.DEGRADED,
-                failCount = newFailCount,
-                lastCheckElapsedMs = now,
-                lastFailureType = TorFailureType.CIRCUIT_FAILED,
-                lastError = "Circuit test to own .onion failed (fail #$newFailCount)",
-                lastStatusChangeElapsedMs = if (current.status != TorHealthStatus.DEGRADED) now else current.lastStatusChangeElapsedMs
-            )
-        }
-
-        // Circuit has been failing for >2 minutes, or failed FAILURE_THRESHOLD times
-        val newFailCount = current.failCount + 1
-        val shouldRestart = newFailCount >= FAILURE_THRESHOLD || timeSinceLastOk > TIME_SINCE_OK_THRESHOLD_MS
-
-        if (shouldRestart) {
-            Log.w(TAG, "Circuit persistently failing (count=$newFailCount, lastOk=${timeSinceLastOk}ms ago), UNHEALTHY + restart")
-            val updated = current.copy(
-                status = TorHealthStatus.UNHEALTHY,
-                failCount = newFailCount,
-                lastCheckElapsedMs = now,
-                lastFailureType = TorFailureType.CIRCUIT_FAILED,
-                lastError = "Circuit failing for >2min or fail count $newFailCount",
-                lastStatusChangeElapsedMs = now
-            )
-            attemptRestartIfAllowed(updated)
-            return updated
-        }
-
-        // First few failures: DEGRADED (give Tor a chance)
-        Log.d(TAG, "Circuit failed, staying DEGRADED (fail #$newFailCount / $FAILURE_THRESHOLD)")
+        // If we got here: SOCKS is reachable AND bootstrap is 100%
+        // → Tor process is HEALTHY regardless of circuit test result
+        Log.i(TAG, "Tor process healthy (SOCKS OK + bootstrap 100%)")
         return current.copy(
-            status = TorHealthStatus.DEGRADED,
-            failCount = newFailCount,
+            status = TorHealthStatus.HEALTHY,
+            lastOkElapsedMs = now,
             lastCheckElapsedMs = now,
-            lastFailureType = TorFailureType.CIRCUIT_FAILED,
-            lastError = "Circuit test failed (fail #$newFailCount)",
-            lastStatusChangeElapsedMs = if (current.status != TorHealthStatus.DEGRADED) now else current.lastStatusChangeElapsedMs
+            failCount = 0,
+            lastError = "",
+            lastStatusChangeElapsedMs = if (current.status != TorHealthStatus.HEALTHY) now else current.lastStatusChangeElapsedMs
         )
     }
 
@@ -256,18 +226,22 @@ class TorHealthMonitorWorker(
 
     /**
      * Test if Tor can route to an onion via SOCKS5 CONNECT
-     * This verifies circuits work end-to-end (not just SOCKS listening)
+     *
+     * ⚠️ TELEMETRY ONLY - NEVER USE THIS TO TRIGGER RESTARTS ⚠️
+     *
+     * This test is useful for diagnosing HS descriptor issues, but failures
+     * do NOT indicate local Tor is broken. Common normal failures:
+     * - REP=6: TTL expired (circuit churned mid-connect)
+     * - REP=5: Connection refused (onion offline or listener not ready)
+     * - Timeout: HS descriptor not yet published, rendezvous delay
      *
      * SOCKS5 protocol:
      * 1. Connect to SOCKS5 server (127.0.0.1:9050)
      * 2. Auth handshake (no auth required)
      * 3. Send CONNECT request with onion address + port
-     * 4. If server responds with REP=0, circuit works
+     * 4. Server responds with REP code (0=success, 5=refused, 6=TTL expired, etc.)
      *
-     * This catches failures like:
-     * - SOCKS5 up but rendezvous fails (status 5)
-     * - Target onion offline
-     * - Tor unable to build circuit
+     * REP ≠ 0 is NORMAL on mobile Tor and does NOT mean restart is needed.
      */
     private suspend fun checkCircuitToOnion(onionAddress: String, port: Int): Boolean {
         return withContext(Dispatchers.IO) {

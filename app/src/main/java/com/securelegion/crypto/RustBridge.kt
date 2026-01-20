@@ -580,6 +580,11 @@ object RustBridge {
     external fun startTapListener(port: Int = 9151): Boolean
 
     /**
+     * Stop the TAP listener
+     */
+    external fun stopTapListener()
+
+    /**
      * Start the friend request listener (separate from TAP to avoid interference)
      * Initializes dedicated channel for 0x07/0x08 wire protocol messages
      * @return True if listener started successfully
@@ -637,9 +642,44 @@ object RustBridge {
     external fun getBootstrapStatus(): Int
 
     /**
+     * Get circuit established status
+     * Fast atomic read, updated every 5 seconds by ControlPort polling
+     * @return 1 if circuits established, 0 if no circuits
+     */
+    external fun getCircuitEstablished(): Int
+
+    /**
+     * Register callback for Tor ControlPort events (CIRC, HS_DESC, STATUS_GENERAL, etc)
+     * Callback receives event type and relevant fields for fast reaction
+     */
+    external fun setTorEventCallback(callback: TorEventCallback)
+
+    /**
+     * Callback interface for Tor ControlPort events
+     */
+    interface TorEventCallback {
+        fun onTorEvent(
+            eventType: String,
+            circId: String,
+            reason: String,
+            address: String,
+            severity: String,
+            message: String,
+            progress: Int
+        )
+    }
+
+    /**
      * Stop all listeners (hidden service listener, tap listener, ping listener)
      */
     external fun stopListeners()
+
+    /**
+     * Send NEWNYM signal to Tor via ControlPort
+     * Rotates Tor guards and circuits (rate-limited by Tor itself, ~10 seconds)
+     * @return true on success, false if failed or rate-limited
+     */
+    external fun sendNewnym(): Boolean
 
     /**
      * Poll for an incoming Ping token (non-blocking)

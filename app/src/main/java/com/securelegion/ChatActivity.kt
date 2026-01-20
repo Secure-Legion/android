@@ -498,6 +498,24 @@ class ChatActivity : BaseActivity() {
         recordingHandler?.removeCallbacksAndMessages(null)
     }
 
+    /**
+     * Scroll to bottom of messages
+     * Use smooth scroll when user is actively interacting (typing/receiving),
+     * instant scroll for data loads
+     */
+    private fun scrollToBottom(smooth: Boolean = true) {
+        val itemCount = messageAdapter.itemCount
+        if (itemCount > 0) {
+            messagesRecyclerView.post {
+                if (smooth) {
+                    messagesRecyclerView.smoothScrollToPosition(itemCount - 1)
+                } else {
+                    messagesRecyclerView.scrollToPosition(itemCount - 1)
+                }
+            }
+        }
+    }
+
     private fun setupRecyclerView() {
         messagesRecyclerView = findViewById(R.id.messagesRecyclerView)
         messageAdapter = MessageAdapter(
@@ -1487,14 +1505,15 @@ class ChatActivity : BaseActivity() {
                     autoPongPingIds      // Pass auto-downloading pings to show typing indicator
                 )
 
-                // Only auto-scroll if user was already at bottom (prevents force-scroll during reading)
+                // Auto-scroll if user was at bottom (normal reading) or if this is a new incoming message
+                // Smooth scroll if user is actively interacting, instant scroll for background updates
+                val totalItems = messages.size + pendingPingsToShow.size
                 if (wasAtBottom) {
-                    messagesRecyclerView.post {
-                        val totalItems = messages.size + pendingPingsToShow.size
-                        if (totalItems > 0) {
-                            messagesRecyclerView.scrollToPosition(totalItems - 1)
-                        }
-                    }
+                    // User was reading - smooth scroll
+                    scrollToBottom(smooth = true)
+                } else if (oldItemCount < totalItems) {
+                    // New message received - scroll to show it at least once
+                    scrollToBottom(smooth = true)
                 }
             }
         } catch (e: Exception) {
@@ -1536,6 +1555,8 @@ class ChatActivity : BaseActivity() {
                         Log.d(TAG, "Message saved to DB, updating UI immediately")
                         lifecycleScope.launch {
                             loadMessages()
+                            // Auto-scroll to newly sent message
+                            scrollToBottom(smooth = true)
                         }
                     }
                 )
@@ -1547,8 +1568,9 @@ class ChatActivity : BaseActivity() {
                 // Silent failure - message saved to database, will retry later
                 Log.e(TAG, "Failed to send message (will retry later)", e)
 
-                // Reload messages to show the pending message
+                // Reload messages to show the pending message and auto-scroll
                 loadMessages()
+                scrollToBottom(smooth = true)
             }
         }
     }

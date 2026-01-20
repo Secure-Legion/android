@@ -5,7 +5,6 @@ import android.util.Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
-import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
@@ -13,10 +12,8 @@ import org.json.JSONObject
 import com.securelegion.crypto.KeyManager
 import com.securelegion.crypto.RustBridge
 import com.securelegion.crypto.TorManager
+import com.securelegion.network.OkHttpProvider
 import java.io.IOException
-import java.net.InetSocketAddress
-import java.net.Proxy
-import java.util.concurrent.TimeUnit
 import android.util.Base64
 import org.bitcoinj.core.Base58
 import java.nio.ByteBuffer
@@ -68,13 +65,8 @@ class SolanaService(private val context: Context) {
         return url
     }
 
-    // Configure OkHttpClient to use Tor SOCKS5 proxy for privacy
-    private val client = OkHttpClient.Builder()
-        .connectTimeout(60, TimeUnit.SECONDS)  // Increased for blockchain API delays
-        .readTimeout(60, TimeUnit.SECONDS)      // Increased for transaction fetching
-        .writeTimeout(60, TimeUnit.SECONDS)
-        .proxy(Proxy(Proxy.Type.SOCKS, InetSocketAddress("127.0.0.1", 9050)))
-        .build()
+    // Get OkHttpClient from centralized provider (supports connection reset on network changes)
+    private val client get() = OkHttpProvider.getSolanaClient()
 
     /**
      * Get SOL balance for a wallet address

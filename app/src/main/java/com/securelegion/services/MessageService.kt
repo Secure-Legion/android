@@ -460,8 +460,12 @@ class MessageService(private val context: Context) {
             Log.d(TAG, "Attempting immediate Ping send...")
 
             try {
-                sendPingForMessage(savedMessage)
-                Log.d(TAG, "Ping sent immediately, will poll for Pong later")
+                val sendResult = sendPingForMessage(savedMessage)
+                if (sendResult.isSuccess) {
+                    Log.i(TAG, "✓ Ping sent successfully, will poll for Pong later")
+                } else {
+                    Log.w(TAG, "⚠️ Ping queued for retry: ${sendResult.exceptionOrNull()?.message}")
+                }
             } catch (e: Exception) {
                 Log.w(TAG, "Immediate Ping send failed, retry worker will retry: ${e.message}")
             }
@@ -623,8 +627,12 @@ class MessageService(private val context: Context) {
             Log.d(TAG, "Attempting immediate Ping send...")
 
             try {
-                sendPingForMessage(savedMessage)
-                Log.d(TAG, "Ping sent immediately, will poll for Pong later")
+                val sendResult = sendPingForMessage(savedMessage)
+                if (sendResult.isSuccess) {
+                    Log.i(TAG, "✓ Ping sent successfully, will poll for Pong later")
+                } else {
+                    Log.w(TAG, "⚠️ Ping queued for retry: ${sendResult.exceptionOrNull()?.message}")
+                }
             } catch (e: Exception) {
                 Log.w(TAG, "Immediate Ping send failed, retry worker will retry: ${e.message}")
             }
@@ -812,8 +820,12 @@ class MessageService(private val context: Context) {
             Log.d(TAG, "Attempting immediate Ping send...")
 
             try {
-                sendPingForMessage(savedMessage)
-                Log.d(TAG, "Ping sent immediately, will poll for Pong later")
+                val sendResult = sendPingForMessage(savedMessage)
+                if (sendResult.isSuccess) {
+                    Log.i(TAG, "✓ Ping sent successfully, will poll for Pong later")
+                } else {
+                    Log.w(TAG, "⚠️ Ping queued for retry: ${sendResult.exceptionOrNull()?.message}")
+                }
             } catch (e: Exception) {
                 // Silent failure - retry worker will handle it
                 Log.w(TAG, "Immediate Ping send failed, retry worker will retry: ${e.message}")
@@ -993,8 +1005,12 @@ class MessageService(private val context: Context) {
             Log.d(TAG, "Attempting immediate Ping send...")
 
             try {
-                sendPingForMessage(savedMessage)
-                Log.d(TAG, "Ping sent immediately, will poll for Pong later")
+                val sendResult = sendPingForMessage(savedMessage)
+                if (sendResult.isSuccess) {
+                    Log.i(TAG, "✓ Ping sent successfully, will poll for Pong later")
+                } else {
+                    Log.w(TAG, "⚠️ Ping queued for retry: ${sendResult.exceptionOrNull()?.message}")
+                }
             } catch (e: Exception) {
                 Log.w(TAG, "Immediate Ping send failed, retry worker will retry: ${e.message}")
             }
@@ -2165,6 +2181,18 @@ class MessageService(private val context: Context) {
 
             Log.d(TAG, "Sending Ping for message ${message.messageId} (Ping ID: ${message.pingId})")
 
+            // Check if Tor is warmed up (must wait 20s after restart/network change)
+            val warmupRemainingMs = TorService.getTorWarmupRemainingMs()
+            if (warmupRemainingMs == null) {
+                Log.w(TAG, "TorService not running - cannot send Ping")
+                return@withContext Result.failure(Exception("TorService not running"))
+            }
+            if (warmupRemainingMs > 0) {
+                Log.w(TAG, "Tor still warming up (${warmupRemainingMs}ms remaining) - deferring send")
+                return@withContext Result.failure(Exception("Tor warming up - retry in ${warmupRemainingMs}ms"))
+            }
+            Log.d(TAG, "Tor warm-up complete - OK to send")
+
             // Get database and contact
             val dbPassphrase = keyManager.getDatabasePassphrase()
             val database = SecureLegionDatabase.getInstance(context, dbPassphrase)
@@ -2220,8 +2248,35 @@ class MessageService(private val context: Context) {
                     message.pingTimestamp!!  // Generated once when message created
                 )
             } catch (e: Exception) {
-                Log.e(TAG, "Failed to send Ping", e)
-                return@withContext Result.failure(e)
+                val errorMsg = e.message ?: "Unknown error"
+
+                // Check if this is a retryable SOCKS failure (Tor-native behavior)
+                val isRetryable = when {
+                    // SOCKS status=1 (general server failure) - temporary routing issue
+                    errorMsg.contains("status 1", ignoreCase = true) -> true
+                    errorMsg.contains("general SOCKS server failure", ignoreCase = true) -> true
+
+                    // Circuit-related failures - circuits still establishing
+                    errorMsg.contains("circuit", ignoreCase = true) -> true
+                    errorMsg.contains("MEASUREMENT_EXPIRED", ignoreCase = true) -> true
+
+                    // Network unreachable - temporary network issue
+                    errorMsg.contains("Network unreachable", ignoreCase = true) -> true
+                    errorMsg.contains("Host unreachable", ignoreCase = true) -> true
+
+                    // Connection refused - HS might be offline/restarting
+                    errorMsg.contains("Connection refused", ignoreCase = true) -> true
+
+                    else -> false
+                }
+
+                if (isRetryable) {
+                    Log.w(TAG, "⚠️ Soft failure (retryable): $errorMsg")
+                    return@withContext Result.failure(Exception("RETRYABLE: $errorMsg"))
+                } else {
+                    Log.e(TAG, "❌ Hard failure (not retryable): $errorMsg", e)
+                    return@withContext Result.failure(e)
+                }
             }
 
             // Parse JSON response: {"pingId":"...","wireBytes":"..."}

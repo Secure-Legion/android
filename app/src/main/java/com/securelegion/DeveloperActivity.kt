@@ -38,6 +38,12 @@ class DeveloperActivity : AppCompatActivity() {
             finish()
         }
 
+        // Set up Tor Health button
+        findViewById<View>(R.id.torHealthItem).setOnClickListener {
+            val intent = Intent(this, TorHealthActivity::class.java)
+            startActivity(intent)
+        }
+
         // Set up Call Log button
         findViewById<View>(R.id.callLogItem).setOnClickListener {
             val intent = Intent(this, CallLogActivity::class.java)

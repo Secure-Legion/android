@@ -198,7 +198,7 @@ interface MessageDao {
     @Query("""
         SELECT * FROM messages
         WHERE isSentByMe = 1
-        AND status < 2
+        AND status NOT IN (2, 3)
         AND timestamp > :currentTimeMs - (:giveupAfterDays * 24 * 60 * 60 * 1000)
         ORDER BY timestamp ASC
     """)

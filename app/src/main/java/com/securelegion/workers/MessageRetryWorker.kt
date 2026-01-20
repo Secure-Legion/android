@@ -35,45 +35,38 @@ class MessageRetryWorker(
     companion object {
         private const val TAG = "MessageRetryWorker"
         private const val WORK_NAME = "message_retry_work"
-        private const val REPEAT_INTERVAL_MINUTES = 15L
+        private const val REPEAT_INTERVAL_MINUTES = 3L  // Retry every 3 minutes (was 15)
 
         /**
          * Periodic background retry (long-term recovery)
          */
         fun schedule(context: Context) {
-            val constraints = Constraints.Builder()
-                .setRequiredNetworkType(NetworkType.CONNECTED)
-                .build()
-
+            // NO CONSTRAINTS - TorService is always running, so network is always available
+            // NetworkType.CONNECTED was blocking execution (VPN, battery saver, etc.)
             val work = PeriodicWorkRequestBuilder<MessageRetryWorker>(
                 REPEAT_INTERVAL_MINUTES,
                 TimeUnit.MINUTES
             )
-                .setConstraints(constraints)
                 .build()
 
             WorkManager.getInstance(context).enqueueUniquePeriodicWork(
                 WORK_NAME,
-                ExistingPeriodicWorkPolicy.KEEP,
+                ExistingPeriodicWorkPolicy.REPLACE,  // REPLACE old schedule (was KEEP - prevented interval change)
                 work
             )
 
-            Log.i(TAG, "Scheduled periodic MessageRetryWorker")
+            Log.w(TAG, "========== SCHEDULED PERIODIC MessageRetryWorker (every ${REPEAT_INTERVAL_MINUTES} minutes) ==========")
         }
 
         /**
          * Immediate retry for a specific contact (triggered by TAP)
          */
         fun scheduleForContact(context: Context, contactId: Long) {
-            val constraints = Constraints.Builder()
-                .setRequiredNetworkType(NetworkType.CONNECTED)
-                .build()
-
+            // NO CONSTRAINTS - TorService is always running
             val data = workDataOf("CONTACT_ID" to contactId)
 
             val work = OneTimeWorkRequestBuilder<MessageRetryWorker>()
                 .setInputData(data)
-                .setConstraints(constraints)
                 .build()
 
             WorkManager.getInstance(context).enqueueUniqueWork(
@@ -96,9 +89,9 @@ class MessageRetryWorker(
             val contactId = inputData.getLong("CONTACT_ID", -1L)
             val isContactSpecific = contactId != -1L
 
-            Log.d(
+            Log.w(
                 TAG,
-                "Starting MessageRetryWorker (contactSpecific=$isContactSpecific)"
+                "========== MESSAGE RETRY WORKER RUNNING (contactSpecific=$isContactSpecific) =========="
             )
 
             val retried = if (isContactSpecific) {
@@ -108,7 +101,9 @@ class MessageRetryWorker(
             }
 
             if (retried > 0) {
-                Log.i(TAG, "Retried $retried PING(s)")
+                Log.w(TAG, "========== RETRY WORKER COMPLETE: Retried $retried PING(s) ==========")
+            } else {
+                Log.w(TAG, "========== RETRY WORKER COMPLETE: No messages needed retry ==========")
             }
 
             Result.success()
@@ -140,12 +135,26 @@ class MessageRetryWorker(
 
         val now = System.currentTimeMillis()
 
-        // CRITICAL GATE: Check Tor health before attempting any sends
-        if (TorHealthHelper.isTorUnavailable(applicationContext)) {
+        // SOFT GATE: Check Tor health AND circuits before attempting retries
+        // CRITICAL: SOCKS status 1 (general failure) usually means no circuits available
+        val torUnavailable = TorHealthHelper.isTorUnavailable(applicationContext)
+        val bootstrapPercent = com.securelegion.crypto.RustBridge.getBootstrapStatus()
+        val circuitsEstablished = com.securelegion.crypto.RustBridge.getCircuitEstablished()
+
+        if (torUnavailable) {
             val status = TorHealthHelper.getStatusString(applicationContext)
-            Log.w(TAG, "Tor unavailable ($status), skipping message retries")
-            return@withContext 0
+            Log.w(TAG, "Tor unavailable ($status), skipping retry (will retry when healthy)")
+            return@withContext 0  // Exit early, don't attempt sends
         }
+
+        if (circuitsEstablished < 1) {
+            Log.w(TAG, "Tor bootstrap ${bootstrapPercent}% but NO CIRCUITS ESTABLISHED - skipping retry (SOCKS would fail with status 1)")
+            Log.w(TAG, "  This is why you see 'SOCKS5 status 1 (general SOCKS server failure)'")
+            Log.w(TAG, "  Waiting for circuits... (will retry in ${REPEAT_INTERVAL_MINUTES} minutes)")
+            return@withContext 0  // Exit early, circuits not ready yet
+        }
+
+        Log.i(TAG, "Tor healthy: bootstrap=${bootstrapPercent}%, circuits=${circuitsEstablished}, proceeding with retries")
 
         // HARD GATE:
         // - Message not fully delivered
@@ -235,11 +244,10 @@ class MessageRetryWorker(
 
             val now = System.currentTimeMillis()
 
-            // CRITICAL GATE: Check Tor health before attempting any sends
+            // SOFT GATE: Check Tor health but still attempt retries (SOCKS health monitor will auto-restart)
             if (TorHealthHelper.isTorUnavailable(applicationContext)) {
                 val status = TorHealthHelper.getStatusString(applicationContext)
-                Log.w(TAG, "Tor unavailable ($status), skipping contact retry for $contactId")
-                return@withContext 0
+                Log.w(TAG, "Tor unavailable ($status), attempting contact retry for $contactId anyway (SOCKS auto-restart enabled)")
             }
 
             val messages = database.messageDao().getMessagesNeedingRetry(
