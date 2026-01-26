@@ -276,6 +276,10 @@
             android:exported="false" />
 
         <activity
+            android:name=".stresstest.StressTestActivity"
+            android:exported="false" />
+
+        <activity
             android:name=".RequestDetailsActivity"
             android:exported="false" />
 

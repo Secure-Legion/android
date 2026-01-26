@@ -319,7 +319,15 @@ data class Message(
     /**
      * Payment amount in smallest unit (lamports/zatoshis)
      */
-    val paymentAmount: Long? = null
+    val paymentAmount: Long? = null,
+
+    /**
+     * Correlation ID for stress test tracing and debugging
+     * Tracks message through entire lifecycle: creation → PING → PONG → MESSAGE_BLOB → ACK
+     * Format: "stress_<runId>_<counter>" or null for normal messages
+     * Enables diagnosis of SOCKS timeout root cause and MESSAGE_TX initialization race
+     */
+    val correlationId: String? = null
 ) {
     companion object {
         // Message type constants

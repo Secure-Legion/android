@@ -4,7 +4,7 @@ import java.io.FileInputStream
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
-    id("com.google.devtools.ksp") version "2.2.21-2.0.4"
+    id("com.google.devtools.ksp") version "2.3.2"
 }
 
 // Load keystore properties

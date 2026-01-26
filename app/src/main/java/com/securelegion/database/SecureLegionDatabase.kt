@@ -52,7 +52,7 @@ import net.zetetic.database.sqlcipher.SupportOpenHelperFactory
  */
 @Database(
     entities = [Contact::class, Message::class, Wallet::class, ReceivedId::class, UsedSignature::class, Group::class, GroupMember::class, GroupMessage::class, CallHistory::class, CallQualityLog::class, PingInbox::class, ContactKeyChain::class, SkippedMessageKey::class, PendingFriendRequest::class],
-    version = 33,
+    version = 35,
     exportSchema = false
 )
 abstract class SecureLegionDatabase : RoomDatabase() {
@@ -650,6 +650,37 @@ abstract class SecureLegionDatabase : RoomDatabase() {
         }
 
         /**
+         * Migration from version 33 to 34: Add correlationId for stress test tracing
+         */
+        private val MIGRATION_33_34 = object : Migration(33, 34) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                Log.i(TAG, "Migrating database from version 33 to 34")
+
+                // Add correlationId column for stress test tracing and debugging
+                // Tracks message through entire lifecycle to diagnose SOCKS timeout + MESSAGE_TX race
+                database.execSQL("ALTER TABLE messages ADD COLUMN correlationId TEXT")
+
+                Log.i(TAG, "Migration completed: Added correlationId column for stress test tracing")
+            }
+        }
+
+        /**
+         * Migration from version 34 to 35: Add pingWireBytesBase64 to ping_inbox
+         * Store encrypted ping wire bytes in DB instead of SharedPreferences for reliability
+         */
+        private val MIGRATION_34_35 = object : Migration(34, 35) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                Log.i(TAG, "Migrating database from version 34 to 35")
+
+                // Add pingWireBytesBase64 column to store encrypted ping payload
+                // Format: [type_byte][sender_x25519_pubkey (32 bytes)][encrypted_payload]
+                database.execSQL("ALTER TABLE ping_inbox ADD COLUMN pingWireBytesBase64 TEXT")
+
+                Log.i(TAG, "Migration completed: Added pingWireBytesBase64 to ping_inbox (DB source of truth)")
+            }
+        }
+
+        /**
          * Migration from version 20 to 21: Add group messaging tables
          */
         private val MIGRATION_20_21 = object : Migration(20, 21) {
@@ -789,7 +820,7 @@ abstract class SecureLegionDatabase : RoomDatabase() {
                     DATABASE_NAME
                 )
                     .openHelperFactory(factory)
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23, MIGRATION_23_24, MIGRATION_24_25, MIGRATION_25_26, MIGRATION_26_27, MIGRATION_27_28, MIGRATION_28_29, MIGRATION_29_30, MIGRATION_30_31, MIGRATION_31_32, MIGRATION_32_33)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23, MIGRATION_23_24, MIGRATION_24_25, MIGRATION_25_26, MIGRATION_26_27, MIGRATION_27_28, MIGRATION_28_29, MIGRATION_29_30, MIGRATION_30_31, MIGRATION_31_32, MIGRATION_32_33, MIGRATION_33_34, MIGRATION_34_35)
                     .addCallback(object : RoomDatabase.Callback() {
                         override fun onCreate(db: SupportSQLiteDatabase) {
                             super.onCreate(db)
@@ -880,7 +911,7 @@ abstract class SecureLegionDatabase : RoomDatabase() {
                         DATABASE_NAME
                     )
                         .openHelperFactory(SupportOpenHelperFactory(passphrase))
-                        .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23, MIGRATION_23_24, MIGRATION_24_25, MIGRATION_25_26, MIGRATION_26_27, MIGRATION_27_28, MIGRATION_28_29, MIGRATION_29_30, MIGRATION_30_31, MIGRATION_31_32, MIGRATION_32_33)
+                        .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23, MIGRATION_23_24, MIGRATION_24_25, MIGRATION_25_26, MIGRATION_26_27, MIGRATION_27_28, MIGRATION_28_29, MIGRATION_29_30, MIGRATION_30_31, MIGRATION_31_32, MIGRATION_32_33, MIGRATION_33_34, MIGRATION_34_35)
                         .addCallback(object : RoomDatabase.Callback() {
                             override fun onCreate(db: SupportSQLiteDatabase) {
                                 super.onCreate(db)

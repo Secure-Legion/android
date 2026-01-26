@@ -110,6 +110,42 @@ interface MessageDao {
     suspend fun updateMessageStatusByMessageId(messageId: String, status: Int)
 
     /**
+     * Update retry fields only (prevents race condition with delivery status updates)
+     * CRITICAL: Use this instead of updateMessage() when only updating retry state
+     * This ensures messageDelivered, pingDelivered, status etc. are never overwritten by stale data
+     */
+    @Query("UPDATE messages SET retryCount = :retryCount, lastRetryTimestamp = :lastRetryTimestamp WHERE id = :messageId")
+    suspend fun updateRetryState(messageId: Long, retryCount: Int, lastRetryTimestamp: Long)
+
+    /**
+     * Update retry fields with next retry time and error (for MessageRetryWorker)
+     * CRITICAL: Partial update to avoid overwriting delivery status with stale data
+     */
+    @Query("UPDATE messages SET retryCount = :retryCount, lastRetryTimestamp = :lastRetryTimestamp, nextRetryAtMs = :nextRetryAtMs, lastError = :lastError WHERE id = :messageId")
+    suspend fun updateRetryStateWithError(messageId: Long, retryCount: Int, lastRetryTimestamp: Long, nextRetryAtMs: Long, lastError: String?)
+
+    /**
+     * Update pingWireBytes only (prevents race condition with delivery status updates)
+     * CRITICAL: Use this instead of updateMessage() when only storing wire bytes for retry
+     */
+    @Query("UPDATE messages SET pingWireBytes = :pingWireBytes WHERE id = :messageId")
+    suspend fun updatePingWireBytes(messageId: Long, pingWireBytes: String)
+
+    /**
+     * Update pongDelivered only (prevents race condition with delivery status updates)
+     * CRITICAL: Use this instead of updateMessage() when marking PONG_ACK sent
+     */
+    @Query("UPDATE messages SET pongDelivered = :pongDelivered WHERE id = :messageId")
+    suspend fun updatePongDelivered(messageId: Long, pongDelivered: Boolean)
+
+    /**
+     * Update payment status and tx signature only (prevents race condition with delivery status)
+     * CRITICAL: Use this instead of updateMessage() for payment updates
+     */
+    @Query("UPDATE messages SET paymentStatus = :paymentStatus, txSignature = :txSignature WHERE id = :messageId")
+    suspend fun updatePaymentFields(messageId: Long, paymentStatus: String, txSignature: String)
+
+    /**
      * Get last message for a contact
      */
     @Query("SELECT * FROM messages WHERE contactId = :contactId ORDER BY timestamp DESC LIMIT 1")

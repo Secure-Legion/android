@@ -88,22 +88,25 @@ class AckStateTracker {
     }
 
     /**
-     * Process an incoming ACK with strict ordering enforcement
+     * Process an incoming ACK with idempotent handling
      *
-     * Returns true if ACK was accepted and state advanced
-     * Returns false if ACK was rejected (duplicate, out-of-order, invalid)
+     * Returns true if ACK was accepted (either new or duplicate of previously processed ACK)
+     * Returns false only for invalid ACKs that were never processed
+     *
+     * IDEMPOTENCY: Duplicates return true (ACK was successfully processed previously)
+     * This prevents retry loops and deadlock after circuit churn.
      *
      * @param messageId The message ID this ACK is for
      * @param ackType The type of ACK (PING_ACK, PONG_ACK, MESSAGE_ACK)
-     * @return true if state changed, false if ACK was rejected
+     * @return true if ACK is valid (new or duplicate), false only for genuinely invalid ACKs
      */
     fun processAck(messageId: String, ackType: String): Boolean {
         val ackKey = messageId to ackType
 
-        // Guard 1: Reject duplicate ACKs (idempotency)
+        // Guard 1: Handle duplicate ACKs (idempotency)
         if (processedAcks.contains(ackKey)) {
-            Log.d(TAG, "Duplicate ACK ignored: $messageId/$ackType")
-            return false
+            Log.d(TAG, "✓ Duplicate ACK (idempotent): $messageId/$ackType - already processed, returning success")
+            return true  // CHANGED: Return true for duplicates (they were successfully processed before)
         }
 
         // Get current state (default to NONE if new message)
@@ -111,16 +114,39 @@ class AckStateTracker {
 
         // Guard 2: Verify valid transition
         if (!current.canTransitionTo(ackType)) {
-            Log.w(TAG, "Invalid ACK transition: $current -> $ackType for $messageId (out-of-order or invalid)")
-            return false
+            // Out-of-order ACK detected - check if it represents forward progress
+            // After circuit churn, ACKs may arrive out of order over Tor
+            val isForwardProgress = when {
+                // Allow MESSAGE_ACK to skip ahead (most advanced state)
+                ackType == "MESSAGE_ACK" && current != AckState.MESSAGE_ACKED -> true
+                // Allow PONG_ACK if not yet received
+                ackType == "PONG_ACK" && current != AckState.PONG_ACKED && current != AckState.MESSAGE_ACKED -> true
+                else -> false
+            }
+
+            if (isForwardProgress) {
+                // Allow out-of-order ACK if it advances state forward (non-fatal)
+                val next = when (ackType) {
+                    "MESSAGE_ACK" -> AckState.MESSAGE_ACKED
+                    "PONG_ACK" -> AckState.PONG_ACKED
+                    else -> return false
+                }
+                Log.w(TAG, "⚠️  Out-of-order ACK allowed (forward progress): $current -> $next for $messageId")
+                ackStates[messageId] = next
+                processedAcks.add(ackKey)
+                return true
+            } else {
+                Log.w(TAG, "⚠️  Out-of-order ACK rejected (backward or no progress): $current -> $ackType for $messageId")
+                return false
+            }
         }
 
-        // Perform transition
+        // Perform transition (normal case)
         val next = current.transitionTo(ackType) ?: return false
         ackStates[messageId] = next
         processedAcks.add(ackKey)
 
-        Log.d(TAG, "ACK processed: $messageId | $current -> $next")
+        Log.d(TAG, "✓ ACK processed (new): $messageId | $current -> $next")
         return true
     }
 

@@ -1231,6 +1231,38 @@ object RustBridge {
      */
     external fun getNLx402Version(): String
 
+    // ==================== STRESS TEST & DEBUG METRICS ====================
+
+    /**
+     * Get all debug counters as JSON string
+     * Returns error categorization, session leaks, MESSAGE_TX drops, listener thrashing
+     * @return JSON string with all counters
+     */
+    external fun getDebugCountersJson(): String
+
+    /**
+     * Get current Pong session count (session leak detector)
+     * @return Number of active Pong sessions
+     */
+    external fun getPongSessionCount(): Long
+
+    /**
+     * Get listener replaced count (thrashing indicator)
+     * @return Number of times listener was replaced mid-run
+     */
+    external fun getListenerReplacedCount(): Long
+
+    /**
+     * Get MESSAGE_TX drop count (initialization race indicator)
+     * @return Number of messages dropped due to channel not initialized
+     */
+    external fun getMessageTxDropCount(): Long
+
+    /**
+     * Reset all debug counters (dev-only, for fast iteration)
+     */
+    external fun resetDebugCounters()
+
     // ==================== HELPER FUNCTIONS ====================
 
     /**
@@ -1245,6 +1277,92 @@ object RustBridge {
             false
         } catch (e: Exception) {
             false
+        }
+    }
+
+    // ==================== WIRE FORMAT NORMALIZATION ====================
+
+    // Message type constants (must match tor.rs)
+    private const val MSG_TYPE_PING: Byte = 0x01
+    private const val MSG_TYPE_PONG: Byte = 0x02
+    private const val MSG_TYPE_TEXT: Byte = 0x03
+    private const val MSG_TYPE_VOICE: Byte = 0x04
+    private const val MSG_TYPE_TAP: Byte = 0x05
+    private const val MSG_TYPE_DELIVERY_CONFIRMATION: Byte = 0x06
+    private const val MSG_TYPE_FRIEND_REQUEST: Byte = 0x07
+    private const val MSG_TYPE_FRIEND_REQUEST_ACCEPTED: Byte = 0x08
+    private const val MSG_TYPE_IMAGE: Byte = 0x09
+    private const val MSG_TYPE_PAYMENT_REQUEST: Byte = 0x0A.toByte()
+    private const val MSG_TYPE_PAYMENT_SENT: Byte = 0x0B.toByte()
+    private const val MSG_TYPE_PAYMENT_ACCEPTED: Byte = 0x0C.toByte()
+    private const val MSG_TYPE_CALL_SIGNALING: Byte = 0x0D.toByte()
+
+    private val KNOWN_MESSAGE_TYPES = setOf(
+        MSG_TYPE_PING,
+        MSG_TYPE_PONG,
+        MSG_TYPE_TEXT,
+        MSG_TYPE_VOICE,
+        MSG_TYPE_TAP,
+        MSG_TYPE_DELIVERY_CONFIRMATION,
+        MSG_TYPE_FRIEND_REQUEST,
+        MSG_TYPE_FRIEND_REQUEST_ACCEPTED,
+        MSG_TYPE_IMAGE,
+        MSG_TYPE_PAYMENT_REQUEST,
+        MSG_TYPE_PAYMENT_SENT,
+        MSG_TYPE_PAYMENT_ACCEPTED,
+        MSG_TYPE_CALL_SIGNALING
+    )
+
+    /**
+     * Check if the first byte is a known protocol message type
+     * Used to detect legacy wire bytes missing type byte
+     */
+    private fun isKnownMessageType(typeByte: Byte): Boolean {
+        return KNOWN_MESSAGE_TYPES.contains(typeByte)
+    }
+
+    /**
+     * Normalize stored wire bytes by detecting and prepending missing type byte
+     *
+     * Legacy packets from older builds may be missing the type byte prefix.
+     * This function migrates them to the new format: [type][pubkey32][ciphertext...]
+     *
+     * @param expectedType The message type this wire blob should have (based on context)
+     * @param wireBytes The stored wire bytes (may or may not have type byte)
+     * @return Normalized wire bytes with type byte at offset 0
+     *
+     * Example usage:
+     * ```
+     * // When loading stored PING from DB/SharedPrefs:
+     * val normalizedWire = RustBridge.normalizeWireBytes(0x01, storedPingWire)
+     *
+     * // When loading stored ACK:
+     * val normalizedWire = RustBridge.normalizeWireBytes(0x06, storedAckWire)
+     * ```
+     */
+    fun normalizeWireBytes(expectedType: Byte, wireBytes: ByteArray): ByteArray {
+        if (wireBytes.isEmpty()) {
+            android.util.Log.w("RustBridge", "normalizeWireBytes: empty wire bytes")
+            return wireBytes
+        }
+
+        val firstByte = wireBytes[0]
+        val isTyped = isKnownMessageType(firstByte)
+
+        return if (isTyped) {
+            // Already has type byte, verify it matches expected
+            if (firstByte != expectedType) {
+                android.util.Log.w("RustBridge",
+                    "normalizeWireBytes: type mismatch! expected=0x%02x, found=0x%02x (len=%d)"
+                        .format(expectedType, firstByte, wireBytes.size))
+            }
+            wireBytes  // Already typed, return as-is
+        } else {
+            // Legacy format without type byte - prepend expected type
+            android.util.Log.i("RustBridge",
+                "✓ LEGACY_WIRE_MIGRATED: prepending type=0x%02x to %d-byte legacy wire blob"
+                    .format(expectedType, wireBytes.size))
+            byteArrayOf(expectedType) + wireBytes
         }
     }
 }

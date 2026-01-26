@@ -47,6 +47,8 @@ import com.securelegion.crypto.TorManager
 import com.securelegion.database.SecureLegionDatabase
 import com.securelegion.database.entities.Message
 import com.securelegion.services.MessageService
+import com.securelegion.services.TorService
+import com.securelegion.network.TransportGate
 import com.securelegion.utils.SecureWipe
 import com.securelegion.utils.ThemedToast
 import com.securelegion.utils.VoiceRecorder
@@ -465,6 +467,11 @@ class ChatActivity : BaseActivity() {
 
         // Download state is derived from database on loadMessages() - no need to check SharedPreferences
 
+        // Refresh messages when returning to the screen (ensures fresh data even if broadcast was missed)
+        lifecycleScope.launch {
+            loadMessages()
+        }
+
         // Notify TorService that app is in foreground (fast bandwidth updates)
         com.securelegion.services.TorService.setForegroundState(true)
     }
@@ -549,6 +556,10 @@ class ChatActivity : BaseActivity() {
             onDeleteMessage = { message ->
                 // Delete single message from long-press menu
                 deleteSingleMessage(message)
+            },
+            onResendMessage = { message ->
+                // Resend failed message (user-triggered via long-press menu)
+                resendFailedMessage(message)
             }
         )
 
@@ -1543,6 +1554,11 @@ class ChatActivity : BaseActivity() {
                     messageInput.text.clear()
                 }
 
+                // Wait for transport gate to open (verifies Tor is healthy)
+                Log.d(TAG, "Waiting for transport gate to open before sending message...")
+                TorService.getTransportGate()?.awaitOpen()
+                Log.d(TAG, "Transport gate opened, proceeding with message send")
+
                 // Send message with security options
                 // Use callback to update UI immediately when message is saved (before Tor send)
                 val result = messageService.sendMessage(
@@ -1677,6 +1693,37 @@ class ChatActivity : BaseActivity() {
                 Log.e(TAG, "Failed to delete message", e)
                 withContext(Dispatchers.Main) {
                     ThemedToast.show(this@ChatActivity, "Failed to delete message")
+                }
+            }
+        }
+    }
+
+    /**
+     * Resend a failed message (from long-press popup menu)
+     * Triggers immediate retry via MessageService
+     */
+    private fun resendFailedMessage(message: Message) {
+        lifecycleScope.launch {
+            try {
+                Log.i(TAG, "User requested resend for message ${message.messageId} (id=${message.id})")
+
+                val messageService = MessageService(this@ChatActivity)
+                val result = messageService.retryMessageNow(message.id)
+
+                if (result.isSuccess) {
+                    withContext(Dispatchers.Main) {
+                        ThemedToast.show(this@ChatActivity, "Resending message...")
+                        loadMessages()  // Refresh UI to show updated status
+                    }
+                } else {
+                    withContext(Dispatchers.Main) {
+                        ThemedToast.show(this@ChatActivity, "Failed to resend message")
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to resend message", e)
+                withContext(Dispatchers.Main) {
+                    ThemedToast.show(this@ChatActivity, "Error resending message")
                 }
             }
         }
