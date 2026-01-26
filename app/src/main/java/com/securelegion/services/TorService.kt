@@ -49,7 +49,10 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.newSingleThreadContext
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlin.coroutines.resume
+import java.util.concurrent.ConcurrentHashMap
 import java.io.File
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.min
@@ -118,6 +121,10 @@ class TorService : Service() {
     // Service-scoped coroutine scope for all protocol operations
     // Ensures proper cleanup when service is destroyed
     private val serviceScope = CoroutineScope(SupervisorJob() + protocolDispatcher)
+
+    // Per-contact receive mutex to prevent race conditions during decrypt+DB+counter update
+    // This fixes "out-of-order" errors caused by concurrent message processing
+    private val receiveMutexByContact = ConcurrentHashMap<Long, Mutex>()
 
     // Bandwidth monitoring
     private var lastRxBytes = 0L
@@ -1930,12 +1937,13 @@ class TorService : Service() {
                         try {
                             val result = messageService.sendPingForMessage(message)
                             if (result.isSuccess) {
-                                // Update retry counter
-                                val updatedMessage = message.copy(
-                                    retryCount = message.retryCount + 1,
-                                    lastRetryTimestamp = System.currentTimeMillis()
+                                // CRITICAL: Use partial update to avoid overwriting delivery status
+                                // (fixes race where MESSAGE_ACK sets delivered=true between read and write)
+                                database.messageDao().updateRetryState(
+                                    message.id,
+                                    message.retryCount + 1,
+                                    System.currentTimeMillis()
                                 )
-                                database.messageDao().updateMessage(updatedMessage)
                                 Log.i(TAG, "✓ Retried Ping for ${message.messageId} after TAP")
                             }
                         } catch (e: Exception) {
@@ -2729,6 +2737,12 @@ class TorService : Service() {
             // This ACK must update the state machine: PING_ACKED → PONG_ACKED
 
             CoroutineScope(Dispatchers.IO).launch {
+                // Skip blob_ transport ACKs - we use pingId-based MESSAGE_ACK for delivery confirmation
+                if (ackType == "MESSAGE_ACK" && itemId.startsWith("blob_")) {
+                    Log.d(TAG, "Ignoring transport MESSAGE_ACK for blob session: $itemId")
+                    return@launch
+                }
+
                 // RECEIVER-SIDE SKIP: Short-circuit PONG_ACK on receiver
                 // If this device is the receiver (pingId exists in ping_inbox), skip processing.
                 // PONG_ACK is sent by sender to receiver, but receiver has no action to take.
@@ -2911,10 +2925,13 @@ class TorService : Service() {
                                                         // No PING_ACK - retry PING
                                                         Log.i(TAG, "  ${msg.messageId}: Retrying PING after TAP_ACK")
                                                         messageService.sendPingForMessage(msg)
-                                                        database.messageDao().updateMessage(msg.copy(
-                                                            retryCount = msg.retryCount + 1,
-                                                            lastRetryTimestamp = System.currentTimeMillis()
-                                                        ))
+                                                        // CRITICAL: Use partial update to avoid overwriting delivery status
+                                                        // (fixes race where MESSAGE_ACK sets delivered=true between read and write)
+                                                        database.messageDao().updateRetryState(
+                                                            msg.id,
+                                                            msg.retryCount + 1,
+                                                            System.currentTimeMillis()
+                                                        )
                                                     }
                                                 } catch (e: Exception) {
                                                     Log.e(TAG, "Failed to retry message ${msg.messageId} after TAP_ACK", e)
@@ -2996,22 +3013,22 @@ class TorService : Service() {
      */
     private fun handleIncomingVoiceMessage(encodedData: ByteArray) {
         try {
-            // Wire format: [connection_id (8 bytes LE)][Sender X25519 key (32 bytes)][Encrypted payload]
-            if (encodedData.size < 40) {  // 8 + 32 minimum
+            // Wire format: [Type byte][connection_id (8 bytes LE)][Sender X25519 key (32 bytes)][Encrypted payload]
+            if (encodedData.size < 41) {  // 1 (type) + 8 + 32 minimum
                 Log.e(TAG, "Invalid VOICE data: too short (${encodedData.size} bytes)")
                 return
             }
 
-            // Extract connection_id (first 8 bytes, little-endian)
-            val connectionId = java.nio.ByteBuffer.wrap(encodedData, 0, 8)
+            // Extract connection_id (skip type byte, then read 8 bytes, little-endian)
+            val connectionId = java.nio.ByteBuffer.wrap(encodedData, 1, 8)
                 .order(java.nio.ByteOrder.LITTLE_ENDIAN)
                 .long
 
-            // Extract sender X25519 public key (next 32 bytes)
-            val senderX25519PublicKey = encodedData.copyOfRange(8, 40)
+            // Extract sender X25519 public key (after type + connection_id)
+            val senderX25519PublicKey = encodedData.copyOfRange(9, 41)
 
             // Extract encrypted payload (rest of bytes)
-            val encryptedPayload = encodedData.copyOfRange(40, encodedData.size)
+            val encryptedPayload = encodedData.copyOfRange(41, encodedData.size)
 
             Log.i(TAG, "✓ Received VOICE call signaling on connection $connectionId: ${encryptedPayload.size} bytes")
 
@@ -3082,139 +3099,30 @@ class TorService : Service() {
             val dbPassphrase = keyManager.getDatabasePassphrase()
             val database = com.securelegion.database.SecureLegionDatabase.getInstance(this, dbPassphrase)
 
-            // Try to decrypt as Ping first (may throw exception if it's actually a Pong)
-            var pingId: String? = null
-            try {
-                pingId = RustBridge.decryptIncomingPing(encryptedPingWire)
+            // STRICT PARSING: PING handler must parse as PingToken ONLY (no fallback)
+            // Fallback parsing masked framing bugs where legacy packets (missing type byte)
+            // had random pubkey first bytes that passed validation (~5% chance of 0x01-0x0D)
+            val pingId: String? = try {
+                RustBridge.decryptIncomingPing(encryptedPingWire)
             } catch (e: Exception) {
-                Log.w(TAG, "⚠️  decryptIncomingPing threw exception: ${e.message}")
+                // Classify error properly: FRAMING vs PAYLOAD
+                val errorType = when {
+                    e.message?.contains("FRAMING_PROTOCOL_VIOLATION") == true -> "FRAMING_PROTOCOL_VIOLATION"
+                    e.message?.contains("PAYLOAD_PARSE_FAILURE") == true -> "PAYLOAD_PARSE_FAILURE"
+                    else -> "UNKNOWN_ERROR"
+                }
+
+                Log.e(TAG, "✗ $errorType: Packet routed as PING failed")
+                Log.e(TAG, "  Reason: ${e.message}")
+                Log.e(TAG, "  Wire length: ${encryptedPingWire.size} bytes")
+                Log.e(TAG, "  First 4 bytes: ${encryptedPingWire.take(4).joinToString(" ") { "%02x".format(it) }}")
+                Log.e(TAG, "  Dropping packet")
+                return
             }
 
             if (pingId == null) {
-                Log.w(TAG, "⚠️  Failed to decrypt as Ping - trying as Pong...")
-
-                // This might be a Pong response! Try to decrypt as Pong
-                val pongPingId = try {
-                    Log.d(TAG, "Calling decryptIncomingPong()...")
-                    val startTime = System.currentTimeMillis()
-                    val result = RustBridge.decryptIncomingPong(encryptedPingWire)
-                    val elapsed = System.currentTimeMillis() - startTime
-                    Log.d(TAG, "decryptIncomingPong() completed in ${elapsed}ms")
-                    result
-                } catch (e: Exception) {
-                    Log.e(TAG, "⚠️  decryptIncomingPong threw exception: ${e.message}")
-                    Log.e(TAG, "Stack trace:", e)
-                    null
-                }
-
-                if (pongPingId != null) {
-                    Log.i(TAG, "✓ Successfully decrypted as Pong for Ping ID: $pongPingId")
-
-                    // Track this pongId to prevent duplicate processing (PRIMARY deduplication)
-                    val pongTracking = com.securelegion.database.entities.ReceivedId(
-                        receivedId = "pong_$pongPingId",
-                        idType = com.securelegion.database.entities.ReceivedId.TYPE_PONG,
-                        receivedTimestamp = System.currentTimeMillis()
-                    )
-                    val rowId = tryInsertReceivedId(database, pongTracking, "PONG")
-
-                    if (rowId == -1L) {
-                        Log.w(TAG, "⚠️  DUPLICATE PONG received! PongId=pong_$pongPingId already in tracking table")
-
-                        // CRITICAL FIX: Check if message was already delivered before blocking retry
-                        val message = withContext(Dispatchers.IO) {
-                            database.messageDao().getMessageByPingId(pongPingId)
-                        }
-
-                        if (message != null && message.messageDelivered) {
-                            Log.i(TAG, "→ Message already delivered (messageId=${message.messageId}) - sending PONG_ACK and blocking duplicate")
-
-                            // Send PONG_ACK for duplicate to stop sender from retrying
-                            val prefs = getSharedPreferences("pending_pings", Context.MODE_PRIVATE)
-                            val contactIdForPing = prefs.getString("ping_${pongPingId}_contact_id", null)?.toLongOrNull() ?: -1L
-
-                            if (contactIdForPing > 0) {
-                                serviceScope.launch {
-                                    sendAckWithRetry(
-                                        connectionId = connectionId,
-                                        itemId = pongPingId,
-                                        ackType = "PONG_ACK",
-                                        contactId = contactIdForPing,
-                                        maxRetries = 3,
-                                        initialDelayMs = 1000L
-                                    )
-                                }
-                            }
-                            return
-                        } else {
-                            Log.i(TAG, "→ Message NOT yet delivered - allowing retry download (messageDelivered=${message?.messageDelivered})")
-                            // Continue to line 2211 to retry message send
-                        }
-                    }
-                    Log.i(TAG, "→ New Pong - tracked in database (rowId=$rowId)")
-
-                    // SEND PONG_ACK to confirm receipt of PONG
-                    // Use sendAckWithRetry() for automatic retry with exponential backoff
-                    // Look up contact by ping_id
-                    val prefs = getSharedPreferences("pending_pings", Context.MODE_PRIVATE)
-                    val contactIdForPing = prefs.getString("ping_${pongPingId}_contact_id", null)?.toLongOrNull() ?: -1L
-
-                    if (contactIdForPing > 0) {
-                        serviceScope.launch {
-                            sendAckWithRetry(
-                                connectionId = connectionId,
-                                itemId = pongPingId,
-                                ackType = "PONG_ACK",
-                                contactId = contactIdForPing,
-                                maxRetries = 3,
-                                initialDelayMs = 1000L
-                            )
-                        }
-                    } else {
-                        Log.w(TAG, "⚠️  Cannot send PONG_ACK - no contact_id found for ping_id=$pongPingId")
-                    }
-
-                    // Check if we already sent the message for this Pong (secondary check)
-                    // CRITICAL FIX: Use suspend function instead of runBlocking to avoid freezing
-                    val message = withContext(Dispatchers.IO) {
-                        database.messageDao().getMessageByPingId(pongPingId)
-                    }
-
-                    if (message != null && message.messageDelivered) {
-                        Log.w(TAG, "⚠️  Duplicate Pong detected! Message for pingId=$pongPingId already delivered (messageId=${message.messageId})")
-                        Log.i(TAG, "→ Skipping duplicate message send")
-                        return
-                    }
-
-                    if (message == null) {
-                        Log.w(TAG, "⚠️  Received Pong for unknown pingId=$pongPingId - no message found in database")
-                        return
-                    }
-
-                    Log.i(TAG, "→ New Pong - sending message payload for messageId=${message.messageId}")
-
-                    // IMMEDIATELY trigger sending the message payload (don't wait for retry worker!)
-                    kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
-                        try {
-                            val messageService = MessageService(this@TorService)
-                            val result = messageService.pollForPongsAndSendMessages()
-
-                            if (result.isSuccess) {
-                                val sentCount = result.getOrNull() ?: 0
-                                Log.i(TAG, "✓ Sent $sentCount message payload(s) immediately after Pong")
-                            } else {
-                                Log.e(TAG, "✗ Failed to send message payload: ${result.exceptionOrNull()?.message}")
-                            }
-                        } catch (e: Exception) {
-                            Log.e(TAG, "Error sending message payload after Pong", e)
-                        }
-                    }
-                    return
-                }
-
-                // Neither Ping nor Pong - must be a message blob!
-                Log.i(TAG, "→ Not a Ping or Pong - treating as MESSAGE BLOB")
-                handleIncomingMessageBlob(encryptedPingWire)
+                Log.e(TAG, "✗ FRAMING_PROTOCOL_VIOLATION: decryptIncomingPing returned null")
+                Log.e(TAG, "  Dropping packet (parse failed)")
                 return
             }
 
@@ -3284,7 +3192,8 @@ class TorService : Service() {
                         lastUpdatedAt = now,
                         lastPingAt = now,
                         pingAckedAt = null,  // Will update after sending ACK
-                        attemptCount = 1
+                        attemptCount = 1,
+                        pingWireBytesBase64 = android.util.Base64.encodeToString(encryptedPingWire, android.util.Base64.NO_WRAP)
                     )
 
                     val inserted = withContext(Dispatchers.IO) {
@@ -3398,6 +3307,11 @@ class TorService : Service() {
         maxRetries: Int = 3,
         initialDelayMs: Long = 1000L
     ) {
+        // Wait for transport gate to open (verifies Tor is healthy)
+        Log.d(TAG, "ACK send: waiting for transport gate to open...")
+        gate.awaitOpen()
+        Log.d(TAG, "ACK send: transport gate opened, proceeding with $ackType")
+
         val keyManager = com.securelegion.crypto.KeyManager.getInstance(this)
         val dbPassphrase = keyManager.getDatabasePassphrase()
         val database = com.securelegion.database.SecureLegionDatabase.getInstance(this, dbPassphrase)
@@ -3493,21 +3407,25 @@ class TorService : Service() {
      */
     private fun handleIncomingMessageBlob(encryptedMessageWire: ByteArray) {
         try {
-            // Wire format: [Sender X25519 - 32 bytes][Encrypted Message]
-            // Note: Type byte was stripped by Rust listener during routing
+            // Wire format: [Type byte][Sender X25519 - 32 bytes][Encrypted Message]
+            // Type byte is kept by Rust listener (not stripped) to prevent offset mismatch
 
             Log.i(TAG, "╔════════════════════════════════════════")
             Log.i(TAG, "║ INCOMING MESSAGE BLOB (${encryptedMessageWire.size} bytes)")
             Log.i(TAG, "╚════════════════════════════════════════")
 
-            if (encryptedMessageWire.size < 32) {
-                Log.e(TAG, "Message blob too short - missing X25519 public key")
+            if (encryptedMessageWire.size < 33) {  // 1 (type) + 32 (pubkey)
+                Log.e(TAG, "Message blob too short - minimum 33 bytes required")
                 return
             }
 
-            // Extract sender's X25519 public key (first 32 bytes)
-            val senderX25519PublicKey = encryptedMessageWire.copyOfRange(0, 32)
-            val encryptedPayload = encryptedMessageWire.copyOfRange(32, encryptedMessageWire.size)
+            // Extract sender's X25519 public key (skip type byte at offset 0)
+            val senderX25519PublicKey = encryptedMessageWire.copyOfRange(1, 33)
+            val encryptedPayload = encryptedMessageWire.copyOfRange(33, encryptedMessageWire.size)
+
+            // Diagnostic: Verify extraction worked correctly
+            Log.e(TAG, "EXTRACT pubkey len=${senderX25519PublicKey.size} head=${senderX25519PublicKey.take(8).joinToString("") { "%02x".format(it) }}")
+            Log.e(TAG, "EXTRACT payload len=${encryptedPayload.size} head=${encryptedPayload.take(8).joinToString("") { "%02x".format(it) }}")
 
             Log.d(TAG, "Sender X25519 pubkey: ${android.util.Base64.encodeToString(senderX25519PublicKey, android.util.Base64.NO_WRAP).take(16)}...")
             Log.d(TAG, "Encrypted payload: ${encryptedPayload.size} bytes")
@@ -3556,9 +3474,21 @@ class TorService : Service() {
 
             // Known contact - this is a regular message
             // Note: All message types (TEXT, VOICE, FRIEND_REQUEST, etc.) come through the same listener channel
-            val encryptedMessage = encryptedPayload
+
+            // COMPATIBILITY FIX: Detect and strip duplicate pubkey prefix if present
+            // Bug in MessageService.kt:747 + android.rs:2960 causes double pubkey wrapping
+            val hasDuplicatePubkey = encryptedPayload.size >= 32 &&
+                encryptedPayload.copyOfRange(0, 32).contentEquals(senderX25519PublicKey)
+
+            val encryptedMessage = if (hasDuplicatePubkey) {
+                Log.w(TAG, "MSG_BLOB has duplicate pubkey prefix; stripping 32 bytes")
+                encryptedPayload.copyOfRange(32, encryptedPayload.size)
+            } else {
+                encryptedPayload
+            }
 
             Log.i(TAG, "Processing message from: ${contact.displayName}")
+            Log.d(TAG, "  Duplicate pubkey detected: $hasDuplicatePubkey")
 
             // CALL_SIGNALING now arrives via dedicated VOICE channel (separate from MESSAGE)
             // This MESSAGE handler only processes: TEXT, VOICE clips, IMAGES, PAYMENTS
@@ -3568,190 +3498,15 @@ class TorService : Service() {
             val ourEd25519PublicKey = keyManager.getSigningPublicKey()
             val ourPrivateKey = keyManager.getSigningKeyBytes()
 
-            // Check if message has metadata (version byte)
+            // ✅ NEW RULE: Never inspect encryptedMessage[0] for message type.
+            // Message type is INSIDE the plaintext (after decryption), not in ciphertext headers.
+            // This prevents confusion between encryption version bytes and app message types.
             var messageType = com.securelegion.database.entities.Message.MESSAGE_TYPE_TEXT
             var voiceDuration: Int? = null
-            var actualEncryptedMessage = encryptedMessage
+            val actualEncryptedMessage = encryptedMessage  // Don't strip any bytes - decrypt full payload
             var voiceFilePath: String? = null
 
-            Log.d(TAG, "Parsing message metadata from ${encryptedMessage.size} bytes")
-            if (encryptedMessage.isNotEmpty()) {
-                Log.d(TAG, "First byte: 0x${String.format("%02X", encryptedMessage[0])}")
-            }
-
-            // Check for metadata byte (0x00 = TEXT, 0x01 = VOICE, 0x02 = IMAGE, 0x0A = PAYMENT_REQUEST, etc.)
-            if (encryptedMessage.isNotEmpty()) {
-                when (encryptedMessage[0].toInt() and 0xFF) {
-                    0x00 -> {
-                        // TEXT message - strip metadata byte
-                        Log.d(TAG, "Message type: TEXT (v2)")
-                        actualEncryptedMessage = encryptedMessage.copyOfRange(1, encryptedMessage.size)
-                        Log.d(TAG, "  Stripped 1 byte metadata, encrypted payload: ${actualEncryptedMessage.size} bytes")
-                    }
-                    0x01 -> {
-                        // VOICE message - extract duration and strip metadata
-                        if (encryptedMessage.size >= 5) {
-                            Log.d(TAG, "Message type: VOICE (v2)")
-                            messageType = com.securelegion.database.entities.Message.MESSAGE_TYPE_VOICE
-                            // Extract duration (4 bytes, big-endian)
-                            voiceDuration = ((encryptedMessage[1].toInt() and 0xFF) shl 24) or
-                                          ((encryptedMessage[2].toInt() and 0xFF) shl 16) or
-                                          ((encryptedMessage[3].toInt() and 0xFF) shl 8) or
-                                          (encryptedMessage[4].toInt() and 0xFF)
-                            actualEncryptedMessage = encryptedMessage.copyOfRange(5, encryptedMessage.size)
-                            Log.d(TAG, "  Voice duration: ${voiceDuration}s")
-                            Log.d(TAG, "  Stripped 5 bytes metadata, encrypted payload: ${actualEncryptedMessage.size} bytes")
-                        } else {
-                            Log.e(TAG, "✗ VOICE message too short - missing duration metadata (only ${encryptedMessage.size} bytes)")
-                            return
-                        }
-                    }
-                    0x02 -> {
-                        // IMAGE message - strip metadata byte
-                        Log.d(TAG, "Message type: IMAGE (v2)")
-                        messageType = com.securelegion.database.entities.Message.MESSAGE_TYPE_IMAGE
-                        actualEncryptedMessage = encryptedMessage.copyOfRange(1, encryptedMessage.size)
-                        Log.d(TAG, "  Stripped 1 byte metadata, encrypted payload: ${actualEncryptedMessage.size} bytes")
-                    }
-                    0x0A -> {
-                        // PAYMENT_REQUEST message
-                        Log.d(TAG, "Message type: PAYMENT_REQUEST")
-                        messageType = com.securelegion.database.entities.Message.MESSAGE_TYPE_PAYMENT_REQUEST
-                        actualEncryptedMessage = encryptedMessage.copyOfRange(1, encryptedMessage.size)
-                        Log.d(TAG, "  Stripped 1 byte metadata, encrypted payload: ${actualEncryptedMessage.size} bytes")
-                    }
-                    0x0B -> {
-                        // PAYMENT_SENT message
-                        Log.d(TAG, "Message type: PAYMENT_SENT")
-                        messageType = com.securelegion.database.entities.Message.MESSAGE_TYPE_PAYMENT_SENT
-                        actualEncryptedMessage = encryptedMessage.copyOfRange(1, encryptedMessage.size)
-                        Log.d(TAG, "  Stripped 1 byte metadata, encrypted payload: ${actualEncryptedMessage.size} bytes")
-                    }
-                    0x0C -> {
-                        // PAYMENT_ACCEPTED message
-                        Log.d(TAG, "Message type: PAYMENT_ACCEPTED")
-                        messageType = com.securelegion.database.entities.Message.MESSAGE_TYPE_PAYMENT_ACCEPTED
-                        actualEncryptedMessage = encryptedMessage.copyOfRange(1, encryptedMessage.size)
-                        Log.d(TAG, "  Stripped 1 byte metadata, encrypted payload: ${actualEncryptedMessage.size} bytes")
-                    }
-                    0x0E -> {
-                        // PING/PONG connectivity test message
-                        Log.i(TAG, "Message type: PING/PONG (connectivity test)")
-                        actualEncryptedMessage = encryptedMessage.copyOfRange(1, encryptedMessage.size)
-
-                        // Decrypt PING/PONG message
-                        val decryptedMessage = com.securelegion.crypto.RustBridge.decryptMessage(
-                            actualEncryptedMessage,
-                            ourEd25519PublicKey,
-                            ourPrivateKey
-                        )
-
-                        if (decryptedMessage != null) {
-                            // Convert back from ISO_8859_1 to get original bytes
-                            val messageBytes = decryptedMessage.toByteArray(Charsets.ISO_8859_1)
-                            val jsonString = String(messageBytes, Charsets.UTF_8)
-
-                            val pingPongMessage = com.securelegion.voice.ConnectivityTest.parsePingPongMessage(jsonString)
-
-                            when (pingPongMessage) {
-                                is com.securelegion.voice.ConnectivityTest.PingPongMessage.Ping -> {
-                                    Log.i(TAG, "✓ Received PING - auto-replying with PONG")
-
-                                    // Get contact X25519 and VOICE onion address for PONG reply
-                                    // IMPORTANT: Use voiceOnion, not messagingOnion, for security
-                                    val senderVoiceOnion = contact.voiceOnion ?: ""
-                                    val contactX25519PublicKey = try {
-                                        android.util.Base64.decode(contact.x25519PublicKeyBase64, android.util.Base64.NO_WRAP)
-                                    } catch (e: Exception) {
-                                        Log.e(TAG, "Failed to decode contact X25519 key", e)
-                                        ByteArray(0)
-                                    }
-
-                                    if (senderVoiceOnion.isNotEmpty() && contactX25519PublicKey.isNotEmpty()) {
-                                        kotlinx.coroutines.GlobalScope.launch(kotlinx.coroutines.Dispatchers.IO) {
-                                            com.securelegion.voice.ConnectivityTest.handleIncomingPing(
-                                                pingPongMessage,
-                                                contactX25519PublicKey,
-                                                senderVoiceOnion
-                                            )
-                                        }
-                                    } else {
-                                        Log.e(TAG, "Cannot send PONG - missing voice onion or X25519 key")
-                                    }
-                                }
-                                is com.securelegion.voice.ConnectivityTest.PingPongMessage.Pong -> {
-                                    Log.i(TAG, "✓ Received PONG - connectivity confirmed!")
-                                    Log.i(TAG, "  Test ID: ${pingPongMessage.testId}")
-                                    Log.i(TAG, "  Seq: ${pingPongMessage.seq}")
-
-                                    // Mark PONG as received so testConnectivity() can complete
-                                    com.securelegion.voice.ConnectivityTest.markPongReceived(pingPongMessage.testId)
-                                }
-                                null -> {
-                                    Log.w(TAG, "Failed to parse PING/PONG message")
-                                }
-                            }
-                        } else {
-                            Log.e(TAG, "Failed to decrypt PING/PONG message")
-                        }
-
-                        // Don't save PING/PONG messages to database - they're ephemeral
-                        return
-                    }
-                    0x20 -> {
-                        // GROUP_INVITE message
-                        Log.i(TAG, "Received GROUP INVITE")
-                        actualEncryptedMessage = encryptedMessage.copyOfRange(1, encryptedMessage.size)
-
-                        // Handle group invite using GroupMessagingService
-                        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
-                            try {
-                                val groupMessagingService = GroupMessagingService.getInstance(this@TorService)
-                                val result = groupMessagingService.processReceivedGroupInvite(
-                                    actualEncryptedMessage,
-                                    ourEd25519PublicKey
-                                )
-                                if (result.isSuccess) {
-                                    Log.i(TAG, "✓ Group invite processed: ${result.getOrNull()}")
-                                } else {
-                                    Log.e(TAG, "✗ Failed to process group invite", result.exceptionOrNull())
-                                }
-                            } catch (e: Exception) {
-                                Log.e(TAG, "Error processing group invite", e)
-                            }
-                        }
-                        return  // Don't process as regular message
-                    }
-                    0x21 -> {
-                        // GROUP_MESSAGE message
-                        Log.i(TAG, "Received GROUP MESSAGE")
-                        actualEncryptedMessage = encryptedMessage.copyOfRange(1, encryptedMessage.size)
-
-                        // Handle group message using GroupMessagingService
-                        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
-                            try {
-                                val groupMessagingService = GroupMessagingService.getInstance(this@TorService)
-                                val result = groupMessagingService.processReceivedGroupMessage(
-                                    actualEncryptedMessage,
-                                    ourEd25519PublicKey
-                                )
-                                if (result.isSuccess) {
-                                    Log.i(TAG, "✓ Group message processed: ${result.getOrNull()}")
-                                } else {
-                                    Log.e(TAG, "✗ Failed to process group message", result.exceptionOrNull())
-                                }
-                            } catch (e: Exception) {
-                                Log.e(TAG, "Error processing group message", e)
-                            }
-                        }
-                        return  // Don't process as regular message
-                    }
-                    else -> {
-                        // Legacy message without metadata - treat as TEXT
-                        Log.d(TAG, "Message type: TEXT (legacy, no metadata)")
-                    }
-                }
-            }
+            Log.d(TAG, "Received encrypted message: ${encryptedMessage.size} bytes (will decrypt first, then parse type)")
 
             // Get key chain for progressive ephemeral key evolution
             Log.d(TAG, "KEY CHAIN LOAD: Loading key chain from database...")
@@ -3771,107 +3526,486 @@ class TorService : Service() {
             Log.d(TAG, "  sendCounter=${keyChain.sendCounter}")
             Log.d(TAG, "  receiveCounter=${keyChain.receiveCounter} <- will use this for decryption")
             Log.d(TAG, "Attempting to decrypt ${actualEncryptedMessage.size} bytes with sequence ${keyChain.receiveCounter}...")
-            var result = RustBridge.decryptMessageWithEvolution(
-                actualEncryptedMessage,
-                keyChain.receiveChainKeyBytes,
-                keyChain.receiveCounter
-            )
 
-            var plaintext: String
+            // Diagnostic: Check wire format and encrypted payload headers
+            Log.e(TAG, "MSG_BLOB wire len=${encryptedMessageWire.size} head=${encryptedMessageWire.take(8).joinToString("") { "%02x".format(it) }}")
+            Log.e(TAG, "MSG_BLOB enc len=${actualEncryptedMessage.size} enc_head=${actualEncryptedMessage.take(8).joinToString("") { "%02x".format(it) }}")
+            Log.e(TAG, "wire[1]=${"%02x".format(encryptedMessageWire[1])} wire[33]=${"%02x".format(encryptedMessageWire[33])}")
+
+            // ====== DECRYPTION WITH PER-CONTACT MUTEX + LOOKAHEAD RECOVERY ======
+            // This section is protected by a per-contact mutex to prevent race conditions
+            // when multiple messages arrive concurrently for the same contact.
+            //
+            // FIX #1: Per-contact receive mutex prevents "out-of-order" errors from concurrent processing
+            // FIX #2: Lookahead window (expected to expected+32) recovers from missed messages over Tor
+            // FIX #3: Only fall back to legacy X25519 for actual legacy packets (not evolution counter mismatch)
+
+            var result: RustBridge.DecryptionResult? = null
+            var plaintext: String = ""  // Will be set by decryption (evolution or legacy)
             var finalReceiveCounter: Long = keyChain.receiveCounter
+            var usedLegacyDecryption = false  // Track if we used non-evolution decryption
+            var evolvedChainKey: ByteArray? = null  // Store evolved key for later
 
-            if (result == null) {
-                // Decryption failed with expected sequence - try out-of-order decryption
-                Log.w(TAG, "⚠️  Decryption failed with sequence ${keyChain.receiveCounter}, attempting out-of-order recovery...")
+            // Get the per-contact mutex (create if first time)
+            val receiveMutex = receiveMutexByContact.getOrPut(contact.id) { Mutex() }
 
-                // Extract sender's sequence from wire format (first 8 bytes, big-endian)
-                if (actualEncryptedMessage.size < 8) {
-                    Log.e(TAG, "Message too short to extract sequence")
-                    return
-                }
+            // Acquire mutex for this contact's decrypt+DB+counter update
+            val decryptResult = kotlinx.coroutines.runBlocking {
+                receiveMutex.withLock {
+                    // Re-load key chain inside mutex to get latest counter
+                    val freshKeyChain = com.securelegion.crypto.KeyChainManager.getKeyChain(this@TorService, contact.id)
+                    if (freshKeyChain == null) {
+                        Log.e(TAG, "Key chain disappeared while waiting for mutex")
+                        return@withLock null
+                    }
 
-                val senderSequence = java.nio.ByteBuffer.wrap(actualEncryptedMessage, 0, 8)
-                    .order(java.nio.ByteOrder.BIG_ENDIAN)
-                    .long
-                Log.i(TAG, "📋 Extracted sender sequence: $senderSequence (our current: ${keyChain.receiveCounter})")
+                    val expected = freshKeyChain.receiveCounter
+                    val MAX_LOOKAHEAD = 32L  // Try up to 32 counters ahead
 
-                // Get onion addresses for direction mapping
-                val keyManager = com.securelegion.crypto.KeyManager.getInstance(this@TorService)
-                val ourOnion = keyManager.getMessagingOnion()
-                val theirOnion = contact.messagingOnion
+                    Log.d(TAG, "MUTEX LOCKED: Attempting decryption for contact ${contact.id}, expected counter: $expected")
 
-                if (ourOnion == null || theirOnion == null) {
-                    Log.e(TAG, "Cannot perform out-of-order decryption: missing onion addresses")
-                    Log.e(TAG, "  Our onion: $ourOnion")
-                    Log.e(TAG, "  Their onion: $theirOnion")
-                    return
-                }
+                    // Try decryption at expected counter first
+                    var decryptedResult: RustBridge.DecryptionResult? = null
+                    var usedCounter: Long = expected
 
-                // Derive key at sender's sequence using root key
-                val derivedKey = try {
-                    RustBridge.deriveReceiveKeyAtSequence(
-                        keyChain.rootKeyBytes,
-                        senderSequence,
-                        ourOnion,
-                        theirOnion
+                    try {
+                        decryptedResult = RustBridge.decryptMessageWithEvolution(
+                            actualEncryptedMessage,
+                            freshKeyChain.receiveChainKeyBytes,
+                            expected
+                        )
+                        if (decryptedResult != null) {
+                            Log.d(TAG, "Decryption succeeded at expected counter $expected")
+                        }
+                    } catch (e: Exception) {
+                        val errorMsg = e.message ?: ""
+                        if (errorMsg.contains("Out of order") || errorMsg.contains("out of order") || errorMsg.contains("Decryption failed")) {
+                            Log.w(TAG, "Decryption failed at expected counter $expected: $errorMsg")
+                        } else {
+                            Log.e(TAG, "Non-recoverable decryption error: $errorMsg", e)
+                            throw e
+                        }
+                    }
+
+                    // If failed at expected, try lookahead window
+                    if (decryptedResult == null) {
+                        Log.w(TAG, "Attempting lookahead recovery (counters ${expected + 1} to ${expected + MAX_LOOKAHEAD})...")
+
+                        // Get onion addresses for direction mapping (needed for deriveReceiveKeyAtSequence)
+                        val keyMgr = com.securelegion.crypto.KeyManager.getInstance(this@TorService)
+                        val ourOnion = keyMgr.getMessagingOnion()
+                        val theirOnion = contact.messagingOnion
+
+                        if (ourOnion == null || theirOnion == null) {
+                            Log.e(TAG, "Cannot perform lookahead recovery: missing onion addresses")
+                            return@withLock null
+                        }
+
+                        // Try counters ahead (expected+1 to expected+MAX_LOOKAHEAD)
+                        for (c in (expected + 1)..(expected + MAX_LOOKAHEAD)) {
+                            // Derive key at counter c from root key
+                            val derivedKey = try {
+                                RustBridge.deriveReceiveKeyAtSequence(
+                                    freshKeyChain.rootKeyBytes,
+                                    c,
+                                    ourOnion,
+                                    theirOnion
+                                )
+                            } catch (e: Exception) {
+                                Log.d(TAG, "Failed to derive key at counter $c: ${e.message}")
+                                continue
+                            }
+
+                            if (derivedKey == null) continue
+
+                            // Try decrypting with derived key
+                            val attempt = try {
+                                RustBridge.decryptMessageWithEvolution(
+                                    actualEncryptedMessage,
+                                    derivedKey,
+                                    c
+                                )
+                            } catch (e: Exception) {
+                                null  // Keep trying next counter
+                            }
+
+                            if (attempt != null) {
+                                decryptedResult = attempt
+                                usedCounter = c
+                                Log.i(TAG, "Lookahead recovery SUCCESS at counter $c (gap: ${c - expected})")
+                                break
+                            }
+                        }
+
+                        if (decryptedResult == null) {
+                            Log.w(TAG, "Lookahead recovery FAILED for counters $expected to ${expected + MAX_LOOKAHEAD}")
+                        }
+                    }
+
+                    // If still null, this is NOT an out-of-order issue - might be legacy packet
+                    if (decryptedResult == null) {
+                        return@withLock Triple<RustBridge.DecryptionResult?, Long, ByteArray?>(null, expected, null)
+                    }
+
+                    // Decryption succeeded - update key chain in DB while still holding mutex
+                    val newCounter = usedCounter + 1
+                    val keyMgrForUpdate = com.securelegion.crypto.KeyManager.getInstance(this@TorService)
+                    val dbPassphraseForUpdate = keyMgrForUpdate.getDatabasePassphrase()
+                    val databaseForUpdate = com.securelegion.database.SecureLegionDatabase.getInstance(this@TorService, dbPassphraseForUpdate)
+
+                    // Update receive chain key and counter atomically
+                    databaseForUpdate.contactKeyChainDao().updateReceiveChainKey(
+                        contactId = contact.id,
+                        newReceiveChainKeyBase64 = android.util.Base64.encodeToString(decryptedResult.evolvedChainKey, android.util.Base64.NO_WRAP),
+                        newReceiveCounter = newCounter,
+                        timestamp = System.currentTimeMillis()
                     )
-                } catch (e: Exception) {
-                    Log.e(TAG, "Failed to derive key at sequence $senderSequence", e)
-                    null
-                }
 
-                if (derivedKey == null) {
-                    Log.e(TAG, "✗ Failed to derive receive key for sequence $senderSequence")
+                    // Verify the update
+                    val verifyKeyChain = databaseForUpdate.contactKeyChainDao().getKeyChainByContactId(contact.id)
+                    if (verifyKeyChain?.receiveCounter != newCounter) {
+                        Log.e(TAG, "CRITICAL: Counter update failed! Expected $newCounter, got ${verifyKeyChain?.receiveCounter}")
+                    } else {
+                        Log.d(TAG, "Counter updated: $expected -> $newCounter (used: $usedCounter)")
+                    }
+
+                    Triple(decryptedResult, usedCounter, decryptedResult.evolvedChainKey)
+                }
+            }
+
+            // Process decrypt result outside mutex
+            if (decryptResult != null && decryptResult.first != null) {
+                result = decryptResult.first
+                finalReceiveCounter = decryptResult.second
+                evolvedChainKey = decryptResult.third
+                Log.d(TAG, "Decryption completed: counter=$finalReceiveCounter")
+            }
+
+            // If evolution decryption failed, check if this is a LEGACY packet (not just counter mismatch)
+            // Only fall back to legacy X25519 for packets that look like legacy format
+            // DO NOT fall back for evolution packets that just have wrong counter
+            if (result == null) {
+                // Check if packet has evolution header (version byte 0x01, valid sequence)
+                val hasEvolutionHeader = actualEncryptedMessage.size >= 9 &&
+                    actualEncryptedMessage[0].toInt() == 0x01
+
+                if (hasEvolutionHeader) {
+                    // This is an evolution packet - lookahead exhausted means key chain is badly desync'd
+                    // DO NOT try legacy decrypt - it will just add noise
+                    Log.e(TAG, "Evolution packet decryption failed after lookahead window exhausted")
+                    Log.e(TAG, "Key chains may be out of sync - contact may need key re-exchange")
                     return
                 }
 
-                Log.i(TAG, "🔑 Successfully derived key at sender's sequence $senderSequence, retrying decryption...")
+                // Not an evolution packet - try legacy X25519 decryption (for PING/PONG, GROUP messages)
+                Log.w(TAG, "Non-evolution packet detected, trying legacy X25519 decryption...")
 
-                // Try decrypting with the derived key
-                result = RustBridge.decryptMessageWithEvolution(
-                    actualEncryptedMessage,
-                    derivedKey,
-                    senderSequence
-                )
+                    // Fallback: Try legacy X25519 decryption (used by PING/PONG, GROUP messages)
+                    val legacyDecrypted = try {
+                        RustBridge.decryptMessage(
+                            actualEncryptedMessage,
+                            ourEd25519PublicKey,
+                            ourPrivateKey
+                        )
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Legacy decryption exception", e)
+                        null
+                    }
 
-                if (result == null) {
-                    Log.e(TAG, "✗ Out-of-order decryption also failed for sequence $senderSequence")
+                    if (legacyDecrypted != null) {
+                        Log.i(TAG, "✓ Legacy X25519 decryption succeeded (likely PING/PONG or GROUP message)")
+                        usedLegacyDecryption = true
+
+                        // Parse plaintext[0] for message type
+                        val legacyPlaintextBytes = legacyDecrypted.toByteArray(Charsets.ISO_8859_1)
+                        if (legacyPlaintextBytes.isEmpty()) {
+                            Log.e(TAG, "Legacy decrypted plaintext is empty")
+                            return
+                        }
+
+                        val legacyAppType = legacyPlaintextBytes[0].toInt() and 0xFF
+                        val legacyBody = if (legacyPlaintextBytes.size > 1) legacyPlaintextBytes.copyOfRange(1, legacyPlaintextBytes.size) else ByteArray(0)
+
+                        when (legacyAppType) {
+                            0x0E -> {
+                                // PING/PONG connectivity test
+                                Log.i(TAG, "Message type: PING/PONG (legacy X25519, from plaintext)")
+                                val jsonString = String(legacyBody, Charsets.UTF_8)
+                                val pingPongMessage = com.securelegion.voice.ConnectivityTest.parsePingPongMessage(jsonString)
+
+                                when (pingPongMessage) {
+                                    is com.securelegion.voice.ConnectivityTest.PingPongMessage.Ping -> {
+                                        Log.i(TAG, "✓ Received PING - auto-replying with PONG")
+                                        val senderVoiceOnion = contact.voiceOnion ?: ""
+                                        val contactX25519PublicKey = try {
+                                            android.util.Base64.decode(contact.x25519PublicKeyBase64, android.util.Base64.NO_WRAP)
+                                        } catch (e: Exception) {
+                                            Log.e(TAG, "Failed to decode contact X25519 key", e)
+                                            ByteArray(0)
+                                        }
+
+                                        if (senderVoiceOnion.isNotEmpty() && contactX25519PublicKey.isNotEmpty()) {
+                                            kotlinx.coroutines.GlobalScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                                                com.securelegion.voice.ConnectivityTest.handleIncomingPing(
+                                                    pingPongMessage,
+                                                    contactX25519PublicKey,
+                                                    senderVoiceOnion
+                                                )
+                                            }
+                                        } else {
+                                            Log.e(TAG, "Cannot send PONG - missing voice onion or X25519 key")
+                                        }
+                                    }
+                                    is com.securelegion.voice.ConnectivityTest.PingPongMessage.Pong -> {
+                                        Log.i(TAG, "✓ Received PONG - connectivity confirmed!")
+                                        Log.i(TAG, "  Test ID: ${pingPongMessage.testId}")
+                                        Log.i(TAG, "  Seq: ${pingPongMessage.seq}")
+                                        com.securelegion.voice.ConnectivityTest.markPongReceived(pingPongMessage.testId)
+                                    }
+                                    null -> {
+                                        Log.w(TAG, "Failed to parse PING/PONG message")
+                                    }
+                                }
+                                // Don't save PING/PONG messages to database
+                                return
+                            }
+                            0x20 -> {
+                                // GROUP_INVITE (legacy X25519)
+                                Log.i(TAG, "Message type: GROUP_INVITE (legacy X25519, from plaintext)")
+                                kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+                                    try {
+                                        val groupMessagingService = GroupMessagingService.getInstance(this@TorService)
+                                        val groupResult = groupMessagingService.processReceivedGroupInvite(
+                                            legacyBody,
+                                            ourEd25519PublicKey
+                                        )
+                                        if (groupResult.isSuccess) {
+                                            Log.i(TAG, "✓ Group invite processed: ${groupResult.getOrNull()}")
+                                        } else {
+                                            Log.e(TAG, "✗ Failed to process group invite", groupResult.exceptionOrNull())
+                                        }
+                                    } catch (e: Exception) {
+                                        Log.e(TAG, "Error processing group invite", e)
+                                    }
+                                }
+                                return
+                            }
+                            0x21 -> {
+                                // GROUP_MESSAGE (legacy X25519)
+                                Log.i(TAG, "Message type: GROUP_MESSAGE (legacy X25519, from plaintext)")
+                                kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+                                    try {
+                                        val groupMessagingService = GroupMessagingService.getInstance(this@TorService)
+                                        val groupResult = groupMessagingService.processReceivedGroupMessage(
+                                            legacyBody,
+                                            ourEd25519PublicKey
+                                        )
+                                        if (groupResult.isSuccess) {
+                                            Log.i(TAG, "✓ Group message processed: ${groupResult.getOrNull()}")
+                                        } else {
+                                            Log.e(TAG, "✗ Failed to process group message", groupResult.exceptionOrNull())
+                                        }
+                                    } catch (e: Exception) {
+                                        Log.e(TAG, "Error processing group message", e)
+                                    }
+                                }
+                                return
+                            }
+                            else -> {
+                                Log.w(TAG, "Legacy decryption succeeded but unknown appType=0x${String.format("%02X", legacyAppType)}")
+                                // Try treating as legacy text message
+                                Log.d(TAG, "Treating as legacy TEXT message (no key evolution)")
+                                plaintext = String(legacyPlaintextBytes, Charsets.UTF_8)
+                                messageType = com.securelegion.database.entities.Message.MESSAGE_TYPE_TEXT
+                                // Skip to message type parsing (no key evolution for legacy)
+                            }
+                        }
+                    } else {
+                        Log.e(TAG, "All decryption methods failed (including legacy)")
+                        return
+                    }
+            }
+
+            // If we got here with evolution decryption, extract plaintext
+            // (Counter was already updated inside the mutex)
+            if (result != null && !usedLegacyDecryption) {
+                plaintext = result.plaintext
+                Log.d(TAG, "Evolution decryption successful, counter=${finalReceiveCounter}")
+            }
+
+            // ✅ NEW: Parse message type from DECRYPTED plaintext[0], not from ciphertext
+            // This is the only stable design - crypto headers can change, but app framing is inside plaintext
+            val plaintextBytes = plaintext.toByteArray(Charsets.ISO_8859_1)
+            if (plaintextBytes.isEmpty()) {
+                Log.e(TAG, "Decrypted plaintext is empty")
+                return
+            }
+
+            val appType = plaintextBytes[0].toInt() and 0xFF
+            val body = if (plaintextBytes.size > 1) plaintextBytes.copyOfRange(1, plaintextBytes.size) else ByteArray(0)
+            Log.d(TAG, "Parsed appType=0x${String.format("%02X", appType)} from plaintext[0], body=${body.size} bytes")
+
+            // Variable to hold the actual message content (after stripping type/metadata)
+            var messageContent: String = plaintext  // Default: use full plaintext
+
+            when (appType) {
+                0x00 -> {
+                    // TEXT: [type=0x00][utf8 text bytes...]
+                    messageType = com.securelegion.database.entities.Message.MESSAGE_TYPE_TEXT
+                    messageContent = String(body, Charsets.UTF_8)
+                    Log.d(TAG, "Message type: TEXT (from plaintext), content length: ${messageContent.length}")
+                }
+
+                0x01 -> {
+                    // VOICE: [type=0x01][duration:4 BE][audioBytes...]
+                    if (body.size < 4) {
+                        Log.e(TAG, "VOICE plaintext too short (missing duration), body size: ${body.size}")
+                        return
+                    }
+                    messageType = com.securelegion.database.entities.Message.MESSAGE_TYPE_VOICE
+                    voiceDuration =
+                        ((body[0].toInt() and 0xFF) shl 24) or
+                        ((body[1].toInt() and 0xFF) shl 16) or
+                        ((body[2].toInt() and 0xFF) shl 8) or
+                        (body[3].toInt() and 0xFF)
+                    val audioBytes = body.copyOfRange(4, body.size)
+                    // Store audio bytes as ISO_8859_1 string for later processing
+                    messageContent = String(audioBytes, Charsets.ISO_8859_1)
+                    Log.d(TAG, "Message type: VOICE (from plaintext), duration: ${voiceDuration}s, audio: ${audioBytes.size} bytes")
+                }
+
+                0x02 -> {
+                    // IMAGE: [type=0x02][imageBytes...]
+                    messageType = com.securelegion.database.entities.Message.MESSAGE_TYPE_IMAGE
+                    // Store image bytes as ISO_8859_1 string for later processing
+                    messageContent = String(body, Charsets.ISO_8859_1)
+                    Log.d(TAG, "Message type: IMAGE (from plaintext), image: ${body.size} bytes")
+                }
+
+                0x0A -> {
+                    // PAYMENT_REQUEST: [type=0x0A][jsonBytes...]
+                    messageType = com.securelegion.database.entities.Message.MESSAGE_TYPE_PAYMENT_REQUEST
+                    messageContent = String(body, Charsets.UTF_8)
+                    Log.d(TAG, "Message type: PAYMENT_REQUEST (from plaintext)")
+                }
+
+                0x0B -> {
+                    // PAYMENT_SENT: [type=0x0B][jsonBytes...]
+                    messageType = com.securelegion.database.entities.Message.MESSAGE_TYPE_PAYMENT_SENT
+                    messageContent = String(body, Charsets.UTF_8)
+                    Log.d(TAG, "Message type: PAYMENT_SENT (from plaintext)")
+                }
+
+                0x0C -> {
+                    // PAYMENT_ACCEPTED: [type=0x0C][jsonBytes...]
+                    messageType = com.securelegion.database.entities.Message.MESSAGE_TYPE_PAYMENT_ACCEPTED
+                    messageContent = String(body, Charsets.UTF_8)
+                    Log.d(TAG, "Message type: PAYMENT_ACCEPTED (from plaintext)")
+                }
+
+                0x0E -> {
+                    // PING/PONG connectivity test: [type=0x0E][utf8 json...]
+                    Log.i(TAG, "Message type: PING/PONG (from plaintext)")
+                    val jsonString = String(body, Charsets.UTF_8)
+                    val pingPongMessage = com.securelegion.voice.ConnectivityTest.parsePingPongMessage(jsonString)
+
+                    when (pingPongMessage) {
+                        is com.securelegion.voice.ConnectivityTest.PingPongMessage.Ping -> {
+                            Log.i(TAG, "✓ Received PING - auto-replying with PONG")
+                            val senderVoiceOnion = contact.voiceOnion ?: ""
+                            val contactX25519PublicKey = try {
+                                android.util.Base64.decode(contact.x25519PublicKeyBase64, android.util.Base64.NO_WRAP)
+                            } catch (e: Exception) {
+                                Log.e(TAG, "Failed to decode contact X25519 key", e)
+                                ByteArray(0)
+                            }
+
+                            if (senderVoiceOnion.isNotEmpty() && contactX25519PublicKey.isNotEmpty()) {
+                                kotlinx.coroutines.GlobalScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                                    com.securelegion.voice.ConnectivityTest.handleIncomingPing(
+                                        pingPongMessage,
+                                        contactX25519PublicKey,
+                                        senderVoiceOnion
+                                    )
+                                }
+                            } else {
+                                Log.e(TAG, "Cannot send PONG - missing voice onion or X25519 key")
+                            }
+                        }
+                        is com.securelegion.voice.ConnectivityTest.PingPongMessage.Pong -> {
+                            Log.i(TAG, "✓ Received PONG - connectivity confirmed!")
+                            Log.i(TAG, "  Test ID: ${pingPongMessage.testId}")
+                            Log.i(TAG, "  Seq: ${pingPongMessage.seq}")
+                            com.securelegion.voice.ConnectivityTest.markPongReceived(pingPongMessage.testId)
+                        }
+                        null -> {
+                            Log.w(TAG, "Failed to parse PING/PONG message")
+                        }
+                    }
+                    // Don't save PING/PONG messages to database - they're ephemeral
                     return
                 }
 
-                Log.i(TAG, "✓ Out-of-order decryption succeeded! Message was encrypted with sequence $senderSequence")
-                plaintext = result.plaintext
-                finalReceiveCounter = senderSequence
-            } else {
-                plaintext = result.plaintext
-            }
+                0x20 -> {
+                    // GROUP_INVITE: [type=0x20][payload...]
+                    Log.i(TAG, "Message type: GROUP_INVITE (from plaintext)")
+                    kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+                        try {
+                            val groupMessagingService = GroupMessagingService.getInstance(this@TorService)
+                            val result = groupMessagingService.processReceivedGroupInvite(
+                                body,
+                                ourEd25519PublicKey
+                            )
+                            if (result.isSuccess) {
+                                Log.i(TAG, "✓ Group invite processed: ${result.getOrNull()}")
+                            } else {
+                                Log.e(TAG, "✗ Failed to process group invite", result.exceptionOrNull())
+                            }
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Error processing group invite", e)
+                        }
+                    }
+                    return  // Don't process as regular message
+                }
 
-            // Save evolved key to database (key evolution happened atomically in Rust)
-            Log.d(TAG, "KEY EVOLUTION: About to update receive chain key")
-            Log.d(TAG, "  contactId=${contact.id} (${contact.displayName})")
-            Log.d(TAG, "  Current receiveCounter=${keyChain.receiveCounter}")
-            Log.d(TAG, "  Actual sequence used=${finalReceiveCounter}")
-            Log.d(TAG, "  New receiveCounter will be=${finalReceiveCounter + 1}")
-            kotlinx.coroutines.runBlocking {
-                val keyManager = com.securelegion.crypto.KeyManager.getInstance(this@TorService)
-                val dbPassphrase = keyManager.getDatabasePassphrase()
-                val database = com.securelegion.database.SecureLegionDatabase.getInstance(this@TorService, dbPassphrase)
-                database.contactKeyChainDao().updateReceiveChainKey(
-                    contactId = contact.id,
-                    newReceiveChainKeyBase64 = android.util.Base64.encodeToString(result.evolvedChainKey, android.util.Base64.NO_WRAP),
-                    newReceiveCounter = finalReceiveCounter + 1,
-                    timestamp = System.currentTimeMillis()
-                )
-                // VERIFY the update actually persisted
-                val verifyKeyChain = database.contactKeyChainDao().getKeyChainByContactId(contact.id)
-                Log.d(TAG, "VERIFICATION: After update, database shows receiveCounter=${verifyKeyChain?.receiveCounter}")
-                if (verifyKeyChain?.receiveCounter != finalReceiveCounter + 1) {
-                    Log.e(TAG, "ERROR: Counter update did NOT persist! Expected ${finalReceiveCounter + 1}, got ${verifyKeyChain?.receiveCounter}")
-                } else {
-                    Log.d(TAG, "Counter update verified successfully")
+                0x21 -> {
+                    // GROUP_MESSAGE: [type=0x21][payload...]
+                    Log.i(TAG, "Message type: GROUP_MESSAGE (from plaintext)")
+                    kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+                        try {
+                            val groupMessagingService = GroupMessagingService.getInstance(this@TorService)
+                            val result = groupMessagingService.processReceivedGroupMessage(
+                                body,
+                                ourEd25519PublicKey
+                            )
+                            if (result.isSuccess) {
+                                Log.i(TAG, "✓ Group message processed: ${result.getOrNull()}")
+                            } else {
+                                Log.e(TAG, "✗ Failed to process group message", result.exceptionOrNull())
+                            }
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Error processing group message", e)
+                        }
+                    }
+                    return  // Don't process as regular message
+                }
+
+                else -> {
+                    // Backward compat: older clients may have sent plaintext TEXT with no leading type byte.
+                    // Treat entire plaintext as UTF-8 text.
+                    Log.d(TAG, "Message type: TEXT (legacy, unknown appType=0x${String.format("%02X", appType)})")
+                    messageType = com.securelegion.database.entities.Message.MESSAGE_TYPE_TEXT
+                    messageContent = try {
+                        String(plaintextBytes, Charsets.UTF_8)
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Failed to decode legacy plaintext as UTF-8", e)
+                        return
+                    }
                 }
             }
-            Log.d(TAG, "✓ Message decrypted with sequence ${finalReceiveCounter}")
+
+            // Update plaintext variable to use the parsed message content
+            plaintext = messageContent
 
             Log.i(TAG, "✓ Decrypted message (${messageType}): ${if (messageType == com.securelegion.database.entities.Message.MESSAGE_TYPE_TEXT) plaintext.take(50) else "${voiceDuration}s voice, ${plaintext.length} bytes"}...")
 
@@ -6570,11 +6704,13 @@ class TorService : Service() {
                     // Find and update original message
                     val originalMessage = database.messageDao().getMessageByMessageId(originalMessageId)
                     if (originalMessage != null) {
-                        val updatedMessage = originalMessage.copy(
-                            paymentStatus = com.securelegion.database.entities.Message.PAYMENT_STATUS_PAID,
-                            txSignature = txSignature
+                        // CRITICAL: Use partial update to avoid overwriting delivery status
+                        // (fixes race where MESSAGE_ACK sets delivered=true between read and write)
+                        database.messageDao().updatePaymentFields(
+                            originalMessage.id,
+                            com.securelegion.database.entities.Message.PAYMENT_STATUS_PAID,
+                            txSignature
                         )
-                        database.messageDao().updateMessage(updatedMessage)
                         Log.i(TAG, "✓ Updated original request status to PAID")
                     }
 

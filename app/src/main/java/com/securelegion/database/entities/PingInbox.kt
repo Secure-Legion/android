@@ -77,7 +77,15 @@ data class PingInbox(
     /**
      * How many times we've seen this PING (for debugging/metrics)
      */
-    val attemptCount: Int = 1
+    val attemptCount: Int = 1,
+
+    /**
+     * Encrypted ping wire bytes (Base64-encoded) for download/resend
+     * Stored at PING_SEEN time so download can retrieve from DB instead of SharedPrefs
+     * Format: [type_byte][sender_x25519_pubkey (32 bytes)][encrypted_payload]
+     * Null after message is successfully downloaded (STATE_MSG_STORED)
+     */
+    val pingWireBytesBase64: String? = null
 ) {
     companion object {
         // State constants (Int for performance)

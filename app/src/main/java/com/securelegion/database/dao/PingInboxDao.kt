@@ -105,6 +105,27 @@ interface PingInboxDao {
     suspend fun updatePingAckTime(pingId: String, timestamp: Long): Int
 
     /**
+     * Get ping wire bytes for download/resend
+     * Returns Base64-encoded wire bytes or null if not found/cleared
+     */
+    @Query("SELECT pingWireBytesBase64 FROM ping_inbox WHERE pingId = :pingId LIMIT 1")
+    suspend fun getPingWireBytes(pingId: String): String?
+
+    /**
+     * Update ping wire bytes (for resend or migration from SharedPrefs)
+     * Also updates lastUpdatedAt timestamp
+     */
+    @Query("UPDATE ping_inbox SET pingWireBytesBase64 = :b64, lastUpdatedAt = :now WHERE pingId = :pingId")
+    suspend fun updatePingWireBytes(pingId: String, b64: String, now: Long): Int
+
+    /**
+     * Clear ping wire bytes after successful download (reduce DB size)
+     * Sets pingWireBytesBase64 to NULL after message is in messages table
+     */
+    @Query("UPDATE ping_inbox SET pingWireBytesBase64 = NULL, lastUpdatedAt = :now WHERE pingId = :pingId")
+    suspend fun clearPingWireBytes(pingId: String, now: Long): Int
+
+    /**
      * Check if ping exists
      */
     @Query("SELECT EXISTS(SELECT 1 FROM ping_inbox WHERE pingId = :pingId LIMIT 1)")

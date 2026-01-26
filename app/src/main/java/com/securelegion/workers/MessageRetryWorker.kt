@@ -6,6 +6,7 @@ import androidx.work.*
 import com.securelegion.crypto.KeyManager
 import com.securelegion.database.SecureLegionDatabase
 import com.securelegion.services.MessageService
+import com.securelegion.services.TorService
 import com.securelegion.models.AckState
 import com.securelegion.utils.TorHealthHelper
 import kotlinx.coroutines.Dispatchers
@@ -86,6 +87,11 @@ class MessageRetryWorker(
 
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
         try {
+            // Wait for transport gate to open (verifies Tor is healthy before retry attempts)
+            Log.d(TAG, "Message retry: waiting for transport gate to open...")
+            TorService.getTransportGate()?.awaitOpen()
+            Log.d(TAG, "Message retry: transport gate opened, proceeding with retries")
+
             val contactId = inputData.getLong("CONTACT_ID", -1L)
             val isContactSpecific = contactId != -1L
 
@@ -349,14 +355,17 @@ class MessageRetryWorker(
                 .replace("\r", " ")
                 .take(256)
 
-            val updated = message.copy(
-                retryCount = message.retryCount + 1,
-                lastRetryTimestamp = System.currentTimeMillis(),
-                nextRetryAtMs = nextRetryMs,
-                lastError = sanitizedError
+            val newRetryCount = message.retryCount + 1
+            // CRITICAL: Use partial update to avoid overwriting delivery status
+            // (fixes race where MESSAGE_ACK sets delivered=true between read and write)
+            database.messageDao().updateRetryStateWithError(
+                message.id,
+                newRetryCount,
+                System.currentTimeMillis(),
+                nextRetryMs,
+                sanitizedError
             )
-            database.messageDao().updateMessage(updated)
-            Log.d(TAG, "Updated message ${message.messageId} retry state: attempt ${updated.retryCount}, next retry at $nextRetryMs")
+            Log.d(TAG, "Updated message ${message.messageId} retry state: attempt $newRetryCount, next retry at $nextRetryMs")
         } catch (e: Exception) {
             Log.e(TAG, "Failed to update message retry state: ${e.message}", e)
         }

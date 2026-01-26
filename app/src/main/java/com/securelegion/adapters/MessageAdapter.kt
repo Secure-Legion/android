@@ -127,7 +127,8 @@ class MessageAdapter(
     private val onPaymentRequestClick: ((Message) -> Unit)? = null,  // Click on payment request (to pay)
     private val onPaymentDetailsClick: ((Message) -> Unit)? = null,  // Click on completed payment (for details)
     private val onPriceRefreshClick: ((Message, TextView, TextView) -> Unit)? = null,  // Refresh price callback
-    private val onDeleteMessage: ((Message) -> Unit)? = null  // Delete single message callback
+    private val onDeleteMessage: ((Message) -> Unit)? = null,  // Delete single message callback
+    private val onResendMessage: ((Message) -> Unit)? = null  // Resend failed message callback
 ) : ListAdapter<ChatListItem, RecyclerView.ViewHolder>(ChatListItemDiffCallback) {
 
     companion object {
@@ -1604,11 +1605,19 @@ class MessageAdapter(
     }
 
     /**
-     * Show popup menu on message long-press with Copy and Delete options
+     * Show popup menu on message long-press with Copy, Delete, and Resend options
      */
     private fun showMessagePopupMenu(view: View, message: Message) {
         val popup = PopupMenu(view.context, view)
         popup.inflate(R.menu.message_actions_menu)
+
+        // Only show "Resend" for failed/pending messages sent by us
+        val canResend = message.isSentByMe && (
+            message.status == Message.STATUS_FAILED ||
+            message.status == Message.STATUS_PENDING ||
+            message.status == Message.STATUS_PING_SENT
+        )
+        popup.menu.findItem(R.id.action_resend)?.isVisible = canResend
 
         // Hide "Copy" option for image messages (copying base64 string isn't useful)
         if (message.messageType == Message.MESSAGE_TYPE_IMAGE) {
@@ -1617,6 +1626,12 @@ class MessageAdapter(
 
         popup.setOnMenuItemClickListener { menuItem ->
             when (menuItem.itemId) {
+                R.id.action_resend -> {
+                    // Resend failed message
+                    onResendMessage?.invoke(message)
+                    ThemedToast.show(view.context, "Resending message...")
+                    true
+                }
                 R.id.action_copy -> {
                     // Copy message text
                     val clipboard = view.context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager

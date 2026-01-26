@@ -180,15 +180,22 @@ class DownloadMessageService : Service() {
             }
         }
 
-        // STEP 3 FIX: Load ping data from DATABASE first (more reliable than SharedPreferences)
-        // SharedPreferences can be lost on app restart/force-kill, so prioritize database
+        // Load ping wire bytes from DATABASE (ping_inbox table)
+        // This is the source of truth - wire bytes stored at PING_SEEN time
         val keyManager = KeyManager.getInstance(this@DownloadMessageService)
         val dbPassphrase = keyManager.getDatabasePassphrase()
         val database = SecureLegionDatabase.getInstance(this@DownloadMessageService, dbPassphrase)
 
-        // Query database for message with this pingId
-        val message = withContext(Dispatchers.IO) {
-            database.messageDao().getMessageByPingId(pingId)
+        // Query ping_inbox for wire bytes (correct table)
+        val pingWireBytesFromDb = withContext(Dispatchers.IO) {
+            database.pingInboxDao().getPingWireBytes(pingId)
+        }
+
+        if (pingWireBytesFromDb != null) {
+            Log.i(TAG, "✓ Found ping wire bytes in ping_inbox for pingId=$pingId (${pingWireBytesFromDb.length} chars)")
+        } else {
+            Log.w(TAG, "✗ Ping wire bytes NOT FOUND in ping_inbox for pingId=$pingId")
+            Log.w(TAG, "  → Will fall back to SharedPreferences (legacy path)")
         }
 
         // Also get contact info for metadata
@@ -204,22 +211,19 @@ class DownloadMessageService : Service() {
             return
         }
 
-        // Extract ping metadata from database message
+        // Extract ping metadata
         val pingWireBytes: String?
         val pingTimestamp: Long
-        val senderOnion: String
-        val connectionId: Long
+        val senderOnion: String = contact.messagingOnion ?: contact.torOnionAddress ?: ""
+        val connectionId: Long = -1L  // Connection ID not stored in DB (doesn't matter, connections expire quickly)
 
-        if (message != null && message.pingWireBytes != null) {
-            // SUCCESS: Found ping data in database (most reliable)
-            Log.i(TAG, "✓ Found ping data in DATABASE for pingId=$pingId")
-            pingWireBytes = message.pingWireBytes
-            pingTimestamp = message.pingTimestamp ?: message.timestamp
-            senderOnion = contact.messagingOnion ?: contact.torOnionAddress ?: ""
-            connectionId = -1L  // Connection ID not stored in DB (doesn't matter, connections expire quickly)
+        if (pingWireBytesFromDb != null) {
+            // SUCCESS: Found ping data in ping_inbox (DB source of truth)
+            pingWireBytes = pingWireBytesFromDb
+            pingTimestamp = System.currentTimeMillis()  // Use current time if not stored separately
         } else {
-            // FALLBACK: Try SharedPreferences for backward compatibility
-            Log.w(TAG, "Ping data not in database, falling back to SharedPreferences (legacy path)")
+            // FALLBACK: Try SharedPreferences for backward compatibility (old installs)
+            Log.w(TAG, "Falling back to SharedPreferences (legacy storage path)")
             val prefs = getSharedPreferences("pending_pings", MODE_PRIVATE)
             val queue = com.securelegion.models.PendingPing.loadQueueForContact(prefs, contactId)
             val pendingPing = queue.find { it.pingId == pingId }
@@ -227,7 +231,7 @@ class DownloadMessageService : Service() {
             if (pendingPing == null) {
                 downloadCompleted = true
                 watchdogJob.cancel()
-                Log.e(TAG, "Ping $pingId not found in database OR SharedPreferences for contact $contactId")
+                Log.e(TAG, "Ping $pingId not found in ping_inbox OR SharedPreferences for contact $contactId")
                 showFailureNotification(contactName, "Message not found", pingId, contactId)
                 return
             }
@@ -235,8 +239,6 @@ class DownloadMessageService : Service() {
             // Extract from SharedPreferences PendingPing object (legacy)
             pingWireBytes = pendingPing.encryptedPingData
             pingTimestamp = pendingPing.timestamp
-            senderOnion = pendingPing.senderOnionAddress
-            connectionId = pendingPing.connectionId
             Log.i(TAG, "Found pending ping in SharedPreferences (legacy): ${pendingPing.senderName}")
         }
 
@@ -247,6 +249,39 @@ class DownloadMessageService : Service() {
             showFailureNotification(contactName, "Message data corrupted", pingId, contactId)
             return
         }
+
+        // CRITICAL FIX: Normalize stored wire bytes to prevent legacy format (missing type byte)
+        // Legacy builds may have stored [pubkey32][ciphertext] without type byte prefix
+        // This migrates them to [0x01=PING][pubkey32][ciphertext] format at read-time
+        val raw = android.util.Base64.decode(pingWireBytes, android.util.Base64.NO_WRAP)
+
+        // GUARD 1: Minimum length check (type + pubkey = 33 bytes minimum)
+        if (raw.size < 33) {
+            downloadCompleted = true
+            watchdogJob.cancel()
+            Log.e(TAG, "❌ Invalid ping wire bytes too short (${raw.size} bytes, need >= 33) pingId=${pingId.take(8)}")
+            showFailureNotification(contactName, "Corrupted message data", pingId, contactId)
+            return
+        }
+
+        // Only normalize if needed (conditional to avoid masking new bugs)
+        val normalized = com.securelegion.crypto.RustBridge.normalizeWireBytes(0x01, raw)
+
+        if (normalized.size != raw.size) {
+            Log.i(TAG, "✓ Normalized ping wire bytes: ${raw.size} → ${normalized.size} bytes (pingId=${pingId.take(8)})")
+        }
+
+        // GUARD 2: Type byte verification after normalization (should be 0x01 for PING)
+        val typeByte = normalized[0].toInt() and 0xFF
+        if (typeByte != 0x01) {
+            downloadCompleted = true
+            watchdogJob.cancel()
+            Log.e(TAG, "❌ Normalized wire has wrong type: 0x${typeByte.toString(16)} expected 0x01 pingId=${pingId.take(8)}")
+            showFailureNotification(contactName, "Invalid message format", pingId, contactId)
+            return
+        }
+
+        val pingWireBytesNormalized = android.util.Base64.encodeToString(normalized, android.util.Base64.NO_WRAP)
 
         Log.i(TAG, "✓ Ping metadata loaded successfully for contact $contactName")
 
@@ -328,7 +363,7 @@ class DownloadMessageService : Service() {
         // This is CRITICAL - if restoration fails, the Ping session is unrecoverable
         val restoredPingId = try {
             Log.d(TAG, "Restoring Ping from wire bytes (pingId=$pingId)")
-            val encryptedPingWire = android.util.Base64.decode(pingWireBytes, android.util.Base64.NO_WRAP)
+            val encryptedPingWire = android.util.Base64.decode(pingWireBytesNormalized, android.util.Base64.NO_WRAP)
 
             withContext(Dispatchers.IO) {
                 com.securelegion.crypto.RustBridge.decryptIncomingPing(encryptedPingWire)
@@ -338,15 +373,13 @@ class DownloadMessageService : Service() {
             downloadCompleted = true
             watchdogJob.cancel()
 
-            // Clean up both database and SharedPreferences (best-effort, non-critical)
+            // Clean up ping_inbox entry (message never downloaded)
             withContext(Dispatchers.IO) {
                 try {
-                    if (message != null) {
-                        database.messageDao().deleteMessageById(message.id)
-                        Log.d(TAG, "Deleted unrecoverable message from database")
-                    }
+                    database.pingInboxDao().delete(pingId)
+                    Log.d(TAG, "Deleted unrecoverable ping from ping_inbox")
                 } catch (cleanupError: Exception) {
-                    Log.w(TAG, "Failed to clean up database (non-critical)", cleanupError)
+                    Log.w(TAG, "Failed to clean up ping_inbox (non-critical)", cleanupError)
                 }
             }
 
@@ -368,15 +401,13 @@ class DownloadMessageService : Service() {
             downloadCompleted = true
             watchdogJob.cancel()
 
-            // Clean up both database and SharedPreferences (best-effort, non-critical)
+            // Clean up ping_inbox entry (message never downloaded)
             withContext(Dispatchers.IO) {
                 try {
-                    if (message != null) {
-                        database.messageDao().deleteMessageById(message.id)
-                        Log.d(TAG, "Deleted corrupted message from database")
-                    }
+                    database.pingInboxDao().delete(pingId)
+                    Log.d(TAG, "Deleted corrupted ping from ping_inbox")
                 } catch (cleanupError: Exception) {
-                    Log.w(TAG, "Failed to clean up database (non-critical)", cleanupError)
+                    Log.w(TAG, "Failed to clean up ping_inbox (non-critical)", cleanupError)
                 }
             }
 
@@ -412,12 +443,10 @@ class DownloadMessageService : Service() {
             // Clean up expired ping from both database and SharedPreferences
             withContext(Dispatchers.IO) {
                 try {
-                    if (message != null) {
-                        database.messageDao().deleteMessageById(message.id)
-                        Log.d(TAG, "Deleted expired message from database")
-                    }
+                    database.pingInboxDao().delete(pingId)
+                    Log.d(TAG, "Deleted expired ping from ping_inbox")
                 } catch (cleanupError: Exception) {
-                    Log.w(TAG, "Failed to clean up expired message from database (non-critical)", cleanupError)
+                    Log.w(TAG, "Failed to clean up expired ping from ping_inbox (non-critical)", cleanupError)
                 }
             }
 
@@ -637,7 +666,9 @@ class DownloadMessageService : Service() {
             val dbPassphrase = keyManager.getDatabasePassphrase()
             val database = SecureLegionDatabase.getInstance(this@DownloadMessageService, dbPassphrase)
             Log.i(TAG, "→ Transitioning pingId=$pingId to MSG_STORED (listener path)")
-            database.pingInboxDao().transitionToMsgStored(pingId, System.currentTimeMillis())
+            val now = System.currentTimeMillis()
+            database.pingInboxDao().transitionToMsgStored(pingId, now)
+            database.pingInboxDao().clearPingWireBytes(pingId, now)  // Free up DB space
         }
 
         // Send MESSAGE_ACK to sender after successfully receiving the message
@@ -1029,7 +1060,9 @@ class DownloadMessageService : Service() {
 
                                 // CRITICAL: Still transition ping_inbox to MSG_STORED (idempotent, monotonic guard)
                                 // This ensures duplicates don't get stuck in PONG_SENT state
-                                database.pingInboxDao().transitionToMsgStored(pingId, System.currentTimeMillis())
+                                val now = System.currentTimeMillis()
+                                database.pingInboxDao().transitionToMsgStored(pingId, now)
+                                database.pingInboxDao().clearPingWireBytes(pingId, now)  // Free up DB space
 
                                 // Return success with existing message (not a failure!)
                                 Result.success(existingMessage)
@@ -1045,7 +1078,9 @@ class DownloadMessageService : Service() {
                                 if (insertResult.isSuccess) {
                                     // Transition ping_inbox to MSG_STORED (monotonic guard prevents regression)
                                     Log.i(TAG, "→ Transitioning pingId=$pingId to MSG_STORED (atomic)")
-                                    database.pingInboxDao().transitionToMsgStored(pingId, System.currentTimeMillis())
+                                    val now = System.currentTimeMillis()
+                                    database.pingInboxDao().transitionToMsgStored(pingId, now)
+                                    database.pingInboxDao().clearPingWireBytes(pingId, now)  // Free up DB space
                                 }
 
                                 insertResult
@@ -1123,7 +1158,9 @@ class DownloadMessageService : Service() {
                                 Log.i(TAG, "✓ VOICE message $pingId already in DB (duplicate insert via multipath/retry)")
 
                                 // CRITICAL: Still transition ping_inbox to MSG_STORED (idempotent, monotonic guard)
-                                database.pingInboxDao().transitionToMsgStored(pingId, System.currentTimeMillis())
+                                val now = System.currentTimeMillis()
+                                database.pingInboxDao().transitionToMsgStored(pingId, now)
+                                database.pingInboxDao().clearPingWireBytes(pingId, now)  // Free up DB space
 
                                 // Return success with existing message (not a failure!)
                                 Result.success(existingMessage)
@@ -1140,7 +1177,9 @@ class DownloadMessageService : Service() {
 
                                 if (insertResult.isSuccess) {
                                     Log.i(TAG, "→ Transitioning pingId=$pingId to MSG_STORED (atomic)")
-                                    database.pingInboxDao().transitionToMsgStored(pingId, System.currentTimeMillis())
+                                    val now = System.currentTimeMillis()
+                                    database.pingInboxDao().transitionToMsgStored(pingId, now)
+                                    database.pingInboxDao().clearPingWireBytes(pingId, now)  // Free up DB space
                                 }
 
                                 insertResult
@@ -1204,7 +1243,9 @@ class DownloadMessageService : Service() {
                                 Log.i(TAG, "✓ IMAGE message $pingId already in DB (duplicate insert via multipath/retry)")
 
                                 // CRITICAL: Still transition ping_inbox to MSG_STORED (idempotent, monotonic guard)
-                                database.pingInboxDao().transitionToMsgStored(pingId, System.currentTimeMillis())
+                                val now = System.currentTimeMillis()
+                                database.pingInboxDao().transitionToMsgStored(pingId, now)
+                                database.pingInboxDao().clearPingWireBytes(pingId, now)  // Free up DB space
 
                                 // Return success with existing message (not a failure!)
                                 Result.success(existingMessage)
@@ -1220,7 +1261,9 @@ class DownloadMessageService : Service() {
 
                                 if (insertResult.isSuccess) {
                                     Log.i(TAG, "→ Transitioning pingId=$pingId to MSG_STORED (atomic)")
-                                    database.pingInboxDao().transitionToMsgStored(pingId, System.currentTimeMillis())
+                                    val now = System.currentTimeMillis()
+                                    database.pingInboxDao().transitionToMsgStored(pingId, now)
+                                    database.pingInboxDao().clearPingWireBytes(pingId, now)  // Free up DB space
                                 }
 
                                 insertResult

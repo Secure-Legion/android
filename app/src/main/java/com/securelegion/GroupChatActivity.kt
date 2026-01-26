@@ -23,6 +23,8 @@ import com.securelegion.database.SecureLegionDatabase
 import com.securelegion.database.entities.Contact
 import com.securelegion.database.entities.GroupMessage
 import com.securelegion.services.GroupManager
+import com.securelegion.services.TorService
+import com.securelegion.network.TransportGate
 import com.securelegion.ui.adapters.GroupMessageAdapter
 import com.securelegion.utils.ThemedToast
 import kotlinx.coroutines.Dispatchers
@@ -273,6 +275,11 @@ class GroupChatActivity : BaseActivity() {
 
         lifecycleScope.launch {
             try {
+                // Wait for transport gate to open (verifies Tor is healthy)
+                Log.d(TAG, "Waiting for transport gate to open before sending message...")
+                TorService.getTransportGate()?.awaitOpen()
+                Log.d(TAG, "Transport gate opened, proceeding with message send")
+
                 withContext(Dispatchers.IO) {
                     val groupManager = GroupManager.getInstance(this@GroupChatActivity)
 

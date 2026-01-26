@@ -284,12 +284,15 @@ pub fn derive_receive_key_at_sequence(
 
     // STAGE 1: Derive direction key (sender's perspective)
     // Sender used their SEND chain, which is our RECEIVE chain
+    // Key insight: We need to derive the key THEY used to send
+    // If our_onion < their_onion: THEY have bigger onion, so THEY send with incoming (0x04)
+    // If our_onion > their_onion: THEY have smaller onion, so THEY send with outgoing (0x03)
     let direction_key = if our_onion < their_onion {
-        // They used outgoing (0x03) to send to us
-        derive_outgoing_chain_key(root_key)?
-    } else {
-        // They used incoming (0x04) to send to us
+        // Their onion is bigger, so they used incoming (0x04) to send to us
         derive_incoming_chain_key(root_key)?
+    } else {
+        // Their onion is smaller, so they used outgoing (0x03) to send to us
+        derive_outgoing_chain_key(root_key)?
     };
 
     // STAGE 2: Evolve to sender's sequence

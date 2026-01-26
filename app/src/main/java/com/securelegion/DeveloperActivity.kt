@@ -50,6 +50,12 @@ class DeveloperActivity : AppCompatActivity() {
             startActivity(intent)
         }
 
+        // Set up Stress Test button
+        findViewById<View>(R.id.stressTestItem).setOnClickListener {
+            val intent = Intent(this, com.securelegion.stresstest.StressTestActivity::class.java)
+            startActivity(intent)
+        }
+
         BottomNavigationHelper.setupBottomNavigation(this)
     }
 }
