@@ -472,7 +472,6 @@ pub static VOICE_TX: once_cell::sync::OnceCell<Arc<StdMutex<tokio::sync::mpsc::U
 /// This ensures ACKs arriving on wrong port still get processed (no message loss)
 /// Initialized when ACK listener starts on port 9153
 pub static ACK_TX: once_cell::sync::OnceCell<Arc<StdMutex<tokio::sync::mpsc::UnboundedSender<(u64, Vec<u8>)>>>> = once_cell::sync::OnceCell::new();
-
 /// Line-oriented Tor control protocol reader
 /// CRITICAL: Handles multi-line Tor responses properly
 /// Response formats:
@@ -571,6 +570,7 @@ pub struct TorManager {
     voice_hidden_service_address: Option<String>,
     listener_handle: Option<tokio::task::JoinHandle<()>>,
     incoming_ping_tx: Option<tokio::sync::mpsc::UnboundedSender<(u64, Vec<u8>)>>,
+    pub(crate) incoming_pong_tx: Option<tokio::sync::mpsc::UnboundedSender<(u64, Vec<u8>)>>,
     hs_state: HiddenServiceState,
     hs_service_port: u16,
     hs_local_port: u16,
@@ -588,6 +588,7 @@ impl TorManager {
             voice_hidden_service_address: None,
             listener_handle: None,
             incoming_ping_tx: None,
+            incoming_pong_tx: None,
             hs_state: HiddenServiceState {
                 message_hs_address: None,
                 voice_hs_address: None,
@@ -1343,18 +1344,19 @@ impl TorManager {
     /// 2. Await stop_listener() to ensure port is released before rebind
     /// 3. Retry on EADDRINUSE with exponential backoff (bounded)
     /// 4. Detailed logging at each fallible step
-    pub async fn start_listener(&mut self, local_port: Option<u16>) -> Result<tokio::sync::mpsc::UnboundedReceiver<(u64, Vec<u8>)>, Box<dyn Error>> {
+    pub async fn start_listener(&mut self, local_port: Option<u16>) -> Result<(tokio::sync::mpsc::UnboundedReceiver<(u64, Vec<u8>)>, tokio::sync::mpsc::UnboundedReceiver<(u64, Vec<u8>)>), Box<dyn Error>> {
         let port = local_port.unwrap_or(self.hs_local_port);
 
         // ✅ IDEMPOTENCY: If already running on same port, return success (NO-OP)
         if self.listener_handle.is_some() && self.bound_port == Some(port) {
             log::info!("✓ Listener already running on port {}, returning success (idempotent NO-OP)", port);
 
-            // Create dummy channel to satisfy return type
-            // FFI wrapper will try to store it in GLOBAL_PING_RECEIVER (already set),
-            // OnceCell will reject it, and FFI returns true to Kotlin
-            let (_tx, rx) = tokio::sync::mpsc::unbounded_channel();
-            return Ok(rx);
+            // Create dummy channels to satisfy return type (both receivers already stored in FFI)
+            // FFI wrapper will try to store them in GLOBAL_PING_RECEIVER and GLOBAL_PONG_RECEIVER (already set),
+            // OnceCell will reject them, and FFI returns true to Kotlin
+            let (_ping_tx, ping_rx) = tokio::sync::mpsc::unbounded_channel();
+            let (_pong_tx, pong_rx) = tokio::sync::mpsc::unbounded_channel();
+            return Ok((ping_rx, pong_rx));
         }
 
         // If port changed or not running, stop existing listener
@@ -1380,6 +1382,11 @@ impl TorManager {
         let incoming_tx = tx.clone();
         self.incoming_ping_tx = Some(tx);
 
+        // Create PONG channel (separate from PING to prevent misrouting)
+        let (pong_tx, pong_rx) = tokio::sync::mpsc::unbounded_channel();
+        let incoming_pong_tx = pong_tx.clone();
+        self.incoming_pong_tx = Some(pong_tx);
+
         // Clone bind_addr for the async move block
         let bind_addr_for_task = bind_addr.clone();
 
@@ -1401,9 +1408,10 @@ impl TorManager {
                         };
 
                         // Spawn handler for this connection
-                        let tx = incoming_tx.clone();
+                        let ping_tx = incoming_tx.clone();
+                        let pong_tx = incoming_pong_tx.clone();
                         tokio::spawn(async move {
-                            if let Err(e) = Self::handle_incoming_connection(socket, conn_id, tx).await {
+                            if let Err(e) = Self::handle_incoming_connection(socket, conn_id, ping_tx, pong_tx).await {
                                 log::error!("Error handling connection {}: {}", conn_id, e);
                             }
                         });
@@ -1420,7 +1428,8 @@ impl TorManager {
 
         log::info!("✓ Hidden service listener FULLY STARTED on {}", bind_addr);
 
-        Ok(rx)
+        // Return both PING and PONG receivers (local channels, no globals)
+        Ok((rx, pong_rx))
     }
 
     /// Bind to address with retry on EADDRINUSE (exponential backoff, bounded)
@@ -1494,7 +1503,8 @@ impl TorManager {
     async fn handle_incoming_connection(
         mut socket: TcpStream,
         conn_id: u64,
-        tx: tokio::sync::mpsc::UnboundedSender<(u64, Vec<u8>)>,
+        ping_tx: tokio::sync::mpsc::UnboundedSender<(u64, Vec<u8>)>,
+        pong_tx: tokio::sync::mpsc::UnboundedSender<(u64, Vec<u8>)>,
     ) -> Result<(), Box<dyn Error>> {
         // Read length prefix
         let mut len_buf = [0u8; 4];
@@ -1506,21 +1516,83 @@ impl TorManager {
             return Err("Message too large (>10MB)".into());
         }
 
-        // Read message type byte
-        let mut type_byte = [0u8; 1];
-        socket.read_exact(&mut type_byte).await?;
-        let msg_type = type_byte[0];
+        // Read full buffer INCLUDING type byte (don't strip it)
+        let mut buf = vec![0u8; total_len];
+        socket.read_exact(&mut buf).await?;
 
-        // Read the rest of the data (total_len includes type byte, so subtract 1)
-        let data_len = total_len.saturating_sub(1);
-        let mut data = vec![0u8; data_len];
-        socket.read_exact(&mut data).await?;
-
-        log::info!("╔════════════════════════════════════════");
-        log::info!("║ INCOMING CONNECTION {} (type=0x{:02x}, {} bytes)", conn_id, msg_type, data_len);
+        // DIAGNOSTIC: Log raw wire bytes at earliest receive point
+        log::info!("╔═══ EARLIEST RECEIVE POINT (connection {}) ═══", conn_id);
+        log::info!("║ len: {} bytes", buf.len());
+        if !buf.is_empty() {
+            log::info!("║ type_byte: 0x{:02x}", buf[0]);
+            log::info!("║ first 8 bytes: {}",
+                buf.iter().take(8).map(|b| format!("{:02x}", b)).collect::<Vec<_>>().join(" "));
+            if buf.len() > 1 {
+                log::info!("║ second byte: 0x{:02x}", buf[1]);
+            }
+            if buf[0] == MSG_TYPE_PING && buf.len() >= 5 {
+                log::info!("║ PING pubkey_first4: {}",
+                    buf[1..5].iter().map(|b| format!("{:02x}", b)).collect::<Vec<_>>().join(" "));
+            }
+        }
         log::info!("╚════════════════════════════════════════");
 
-        // Route based on message type
+        // Validate: first byte must be a known message type
+        if buf.is_empty() {
+            log::error!("Empty buffer received on connection {}", conn_id);
+            return Err("Empty message".into());
+        }
+
+        let msg_type = buf[0];
+
+        // STRICT VALIDATION: First byte must be EXACTLY one of the known protocol types
+        // This prevents random pubkey first bytes from legacy packets (missing type byte)
+        // from accidentally passing validation (~5% chance of being in 0x01-0x0D range)
+        match msg_type {
+            MSG_TYPE_PING |
+            MSG_TYPE_PONG |
+            MSG_TYPE_TEXT |
+            MSG_TYPE_VOICE |
+            MSG_TYPE_TAP |
+            MSG_TYPE_DELIVERY_CONFIRMATION |
+            MSG_TYPE_FRIEND_REQUEST |
+            MSG_TYPE_FRIEND_REQUEST_ACCEPTED |
+            MSG_TYPE_IMAGE |
+            MSG_TYPE_PAYMENT_REQUEST |
+            MSG_TYPE_PAYMENT_SENT |
+            MSG_TYPE_PAYMENT_ACCEPTED |
+            MSG_TYPE_CALL_SIGNALING => {
+                // Valid type, continue to length check
+            }
+            _ => {
+                log::error!("✗ INVALID_MSG_TYPE_DROP: 0x{:02x} (not in known protocol types)", msg_type);
+                log::error!("  Connection {}, {} bytes, first 4 bytes: {:02x} {:02x} {:02x} {:02x}",
+                    conn_id, buf.len(),
+                    buf.get(0).unwrap_or(&0), buf.get(1).unwrap_or(&0),
+                    buf.get(2).unwrap_or(&0), buf.get(3).unwrap_or(&0));
+                return Err(format!("Invalid message type: 0x{:02x}", msg_type).into());
+            }
+        }
+
+        // MINIMUM LENGTH CHECK: All protocol messages have format [type][pubkey32][encrypted_payload]
+        // Minimum encrypted payload is 16 bytes (AES-GCM tag), so absolute minimum is 1+32+16=49 bytes
+        const MIN_WIRE_LEN: usize = 1 + 32 + 16; // type + pubkey + smallest possible ciphertext
+        if buf.len() < MIN_WIRE_LEN {
+            log::error!("✗ WIRE_TOO_SHORT_DROP: type=0x{:02x}, len={} (min={})", msg_type, buf.len(), MIN_WIRE_LEN);
+            log::error!("  Connection {}, rejecting packet (likely garbage/corruption)", conn_id);
+            return Err(format!("Wire message too short: {} bytes (min {})", buf.len(), MIN_WIRE_LEN).into());
+        }
+
+        log::info!("╔════════════════════════════════════════");
+        log::info!("║ INCOMING CONNECTION {} (type=0x{:02x}, {} bytes total)", conn_id, msg_type, buf.len());
+        log::info!("║ First byte: 0x{:02x} (validated as known type)", msg_type);
+        log::info!("╚════════════════════════════════════════");
+
+        // ROUTER INVARIANT: Log route decision for debugging
+        let head_hex: String = buf.iter().take(8).map(|b| format!("{:02x}", b)).collect::<Vec<_>>().join("");
+        log::info!("ROUTE: type=0x{:02x} conn={} len={} head={}", msg_type, conn_id, buf.len(), head_hex);
+
+        // Route based on message type (buf INCLUDES type byte at offset 0)
         match msg_type {
             MSG_TYPE_PING => {
                 log::info!("→ Routing to PING handler");
@@ -1531,18 +1603,26 @@ impl TorManager {
                     let mut pending = PENDING_CONNECTIONS.lock().unwrap();
                     pending.insert(conn_id, PendingConnection {
                         socket,
-                        encrypted_ping: data.clone(),
+                        encrypted_ping: buf.clone(),
                     });
                 }
 
-                // Send to Ping receiver channel
-                tx.send((conn_id, data)).ok();
+                // ROUTER INVARIANT: Check send result
+                let buf_len = buf.len();
+                if let Err(_) = ping_tx.send((conn_id, buf)) {
+                    log::error!("✗ ROUTER_DROP: PING_TX send failed (receiver dropped), conn={} len={}", conn_id, buf_len);
+                }
             }
             MSG_TYPE_PONG => {
                 log::info!("→ Routing to PONG handler");
                 // Pongs don't need connection stored (no reply needed)
-                // Send directly to whichever channel is listening
-                tx.send((conn_id, data)).ok();
+                // Send full buffer (INCLUDING type byte at offset 0) to PONG_TX (NOT PING_TX!)
+                // ROUTER INVARIANT: Check send result
+                if let Err(_) = pong_tx.send((conn_id, buf.clone())) {
+                    log::error!("✗ ROUTER_DROP: PONG_TX send failed (receiver dropped), conn={} len={} head={}", conn_id, buf.len(), head_hex);
+                } else {
+                    log::info!("✓ ROUTER: PONG dispatch ok, conn={} len={}", conn_id, buf.len());
+                }
             }
             MSG_TYPE_TEXT | MSG_TYPE_VOICE | MSG_TYPE_IMAGE | MSG_TYPE_PAYMENT_REQUEST | MSG_TYPE_PAYMENT_SENT | MSG_TYPE_PAYMENT_ACCEPTED => {
                 log::info!("→ Routing to MESSAGE handler (separate channel, type={})",
@@ -1562,18 +1642,24 @@ impl TorManager {
                     let mut pending = PENDING_CONNECTIONS.lock().unwrap();
                     pending.insert(conn_id, PendingConnection {
                         socket,
-                        encrypted_ping: data.clone(),
+                        encrypted_ping: buf.clone(),
                     });
                 }
 
                 // Route to MESSAGE channel (not PING channel)
+                // Send full buffer (INCLUDING type byte at offset 0)
                 if let Some(message_tx) = MESSAGE_TX.get() {
                     let tx_lock = message_tx.lock().unwrap();
-                    if let Err(e) = tx_lock.send((conn_id, data)) {
+                    if let Err(e) = tx_lock.send((conn_id, buf)) {
                         log::error!("Failed to send message to MESSAGE channel: {}", e);
+                    } else {
+                        // Successfully accepted message
+                        crate::ffi::android::RX_MESSAGE_ACCEPT_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     }
                 } else {
                     log::warn!("MESSAGE channel not initialized - dropping message");
+                    // Increment drop counter for stress test diagnostics
+                    crate::ffi::android::RX_MESSAGE_TX_DROP_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 }
             }
             MSG_TYPE_CALL_SIGNALING => {
@@ -1585,14 +1671,15 @@ impl TorManager {
                     let mut pending = PENDING_CONNECTIONS.lock().unwrap();
                     pending.insert(conn_id, PendingConnection {
                         socket,
-                        encrypted_ping: data.clone(),
+                        encrypted_ping: buf.clone(),
                     });
                 }
 
                 // Route to VOICE channel (separate from MESSAGE to allow simultaneous messaging during calls)
+                // Send full buffer (INCLUDING type byte at offset 0)
                 if let Some(voice_tx) = VOICE_TX.get() {
                     let tx_lock = voice_tx.lock().unwrap();
-                    if let Err(e) = tx_lock.send((conn_id, data)) {
+                    if let Err(e) = tx_lock.send((conn_id, buf)) {
                         log::error!("Failed to send call signaling to VOICE channel: {}", e);
                     }
                 } else {
@@ -1601,7 +1688,8 @@ impl TorManager {
             }
             MSG_TYPE_TAP => {
                 log::info!("→ Routing to TAP handler");
-                tx.send((conn_id, data)).ok();
+                // Send full buffer (INCLUDING type byte at offset 0)
+                ping_tx.send((conn_id, buf)).ok();
             }
             MSG_TYPE_DELIVERY_CONFIRMATION => {
                 log::warn!("⚠️  Received ACK on main listener (port 8080) - should go to port 9153!");
@@ -1610,9 +1698,10 @@ impl TorManager {
                 // ERROR RECOVERY: ACK arrived on wrong port, but we MUST NOT drop it!
                 // Route to shared ACK_TX channel so it still gets processed.
                 // This prevents permanent message delivery failures.
+                // Send full buffer (INCLUDING type byte at offset 0)
                 if let Some(ack_tx) = ACK_TX.get() {
                     let tx_lock = ack_tx.lock().unwrap();
-                    if let Err(e) = tx_lock.send((conn_id, data)) {
+                    if let Err(e) = tx_lock.send((conn_id, buf)) {
                         log::error!("Failed to send ACK to ACK channel: {}", e);
                     } else {
                         log::info!("✓ ACK successfully routed to ACK channel from port 8080");
@@ -1625,12 +1714,10 @@ impl TorManager {
             MSG_TYPE_FRIEND_REQUEST => {
                 log::info!("→ Routing to FRIEND_REQUEST handler (separate channel)");
                 // Friend requests routed to dedicated channel to avoid interference with message system
-                // Include type byte so Kotlin can distinguish Phase 1 (0x07) from Phase 2 (0x08)
+                // buf already includes type byte - no need to prepend
                 if let Some(friend_tx) = FRIEND_REQUEST_TX.get() {
                     let tx_lock = friend_tx.lock().unwrap();
-                    let mut wire_data = vec![msg_type]; // Prepend type byte
-                    wire_data.extend_from_slice(&data);
-                    if let Err(e) = tx_lock.send(wire_data) {
+                    if let Err(e) = tx_lock.send(buf) {
                         log::error!("Failed to send friend request to channel: {}", e);
                     }
                 } else {
@@ -1640,12 +1727,10 @@ impl TorManager {
             MSG_TYPE_FRIEND_REQUEST_ACCEPTED => {
                 log::info!("→ Routing to FRIEND_REQUEST_ACCEPTED handler (separate channel)");
                 // Friend request accepted routed to dedicated channel to avoid interference with message system
-                // Include type byte so Kotlin can distinguish Phase 1 (0x07) from Phase 2 (0x08)
+                // buf already includes type byte at offset 0 so Kotlin can distinguish Phase 1 (0x07) from Phase 2 (0x08)
                 if let Some(friend_tx) = FRIEND_REQUEST_TX.get() {
                     let tx_lock = friend_tx.lock().unwrap();
-                    let mut wire_data = vec![msg_type]; // Prepend type byte
-                    wire_data.extend_from_slice(&data);
-                    if let Err(e) = tx_lock.send(wire_data) {
+                    if let Err(e) = tx_lock.send(buf) {  // Changed from constructing wire_data
                         log::error!("Failed to send friend request accepted to channel: {}", e);
                     }
                 } else {
@@ -1661,11 +1746,11 @@ impl TorManager {
                     let mut pending = PENDING_CONNECTIONS.lock().unwrap();
                     pending.insert(conn_id, PendingConnection {
                         socket,
-                        encrypted_ping: data.clone(),
+                        encrypted_ping: buf.clone(),
                     });
                 }
 
-                tx.send((conn_id, data)).ok();
+                ping_tx.send((conn_id, buf)).ok();
             }
         }
 
