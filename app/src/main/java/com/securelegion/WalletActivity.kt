@@ -29,7 +29,9 @@ class WalletActivity : AppCompatActivity() {
         setContentView(R.layout.activity_wallet)
 
         setupUI()
-        ensureZcashInitialized()
+        if (BuildConfig.ENABLE_ZCASH_WALLET) {
+            ensureZcashInitialized()
+        }
 
         // Load cached balances immediately for instant display
         loadCachedBalances()

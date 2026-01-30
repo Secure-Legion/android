@@ -85,9 +85,14 @@ class SettingsActivity : BaseActivity() {
             startActivity(Intent(this, BridgeActivity::class.java))
         }
 
-        // Developer
-        findViewById<View>(R.id.developerItem).setOnClickListener {
-            startActivity(Intent(this, DeveloperActivity::class.java))
+        // Developer (master flavor only)
+        val developerItem = findViewById<View>(R.id.developerItem)
+        if (BuildConfig.ENABLE_DEVELOPER_MENU) {
+            developerItem.setOnClickListener {
+                startActivity(Intent(this, DeveloperActivity::class.java))
+            }
+        } else {
+            developerItem.visibility = View.GONE
         }
 
         // Security Mode (includes auto-lock timer)

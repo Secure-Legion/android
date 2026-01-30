@@ -47,9 +47,15 @@ class CreateWalletActivity : AppCompatActivity() {
         solanaCheckbox = findViewById(R.id.solanaCheckbox)
         zcashCheckbox = findViewById(R.id.zcashCheckbox)
 
+        // Hide Zcash option if disabled for this flavor
+        if (!BuildConfig.ENABLE_ZCASH_WALLET) {
+            zcashOption.visibility = View.GONE
+            selectedWalletType = "SOLANA"
+        }
+
         // Check if chain was pre-selected via intent
         val preSelectedChain = intent.getStringExtra("SELECTED_CHAIN")
-        if (preSelectedChain != null) {
+        if (preSelectedChain != null && (preSelectedChain != "ZCASH" || BuildConfig.ENABLE_ZCASH_WALLET)) {
             selectedWalletType = preSelectedChain
         }
 

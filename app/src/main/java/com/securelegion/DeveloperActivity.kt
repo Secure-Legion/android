@@ -50,10 +50,15 @@ class DeveloperActivity : AppCompatActivity() {
             startActivity(intent)
         }
 
-        // Set up Stress Test button
-        findViewById<View>(R.id.stressTestItem).setOnClickListener {
-            val intent = Intent(this, com.securelegion.stresstest.StressTestActivity::class.java)
-            startActivity(intent)
+        // Set up Stress Test button (master flavor only)
+        val stressTestItem = findViewById<View>(R.id.stressTestItem)
+        if (BuildConfig.ENABLE_STRESS_TESTING) {
+            stressTestItem.setOnClickListener {
+                val intent = Intent(this, com.securelegion.stresstest.StressTestActivity::class.java)
+                startActivity(intent)
+            }
+        } else {
+            stressTestItem.visibility = View.GONE
         }
 
         BottomNavigationHelper.setupBottomNavigation(this)

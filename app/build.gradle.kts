@@ -18,6 +18,8 @@ android {
     namespace = "com.securelegion"
     compileSdk = 36
 
+    flavorDimensions += "version"
+
     defaultConfig {
         applicationId = "com.securelegion"
         minSdk = 27  // Increased from 26 for Zcash SDK compatibility
@@ -26,6 +28,137 @@ android {
         versionName = "1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+    }
+
+    productFlavors {
+        create("master") {
+            dimension = "version"
+            applicationId = "com.securelegion.master"
+            versionNameSuffix = "-master"
+
+            buildConfigField("boolean", "ENABLE_TOR", "true")
+            buildConfigField("boolean", "ENABLE_VOICE", "true")
+            buildConfigField("boolean", "ENABLE_MESHTASTIC", "true")
+            buildConfigField("boolean", "ENABLE_ZCASH_WALLET", "true")
+            buildConfigField("boolean", "ENABLE_SOLANA_WALLET", "true")
+            buildConfigField("boolean", "ENABLE_DEVELOPER_MENU", "true")
+            buildConfigField("boolean", "ENABLE_STRESS_TESTING", "true")
+            buildConfigField("boolean", "ENABLE_DEBUG_LOGS", "true")
+            buildConfigField("boolean", "HAS_DEMO_LOGIN", "false")
+            buildConfigField("int", "MAX_GROUP_SIZE", "100")
+            buildConfigField("String", "FLAVOR_NAME", "\"Master\"")
+        }
+
+        create("solanadapp") {
+            dimension = "version"
+            applicationId = "com.securelegion.solana"
+            versionNameSuffix = "-solana"
+
+            buildConfigField("boolean", "ENABLE_TOR", "true")
+            buildConfigField("boolean", "ENABLE_VOICE", "true")
+            buildConfigField("boolean", "ENABLE_MESHTASTIC", "false")
+            buildConfigField("boolean", "ENABLE_ZCASH_WALLET", "false")
+            buildConfigField("boolean", "ENABLE_SOLANA_WALLET", "true")
+            buildConfigField("boolean", "ENABLE_DEVELOPER_MENU", "false")
+            buildConfigField("boolean", "ENABLE_STRESS_TESTING", "false")
+            buildConfigField("boolean", "ENABLE_DEBUG_LOGS", "false")
+            buildConfigField("boolean", "HAS_DEMO_LOGIN", "false")
+            buildConfigField("int", "MAX_GROUP_SIZE", "100")
+            buildConfigField("String", "FLAVOR_NAME", "\"Solana dApp\"")
+        }
+
+        create("solanahackathon") {
+            dimension = "version"
+            applicationId = "com.securelegion.solana.hackathon"
+            versionNameSuffix = "-solana-hackathon"
+
+            buildConfigField("boolean", "ENABLE_TOR", "true")
+            buildConfigField("boolean", "ENABLE_VOICE", "true")
+            buildConfigField("boolean", "ENABLE_MESHTASTIC", "false")
+            buildConfigField("boolean", "ENABLE_ZCASH_WALLET", "false")
+            buildConfigField("boolean", "ENABLE_SOLANA_WALLET", "true")
+            buildConfigField("boolean", "ENABLE_DEVELOPER_MENU", "false")
+            buildConfigField("boolean", "ENABLE_STRESS_TESTING", "false")
+            buildConfigField("boolean", "ENABLE_DEBUG_LOGS", "true")
+            buildConfigField("boolean", "HAS_DEMO_LOGIN", "false")
+            buildConfigField("int", "MAX_GROUP_SIZE", "100")
+            buildConfigField("String", "FLAVOR_NAME", "\"Solana Hackathon\"")
+            buildConfigField("String", "HACKATHON_NAME", "\"Solana\"")
+        }
+
+        create("starnethackathon") {
+            dimension = "version"
+            applicationId = "com.securelegion.starnet.hackathon"
+            versionNameSuffix = "-starnet-hackathon"
+
+            buildConfigField("boolean", "ENABLE_TOR", "true")
+            buildConfigField("boolean", "ENABLE_VOICE", "true")
+            buildConfigField("boolean", "ENABLE_MESHTASTIC", "false")
+            buildConfigField("boolean", "ENABLE_ZCASH_WALLET", "true")
+            buildConfigField("boolean", "ENABLE_SOLANA_WALLET", "true")
+            buildConfigField("boolean", "ENABLE_DEVELOPER_MENU", "false")
+            buildConfigField("boolean", "ENABLE_STRESS_TESTING", "false")
+            buildConfigField("boolean", "ENABLE_DEBUG_LOGS", "true")
+            buildConfigField("boolean", "HAS_DEMO_LOGIN", "false")
+            buildConfigField("int", "MAX_GROUP_SIZE", "100")
+            buildConfigField("String", "FLAVOR_NAME", "\"Starnet Hackathon\"")
+            buildConfigField("String", "HACKATHON_NAME", "\"Starnet\"")
+        }
+
+        create("googleplay") {
+            dimension = "version"
+            applicationId = "com.securelegion"
+
+            buildConfigField("boolean", "ENABLE_TOR", "true")
+            buildConfigField("boolean", "ENABLE_VOICE", "true")
+            buildConfigField("boolean", "ENABLE_MESHTASTIC", "false")
+            buildConfigField("boolean", "ENABLE_ZCASH_WALLET", "true")
+            buildConfigField("boolean", "ENABLE_SOLANA_WALLET", "true")
+            buildConfigField("boolean", "ENABLE_DEVELOPER_MENU", "false")
+            buildConfigField("boolean", "ENABLE_STRESS_TESTING", "false")
+            buildConfigField("boolean", "ENABLE_DEBUG_LOGS", "false")
+            buildConfigField("boolean", "HAS_DEMO_LOGIN", "false")
+            buildConfigField("int", "MAX_GROUP_SIZE", "100")
+            buildConfigField("String", "FLAVOR_NAME", "\"Google Play\"")
+        }
+
+        create("googleplaydemo") {
+            dimension = "version"
+            applicationId = "com.securelegion.demo"
+            versionNameSuffix = "-demo"
+
+            buildConfigField("boolean", "ENABLE_TOR", "true")
+            buildConfigField("boolean", "ENABLE_VOICE", "true")
+            buildConfigField("boolean", "ENABLE_MESHTASTIC", "false")
+            buildConfigField("boolean", "ENABLE_ZCASH_WALLET", "true")
+            buildConfigField("boolean", "ENABLE_SOLANA_WALLET", "true")
+            buildConfigField("boolean", "ENABLE_DEVELOPER_MENU", "false")
+            buildConfigField("boolean", "ENABLE_STRESS_TESTING", "false")
+            buildConfigField("boolean", "ENABLE_DEBUG_LOGS", "false")
+            buildConfigField("boolean", "HAS_DEMO_LOGIN", "true")
+            buildConfigField("int", "MAX_GROUP_SIZE", "100")
+            buildConfigField("String", "FLAVOR_NAME", "\"Google Play Demo\"")
+            buildConfigField("String", "DEMO_USERNAME", "\"google_reviewer\"")
+            buildConfigField("String", "DEMO_PASSWORD", "\"demo123!\"")
+        }
+
+        create("fdroid") {
+            dimension = "version"
+            applicationId = "com.securelegion.fdroid"
+            versionNameSuffix = "-fdroid"
+
+            buildConfigField("boolean", "ENABLE_TOR", "true")
+            buildConfigField("boolean", "ENABLE_VOICE", "true")
+            buildConfigField("boolean", "ENABLE_MESHTASTIC", "false")
+            buildConfigField("boolean", "ENABLE_ZCASH_WALLET", "true")
+            buildConfigField("boolean", "ENABLE_SOLANA_WALLET", "true")
+            buildConfigField("boolean", "ENABLE_DEVELOPER_MENU", "false")
+            buildConfigField("boolean", "ENABLE_STRESS_TESTING", "false")
+            buildConfigField("boolean", "ENABLE_DEBUG_LOGS", "true")
+            buildConfigField("boolean", "HAS_DEMO_LOGIN", "false")
+            buildConfigField("int", "MAX_GROUP_SIZE", "100")
+            buildConfigField("String", "FLAVOR_NAME", "\"F-Droid\"")
+        }
     }
 
     signingConfigs {
