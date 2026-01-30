@@ -13,6 +13,12 @@ import IPtProxy.IPtProxy
 import com.securelegion.SecureLegionApplication
 
 /**
+ * Thrown when a user-selected bridge transport fails to start.
+ * Prevents silent fallback to direct Tor when bridges were explicitly requested.
+ */
+class BridgeTransportFailedException(message: String) : Exception(message)
+
+/**
  * Manages Tor network initialization and hidden service setup using TorService JNI
  *
  * Responsibilities:
@@ -383,6 +389,18 @@ class TorManager(private val context: Context) {
                     initCallbacks.clear()
                     callbacks.forEach { it(true, onionAddress) }
                 }
+            } catch (e: BridgeTransportFailedException) {
+                Log.e(TAG, "Bridge transport failed - Tor will NOT start without bridges: ${e.message}", e)
+                // Broadcast bridge failure so UI can inform the user
+                val failIntent = Intent("com.securelegion.BRIDGE_TRANSPORT_FAILED")
+                failIntent.putExtra("error_message", e.message)
+                context.sendBroadcast(failIntent)
+                synchronized(this) {
+                    isInitializing = false
+                    val callbacks = initCallbacks.toList()
+                    initCallbacks.clear()
+                    callbacks.forEach { it(false, null) }
+                }
             } catch (e: Exception) {
                 Log.e(TAG, "Tor initialization failed", e)
                 synchronized(this) {
@@ -448,7 +466,8 @@ class TorManager(private val context: Context) {
             if (alreadyRunning) {
                 Log.i(TAG, "Voice Tor already running on port 9052")
                 // Initialize Rust voice control connection
-                val status = RustBridge.initializeVoiceTorControl()
+                val cookiePath = File(context.filesDir, "voice_tor/control_auth_cookie").absolutePath
+                val status = RustBridge.initializeVoiceTorControl(cookiePath)
                 Log.i(TAG, "Voice Tor control initialized: $status")
                 return true
             }
@@ -518,7 +537,8 @@ class TorManager(private val context: Context) {
             }
 
             // Initialize Rust voice control connection
-            val status = RustBridge.initializeVoiceTorControl()
+            val cookiePath = File(context.filesDir, "voice_tor/control_auth_cookie").absolutePath
+            val status = RustBridge.initializeVoiceTorControl(cookiePath)
             Log.i(TAG, "✓ Voice Tor initialized successfully: $status")
             true
 
@@ -716,10 +736,11 @@ class TorManager(private val context: Context) {
                 }
                 "snowflake" -> {
                     Log.d(TAG, "Configuring snowflake transport...")
-                    // Configure snowflake with default settings
-                    controller.snowflakeBrokerUrl = "https://snowflake-broker.torproject.net.global.prod.fastly.net/"
-                    controller.snowflakeFrontDomains = "cdn.sstatic.net,github.githubassets.com"
-                    controller.snowflakeIceServers = "stun:stun.l.google.com:19302,stun:stun.altar.com.pl:3478,stun:stun.antisip.com:3478"
+                    // Match Tor Project circumvention API config for Iran (ir)
+                    // CDN77 domain fronting with Iran-specific front domains
+                    controller.snowflakeBrokerUrl = "https://1098762253.rsc.cdn77.org/"
+                    controller.snowflakeFrontDomains = "www.phpmyadmin.net,cdn.zk.mk"
+                    controller.snowflakeIceServers = "stun:stun.antisip.com:3478,stun:stun.epygi.com:3478,stun:stun.uls.co.za:3478,stun:stun.voipgate.com:3478,stun:stun.mixvoip.com:3478,stun:stun.nextcloud.com:3478,stun:stun.bethesda.net:3478,stun:stun.nextcloud.com:443"
                     Log.d(TAG, "Starting snowflake transport...")
                     controller.start(IPtProxy.Snowflake, null)
 
@@ -763,10 +784,132 @@ class TorManager(private val context: Context) {
                         Log.e(TAG, "✗ meek_lite failed to start after 30 seconds")
                     }
                 }
+                "webtunnel" -> {
+                    Log.d(TAG, "Starting webtunnel transport...")
+                    controller.start(IPtProxy.Webtunnel, "")
+
+                    // Wait for webtunnel to start and bind to a port
+                    var port = 0L
+                    var attempts = 0
+                    while (port == 0L && attempts < 30) {
+                        Thread.sleep(1000)
+                        port = controller.port(IPtProxy.Webtunnel)
+                        attempts++
+                        if (port > 0) {
+                            Log.i(TAG, "✓ webtunnel transport started on port $port after ${attempts}s")
+                            break
+                        }
+                        Log.d(TAG, "Waiting for webtunnel to start... (${attempts}s)")
+                    }
+
+                    if (port == 0L) {
+                        Log.e(TAG, "✗ webtunnel failed to start after 30 seconds")
+                    }
+                }
             }
         } catch (e: Exception) {
             Log.e(TAG, "Failed to start IPtProxy transport for $bridgeType: ${e.message}", e)
-            // Don't re-throw - allow Tor to start without bridges as fallback
+            throw BridgeTransportFailedException("Failed to start $bridgeType transport: ${e.message}")
+        }
+    }
+
+    /**
+     * Fetch bridge lines from Tor Project's circumvention map API.
+     * Returns null if the API is unreachable (e.g. in censored regions before Tor is up).
+     * API endpoint: https://bridges.torproject.org/moat/circumvention/map
+     */
+    private fun fetchCircumventionBridges(bridgeType: String): List<String>? {
+        return try {
+            Log.d(TAG, "Fetching bridges from circumvention API for type=$bridgeType...")
+            val url = java.net.URL("https://bridges.torproject.org/moat/circumvention/map")
+            val connection = url.openConnection() as java.net.HttpURLConnection
+            connection.connectTimeout = 10_000
+            connection.readTimeout = 10_000
+            connection.requestMethod = "GET"
+
+            val responseCode = connection.responseCode
+            if (responseCode != 200) {
+                Log.w(TAG, "Circumvention API returned $responseCode")
+                return null
+            }
+
+            val responseBody = connection.inputStream.bufferedReader().readText()
+            connection.disconnect()
+
+            val json = org.json.JSONObject(responseBody)
+
+            // Try Iran first, then fallback to other regions
+            val countryCode = "ir"
+            val countryData = json.optJSONObject(countryCode) ?: run {
+                Log.w(TAG, "No circumvention data for country=$countryCode")
+                return null
+            }
+
+            val settings = countryData.optJSONArray("settings") ?: return null
+
+            for (i in 0 until settings.length()) {
+                val setting = settings.getJSONObject(i)
+                val bridges = setting.optJSONObject("bridges") ?: continue
+                val type = bridges.optString("type", "")
+
+                if (type == bridgeType) {
+                    val bridgeStrings = bridges.optJSONArray("bridge_strings") ?: continue
+                    val result = mutableListOf<String>()
+                    for (j in 0 until bridgeStrings.length()) {
+                        result.add(bridgeStrings.getString(j))
+                    }
+                    if (result.isNotEmpty()) {
+                        Log.i(TAG, "Circumvention API: got ${result.size} $bridgeType bridges for $countryCode")
+                        // Cache the bridges for future use
+                        try {
+                            val prefs = context.getSharedPreferences("tor_settings", Context.MODE_PRIVATE)
+                            prefs.edit()
+                                .putString("cached_${bridgeType}_bridges", result.joinToString("\n"))
+                                .putLong("cached_${bridgeType}_timestamp", System.currentTimeMillis())
+                                .apply()
+                        } catch (e: Exception) {
+                            Log.w(TAG, "Failed to cache bridges: ${e.message}")
+                        }
+                        return result
+                    }
+                }
+            }
+
+            Log.w(TAG, "No $bridgeType bridges found in API response for $countryCode")
+            // Try cached bridges
+            getCachedBridges(bridgeType)
+        } catch (e: Exception) {
+            Log.w(TAG, "Circumvention API fetch failed: ${e.message}")
+            // Try cached bridges
+            getCachedBridges(bridgeType)
+        }
+    }
+
+    /**
+     * Get previously cached bridges from SharedPreferences.
+     * Returns null if no cache exists or cache is older than 24 hours.
+     */
+    private fun getCachedBridges(bridgeType: String): List<String>? {
+        return try {
+            val prefs = context.getSharedPreferences("tor_settings", Context.MODE_PRIVATE)
+            val cached = prefs.getString("cached_${bridgeType}_bridges", null) ?: return null
+            val timestamp = prefs.getLong("cached_${bridgeType}_timestamp", 0)
+            val ageMs = System.currentTimeMillis() - timestamp
+
+            // Cache valid for 24 hours
+            if (ageMs > 24 * 60 * 60 * 1000) {
+                Log.d(TAG, "Cached $bridgeType bridges expired (${ageMs / 1000}s old)")
+                return null
+            }
+
+            val bridges = cached.split("\n").filter { it.isNotBlank() }
+            if (bridges.isNotEmpty()) {
+                Log.i(TAG, "Using ${bridges.size} cached $bridgeType bridges (${ageMs / 1000}s old)")
+                bridges
+            } else null
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to read cached bridges: ${e.message}")
+            null
         }
     }
 
@@ -779,26 +922,48 @@ class TorManager(private val context: Context) {
         val bridgeType = torSettings.getString("bridge_type", "none") ?: "none"
 
         // Start IPtProxy if needed
-        if (bridgeType in listOf("obfs4", "snowflake", "meek")) {
+        if (bridgeType in listOf("obfs4", "snowflake", "meek", "webtunnel")) {
             startIPtProxy(bridgeType)
         }
 
         return when (bridgeType) {
             "snowflake" -> {
                 // Snowflake - uses IPtProxy pluggable transport
-                // Connects through volunteer WebRTC proxies via broker
+                // Bridge lines from Tor Project circumvention API: bridges.torproject.org/moat/circumvention/map
+                // Iran (ir) specific config: CDN77 domain-fronted rendezvous, no SQS
                 val app = context.applicationContext as? SecureLegionApplication
                 val controller = app?.let { SecureLegionApplication.iptProxyController }
                 val port = controller?.port(IPtProxy.Snowflake) ?: 0
                 if (port == 0L) {
-                    Log.e(TAG, "Snowflake transport failed to start - no SOCKS port available")
-                    ""
+                    throw BridgeTransportFailedException("Snowflake transport failed to start - no SOCKS port available")
                 } else {
-                    """
-                    UseBridges 1
-                    ClientTransportPlugin snowflake socks5 127.0.0.1:$port
-                    Bridge snowflake 192.0.2.3:80 2B280B23E1107BB62ABFC40DDCC8824814F80A72 fingerprint=2B280B23E1107BB62ABFC40DDCC8824814F80A72 url=https://snowflake-broker.torproject.net.global.prod.fastly.net/ front=cdn.sstatic.net ice=stun:stun.l.google.com:19302,stun:stun.altar.com.pl:3478,stun:stun.antisip.com:3478,stun:stun.bluesip.net:3478,stun:stun.dus.net:3478,stun:stun.epygi.com:3478,stun:stun.sonetel.net:3478,stun:stun.stunprotocol.org:3478,stun:stun.voipgate.com:3478,stun:stun.voys.nl:3478 utls-imitate=hellorandomizedalpn
-                    """.trimIndent()
+                    // Try fetching fresh bridges from circumvention API first
+                    val apiBridges = fetchCircumventionBridges("snowflake")
+                    if (apiBridges != null) {
+                        Log.i(TAG, "Using ${apiBridges.size} snowflake bridges from circumvention API")
+                        val bridgeLines = apiBridges.joinToString("\n") { "Bridge $it" }
+                        """
+                        UseBridges 1
+                        ClientTransportPlugin snowflake socks5 127.0.0.1:$port
+                        $bridgeLines
+                        """.trimIndent()
+                    } else {
+                        // Fallback: hardcoded bridges from Tor Project API + forum recommendations for Iran
+                        // Includes 3 rendezvous methods: CDN77 domain-front, Netlify domain-front, Amazon SQS
+                        Log.i(TAG, "Using hardcoded snowflake bridges (API unavailable)")
+                        """
+                        UseBridges 1
+                        ClientTransportPlugin snowflake socks5 127.0.0.1:$port
+                        Bridge snowflake 192.0.2.3:80 2B280B23E1107BB62ABFC40DDCC8824814F80A72 fingerprint=2B280B23E1107BB62ABFC40DDCC8824814F80A72 url=https://1098762253.rsc.cdn77.org front=www.phpmyadmin.net,cdn.zk.mk ice=stun:stun.antisip.com:3478,stun:stun.epygi.com:3478,stun:stun.uls.co.za:3478,stun:stun.voipgate.com:3478,stun:stun.mixvoip.com:3478,stun:stun.nextcloud.com:3478,stun:stun.bethesda.net:3478,stun:stun.nextcloud.com:443 utls-imitate=hellorandomizedalpn
+                        Bridge snowflake 192.0.2.4:80 8838024498816A039FCBBAB14E6F40A0843051FA fingerprint=8838024498816A039FCBBAB14E6F40A0843051FA url=https://1098762253.rsc.cdn77.org front=www.phpmyadmin.net,cdn.zk.mk ice=stun:stun.antisip.com:3478,stun:stun.epygi.com:3478,stun:stun.uls.co.za:3478,stun:stun.voipgate.com:3478,stun:stun.mixvoip.com:3478,stun:stun.nextcloud.com:3478,stun:stun.bethesda.net:3478,stun:stun.nextcloud.com:443 utls-imitate=hellorandomizedalpn
+                        Bridge snowflake 192.0.2.3:80 2B280B23E1107BB62ABFC40DDCC8824814F80A72 fingerprint=2B280B23E1107BB62ABFC40DDCC8824814F80A72 url=https://voluble-torrone-fc39bf.netlify.app/ fronts=vuejs.org ice=stun:stun.antisip.com:3478,stun:stun.epygi.com:3478,stun:stun.uls.co.za:3478,stun:stun.voipgate.com:3478,stun:stun.mixvoip.com:3478,stun:stun.nextcloud.com:3478,stun:stun.bethesda.net:3478,stun:stun.nextcloud.com:443 utls-imitate=hellorandomizedalpn
+                        Bridge snowflake 192.0.2.4:80 8838024498816A039FCBBAB14E6F40A0843051FA fingerprint=8838024498816A039FCBBAB14E6F40A0843051FA url=https://voluble-torrone-fc39bf.netlify.app/ fronts=vuejs.org ice=stun:stun.antisip.com:3478,stun:stun.epygi.com:3478,stun:stun.uls.co.za:3478,stun:stun.voipgate.com:3478,stun:stun.mixvoip.com:3478,stun:stun.nextcloud.com:3478,stun:stun.bethesda.net:3478,stun:stun.nextcloud.com:443 utls-imitate=hellorandomizedalpn
+                        Bridge snowflake 192.0.2.5:80 2B280B23E1107BB62ABFC40DDCC8824814F80A72 fingerprint=2B280B23E1107BB62ABFC40DDCC8824814F80A72 url=https://snowflake-broker.torproject.net/ ampcache=https://cdn.ampproject.org/ front=www.google.com ice=stun:stun.antisip.com:3478,stun:stun.epygi.com:3478,stun:stun.uls.co.za:3478,stun:stun.voipgate.com:3478,stun:stun.mixvoip.com:3478,stun:stun.nextcloud.com:3478,stun:stun.bethesda.net:3478,stun:stun.nextcloud.com:443 utls-imitate=hellorandomizedalpn
+                        Bridge snowflake 192.0.2.6:80 8838024498816A039FCBBAB14E6F40A0843051FA fingerprint=8838024498816A039FCBBAB14E6F40A0843051FA url=https://snowflake-broker.torproject.net/ ampcache=https://cdn.ampproject.org/ front=www.google.com ice=stun:stun.antisip.com:3478,stun:stun.epygi.com:3478,stun:stun.uls.co.za:3478,stun:stun.voipgate.com:3478,stun:stun.mixvoip.com:3478,stun:stun.nextcloud.com:3478,stun:stun.bethesda.net:3478,stun:stun.nextcloud.com:443 utls-imitate=hellorandomizedalpn
+                        Bridge snowflake 192.0.2.5:80 2B280B23E1107BB62ABFC40DDCC8824814F80A72 fingerprint=2B280B23E1107BB62ABFC40DDCC8824814F80A72 sqsqueue=https://sqs.us-east-1.amazonaws.com/893902434899/snowflake-broker sqscreds=eyJhd3MtYWNjZXNzLWtleS1pZCI6IkFLSUE1QUlGNFdKSlhTN1lIRUczIiwiYXdzLXNlY3JldC1rZXkiOiI3U0RNc0pBNHM1RitXZWJ1L3pMOHZrMFFXV0lsa1c2Y1dOZlVsQ0tRIn0= ice=stun:stun.antisip.com:3478,stun:stun.epygi.com:3478,stun:stun.uls.co.za:3478,stun:stun.voipgate.com:3478,stun:stun.nextcloud.com:3478,stun:stun.bethesda.net:3478,stun:stun.nextcloud.com:443 utls-imitate=hellorandomizedalpn
+                        Bridge snowflake 192.0.2.6:80 8838024498816A039FCBBAB14E6F40A0843051FA fingerprint=8838024498816A039FCBBAB14E6F40A0843051FA sqsqueue=https://sqs.us-east-1.amazonaws.com/893902434899/snowflake-broker sqscreds=eyJhd3MtYWNjZXNzLWtleS1pZCI6IkFLSUE1QUlGNFdKSlhTN1lIRUczIiwiYXdzLXNlY3JldC1rZXkiOiI3U0RNc0pBNHM1RitXZWJ1L3pMOHZrMFFXV0lsa1c2Y1dOZlVsQ0tRIn0= ice=stun:stun.antisip.com:3478,stun:stun.epygi.com:3478,stun:stun.uls.co.za:3478,stun:stun.voipgate.com:3478,stun:stun.nextcloud.com:3478,stun:stun.bethesda.net:3478,stun:stun.nextcloud.com:443 utls-imitate=hellorandomizedalpn
+                        """.trimIndent()
+                    }
                 }
             }
             "obfs4" -> {
@@ -808,8 +973,7 @@ class TorManager(private val context: Context) {
                 val controller = app?.let { SecureLegionApplication.iptProxyController }
                 val port = controller?.port(IPtProxy.Obfs4) ?: 0
                 if (port == 0L) {
-                    Log.e(TAG, "obfs4 transport failed to start - no SOCKS port available")
-                    ""
+                    throw BridgeTransportFailedException("obfs4 transport failed to start - no SOCKS port available")
                 } else {
                     """
                     UseBridges 1
@@ -829,14 +993,47 @@ class TorManager(private val context: Context) {
                 val controller = app?.let { SecureLegionApplication.iptProxyController }
                 val port = controller?.port(IPtProxy.MeekLite) ?: 0
                 if (port == 0L) {
-                    Log.e(TAG, "meek_lite transport failed to start - no SOCKS port available")
-                    ""
+                    throw BridgeTransportFailedException("meek_lite transport failed to start - no SOCKS port available")
                 } else {
                     """
                     UseBridges 1
                     ClientTransportPlugin meek_lite socks5 127.0.0.1:$port
                     Bridge meek_lite 192.0.2.2:2 97700DFE9F483596DDA6264C4D7DF7641E1E39CE url=https://meek.azureedge.net/ front=ajax.aspnetcdn.com
                     """.trimIndent()
+                }
+            }
+            "webtunnel" -> {
+                // WebTunnel - disguises Tor traffic as HTTPS WebSocket connections
+                // Iran priority #1 in Tor Project circumvention API
+                val app = context.applicationContext as? SecureLegionApplication
+                val controller = app?.let { SecureLegionApplication.iptProxyController }
+                val port = controller?.port(IPtProxy.Webtunnel) ?: 0
+                if (port == 0L) {
+                    throw BridgeTransportFailedException("webtunnel transport failed to start - no SOCKS port available")
+                } else {
+                    // Try fetching fresh bridges from circumvention API first
+                    val apiBridges = fetchCircumventionBridges("webtunnel")
+                    if (apiBridges != null) {
+                        Log.i(TAG, "Using ${apiBridges.size} webtunnel bridges from circumvention API")
+                        val bridgeLines = apiBridges.joinToString("\n") { "Bridge $it" }
+                        """
+                        UseBridges 1
+                        ClientTransportPlugin webtunnel socks5 127.0.0.1:$port
+                        $bridgeLines
+                        """.trimIndent()
+                    } else {
+                        // Fallback: hardcoded webtunnel bridges
+                        Log.i(TAG, "Using hardcoded webtunnel bridges (API unavailable)")
+                        """
+                        UseBridges 1
+                        ClientTransportPlugin webtunnel socks5 127.0.0.1:$port
+                        Bridge webtunnel [2001:db8:1fc0:eebe:5e6e:d6ee:f53e:6889]:443 4A3859C089DF40A4FFADC10A79DFEBE4F8272535 url=https://verry.org/K2A2utQIMou4Ia2WjVseyDjV ver=0.0.1
+                        Bridge webtunnel [2001:db8:2ae3:679a:856c:c72a:2746:1a1b]:443 8943BF53C9561C75A7302ED59575EF71E2B26562 url=https://allium.heelsn.eu/X1uzc7J4omPPBbqkJMDgBtXP ver=0.0.3
+                        Bridge webtunnel [2001:db8:2b58:9764:2fcf:67a0:1d1d:b622]:443 9255D4ADB05B7F8792E49779E4DF382BF7B2BE01 url=https://3124.null-f.org/KFfqlXliDgBsyHEtT0SKO1i5 ver=0.0.1
+                        Bridge webtunnel [2001:db8:2b84:8d:b5af:2b7c:2528:ecbc]:443 F99CFE52EDFF8EAA332CD73C1E638035210C0336 url=https://cdn-26.privacyguides.net/cFwsJGX85KZ4INwnDHvVxs0G ver=0.0.2
+                        Bridge webtunnel [2001:db8:2c2a:de34:35ec:ef86:f18a:e2fc]:443 B2DD1165FE69D5E934002AF882D3397CFCE441DC url=https://doxy.ptnpnhcdn.net/ptnpnh/ ver=0.0.1
+                        """.trimIndent()
+                    }
                 }
             }
             "custom" -> {

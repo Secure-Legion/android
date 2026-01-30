@@ -265,14 +265,25 @@ class TorService : Service() {
     private fun startBootstrapWatchdog() {
         bootstrapWatchdogJob?.cancel()
         bootstrapWatchdogJob = serviceScope.launch {
+            // Use longer timeout when bridges are configured — bridge transports
+            // add significant overhead (especially on slow connections like 500kbps in Iran)
+            val torSettings = getSharedPreferences("tor_settings", MODE_PRIVATE)
+            val bridgeType = torSettings.getString("bridge_type", "none") ?: "none"
+            val usingBridges = bridgeType != "none"
+            val stallTimeoutMs = if (usingBridges) 300_000L else 60_000L  // 5 min with bridges (Iran ~500kbps), 1 min without
+
+            if (usingBridges) {
+                Log.i(TAG, "Bootstrap watchdog: using extended timeout (${stallTimeoutMs / 1000}s) for bridge type '$bridgeType'")
+            }
+
             while (torState == TorState.STARTING || torState == TorState.BOOTSTRAPPING) {
                 kotlinx.coroutines.delay(5000)  // Check every 5 seconds
 
                 // Track actual bootstrap progress, not log activity
                 // Tor can be quiet even when working, but % must increase
                 val stalledMs = SystemClock.elapsedRealtime() - lastBootstrapProgressMs
-                if (stalledMs > 60_000) {  // 60 second timeout
-                    Log.w(TAG, "Bootstrap stalled (no progress for ${stalledMs}ms, stuck at $bootstrapPercent%) → restarting Tor")
+                if (stalledMs > stallTimeoutMs) {
+                    Log.w(TAG, "Bootstrap stalled (no progress for ${stalledMs}ms, stuck at $bootstrapPercent%, bridges=$usingBridges) → restarting Tor")
                     restartTor("bootstrap stalled at $bootstrapPercent%")
                     return@launch
                 }
@@ -304,7 +315,99 @@ class TorService : Service() {
 
         // Update notification
         updateNotification("Connected to Tor")
+
+        // Verify bridge usage if bridges were requested
+        verifyBridgeUsage()
+
         Log.w(TAG, "========== onTorReady() COMPLETE ==========")
+    }
+
+    /**
+     * Post-bootstrap verification: check if bridges are actually in use.
+     * Connects to Tor control port (127.0.0.1:9051) with cookie auth and checks
+     * entry guards to confirm bridge connectivity when user selected bridges.
+     */
+    private fun verifyBridgeUsage() {
+        val torSettings = getSharedPreferences("tor_settings", MODE_PRIVATE)
+        val bridgeType = torSettings.getString("bridge_type", "none") ?: "none"
+        if (bridgeType == "none") return  // No bridges expected
+
+        serviceScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            try {
+                // Read cookie file for authentication
+                val dataDir = File(filesDir, "app_TorService/data")
+                val cookieFile = File(dataDir, "control_auth_cookie")
+                if (!cookieFile.exists()) {
+                    // Try alternate location
+                    val altCookieFile = File(filesDir, "tor/control_auth_cookie")
+                    if (!altCookieFile.exists()) {
+                        Log.w(TAG, "Bridge verify: cookie file not found, skipping verification")
+                        return@launch
+                    }
+                }
+
+                val cookieBytes = (if (cookieFile.exists()) cookieFile else File(filesDir, "tor/control_auth_cookie")).readBytes()
+                val cookieHex = cookieBytes.joinToString("") { "%02x".format(it) }
+
+                // Connect to control port
+                val socket = java.net.Socket()
+                socket.connect(java.net.InetSocketAddress("127.0.0.1", 9051), 5000)
+                socket.soTimeout = 5000
+                val writer = socket.getOutputStream().bufferedWriter()
+                val reader = socket.getInputStream().bufferedReader()
+
+                // Authenticate
+                writer.write("AUTHENTICATE $cookieHex\r\n")
+                writer.flush()
+                val authReply = reader.readLine()
+                if (authReply != "250 OK") {
+                    Log.w(TAG, "Bridge verify: auth failed: $authReply")
+                    socket.close()
+                    return@launch
+                }
+
+                // Check entry guards - bridges show as "Bridge" type
+                writer.write("GETINFO entry-guards\r\n")
+                writer.flush()
+
+                val guardLines = mutableListOf<String>()
+                var line = reader.readLine()
+                while (line != null && !line.startsWith("250 ")) {
+                    guardLines.add(line)
+                    line = reader.readLine()
+                }
+
+                // Check if UseBridges is set
+                writer.write("GETCONF UseBridges\r\n")
+                writer.flush()
+                val bridgeConf = reader.readLine()
+
+                // Close connection
+                writer.write("QUIT\r\n")
+                writer.flush()
+                socket.close()
+
+                val useBridges = bridgeConf?.contains("1") == true
+                val hasBridgeGuards = guardLines.any { it.contains("Bridge", ignoreCase = true) }
+
+                if (useBridges) {
+                    Log.i(TAG, "Bridge verify: UseBridges=1, bridge guards=${guardLines.size} " +
+                            "(type=$bridgeType) — bridges ARE configured in Tor")
+                    if (hasBridgeGuards) {
+                        Log.i(TAG, "Bridge verify: Entry guards contain bridge entries — bridges ACTIVE")
+                    }
+                } else {
+                    Log.e(TAG, "Bridge verify: UseBridges NOT set but user selected '$bridgeType' — " +
+                            "Tor may be running WITHOUT bridges!")
+                    // Broadcast warning so UI can inform user
+                    val warnIntent = android.content.Intent("com.securelegion.BRIDGE_VERIFICATION_WARNING")
+                    warnIntent.putExtra("message", "Bridges may not be active. Selected: $bridgeType but UseBridges not set.")
+                    sendBroadcast(warnIntent)
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Bridge verify: failed to verify bridge usage: ${e.message}")
+            }
+        }
     }
 
     /**
@@ -2856,27 +2959,8 @@ class TorService : Service() {
                                         Log.w(TAG, "Failed to clean up ReceivedId entries (non-critical)", e)
                                     }
 
-                                    // Clean up SharedPreferences ping tracking (prevents memory bloat)
-                                    // After MESSAGE_ACK, we'll never need this ping data again
-                                    try {
-                                        val prefs = getSharedPreferences("pending_pings", MODE_PRIVATE)
-                                        prefs.edit().apply {
-                                            // Remove ping-indexed entries (for Pong lookup)
-                                            remove("ping_${pingId}_contact_id")
-                                            remove("ping_${pingId}_name")
-                                            remove("ping_${pingId}_timestamp")
-                                            remove("ping_${pingId}_onion")
-                                            // Remove contact-indexed entries (for outgoing tracking)
-                                            remove("outgoing_ping_${message.contactId}_id")
-                                            remove("outgoing_ping_${message.contactId}_name")
-                                            remove("outgoing_ping_${message.contactId}_timestamp")
-                                            remove("outgoing_ping_${message.contactId}_onion")
-                                            apply()
-                                        }
-                                        Log.d(TAG, "✓ Cleaned up SharedPreferences ping tracking for ${pingId.take(8)}...")
-                                    } catch (e: Exception) {
-                                        Log.w(TAG, "Failed to clean up SharedPreferences (non-critical)", e)
-                                    }
+                                    // Ping tracking cleanup handled by ping_inbox DB (MSG_STORED state)
+                                    Log.d(TAG, "✓ Ping $pingId delivery confirmed (DB state = MSG_STORED)")
                                 }
 
                                 message.copy(
@@ -3207,9 +3291,7 @@ class TorService : Service() {
                     }
 
                     if (inserted) {
-                        // Store pending ping for UI display
-                        storePendingPing(pingId, connectionId, senderPublicKey, senderName, encryptedPingWire)
-
+                        // DB insert is the single source of truth (ping_inbox with pingWireBytesBase64)
                         shouldNotify = true
                         Log.i(TAG, "→ Will show notification and send PING_ACK")
                     }
@@ -3236,8 +3318,8 @@ class TorService : Service() {
                         itemId = pingId,
                         ackType = "PING_ACK",
                         contactId = contactId,
-                        maxRetries = 1,
-                        initialDelayMs = 0L
+                        maxRetries = 10,
+                        initialDelayMs = 2000L
                     )
 
                     // Update pingAckedAt timestamp
@@ -3384,7 +3466,7 @@ class TorService : Service() {
                 if (attempt < maxRetries) {
                     Log.w(TAG, "⚠️ $ackType send failed (attempt $attempt/$maxRetries), retrying in ${delayMs}ms...")
                     kotlinx.coroutines.delay(delayMs)
-                    delayMs *= 2 // Exponential backoff: 1s, 2s, 4s
+                    delayMs = (delayMs * 2).coerceAtMost(30_000L) // Exponential backoff capped at 30s
                 } else {
                     Log.e(TAG, "✗ $ackType send FAILED after $maxRetries attempts for $itemId")
                     Log.e(TAG, "→ Sender will retry ${if (ackType == "PING_ACK") "PING" else if (ackType == "PONG_ACK") "PONG" else "MESSAGE"}, which is acceptable")
@@ -3395,7 +3477,7 @@ class TorService : Service() {
                 attempt++
                 if (attempt < maxRetries) {
                     kotlinx.coroutines.delay(delayMs)
-                    delayMs *= 2
+                    delayMs = (delayMs * 2).coerceAtMost(30_000L)
                 }
             }
         }
@@ -4169,9 +4251,13 @@ class TorService : Service() {
                         }
                     }
 
-                    // Check if this message is for an active download (associate with pingId)
-                    val downloadPrefs = getSharedPreferences("active_downloads", MODE_PRIVATE)
-                    val downloadPingId = downloadPrefs.getString("download_${contact.id}", null)
+                    // Check if this message is for an active download (find PONG_SENT or DOWNLOAD_QUEUED ping)
+                    // DOWNLOAD_QUEUED(10) included for race: message may arrive before DB transitions to PONG_SENT(1)
+                    val activePings = database.pingInboxDao().getPendingByContact(contact.id)
+                    val downloadPingId = activePings.firstOrNull {
+                        it.state == com.securelegion.database.entities.PingInbox.STATE_PONG_SENT ||
+                            it.state == com.securelegion.database.entities.PingInbox.STATE_DOWNLOAD_QUEUED
+                    }?.pingId
                     if (downloadPingId != null) {
                         Log.i(TAG, "⚡ Message associated with active download pingId: ${downloadPingId.take(8)}")
                     }
@@ -4217,21 +4303,21 @@ class TorService : Service() {
                     val savedMessageId = database.messageDao().insertMessage(message)
                     Log.i(TAG, "MESSAGE SAVE: Message saved to database successfully! DB row ID=$savedMessageId")
 
-                    // If this was an active download, update ping state to READY for atomic swap
+                    // If this was an active download, transition ping to MSG_STORED in DB
                     if (downloadPingId != null) {
-                        val pingPrefs = getSharedPreferences("pending_pings", MODE_PRIVATE)
-                        Log.i(TAG, "⚡ Setting ping ${downloadPingId.take(8)} to READY state (listener path)")
-                        com.securelegion.models.PendingPing.updateState(
-                            pingPrefs,
-                            contact.id,
-                            downloadPingId,
-                            com.securelegion.models.PingState.READY,
-                            synchronous = true
+                        Log.i(TAG, "⚡ Transitioning ping ${downloadPingId.take(8)} to MSG_STORED (listener path)")
+                        val transitioned = database.pingInboxDao().transitionToMsgStored(
+                            pingId = downloadPingId,
+                            timestamp = System.currentTimeMillis()
                         )
+                        if (transitioned > 0) {
+                            Log.d(TAG, "  ✓ ping_inbox ${downloadPingId.take(8)} → MSG_STORED")
+                        } else {
+                            Log.w(TAG, "  ⚠ ping_inbox ${downloadPingId.take(8)} already MSG_STORED or not found")
+                        }
 
-                        // Clear active download tracking
-                        downloadPrefs.edit().remove("download_${contact.id}").commit()
-                        Log.d(TAG, "  ✓ Cleared active download tracking for contact ${contact.id}")
+                        // Active download tracking cleared by transitionToMsgStored (downloadQueuedAt = NULL)
+                        Log.d(TAG, "  ✓ Active download tracking cleared via DB state for contact ${contact.id}")
                     }
 
                     // Send MESSAGE_ACK to sender to confirm receipt (with retry logic)
@@ -4985,57 +5071,8 @@ class TorService : Service() {
         }
     }
 
-    /**
-     * Store pending Ping for user to manually download later
-     */
-    private suspend fun storePendingPing(pingId: String, connectionId: Long, senderPublicKey: ByteArray?, senderName: String, encryptedPingWire: ByteArray): Long? {
-        return withContext(Dispatchers.IO) {
-            try {
-                val keyManager = com.securelegion.crypto.KeyManager.getInstance(this@TorService)
-                val dbPassphrase = keyManager.getDatabasePassphrase()
-                val database = com.securelegion.database.SecureLegionDatabase.getInstance(this@TorService, dbPassphrase)
-
-                // Find contact by public key
-                if (senderPublicKey != null) {
-                    val publicKeyBase64 = android.util.Base64.encodeToString(senderPublicKey, android.util.Base64.NO_WRAP)
-                    Log.d(TAG, "Looking up contact by public key (Base64, first 20 chars): ${publicKeyBase64.take(20)}...")
-
-                    // Debug: List all contacts and their public keys
-                    val allContacts = database.contactDao().getAllContacts()
-                    Log.d(TAG, "Total contacts in database: ${allContacts.size}")
-                    for (c in allContacts) {
-                        Log.d(TAG, "  Contact: ${c.displayName}, PubKey (first 20 chars): ${c.publicKeyBase64.take(20)}...")
-                    }
-
-                    val contact = database.contactDao().getContactByPublicKey(publicKeyBase64)
-
-                    if (contact != null) {
-                        // Store pending Ping in queue (NEW: supports multiple pings per contact)
-                        val prefs = getSharedPreferences("pending_pings", Context.MODE_PRIVATE)
-                        val encryptedPingBase64 = android.util.Base64.encodeToString(encryptedPingWire, android.util.Base64.NO_WRAP)
-
-                        val pendingPing = com.securelegion.models.PendingPing(
-                            pingId = pingId,
-                            connectionId = connectionId,
-                            senderName = senderName,
-                            timestamp = System.currentTimeMillis(),
-                            encryptedPingData = encryptedPingBase64,
-                            senderOnionAddress = contact.messagingOnion ?: contact.torOnionAddress ?: ""
-                        )
-
-                        com.securelegion.models.PendingPing.addToQueue(prefs, contact.id, pendingPing)
-                        Log.i(TAG, "Added Ping $pingId to queue for contact ${contact.id}: $senderName")
-                        return@withContext contact.id  // Return contact ID for broadcast
-                    } else {
-                        Log.w(TAG, "Cannot store Ping - sender not in contacts: $senderName")
-                    }
-                }
-            } catch (e: Exception) {
-                Log.e(TAG, "Failed to store pending Ping", e)
-            }
-            return@withContext null  // Failed to find/store contact
-        }
-    }
+    // storePendingPing() REMOVED — ping_inbox DB is the single source of truth
+    // Wire bytes stored in pingWireBytesBase64 column at insert time (handleIncomingPing)
 
     /**
      * PHASE 6: Send taps to all contacts when Tor connects
@@ -5130,20 +5167,17 @@ class TorService : Service() {
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
 
-        // Get pending message count (new format: ping_queue_<contactId>)
-        val prefs = getSharedPreferences("pending_pings", Context.MODE_PRIVATE)
-
-        // Count total pings across all contacts
-        var pendingCount = 0
-        prefs.all.forEach { (key, value) ->
-            if (key.startsWith("ping_queue_") && value is String) {
-                try {
-                    val jsonArray = org.json.JSONArray(value)
-                    pendingCount += jsonArray.length()
-                } catch (e: Exception) {
-                    Log.w(TAG, "Failed to parse ping queue for key $key", e)
-                }
+        // Count pending pings from DB (single source of truth)
+        val pendingCount = try {
+            val keyManager = com.securelegion.crypto.KeyManager.getInstance(this)
+            val dbPassphrase = keyManager.getDatabasePassphrase()
+            val database = com.securelegion.database.SecureLegionDatabase.getInstance(this, dbPassphrase)
+            kotlinx.coroutines.runBlocking(kotlinx.coroutines.Dispatchers.IO) {
+                database.pingInboxDao().countGlobalPending()
             }
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to count pending pings from DB", e)
+            0
         }
 
         // Only show notification if there are pending messages
@@ -5262,18 +5296,12 @@ class TorService : Service() {
                         )
                     }
 
-                    // Clear pending Ping from SharedPreferences (even for duplicates)
-                    val prefs = getSharedPreferences("pending_pings", Context.MODE_PRIVATE)
-                    prefs.edit().apply {
-                        remove("ping_${contact.id}_id")
-                        remove("ping_${contact.id}_connection")
-                        remove("ping_${contact.id}_name")
-                        remove("ping_${contact.id}_timestamp")
-                        remove("ping_${contact.id}_data")
-                        remove("ping_${contact.id}_onion")
-                        apply()
-                    }
-                    Log.i(TAG, "✓ Cleared pending Ping for contact ${contact.id} (duplicate message)")
+                    // Transition ping to MSG_STORED in DB (idempotent for duplicates)
+                    database.pingInboxDao().transitionToMsgStored(
+                        pingId = pingId,
+                        timestamp = System.currentTimeMillis()
+                    )
+                    Log.i(TAG, "✓ Ensured ping_inbox MSG_STORED for contact ${contact.id} (duplicate message)")
 
                     // Update notification to reflect new pending count (will cancel if 0)
                     showNewMessageNotification()
@@ -5317,18 +5345,12 @@ class TorService : Service() {
                     )
                 }
 
-                // Clear pending Ping from SharedPreferences (message has been downloaded)
-                val prefs = getSharedPreferences("pending_pings", Context.MODE_PRIVATE)
-                prefs.edit().apply {
-                    remove("ping_${contact.id}_id")
-                    remove("ping_${contact.id}_connection")
-                    remove("ping_${contact.id}_name")
-                    remove("ping_${contact.id}_timestamp")
-                    remove("ping_${contact.id}_data")
-                    remove("ping_${contact.id}_onion")
-                    apply()
-                }
-                Log.i(TAG, "✓ Cleared pending Ping for contact ${contact.id} after message download")
+                // Transition ping to MSG_STORED in DB (single source of truth)
+                database.pingInboxDao().transitionToMsgStored(
+                    pingId = pingId,
+                    timestamp = System.currentTimeMillis()
+                )
+                Log.i(TAG, "✓ ping_inbox → MSG_STORED for contact ${contact.id} after message download")
 
                 // Update notification to reflect new pending count (will cancel if 0)
                 showNewMessageNotification()

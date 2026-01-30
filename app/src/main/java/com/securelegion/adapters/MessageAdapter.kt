@@ -44,11 +44,11 @@ sealed class ChatListItem {
     }
 
     data class PendingPingItem(
-        val ping: com.securelegion.models.PendingPing,
+        val pingInbox: com.securelegion.database.entities.PingInbox,
         val isDownloading: Boolean = false,
         val isAutoDownloading: Boolean = false
     ) : ChatListItem() {
-        override fun getStableId() = "ping_${ping.pingId}".hashCode().toLong() and 0x7FFFFFFFL
+        override fun getStableId() = "ping_${pingInbox.pingId}".hashCode().toLong() and 0x7FFFFFFFL
     }
 
     abstract fun getStableId(): Long
@@ -65,7 +65,7 @@ private object ChatListItemDiffCallback : DiffUtil.ItemCallback<ChatListItem>() 
             oldItem is ChatListItem.MessageItem && newItem is ChatListItem.MessageItem ->
                 oldItem.message.messageId == newItem.message.messageId
             oldItem is ChatListItem.PendingPingItem && newItem is ChatListItem.PendingPingItem ->
-                oldItem.ping.pingId == newItem.ping.pingId
+                oldItem.pingInbox.pingId == newItem.pingInbox.pingId
             else -> false
         }
     }
@@ -85,8 +85,8 @@ private object ChatListItemDiffCallback : DiffUtil.ItemCallback<ChatListItem>() 
                 oldItem.message.messageDelivered == newItem.message.messageDelivered
             oldItem is ChatListItem.PendingPingItem && newItem is ChatListItem.PendingPingItem ->
                 // Compare all fields that affect display
-                oldItem.ping.pingId == newItem.ping.pingId &&
-                oldItem.ping.state == newItem.ping.state &&
+                oldItem.pingInbox.pingId == newItem.pingInbox.pingId &&
+                oldItem.pingInbox.state == newItem.pingInbox.state &&
                 oldItem.isDownloading == newItem.isDownloading &&
                 oldItem.isAutoDownloading == newItem.isAutoDownloading
             else -> false
@@ -105,7 +105,7 @@ private object ChatListItemDiffCallback : DiffUtil.ItemCallback<ChatListItem>() 
                 } else null
             }
             oldItem is ChatListItem.PendingPingItem && newItem is ChatListItem.PendingPingItem -> {
-                if (oldItem.ping.state != newItem.ping.state) {
+                if (oldItem.pingInbox.state != newItem.pingInbox.state) {
                     "state_changed"  // Update pending state
                 } else if (oldItem.isDownloading != newItem.isDownloading) {
                     "downloading_changed"  // Update download status
@@ -424,7 +424,7 @@ class MessageAdapter(
 
         return when (item) {
             is ChatListItem.PendingPingItem -> {
-                Log.d(TAG, "  -> VIEW_TYPE_PENDING (ping: ${item.ping.pingId.take(8)})")
+                Log.d(TAG, "  -> VIEW_TYPE_PENDING (ping: ${item.pingInbox.pingId.take(8)})")
                 VIEW_TYPE_PENDING
             }
             is ChatListItem.MessageItem -> {
@@ -679,43 +679,50 @@ class MessageAdapter(
     private fun bindPendingMessage(holder: PendingMessageViewHolder, position: Int) {
         // Get the specific pending ping for this position
         val item = getItem(position)
-        val pendingPing = (item as ChatListItem.PendingPingItem).ping
-        val timestamp = pendingPing.timestamp
+        val pingInbox = (item as ChatListItem.PendingPingItem).pingInbox
+        val timestamp = pingInbox.firstSeenAt
 
-        // Check if this is an auto-downloading ping (show typing indicator)
-        val isAutoPong = pendingPing.pingId in autoPongPingIds
-        if (isAutoPong) {
-            android.util.Log.i("MessageAdapter", "🔵 Ping ${pendingPing.pingId.take(8)} is AUTO-PONG - showing typing indicator")
-        }
+        // In-memory sets override DB state for immediate UI feedback
+        // (DB state lags behind because download service hasn't transitioned yet)
+        val isAutoPong = pingInbox.pingId in autoPongPingIds
+        val isDownloading = pingInbox.pingId in downloadingPingIds
 
-        // Update UI based on ping state
-        when (pendingPing.state) {
-            com.securelegion.models.PingState.PENDING -> {
-                // Show "Download" button (lock icon)
+        // Priority: autoPong (typing) > downloading (manual) > DB state
+        when {
+            isAutoPong -> {
+                // Auto-PONG in progress: show typing indicator with animated dots
+                holder.downloadButton.visibility = View.GONE
+                holder.downloadingText.visibility = View.GONE
+                holder.typingIndicator.visibility = View.VISIBLE
+                stopEllipsisAnimation(holder.downloadingText)
+                startTypingAnimation(holder.typingDot1, holder.typingDot2, holder.typingDot3)
+            }
+            isDownloading || pingInbox.state == com.securelegion.database.entities.PingInbox.STATE_PONG_SENT
+                || pingInbox.state == com.securelegion.database.entities.PingInbox.STATE_DOWNLOAD_QUEUED -> {
+                // Manual download in progress (in-memory flag OR DB state confirms)
+                holder.downloadButton.visibility = View.GONE
+                holder.downloadingText.visibility = View.VISIBLE
+                holder.typingIndicator.visibility = View.GONE
+                stopTypingAnimation(holder.typingDot1, holder.typingDot2, holder.typingDot3)
+                startEllipsisAnimation(holder.downloadingText, "Downloading")
+            }
+            pingInbox.state == com.securelegion.database.entities.PingInbox.STATE_PING_SEEN
+                || pingInbox.state == com.securelegion.database.entities.PingInbox.STATE_FAILED_TEMP
+                || pingInbox.state == com.securelegion.database.entities.PingInbox.STATE_MANUAL_REQUIRED -> {
+                // Lock icon — user action required
                 holder.downloadButton.visibility = View.VISIBLE
                 holder.downloadingText.visibility = View.GONE
                 holder.typingIndicator.visibility = View.GONE
                 stopEllipsisAnimation(holder.downloadingText)
                 stopTypingAnimation(holder.typingDot1, holder.typingDot2, holder.typingDot3)
             }
-            com.securelegion.models.PingState.DOWNLOADING,
-            com.securelegion.models.PingState.DECRYPTING,
-            com.securelegion.models.PingState.READY -> {
-                holder.downloadButton.visibility = View.GONE
-
-                if (isAutoPong) {
-                    // Auto-PONG: Show typing indicator with animated dots (like real messaging apps)
-                    holder.downloadingText.visibility = View.GONE
-                    holder.typingIndicator.visibility = View.VISIBLE
-                    stopEllipsisAnimation(holder.downloadingText)
-                    startTypingAnimation(holder.typingDot1, holder.typingDot2, holder.typingDot3)
-                } else {
-                    // Manual download: Show "Downloading..." text with ellipsis
-                    holder.downloadingText.visibility = View.VISIBLE
-                    holder.typingIndicator.visibility = View.GONE
-                    stopTypingAnimation(holder.typingDot1, holder.typingDot2, holder.typingDot3)
-                    startEllipsisAnimation(holder.downloadingText, "Downloading")
-                }
+            else -> {
+                // Fallback: show lock icon
+                holder.downloadButton.visibility = View.VISIBLE
+                holder.downloadingText.visibility = View.GONE
+                holder.typingIndicator.visibility = View.GONE
+                stopEllipsisAnimation(holder.downloadingText)
+                stopTypingAnimation(holder.typingDot1, holder.typingDot2, holder.typingDot3)
             }
         }
 
@@ -734,8 +741,8 @@ class MessageAdapter(
         // Handle selection mode for pending messages
         if (isSelectionMode) {
             holder.messageCheckbox.visibility = View.VISIBLE
-            // Use pingId directly as identifier (much simpler and more reliable!)
-            val pingIdStr = "ping:" + pendingPing.pingId  // Prefix to distinguish from message IDs
+            // Use pingId directly as identifier
+            val pingIdStr = "ping:" + pingInbox.pingId
             val isPendingSelected = selectedMessages.contains(pingIdStr)
             holder.messageCheckbox.isChecked = isPendingSelected
 
@@ -773,7 +780,7 @@ class MessageAdapter(
             holder.downloadButton.setOnClickListener {
                 holder.downloadButton.visibility = View.GONE
                 holder.downloadingText.visibility = View.VISIBLE
-                onDownloadClick?.invoke(pendingPing.pingId)  // Pass specific ping ID
+                onDownloadClick?.invoke(pingInbox.pingId)  // Pass specific ping ID
             }
         }
 
@@ -1456,13 +1463,13 @@ class MessageAdapter(
         val currentItem = getItem(position)
         val currentTimestamp = when (currentItem) {
             is ChatListItem.MessageItem -> currentItem.message.timestamp
-            is ChatListItem.PendingPingItem -> currentItem.ping.timestamp
+            is ChatListItem.PendingPingItem -> currentItem.pingInbox.firstSeenAt
         }
 
         val previousItem = getItem(position - 1)
         val previousTimestamp = when (previousItem) {
             is ChatListItem.MessageItem -> previousItem.message.timestamp
-            is ChatListItem.PendingPingItem -> previousItem.ping.timestamp
+            is ChatListItem.PendingPingItem -> previousItem.pingInbox.firstSeenAt
         }
 
         // Show header if date changed
@@ -1567,7 +1574,7 @@ class MessageAdapter(
 
     fun updateMessages(
         newMessages: List<Message>,
-        newPendingPings: List<com.securelegion.models.PendingPing> = emptyList(),
+        newPendingPings: List<com.securelegion.database.entities.PingInbox> = emptyList(),
         newDownloadingPingIds: Set<String> = emptySet(),
         newAutoPongPingIds: Set<String> = emptySet()
     ) {
@@ -1583,18 +1590,17 @@ class MessageAdapter(
         autoPongPingIds = newAutoPongPingIds
 
         // Build combined list of ChatListItem objects for DiffUtil to process atomically
-        // This replaces all the manual notify logic - DiffUtil computes the optimal diff
         val combinedList = mutableListOf<ChatListItem>()
 
         // Add all messages
         combinedList.addAll(newMessages.map { ChatListItem.MessageItem(it) })
 
-        // Add all pending pings with their download states
-        combinedList.addAll(newPendingPings.map { ping ->
+        // Add all pending pings with their download states (from ping_inbox DB)
+        combinedList.addAll(newPendingPings.map { pingInbox ->
             ChatListItem.PendingPingItem(
-                ping = ping,
-                isDownloading = ping.pingId in newDownloadingPingIds,
-                isAutoDownloading = ping.pingId in newAutoPongPingIds
+                pingInbox = pingInbox,
+                isDownloading = pingInbox.pingId in newDownloadingPingIds,
+                isAutoDownloading = pingInbox.pingId in newAutoPongPingIds
             )
         })
 

@@ -406,16 +406,27 @@ class SplashActivity : AppCompatActivity() {
 
     private fun waitForBootstrap() {
         Thread {
-            val maxAttempts = 480 // 120 seconds max at 4 polls/sec (allows time for descriptor uploads)
+            // Bridge connections are much slower (especially on throttled networks like Iran ~500kbps)
+            // Use extended timeouts when bridges are configured to avoid premature restarts
+            val torSettings = getSharedPreferences("tor_settings", MODE_PRIVATE)
+            val bridgeType = torSettings.getString("bridge_type", "none") ?: "none"
+            val usingBridges = bridgeType != "none"
+            val sdkInt = android.os.Build.VERSION.SDK_INT
+
+            val maxAttempts = if (usingBridges) 1200 else 480 // 5 min with bridges, 120s without (at 250ms/poll)
             var attempts = 0
             var bootstrapComplete = false
 
             // Track progress to detect truly stuck state
             var lastProgressStatus = -999
             var stuckCounter = 0
-            // Faster restart on slow devices: 12s for Android < 13, 15s for newer
-            val sdkInt = android.os.Build.VERSION.SDK_INT
-            val maxStuckAttempts = if (sdkInt < 33) 48 else 60 // 12s vs 15s at 250ms intervals
+            val maxStuckAttempts = if (usingBridges) {
+                1200 // 300s (5 min) at 250ms intervals — bridges on slow networks need extended time
+            } else if (sdkInt < 33) {
+                48 // 12s for older Android without bridges
+            } else {
+                60 // 15s for newer Android without bridges
+            }
 
             // Check if this is first-time setup (no account/keys exist yet)
             val keyManager = KeyManager.getInstance(this@SplashActivity)

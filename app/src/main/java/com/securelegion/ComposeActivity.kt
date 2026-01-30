@@ -13,6 +13,9 @@ import android.widget.EditText
 import android.widget.ImageView
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
@@ -92,6 +95,15 @@ class ComposeActivity : BaseActivity() {
                 @Suppress("DEPRECATION")
                 overridePendingTransition(0, 0)
             }
+        }
+
+        // Handle system bar insets for bottom nav
+        WindowCompat.setDecorFitsSystemWindows(window, false)
+        val bottomNav = findViewById<View>(R.id.bottomNav)
+        ViewCompat.setOnApplyWindowInsetsListener(findViewById(android.R.id.content)) { _, windowInsets ->
+            val insets = windowInsets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())
+            bottomNav.setPadding(bottomNav.paddingLeft, bottomNav.paddingTop, bottomNav.paddingRight, insets.bottom)
+            windowInsets
         }
 
         // Bottom navigation

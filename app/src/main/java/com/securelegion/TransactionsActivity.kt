@@ -6,6 +6,9 @@ import android.os.Handler
 import android.os.Looper
 import android.view.View
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
 import com.securelegion.utils.ThemedToast
 // import com.securelegion.utils.finishWithSlideAnimation
@@ -81,6 +84,14 @@ class TransactionsActivity : AppCompatActivity() {
     }
 
     private fun setupBottomNav() {
+        WindowCompat.setDecorFitsSystemWindows(window, false)
+        val bottomNav = findViewById<View>(R.id.bottomNav)
+        ViewCompat.setOnApplyWindowInsetsListener(findViewById(android.R.id.content)) { _, windowInsets ->
+            val insets = windowInsets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())
+            bottomNav.setPadding(bottomNav.paddingLeft, bottomNav.paddingTop, bottomNav.paddingRight, insets.bottom)
+            windowInsets
+        }
+
         findViewById<View>(R.id.navMessages).setOnClickListener {
             val intent = Intent(this, MainActivity::class.java)
             startActivity(intent)

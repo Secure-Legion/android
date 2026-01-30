@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Deposit: downward arrow into a tray/vault -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+
+    <!-- Down arrow -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M12,3 L12,15 M12,15 L7,10 M12,15 L17,10"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="2"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"/>
+
+    <!-- Tray/container bottom -->
+    <path
+        android:pathData="M5,17 L5,19 C5,20.1 5.9,21 7,21 L17,21 C18.1,21 19,20.1 19,19 L19,17"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="2"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:fillColor="#00000000"/>
+</vector>

@@ -1,0 +1,224 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- ShadowWire Action Dialog (Deposit, Withdraw, Private Send, Anon Send) -->
+<LinearLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:background="@drawable/bottom_sheet_bg"
+    android:paddingStart="24dp"
+    android:paddingEnd="24dp"
+    android:paddingTop="8dp"
+    android:paddingBottom="24dp">
+
+    <!-- Handle Bar -->
+    <View
+        android:layout_width="60dp"
+        android:layout_height="5dp"
+        android:layout_gravity="center_horizontal"
+        android:background="#4A4A4A"
+        android:layout_marginBottom="16dp" />
+
+    <!-- Title -->
+    <TextView
+        android:id="@+id/dialogTitle"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Deposit"
+        android:textSize="22sp"
+        android:textColor="#FFFFFF"
+        android:fontFamily="@font/space_grotesk_bold"
+        android:layout_marginBottom="20dp" />
+
+    <!-- Recipient Address Input (hidden for deposit/withdraw) -->
+    <LinearLayout
+        android:id="@+id/recipientContainer"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:layout_marginBottom="16dp"
+        android:visibility="gone">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Recipient Address"
+            android:textSize="13sp"
+            android:textColor="#888888"
+            android:fontFamily="@font/poppins_medium"
+            android:layout_marginBottom="6dp" />
+
+        <EditText
+            android:id="@+id/recipientInput"
+            android:layout_width="match_parent"
+            android:layout_height="48dp"
+            android:background="@drawable/edit_text_bg"
+            android:textColor="#FFFFFF"
+            android:textColorHint="#555555"
+            android:hint="Solana wallet address"
+            android:textSize="14sp"
+            android:fontFamily="@font/poppins_regular"
+            android:paddingStart="16dp"
+            android:paddingEnd="16dp"
+            android:inputType="text"
+            android:maxLines="1"
+            android:singleLine="true" />
+
+    </LinearLayout>
+
+    <!-- Amount Input -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:layout_marginBottom="16dp">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:layout_marginBottom="6dp">
+
+            <TextView
+                android:id="@+id/amountLabel"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="Amount (SOL)"
+                android:textSize="13sp"
+                android:textColor="#888888"
+                android:fontFamily="@font/poppins_medium" />
+
+            <TextView
+                android:id="@+id/currencyToggleLabel"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="SOL"
+                android:textSize="12sp"
+                android:textColor="#888888"
+                android:fontFamily="@font/poppins_medium"
+                android:layout_marginEnd="6dp" />
+
+            <ImageView
+                android:id="@+id/currencyToggle"
+                android:layout_width="20dp"
+                android:layout_height="20dp"
+                android:src="@drawable/ic_swap"
+                android:tint="#888888"
+                android:clickable="true"
+                android:focusable="true"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:contentDescription="Toggle currency" />
+
+        </LinearLayout>
+
+        <EditText
+            android:id="@+id/amountInput"
+            android:layout_width="match_parent"
+            android:layout_height="48dp"
+            android:background="@drawable/edit_text_bg"
+            android:textColor="#FFFFFF"
+            android:textColorHint="#555555"
+            android:hint="0.00"
+            android:textSize="14sp"
+            android:fontFamily="@font/poppins_regular"
+            android:paddingStart="16dp"
+            android:paddingEnd="16dp"
+            android:inputType="numberDecimal"
+            android:maxLines="1"
+            android:singleLine="true" />
+
+    </LinearLayout>
+
+    <!-- Fee Display -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:background="@drawable/wallet_token_bg"
+        android:padding="14dp"
+        android:layout_marginBottom="20dp">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:layout_marginBottom="6dp">
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="Fee (0.5%)"
+                android:textSize="13sp"
+                android:textColor="#888888"
+                android:fontFamily="@font/poppins_regular" />
+
+            <TextView
+                android:id="@+id/feeAmount"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="0.000 SOL"
+                android:textSize="13sp"
+                android:textColor="#888888"
+                android:fontFamily="@font/poppins_medium" />
+
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal">
+
+            <TextView
+                android:id="@+id/netLabel"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="You receive"
+                android:textSize="13sp"
+                android:textColor="#AAAAAA"
+                android:fontFamily="@font/poppins_regular" />
+
+            <TextView
+                android:id="@+id/netAmount"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="0.000 SOL"
+                android:textSize="13sp"
+                android:textColor="#FFFFFF"
+                android:fontFamily="@font/poppins_medium" />
+
+        </LinearLayout>
+
+    </LinearLayout>
+
+    <!-- Confirm Button -->
+    <FrameLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="12dp">
+
+        <androidx.appcompat.widget.AppCompatButton
+            android:id="@+id/confirmButton"
+            android:layout_width="match_parent"
+            android:layout_height="56dp"
+            android:background="@drawable/wallet_action_button_bg"
+            android:fontFamily="@font/poppins_semibold"
+            android:text="Confirm"
+            android:textAllCaps="false"
+            android:textColor="@color/text_white"
+            android:textSize="16sp" />
+
+        <ProgressBar
+            android:id="@+id/progressBar"
+            android:layout_width="24dp"
+            android:layout_height="24dp"
+            android:layout_gravity="center"
+            android:visibility="gone"
+            android:indeterminateTint="#FFFFFF" />
+
+    </FrameLayout>
+
+</LinearLayout>

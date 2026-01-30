@@ -467,7 +467,7 @@ object RustBridge {
      * Voice Tor runs with Single Onion Service configuration for reduced latency
      * @return Status message
      */
-    external fun initializeVoiceTorControl(): String
+    external fun initializeVoiceTorControl(cookiePath: String): String
 
     /**
      * Create a hidden service and get the .onion address

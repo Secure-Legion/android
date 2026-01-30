@@ -10,7 +10,7 @@
     android:clickable="true"
     android:focusable="true">
 
-    <!-- Wallet Icon -->
+    <!-- Chain Icon -->
     <FrameLayout
         android:id="@+id/walletIconFrame"
         android:layout_width="48dp"
@@ -23,7 +23,7 @@
             android:layout_width="24dp"
             android:layout_height="24dp"
             android:layout_gravity="center"
-            android:src="@drawable/ic_wallet" />
+            android:src="@drawable/ic_solana" />
     </FrameLayout>
 
     <!-- Wallet Info -->
@@ -53,18 +53,7 @@
 
     </LinearLayout>
 
-    <!-- Address Preview -->
-    <TextView
-        android:id="@+id/walletAddress"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="ADm9P.....2eoLX5"
-        android:textSize="12sp"
-        android:textColor="#888888"
-        android:fontFamily="@font/poppins_regular"
-        android:layout_marginEnd="12dp" />
-
-    <!-- Edit Button with Background -->
+    <!-- Balance Toggle Button -->
     <FrameLayout
         android:id="@+id/walletSettingsBtn"
         android:layout_width="42dp"
@@ -74,12 +63,13 @@
         android:focusable="true">
 
         <ImageView
+            android:id="@+id/walletToggleIcon"
             android:layout_width="20dp"
             android:layout_height="20dp"
             android:layout_gravity="center"
-            android:src="@android:drawable/ic_menu_edit"
+            android:src="@drawable/ic_swap"
             android:tint="#888888"
-            android:contentDescription="Edit" />
+            android:contentDescription="Toggle balance display" />
     </FrameLayout>
 
 </LinearLayout>

@@ -6,16 +6,22 @@ import androidx.room.Index
 /**
  * Persistent ping inbox for tracking message delivery state
  *
- * This table provides idempotent state tracking over Tor:
- * - PING_SEEN (0): Received notification, sent PING_ACK
- * - PONG_SENT (1): User authorized download, sent PONG
- * - MSG_STORED (2): Message stored in DB, sent MESSAGE_ACK
+ * State machine (existing states unchanged, new states added above max):
+ *
+ * Manual path:  PING_SEEN (0) → PONG_SENT (1) → MSG_STORED (2)
+ * Auto path:    PING_SEEN (0) → DOWNLOAD_QUEUED (10) → PONG_SENT (1) → MSG_STORED (2)
+ * Auto failure: DOWNLOAD_QUEUED (10) → FAILED_TEMP (11) → DOWNLOAD_QUEUED (10) [retry]
+ *               FAILED_TEMP (11) → MANUAL_REQUIRED (12) [retries exhausted, show lock icon]
+ *               MANUAL_REQUIRED (12) → DOWNLOAD_QUEUED (10) [user tapped lock]
+ *
+ * Watchdog: DOWNLOAD_QUEUED older than 5 min → FAILED_TEMP (process died)
  *
  * Benefits:
- * - Survives app restarts
- * - Prevents duplicate notifications
- * - Prevents ghost lock icons
+ * - Survives app restarts (no SharedPreferences state)
+ * - Prevents duplicate notifications via atomic claims
+ * - Prevents ghost lock icons via DB-driven UI
  * - Separates PING_ACK ("I saw it") from MESSAGE_ACK ("I stored it")
+ * - Single source of truth for all download/indicator state
  */
 @Entity(
     tableName = "ping_inbox",
@@ -85,12 +91,24 @@ data class PingInbox(
      * Format: [type_byte][sender_x25519_pubkey (32 bytes)][encrypted_payload]
      * Null after message is successfully downloaded (STATE_MSG_STORED)
      */
-    val pingWireBytesBase64: String? = null
+    val pingWireBytesBase64: String? = null,
+
+    /**
+     * When this ping was claimed for auto-download (state → DOWNLOAD_QUEUED)
+     * Used by watchdog to release stuck claims (process died mid-download)
+     * Null when not in DOWNLOAD_QUEUED state
+     */
+    val downloadQueuedAt: Long? = null
 ) {
     companion object {
-        // State constants (Int for performance)
+        // Existing states (unchanged)
         const val STATE_PING_SEEN = 0    // PING received, PING_ACK sent
         const val STATE_PONG_SENT = 1    // User authorized, PONG sent
         const val STATE_MSG_STORED = 2   // Message in DB, MESSAGE_ACK sent
+
+        // New states (added above existing max — no renumbering)
+        const val STATE_DOWNLOAD_QUEUED = 10   // Claimed for auto-download
+        const val STATE_FAILED_TEMP = 11       // Auto-download failed, will retry
+        const val STATE_MANUAL_REQUIRED = 12   // Retries exhausted, show lock icon once
     }
 }

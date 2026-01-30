@@ -768,7 +768,7 @@ class SolanaService(private val context: Context) {
     /**
      * Broadcast signed transaction to blockchain
      */
-    private suspend fun broadcastTransaction(base64Transaction: String): Result<String> {
+    internal suspend fun broadcastTransaction(base64Transaction: String): Result<String> {
         try {
             val rpcRequest = JSONObject().apply {
                 put("jsonrpc", "2.0")
@@ -807,6 +807,14 @@ class SolanaService(private val context: Context) {
                     val error = jsonResponse.getJSONObject("error")
                     val errorMessage = error.optString("message", "Unknown error")
                     Log.e(TAG, "Broadcast error: $errorMessage")
+                    // Extract simulation logs if available
+                    val data = error.optJSONObject("data")
+                    val logs = data?.optJSONArray("logs")
+                    if (logs != null) {
+                        for (i in 0 until logs.length()) {
+                            Log.e(TAG, "  TX log[$i]: ${logs.optString(i)}")
+                        }
+                    }
                     return Result.failure(IOException("Transaction failed: $errorMessage"))
                 }
 
@@ -824,7 +832,7 @@ class SolanaService(private val context: Context) {
     /**
      * Get recent blockhash for transactions
      */
-    private suspend fun getRecentBlockhash(): Result<String> {
+    internal suspend fun getRecentBlockhash(): Result<String> {
         try {
             val rpcRequest = JSONObject().apply {
                 put("jsonrpc", "2.0")

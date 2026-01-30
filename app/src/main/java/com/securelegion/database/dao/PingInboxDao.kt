@@ -36,11 +36,25 @@ interface PingInboxDao {
     suspend fun getPendingByContact(contactId: Long, msgStoredState: Int = PingInbox.STATE_MSG_STORED): List<PingInbox>
 
     /**
-     * Count pending locks for a contact (not yet MSG_STORED)
-     * Micro-optimization: faster than fetching full rows when only checking if pending exist
+     * Get pings that need UI rendering for a contact.
+     * Only returns states that should show a row in chat:
+     *   PING_SEEN(0), DOWNLOAD_QUEUED(10), FAILED_TEMP(11), MANUAL_REQUIRED(12)
+     * Excludes PONG_SENT(1) and MSG_STORED(2) to prevent message+downloading overlap.
      */
-    @Query("SELECT COUNT(*) FROM ping_inbox WHERE contactId = :contactId AND state < :msgStoredState")
-    suspend fun countPendingByContact(contactId: Long, msgStoredState: Int = PingInbox.STATE_MSG_STORED): Int
+    @Query("""
+        SELECT * FROM ping_inbox
+        WHERE contactId = :contactId
+        AND state IN (${PingInbox.STATE_PING_SEEN}, ${PingInbox.STATE_DOWNLOAD_QUEUED}, ${PingInbox.STATE_FAILED_TEMP}, ${PingInbox.STATE_MANUAL_REQUIRED})
+        ORDER BY firstSeenAt ASC
+    """)
+    suspend fun getRenderableByContact(contactId: Long): List<PingInbox>
+
+    /**
+     * Count pending locks for a contact (not yet MSG_STORED)
+     * Uses != instead of state < 2 to handle new states (10, 11, 12) correctly
+     */
+    @Query("SELECT COUNT(*) FROM ping_inbox WHERE contactId = :contactId AND state != ${PingInbox.STATE_MSG_STORED}")
+    suspend fun countPendingByContact(contactId: Long): Int
 
     /**
      * Get all pending locks across all contacts
@@ -63,32 +77,32 @@ interface PingInboxDao {
     suspend fun updatePingRetry(pingId: String, timestamp: Long, msgStoredState: Int = PingInbox.STATE_MSG_STORED): Int
 
     /**
-     * Transition to PONG_SENT state (user authorized download)
-     * MONOTONIC GUARD: Only transitions forward (state < PONG_SENT)
+     * Transition to PONG_SENT state (user authorized download or auto-download sent PONG)
+     * Accepts from both manual path (PING_SEEN=0) and auto path (DOWNLOAD_QUEUED=10)
+     * Clears downloadQueuedAt since we're past the claim phase
      */
     @Query("""
         UPDATE ping_inbox
-        SET state = :pongSentState,
+        SET state = ${PingInbox.STATE_PONG_SENT},
             lastUpdatedAt = :timestamp,
-            pongSentAt = :timestamp
+            pongSentAt = :timestamp,
+            downloadQueuedAt = NULL
         WHERE pingId = :pingId
-        AND state < :pongSentState
+        AND state IN (${PingInbox.STATE_PING_SEEN}, ${PingInbox.STATE_DOWNLOAD_QUEUED})
     """)
-    suspend fun transitionToPongSent(
-        pingId: String,
-        timestamp: Long,
-        pongSentState: Int = PingInbox.STATE_PONG_SENT
-    ): Int
+    suspend fun transitionToPongSent(pingId: String, timestamp: Long): Int
 
     /**
      * Transition to MSG_STORED state (message saved to DB)
      * MONOTONIC GUARD: Only transitions forward (state < MSG_STORED)
+     * Clears downloadQueuedAt to prevent stale timestamps after success
      */
     @Query("""
         UPDATE ping_inbox
         SET state = :msgStoredState,
             lastUpdatedAt = :timestamp,
-            msgAckedAt = :timestamp
+            msgAckedAt = :timestamp,
+            downloadQueuedAt = NULL
         WHERE pingId = :pingId
         AND state < :msgStoredState
     """)
@@ -131,6 +145,187 @@ interface PingInboxDao {
     @Query("SELECT EXISTS(SELECT 1 FROM ping_inbox WHERE pingId = :pingId LIMIT 1)")
     suspend fun exists(pingId: String): Boolean
 
+    // ═══════════════════════════════════════════════════════════════
+    // Manual download claim (user tapped lock icon)
+    // ═══════════════════════════════════════════════════════════════
+
+    /**
+     * Atomically claim a ping for manual download (user tapped lock icon).
+     * Phase 1: accepts PING_SEEN and MANUAL_REQUIRED only.
+     * FAILED_TEMP excluded to avoid collision with retry worker.
+     * Returns 1 if claimed, 0 if already in DOWNLOAD_QUEUED/PONG_SENT/MSG_STORED.
+     */
+    @Query("""
+        UPDATE ping_inbox
+        SET state = ${PingInbox.STATE_DOWNLOAD_QUEUED},
+            downloadQueuedAt = :now,
+            lastUpdatedAt = :now
+        WHERE pingId = :pingId
+        AND state IN (${PingInbox.STATE_PING_SEEN}, ${PingInbox.STATE_MANUAL_REQUIRED})
+    """)
+    suspend fun claimForManualDownload(pingId: String, now: Long): Int
+
+    // ═══════════════════════════════════════════════════════════════
+    // Auto-download claim methods (atomic DB-as-lock pattern)
+    // ═══════════════════════════════════════════════════════════════
+
+    /**
+     * Atomically claim a PING_SEEN for auto-download
+     * Returns 1 if claimed, 0 if already claimed or in different state
+     * Sets downloadQueuedAt for watchdog stuck-claim detection
+     */
+    @Query("""
+        UPDATE ping_inbox
+        SET state = ${PingInbox.STATE_DOWNLOAD_QUEUED},
+            downloadQueuedAt = :now,
+            lastUpdatedAt = :now
+        WHERE pingId = :pingId
+        AND state = ${PingInbox.STATE_PING_SEEN}
+    """)
+    suspend fun claimForAutoDownload(pingId: String, now: Long): Int
+
+    /**
+     * Reclaim a FAILED_TEMP ping for retry
+     * Returns 1 if reclaimed, 0 if state changed since check
+     * Resets downloadQueuedAt for fresh watchdog window
+     */
+    @Query("""
+        UPDATE ping_inbox
+        SET state = ${PingInbox.STATE_DOWNLOAD_QUEUED},
+            downloadQueuedAt = :now,
+            lastUpdatedAt = :now
+        WHERE pingId = :pingId
+        AND state = ${PingInbox.STATE_FAILED_TEMP}
+    """)
+    suspend fun reclaimForRetry(pingId: String, now: Long): Int
+
+    /**
+     * Reclaim a MANUAL_REQUIRED ping (user tapped lock icon to retry)
+     * Returns 1 if reclaimed, 0 if state changed since check
+     * Resets downloadQueuedAt for fresh watchdog window
+     */
+    @Query("""
+        UPDATE ping_inbox
+        SET state = ${PingInbox.STATE_DOWNLOAD_QUEUED},
+            downloadQueuedAt = :now,
+            lastUpdatedAt = :now
+        WHERE pingId = :pingId
+        AND state = ${PingInbox.STATE_MANUAL_REQUIRED}
+    """)
+    suspend fun reclaimFromManual(pingId: String, now: Long): Int
+
+    /**
+     * Atomic failure decision: DOWNLOAD_QUEUED/PONG_SENT → FAILED_TEMP or MANUAL_REQUIRED
+     * Single SQL CASE avoids two-update race window
+     * Clears downloadQueuedAt to prevent stale watchdog triggers
+     * Increments attemptCount for retry tracking
+     * Accepts PONG_SENT so timeout after pong-sent also resolves correctly
+     * Returns 1 if updated, 0 if not in expected state
+     */
+    @Query("""
+        UPDATE ping_inbox
+        SET state = CASE
+                WHEN attemptCount + 1 >= :maxRetries THEN ${PingInbox.STATE_MANUAL_REQUIRED}
+                ELSE ${PingInbox.STATE_FAILED_TEMP}
+            END,
+            attemptCount = attemptCount + 1,
+            downloadQueuedAt = NULL,
+            lastUpdatedAt = :now
+        WHERE pingId = :pingId
+        AND state IN (${PingInbox.STATE_DOWNLOAD_QUEUED}, ${PingInbox.STATE_PONG_SENT})
+    """)
+    suspend fun failAutoDownload(pingId: String, now: Long, maxRetries: Int): Int
+
+    /**
+     * Get current state for a ping
+     * Returns null if ping doesn't exist
+     */
+    @Query("SELECT state FROM ping_inbox WHERE pingId = :pingId")
+    suspend fun getState(pingId: String): Int?
+
+    /**
+     * Get state and attempt count in a single round trip
+     * Useful for failure gating decisions after failAutoDownload()
+     */
+    @Query("SELECT state, attemptCount FROM ping_inbox WHERE pingId = :pingId")
+    suspend fun getStateAndAttempts(pingId: String): PingStateSnapshot?
+
+    // ═══════════════════════════════════════════════════════════════
+    // Watchdog and retry worker methods
+    // ═══════════════════════════════════════════════════════════════
+
+    /**
+     * Release stuck DOWNLOAD_QUEUED claims (process died mid-download)
+     * Smart release: if attempts near max → MANUAL_REQUIRED, else → FAILED_TEMP
+     * Increments attemptCount to prevent infinite churn on persistent failures
+     * Clears downloadQueuedAt so released rows aren't re-caught by watchdog
+     */
+    @Query("""
+        UPDATE ping_inbox
+        SET state = CASE
+                WHEN attemptCount + 1 >= :maxRetries THEN ${PingInbox.STATE_MANUAL_REQUIRED}
+                ELSE ${PingInbox.STATE_FAILED_TEMP}
+            END,
+            attemptCount = attemptCount + 1,
+            downloadQueuedAt = NULL,
+            lastUpdatedAt = :now
+        WHERE state = ${PingInbox.STATE_DOWNLOAD_QUEUED}
+        AND downloadQueuedAt < :stuckCutoff
+    """)
+    suspend fun releaseStuckClaims(stuckCutoff: Long, now: Long, maxRetries: Int): Int
+
+    /**
+     * Get FAILED_TEMP pings eligible for retry (ordered oldest first)
+     * Call site must filter by trusted contacts before enqueuing
+     */
+    @Query("""
+        SELECT * FROM ping_inbox
+        WHERE state = ${PingInbox.STATE_FAILED_TEMP}
+        ORDER BY lastUpdatedAt ASC
+    """)
+    suspend fun getRetryablePings(): List<PingInbox>
+
+    /**
+     * Get unclaimed PING_SEEN entries (cap-hit arrivals or missed by auto-download)
+     * Call site MUST filter by trusted contacts before claiming (spam vector otherwise)
+     */
+    @Query("""
+        SELECT * FROM ping_inbox
+        WHERE state = ${PingInbox.STATE_PING_SEEN}
+        ORDER BY firstSeenAt ASC
+    """)
+    suspend fun getUnclaimedPingSeen(): List<PingInbox>
+
+    // ═══════════════════════════════════════════════════════════════
+    // Pressure cap methods (states 0 + 10 + 11 = total pending pressure)
+    // ═══════════════════════════════════════════════════════════════
+
+    /**
+     * Count global pending pressure across all contacts
+     * Includes PING_SEEN (0) + DOWNLOAD_QUEUED (10) + FAILED_TEMP (11)
+     * Does NOT include MANUAL_REQUIRED (12) — user already notified
+     */
+    @Query("""
+        SELECT COUNT(*) FROM ping_inbox
+        WHERE state IN (${PingInbox.STATE_PING_SEEN}, ${PingInbox.STATE_DOWNLOAD_QUEUED}, ${PingInbox.STATE_FAILED_TEMP})
+    """)
+    suspend fun countGlobalPending(): Int
+
+    /**
+     * Count pending pressure for a specific contact
+     * Includes PING_SEEN (0) + DOWNLOAD_QUEUED (10) + FAILED_TEMP (11)
+     */
+    @Query("""
+        SELECT COUNT(*) FROM ping_inbox
+        WHERE contactId = :contactId
+        AND state IN (${PingInbox.STATE_PING_SEEN}, ${PingInbox.STATE_DOWNLOAD_QUEUED}, ${PingInbox.STATE_FAILED_TEMP})
+    """)
+    suspend fun countPendingByContactAll(contactId: Long): Int
+
+    // ═══════════════════════════════════════════════════════════════
+    // Cleanup methods
+    // ═══════════════════════════════════════════════════════════════
+
     /**
      * Delete old completed pings (cleanup)
      * Only deletes MSG_STORED entries older than cutoff
@@ -159,8 +354,22 @@ interface PingInboxDao {
     suspend fun delete(pingId: String): Int
 
     /**
+     * Delete all pings for a specific contact (thread deletion)
+     */
+    @Query("DELETE FROM ping_inbox WHERE contactId = :contactId")
+    suspend fun deleteByContact(contactId: Long): Int
+
+    /**
      * Delete all (testing/debugging)
      */
     @Query("DELETE FROM ping_inbox")
     suspend fun deleteAll()
 }
+
+/**
+ * Projection for getStateAndAttempts() — avoids loading the full PingInbox row
+ */
+data class PingStateSnapshot(
+    val state: Int,
+    val attemptCount: Int
+)

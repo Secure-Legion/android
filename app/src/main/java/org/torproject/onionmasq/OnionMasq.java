@@ -40,6 +40,7 @@ import java.util.ArrayList;
 
 import IPtProxy.Controller;
 import IPtProxy.IPtProxy;
+import IPtProxy.OnTransportEvents;
 
 public class OnionMasq {
 
@@ -172,8 +173,25 @@ public class OnionMasq {
 
     private Controller initializeController(Context context)  {
         File ptDir = new File(context.getFilesDir().getAbsolutePath(), "pt_state");
-        return IPtProxy.newController(ptDir.getAbsolutePath(), true, false, "DEBUG", (name, error) -> {
-            Log.e(TAG, "IPtProxy transport: " + name + " error: " + error);
+        return IPtProxy.newController(ptDir.getAbsolutePath(), true, false, "DEBUG", new OnTransportEvents() {
+            @Override
+            public void stopped(String name, Exception error) {
+                if (error != null) {
+                    Log.e(TAG, "IPtProxy transport stopped: " + name + " error: " + error.getMessage());
+                } else {
+                    Log.i(TAG, "IPtProxy transport stopped: " + name);
+                }
+            }
+
+            @Override
+            public void error(String name, Exception error) {
+                Log.e(TAG, "IPtProxy transport error: " + name + " - " + (error != null ? error.getMessage() : "unknown"));
+            }
+
+            @Override
+            public void connected(String name) {
+                Log.i(TAG, "IPtProxy transport connected: " + name);
+            }
         });
     }
 

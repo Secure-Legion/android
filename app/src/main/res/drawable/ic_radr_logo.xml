@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="280"
+    android:viewportHeight="294">
+
+    <!-- RADR orange mark -->
+    <path
+        android:fillColor="#FF7A1A"
+        android:pathData="M155.47,116.47L155.47,116.48L147.51,163.21L146.88,166.92L140.03,168.69L140.03,168.71L140.02,168.71L27.52,197.91L37.54,139.1L71.23,130.34L140.03,112.46Z"/>
+    <path
+        android:fillColor="#FF7A1A"
+        android:pathData="M139.4,225.09L139.39,225.09L136.86,225.75L89.57,238.04L71.91,242.62L93.03,258.39L94.56,259.53L126.98,283.76L140.03,293.5L185.5,259.53L140.03,225.57Z"/>
+    <path
+        android:fillColor="#FF7A1A"
+        android:pathData="M226.92,21.74L226.91,21.73L173.87,8.46L140.03,0L52.88,22.63L0,36.37L9.18,90.22L62.06,76.48L140.03,56.23L164.64,62.62L217.61,76.38L208.44,130.23L199.81,180.9L196.51,183.37L185.5,191.6L196.58,199.88L206.87,207.57L230.97,225.57L249.81,211.49L252.15,197.81L252.5,195.72L261.32,143.96L263.07,133.65L263.07,133.64L270.49,90.11L279.87,34.98Z"/>
+</vector>

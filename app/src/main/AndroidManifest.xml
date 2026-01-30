@@ -114,6 +114,15 @@
             android:exported="false" />
 
         <activity
+            android:name=".ShadowWireActivity"
+            android:exported="false"
+            android:windowSoftInputMode="adjustPan" />
+
+        <activity
+            android:name=".PoolActivityActivity"
+            android:exported="false" />
+
+        <activity
             android:name=".QRScannerActivity"
             android:exported="false"
             android:screenOrientation="portrait" />

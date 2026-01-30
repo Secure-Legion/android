@@ -8,6 +8,9 @@ import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.TextView
 import androidx.appcompat.app.AlertDialog
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
@@ -310,6 +313,14 @@ class GroupMembersActivity : BaseActivity() {
 
 
     private fun setupBottomNav() {
+        WindowCompat.setDecorFitsSystemWindows(window, false)
+        val bottomNav = findViewById<View>(R.id.bottomNav)
+        ViewCompat.setOnApplyWindowInsetsListener(findViewById(android.R.id.content)) { _, windowInsets ->
+            val insets = windowInsets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())
+            bottomNav?.setPadding(bottomNav.paddingLeft, bottomNav.paddingTop, bottomNav.paddingRight, insets.bottom)
+            windowInsets
+        }
+
         // Messages
         findViewById<View>(R.id.navMessages)?.setOnClickListener {
             val intent = Intent(this, MainActivity::class.java)

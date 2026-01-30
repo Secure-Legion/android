@@ -13,6 +13,9 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
 import com.securelegion.crypto.KeyManager
 import com.securelegion.database.SecureLegionDatabase
 import com.securelegion.utils.ThemedToast
@@ -357,9 +360,8 @@ class ContactOptionsActivity : BaseActivity() {
                             Log.w(TAG, "Non-critical error during contact list backup", e)
                         }
 
-                        // Clear any pending Pings for this contact (using new queue format)
-                        val prefs = getSharedPreferences("pending_pings", MODE_PRIVATE)
-                        com.securelegion.models.PendingPing.clearQueueForContact(prefs, contact.id)
+                        // Delete all ping_inbox entries for this contact
+                        database.pingInboxDao().deleteByContact(contact.id)
 
                         Log.i(TAG, "Contact and all messages securely deleted (DOD 3-pass): ${contact.displayName}")
                         Log.i(TAG, "Pending Pings cleared for contact ${contact.id} (if any)")
@@ -383,6 +385,14 @@ class ContactOptionsActivity : BaseActivity() {
     }
 
     private fun setupBottomNav() {
+        WindowCompat.setDecorFitsSystemWindows(window, false)
+        val bottomNav = findViewById<View>(R.id.bottomNav)
+        ViewCompat.setOnApplyWindowInsetsListener(findViewById(android.R.id.content)) { _, windowInsets ->
+            val insets = windowInsets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())
+            bottomNav.setPadding(bottomNav.paddingLeft, bottomNav.paddingTop, bottomNav.paddingRight, insets.bottom)
+            windowInsets
+        }
+
         findViewById<View>(R.id.navMessages).setOnClickListener {
             val intent = Intent(this, MainActivity::class.java)
             intent.flags = Intent.FLAG_ACTIVITY_CLEAR_TOP

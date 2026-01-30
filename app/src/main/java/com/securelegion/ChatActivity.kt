@@ -115,6 +115,13 @@ class ChatActivity : BaseActivity() {
     // Track pings that are being auto-downloaded (hide from UI for seamless experience)
     private val autoPongPingIds = mutableSetOf<String>()
 
+    // Lazy DB reference — avoids reconstructing KeyManager + passphrase on every call
+    private val database by lazy {
+        val keyManager = KeyManager.getInstance(this)
+        val dbPassphrase = keyManager.getDatabasePassphrase()
+        SecureLegionDatabase.getInstance(this, dbPassphrase)
+    }
+
     // Debouncing for loadMessages() to prevent rapid refresh bursts (coalesce within 150ms)
     private val loadMessagesHandler = Handler(Looper.getMainLooper())
     private var pendingLoadMessagesRunnable: Runnable? = null
@@ -215,16 +222,18 @@ class ChatActivity : BaseActivity() {
                     Log.d(TAG, "NEW_PING broadcast: received contactId=$receivedContactId, current contactId=$contactId")
 
                     if (receivedContactId == contactId) {
-                        // NEW_PING for current contact
-                        // Check if pending pings exist - if cleared during download, allow refresh (using new queue format)
-                        val prefs = getSharedPreferences("pending_pings", MODE_PRIVATE)
-                        val pendingPings = com.securelegion.models.PendingPing.loadQueueForContact(prefs, contactId)
-                        val hasPendingPing = pendingPings.isNotEmpty()
+                        // NEW_PING for current contact — check DB for pending pings
+                        val keyManager = com.securelegion.crypto.KeyManager.getInstance(this@ChatActivity)
+                        val dbPassphrase = keyManager.getDatabasePassphrase()
+                        val database = com.securelegion.database.SecureLegionDatabase.getInstance(this@ChatActivity, dbPassphrase)
+                        val pendingCount = kotlinx.coroutines.runBlocking(kotlinx.coroutines.Dispatchers.IO) {
+                            database.pingInboxDao().countPendingByContact(contactId)
+                        }
+                        val hasPendingPing = pendingCount > 0
 
                         if (!isDownloadInProgress || !hasPendingPing) {
-                            // Either not downloading, OR download completed (pings cleared) - refresh UI
                             if (isDownloadInProgress && !hasPendingPing) {
-                                Log.i(TAG, "Download completed (pings cleared) - resetting flag and refreshing UI")
+                                Log.i(TAG, "Download completed (DB confirms no pending) - resetting flag and refreshing UI")
                                 isDownloadInProgress = false
                             } else {
                                 Log.i(TAG, "New Ping for current contact - reloading to show lock icon")
@@ -233,25 +242,18 @@ class ChatActivity : BaseActivity() {
                                 lifecycleScope.launch {
                                     // AUTO-PONG: Check BEFORE loadMessages to prevent lock icon flash
                                     if (hasDownloadedOnce) {
-                                        val currentPings = com.securelegion.models.PendingPing.loadQueueForContact(prefs, contactId)
-                                        val pendingPings = currentPings.filter { it.state == com.securelegion.models.PingState.PENDING }
+                                        val pingSeen = withContext(kotlinx.coroutines.Dispatchers.IO) {
+                                            database.pingInboxDao().getPendingByContact(contactId)
+                                                .filter { it.state == com.securelegion.database.entities.PingInbox.STATE_PING_SEEN }
+                                        }
 
-                                        if (pendingPings.isNotEmpty()) {
-                                            Log.i(TAG, "⚡ Auto-sending PONG for ${pendingPings.size} new message(s) (user is active in thread)")
-                                            pendingPings.forEach { ping ->
+                                        if (pingSeen.isNotEmpty()) {
+                                            Log.i(TAG, "⚡ Auto-sending PONG for ${pingSeen.size} new message(s) (user is active in thread)")
+                                            pingSeen.forEach { ping ->
                                                 Log.d(TAG, "  Auto-PONGing ping: ${ping.pingId.take(8)}")
 
                                                 // Mark this ping as auto-download FIRST (prevents lock icon flash)
                                                 autoPongPingIds.add(ping.pingId)
-
-                                                // Update state to DOWNLOADING immediately to prevent duplicate sends
-                                                com.securelegion.models.PendingPing.updateState(
-                                                    prefs,
-                                                    contactId,
-                                                    ping.pingId,
-                                                    com.securelegion.models.PingState.DOWNLOADING,
-                                                    synchronous = true
-                                                )
 
                                                 // Start download service which will send PONG and receive message
                                                 com.securelegion.services.DownloadMessageService.start(
@@ -360,8 +362,7 @@ class ChatActivity : BaseActivity() {
         // Download state will be determined from database (pending pings with DOWNLOADING/DECRYPTING state)
         // No need to check SharedPreferences - database is source of truth
 
-        // Migrate old pending ping format to queue format (one-time)
-        com.securelegion.utils.PendingPingMigration.migrateIfNeeded(this)
+        // SharedPrefs migration removed — ping_inbox DB is single source of truth
 
         // Initialize services
         messageService = MessageService(this)
@@ -1357,92 +1358,38 @@ class ChatActivity : BaseActivity() {
                 sendBroadcast(intent)
             }
 
-            // Load all pending pings from DATABASE (source of truth, restart-safe)
-            // Falls back to SharedPreferences for backward compatibility
-            val prefs = getSharedPreferences("pending_pings", MODE_PRIVATE)
-            var allPendingPings = com.securelegion.models.PendingPing.loadQueueFromDatabase(database, prefs, contactId.toLong())
-
-            // Don't auto-reset DOWNLOADING/DECRYPTING states - let database guide the UI
-            // If download service restarts, it will update the state
-            // If it stays stuck, user can manually trigger download again
-            if (false) {  // Disabled stale state reset
-                val staleStates = allPendingPings.filter {
-                    it.state == com.securelegion.models.PingState.DOWNLOADING ||
-                    it.state == com.securelegion.models.PingState.DECRYPTING
-                }
-                if (staleStates.isNotEmpty()) {
-                    Log.i(TAG, "Found ${staleStates.size} pings with stale download states - resetting to PENDING")
-                    staleStates.forEach { ping ->
-                        com.securelegion.models.PendingPing.updateState(
-                            prefs,
-                            contactId.toLong(),
-                            ping.pingId,
-                            com.securelegion.models.PingState.PENDING,
-                            synchronous = true
-                        )
-                        Log.d(TAG, "  Reset ping ${ping.pingId.take(8)} from ${ping.state} to PENDING")
-                    }
-                    // Reload pings after reset (from database)
-                    allPendingPings = com.securelegion.models.PendingPing.loadQueueFromDatabase(database, prefs, contactId.toLong())
-                }
-            } else {
-                Log.d(TAG, "Download service is running - preserving DOWNLOADING/DECRYPTING states")
+            // Load renderable pings from ping_inbox DB (single source of truth)
+            // Only states that need a UI row: PING_SEEN(0), DOWNLOAD_QUEUED(10), FAILED_TEMP(11), MANUAL_REQUIRED(12)
+            // Excludes PONG_SENT(1) and MSG_STORED(2) to prevent message+downloading overlap
+            val pingInboxEntries = withContext(Dispatchers.IO) {
+                database.pingInboxDao().getRenderableByContact(contactId.toLong())
             }
 
-            // Clean up pings that match existing messages (ghost pings from completed downloads)
-            // Database instance already initialized above
+            // Get set of pingIds that already have messages in the database
+            val existingMessagePingIds = messages.mapNotNull { it.pingId }.toSet()
 
-            val ghostPings = mutableListOf<String>()
-            allPendingPings.forEach { ping ->
-                // Check if this ping was already processed into a message
-                val existingMessage = database.messageDao().getMessageByPingId(ping.pingId)
-                if (existingMessage != null) {
-                    Log.w(TAG, "Found ghost ping ${ping.pingId} that matches existing message - removing")
-                    ghostPings.add(ping.pingId)
-                }
-            }
-
-            // Remove ghost pings from queue
-            ghostPings.forEach { pingId ->
-                com.securelegion.models.PendingPing.removeFromQueue(prefs, contactId.toLong(), pingId)
-            }
-
-            val pendingPings = allPendingPings.filter { it.pingId !in ghostPings }
-
+            // Transition ghost pings (message exists but ping not yet MSG_STORED) to MSG_STORED
+            val ghostPings = pingInboxEntries.filter { it.pingId in existingMessagePingIds }
             if (ghostPings.isNotEmpty()) {
-                Log.i(TAG, "Cleaned up ${ghostPings.size} ghost pings")
+                Log.i(TAG, "Transitioning ${ghostPings.size} ghost pings to MSG_STORED")
+                withContext(Dispatchers.IO) {
+                    val now = System.currentTimeMillis()
+                    ghostPings.forEach { ping ->
+                        database.pingInboxDao().transitionToMsgStored(ping.pingId, now)
+                    }
+                }
             }
 
-            // ATOMIC SWAP: Remove pings in READY state ONLY if message is confirmed in DB
-            Log.d(TAG, "Checking for READY pings. Total pings: ${pendingPings.size}")
-            pendingPings.forEachIndexed { index, ping ->
+            // Only show pings that don't have messages yet
+            val activePingEntries = pingInboxEntries.filter { it.pingId !in existingMessagePingIds }
+
+            Log.d(TAG, "Pending pings from DB: ${activePingEntries.size} (${ghostPings.size} ghost cleaned)")
+            activePingEntries.forEachIndexed { index, ping ->
                 Log.d(TAG, "  Ping $index: ${ping.pingId.take(8)} - state=${ping.state}")
             }
 
-            // Get set of pingIds that have messages in the database
-            val existingMessagePingIds = messages.mapNotNull { it.pingId }.toSet()
-
-            val readyPings = pendingPings.filter { it.state == com.securelegion.models.PingState.READY }
-            if (readyPings.isNotEmpty()) {
-                Log.i(TAG, "⚡ ATOMIC SWAP: Found ${readyPings.size} READY pings")
-                readyPings.forEach { ping ->
-                    // Only remove if message is confirmed in database
-                    if (ping.pingId in existingMessagePingIds) {
-                        com.securelegion.models.PendingPing.removeFromQueue(prefs, contactId.toLong(), ping.pingId, synchronous = true)
-                        Log.d(TAG, "  ✓ Removed READY ping ${ping.pingId.take(8)} - message confirmed in DB")
-                    } else {
-                        Log.d(TAG, "  ⏳ Keeping READY ping ${ping.pingId.take(8)} - message not in DB yet (will show as Downloading)")
-                    }
-                }
-            } else {
-                Log.d(TAG, "No READY pings found")
-            }
-
-            // Filter out pings whose messages already exist in DB
-            // Pings are removed from queue when message arrives, but check DB as safety net
-            val pendingPingsToShow = pendingPings.filter { ping ->
-                ping.pingId !in existingMessagePingIds
-            }
+            // Pass PingInbox entries directly to adapter (no bridge conversion needed)
+            val pendingPingsToShow = activePingEntries
 
             // Clean up autoPongPingIds - remove completed auto-downloads
             val completedAutoPongs = autoPongPingIds.filter { pingId ->
@@ -1455,7 +1402,7 @@ class ChatActivity : BaseActivity() {
 
             // GHOST TYPING FIX: Also remove pings from autoPongPingIds if they're not in pending queue
             // This handles cases where download completed but ping wasn't cleaned up from autoPongPingIds
-            val pendingPingIds = pendingPings.map { it.pingId }.toSet()
+            val pendingPingIds = pendingPingsToShow.map { it.pingId }.toSet()
             val ghostAutoPongs = autoPongPingIds.filter { pingId ->
                 pingId !in pendingPingIds  // No longer in pending queue
             }
@@ -1469,9 +1416,17 @@ class ChatActivity : BaseActivity() {
             // This handles failed downloads, completed downloads (safety net), and activity recreation scenarios
             val stillPendingIds = pendingPingsToShow.map { it.pingId }.toSet()
 
+            // Build a set of pingIds whose DB state is a lock-showing state (failed back to lock)
+            val lockStateIds = pendingPingsToShow
+                .filter { it.state == com.securelegion.database.entities.PingInbox.STATE_PING_SEEN
+                        || it.state == com.securelegion.database.entities.PingInbox.STATE_FAILED_TEMP
+                        || it.state == com.securelegion.database.entities.PingInbox.STATE_MANUAL_REQUIRED }
+                .map { it.pingId }.toSet()
+
             // A download is stale if: (1) not in pending queue OR (2) message already exists in DB
+            // OR (3) DB state reverted to a lock-showing state (failure path)
             val staleDownloadIds = downloadingPingIds.filter {
-                it !in stillPendingIds || it in existingMessagePingIds
+                it !in stillPendingIds || it in existingMessagePingIds || it in lockStateIds
             }
             staleDownloadIds.forEach {
                 Log.d(TAG, "Removing stale download indicator for ping ${it.take(8)}")
@@ -1486,10 +1441,7 @@ class ChatActivity : BaseActivity() {
             // Query ping_inbox directly (SOURCE OF TRUTH) with COUNT optimization
             // Wrapped in IO dispatcher to avoid main thread violations
             val pendingCount = withContext(Dispatchers.IO) {
-                database.pingInboxDao().countPendingByContact(
-                    contactId = contactId,
-                    msgStoredState = com.securelegion.database.entities.PingInbox.STATE_MSG_STORED
-                )
+                database.pingInboxDao().countPendingByContact(contactId.toLong())
             }
 
             if (pendingCount == 0 && downloadingPingIds.isEmpty() && isDownloadInProgress) {
@@ -1595,46 +1547,39 @@ class ChatActivity : BaseActivity() {
     private fun handleDownloadClick(pingId: String) {
         Log.i(TAG, "Download button clicked for contact $contactId, ping $pingId")
 
-        // Check if already downloading this specific ping
+        // Check if already downloading this specific ping (in-memory guard)
         if (downloadingPingIds.contains(pingId)) {
             Log.d(TAG, "Ping $pingId is already being downloaded, ignoring duplicate click")
             return
         }
 
-        // Mark that user has downloaded at least once (enables auto-download for future messages)
-        hasDownloadedOnce = true
-        Log.d(TAG, "User has downloaded a message - auto-download enabled for this session")
-
-        // Mark this specific ping as downloading
-        downloadingPingIds.add(pingId)
-        Log.d(TAG, "Added pingId ${pingId.take(8)} to downloadingPingIds - now tracking ${downloadingPingIds.size} downloads")
-
-        // Set flag to prevent showing pending message again during download
-        isDownloadInProgress = true
-
-        // CRITICAL FIX: Update ping state to DOWNLOADING in SharedPreferences IMMEDIATELY
-        // This ensures loadMessages() will show "Downloading..." instead of the lock icon
-        val prefs = getSharedPreferences("pending_pings", MODE_PRIVATE)
-        com.securelegion.models.PendingPing.updateState(
-            prefs,
-            contactId,
-            pingId,
-            com.securelegion.models.PingState.DOWNLOADING,
-            synchronous = true  // Synchronous to ensure it's written before loadMessages()
-        )
-        Log.d(TAG, "Updated ping state to DOWNLOADING in SharedPreferences before UI refresh")
-
-        // Mark that a download is in progress (in-memory tracking only, no SharedPreferences)
-        downloadingPingIds.add(pingId)
-
-        // Immediately update UI to show "Downloading..." status
+        // Atomic DB claim — prevents double-click race
         lifecycleScope.launch {
-            loadMessages()
-        }
+            val claimed = withContext(Dispatchers.IO) {
+                database.pingInboxDao().claimForManualDownload(pingId, System.currentTimeMillis())
+            }
 
-        // Start the download service with specific ping ID
-        // The service will update the ping state (PENDING → DOWNLOADING → DECRYPTING → READY)
-        com.securelegion.services.DownloadMessageService.start(this, contactId, contactName, pingId)
+            if (claimed == 0) {
+                Log.w(TAG, "Ping ${pingId.take(8)} claim failed — already claimed or past DOWNLOAD_QUEUED")
+                return@launch
+            }
+
+            Log.d(TAG, "Ping ${pingId.take(8)} claimed (DB → DOWNLOAD_QUEUED)")
+
+            // Mark that user has downloaded at least once (enables auto-download for future messages)
+            hasDownloadedOnce = true
+
+            // In-memory tracking for immediate UI feedback
+            downloadingPingIds.add(pingId)
+            isDownloadInProgress = true
+            Log.d(TAG, "Added pingId ${pingId.take(8)} to downloadingPingIds — tracking ${downloadingPingIds.size} downloads")
+
+            // Immediately update UI to show "Downloading..." status
+            loadMessages()
+
+            // Start the download service with specific ping ID
+            com.securelegion.services.DownloadMessageService.start(this@ChatActivity, contactId, contactName, pingId)
+        }
     }
 
     private fun toggleSelectionMode() {
@@ -1750,26 +1695,13 @@ class ChatActivity : BaseActivity() {
                     val pingIds = selectedIds.filter { it.startsWith("ping:") }.map { it.removePrefix("ping:") }
                     val messageIds = selectedIds.filter { !it.startsWith("ping:") }.mapNotNull { it.toLongOrNull() }
 
-                    // Delete pending pings by pingId (no formula needed!)
+                    // Delete pending pings from ping_inbox DB
                     if (pingIds.isNotEmpty()) {
-                        val prefs = getSharedPreferences("pending_pings", MODE_PRIVATE)
-
                         pingIds.forEach { pingId ->
-                            // Direct removal by pingId - simple and reliable!
-                            com.securelegion.models.PendingPing.removeFromQueue(prefs, contactId.toLong(), pingId)
-                            Log.d(TAG, "✓ Deleted pending ping $pingId from queue")
+                            database.pingInboxDao().delete(pingId)
+                            Log.d(TAG, "✓ Deleted pending ping $pingId from ping_inbox")
                             deletedPendingMessage = true
                         }
-
-                        // Also clean up outgoing ping keys (fix for ghost messages)
-                        prefs.edit().apply {
-                            remove("outgoing_ping_${contactId}_id")
-                            remove("outgoing_ping_${contactId}_name")
-                            remove("outgoing_ping_${contactId}_timestamp")
-                            remove("outgoing_ping_${contactId}_onion")
-                            apply()
-                        }
-                        Log.d(TAG, "✓ Cleaned up outgoing ping keys to prevent ghost messages")
                     }
 
                     // Delete regular messages from database

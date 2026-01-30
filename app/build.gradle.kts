@@ -47,6 +47,7 @@ android {
             buildConfigField("boolean", "HAS_DEMO_LOGIN", "false")
             buildConfigField("int", "MAX_GROUP_SIZE", "100")
             buildConfigField("String", "FLAVOR_NAME", "\"Master\"")
+            buildConfigField("boolean", "ENABLE_SHADOW_WIRE", "true")
         }
 
         create("solanadapp") {
@@ -65,6 +66,7 @@ android {
             buildConfigField("boolean", "HAS_DEMO_LOGIN", "false")
             buildConfigField("int", "MAX_GROUP_SIZE", "100")
             buildConfigField("String", "FLAVOR_NAME", "\"Solana dApp\"")
+            buildConfigField("boolean", "ENABLE_SHADOW_WIRE", "false")
         }
 
         create("solanahackathon") {
@@ -75,7 +77,7 @@ android {
             buildConfigField("boolean", "ENABLE_TOR", "true")
             buildConfigField("boolean", "ENABLE_VOICE", "true")
             buildConfigField("boolean", "ENABLE_MESHTASTIC", "false")
-            buildConfigField("boolean", "ENABLE_ZCASH_WALLET", "false")
+            buildConfigField("boolean", "ENABLE_ZCASH_WALLET", "true")
             buildConfigField("boolean", "ENABLE_SOLANA_WALLET", "true")
             buildConfigField("boolean", "ENABLE_DEVELOPER_MENU", "false")
             buildConfigField("boolean", "ENABLE_STRESS_TESTING", "false")
@@ -84,6 +86,7 @@ android {
             buildConfigField("int", "MAX_GROUP_SIZE", "100")
             buildConfigField("String", "FLAVOR_NAME", "\"Solana Hackathon\"")
             buildConfigField("String", "HACKATHON_NAME", "\"Solana\"")
+            buildConfigField("boolean", "ENABLE_SHADOW_WIRE", "true")
         }
 
         create("starnethackathon") {
@@ -103,6 +106,7 @@ android {
             buildConfigField("int", "MAX_GROUP_SIZE", "100")
             buildConfigField("String", "FLAVOR_NAME", "\"Starnet Hackathon\"")
             buildConfigField("String", "HACKATHON_NAME", "\"Starnet\"")
+            buildConfigField("boolean", "ENABLE_SHADOW_WIRE", "false")
         }
 
         create("googleplay") {
@@ -120,6 +124,7 @@ android {
             buildConfigField("boolean", "HAS_DEMO_LOGIN", "false")
             buildConfigField("int", "MAX_GROUP_SIZE", "100")
             buildConfigField("String", "FLAVOR_NAME", "\"Google Play\"")
+            buildConfigField("boolean", "ENABLE_SHADOW_WIRE", "false")
         }
 
         create("googleplaydemo") {
@@ -140,6 +145,7 @@ android {
             buildConfigField("String", "FLAVOR_NAME", "\"Google Play Demo\"")
             buildConfigField("String", "DEMO_USERNAME", "\"google_reviewer\"")
             buildConfigField("String", "DEMO_PASSWORD", "\"demo123!\"")
+            buildConfigField("boolean", "ENABLE_SHADOW_WIRE", "false")
         }
 
         create("fdroid") {
@@ -158,6 +164,7 @@ android {
             buildConfigField("boolean", "HAS_DEMO_LOGIN", "false")
             buildConfigField("int", "MAX_GROUP_SIZE", "100")
             buildConfigField("String", "FLAVOR_NAME", "\"F-Droid\"")
+            buildConfigField("boolean", "ENABLE_SHADOW_WIRE", "false")
         }
     }
 
@@ -303,8 +310,8 @@ dependencies {
     implementation("info.guardianproject:jtorctl:0.4.5.7")
 
     // Pluggable Transports for bridges (obfs4, snowflake, meek)
-    // IPtProxy includes obfs4proxy, snowflake, and meek_lite pluggable transports
-    implementation("com.netzarchitekten:IPtProxy:4.2.2")
+    // IPtProxy includes obfs4proxy (Lyrebird), snowflake, and meek_lite pluggable transports
+    implementation("com.netzarchitekten:IPtProxy:5.1.0")
 
     // Voice Calling - Opus codec for audio compression
     // Using native Rust implementation via RustBridge (libopus built from source)

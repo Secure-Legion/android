@@ -52,7 +52,7 @@ import net.zetetic.database.sqlcipher.SupportOpenHelperFactory
  */
 @Database(
     entities = [Contact::class, Message::class, Wallet::class, ReceivedId::class, UsedSignature::class, Group::class, GroupMember::class, GroupMessage::class, CallHistory::class, CallQualityLog::class, PingInbox::class, ContactKeyChain::class, SkippedMessageKey::class, PendingFriendRequest::class],
-    version = 35,
+    version = 36,
     exportSchema = false
 )
 abstract class SecureLegionDatabase : RoomDatabase() {
@@ -681,6 +681,22 @@ abstract class SecureLegionDatabase : RoomDatabase() {
         }
 
         /**
+         * Migration from version 35 to 36: Add downloadQueuedAt to ping_inbox
+         * Supports auto-download queue with watchdog timeout for stuck claims.
+         * New states (10, 11, 12) use existing Int column — no schema change needed for those.
+         */
+        private val MIGRATION_35_36 = object : Migration(35, 36) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                Log.i(TAG, "Migrating database from version 35 to 36")
+
+                // Add downloadQueuedAt column for watchdog timeout on auto-download claims
+                database.execSQL("ALTER TABLE ping_inbox ADD COLUMN downloadQueuedAt INTEGER")
+
+                Log.i(TAG, "Migration completed: Added downloadQueuedAt to ping_inbox (auto-download watchdog)")
+            }
+        }
+
+        /**
          * Migration from version 20 to 21: Add group messaging tables
          */
         private val MIGRATION_20_21 = object : Migration(20, 21) {
@@ -820,7 +836,7 @@ abstract class SecureLegionDatabase : RoomDatabase() {
                     DATABASE_NAME
                 )
                     .openHelperFactory(factory)
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23, MIGRATION_23_24, MIGRATION_24_25, MIGRATION_25_26, MIGRATION_26_27, MIGRATION_27_28, MIGRATION_28_29, MIGRATION_29_30, MIGRATION_30_31, MIGRATION_31_32, MIGRATION_32_33, MIGRATION_33_34, MIGRATION_34_35)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23, MIGRATION_23_24, MIGRATION_24_25, MIGRATION_25_26, MIGRATION_26_27, MIGRATION_27_28, MIGRATION_28_29, MIGRATION_29_30, MIGRATION_30_31, MIGRATION_31_32, MIGRATION_32_33, MIGRATION_33_34, MIGRATION_34_35, MIGRATION_35_36)
                     .addCallback(object : RoomDatabase.Callback() {
                         override fun onCreate(db: SupportSQLiteDatabase) {
                             super.onCreate(db)
@@ -911,7 +927,7 @@ abstract class SecureLegionDatabase : RoomDatabase() {
                         DATABASE_NAME
                     )
                         .openHelperFactory(SupportOpenHelperFactory(passphrase))
-                        .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23, MIGRATION_23_24, MIGRATION_24_25, MIGRATION_25_26, MIGRATION_26_27, MIGRATION_27_28, MIGRATION_28_29, MIGRATION_29_30, MIGRATION_30_31, MIGRATION_31_32, MIGRATION_32_33, MIGRATION_33_34, MIGRATION_34_35)
+                        .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23, MIGRATION_23_24, MIGRATION_24_25, MIGRATION_25_26, MIGRATION_26_27, MIGRATION_27_28, MIGRATION_28_29, MIGRATION_29_30, MIGRATION_30_31, MIGRATION_31_32, MIGRATION_32_33, MIGRATION_33_34, MIGRATION_34_35, MIGRATION_35_36)
                         .addCallback(object : RoomDatabase.Callback() {
                             override fun onCreate(db: SupportSQLiteDatabase) {
                                 super.onCreate(db)

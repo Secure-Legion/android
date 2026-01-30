@@ -3,10 +3,33 @@ package com.securelegion
 import android.app.Activity
 import android.content.Intent
 import android.view.View
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
 
 object BottomNavigationHelper {
 
     fun setupBottomNavigation(activity: Activity) {
+        // Apply system bar insets to bottom nav so gesture bar doesn't overlap
+        val bottomNav = activity.findViewById<View>(R.id.bottomNav)
+        if (bottomNav != null) {
+            WindowCompat.setDecorFitsSystemWindows(activity.window, false)
+            val rootView = activity.findViewById<View>(android.R.id.content)
+            ViewCompat.setOnApplyWindowInsetsListener(rootView) { _, windowInsets ->
+                val insets = windowInsets.getInsets(
+                    WindowInsetsCompat.Type.systemBars() or
+                    WindowInsetsCompat.Type.displayCutout()
+                )
+                bottomNav.setPadding(
+                    bottomNav.paddingLeft,
+                    bottomNav.paddingTop,
+                    bottomNav.paddingRight,
+                    insets.bottom
+                )
+                windowInsets
+            }
+        }
+
         activity.findViewById<View>(R.id.navMessages)?.setOnClickListener {
             if (activity !is MainActivity) {
                 val intent = Intent(activity, MainActivity::class.java)

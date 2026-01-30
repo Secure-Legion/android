@@ -11,6 +11,9 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.appcompat.app.AlertDialog
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.constraintlayout.widget.ConstraintLayout
 import androidx.lifecycle.lifecycleScope
 import com.securelegion.crypto.KeyManager
@@ -311,6 +314,14 @@ class GroupProfileActivity : BaseActivity() {
     }
 
     private fun setupBottomNav() {
+        WindowCompat.setDecorFitsSystemWindows(window, false)
+        val bottomNav = findViewById<View>(R.id.bottomNav)
+        ViewCompat.setOnApplyWindowInsetsListener(findViewById(android.R.id.content)) { _, windowInsets ->
+            val insets = windowInsets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())
+            bottomNav?.setPadding(bottomNav.paddingLeft, bottomNav.paddingTop, bottomNav.paddingRight, insets.bottom)
+            windowInsets
+        }
+
         // Messages
         findViewById<View>(R.id.navMessages)?.setOnClickListener {
             val intent = Intent(this, MainActivity::class.java)

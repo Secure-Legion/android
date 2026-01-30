@@ -1,0 +1,76 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="horizontal"
+    android:background="@drawable/settings_item_bg"
+    android:padding="16dp"
+    android:layout_marginBottom="8dp"
+    android:gravity="center_vertical"
+    android:clickable="true"
+    android:focusable="true">
+
+    <!-- Type Icon -->
+    <FrameLayout
+        android:layout_width="40dp"
+        android:layout_height="40dp"
+        android:layout_marginEnd="12dp"
+        android:background="@drawable/settings_icon_bg"
+        android:gravity="center">
+
+        <ImageView
+            android:id="@+id/activityIcon"
+            android:layout_width="22dp"
+            android:layout_height="22dp"
+            android:layout_gravity="center"
+            android:src="@drawable/ic_deposit"
+            android:tint="#888888"
+            android:contentDescription="Activity type" />
+
+    </FrameLayout>
+
+    <!-- Activity Info -->
+    <LinearLayout
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="1"
+        android:orientation="vertical">
+
+        <!-- Type label -->
+        <TextView
+            android:id="@+id/activityType"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Deposit"
+            android:textSize="16sp"
+            android:textStyle="bold"
+            android:textColor="@color/text_white"
+            android:fontFamily="@font/poppins_medium" />
+
+        <!-- Date -->
+        <TextView
+            android:id="@+id/activityDate"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Jan 30, 2026"
+            android:textSize="13sp"
+            android:textColor="#888888"
+            android:fontFamily="@font/poppins_regular"
+            android:layout_marginTop="2dp" />
+
+    </LinearLayout>
+
+    <!-- Amount -->
+    <TextView
+        android:id="@+id/activityAmount"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="+0.1000 SOL"
+        android:textSize="16sp"
+        android:textStyle="bold"
+        android:textColor="@color/text_white"
+        android:fontFamily="@font/poppins_medium"
+        android:gravity="end" />
+
+</LinearLayout>

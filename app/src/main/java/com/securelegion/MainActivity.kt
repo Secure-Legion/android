@@ -546,15 +546,12 @@ class MainActivity : BaseActivity() {
 
                     val chatsList = mutableListOf<Pair<Chat, Long>>()
 
-                    // Check for pending Pings
-                    val prefs = getSharedPreferences("pending_pings", MODE_PRIVATE)
-
                     // Process each contact
                     for (contact in allContacts) {
                         val lastMessage = database.messageDao().getLastMessage(contact.id)
-                        // Check for pending pings using new queue format
-                        val pendingPings = com.securelegion.models.PendingPing.loadQueueForContact(prefs, contact.id)
-                        val hasPendingPing = pendingPings.isNotEmpty()
+                        // Count pending pings from ping_inbox DB
+                        val pendingPingCount = database.pingInboxDao().countPendingByContact(contact.id)
+                        val hasPendingPing = pendingPingCount > 0
 
                         // Include contacts with messages OR pending Pings
                         if (lastMessage != null || hasPendingPing) {
@@ -564,14 +561,14 @@ class MainActivity : BaseActivity() {
                             val isSent = lastMessage?.isSentByMe ?: false
                             val pingDelivered = lastMessage?.pingDelivered ?: false
                             val messageDelivered = lastMessage?.messageDelivered ?: false
-                            Log.d("MainActivity", "📊 Contact ${contact.displayName}: status=$messageStatus, isSent=$isSent, pingDelivered=$pingDelivered, messageDelivered=$messageDelivered, messageId=${lastMessage?.messageId}")
+                            Log.d("MainActivity", "Contact ${contact.displayName}: status=$messageStatus, isSent=$isSent, pingDelivered=$pingDelivered, messageDelivered=$messageDelivered, messageId=${lastMessage?.messageId}")
 
                             val chat = Chat(
                                 id = contact.id.toString(),
                                 nickname = contact.displayName,
                                 lastMessage = if (lastMessage != null) lastMessage.encryptedContent else "New message",
                                 time = if (lastMessage != null) formatTimestamp(lastMessage.timestamp) else formatTimestamp(System.currentTimeMillis()),
-                                unreadCount = unreadCount + pendingPings.size,  // Add count of ALL pending pings
+                                unreadCount = unreadCount + pendingPingCount,  // Add count of ALL pending pings
                                 isOnline = false,
                                 avatar = contact.displayName.firstOrNull()?.toString()?.uppercase() ?: "?",
                                 securityBadge = "",
@@ -719,10 +716,8 @@ class MainActivity : BaseActivity() {
                     }
                 }
 
-                // Clear pending Pings for this contact (using new queue format)
-                val prefs = getSharedPreferences("pending_pings", MODE_PRIVATE)
-                com.securelegion.models.PendingPing.clearQueueForContact(prefs, chat.id.toLong())
-
+                // Delete all ping_inbox entries for this contact
+                database.pingInboxDao().deleteByContact(chat.id.toLong())
                 Log.i("MainActivity", "Securely deleted all messages (DOD 3-pass) and pending Pings for contact: ${chat.nickname}")
 
                 // Reload the chat list
@@ -1170,9 +1165,12 @@ class MainActivity : BaseActivity() {
                 val contactId = chat.id.toLong()
                 Log.i("MainActivity", "User clicked download for contact $contactId (${chat.nickname})")
 
-                // Retrieve pending Ping info from SharedPreferences (using new queue format)
-                val prefs = getSharedPreferences("pending_pings", MODE_PRIVATE)
-                val pendingPings = com.securelegion.models.PendingPing.loadQueueForContact(prefs, contactId)
+                // Query ping_inbox DB for pending pings
+                val keyManager = KeyManager.getInstance(this@MainActivity)
+                val dbPassphrase = keyManager.getDatabasePassphrase()
+                val database = SecureLegionDatabase.getInstance(this@MainActivity, dbPassphrase)
+
+                val pendingPings = database.pingInboxDao().getPendingByContact(contactId)
 
                 if (pendingPings.isEmpty()) {
                     Log.e("MainActivity", "No pending Ping found for contact $contactId")
@@ -1182,187 +1180,25 @@ class MainActivity : BaseActivity() {
                     return@launch
                 }
 
-                // Get the first pending ping from the queue
-                val pendingPing = pendingPings.first()
-                val pingId = pendingPing.pingId
-                val senderOnionAddress = pendingPing.senderOnionAddress
-                val senderName = pendingPing.senderName
-                val encryptedPingData = pendingPing.encryptedPingData
+                // Get the first pending ping
+                val firstPing = pendingPings.first()
+                val pingId = firstPing.pingId
 
-                Log.i("MainActivity", "Downloading message: pingId=$pingId, sender=$senderOnionAddress")
+                Log.i("MainActivity", "Delegating download to DownloadMessageService: pingId=${pingId.take(8)}")
 
                 withContext(Dispatchers.Main) {
-                    ThemedToast.show(this@MainActivity, "Downloading message from $senderName...")
+                    ThemedToast.show(this@MainActivity, "Downloading message from ${chat.nickname}...")
                 }
 
-                // Step 1: Get contact info from database
-                val keyManager = KeyManager.getInstance(this@MainActivity)
-                val dbPassphrase = keyManager.getDatabasePassphrase()
-                val database = SecureLegionDatabase.getInstance(this@MainActivity, dbPassphrase)
-                val contact = database.contactDao().getContactById(contactId)
+                // Delegate to DownloadMessageService (handles PONG, polling, message save, ACK)
+                com.securelegion.services.DownloadMessageService.start(
+                    this@MainActivity,
+                    contactId,
+                    chat.nickname,
+                    pingId
+                )
 
-                if (contact == null) {
-                    Log.e("MainActivity", "Contact $contactId not found in database")
-                    withContext(Dispatchers.Main) {
-                        ThemedToast.show(this@MainActivity, "Contact not found")
-                    }
-                    return@launch
-                }
-
-                // Step 2: Restore the Ping in Rust so respondToPing can find it
-                Log.d("MainActivity", "Stored Ping ID from SharedPreferences: $pingId")
-
-                val encryptedPingBytes = android.util.Base64.decode(encryptedPingData, android.util.Base64.NO_WRAP)
-                Log.d("MainActivity", "Restoring Ping from ${encryptedPingBytes.size} bytes of encrypted data")
-                val restoredPingId = com.securelegion.crypto.RustBridge.decryptIncomingPing(encryptedPingBytes)
-
-                if (restoredPingId == null) {
-                    Log.e("MainActivity", "Failed to decrypt/restore Ping")
-                    withContext(Dispatchers.Main) {
-                        ThemedToast.show(this@MainActivity, "Failed to restore message request")
-                    }
-                    return@launch
-                }
-
-                Log.i("MainActivity", "Ping decrypted - stored ID: $pingId, restored ID: $restoredPingId")
-
-                if (restoredPingId != pingId) {
-                    Log.w("MainActivity", "⚠️  Ping ID MISMATCH! Stored=$pingId, Restored=$restoredPingId")
-                    Log.w("MainActivity", "Using restored ID (based on actual nonce) for Pong response")
-                }
-
-                val actualPingId = restoredPingId
-                Log.i("MainActivity", "Ping restored successfully: $actualPingId")
-
-                // Step 3: Generate Pong response (user authenticated = true)
-                Log.d("MainActivity", "Creating Pong with Ping ID: $actualPingId")
-                val encryptedPongBytes = com.securelegion.crypto.RustBridge.respondToPing(actualPingId, authenticated = true)
-
-                if (encryptedPongBytes == null) {
-                    Log.e("MainActivity", "Failed to generate Pong response")
-                    withContext(Dispatchers.Main) {
-                        ThemedToast.show(this@MainActivity, "Failed to respond to message")
-                    }
-                    return@launch
-                }
-
-                Log.i("MainActivity", "Generated Pong response (${encryptedPongBytes.size} bytes)")
-
-                // Step 4: Send Pong over NEW connection to sender (old connection is closed)
-                val pongSent = com.securelegion.crypto.RustBridge.sendPongToNewConnection(senderOnionAddress, encryptedPongBytes)
-
-                if (!pongSent) {
-                    Log.e("MainActivity", "Failed to send Pong to $senderOnionAddress")
-                    withContext(Dispatchers.Main) {
-                        ThemedToast.show(this@MainActivity, "Failed to connect to sender")
-                    }
-                    return@launch
-                }
-
-                Log.i("MainActivity", "Pong sent to sender via new connection")
-
-                // Step 5: Wait for the message blob to arrive via TorService listener
-                // The message will be received by handleIncomingMessageBlob in TorService
-                // and automatically saved to the database. We'll wait up to 30 seconds.
-                Log.i("MainActivity", "Waiting for message blob from sender...")
-
-                var messageReceived = false
-                var attempts = 0
-                val maxAttempts = 30  // 30 seconds total
-
-                while (!messageReceived && attempts < maxAttempts) {
-                    kotlinx.coroutines.delay(1000)  // Wait 1 second
-                    attempts++
-
-                    // Check if message has arrived by checking if Ping is still pending (using new queue format)
-                    val currentPings = com.securelegion.models.PendingPing.loadQueueForContact(prefs, contactId)
-                    val stillPending = currentPings.any { it.pingId == pingId }
-                    if (!stillPending) {
-                        // Ping was cleared, meaning message was received and processed
-                        messageReceived = true
-                        break
-                    }
-
-                    // Also check database for new message from this contact
-                    val lastMessage = database.messageDao().getLastMessage(contactId)
-                    if (lastMessage != null && !lastMessage.isSentByMe &&
-                        System.currentTimeMillis() - lastMessage.timestamp < 35000) {
-                        // New received message within last 35 seconds
-                        messageReceived = true
-                        break
-                    }
-                }
-
-                if (!messageReceived) {
-                    Log.e("MainActivity", "Timeout waiting for message blob from sender")
-                    withContext(Dispatchers.Main) {
-                        ThemedToast.showLong(this@MainActivity, "Timeout: sender may be offline")
-                    }
-                    return@launch
-                }
-
-                Log.i("MainActivity", "Message blob received and processed by TorService")
-
-                // Step 6: Remove pending Ping from queue (TorService already saved the message)
-                com.securelegion.models.PendingPing.removeFromQueue(prefs, contactId, pingId)
-
-                Log.i("MainActivity", "Pending Ping cleared from SharedPreferences")
-
-                // Step 7: Clear notification if no more pending Pings (using new queue format)
-                var totalRemainingPings = 0
-                prefs.all.forEach { (key, value) ->
-                    if (key.startsWith("ping_queue_") && value is String) {
-                        try {
-                            val jsonArray = org.json.JSONArray(value)
-                            totalRemainingPings += jsonArray.length()
-                        } catch (e: Exception) {
-                            Log.w("MainActivity", "Failed to parse ping queue for key $key", e)
-                        }
-                    }
-                }
-
-                val notificationManager = getSystemService(android.app.NotificationManager::class.java)
-                if (totalRemainingPings == 0) {
-                    notificationManager.cancel(999)
-                    Log.i("MainActivity", "All pings cleared - notification cancelled")
-                } else {
-                    // Update notification to show correct count
-                    val openAppIntent = Intent(this@MainActivity, com.securelegion.LockActivity::class.java).apply {
-                        putExtra("TARGET_ACTIVITY", "MainActivity")
-                        flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
-                    }
-                    val openAppPendingIntent = android.app.PendingIntent.getActivity(
-                        this@MainActivity,
-                        0,
-                        openAppIntent,
-                        android.app.PendingIntent.FLAG_IMMUTABLE or android.app.PendingIntent.FLAG_UPDATE_CURRENT
-                    )
-
-                    val notification = androidx.core.app.NotificationCompat.Builder(this@MainActivity, "auth_channel")
-                        .setSmallIcon(R.drawable.ic_shield)
-                        .setContentTitle("New Message")
-                        .setContentText("You have $totalRemainingPings pending ${if (totalRemainingPings == 1) "message" else "messages"}")
-                        .setPriority(androidx.core.app.NotificationCompat.PRIORITY_HIGH)
-                        .setCategory(androidx.core.app.NotificationCompat.CATEGORY_MESSAGE)
-                        .setAutoCancel(true)
-                        .setContentIntent(openAppPendingIntent)
-                        .setNumber(totalRemainingPings)
-                        .build()
-
-                    notificationManager.notify(999, notification)
-                    Log.i("MainActivity", "Updated notification - $totalRemainingPings pending pings remaining")
-                }
-
-                // Step 8: Update UI
-                withContext(Dispatchers.Main) {
-                    ThemedToast.show(this@MainActivity, "Message from $senderName downloaded!")
-                    // Refresh chat list to hide download button and show the new message
-                    setupChatList()
-                    // Update app badge
-                    updateAppBadge()
-                }
-
-                Log.i("MainActivity", "Message download complete for contact $contactId")
+                Log.i("MainActivity", "Download service started for contact $contactId")
 
             } catch (e: Exception) {
                 Log.e("MainActivity", "Failed to download message", e)

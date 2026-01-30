@@ -42,8 +42,7 @@ class RequestMoneyActivity : AppCompatActivity() {
     private lateinit var fromWalletNameText: TextView
     private lateinit var fromAddressShort: TextView
     private lateinit var amountInput: EditText
-    private lateinit var currencyLabel: TextView
-    private lateinit var currencyDropdown: View
+    private lateinit var currencyIcon: ImageView
     private lateinit var expiryDropdown: View
     private lateinit var expiryText: TextView
     private lateinit var requestNowButton: View
@@ -73,7 +72,7 @@ class RequestMoneyActivity : AppCompatActivity() {
 
         // Get wallet info from intent if available
         currentWalletId = intent.getStringExtra("WALLET_ID") ?: ""
-        currentWalletName = intent.getStringExtra("WALLET_NAME") ?: "Wallet 1"
+        currentWalletName = intent.getStringExtra("WALLET_NAME") ?: ""
         currentWalletAddress = intent.getStringExtra("WALLET_ADDRESS") ?: ""
 
         initializeViews()
@@ -92,8 +91,7 @@ class RequestMoneyActivity : AppCompatActivity() {
         fromWalletNameText = findViewById(R.id.fromWalletNameText)
         fromAddressShort = findViewById(R.id.fromAddressShort)
         amountInput = findViewById(R.id.amountInput)
-        currencyLabel = findViewById(R.id.currencyLabel)
-        currencyDropdown = findViewById(R.id.currencyDropdown)
+        currencyIcon = findViewById(R.id.currencyIcon)
         expiryDropdown = findViewById(R.id.expiryDropdown)
         expiryText = findViewById(R.id.expiryText)
         requestNowButton = findViewById(R.id.requestNowButton)
@@ -112,10 +110,6 @@ class RequestMoneyActivity : AppCompatActivity() {
             showWalletSelector()
         }
 
-        currencyDropdown.setOnClickListener {
-            showCurrencySelector()
-        }
-
         expiryDropdown.setOnClickListener {
             showExpirySelector()
         }
@@ -123,59 +117,6 @@ class RequestMoneyActivity : AppCompatActivity() {
         requestNowButton.setOnClickListener {
             requestMoney()
         }
-    }
-
-    private fun showCurrencySelector() {
-        val bottomSheet = BottomSheetDialog(this)
-        val view = layoutInflater.inflate(R.layout.bottom_sheet_currency_selector, null)
-        bottomSheet.setContentView(view)
-
-        // Configure bottom sheet behavior
-        bottomSheet.behavior.isDraggable = true
-        bottomSheet.behavior.isFitToContents = true
-        bottomSheet.behavior.skipCollapsed = true
-
-        // Make backgrounds transparent
-        bottomSheet.window?.setBackgroundDrawableResource(android.R.color.transparent)
-        bottomSheet.window?.findViewById<View>(com.google.android.material.R.id.design_bottom_sheet)?.setBackgroundResource(android.R.color.transparent)
-        view.post {
-            val parentView = view.parent as? View
-            parentView?.setBackgroundResource(android.R.color.transparent)
-        }
-
-        // Get check marks
-        val checkSOL = view.findViewById<ImageView>(R.id.checkSOL)
-        val checkZEC = view.findViewById<ImageView>(R.id.checkZEC)
-
-        // Show current selection
-        checkSOL.visibility = if (selectedToken == "SOL") View.VISIBLE else View.GONE
-        checkZEC.visibility = if (selectedToken == "ZEC") View.VISIBLE else View.GONE
-
-        // Set click listeners
-        view.findViewById<View>(R.id.optionSOL).setOnClickListener {
-            if (selectedToken != "SOL") {
-                selectedToken = "SOL"
-                currencyLabel.text = selectedToken
-                // Reload wallet list for SOL chain
-                loadWalletInfoForChain("SOL")
-                // Update USD value
-                updateAmountUsdValue()
-            }
-            bottomSheet.dismiss()
-        }
-        view.findViewById<View>(R.id.optionZEC).setOnClickListener {
-            if (selectedToken != "ZEC") {
-                selectedToken = "ZEC"
-                currencyLabel.text = selectedToken
-                // Reload wallet list for ZEC chain
-                loadWalletInfoForChain("ZEC")
-                // Update USD value
-                updateAmountUsdValue()
-            }
-            bottomSheet.dismiss()
-        }
-
-        bottomSheet.show()
     }
 
     private fun loadWalletInfoForChain(chain: String) {
@@ -188,7 +129,7 @@ class RequestMoneyActivity : AppCompatActivity() {
                 // Filter wallets that have the appropriate address for this chain
                 val wallets = allWallets.filter { wallet ->
                     wallet.walletId != "main" && when (chain) {
-                        "ZEC" -> !wallet.zcashAddress.isNullOrEmpty()
+                        "ZEC" -> !wallet.zcashAddress.isNullOrEmpty() || !wallet.zcashUnifiedAddress.isNullOrEmpty()
                         else -> wallet.solanaAddress.isNotEmpty()
                     }
                 }
@@ -302,20 +243,7 @@ class RequestMoneyActivity : AppCompatActivity() {
                 val database = SecureLegionDatabase.getInstance(this@RequestMoneyActivity, dbPassphrase)
                 val allWallets = database.walletDao().getAllWallets()
 
-                // Filter wallets: exclude "main" and only show wallets with address for selected chain
-                val wallets = allWallets.filter { wallet ->
-                    wallet.walletId != "main" && when (selectedToken) {
-                        "ZEC" -> !wallet.zcashAddress.isNullOrEmpty()
-                        else -> wallet.solanaAddress.isNotEmpty()
-                    }
-                }
-
                 withContext(Dispatchers.Main) {
-                    if (wallets.isEmpty()) {
-                        ThemedToast.show(this@RequestMoneyActivity, "No $selectedToken wallets found")
-                        return@withContext
-                    }
-
                     val bottomSheet = BottomSheetDialog(this@RequestMoneyActivity)
                     val view = layoutInflater.inflate(R.layout.bottom_sheet_wallet_selector, null)
 
@@ -339,39 +267,123 @@ class RequestMoneyActivity : AppCompatActivity() {
                     }
 
                     val walletListContainer = view.findViewById<LinearLayout>(R.id.walletListContainer)
+                    val solanaChainBtn = view.findViewById<View>(R.id.solanaChainButton)
+                    val zcashChainBtn = view.findViewById<View>(R.id.zcashChainButton)
 
-                    for (wallet in wallets) {
-                        val walletItemView = layoutInflater.inflate(R.layout.item_wallet_selector, walletListContainer, false)
+                    // Track showing USD vs native per wallet item
+                    val showingUsdMap = mutableMapOf<String, Boolean>()
 
-                        val walletName = walletItemView.findViewById<TextView>(R.id.walletName)
-                        val walletBalance = walletItemView.findViewById<TextView>(R.id.walletBalance)
-                        val settingsBtn = walletItemView.findViewById<View>(R.id.walletSettingsBtn)
+                    // Helper to populate wallet list for a given chain
+                    fun populateWallets(chain: String) {
+                        walletListContainer.removeAllViews()
 
-                        // Show appropriate address based on chain
-                        val displayAddress = when (selectedToken) {
-                            "ZEC" -> wallet.zcashAddress ?: ""
-                            else -> wallet.solanaAddress
+                        val wallets = allWallets.filter { wallet ->
+                            wallet.walletId != "main" && when (chain) {
+                                "ZEC" -> !wallet.zcashAddress.isNullOrEmpty() || !wallet.zcashUnifiedAddress.isNullOrEmpty()
+                                else -> wallet.solanaAddress.isNotEmpty()
+                            }
                         }
 
-                        walletName.text = wallet.name
-                        walletBalance.text = formatAddressShort(displayAddress)
+                        // Update chain button backgrounds to show selection
+                        solanaChainBtn.setBackgroundResource(
+                            if (chain == "SOL") R.drawable.swap_button_bg else R.drawable.wallet_dropdown_bg
+                        )
+                        zcashChainBtn.setBackgroundResource(
+                            if (chain == "ZEC") R.drawable.swap_button_bg else R.drawable.wallet_dropdown_bg
+                        )
 
-                        walletItemView.setOnClickListener {
-                            switchToWallet(wallet)
-                            bottomSheet.dismiss()
+                        if (wallets.isEmpty()) {
+                            val emptyText = TextView(this@RequestMoneyActivity).apply {
+                                text = "No $chain wallets found"
+                                setTextColor(0xFF888888.toInt())
+                                textSize = 14f
+                                setPadding(0, 32, 0, 32)
+                            }
+                            walletListContainer.addView(emptyText)
+                            return
                         }
 
-                        settingsBtn.setOnClickListener {
-                            val intent = Intent(this@RequestMoneyActivity, WalletSettingsActivity::class.java)
-                            intent.putExtra("WALLET_ID", wallet.walletId)
-                            intent.putExtra("WALLET_NAME", wallet.name)
-                            intent.putExtra("IS_MAIN_WALLET", wallet.walletId == "main")
-                            startActivity(intent)
-                            bottomSheet.dismiss()
-                        }
+                        for (wallet in wallets) {
+                            val walletItemView = layoutInflater.inflate(R.layout.item_wallet_selector, walletListContainer, false)
 
-                        walletListContainer.addView(walletItemView)
+                            val walletNameView = walletItemView.findViewById<TextView>(R.id.walletName)
+                            val walletBalanceView = walletItemView.findViewById<TextView>(R.id.walletBalance)
+                            val walletIcon = walletItemView.findViewById<ImageView>(R.id.walletIcon)
+                            val toggleBtn = walletItemView.findViewById<View>(R.id.walletSettingsBtn)
+
+                            // Set chain icon
+                            walletIcon.setImageResource(
+                                if (chain == "ZEC") R.drawable.ic_zcash else R.drawable.ic_solana
+                            )
+
+                            walletNameView.text = wallet.name
+                            showingUsdMap[wallet.walletId] = true
+
+                            // Load balance async
+                            walletBalanceView.text = "Loading..."
+                            lifecycleScope.launch {
+                                try {
+                                    val balance: Double
+                                    val price: Double
+                                    val symbol: String
+                                    if (chain == "ZEC") {
+                                        val zcashService = ZcashService.getInstance(this@RequestMoneyActivity)
+                                        val balResult = zcashService.getBalance()
+                                        balance = balResult.getOrDefault(0.0)
+                                        price = currentZecPrice
+                                        symbol = "ZEC"
+                                    } else {
+                                        val balResult = solanaService.getBalance(wallet.solanaAddress)
+                                        balance = balResult.getOrDefault(0.0)
+                                        price = currentSolPrice
+                                        symbol = "SOL"
+                                    }
+                                    walletBalanceView.text = if (price > 0) {
+                                        String.format("$%,.2f", balance * price)
+                                    } else {
+                                        String.format("%.4f %s", balance, symbol)
+                                    }
+                                    walletBalanceView.tag = balance // Store balance for toggle
+
+                                    // Toggle button switches between USD and native
+                                    toggleBtn.setOnClickListener { toggleView ->
+                                        val isUsd = showingUsdMap[wallet.walletId] ?: true
+                                        if (isUsd) {
+                                            walletBalanceView.text = String.format("%.4f %s", balance, symbol)
+                                        } else {
+                                            if (price > 0) {
+                                                walletBalanceView.text = String.format("$%,.2f", balance * price)
+                                            }
+                                        }
+                                        showingUsdMap[wallet.walletId] = !isUsd
+                                    }
+                                } catch (e: Exception) {
+                                    walletBalanceView.text = "Balance unavailable"
+                                }
+                            }
+
+                            walletItemView.setOnClickListener {
+                                // Update selected token to match the chain tab
+                                selectedToken = chain
+                                currencyIcon.setImageResource(if (selectedToken == "ZEC") R.drawable.ic_zcash else R.drawable.ic_solana)
+                                switchToWallet(wallet)
+                                bottomSheet.dismiss()
+                            }
+
+                            walletListContainer.addView(walletItemView)
+                        }
                     }
+
+                    // Wire up chain selector buttons
+                    solanaChainBtn.setOnClickListener {
+                        populateWallets("SOL")
+                    }
+                    zcashChainBtn.setOnClickListener {
+                        populateWallets("ZEC")
+                    }
+
+                    // Populate with current selected chain
+                    populateWallets(selectedToken)
 
                     bottomSheet.show()
                 }
@@ -430,15 +442,17 @@ class RequestMoneyActivity : AppCompatActivity() {
             return
         }
 
-        // Otherwise, load first available wallet from database
+        // Load most recently used wallet from database
         lifecycleScope.launch(Dispatchers.IO) {
             try {
                 val dbPassphrase = keyManager.getDatabasePassphrase()
                 val database = SecureLegionDatabase.getInstance(this@RequestMoneyActivity, dbPassphrase)
                 val allWallets = database.walletDao().getAllWallets()
 
-                // Filter out "main" wallet - it's hidden (used only for encryption keys)
-                val wallets = allWallets.filter { it.walletId != "main" }
+                // Filter out "main" wallet, sort by last used (most recent first)
+                val wallets = allWallets
+                    .filter { it.walletId != "main" }
+                    .sortedByDescending { it.lastUsedAt }
 
                 if (wallets.isNotEmpty()) {
                     val firstWallet = wallets.first()
@@ -448,7 +462,7 @@ class RequestMoneyActivity : AppCompatActivity() {
                     currentZcashAddress = firstWallet.zcashAddress
 
                     // Detect wallet type and sync currency selector
-                    val isZcashWallet = !firstWallet.zcashAddress.isNullOrEmpty() && firstWallet.solanaAddress.isEmpty()
+                    val isZcashWallet = (!firstWallet.zcashAddress.isNullOrEmpty() || !firstWallet.zcashUnifiedAddress.isNullOrEmpty()) && firstWallet.solanaAddress.isEmpty()
                     selectedToken = if (isZcashWallet) "ZEC" else "SOL"
 
                     val displayAddress = if (isZcashWallet) {
@@ -460,7 +474,7 @@ class RequestMoneyActivity : AppCompatActivity() {
                     withContext(Dispatchers.Main) {
                         fromWalletNameText.text = currentWalletName
                         fromAddressShort.text = formatAddressShort(displayAddress)
-                        currencyLabel.text = selectedToken
+                        currencyIcon.setImageResource(if (selectedToken == "ZEC") R.drawable.ic_zcash else R.drawable.ic_solana)
                     }
                 } else {
                     // Fallback to KeyManager address

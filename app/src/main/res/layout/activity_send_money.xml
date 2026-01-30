@@ -250,35 +250,12 @@
                         android:fontFamily="@font/space_grotesk_bold"
                         android:inputType="numberDecimal" />
 
-                    <LinearLayout
-                        android:id="@+id/currencyDropdown"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:orientation="horizontal"
-                        android:gravity="center_vertical"
-                        android:clickable="true"
-                        android:focusable="true"
-                        android:background="?attr/selectableItemBackgroundBorderless">
-
-                        <TextView
-                            android:id="@+id/currencyLabel"
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:text="SOL"
-                            android:textSize="16sp"
-                            android:textColor="#888888"
-                            android:fontFamily="@font/poppins_medium"
-                            android:layout_marginEnd="4dp" />
-
-                        <ImageView
-                            android:layout_width="16dp"
-                            android:layout_height="16dp"
-                            android:src="@drawable/ic_arrow_forward"
-                            android:rotation="90"
-                            android:tint="#888888"
-                            android:contentDescription="Dropdown" />
-
-                    </LinearLayout>
+                    <ImageView
+                        android:id="@+id/currencyIcon"
+                        android:layout_width="28dp"
+                        android:layout_height="28dp"
+                        android:src="@drawable/ic_solana"
+                        android:contentDescription="Chain icon" />
 
                 </LinearLayout>
 

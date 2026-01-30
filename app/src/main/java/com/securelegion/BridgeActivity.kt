@@ -41,11 +41,9 @@ class BridgeActivity : AppCompatActivity() {
         bridgeRadioGroup.setOnCheckedChangeListener { _, checkedId ->
             when (checkedId) {
                 R.id.bridgeCustom -> {
-                    // Show custom bridge input
                     customBridgeInput.visibility = View.VISIBLE
                 }
                 else -> {
-                    // Hide custom bridge input for preset options
                     customBridgeInput.visibility = View.GONE
                 }
             }
@@ -69,12 +67,12 @@ class BridgeActivity : AppCompatActivity() {
             "snowflake" -> findViewById<RadioButton>(R.id.bridgeSnowflake).isChecked = true
             "obfs4" -> findViewById<RadioButton>(R.id.bridgeObfs4).isChecked = true
             "meek" -> findViewById<RadioButton>(R.id.bridgeMeek).isChecked = true
+            "webtunnel" -> findViewById<RadioButton>(R.id.bridgeWebtunnel).isChecked = true
             "custom" -> {
                 findViewById<RadioButton>(R.id.bridgeCustom).isChecked = true
                 customBridgeInput.setText(customBridge)
                 customBridgeInput.visibility = View.VISIBLE
             }
-            // WebTunnel removed - not fully supported yet
         }
     }
 
@@ -87,6 +85,7 @@ class BridgeActivity : AppCompatActivity() {
             R.id.bridgeSnowflake -> "snowflake"
             R.id.bridgeObfs4 -> "obfs4"
             R.id.bridgeMeek -> "meek"
+            R.id.bridgeWebtunnel -> "webtunnel"
             R.id.bridgeCustom -> "custom"
             else -> "none"
         }
@@ -121,10 +120,10 @@ class BridgeActivity : AppCompatActivity() {
         startService(stopIntent)
 
         // Redirect to SplashActivity which will handle Tor restart
+        // FLAG_ACTIVITY_CLEAR_TASK already destroys all activities, no need for finish()
         val intent = Intent(this, SplashActivity::class.java)
         intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
         startActivity(intent)
-        finish()
     }
 
     private fun loadTestnetSetting() {

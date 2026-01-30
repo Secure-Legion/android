@@ -2421,27 +2421,9 @@ class MessageService(private val context: Context) {
                 }
             }
 
-            // CRITICAL FIX: Save outgoing Ping to SharedPreferences so Pong can be matched!
-            // Without this, incoming Pongs fail with "No contact_id found" error
-            // KEY FORMAT: ping_<PING_ID>_contact_id (indexed by Ping ID for Pong lookup)
-            withContext(kotlinx.coroutines.NonCancellable) {
-                val prefs = context.getSharedPreferences("pending_pings", Context.MODE_PRIVATE)
-                prefs.edit().apply {
-                    // PONG LOOKUP FORMAT: Indexed by ping_id (not contact_id!)
-                    putString("ping_${pingId}_contact_id", contact.id.toString())
-                    putString("ping_${pingId}_name", contact.displayName)
-                    putLong("ping_${pingId}_timestamp", System.currentTimeMillis())
-                    putString("ping_${pingId}_onion", contact.torOnionAddress)
-
-                    // ALSO save in contact-indexed format for OUTGOING tracking (use different prefix to avoid UI confusion)
-                    putString("outgoing_ping_${contact.id}_id", pingId)
-                    putString("outgoing_ping_${contact.id}_name", contact.displayName)
-                    putLong("outgoing_ping_${contact.id}_timestamp", System.currentTimeMillis())
-                    putString("outgoing_ping_${contact.id}_onion", contact.torOnionAddress)
-                    apply()
-                }
-                Log.i(TAG, "✓ Saved outgoing Ping to SharedPreferences (both formats): contact_id=${contact.id}, ping_id=$pingId")
-            }
+            // Outgoing ping tracking handled by ping_inbox DB on receiver side
+            // Pong lookup uses ping_inbox.contactId — no SharedPrefs needed
+            Log.i(TAG, "✓ Outgoing Ping sent: contact_id=${contact.id}, ping_id=$pingId")
 
             Log.i(TAG, "✓ Ping sent successfully: $pingId (waiting for PING_ACK from receiver)")
             Result.success(pingId)

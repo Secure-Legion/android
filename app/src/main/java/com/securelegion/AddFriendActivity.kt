@@ -12,6 +12,9 @@ import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
 import com.securelegion.crypto.KeyManager
 import com.securelegion.utils.ThemedToast
 import com.securelegion.utils.BadgeUtils
@@ -42,6 +45,24 @@ class AddFriendActivity : BaseActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_add_friend)
+
+        // Enable edge-to-edge and handle system bar insets (matches MainActivity)
+        WindowCompat.setDecorFitsSystemWindows(window, false)
+        val rootView = findViewById<View>(android.R.id.content)
+        val bottomNav = findViewById<View>(R.id.bottomNav)
+        ViewCompat.setOnApplyWindowInsetsListener(rootView) { _, windowInsets ->
+            val insets = windowInsets.getInsets(
+                WindowInsetsCompat.Type.systemBars() or
+                WindowInsetsCompat.Type.displayCutout()
+            )
+            bottomNav.setPadding(
+                bottomNav.paddingLeft,
+                bottomNav.paddingTop,
+                bottomNav.paddingRight,
+                insets.bottom
+            )
+            windowInsets
+        }
 
         // Initialize loading overlay
         loadingOverlay = findViewById(R.id.loadingOverlay)
