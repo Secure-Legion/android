@@ -4,10 +4,19 @@
 
 **The first of its class private messaging app with Post-Quantum Cryptography, Private Payments, and Metadata Resistant with Patent Pending Technology**
 
-[![Platform](https://img.shields.io/badge/platform-Android-green)](https://www.android.com/)
-[![Language](https://img.shields.io/badge/language-Kotlin%20%7C%20Rust-orange)](https://kotlinlang.org/)
-[![License](https://img.shields.io/badge/license-PolyForm%20Noncommercial-blue)](LICENSE)
-[![Website](https://img.shields.io/badge/website-securelegion.org-blue)](https://securelegion.org)
+<p align="center">
+  <img src="https://img.shields.io/badge/platform-Android-34A853?style=flat-square&logo=android&logoColor=white" alt="Android" />
+  <img src="https://img.shields.io/badge/language-Kotlin%20%7C%20Rust-F46623?style=flat-square&logo=kotlin&logoColor=white" alt="Kotlin | Rust" />
+  <img src="https://img.shields.io/badge/license-PolyForm%20Noncommercial-blue?style=flat-square" alt="License" />
+  <img src="https://img.shields.io/badge/website-securelegion.org-5AF5F5?style=flat-square" alt="Website" />
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/Tor-Hidden%20Services-7D4698?style=flat-square&logo=torproject&logoColor=white" alt="Tor" />
+  <img src="https://img.shields.io/badge/Post--Quantum-ML--KEM--1024-FF6F00?style=flat-square" alt="Post-Quantum" />
+  <img src="https://img.shields.io/badge/Solana-Wallet-9945FF?style=flat-square&logo=solana&logoColor=white" alt="Solana" />
+  <img src="https://img.shields.io/badge/Zcash-Shielded-F4B728?style=flat-square&logo=zcash&logoColor=black" alt="Zcash" />
+</p>
 
 > "No servers. Metadata resistance. No compromises."
 
