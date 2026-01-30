@@ -822,24 +822,15 @@ impl TorManager {
     /// Connect to VOICE Tor control port (port 9052 - Single Onion Service instance)
     /// This is a separate Tor daemon specifically for voice hidden service
     /// Must be called AFTER voice Tor daemon is started by TorManager.kt
-    pub async fn initialize_voice_control(&mut self) -> Result<String, Box<dyn Error>> {
+    pub async fn initialize_voice_control(&mut self, cookie_path: &str) -> Result<String, Box<dyn Error>> {
         log::info!("Connecting to VOICE Tor control port (9052)...");
 
         // Connect to voice Tor control port
         let mut control = TcpStream::connect("127.0.0.1:9052").await?;
 
-        // Read voice Tor cookie file
-        let cookie_path = "/data/data/com.securelegion/files/voice_tor/control_auth_cookie";
-        let cookie = match std::fs::read(cookie_path) {
-            Ok(c) => c,
-            Err(e) => {
-                log::warn!("Failed to read voice Tor cookie at {}: {}", cookie_path, e);
-                log::warn!("Trying alternate path...");
-                // Try alternate path
-                let alt_path = "/data/user/0/com.securelegion/files/voice_tor/control_auth_cookie";
-                std::fs::read(alt_path)?
-            }
-        };
+        // Read voice Tor cookie file (path provided by Kotlin caller)
+        log::info!("Reading voice Tor cookie from: {}", cookie_path);
+        let cookie = std::fs::read(cookie_path)?;
 
         // Hex-encode the cookie
         let cookie_hex = hex::encode(&cookie);
@@ -863,8 +854,10 @@ impl TorManager {
     }
 
     /// Wait for Tor to finish bootstrapping (100%)
+    /// Uses 180s timeout to accommodate bridge transports on slow networks
+    /// (e.g. 500kbps in Iran through snowflake/webtunnel/obfs4)
     async fn wait_for_bootstrap(&self) -> Result<(), Box<dyn Error>> {
-        let max_attempts = 60; // 60 seconds max
+        let max_attempts = 180; // 180 seconds max (bridges on slow networks need more time)
 
         for attempt in 1..=max_attempts {
             let status = self.get_bootstrap_status().await?;
@@ -874,14 +867,14 @@ impl TorManager {
                 return Ok(());
             }
 
-            if attempt % 5 == 0 {
-                log::info!("Tor bootstrapping: {}%", status);
+            if attempt % 10 == 0 {
+                log::info!("Tor bootstrapping: {}% (attempt {}/{})", status, attempt, max_attempts);
             }
 
             tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
         }
 
-        Err("Tor bootstrap timeout - took longer than 60 seconds".into())
+        Err("Tor bootstrap timeout - took longer than 180 seconds".into())
     }
 
     /// Get current Tor bootstrap percentage

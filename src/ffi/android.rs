@@ -666,18 +666,28 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_initializeTor(
 /// Initialize VOICE Tor control connection (port 9052)
 /// This must be called AFTER voice Tor daemon is started by TorManager.kt
 /// Voice Tor runs with Single Onion Service configuration (HiddenServiceNonAnonymousMode 1)
+/// cookie_path: The full filesystem path to the voice Tor control_auth_cookie file
 #[no_mangle]
 pub extern "C" fn Java_com_securelegion_crypto_RustBridge_initializeVoiceTorControl(
     mut env: JNIEnv,
     _class: JClass,
+    cookie_path: JString,
 ) -> jstring {
     catch_panic!(env, {
+        let cookie_path_str: String = match env.get_string(&cookie_path) {
+            Ok(s) => s.into(),
+            Err(_) => {
+                let _ = env.throw_new("java/lang/RuntimeException", "Failed to read cookie path string");
+                return std::ptr::null_mut();
+            }
+        };
+
         let tor_manager = get_tor_manager();
 
         // Connect to voice Tor control port (9052)
         let result = GLOBAL_RUNTIME.block_on(async {
             let mut manager = tor_manager.lock().unwrap();
-            manager.initialize_voice_control().await
+            manager.initialize_voice_control(&cookie_path_str).await
         });
 
         match result {
