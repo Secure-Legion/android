@@ -5,6 +5,7 @@ pub mod hashing;
 pub mod pqc;
 pub mod replay_cache;
 pub mod ack_state;
+pub mod zkproofs;
 
 pub use encryption::{
     encrypt_message,
@@ -26,3 +27,4 @@ pub use pqc::{
     HybridKEMKeypair,
     HybridCiphertext,
 };
+pub use zkproofs::{generate_range_proof, verify_range_proof};

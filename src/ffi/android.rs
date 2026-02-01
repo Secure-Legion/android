@@ -2145,48 +2145,55 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendFriendRequest(
 
         const FRIEND_REQUEST_PORT: u16 = 9151; // Friend request .onion port (wire protocol)
         const FALLBACK_PORT: u16 = 8080; // Fallback to main listener if 9151 fails
+        const MAX_RETRIES: u32 = 24; // 24 retries x 5s = 2 min for slow bridges (Snowflake)
+        const RETRY_DELAY_SECS: u64 = 5;
 
-        // Try port 9151 first
-        let result = runtime.block_on(async {
-            let manager = tor_manager.lock().unwrap();
-            let mut conn = manager.connect(&recipient_onion_str, FRIEND_REQUEST_PORT).await?;
-            manager.send(&mut conn, &wire_message).await?;
+        for attempt in 1..=MAX_RETRIES {
+            // Try port 9151 first
+            let result = runtime.block_on(async {
+                let manager = tor_manager.lock().unwrap();
+                let mut conn = manager.connect(&recipient_onion_str, FRIEND_REQUEST_PORT).await?;
+                manager.send(&mut conn, &wire_message).await?;
+                Ok::<(), Box<dyn std::error::Error>>(())
+            });
 
-            log::info!("Friend request sent successfully to {} on port {}", recipient_onion_str, FRIEND_REQUEST_PORT);
-            Ok::<(), Box<dyn std::error::Error>>(())
-        });
+            match result {
+                Ok(_) => {
+                    log::info!("Friend request sent successfully to {} on port {} (attempt {})", recipient_onion_str, FRIEND_REQUEST_PORT, attempt);
+                    return 1;
+                }
+                Err(e) => {
+                    log::warn!("Port {} attempt {}/{} failed: {}. Trying fallback port {}...", FRIEND_REQUEST_PORT, attempt, MAX_RETRIES, e, FALLBACK_PORT);
 
-        match result {
-            Ok(_) => {
-                log::info!("Friend request sent successfully to {} on port {}", recipient_onion_str, FRIEND_REQUEST_PORT);
-                1 // success
-            }
-            Err(e) => {
-                log::warn!("Port {} failed: {}. Trying fallback port {}...", FRIEND_REQUEST_PORT, e, FALLBACK_PORT);
+                    // Fallback to port 8080
+                    let fallback_result = runtime.block_on(async {
+                        let manager = tor_manager.lock().unwrap();
+                        let mut conn = manager.connect(&recipient_onion_str, FALLBACK_PORT).await?;
+                        manager.send(&mut conn, &wire_message).await?;
+                        Ok::<(), Box<dyn std::error::Error>>(())
+                    });
 
-                // Fallback to port 8080
-                let fallback_result = runtime.block_on(async {
-                    let manager = tor_manager.lock().unwrap();
-                    let mut conn = manager.connect(&recipient_onion_str, FALLBACK_PORT).await?;
-                    manager.send(&mut conn, &wire_message).await?;
-
-                    log::info!("Friend request sent successfully to {} on fallback port {}", recipient_onion_str, FALLBACK_PORT);
-                    Ok::<(), Box<dyn std::error::Error>>(())
-                });
-
-                match fallback_result {
-                    Ok(_) => {
-                        log::info!("Friend request sent successfully via fallback port {}", FALLBACK_PORT);
-                        1 // success
-                    }
-                    Err(fallback_err) => {
-                        log::error!("Failed to send friend request to {} (tried both port {} and {}): {}",
-                            recipient_onion_str, FRIEND_REQUEST_PORT, FALLBACK_PORT, fallback_err);
-                        0 // failure
+                    match fallback_result {
+                        Ok(_) => {
+                            log::info!("Friend request sent via fallback port {} (attempt {})", FALLBACK_PORT, attempt);
+                            return 1;
+                        }
+                        Err(fallback_err) => {
+                            if attempt < MAX_RETRIES {
+                                log::warn!("Friend request attempt {}/{} failed (both ports): {}. Retrying in {}s...",
+                                    attempt, MAX_RETRIES, fallback_err, RETRY_DELAY_SECS);
+                                std::thread::sleep(std::time::Duration::from_secs(RETRY_DELAY_SECS));
+                            } else {
+                                log::error!("Failed to send friend request to {} after {} attempts: {}",
+                                    recipient_onion_str, MAX_RETRIES, fallback_err);
+                            }
+                        }
                     }
                 }
             }
         }
+
+        0 // all retries exhausted
     }, 0)
 }
 
@@ -2243,48 +2250,55 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendFriendRequestAccep
 
         const FRIEND_REQUEST_PORT: u16 = 9151; // Friend request .onion port (wire protocol)
         const FALLBACK_PORT: u16 = 8080; // Fallback to main listener if 9151 fails
+        const MAX_RETRIES: u32 = 24; // 24 retries x 5s = 2 min for slow bridges (Snowflake)
+        const RETRY_DELAY_SECS: u64 = 5;
 
-        // Try port 9151 first
-        let result = runtime.block_on(async {
-            let manager = tor_manager.lock().unwrap();
-            let mut conn = manager.connect(&recipient_onion_str, FRIEND_REQUEST_PORT).await?;
-            manager.send(&mut conn, &wire_message).await?;
+        for attempt in 1..=MAX_RETRIES {
+            // Try port 9151 first
+            let result = runtime.block_on(async {
+                let manager = tor_manager.lock().unwrap();
+                let mut conn = manager.connect(&recipient_onion_str, FRIEND_REQUEST_PORT).await?;
+                manager.send(&mut conn, &wire_message).await?;
+                Ok::<(), Box<dyn std::error::Error>>(())
+            });
 
-            log::info!("Friend request acceptance sent successfully to {} on port {}", recipient_onion_str, FRIEND_REQUEST_PORT);
-            Ok::<(), Box<dyn std::error::Error>>(())
-        });
+            match result {
+                Ok(_) => {
+                    log::info!("Friend request acceptance sent to {} on port {} (attempt {})", recipient_onion_str, FRIEND_REQUEST_PORT, attempt);
+                    return 1;
+                }
+                Err(e) => {
+                    log::warn!("Port {} attempt {}/{} failed: {}. Trying fallback port {}...", FRIEND_REQUEST_PORT, attempt, MAX_RETRIES, e, FALLBACK_PORT);
 
-        match result {
-            Ok(_) => {
-                log::info!("Friend request acceptance sent successfully to {} on port {}", recipient_onion_str, FRIEND_REQUEST_PORT);
-                1 // success
-            }
-            Err(e) => {
-                log::warn!("Port {} failed: {}. Trying fallback port {}...", FRIEND_REQUEST_PORT, e, FALLBACK_PORT);
+                    // Fallback to port 8080
+                    let fallback_result = runtime.block_on(async {
+                        let manager = tor_manager.lock().unwrap();
+                        let mut conn = manager.connect(&recipient_onion_str, FALLBACK_PORT).await?;
+                        manager.send(&mut conn, &wire_message).await?;
+                        Ok::<(), Box<dyn std::error::Error>>(())
+                    });
 
-                // Fallback to port 8080
-                let fallback_result = runtime.block_on(async {
-                    let manager = tor_manager.lock().unwrap();
-                    let mut conn = manager.connect(&recipient_onion_str, FALLBACK_PORT).await?;
-                    manager.send(&mut conn, &wire_message).await?;
-
-                    log::info!("Friend request acceptance sent successfully to {} on fallback port {}", recipient_onion_str, FALLBACK_PORT);
-                    Ok::<(), Box<dyn std::error::Error>>(())
-                });
-
-                match fallback_result {
-                    Ok(_) => {
-                        log::info!("Friend request acceptance sent successfully via fallback port {}", FALLBACK_PORT);
-                        1 // success
-                    }
-                    Err(fallback_err) => {
-                        log::error!("Failed to send friend request acceptance to {} (tried both port {} and {}): {}",
-                            recipient_onion_str, FRIEND_REQUEST_PORT, FALLBACK_PORT, fallback_err);
-                        0 // failure
+                    match fallback_result {
+                        Ok(_) => {
+                            log::info!("Friend request acceptance sent via fallback port {} (attempt {})", FALLBACK_PORT, attempt);
+                            return 1;
+                        }
+                        Err(fallback_err) => {
+                            if attempt < MAX_RETRIES {
+                                log::warn!("Acceptance attempt {}/{} failed (both ports): {}. Retrying in {}s...",
+                                    attempt, MAX_RETRIES, fallback_err, RETRY_DELAY_SECS);
+                                std::thread::sleep(std::time::Duration::from_secs(RETRY_DELAY_SECS));
+                            } else {
+                                log::error!("Failed to send friend request acceptance to {} after {} attempts: {}",
+                                    recipient_onion_str, MAX_RETRIES, fallback_err);
+                            }
+                        }
                     }
                 }
             }
         }
+
+        0 // all retries exhausted
     }, 0)
 }
 
@@ -4064,6 +4078,32 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_getCircuitEstablished(
         log::debug!("Circuit established status: {}", status);
         status as jint
     }, 0 as jint)
+}
+
+/// Get HS descriptor upload count - how many HSDirs have confirmed our descriptor
+/// Updated in real-time by event listener when it sees HS_DESC UPLOADED events
+/// v3 onions upload to ~6-8 HSDirs; count >= 1 means partially reachable, >= 3 is good
+#[no_mangle]
+pub extern "C" fn Java_com_securelegion_crypto_RustBridge_getHsDescUploadCount(
+    mut env: JNIEnv,
+    _class: JClass,
+) -> jint {
+    catch_panic!(env, {
+        let count = crate::network::tor::get_hs_desc_upload_count();
+        count as jint
+    }, 0 as jint)
+}
+
+/// Reset HS descriptor upload counter (call before creating a new hidden service)
+#[no_mangle]
+pub extern "C" fn Java_com_securelegion_crypto_RustBridge_resetHsDescUploadCount(
+    mut env: JNIEnv,
+    _class: JClass,
+) {
+    catch_panic!(env, {
+        crate::network::tor::reset_hs_desc_upload_count();
+        log::info!("HS_DESC upload counter reset from JNI");
+    }, ())
 }
 
 /// Register Tor event callback handler
@@ -7670,3 +7710,90 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_getMessageTxDropCount(
 }
 
 // ==================== END v2.0: Voice Streaming ====================
+
+// ==================== ShadowWire ZK Range Proofs ====================
+
+/// Helper to cast &[u8] to &[i8] for JNI byte arrays
+fn bytemuck_cast_slice(bytes: &[u8]) -> &[i8] {
+    unsafe { std::slice::from_raw_parts(bytes.as_ptr() as *const i8, bytes.len()) }
+}
+
+/// Generate a Bulletproof range proof for ShadowWire transfers
+/// Returns: [4-byte proof_len (big-endian)][proof_bytes][32-byte commitment][32-byte blinding_factor]
+#[no_mangle]
+pub extern "C" fn Java_com_securelegion_crypto_RustBridge_generateRangeProof(
+    mut env: JNIEnv,
+    _class: JClass,
+    amount: jlong,
+    bit_length: jint,
+) -> jbyteArray {
+    catch_panic!(env, {
+        use crate::crypto::zkproofs::generate_range_proof;
+
+        let amount_u64 = amount as u64;
+        let bit_len = bit_length as usize;
+
+        match generate_range_proof(amount_u64, bit_len) {
+            Ok((proof_bytes, commitment, blinding)) => {
+                // Pack: [4-byte proof_len BE][proof_bytes][32-byte commitment][32-byte blinding]
+                let proof_len = proof_bytes.len() as u32;
+                let total_len = 4 + proof_bytes.len() + 32 + 32;
+                let mut result = Vec::with_capacity(total_len);
+                result.extend_from_slice(&proof_len.to_be_bytes());
+                result.extend_from_slice(&proof_bytes);
+                result.extend_from_slice(&commitment);
+                result.extend_from_slice(&blinding);
+
+                let output = env.new_byte_array(result.len() as i32)
+                    .expect("Failed to create byte array");
+                env.set_byte_array_region(&output, 0, bytemuck_cast_slice(&result))
+                    .expect("Failed to set byte array");
+                output.into_raw()
+            }
+            Err(e) => {
+                log::error!("generateRangeProof failed: {}", e);
+                env.throw_new("java/lang/RuntimeException", &e)
+                    .expect("Failed to throw exception");
+                std::ptr::null_mut()
+            }
+        }
+    }, std::ptr::null_mut())
+}
+
+/// Verify a Bulletproof range proof
+#[no_mangle]
+pub extern "C" fn Java_com_securelegion_crypto_RustBridge_verifyRangeProof(
+    mut env: JNIEnv,
+    _class: JClass,
+    proof_bytes: JByteArray,
+    commitment_bytes: JByteArray,
+    bit_length: jint,
+) -> jboolean {
+    catch_panic!(env, {
+        use crate::crypto::zkproofs::verify_range_proof;
+
+        let proof = env.convert_byte_array(&proof_bytes)
+            .expect("Failed to read proof bytes");
+        let commitment_vec = env.convert_byte_array(&commitment_bytes)
+            .expect("Failed to read commitment bytes");
+
+        if commitment_vec.len() != 32 {
+            log::error!("verifyRangeProof: commitment must be 32 bytes, got {}", commitment_vec.len());
+            return JNI_FALSE;
+        }
+
+        let mut commitment = [0u8; 32];
+        commitment.copy_from_slice(&commitment_vec);
+
+        match verify_range_proof(&proof, &commitment, bit_length as usize) {
+            Ok(true) => JNI_TRUE,
+            Ok(false) => JNI_FALSE,
+            Err(e) => {
+                log::warn!("verifyRangeProof failed: {}", e);
+                JNI_FALSE
+            }
+        }
+    }, JNI_FALSE)
+}
+
+// ==================== END ShadowWire ZK Range Proofs ====================

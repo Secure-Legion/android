@@ -25,6 +25,9 @@ hmac = "0.12"
 sha2 = "0.10"
 blake3 = "1.5"  # For PING hashing and replay detection
 subtle = "2.5"  # For constant-time comparison
+bulletproofs = "5.0.0"  # Bulletproof range proofs for ShadowWire ZK transfers
+curve25519-dalek = { version = "4", features = ["rand_core"] }  # Required by bulletproofs for Scalar/Ristretto types
+merlin = "3"  # Transcript protocol for bulletproofs
 
 # Post-Quantum Cryptography (NIST FIPS 203)
 pqc_kyber = { version = "0.7", features = ["kyber1024"] }  # ML-KEM-1024 implementation

@@ -34,6 +34,20 @@ pub fn get_circuit_established_fast() -> u8 {
     CIRCUIT_ESTABLISHED.load(Ordering::SeqCst)
 }
 
+/// HS descriptor upload counter - incremented by event listener each time Tor confirms UPLOADED to an HSDir
+/// v3 onion services upload to multiple HSDirs (typically 6-8), so count >= 1 means partially reachable
+pub static HS_DESC_UPLOAD_COUNT: AtomicU32 = AtomicU32::new(0);
+
+/// Get HS descriptor upload count (fast, no control port query)
+pub fn get_hs_desc_upload_count() -> u32 {
+    HS_DESC_UPLOAD_COUNT.load(Ordering::SeqCst)
+}
+
+/// Reset HS descriptor upload counter (call before creating a new hidden service)
+pub fn reset_hs_desc_upload_count() {
+    HS_DESC_UPLOAD_COUNT.store(0, Ordering::SeqCst);
+}
+
 /// Tor event types for ControlPort event monitoring
 #[derive(Debug, Clone)]
 pub enum TorEventType {
@@ -240,7 +254,8 @@ async fn bootstrap_event_listener_task() -> Result<(), Box<dyn Error + Send + Sy
                                             log::info!("Circuit CLOSED: {} (reason: {})", circ_id, reason);
                                         }
                                         TorEventType::HsDescUploaded { address } => {
-                                            log::info!("HS descriptor UPLOADED: {}", address);
+                                            let count = HS_DESC_UPLOAD_COUNT.fetch_add(1, Ordering::SeqCst) + 1;
+                                            log::info!("HS descriptor UPLOADED: {} (total: {}/6 HSDirs)", address, count);
                                         }
                                         TorEventType::HsDescUploadFailed { address, reason } => {
                                             log::warn!("HS descriptor UPLOAD FAILED: {} (reason: {})", address, reason);
@@ -930,6 +945,10 @@ impl TorManager {
         local_port: u16,
         hs_private_key: &[u8],
     ) -> Result<String, Box<dyn Error>> {
+        // Reset descriptor upload counter so Kotlin can track fresh propagation
+        reset_hs_desc_upload_count();
+        log::info!("HS_DESC upload counter reset for new hidden service");
+
         // Validate key length
         if hs_private_key.len() != 32 {
             return Err("Hidden service private key must be 32 bytes".into());
@@ -972,6 +991,18 @@ impl TorManager {
 
         // NOTE: HS_DESC event subscription is handled by the main event listener (spawn_event_listener)
         // No need to subscribe again here - would cause duplicate events
+
+        // CRITICAL: Verify control port is alive before issuing ADD_ONION
+        // Prevents "Broken pipe" failures when Tor restarts between bootstrap and account creation
+        match self.check_control_connection().await {
+            Ok(true) => log::info!("Control port healthy for create_hidden_service"),
+            Ok(false) => log::warn!("Control port check returned false, attempting anyway..."),
+            Err(e) => {
+                log::error!("Control port reconnection failed: {} - will retry from Kotlin side", e);
+                return Err(format!("Control port not available: {}", e).into());
+            }
+        }
+
         let control = self.control_stream.as_ref()
             .ok_or("Control port not connected")?;
 
