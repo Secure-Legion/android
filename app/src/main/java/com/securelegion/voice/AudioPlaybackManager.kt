@@ -2,9 +2,11 @@ package com.securelegion.voice
 
 import android.content.Context
 import android.media.AudioAttributes
+import android.media.AudioDeviceInfo
 import android.media.AudioFormat
 import android.media.AudioManager
 import android.media.AudioTrack
+import android.os.Build
 import android.util.Log
 import kotlinx.coroutines.*
 import kotlin.coroutines.coroutineContext
@@ -155,10 +157,15 @@ class AudioPlaybackManager(
                     Log.d(TAG, "AudioManager already in MODE_IN_COMMUNICATION - preserving existing settings")
                 }
 
-                // CRITICAL FIX: Respect current speaker state instead of forcing it OFF
-                // VoiceCallActivity may have already set speaker ON during "Calling..." phase
-                @Suppress("DEPRECATION")
-                val currentSpeakerState = am.isSpeakerphoneOn
+                // Respect current speaker state from VoiceCallActivity
+                val currentSpeakerState = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    // On API 31+, check if a speaker communication device is set
+                    val currentDevice = am.communicationDevice
+                    currentDevice?.type == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER
+                } else {
+                    @Suppress("DEPRECATION")
+                    am.isSpeakerphoneOn
+                }
                 isSpeakerEnabled = currentSpeakerState
 
                 Log.d(TAG, "AudioPlaybackManager initialized: mode=${am.mode}, speaker=${if (currentSpeakerState) "ON" else "OFF"} (preserved from VoiceCallActivity)")
@@ -745,20 +752,36 @@ class AudioPlaybackManager(
 
         audioManager?.let { am ->
             try {
-                // CRITICAL: For MODE_IN_COMMUNICATION, we must:
-                // 1. Set speakerphone mode (routes audio to loudspeaker vs earpiece)
-                // 2. DO NOT restart AudioTrack (causes audio gaps and issues)
-
-                @Suppress("DEPRECATION")
-                am.isSpeakerphoneOn = enabled
-
-                if (enabled) {
-                    Log.i(TAG, "✓ Speaker ON - audio routed to LOUDSPEAKER")
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    // Android 12+ (API 31): Use setCommunicationDevice
+                    // isSpeakerphoneOn is deprecated and silently ignored on many devices
+                    if (enabled) {
+                        val speakerDevice = am.availableCommunicationDevices.firstOrNull {
+                            it.type == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER
+                        }
+                        if (speakerDevice != null) {
+                            val success = am.setCommunicationDevice(speakerDevice)
+                            Log.i(TAG, "✓ Speaker ON via setCommunicationDevice: success=$success")
+                        } else {
+                            Log.e(TAG, "No built-in speaker device found in available devices")
+                        }
+                    } else {
+                        am.clearCommunicationDevice()
+                        Log.i(TAG, "✓ Speaker OFF via clearCommunicationDevice (earpiece)")
+                    }
                 } else {
-                    Log.i(TAG, "✓ Speaker OFF - audio routed to EARPIECE")
+                    // Android 11 and below: Use legacy API
+                    @Suppress("DEPRECATION")
+                    am.isSpeakerphoneOn = enabled
+
+                    if (enabled) {
+                        Log.i(TAG, "✓ Speaker ON via isSpeakerphoneOn")
+                    } else {
+                        Log.i(TAG, "✓ Speaker OFF via isSpeakerphoneOn")
+                    }
                 }
 
-                Log.d(TAG, "AudioManager state: mode=${am.mode}, speakerphone=${am.isSpeakerphoneOn}")
+                Log.d(TAG, "AudioManager state: mode=${am.mode}")
             } catch (e: Exception) {
                 Log.e(TAG, "Error setting speaker mode", e)
             }
@@ -820,11 +843,16 @@ class AudioPlaybackManager(
             Log.e(TAG, "Error releasing AudioTrack", e)
         }
 
-        // Restore previous audio mode
+        // Restore previous audio mode and clear communication device
         audioManager?.let { am ->
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                am.clearCommunicationDevice()
+            } else {
+                @Suppress("DEPRECATION")
+                am.isSpeakerphoneOn = false
+            }
             am.mode = previousAudioMode
-            am.isSpeakerphoneOn = false
-            Log.d(TAG, "AudioManager mode restored to $previousAudioMode, speakerphone disabled")
+            Log.d(TAG, "AudioManager mode restored to $previousAudioMode, speaker route cleared")
         }
         audioManager = null
     }

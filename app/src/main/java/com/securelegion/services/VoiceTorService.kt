@@ -32,10 +32,10 @@ class VoiceTorService : Service() {
         const val ACTION_START = "com.securelegion.services.VoiceTorService.START"
         const val ACTION_STOP = "com.securelegion.services.VoiceTorService.STOP"
 
-        // Foreground notification constants
-        private const val NOTIFICATION_ID = 2  // Different from TorService (1)
-        private const val CHANNEL_ID = "voice_tor_service_channel"
-        private const val CHANNEL_NAME = "Voice Tor Service"
+        // Share TorService's notification so no separate notification appears
+        private const val NOTIFICATION_ID = 1001  // Same as TorService
+        private const val CHANNEL_ID = "tor_service_channel"  // Same as TorService
+        private const val CHANNEL_NAME = "Tor Hidden Service"
 
         // Voice Tor health status (accessible from UI)
         @Volatile var isHealthy: Boolean = false
@@ -224,7 +224,7 @@ class VoiceTorService : Service() {
             val channel = NotificationChannel(
                 CHANNEL_ID,
                 CHANNEL_NAME,
-                NotificationManager.IMPORTANCE_LOW
+                NotificationManager.IMPORTANCE_MIN
             ).apply {
                 description = "Voice Tor network status"
                 setShowBadge(false)
@@ -240,6 +240,12 @@ class VoiceTorService : Service() {
             .setSmallIcon(R.drawable.ic_notification_logo)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .build()
+    }
+
+    private fun updateNotification(message: String) {
+        val notification = createNotification(message)
+        val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        notificationManager.notify(NOTIFICATION_ID, notification)
     }
 
     private fun stopVoiceTor() {

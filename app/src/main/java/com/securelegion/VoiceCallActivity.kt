@@ -4,6 +4,7 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.media.AudioDeviceInfo
 import android.media.AudioManager
 import android.media.ToneGenerator
 import android.os.Build
@@ -184,16 +185,14 @@ class VoiceCallActivity : BaseActivity() {
         setupProximitySensor()
 
         // Initialize AudioManager for proper speaker/earpiece routing
-        // CRITICAL: Must set MODE_IN_COMMUNICATION for speaker button to work during ringing
         audioManager = getSystemService(Context.AUDIO_SERVICE) as? AudioManager
         audioManager?.let { am ->
             previousAudioMode = am.mode
             am.mode = AudioManager.MODE_IN_COMMUNICATION
-            // Start with earpiece (speaker OFF) by default
-            @Suppress("DEPRECATION")
-            am.isSpeakerphoneOn = false
             Log.d(TAG, "AudioManager initialized: mode=MODE_IN_COMMUNICATION (prev: $previousAudioMode)")
         }
+        // Start with earpiece (speaker OFF) by default using the correct API
+        setSpeakerRoute(false)
 
         // Initialize NotificationManager for ongoing call notification
         notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
@@ -428,19 +427,8 @@ class VoiceCallActivity : BaseActivity() {
     private fun toggleSpeaker() {
         isSpeakerOn = !isSpeakerOn
 
-        // Set speaker mode directly via AudioManager
-        // This works for both:
-        // 1. RINGING state - controls ringback tone playback
-        // 2. ACTIVE state - controls voice call audio (also handled via AudioPlaybackManager)
-        audioManager?.let { am ->
-            try {
-                @Suppress("DEPRECATION")
-                am.isSpeakerphoneOn = isSpeakerOn
-                Log.d(TAG, "Speaker ${if (isSpeakerOn) "ON" else "OFF"} via AudioManager (mode=${am.mode})")
-            } catch (e: Exception) {
-                Log.e(TAG, "Failed to set speaker via AudioManager", e)
-            }
-        } ?: Log.e(TAG, "AudioManager is null, cannot toggle speaker")
+        // Route audio to speaker or earpiece
+        setSpeakerRoute(isSpeakerOn)
 
         // Also notify call manager (for when AudioPlaybackManager is initialized)
         try {
@@ -457,6 +445,43 @@ class VoiceCallActivity : BaseActivity() {
             speakerButton.setImageResource(R.drawable.ic_speaker)
             speakerButton.backgroundTintList = android.content.res.ColorStateList.valueOf(0xFF2C2C2C.toInt())
         }
+    }
+
+    /**
+     * Route audio to speaker or earpiece using the correct API for the Android version.
+     *
+     * isSpeakerphoneOn is deprecated on API 31+ (Android 12) and silently ignored on many devices.
+     * API 31+ requires setCommunicationDevice() to actually switch the audio route.
+     */
+    private fun setSpeakerRoute(speaker: Boolean) {
+        audioManager?.let { am ->
+            try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    // Android 12+ (API 31): Use setCommunicationDevice
+                    if (speaker) {
+                        val speakerDevice = am.availableCommunicationDevices.firstOrNull {
+                            it.type == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER
+                        }
+                        if (speakerDevice != null) {
+                            val success = am.setCommunicationDevice(speakerDevice)
+                            Log.d(TAG, "Speaker ON via setCommunicationDevice: success=$success")
+                        } else {
+                            Log.e(TAG, "No built-in speaker device found")
+                        }
+                    } else {
+                        am.clearCommunicationDevice()
+                        Log.d(TAG, "Speaker OFF via clearCommunicationDevice (earpiece)")
+                    }
+                } else {
+                    // Android 11 and below: Use legacy API
+                    @Suppress("DEPRECATION")
+                    am.isSpeakerphoneOn = speaker
+                    Log.d(TAG, "Speaker ${if (speaker) "ON" else "OFF"} via isSpeakerphoneOn (mode=${am.mode})")
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to set speaker route", e)
+            }
+        } ?: Log.e(TAG, "AudioManager is null, cannot toggle speaker")
     }
 
 
@@ -1061,8 +1086,11 @@ class VoiceCallActivity : BaseActivity() {
         // Clear ongoing call notification
         clearOngoingCallNotification()
 
-        // Restore previous audio mode
+        // Restore previous audio mode and clear communication device
         audioManager?.let { am ->
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                am.clearCommunicationDevice()
+            }
             am.mode = previousAudioMode
             Log.d(TAG, "Audio mode restored to $previousAudioMode")
         }

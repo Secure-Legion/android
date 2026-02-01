@@ -276,9 +276,10 @@ class GroupChatActivity : BaseActivity() {
         lifecycleScope.launch {
             try {
                 // Wait for transport gate to open (verifies Tor is healthy)
+                // Best-effort: message is already saved to DB, retry worker handles failures
                 Log.d(TAG, "Waiting for transport gate to open before sending message...")
-                TorService.getTransportGate()?.awaitOpen()
-                Log.d(TAG, "Transport gate opened, proceeding with message send")
+                TorService.getTransportGate()?.awaitOpen(com.securelegion.network.TransportGate.TIMEOUT_SEND_MS)
+                Log.d(TAG, "Transport gate opened (or timed out), proceeding with message send")
 
                 withContext(Dispatchers.IO) {
                     val groupManager = GroupManager.getInstance(this@GroupChatActivity)

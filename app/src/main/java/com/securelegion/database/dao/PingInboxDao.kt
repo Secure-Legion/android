@@ -37,14 +37,15 @@ interface PingInboxDao {
 
     /**
      * Get pings that need UI rendering for a contact.
-     * Only returns states that should show a row in chat:
-     *   PING_SEEN(0), DOWNLOAD_QUEUED(10), FAILED_TEMP(11), MANUAL_REQUIRED(12)
-     * Excludes PONG_SENT(1) and MSG_STORED(2) to prevent message+downloading overlap.
+     * Returns states that should show a row in chat:
+     *   PING_SEEN(0), PONG_SENT(1), DOWNLOAD_QUEUED(10), FAILED_TEMP(11), MANUAL_REQUIRED(12)
+     * PONG_SENT included to handle stale entries after logout/login (shows lock icon so user can retry).
+     * Excludes MSG_STORED(2) only — those have a real message row in chat.
      */
     @Query("""
         SELECT * FROM ping_inbox
         WHERE contactId = :contactId
-        AND state IN (${PingInbox.STATE_PING_SEEN}, ${PingInbox.STATE_DOWNLOAD_QUEUED}, ${PingInbox.STATE_FAILED_TEMP}, ${PingInbox.STATE_MANUAL_REQUIRED})
+        AND state IN (${PingInbox.STATE_PING_SEEN}, ${PingInbox.STATE_PONG_SENT}, ${PingInbox.STATE_DOWNLOAD_QUEUED}, ${PingInbox.STATE_FAILED_TEMP}, ${PingInbox.STATE_MANUAL_REQUIRED})
         ORDER BY firstSeenAt ASC
     """)
     suspend fun getRenderableByContact(contactId: Long): List<PingInbox>
@@ -151,9 +152,10 @@ interface PingInboxDao {
 
     /**
      * Atomically claim a ping for manual download (user tapped lock icon).
-     * Phase 1: accepts PING_SEEN and MANUAL_REQUIRED only.
-     * FAILED_TEMP excluded to avoid collision with retry worker.
-     * Returns 1 if claimed, 0 if already in DOWNLOAD_QUEUED/PONG_SENT/MSG_STORED.
+     * Accepts PING_SEEN, MANUAL_REQUIRED, FAILED_TEMP, and PONG_SENT.
+     * PONG_SENT included to handle stale state after logout/login (process died mid-download).
+     * FAILED_TEMP included so user can manually retry from lock icon.
+     * Returns 1 if claimed, 0 if already in DOWNLOAD_QUEUED or MSG_STORED.
      */
     @Query("""
         UPDATE ping_inbox
@@ -161,7 +163,7 @@ interface PingInboxDao {
             downloadQueuedAt = :now,
             lastUpdatedAt = :now
         WHERE pingId = :pingId
-        AND state IN (${PingInbox.STATE_PING_SEEN}, ${PingInbox.STATE_MANUAL_REQUIRED})
+        AND state IN (${PingInbox.STATE_PING_SEEN}, ${PingInbox.STATE_MANUAL_REQUIRED}, ${PingInbox.STATE_FAILED_TEMP}, ${PingInbox.STATE_PONG_SENT})
     """)
     suspend fun claimForManualDownload(pingId: String, now: Long): Int
 

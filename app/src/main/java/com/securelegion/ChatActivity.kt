@@ -241,21 +241,42 @@ class ChatActivity : BaseActivity() {
                             runOnUiThread {
                                 lifecycleScope.launch {
                                     // AUTO-PONG: Check BEFORE loadMessages to prevent lock icon flash
-                                    if (hasDownloadedOnce) {
+                                    // When Device Protection is OFF, TorService auto-downloads — we just
+                                    // need to mark pings for typing indicator so no lock icon flashes.
+                                    // When Device Protection is ON, fall back to old hasDownloadedOnce behavior.
+                                    val securityPrefs = getSharedPreferences("security", MODE_PRIVATE)
+                                    val deviceProtectionEnabled = securityPrefs.getBoolean(
+                                        com.securelegion.SecurityModeActivity.PREF_DEVICE_PROTECTION_ENABLED, false
+                                    )
+
+                                    if (!deviceProtectionEnabled) {
+                                        // Auto-download is ON (default) — TorService handles the download.
+                                        // Mark all non-stored pings for typing indicator (seamless UX).
+                                        val pendingPings = withContext(kotlinx.coroutines.Dispatchers.IO) {
+                                            database.pingInboxDao().getPendingByContact(contactId)
+                                                .filter { it.state != com.securelegion.database.entities.PingInbox.STATE_MSG_STORED }
+                                        }
+
+                                        if (pendingPings.isNotEmpty()) {
+                                            Log.i(TAG, "Auto-download active — showing typing indicator for ${pendingPings.size} ping(s)")
+                                            pendingPings.forEach { ping ->
+                                                autoPongPingIds.add(ping.pingId)
+                                                Log.d(TAG, "  Typing indicator for ping: ${ping.pingId.take(8)} (state=${ping.state})")
+                                            }
+                                        }
+                                    } else if (hasDownloadedOnce) {
+                                        // Device Protection ON but user downloaded once this session —
+                                        // auto-PONG subsequent pings from ChatActivity
                                         val pingSeen = withContext(kotlinx.coroutines.Dispatchers.IO) {
                                             database.pingInboxDao().getPendingByContact(contactId)
                                                 .filter { it.state == com.securelegion.database.entities.PingInbox.STATE_PING_SEEN }
                                         }
 
                                         if (pingSeen.isNotEmpty()) {
-                                            Log.i(TAG, "⚡ Auto-sending PONG for ${pingSeen.size} new message(s) (user is active in thread)")
+                                            Log.i(TAG, "Device Protection ON but user active — auto-sending PONG for ${pingSeen.size} message(s)")
                                             pingSeen.forEach { ping ->
                                                 Log.d(TAG, "  Auto-PONGing ping: ${ping.pingId.take(8)}")
-
-                                                // Mark this ping as auto-download FIRST (prevents lock icon flash)
                                                 autoPongPingIds.add(ping.pingId)
-
-                                                // Start download service which will send PONG and receive message
                                                 com.securelegion.services.DownloadMessageService.start(
                                                     this@ChatActivity,
                                                     contactId,
@@ -1391,6 +1412,23 @@ class ChatActivity : BaseActivity() {
             // Pass PingInbox entries directly to adapter (no bridge conversion needed)
             val pendingPingsToShow = activePingEntries
 
+            // AUTO-DOWNLOAD TYPING INDICATOR: When Device Protection is OFF,
+            // mark in-progress pings (DOWNLOAD_QUEUED, PONG_SENT, PING_SEEN) for typing indicator.
+            // This handles the case where user opens chat while TorService auto-download is running.
+            val secPrefs = getSharedPreferences("security", MODE_PRIVATE)
+            val devProtection = secPrefs.getBoolean(
+                com.securelegion.SecurityModeActivity.PREF_DEVICE_PROTECTION_ENABLED, false
+            )
+            if (!devProtection) {
+                activePingEntries.forEach { ping ->
+                    if (ping.state == com.securelegion.database.entities.PingInbox.STATE_PING_SEEN
+                        || ping.state == com.securelegion.database.entities.PingInbox.STATE_DOWNLOAD_QUEUED
+                        || ping.state == com.securelegion.database.entities.PingInbox.STATE_PONG_SENT) {
+                        autoPongPingIds.add(ping.pingId)
+                    }
+                }
+            }
+
             // Clean up autoPongPingIds - remove completed auto-downloads
             val completedAutoPongs = autoPongPingIds.filter { pingId ->
                 pingId in existingMessagePingIds  // Message arrived
@@ -1417,10 +1455,12 @@ class ChatActivity : BaseActivity() {
             val stillPendingIds = pendingPingsToShow.map { it.pingId }.toSet()
 
             // Build a set of pingIds whose DB state is a lock-showing state (failed back to lock)
+            // PONG_SENT included: stale state after logout/login shows lock icon
             val lockStateIds = pendingPingsToShow
                 .filter { it.state == com.securelegion.database.entities.PingInbox.STATE_PING_SEEN
                         || it.state == com.securelegion.database.entities.PingInbox.STATE_FAILED_TEMP
-                        || it.state == com.securelegion.database.entities.PingInbox.STATE_MANUAL_REQUIRED }
+                        || it.state == com.securelegion.database.entities.PingInbox.STATE_MANUAL_REQUIRED
+                        || it.state == com.securelegion.database.entities.PingInbox.STATE_PONG_SENT }
                 .map { it.pingId }.toSet()
 
             // A download is stale if: (1) not in pending queue OR (2) message already exists in DB
@@ -1507,9 +1547,10 @@ class ChatActivity : BaseActivity() {
                 }
 
                 // Wait for transport gate to open (verifies Tor is healthy)
+                // Best-effort: message is already saved to DB, retry worker handles failures
                 Log.d(TAG, "Waiting for transport gate to open before sending message...")
-                TorService.getTransportGate()?.awaitOpen()
-                Log.d(TAG, "Transport gate opened, proceeding with message send")
+                TorService.getTransportGate()?.awaitOpen(com.securelegion.network.TransportGate.TIMEOUT_SEND_MS)
+                Log.d(TAG, "Transport gate opened (or timed out), proceeding with message send")
 
                 // Send message with security options
                 // Use callback to update UI immediately when message is saved (before Tor send)

@@ -409,7 +409,7 @@
 
             </LinearLayout>
 
-            <!-- New Identity Button -->
+            <!-- New Identity Button (future feature - commented out)
             <LinearLayout
                 android:id="@+id/updateUsernameButton"
                 android:layout_width="match_parent"
@@ -463,6 +463,7 @@
                 </FrameLayout>
 
             </LinearLayout>
+            -->
 
         </LinearLayout>
 

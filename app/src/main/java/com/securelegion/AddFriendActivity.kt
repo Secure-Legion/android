@@ -1094,7 +1094,25 @@ class AddFriendActivity : BaseActivity() {
 
                 Log.d(TAG, "Encrypted Phase 2 payload: ${encryptedPhase2.size} bytes (quantum=${kyberCiphertextBase64 != null})")
 
+                // Wait for transport gate before sending (handshake — hard fail on timeout)
+                Log.d(TAG, "Waiting for transport gate before sending Phase 2...")
+                val gateOpened = withContext(Dispatchers.IO) {
+                    com.securelegion.services.TorService.getTransportGate()?.awaitOpen(
+                        com.securelegion.network.TransportGate.TIMEOUT_HANDSHAKE_MS
+                    ) ?: run {
+                        Log.w(TAG, "TransportGate is null — TorService may not be initialized")
+                        false
+                    }
+                }
+                if (!gateOpened) {
+                    hideLoading()
+                    ThemedToast.show(this@AddFriendActivity, "Tor is still connecting — please try again in a moment")
+                    return@launch
+                }
+                Log.d(TAG, "Transport gate open - sending Phase 2")
+
                 // Send Phase 2 to sender's friend-request.onion using dedicated channel
+                // Rust side retries up to 24x (2 min) for slow bridges like Snowflake
                 val success = withContext(Dispatchers.IO) {
                     RustBridge.sendFriendRequestAccepted(
                         recipientOnion = senderFriendRequestOnion,
@@ -1238,7 +1256,25 @@ class AddFriendActivity : BaseActivity() {
 
                 Log.d(TAG, "Encrypted Phase 1 payload: ${encryptedPhase1.size} bytes")
 
+                // Wait for transport gate before sending (handshake — hard fail on timeout)
+                Log.d(TAG, "Waiting for transport gate before sending Phase 1...")
+                val gateOpened = withContext(Dispatchers.IO) {
+                    com.securelegion.services.TorService.getTransportGate()?.awaitOpen(
+                        com.securelegion.network.TransportGate.TIMEOUT_HANDSHAKE_MS
+                    ) ?: run {
+                        Log.w(TAG, "TransportGate is null — TorService may not be initialized")
+                        false
+                    }
+                }
+                if (!gateOpened) {
+                    hideLoading()
+                    ThemedToast.show(this@AddFriendActivity, "Tor is still connecting — please try again in a moment")
+                    return@launch
+                }
+                Log.d(TAG, "Transport gate open - sending Phase 1")
+
                 // Send Phase 1 via Tor using dedicated friend request channel
+                // Rust side retries up to 24x (2 min) for slow bridges like Snowflake
                 val success = withContext(Dispatchers.IO) {
                     com.securelegion.crypto.RustBridge.sendFriendRequest(
                         recipientOnion = sanitizedOnion,

@@ -87,10 +87,10 @@ class MessageRetryWorker(
 
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
         try {
-            // Wait for transport gate to open (verifies Tor is healthy before retry attempts)
+            // Wait for transport gate (quick timeout — worker runs periodically, will retry next cycle)
             Log.d(TAG, "Message retry: waiting for transport gate to open...")
-            TorService.getTransportGate()?.awaitOpen()
-            Log.d(TAG, "Message retry: transport gate opened, proceeding with retries")
+            TorService.getTransportGate()?.awaitOpen(com.securelegion.network.TransportGate.TIMEOUT_QUICK_MS)
+            Log.d(TAG, "Message retry: transport gate check done, proceeding with retries")
 
             val contactId = inputData.getLong("CONTACT_ID", -1L)
             val isContactSpecific = contactId != -1L

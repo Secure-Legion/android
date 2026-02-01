@@ -9,6 +9,7 @@ class SecurityModeActivity : BaseActivity() {
 
     companion object {
         const val PREF_ALLOW_INCOMING_CALLS_WHEN_CLOSED = "allow_incoming_calls_when_closed"
+        const val PREF_DEVICE_PROTECTION_ENABLED = "device_protection_enabled"
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -19,6 +20,7 @@ class SecurityModeActivity : BaseActivity() {
         // setupBottomNavigation() // REMOVED: This layout doesn't have bottom nav
         setupAutoLock()
         setupIncomingCallsToggle()
+        setupDeviceProtectionToggle()
     }
 
     private fun setupClickListeners() {
@@ -67,6 +69,19 @@ class SecurityModeActivity : BaseActivity() {
         // Save state when toggled
         switch.setOnCheckedChangeListener { _, isChecked ->
             prefs.edit().putBoolean(PREF_ALLOW_INCOMING_CALLS_WHEN_CLOSED, isChecked).apply()
+        }
+    }
+
+    private fun setupDeviceProtectionToggle() {
+        val switch = findViewById<SwitchCompat>(R.id.deviceProtectionSwitch)
+        val prefs = getSharedPreferences("security", MODE_PRIVATE)
+
+        // Load saved state (default false - auto-download enabled by default)
+        switch.isChecked = prefs.getBoolean(PREF_DEVICE_PROTECTION_ENABLED, false)
+
+        // Save state when toggled
+        switch.setOnCheckedChangeListener { _, isChecked ->
+            prefs.edit().putBoolean(PREF_DEVICE_PROTECTION_ENABLED, isChecked).apply()
         }
     }
 

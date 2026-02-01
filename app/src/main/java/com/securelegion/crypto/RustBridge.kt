@@ -649,6 +649,18 @@ object RustBridge {
     external fun getCircuitEstablished(): Int
 
     /**
+     * Get HS descriptor upload count - how many HSDirs confirmed our descriptor
+     * v3 onions upload to ~6-8 HSDirs; >= 1 means partially reachable, >= 3 is good
+     * Updated in real-time by event listener (no control port query)
+     */
+    external fun getHsDescUploadCount(): Int
+
+    /**
+     * Reset HS descriptor upload counter (call before creating a new hidden service)
+     */
+    external fun resetHsDescUploadCount()
+
+    /**
      * Register callback for Tor ControlPort events (CIRC, HS_DESC, STATUS_GENERAL, etc)
      * Callback receives event type and relevant fields for fast reaction
      */
@@ -1230,6 +1242,60 @@ object RustBridge {
      * @return Version string (e.g., "1.0.0")
      */
     external fun getNLx402Version(): String
+
+    // ==================== SHADOWWIRE ZK RANGE PROOFS ====================
+
+    /**
+     * Result of generating a Bulletproof range proof
+     * @param proofBytes The serialized range proof (~672 bytes)
+     * @param commitment The 32-byte Pedersen commitment to the amount
+     * @param blindingFactor The 32-byte blinding factor
+     */
+    data class RangeProofResult(
+        val proofBytes: ByteArray,
+        val commitment: ByteArray,
+        val blindingFactor: ByteArray
+    )
+
+    /**
+     * Generate a Bulletproof range proof for ShadowWire transfers.
+     * Proves amount is in range [0, 2^bitLength) without revealing it.
+     *
+     * @param amount Amount in lamports (must be >= 0)
+     * @param bitLength Range bit length (8, 16, 32, or 64)
+     * @return Raw packed bytes: [4-byte proof_len BE][proof][32-byte commitment][32-byte blinding]
+     */
+    private external fun generateRangeProof(amount: Long, bitLength: Int): ByteArray
+
+    /**
+     * Verify a Bulletproof range proof
+     * @param proofBytes The serialized range proof
+     * @param commitment The 32-byte Pedersen commitment
+     * @param bitLength Range bit length (8, 16, 32, or 64)
+     * @return True if proof is valid
+     */
+    external fun verifyRangeProof(proofBytes: ByteArray, commitment: ByteArray, bitLength: Int): Boolean
+
+    /**
+     * Generate and parse a Bulletproof range proof for ShadowWire transfers.
+     * Kotlin wrapper that unpacks the raw JNI result into a structured object.
+     *
+     * @param amount Amount in lamports
+     * @param bitLength Range bit length (default 64 for full u64 range)
+     * @return RangeProofResult with proof, commitment, and blinding factor
+     */
+    fun generateRangeProofParsed(amount: Long, bitLength: Int = 64): RangeProofResult {
+        val raw = generateRangeProof(amount, bitLength)
+        // Unpack: [4-byte proof_len BE][proof_bytes][32-byte commitment][32-byte blinding]
+        val proofLen = ((raw[0].toInt() and 0xFF) shl 24) or
+                ((raw[1].toInt() and 0xFF) shl 16) or
+                ((raw[2].toInt() and 0xFF) shl 8) or
+                (raw[3].toInt() and 0xFF)
+        val proofBytes = raw.copyOfRange(4, 4 + proofLen)
+        val commitment = raw.copyOfRange(4 + proofLen, 4 + proofLen + 32)
+        val blindingFactor = raw.copyOfRange(4 + proofLen + 32, 4 + proofLen + 64)
+        return RangeProofResult(proofBytes, commitment, blindingFactor)
+    }
 
     // ==================== STRESS TEST & DEBUG METRICS ====================
 

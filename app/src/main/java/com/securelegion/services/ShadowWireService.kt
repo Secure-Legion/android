@@ -79,9 +79,11 @@ class ShadowWireService(private val context: Context, private val walletId: Stri
      * Generate ShadowWire auth signature
      * Message format: "shadowpay:{transferType}:{nonce}:{timestamp}"
      * Signed with Ed25519 via KeyManager, base58-encoded
+     *
+     * nonce matches SDK: Math.floor(Date.now() / 1000) — epoch seconds as integer
      */
     private fun generateAuth(transferType: String): SignatureAuth {
-        val nonce = UUID.randomUUID().toString()
+        val nonce = (System.currentTimeMillis() / 1000).toString()
         val timestamp = System.currentTimeMillis() / 1000
         val message = "shadowpay:$transferType:$nonce:$timestamp"
         val messageBytes = message.toByteArray(Charsets.UTF_8)
@@ -89,6 +91,7 @@ class ShadowWireService(private val context: Context, private val walletId: Stri
         val signatureBytes = RustBridge.signData(messageBytes, privateKey)
         val signatureBase58 = Base58.encode(signatureBytes)
         return SignatureAuth(
+            nonce = nonce,
             senderSignature = signatureBase58,
             signatureMessage = message
         )
@@ -351,12 +354,20 @@ class ShadowWireService(private val context: Context, private val walletId: Stri
             val auth = generateAuth("internal_transfer")
             Log.d(TAG, "Internal transfer $amountLamports lamports to $recipient")
 
+            // Generate Bulletproof range proof (proves amount in [0, 2^64) without revealing it)
+            val zkProof = RustBridge.generateRangeProofParsed(amountLamports)
+            val proofBase64 = android.util.Base64.encodeToString(zkProof.proofBytes, android.util.Base64.NO_WRAP)
+            val commitmentBase64 = android.util.Base64.encodeToString(zkProof.commitment, android.util.Base64.NO_WRAP)
+            Log.d(TAG, "Generated ZK range proof: ${zkProof.proofBytes.size} bytes, commitment: 32 bytes")
+
             val body = JSONObject().apply {
-                put("sender", wallet)
-                put("recipient", recipient)
+                put("sender_wallet", wallet)
+                put("recipient_wallet", recipient)
                 put("amount", amountLamports)
                 put("token", "SOL")
-                put("type", "internal")
+                put("nonce", auth.nonce)
+                put("proof_bytes", proofBase64)
+                put("commitment", commitmentBase64)
                 put("sender_signature", auth.senderSignature)
                 put("signature_message", auth.signatureMessage)
             }
@@ -409,12 +420,20 @@ class ShadowWireService(private val context: Context, private val walletId: Stri
             val auth = generateAuth("external_transfer")
             Log.d(TAG, "External transfer $amountLamports lamports to $recipient")
 
+            // Generate Bulletproof range proof for external transfers too
+            val zkProof = RustBridge.generateRangeProofParsed(amountLamports)
+            val proofBase64 = android.util.Base64.encodeToString(zkProof.proofBytes, android.util.Base64.NO_WRAP)
+            val commitmentBase64 = android.util.Base64.encodeToString(zkProof.commitment, android.util.Base64.NO_WRAP)
+            Log.d(TAG, "Generated ZK range proof: ${zkProof.proofBytes.size} bytes")
+
             val body = JSONObject().apply {
-                put("sender", wallet)
-                put("recipient", recipient)
+                put("sender_wallet", wallet)
+                put("recipient_wallet", recipient)
                 put("amount", amountLamports)
                 put("token", "SOL")
-                put("type", "external")
+                put("nonce", auth.nonce)
+                put("proof_bytes", proofBase64)
+                put("commitment", commitmentBase64)
                 put("sender_signature", auth.senderSignature)
                 put("signature_message", auth.signatureMessage)
             }
@@ -587,6 +606,7 @@ class ShadowWireService(private val context: Context, private val walletId: Stri
     // --- Data Classes ---
 
     data class SignatureAuth(
+        val nonce: String,
         val senderSignature: String,
         val signatureMessage: String
     )

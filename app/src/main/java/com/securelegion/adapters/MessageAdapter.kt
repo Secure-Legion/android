@@ -697,9 +697,8 @@ class MessageAdapter(
                 stopEllipsisAnimation(holder.downloadingText)
                 startTypingAnimation(holder.typingDot1, holder.typingDot2, holder.typingDot3)
             }
-            isDownloading || pingInbox.state == com.securelegion.database.entities.PingInbox.STATE_PONG_SENT
-                || pingInbox.state == com.securelegion.database.entities.PingInbox.STATE_DOWNLOAD_QUEUED -> {
-                // Manual download in progress (in-memory flag OR DB state confirms)
+            isDownloading || pingInbox.state == com.securelegion.database.entities.PingInbox.STATE_DOWNLOAD_QUEUED -> {
+                // Download actively in progress (in-memory flag OR DB state DOWNLOAD_QUEUED)
                 holder.downloadButton.visibility = View.GONE
                 holder.downloadingText.visibility = View.VISIBLE
                 holder.typingIndicator.visibility = View.GONE
@@ -708,8 +707,10 @@ class MessageAdapter(
             }
             pingInbox.state == com.securelegion.database.entities.PingInbox.STATE_PING_SEEN
                 || pingInbox.state == com.securelegion.database.entities.PingInbox.STATE_FAILED_TEMP
-                || pingInbox.state == com.securelegion.database.entities.PingInbox.STATE_MANUAL_REQUIRED -> {
+                || pingInbox.state == com.securelegion.database.entities.PingInbox.STATE_MANUAL_REQUIRED
+                || pingInbox.state == com.securelegion.database.entities.PingInbox.STATE_PONG_SENT -> {
                 // Lock icon — user action required
+                // PONG_SENT included: stale state after logout/login (process died mid-download)
                 holder.downloadButton.visibility = View.VISIBLE
                 holder.downloadingText.visibility = View.GONE
                 holder.typingIndicator.visibility = View.GONE

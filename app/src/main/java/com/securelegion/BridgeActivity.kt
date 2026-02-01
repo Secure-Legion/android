@@ -25,7 +25,13 @@ class BridgeActivity : AppCompatActivity() {
         customBridgeInput = findViewById(R.id.customBridgeInput)
         testnetSwitch = findViewById(R.id.testnetSwitch)
 
-        BottomNavigationHelper.setupBottomNavigation(this)
+        // Hide bottom nav when opened from splash screen (first-time setup)
+        val fromSplash = intent.getBooleanExtra("FROM_SPLASH", false)
+        if (fromSplash) {
+            findViewById<View>(R.id.bottomNav)?.visibility = View.GONE
+        } else {
+            BottomNavigationHelper.setupBottomNavigation(this)
+        }
         setupClickListeners()
         loadSavedBridgeSettings()
         loadTestnetSetting()
@@ -110,20 +116,33 @@ class BridgeActivity : AppCompatActivity() {
         editor.putBoolean("bridge_config_changed", true)
         editor.apply()
 
-        // Redirect to SplashActivity to restart Tor with new bridge settings
-        Log.i("BridgeActivity", "Redirecting to SplashActivity to restart Tor...")
-        ThemedToast.show(this, "Restarting Tor with new bridge settings...")
+        val fromSplash = intent.getBooleanExtra("FROM_SPLASH", false)
 
-        // Stop current Tor service first
-        val stopIntent = Intent(this, TorService::class.java)
-        stopIntent.action = TorService.ACTION_STOP_TOR
-        startService(stopIntent)
+        if (fromSplash) {
+            // Opened from splash screen (first-time setup) — just finish and return
+            // SplashActivity will handle Tor start when user presses Start
+            Log.i("BridgeActivity", "Bridge configured from splash - returning")
+            ThemedToast.show(this, "Bridge configured! Press Start to connect.")
+            finish()
+        } else {
+            // Opened from settings — restart Tor with new bridge settings
+            Log.i("BridgeActivity", "Redirecting to SplashActivity to restart Tor...")
+            ThemedToast.show(this, "Restarting Tor with new bridge settings...")
 
-        // Redirect to SplashActivity which will handle Tor restart
-        // FLAG_ACTIVITY_CLEAR_TASK already destroys all activities, no need for finish()
-        val intent = Intent(this, SplashActivity::class.java)
-        intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
-        startActivity(intent)
+            // Stop current Tor service first
+            try {
+                val stopIntent = Intent(this, TorService::class.java)
+                stopIntent.action = TorService.ACTION_STOP_TOR
+                startService(stopIntent)
+            } catch (e: Exception) {
+                Log.w("BridgeActivity", "Failed to stop TorService: ${e.message}")
+            }
+
+            // Redirect to SplashActivity which will handle Tor restart
+            val intent = Intent(this, SplashActivity::class.java)
+            intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+            startActivity(intent)
+        }
     }
 
     private fun loadTestnetSetting() {

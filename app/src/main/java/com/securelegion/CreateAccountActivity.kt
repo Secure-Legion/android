@@ -356,9 +356,10 @@ class CreateAccountActivity : AppCompatActivity() {
                             Log.w("CreateAccount", "Failed to clear ephemeral services (continuing anyway): ${e.message}")
                         }
 
-                        // Retry hidden service creation with exponential backoff
+                        // Retry hidden service creation with fixed interval
+                        // 24 attempts x 5s = 2 minutes to accommodate slow bridges (Snowflake)
                         var createAttempt = 0
-                        val maxCreateAttempts = 5
+                        val maxCreateAttempts = 24
                         var address: String? = null
                         var lastError: Exception? = null
 
@@ -373,9 +374,7 @@ class CreateAccountActivity : AppCompatActivity() {
                                 lastError = e
                                 Log.e("CreateAccount", "Failed to create hidden service (attempt $createAttempt): ${e.message}", e)
                                 if (createAttempt < maxCreateAttempts) {
-                                    val delayMs = 2000L * createAttempt // Exponential backoff: 2s, 4s, 6s, 8s
-                                    Log.d("CreateAccount", "Waiting ${delayMs}ms before retry...")
-                                    Thread.sleep(delayMs)
+                                    Thread.sleep(5_000)
                                 }
                             }
                         }
@@ -385,6 +384,31 @@ class CreateAccountActivity : AppCompatActivity() {
                         }
 
                         address
+                    }
+                }
+
+                // Wait for HS descriptor propagation before proceeding
+                // This ensures our .onion is reachable before friend requests can be sent to us
+                run {
+                    val minUploads = 1  // At least 1 HSDir confirmed (partially reachable)
+                    val maxWaitSecs = 60 // Max wait time
+                    var waited = 0
+                    Log.i("CreateAccount", "Waiting for HS descriptor propagation (need >= $minUploads uploads)...")
+                    while (waited < maxWaitSecs) {
+                        val uploads = com.securelegion.crypto.RustBridge.getHsDescUploadCount()
+                        if (uploads >= minUploads) {
+                            Log.i("CreateAccount", "✓ HS descriptors propagated ($uploads HSDirs confirmed)")
+                            break
+                        }
+                        if (waited % 10 == 0) {
+                            Log.d("CreateAccount", "HS descriptor propagation: $uploads/$minUploads HSDirs (waited ${waited}s)")
+                        }
+                        Thread.sleep(1000)
+                        waited++
+                    }
+                    val finalCount = com.securelegion.crypto.RustBridge.getHsDescUploadCount()
+                    if (finalCount < minUploads) {
+                        Log.w("CreateAccount", "HS descriptor propagation timeout after ${maxWaitSecs}s ($finalCount uploads) - continuing anyway")
                     }
                 }
 

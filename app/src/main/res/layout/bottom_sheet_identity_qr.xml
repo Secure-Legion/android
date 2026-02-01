@@ -80,18 +80,17 @@
     </LinearLayout>
 
     <!-- Share Button -->
-    <androidx.appcompat.widget.AppCompatButton
+    <TextView
         android:id="@+id/shareQrButton"
         android:layout_width="match_parent"
         android:layout_height="56dp"
         android:background="@drawable/swap_button_bg"
-        android:fontFamily="@font/poppins_semibold"
-        android:text="SHARE QR CODE"
-        android:textAllCaps="true"
+        android:gravity="center"
+        android:text="Share"
+        android:textSize="18sp"
         android:textColor="@color/text_white"
-        android:textSize="16sp"
-        android:drawableStart="@android:drawable/ic_menu_share"
-        android:drawablePadding="12dp"
-        android:drawableTint="@color/text_white" />
+        android:fontFamily="@font/poppins_semibold"
+        android:clickable="true"
+        android:focusable="true" />
 
 </LinearLayout>

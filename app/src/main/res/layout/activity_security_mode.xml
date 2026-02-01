@@ -185,6 +185,62 @@
 
             </LinearLayout>
 
+            <!-- Message Privacy Section -->
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Message Privacy"
+                android:textSize="13sp"
+                android:fontFamily="@font/poppins_medium"
+                android:textColor="#666666"
+                android:layout_marginTop="16dp"
+                android:layout_marginBottom="8dp" />
+
+            <!-- Device Protection -->
+            <LinearLayout
+                android:id="@+id/deviceProtectionItem"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:background="@drawable/settings_box_bg"
+                android:padding="16dp"
+                android:layout_marginBottom="16dp"
+                android:gravity="center_vertical">
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:orientation="vertical">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Device Protection"
+                        android:textSize="16sp"
+                        android:fontFamily="@font/poppins_medium"
+                        android:textColor="#5C5C5C" />
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Require manual approval to download messages"
+                        android:textSize="13sp"
+                        android:textColor="#666666"
+                        android:fontFamily="@font/poppins_regular" />
+
+                </LinearLayout>
+
+                <androidx.appcompat.widget.SwitchCompat
+                    android:id="@+id/deviceProtectionSwitch"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:checked="false"
+                    app:thumbTint="#333333"
+                    app:trackTint="#888888" />
+
+            </LinearLayout>
+
     </LinearLayout>
 
 </ScrollView>

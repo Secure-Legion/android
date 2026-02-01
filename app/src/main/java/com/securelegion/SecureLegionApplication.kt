@@ -48,6 +48,28 @@ class SecureLegionApplication : Application() {
     override fun onCreate() {
         super.onCreate()
 
+        // CRITICAL: Check if we're in the main process
+        // When GP TorService runs in android:process=":tor", Android creates a new
+        // SecureLegionApplication instance in that process. We must skip ALL initialization
+        // in non-main processes to avoid: conflicting IPtProxy ports, duplicate Tor startup,
+        // duplicate IPFS init, and potential exit(1) from Go/native runtime conflicts.
+        val processName = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            getProcessName()
+        } else {
+            // Fallback for API 27
+            try {
+                val pid = android.os.Process.myPid()
+                val am = getSystemService(ACTIVITY_SERVICE) as android.app.ActivityManager
+                am.runningAppProcesses?.find { it.pid == pid }?.processName
+            } catch (e: Exception) {
+                null
+            }
+        }
+        if (processName != null && processName != packageName) {
+            Log.d(TAG, "Skipping initialization in non-main process: $processName")
+            return
+        }
+
         Log.d(TAG, "Application starting...")
 
         // Create notification channels
@@ -68,10 +90,32 @@ class SecureLegionApplication : Application() {
         registerLifecycleObserver()
 
         // Initialize Tor network
+        // Skip auto-start on first launch so user can configure bridges first
+        // Skip auto-start if we recently shut down (restart storm suppression)
         try {
-            Log.d(TAG, "About to initialize Tor...")
-            initializeTor()
-            Log.d(TAG, "Tor initialization started")
+            val keyManager = com.securelegion.crypto.KeyManager.getInstance(this)
+            if (keyManager.isInitialized()) {
+                // Check for restart storm: if last shutdown was within 30s, skip auto-start
+                // SplashActivity will handle Tor init when user opens the app
+                val shutdownFile = File(filesDir, "tor/last_shutdown_time")
+                val recentShutdown = try {
+                    if (shutdownFile.exists()) {
+                        val lastShutdown = shutdownFile.readText().trim().toLongOrNull() ?: 0L
+                        val elapsed = System.currentTimeMillis() - lastShutdown
+                        elapsed in 1..30_000
+                    } else false
+                } catch (e: Exception) { false }
+
+                if (recentShutdown) {
+                    Log.w(TAG, "Tor shutdown was within last 30s - suppressing auto-start to prevent restart storm")
+                } else {
+                    Log.d(TAG, "Existing account - auto-starting Tor...")
+                    initializeTor()
+                    Log.d(TAG, "Tor initialization started")
+                }
+            } else {
+                Log.i(TAG, "First-time setup - skipping Tor auto-start (user will press Start)")
+            }
         } catch (e: Exception) {
             Log.e(TAG, "Failed to initialize Tor", e)
         }

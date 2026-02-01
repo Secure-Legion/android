@@ -2292,6 +2292,11 @@ class MessageService(private val context: Context) {
 
             Log.d(TAG, "Sending Ping for message ${message.messageId} (Ping ID: ${message.pingId})")
 
+            // Wait for transport gate (best-effort with send timeout — retry worker handles failures)
+            Log.d(TAG, "Waiting for transport gate before sending Ping...")
+            TorService.getTransportGate()?.awaitOpen(com.securelegion.network.TransportGate.TIMEOUT_SEND_MS)
+            Log.d(TAG, "Transport gate check done - proceeding with Ping send")
+
             // Check if Tor is warmed up (must wait 20s after restart/network change)
             val warmupRemainingMs = TorService.getTorWarmupRemainingMs()
             if (warmupRemainingMs == null) {
@@ -2443,6 +2448,9 @@ class MessageService(private val context: Context) {
      */
     suspend fun pollForPongsAndSendMessages(): Result<Int> = withContext(Dispatchers.IO) {
         try {
+            // Quick gate check for background poll — don't block long
+            TorService.getTransportGate()?.awaitOpen(com.securelegion.network.TransportGate.TIMEOUT_QUICK_MS)
+
             val dbPassphrase = keyManager.getDatabasePassphrase()
             val database = SecureLegionDatabase.getInstance(context, dbPassphrase)
 
@@ -2775,6 +2783,11 @@ class MessageService(private val context: Context) {
         pingId: String
     ) {
         try {
+            // Quick gate check for blob send — message already ACKd, best-effort delivery
+            Log.d(TAG, "Waiting for transport gate before sending message blob...")
+            TorService.getTransportGate()?.awaitOpen(com.securelegion.network.TransportGate.TIMEOUT_QUICK_MS)
+            Log.d(TAG, "Transport gate check done - proceeding with message blob send")
+
             val dbPassphrase = keyManager.getDatabasePassphrase()
             val database = SecureLegionDatabase.getInstance(context, dbPassphrase)
 

@@ -1,5 +1,6 @@
 package com.securelegion.crypto
 
+import android.app.ActivityManager
 import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
@@ -113,6 +114,25 @@ class TorManager(private val context: Context) {
     }
 
     /**
+     * Check if the :tor process (Guardian Project's TorService) is still alive.
+     * Used to prevent double-starting GP TorService which causes SIGABRT on destroyed mutex.
+     */
+    private fun isTorProcessAlive(): Boolean {
+        return try {
+            val am = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
+            val torProcessName = "${context.packageName}:tor"
+            val alive = am.runningAppProcesses?.any { it.processName == torProcessName } == true
+            if (alive) {
+                Log.w(TAG, ":tor process is still alive - will skip GP TorService start")
+            }
+            alive
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to check :tor process status: ${e.message}")
+            false
+        }
+    }
+
+    /**
      * Initialize Tor client using Tor_Onion_Proxy_Library
      * Should be called once on app startup (from Application class)
      * Prevents concurrent initializations - queues callbacks if already initializing
@@ -200,6 +220,25 @@ class TorManager(private val context: Context) {
 
                 Log.i(TAG, "Device: Android $sdkInt, using initial timeout: ${if (isSlowerDevice) "45s (slower device)" else "30s (faster device)"}")
 
+                // Bridge performance profile: keep circuits alive longer to avoid expensive rebuilds,
+                // and send keepalives more frequently to survive mobile NAT timeouts
+                val usingBridges = bridgeConfig.isNotEmpty()
+                val bridgePerformanceConfig = if (usingBridges) {
+                    // MaxCircuitDirtiness 1800 = 30 min circuit reuse (default 10 min)
+                    //   Bridge circuits are expensive to rebuild (30-60s), so reuse them longer.
+                    //   Privacy cost is minimal for a messaging app with persistent onion identity.
+                    // KeepalivePeriod 120 = 2 min keepalive (default 5 min)
+                    //   Mobile NATs can drop idle connections in 30-60s on some carriers.
+                    //   120s balances keeping connections alive vs battery/traffic overhead.
+                    Log.i(TAG, "Bridge mode: applying performance profile (MaxCircuitDirtiness=1800, KeepalivePeriod=120)")
+                    """
+                    MaxCircuitDirtiness 1800
+                    KeepalivePeriod 120
+                    """.trimIndent()
+                } else {
+                    "" // Use Tor defaults for direct connections
+                }
+
                 // Generate torrc content
                 // PERSISTENT HIDDEN SERVICES (not ephemeral):
                 // Keys are generated once and stored in HiddenServiceDir
@@ -218,6 +257,7 @@ class TorManager(private val context: Context) {
                     DormantCanceledByStartup 1
                     LearnCircuitBuildTimeout 1
                     $initialCircuitTimeout
+                    $bridgePerformanceConfig
                     HiddenServiceDir ${messagingHiddenServiceDir.absolutePath}
                     HiddenServicePort $DEFAULT_SERVICE_PORT 127.0.0.1:$DEFAULT_LOCAL_PORT
                     HiddenServicePort 9153 127.0.0.1:9153
@@ -258,24 +298,69 @@ class TorManager(private val context: Context) {
                         }
                     }
 
-                    Log.w(TAG, "========== STARTING GUARDIAN PROJECT TOR DAEMON (org.torproject.jni.TorService) ==========")
+                    Log.w(TAG, "========== STARTING FOREGROUND SERVICE + TOR DAEMON ==========")
 
-                    // Start TorService as an Android Service
-                    // NOTE: Guardian Project TorService is a third-party library that handles its own
-                    // foreground service lifecycle. Use regular startService() to avoid crashes.
-                    val intent = Intent(context, TorService::class.java)
-                    intent.action = "org.torproject.android.intent.action.START"
-                    context.startService(intent)
+                    // Step 1: Start our custom TorService as foreground (keeps process alive)
+                    // Uses KEEP_ALIVE action to avoid calling initializeAsync() again (circular dependency)
+                    val keepAliveIntent = Intent(context, com.securelegion.services.TorService::class.java)
+                    keepAliveIntent.action = com.securelegion.services.TorService.ACTION_KEEP_ALIVE
+                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                        context.startForegroundService(keepAliveIntent)
+                    } else {
+                        context.startService(keepAliveIntent)
+                    }
+                    Log.i(TAG, "Custom TorService started as foreground (KEEP_ALIVE)")
 
-                    Log.w(TAG, "========== GUARDIAN PROJECT TOR DAEMON START COMMAND SENT ==========")
+                    // Step 2: Start Guardian Project's TorService to launch native Tor daemon via JNI
+                    // Uses the imported org.torproject.jni.TorService (NOT our custom services.TorService)
+                    // CRITICAL: Skip if :tor process is still alive to prevent SIGABRT on destroyed mutex
+                    if (isTorProcessAlive()) {
+                        Log.w(TAG, ":tor process is still alive - checking if control port responds...")
+                        // Give zombie process 15s to prove it's functional
+                        var zombieCheck = 0
+                        var controlAlive = false
+                        while (zombieCheck < 15 && !controlAlive) {
+                            try {
+                                val testSocket = java.net.Socket()
+                                testSocket.connect(java.net.InetSocketAddress("127.0.0.1", 9051), 1000)
+                                testSocket.close()
+                                controlAlive = true
+                            } catch (e: Exception) {
+                                Thread.sleep(1000)
+                                zombieCheck++
+                            }
+                        }
+                        if (controlAlive) {
+                            Log.i(TAG, ":tor process alive and control port responding - reusing existing instance")
+                        } else {
+                            Log.w(TAG, ":tor process alive but control port DEAD after 15s - killing zombie and restarting")
+                            try {
+                                val gpStopIntent = Intent(context, org.torproject.jni.TorService::class.java)
+                                context.stopService(gpStopIntent)
+                            } catch (e: Exception) {
+                                Log.w(TAG, "Failed to stop GP TorService: ${e.message}")
+                            }
+                            Thread.sleep(3000) // Wait for process to die
+                            val serviceIntent = Intent(context, TorService::class.java)
+                            serviceIntent.action = "org.torproject.android.intent.action.START"
+                            context.startService(serviceIntent)
+                            Log.w(TAG, "========== GP TOR DAEMON RESTARTED AFTER ZOMBIE KILL ==========")
+                        }
+                    } else {
+                        val serviceIntent = Intent(context, TorService::class.java)
+                        serviceIntent.action = "org.torproject.android.intent.action.START"
+                        context.startService(serviceIntent)
+                        Log.w(TAG, "========== GUARDIAN PROJECT TOR DAEMON START COMMAND SENT ==========")
+                    }
                     Log.d(TAG, "Waiting for control port to be ready...")
                 } else {
                     Log.d(TAG, "Tor already running and torrc unchanged")
                 }
 
                 // Wait for Tor control port to be ready (poll until we can connect)
+                // 120s to accommodate bridge transports on slow networks (~1.3 MB/s in Iran)
                 var attempts = 0
-                val maxAttempts = 60 // 60 seconds max
+                val maxAttempts = 120 // 120 seconds max (bridges need more time)
                 var controlPortReady = false
 
                 while (attempts < maxAttempts && !controlPortReady) {
@@ -294,15 +379,16 @@ class TorManager(private val context: Context) {
                 }
 
                 if (!controlPortReady) {
-                    throw Exception("Tor control port failed to become ready after $maxAttempts seconds")
+                    throw Exception("Tor control port failed to become ready after ${maxAttempts} seconds")
                 }
 
                 Log.d(TAG, "Tor is ready and control port is accessible")
 
                 // CRITICAL: Also wait for SOCKS port to be ready
+                // 90s to accommodate bridge transports on slow networks (~1.3 MB/s in Iran)
                 Log.d(TAG, "Waiting for Tor SOCKS proxy on port 9050...")
                 var socksAttempts = 0
-                val maxSocksAttempts = 30 // 30 seconds max
+                val maxSocksAttempts = 90 // 90 seconds max (bridges need more time)
                 var socksPortReady = false
 
                 while (socksAttempts < maxSocksAttempts && !socksPortReady) {
@@ -584,7 +670,7 @@ class TorManager(private val context: Context) {
                     if (keyManager.isInitialized()) {
                         // Wait for Tor to be fully bootstrapped before reading hidden service
                         Log.d(TAG, "Waiting for Tor to be ready before reading hidden service...")
-                        val maxAttempts = 30 // 30 seconds max
+                        val maxAttempts = 120 // 120 seconds max (bridges on slow networks need more time)
                         var attempts = 0
                         while (attempts < maxAttempts) {
                             val status = RustBridge.getBootstrapStatus()
@@ -719,7 +805,7 @@ class TorManager(private val context: Context) {
                     // Wait for obfs4 to start and bind to a port
                     var port = 0L
                     var attempts = 0
-                    while (port == 0L && attempts < 30) {
+                    while (port == 0L && attempts < 90) {
                         Thread.sleep(1000)
                         port = controller.port(IPtProxy.Obfs4)
                         attempts++
@@ -731,23 +817,24 @@ class TorManager(private val context: Context) {
                     }
 
                     if (port == 0L) {
-                        Log.e(TAG, "✗ obfs4 failed to start after 30 seconds")
+                        Log.e(TAG, "✗ obfs4 failed to start after 90 seconds")
                     }
                 }
                 "snowflake" -> {
                     Log.d(TAG, "Configuring snowflake transport...")
-                    // Match Tor Project circumvention API config for Iran (ir)
-                    // CDN77 domain fronting with Iran-specific front domains
-                    controller.snowflakeBrokerUrl = "https://1098762253.rsc.cdn77.org/"
-                    controller.snowflakeFrontDomains = "www.phpmyadmin.net,cdn.zk.mk"
+                    // AMP Cache method - proven to work from Iran
+                    // Uses Google's AMP CDN as rendezvous, which is not blocked
+                    controller.snowflakeBrokerUrl = "https://snowflake-broker.torproject.net/"
+                    controller.snowflakeFrontDomains = "www.google.com"
+                    controller.snowflakeAmpCacheUrl = "https://cdn.ampproject.org/"
                     controller.snowflakeIceServers = "stun:stun.antisip.com:3478,stun:stun.epygi.com:3478,stun:stun.uls.co.za:3478,stun:stun.voipgate.com:3478,stun:stun.mixvoip.com:3478,stun:stun.nextcloud.com:3478,stun:stun.bethesda.net:3478,stun:stun.nextcloud.com:443"
-                    Log.d(TAG, "Starting snowflake transport...")
+                    Log.d(TAG, "Starting snowflake transport with AMP cache...")
                     controller.start(IPtProxy.Snowflake, null)
 
                     // Wait for Snowflake to start and bind to a port
                     var port = 0L
                     var attempts = 0
-                    while (port == 0L && attempts < 30) {
+                    while (port == 0L && attempts < 90) {
                         Thread.sleep(1000)
                         port = controller.port(IPtProxy.Snowflake)
                         attempts++
@@ -759,7 +846,7 @@ class TorManager(private val context: Context) {
                     }
 
                     if (port == 0L) {
-                        Log.e(TAG, "✗ Snowflake failed to start after 30 seconds")
+                        Log.e(TAG, "✗ Snowflake failed to start after 90 seconds")
                     }
                 }
                 "meek" -> {
@@ -769,7 +856,7 @@ class TorManager(private val context: Context) {
                     // Wait for meek_lite to start and bind to a port
                     var port = 0L
                     var attempts = 0
-                    while (port == 0L && attempts < 30) {
+                    while (port == 0L && attempts < 90) {
                         Thread.sleep(1000)
                         port = controller.port(IPtProxy.MeekLite)
                         attempts++
@@ -781,7 +868,7 @@ class TorManager(private val context: Context) {
                     }
 
                     if (port == 0L) {
-                        Log.e(TAG, "✗ meek_lite failed to start after 30 seconds")
+                        Log.e(TAG, "✗ meek_lite failed to start after 90 seconds")
                     }
                 }
                 "webtunnel" -> {
@@ -791,7 +878,7 @@ class TorManager(private val context: Context) {
                     // Wait for webtunnel to start and bind to a port
                     var port = 0L
                     var attempts = 0
-                    while (port == 0L && attempts < 30) {
+                    while (port == 0L && attempts < 90) {
                         Thread.sleep(1000)
                         port = controller.port(IPtProxy.Webtunnel)
                         attempts++
@@ -803,7 +890,7 @@ class TorManager(private val context: Context) {
                     }
 
                     if (port == 0L) {
-                        Log.e(TAG, "✗ webtunnel failed to start after 30 seconds")
+                        Log.e(TAG, "✗ webtunnel failed to start after 90 seconds")
                     }
                 }
             }
@@ -823,8 +910,8 @@ class TorManager(private val context: Context) {
             Log.d(TAG, "Fetching bridges from circumvention API for type=$bridgeType...")
             val url = java.net.URL("https://bridges.torproject.org/moat/circumvention/map")
             val connection = url.openConnection() as java.net.HttpURLConnection
-            connection.connectTimeout = 10_000
-            connection.readTimeout = 10_000
+            connection.connectTimeout = 45_000
+            connection.readTimeout = 45_000
             connection.requestMethod = "GET"
 
             val responseCode = connection.responseCode
@@ -948,18 +1035,18 @@ class TorManager(private val context: Context) {
                         $bridgeLines
                         """.trimIndent()
                     } else {
-                        // Fallback: hardcoded bridges from Tor Project API + forum recommendations for Iran
-                        // Includes 3 rendezvous methods: CDN77 domain-front, Netlify domain-front, Amazon SQS
+                        // Fallback: hardcoded bridges for Iran
+                        // AMP Cache bridges first (proven to work from Iran), then CDN77, Netlify, SQS
                         Log.i(TAG, "Using hardcoded snowflake bridges (API unavailable)")
                         """
                         UseBridges 1
                         ClientTransportPlugin snowflake socks5 127.0.0.1:$port
+                        Bridge snowflake 192.0.2.5:80 2B280B23E1107BB62ABFC40DDCC8824814F80A72 fingerprint=2B280B23E1107BB62ABFC40DDCC8824814F80A72 url=https://snowflake-broker.torproject.net/ ampcache=https://cdn.ampproject.org/ front=www.google.com ice=stun:stun.antisip.com:3478,stun:stun.epygi.com:3478,stun:stun.uls.co.za:3478,stun:stun.voipgate.com:3478,stun:stun.mixvoip.com:3478,stun:stun.nextcloud.com:3478,stun:stun.bethesda.net:3478,stun:stun.nextcloud.com:443 utls-imitate=hellorandomizedalpn
+                        Bridge snowflake 192.0.2.6:80 8838024498816A039FCBBAB14E6F40A0843051FA fingerprint=8838024498816A039FCBBAB14E6F40A0843051FA url=https://snowflake-broker.torproject.net/ ampcache=https://cdn.ampproject.org/ front=www.google.com ice=stun:stun.antisip.com:3478,stun:stun.epygi.com:3478,stun:stun.uls.co.za:3478,stun:stun.voipgate.com:3478,stun:stun.mixvoip.com:3478,stun:stun.nextcloud.com:3478,stun:stun.bethesda.net:3478,stun:stun.nextcloud.com:443 utls-imitate=hellorandomizedalpn
                         Bridge snowflake 192.0.2.3:80 2B280B23E1107BB62ABFC40DDCC8824814F80A72 fingerprint=2B280B23E1107BB62ABFC40DDCC8824814F80A72 url=https://1098762253.rsc.cdn77.org front=www.phpmyadmin.net,cdn.zk.mk ice=stun:stun.antisip.com:3478,stun:stun.epygi.com:3478,stun:stun.uls.co.za:3478,stun:stun.voipgate.com:3478,stun:stun.mixvoip.com:3478,stun:stun.nextcloud.com:3478,stun:stun.bethesda.net:3478,stun:stun.nextcloud.com:443 utls-imitate=hellorandomizedalpn
                         Bridge snowflake 192.0.2.4:80 8838024498816A039FCBBAB14E6F40A0843051FA fingerprint=8838024498816A039FCBBAB14E6F40A0843051FA url=https://1098762253.rsc.cdn77.org front=www.phpmyadmin.net,cdn.zk.mk ice=stun:stun.antisip.com:3478,stun:stun.epygi.com:3478,stun:stun.uls.co.za:3478,stun:stun.voipgate.com:3478,stun:stun.mixvoip.com:3478,stun:stun.nextcloud.com:3478,stun:stun.bethesda.net:3478,stun:stun.nextcloud.com:443 utls-imitate=hellorandomizedalpn
                         Bridge snowflake 192.0.2.3:80 2B280B23E1107BB62ABFC40DDCC8824814F80A72 fingerprint=2B280B23E1107BB62ABFC40DDCC8824814F80A72 url=https://voluble-torrone-fc39bf.netlify.app/ fronts=vuejs.org ice=stun:stun.antisip.com:3478,stun:stun.epygi.com:3478,stun:stun.uls.co.za:3478,stun:stun.voipgate.com:3478,stun:stun.mixvoip.com:3478,stun:stun.nextcloud.com:3478,stun:stun.bethesda.net:3478,stun:stun.nextcloud.com:443 utls-imitate=hellorandomizedalpn
                         Bridge snowflake 192.0.2.4:80 8838024498816A039FCBBAB14E6F40A0843051FA fingerprint=8838024498816A039FCBBAB14E6F40A0843051FA url=https://voluble-torrone-fc39bf.netlify.app/ fronts=vuejs.org ice=stun:stun.antisip.com:3478,stun:stun.epygi.com:3478,stun:stun.uls.co.za:3478,stun:stun.voipgate.com:3478,stun:stun.mixvoip.com:3478,stun:stun.nextcloud.com:3478,stun:stun.bethesda.net:3478,stun:stun.nextcloud.com:443 utls-imitate=hellorandomizedalpn
-                        Bridge snowflake 192.0.2.5:80 2B280B23E1107BB62ABFC40DDCC8824814F80A72 fingerprint=2B280B23E1107BB62ABFC40DDCC8824814F80A72 url=https://snowflake-broker.torproject.net/ ampcache=https://cdn.ampproject.org/ front=www.google.com ice=stun:stun.antisip.com:3478,stun:stun.epygi.com:3478,stun:stun.uls.co.za:3478,stun:stun.voipgate.com:3478,stun:stun.mixvoip.com:3478,stun:stun.nextcloud.com:3478,stun:stun.bethesda.net:3478,stun:stun.nextcloud.com:443 utls-imitate=hellorandomizedalpn
-                        Bridge snowflake 192.0.2.6:80 8838024498816A039FCBBAB14E6F40A0843051FA fingerprint=8838024498816A039FCBBAB14E6F40A0843051FA url=https://snowflake-broker.torproject.net/ ampcache=https://cdn.ampproject.org/ front=www.google.com ice=stun:stun.antisip.com:3478,stun:stun.epygi.com:3478,stun:stun.uls.co.za:3478,stun:stun.voipgate.com:3478,stun:stun.mixvoip.com:3478,stun:stun.nextcloud.com:3478,stun:stun.bethesda.net:3478,stun:stun.nextcloud.com:443 utls-imitate=hellorandomizedalpn
                         Bridge snowflake 192.0.2.5:80 2B280B23E1107BB62ABFC40DDCC8824814F80A72 fingerprint=2B280B23E1107BB62ABFC40DDCC8824814F80A72 sqsqueue=https://sqs.us-east-1.amazonaws.com/893902434899/snowflake-broker sqscreds=eyJhd3MtYWNjZXNzLWtleS1pZCI6IkFLSUE1QUlGNFdKSlhTN1lIRUczIiwiYXdzLXNlY3JldC1rZXkiOiI3U0RNc0pBNHM1RitXZWJ1L3pMOHZrMFFXV0lsa1c2Y1dOZlVsQ0tRIn0= ice=stun:stun.antisip.com:3478,stun:stun.epygi.com:3478,stun:stun.uls.co.za:3478,stun:stun.voipgate.com:3478,stun:stun.nextcloud.com:3478,stun:stun.bethesda.net:3478,stun:stun.nextcloud.com:443 utls-imitate=hellorandomizedalpn
                         Bridge snowflake 192.0.2.6:80 8838024498816A039FCBBAB14E6F40A0843051FA fingerprint=8838024498816A039FCBBAB14E6F40A0843051FA sqsqueue=https://sqs.us-east-1.amazonaws.com/893902434899/snowflake-broker sqscreds=eyJhd3MtYWNjZXNzLWtleS1pZCI6IkFLSUE1QUlGNFdKSlhTN1lIRUczIiwiYXdzLXNlY3JldC1rZXkiOiI3U0RNc0pBNHM1RitXZWJ1L3pMOHZrMFFXV0lsa1c2Y1dOZlVsQ0tRIn0= ice=stun:stun.antisip.com:3478,stun:stun.epygi.com:3478,stun:stun.uls.co.za:3478,stun:stun.voipgate.com:3478,stun:stun.nextcloud.com:3478,stun:stun.bethesda.net:3478,stun:stun.nextcloud.com:443 utls-imitate=hellorandomizedalpn
                         """.trimIndent()

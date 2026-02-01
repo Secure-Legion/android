@@ -296,11 +296,13 @@
             android:name=".AcceptPaymentActivity"
             android:exported="false" />
 
-        <!-- Tor daemon - In-process Tor via JNI (from tor-android library) -->
+        <!-- Tor daemon - In-process Tor via JNI (from tor-android library)
+             Runs in a separate process (:tor) so native exit(1) doesn't kill the main app -->
         <service
             android:name="org.torproject.jni.TorService"
             android:enabled="true"
             android:exported="false"
+            android:process=":tor"
             android:stopWithTask="false" />
 
         <!-- Tor foreground service - Shows notification and handles Ping-Pong protocol -->

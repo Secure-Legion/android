@@ -27,6 +27,7 @@ import com.securelegion.ChatActivity
 import com.securelegion.LockActivity
 import com.securelegion.MainActivity
 import com.securelegion.R
+import com.securelegion.SecurityModeActivity
 import com.securelegion.crypto.TorManager
 import com.securelegion.crypto.RustBridge
 import com.securelegion.crypto.KeyChainManager
@@ -106,10 +107,10 @@ class TorService : Service() {
     private val SOCKS_FAILURE_THRESHOLD = 3  // Restart Tor after 3 consecutive failures
     private val SOCKS_FAILURE_WINDOW = 60000L  // 60 second window
 
-    // Reconnection constants
-    private val INITIAL_RETRY_DELAY = 5000L        // 5 seconds
+    // Reconnection constants (tuned to prevent restart storms after OOM kills)
+    private val INITIAL_RETRY_DELAY = 10_000L      // 10 seconds (was 5s)
     private val MAX_RETRY_DELAY = 60000L           // 60 seconds
-    private val MIN_RETRY_INTERVAL = 3000L         // 3 seconds minimum between retries
+    private val MIN_RETRY_INTERVAL = 15_000L       // 15 seconds minimum between retries (was 3s)
 
     // AlarmManager constants
     private val RESTART_CHECK_INTERVAL = 15 * 60 * 1000L  // 15 minutes
@@ -171,6 +172,9 @@ class TorService : Service() {
     // Lifecycle management (prevent repeated resets)
     private val startupCompleted = AtomicBoolean(false)  // Latch: only run startup setup once
     @Volatile private var lastGlobalResetAt: Long = 0L  // Rate limiter: prevent reset spam
+
+    // Fast message retry loop (runs in TorService, not subject to WorkManager 15-min limit)
+    private var fastRetryJob: kotlinx.coroutines.Job? = null
 
     // Tor health metrics (from MetricsPort)
     private var metricsHealthJob: kotlinx.coroutines.Job? = null
@@ -270,7 +274,7 @@ class TorService : Service() {
             val torSettings = getSharedPreferences("tor_settings", MODE_PRIVATE)
             val bridgeType = torSettings.getString("bridge_type", "none") ?: "none"
             val usingBridges = bridgeType != "none"
-            val stallTimeoutMs = if (usingBridges) 300_000L else 60_000L  // 5 min with bridges (Iran ~500kbps), 1 min without
+            val stallTimeoutMs = if (usingBridges) 180_000L else 60_000L  // 3 min with bridges, 1 min without
 
             if (usingBridges) {
                 Log.i(TAG, "Bootstrap watchdog: using extended timeout (${stallTimeoutMs / 1000}s) for bridge type '$bridgeType'")
@@ -283,7 +287,7 @@ class TorService : Service() {
                 // Tor can be quiet even when working, but % must increase
                 val stalledMs = SystemClock.elapsedRealtime() - lastBootstrapProgressMs
                 if (stalledMs > stallTimeoutMs) {
-                    Log.w(TAG, "Bootstrap stalled (no progress for ${stalledMs}ms, stuck at $bootstrapPercent%, bridges=$usingBridges) → restarting Tor")
+                    Log.w(TAG, "WATCHDOG restarting Tor: no bootstrap progress for ${stalledMs / 1000}s, stuck at $bootstrapPercent%, bridgeType=$bridgeType, timeout=${stallTimeoutMs / 1000}s")
                     restartTor("bootstrap stalled at $bootstrapPercent%")
                     return@launch
                 }
@@ -334,19 +338,14 @@ class TorService : Service() {
 
         serviceScope.launch(kotlinx.coroutines.Dispatchers.IO) {
             try {
-                // Read cookie file for authentication
-                val dataDir = File(filesDir, "app_TorService/data")
-                val cookieFile = File(dataDir, "control_auth_cookie")
+                // Read cookie file for authentication (CookieAuthentication 1 in torrc)
+                val cookieFile = File(filesDir, "app_TorService/data/control_auth_cookie")
                 if (!cookieFile.exists()) {
-                    // Try alternate location
-                    val altCookieFile = File(filesDir, "tor/control_auth_cookie")
-                    if (!altCookieFile.exists()) {
-                        Log.w(TAG, "Bridge verify: cookie file not found, skipping verification")
-                        return@launch
-                    }
+                    Log.w(TAG, "Bridge verify: cookie file not found at ${cookieFile.absolutePath}, skipping verification")
+                    return@launch
                 }
 
-                val cookieBytes = (if (cookieFile.exists()) cookieFile else File(filesDir, "tor/control_auth_cookie")).readBytes()
+                val cookieBytes = cookieFile.readBytes()
                 val cookieHex = cookieBytes.joinToString("") { "%02x".format(it) }
 
                 // Connect to control port
@@ -544,13 +543,18 @@ class TorService : Service() {
                     } else {
                         Log.w(TAG, "Failed to fetch Tor metrics (endpoint not reachable)")
                         metricsAvailable = false
+                        // CRITICAL: Still run health check using ControlPort fallback
+                        // Without this, the gate never opens when MetricsPort is down
+                        onTorHealthSample(null, null)
                     }
                 } catch (e: Exception) {
                     Log.e(TAG, "Error polling Tor metrics", e)
                     metricsAvailable = false
+                    // CRITICAL: Still run health check using ControlPort fallback
+                    onTorHealthSample(null, null)
                 }
 
-                kotlinx.coroutines.delay(3000)  // Poll every 3 seconds
+                kotlinx.coroutines.delay(2000)  // Poll every 2 seconds (gate opens faster on bridges)
             }
         }
     }
@@ -668,7 +672,7 @@ class TorService : Service() {
 
                 if (!socksReachable) {
                     Log.e(TAG, "⚠️ SOCKS proxy UNREACHABLE (127.0.0.1:9050) → closing gate")
-                    gate.close()
+                    gate.close("SOCKS_PROXY_DEAD")
                     lastTorUnstableAt = System.currentTimeMillis()
                 } else {
                     // SOCKS is alive - DO NOT close gate even if circuits=0 or bootstrap<100%
@@ -683,7 +687,7 @@ class TorService : Service() {
 
             // Calculate backoff delay based on restart attempts
             // 30s, 2m, 5m, 10m (capped)
-            val backoffDelays = longArrayOf(30_000, 120_000, 300_000, 600_000)
+            val backoffDelays = longArrayOf(20_000, 120_000, 300_000, 600_000)
             val backoffIndex = min(consecutiveRestarts, backoffDelays.size - 1)
             val requiredUnhealthyMs = backoffDelays[backoffIndex]
 
@@ -728,6 +732,117 @@ class TorService : Service() {
         metricsHealthJob?.cancel()
         metricsHealthJob = null
         Log.i(TAG, "Tor health monitor stopped")
+    }
+
+    // ==================== FAST MESSAGE RETRY LOOP ====================
+
+    /**
+     * Fast retry loop for pending messages — runs inside TorService (foreground service),
+     * NOT subject to WorkManager's 15-minute minimum interval.
+     *
+     * Bridge mode: retries every 30s (bridge circuits are slow but transient failures are common)
+     * Direct mode: retries every 90s (circuits are fast, failures are rarer)
+     *
+     * WorkManager periodic worker remains as a 15-minute safety net for edge cases
+     * (process killed, service restarted, device slept for hours).
+     */
+    private fun startFastRetryLoop() {
+        fastRetryJob?.cancel()
+        fastRetryJob = serviceScope.launch(Dispatchers.IO) {
+            val torSettings = getSharedPreferences("tor_settings", MODE_PRIVATE)
+            val bridgeType = torSettings.getString("bridge_type", "none") ?: "none"
+            val usingBridges = bridgeType != "none"
+            val intervalMs = if (usingBridges) 30_000L else 90_000L
+
+            Log.i(TAG, "Starting fast retry loop (interval=${intervalMs}ms, bridges=$usingBridges)")
+
+            // Initial delay — let Tor stabilize after startup
+            kotlinx.coroutines.delay(if (usingBridges) 15_000L else 5_000L)
+
+            while (isActive && torState != TorState.OFF && torState != TorState.STOPPING) {
+                try {
+                    // Only retry if gate is open (Tor is healthy)
+                    if (!gate.isOpenNow()) {
+                        Log.d(TAG, "Fast retry: gate closed, skipping cycle")
+                        kotlinx.coroutines.delay(intervalMs)
+                        continue
+                    }
+
+                    // Check if there are pending messages before doing DB work
+                    val keyManager = com.securelegion.crypto.KeyManager.getInstance(this@TorService)
+                    val dbPassphrase = keyManager.getDatabasePassphrase()
+                    val database = com.securelegion.database.SecureLegionDatabase.getInstance(this@TorService, dbPassphrase)
+                    val pendingCount = database.messageDao().getMessagesNeedingRetry(
+                        currentTimeMs = System.currentTimeMillis(),
+                        giveupAfterDays = 365
+                    ).count { !it.messageDelivered }
+
+                    if (pendingCount > 0) {
+                        Log.i(TAG, "Fast retry: $pendingCount pending message(s), attempting phase-aware retry...")
+                        val messageService = MessageService(this@TorService)
+                        val ackTracker = MessageService.getAckTracker()
+
+                        val messages = database.messageDao().getMessagesNeedingRetry(
+                            currentTimeMs = System.currentTimeMillis(),
+                            giveupAfterDays = 365
+                        ).filter { !it.messageDelivered }
+
+                        var retried = 0
+                        for (message in messages) {
+                            val contact = database.contactDao().getContactById(message.contactId) ?: continue
+                            val ackState = ackTracker.getState(message.messageId)
+
+                            try {
+                                when (ackState) {
+                                    com.securelegion.models.AckState.NONE, com.securelegion.models.AckState.PING_ACKED -> {
+                                        // Phase 1: No ACK or only PING_ACK — retry ping
+                                        Log.d(TAG, "Fast retry: PING for ${message.messageId} (phase=$ackState)")
+                                        if (message.pingWireBytes != null) {
+                                            val sent = com.securelegion.crypto.RustBridge.resendPingWithWireBytes(
+                                                message.pingWireBytes!!,
+                                                contact.messagingOnion ?: contact.torOnionAddress ?: ""
+                                            )
+                                            if (sent) retried++
+                                        } else {
+                                            val result = messageService.sendPingForMessage(message)
+                                            if (result.isSuccess) retried++
+                                        }
+                                    }
+                                    com.securelegion.models.AckState.PONG_ACKED -> {
+                                        // Phase 2: PONG received — poll and send blob
+                                        Log.d(TAG, "Fast retry: PONG_ACK+BLOB for ${message.messageId}")
+                                        messageService.pollForPongsAndSendMessages()
+                                        retried++
+                                    }
+                                    com.securelegion.models.AckState.MESSAGE_ACKED -> {
+                                        // Delivered — skip
+                                        Log.d(TAG, "Fast retry: already delivered ${message.messageId}")
+                                    }
+                                }
+                            } catch (e: Exception) {
+                                Log.d(TAG, "Fast retry: failed ${message.messageId} (phase=$ackState): ${e.message}")
+                            }
+                        }
+
+                        if (retried > 0) {
+                            Log.i(TAG, "Fast retry: processed $retried message(s)")
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "Fast retry loop error: ${e.message}")
+                }
+
+                kotlinx.coroutines.delay(intervalMs)
+            }
+
+            Log.i(TAG, "Fast retry loop stopped")
+        }
+    }
+
+    private fun stopFastRetryLoop() {
+        fastRetryJob?.cancel()
+        fastRetryJob = null
+        Log.i(TAG, "Fast retry loop stopped")
     }
 
     /**
@@ -858,10 +973,11 @@ class TorService : Service() {
         private const val NETWORK_STABILIZATION_WINDOW_MS = 45_000L  // 45 seconds
 
         // Tor warm-up window - wait after Tor instability before sending traffic
-        private const val TOR_WARMUP_WINDOW_MS = 20_000L  // 20 seconds
+        private const val TOR_WARMUP_WINDOW_MS = 10_000L  // 10 seconds (TransportGate is the real guard)
 
         const val ACTION_START_TOR = "com.securelegion.action.START_TOR"
         const val ACTION_STOP_TOR = "com.securelegion.action.STOP_TOR"
+        const val ACTION_KEEP_ALIVE = "com.securelegion.action.KEEP_ALIVE"
         const val ACTION_NOTIFICATION_DELETED = "com.securelegion.action.NOTIFICATION_DELETED"
         const val ACTION_ACCEPT_MESSAGE = "com.securelegion.action.ACCEPT_MESSAGE"
         const val ACTION_DECLINE_MESSAGE = "com.securelegion.action.DECLINE_MESSAGE"
@@ -1063,6 +1179,11 @@ class TorService : Service() {
             ACTION_ACCEPT_MESSAGE -> handleAcceptMessage(intent)
             ACTION_DECLINE_MESSAGE -> handleDeclineMessage(intent)
             "com.securelegion.action.REPORT_SOCKS_FAILURE" -> handleSocksFailure()
+            ACTION_KEEP_ALIVE -> {
+                // Just keep the foreground service alive (startForeground already called above)
+                // TorManager.initializeAsync() will handle starting the GP TorService daemon
+                Log.i(TAG, "KEEP_ALIVE: Foreground service started, waiting for Tor daemon")
+            }
             else -> {
                 // Default: start using new state machine
                 serviceScope.launch { startTor() }
@@ -1178,6 +1299,23 @@ class TorService : Service() {
             return
         }
 
+        // Guard: Enforce 10s cooldown after last shutdown to let :tor process fully exit
+        // Prevents SIGABRT from destroyed mutex when old :tor is still shutting down
+        try {
+            val shutdownFile = File(filesDir, "tor/last_shutdown_time")
+            if (shutdownFile.exists()) {
+                val lastShutdown = shutdownFile.readText().trim().toLongOrNull() ?: 0L
+                val elapsed = System.currentTimeMillis() - lastShutdown
+                if (elapsed in 1..10_000) {
+                    val waitMs = 10_000 - elapsed
+                    Log.w(TAG, "startTor(): Cooling down ${waitMs}ms after recent shutdown (${elapsed}ms ago)")
+                    kotlinx.coroutines.delay(waitMs)
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "startTor(): Error reading shutdown timestamp: ${e.message}")
+        }
+
         setState(TorState.STARTING, "user requested")
         bootstrapPercent = 0
         lastBootstrapProgressMs = SystemClock.elapsedRealtime()  // Reset watchdog timer
@@ -1198,6 +1336,9 @@ class TorService : Service() {
 
             // Start SOCKS health monitor (detects dead proxy, auto-restarts)
             startSocksHealthMonitor()
+
+            // Start fast retry loop (gates on isOpenNow, safe to start early)
+            startFastRetryLoop()
 
             // Initialize Tor (async, converts callback to suspend)
             val onionAddress = suspendCancellableCoroutine<String?> { continuation ->
@@ -1246,6 +1387,7 @@ class TorService : Service() {
 
         setState(TorState.STOPPING, "user requested")
         bootstrapWatchdogJob?.cancel()
+        stopFastRetryLoop()
         stopMetricsHealthMonitor()
         stopSocksHealthMonitor()
 
@@ -1285,10 +1427,10 @@ class TorService : Service() {
             return
         }
 
-        // Guard 2: Debounce restarts (min 5 seconds between restarts)
+        // Guard 2: Debounce restarts (min 15 seconds between restarts, prevents restart storms)
         val now = SystemClock.elapsedRealtime()
         val timeSinceLastRestart = now - lastRestartMs
-        if (timeSinceLastRestart < 5_000) {
+        if (timeSinceLastRestart < 15_000) {
             Log.d(TAG, "Ignoring restart request (too soon: ${timeSinceLastRestart}ms): $reason")
             return
         }
@@ -1298,7 +1440,7 @@ class TorService : Service() {
         lastTorUnstableAt = System.currentTimeMillis()  // Mark Tor as unstable
 
         stopTor()
-        kotlinx.coroutines.delay(250)  // Brief delay to let cleanup finish
+        kotlinx.coroutines.delay(1_500)  // 1.5s for native :tor to release mutex (prevents SIGABRT)
         startTor()
     }
 
@@ -1382,7 +1524,7 @@ class TorService : Service() {
                             // Start listening for incoming Ping tokens
                             startIncomingListener()
 
-                            // Schedule background message retry worker
+                            // Schedule background message retry worker (15-min safety net)
                             com.securelegion.workers.MessageRetryWorker.schedule(this@TorService)
                             Log.d(TAG, "Message retry worker scheduled")
 
@@ -1423,7 +1565,7 @@ class TorService : Service() {
                         // Ensure listener is started (in case service was restarted)
                         startIncomingListener()
 
-                        // Schedule background message retry worker
+                        // Schedule background message retry worker (15-min safety net)
                         com.securelegion.workers.MessageRetryWorker.schedule(this@TorService)
                         Log.d(TAG, "Message retry worker scheduled")
 
@@ -1959,8 +2101,8 @@ class TorService : Service() {
                             }
                         }
 
-                        // Note: We DON'T auto-download - user manually clicks download button
-                        // This is by design for privacy/security
+                        // Note: Auto-download is handled in handleIncomingPing() after PING_ACK
+                        // If Device Protection is enabled, user must manually click download button
                     }
                 } catch (e: Exception) {
                     Log.e(TAG, "Error checking ping_inbox for ${contact.displayName}", e)
@@ -3328,6 +3470,40 @@ class TorService : Service() {
                     }
 
                     Log.d(TAG, "✓ PING_ACK sent for pingId=$pingId")
+
+                    // AUTO-DOWNLOAD: If Device Protection is OFF (default), automatically
+                    // trigger download for new pings from known contacts
+                    if (shouldNotify) {
+                        val securityPrefs = getSharedPreferences("security", MODE_PRIVATE)
+                        val deviceProtectionEnabled = securityPrefs.getBoolean(
+                            SecurityModeActivity.PREF_DEVICE_PROTECTION_ENABLED, false
+                        )
+
+                        if (!deviceProtectionEnabled) {
+                            Log.i(TAG, "Auto-download enabled (Device Protection OFF) - triggering download for ping $pingId from $senderName")
+                            try {
+                                // Claim the ping for auto-download (atomic - prevents double download)
+                                val claimed = withContext(Dispatchers.IO) {
+                                    database.pingInboxDao().claimForAutoDownload(pingId, System.currentTimeMillis())
+                                }
+                                if (claimed > 0) {
+                                    Log.i(TAG, "✓ Claimed ping $pingId for auto-download - starting DownloadMessageService")
+                                    com.securelegion.services.DownloadMessageService.start(
+                                        this@TorService,
+                                        contactId,
+                                        senderName,
+                                        pingId
+                                    )
+                                } else {
+                                    Log.d(TAG, "Ping $pingId already claimed or past PING_SEEN state - skipping auto-download")
+                                }
+                            } catch (e: Exception) {
+                                Log.e(TAG, "Auto-download failed for ping $pingId", e)
+                            }
+                        } else {
+                            Log.d(TAG, "Device Protection ON - waiting for manual download for ping $pingId")
+                        }
+                    }
                 } catch (e: Exception) {
                     Log.w(TAG, "Failed to send PING_ACK", e)
                 }
@@ -3389,10 +3565,10 @@ class TorService : Service() {
         maxRetries: Int = 3,
         initialDelayMs: Long = 1000L
     ) {
-        // Wait for transport gate to open (verifies Tor is healthy)
+        // Wait for transport gate (quick timeout — ACKs are best-effort, retryable)
         Log.d(TAG, "ACK send: waiting for transport gate to open...")
-        gate.awaitOpen()
-        Log.d(TAG, "ACK send: transport gate opened, proceeding with $ackType")
+        gate.awaitOpen(com.securelegion.network.TransportGate.TIMEOUT_QUICK_MS)
+        Log.d(TAG, "ACK send: transport gate check done, proceeding with $ackType")
 
         val keyManager = com.securelegion.crypto.KeyManager.getInstance(this)
         val dbPassphrase = keyManager.getDatabasePassphrase()
@@ -5081,9 +5257,14 @@ class TorService : Service() {
     private fun sendTapsToAllContacts() {
         CoroutineScope(Dispatchers.IO).launch {
             try {
+                val keyManager = com.securelegion.crypto.KeyManager.getInstance(this@TorService)
+                if (!keyManager.isInitialized()) {
+                    Log.d(TAG, "Skipping taps - no account yet")
+                    return@launch
+                }
+
                 Log.i(TAG, "Sending taps to all contacts...")
 
-                val keyManager = com.securelegion.crypto.KeyManager.getInstance(this@TorService)
                 val dbPassphrase = keyManager.getDatabasePassphrase()
                 val database = com.securelegion.database.SecureLegionDatabase.getInstance(this@TorService, dbPassphrase)
 
@@ -6494,7 +6675,7 @@ class TorService : Service() {
     }
 
     private fun calculateBackoffDelay(): Long {
-        // Exponential backoff: 5s, 10s, 20s, 40s, 60s (max)
+        // Exponential backoff: 10s, 20s, 40s, 60s, 60s (max)
         val delay = INITIAL_RETRY_DELAY * (1 shl (reconnectAttempts.coerceAtMost(4)))
         return min(delay, MAX_RETRY_DELAY)
     }
@@ -6572,6 +6753,25 @@ class TorService : Service() {
         torConnected = false
         listenersReady = false
         isServiceRunning = false
+
+        // Stop Guardian Project's :tor process to prevent SIGABRT on next start
+        try {
+            val gpStopIntent = Intent(this, org.torproject.jni.TorService::class.java)
+            stopService(gpStopIntent)
+            Log.d(TAG, "Sent stopService to Guardian Project TorService")
+        } catch (e: Exception) {
+            Log.w(TAG, "Error stopping GP TorService in onDestroy: ${e.message}")
+        }
+
+        // Record shutdown timestamp so startTor() can enforce a cooldown
+        try {
+            val torDir = File(filesDir, "tor")
+            torDir.mkdirs()
+            File(torDir, "last_shutdown_time").writeText(System.currentTimeMillis().toString())
+            Log.d(TAG, "Recorded shutdown timestamp")
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to write shutdown timestamp: ${e.message}")
+        }
 
         // Cancel all protocol operations and clean up coroutine scope
         serviceScope.cancel()

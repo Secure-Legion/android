@@ -85,10 +85,10 @@ class WalletIdentityActivity : AppCompatActivity() {
         setupBottomNavigation()
         setupProfilePhoto()
 
-        // New Identity button - Creates new wallet, CID, username, and onion address
-        findViewById<View>(R.id.updateUsernameButton).setOnClickListener {
-            showNewIdentityConfirmation()
-        }
+        // New Identity button - future feature (commented out in layout)
+        // findViewById<View>(R.id.updateUsernameButton).setOnClickListener {
+        //     showNewIdentityConfirmation()
+        // }
 
         // Copy friend request address button
         findViewById<View>(R.id.copyCidButton).setOnClickListener {
@@ -287,7 +287,7 @@ class WalletIdentityActivity : AppCompatActivity() {
                 Log.i("WalletIdentity", "Creating new identity...")
 
                 // Show loading
-                findViewById<View>(R.id.updateUsernameButton).isEnabled = false
+                // findViewById<View>(R.id.updateUsernameButton).isEnabled = false
                 ThemedToast.showLong(this@WalletIdentityActivity, "Creating new identity...")
 
                 // Step 1: Generate new BIP39 mnemonic (12 words)
@@ -369,12 +369,12 @@ class WalletIdentityActivity : AppCompatActivity() {
                 intent.putExtra(BackupSeedPhraseActivity.EXTRA_SEED_PHRASE, mnemonic)
                 startActivity(intent)
 
-                findViewById<View>(R.id.updateUsernameButton).isEnabled = true
+                // findViewById<View>(R.id.updateUsernameButton).isEnabled = true
 
             } catch (e: Exception) {
                 Log.e("WalletIdentity", "Failed to create new identity", e)
                 ThemedToast.showLong(this@WalletIdentityActivity, "Failed to create new identity: ${e.message}")
-                findViewById<View>(R.id.updateUsernameButton).isEnabled = true
+                // findViewById<View>(R.id.updateUsernameButton).isEnabled = true
             }
         }
     }
