@@ -364,16 +364,12 @@
 
 # ==================== LOG REMOVAL (Security) ====================
 
-# Remove ALL logging in release builds
-# TEMPORARILY DISABLED FOR DEBUGGING - uncomment for production
-#-assumenosideeffects class android.util.Log {
-#    public static int d(...);
-#    public static int v(...);
-#    public static int i(...);
-#    public static int e(...);
-#    public static int w(...);
-#    public static int wtf(...);
-#}
+# Remove debug/info logging in release builds (keep w/e for crash diagnostics)
+-assumenosideeffects class android.util.Log {
+    public static int d(...);
+    public static int v(...);
+    public static int i(...);
+}
 
 # ==================== OPTIMIZATION ====================
 

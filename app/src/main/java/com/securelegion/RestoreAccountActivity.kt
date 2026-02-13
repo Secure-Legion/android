@@ -299,7 +299,7 @@ class RestoreAccountActivity : AppCompatActivity() {
                                 Log.d("RestoreAccount", "Restoring hidden service from seed (attempt $createAttempt/$maxCreateAttempts)...")
                                 address = com.securelegion.crypto.RustBridge.createHiddenService(9150, 8080)
                                 torManager.saveOnionAddress(address)
-                                Log.i("RestoreAccount", "Hidden service restored from seed: $address")
+                                Log.i("RestoreAccount", "Hidden service restored from seed successfully")
                             } catch (e: Exception) {
                                 lastError = e
                                 Log.e("RestoreAccount", "Failed to restore hidden service (attempt $createAttempt): ${e.message}", e)

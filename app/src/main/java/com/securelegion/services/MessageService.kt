@@ -2228,7 +2228,7 @@ class MessageService(private val context: Context) {
     private suspend fun sendViaTor(onionAddress: String, encryptedData: String, messageId: String) {
         withContext(Dispatchers.IO) {
             try {
-                Log.d(TAG, "Sending to Tor hidden service: $onionAddress")
+                Log.d(TAG, "Sending to Tor hidden service")
                 Log.d(TAG, "Message ID: $messageId")
                 Log.d(TAG, "Encrypted data length: ${encryptedData.length}")
 
@@ -2338,12 +2338,8 @@ class MessageService(private val context: Context) {
             Log.d(TAG, "Message type: ${message.messageType} → wire byte: 0x${messageTypeByte.toString(16).padStart(2, '0')}")
 
             // Send Ping via Rust bridge (with message for instant mode)
-            Log.d(TAG, "Contact ${contact.displayName} .onion addresses:")
-            Log.d(TAG, "  messagingOnion: ${contact.messagingOnion}")
-            Log.d(TAG, "  friendRequestOnion: ${contact.friendRequestOnion}")
-            Log.d(TAG, "  torOnionAddress (deprecated): ${contact.torOnionAddress}")
             val onionAddress = contact.messagingOnion ?: contact.torOnionAddress ?: ""
-            Log.d(TAG, "  → Selected for messaging: $onionAddress")
+            Log.d(TAG, "Resolved messaging .onion for ${contact.displayName}")
 
             // Validate message has pingId and timestamp (should be generated when message created)
             if (message.pingId == null || message.pingTimestamp == null) {

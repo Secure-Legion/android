@@ -65,8 +65,6 @@ class ContactCardManager(private val context: Context) {
                 if (result.isSuccess) {
                     val cid = result.getOrThrow()
                     Log.i(TAG, "Contact card uploaded successfully to Crust Network")
-                    Log.i(TAG, "CID: $cid")
-                    Log.i(TAG, "PIN: $pin (share this separately!)")
                     Result.success(Pair(cid, encrypted.size))
                 } else {
                     Log.e(TAG, "Crust Network upload failed: ${result.exceptionOrNull()?.message}")

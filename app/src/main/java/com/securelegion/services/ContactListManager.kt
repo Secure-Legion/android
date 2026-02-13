@@ -10,7 +10,7 @@ import org.json.JSONObject
 import java.security.MessageDigest
 import javax.crypto.Cipher
 import javax.crypto.SecretKeyFactory
-import javax.crypto.spec.IvParameterSpec
+import javax.crypto.spec.GCMParameterSpec
 import javax.crypto.spec.PBEKeySpec
 import javax.crypto.spec.SecretKeySpec
 
@@ -325,12 +325,15 @@ class ContactListManager private constructor(private val context: Context) {
      * Uses AES-256-GCM for authenticated encryption.
      * Key derived from PIN using PBKDF2 with 100,000 iterations.
      *
-     * Format: [12-byte IV][encrypted data][16-byte auth tag]
+     * Format: [16-byte salt][12-byte IV][encrypted data + 16-byte auth tag]
      */
     private fun encryptContactList(plaintext: String, pin: String): ByteArray {
         try {
+            // Generate random salt for PBKDF2
+            val salt = ByteArray(16)
+            java.security.SecureRandom().nextBytes(salt)
+
             // Derive key from PIN using PBKDF2
-            val salt = "SecureLegion-ContactList-Salt-v1".toByteArray() // Static salt (deterministic)
             val spec = PBEKeySpec(pin.toCharArray(), salt, 100000, 256)
             val factory = SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256")
             val keyBytes = factory.generateSecret(spec).encoded
@@ -342,11 +345,11 @@ class ContactListManager private constructor(private val context: Context) {
 
             // Encrypt with AES-GCM
             val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-            cipher.init(Cipher.ENCRYPT_MODE, key, IvParameterSpec(iv))
+            cipher.init(Cipher.ENCRYPT_MODE, key, GCMParameterSpec(128, iv))
             val encrypted = cipher.doFinal(plaintext.toByteArray(Charsets.UTF_8))
 
-            // Return: IV || encrypted data (includes auth tag)
-            return iv + encrypted
+            // Return: salt || IV || encrypted data (includes auth tag)
+            return salt + iv + encrypted
 
         } catch (e: Exception) {
             Log.e(TAG, "Encryption failed", e)
@@ -357,26 +360,26 @@ class ContactListManager private constructor(private val context: Context) {
     /**
      * Decrypt contact list with PIN
      *
-     * @param ciphertext Encrypted data (format: IV || encrypted data)
+     * @param ciphertext Encrypted data (format: salt || IV || encrypted data)
      * @param pin PIN for decryption
      * @return Decrypted JSON string
      */
     private fun decryptContactList(ciphertext: ByteArray, pin: String): String {
         try {
+            // Extract salt, IV, and encrypted data
+            val salt = ciphertext.sliceArray(0 until 16)
+            val iv = ciphertext.sliceArray(16 until 28)
+            val encrypted = ciphertext.sliceArray(28 until ciphertext.size)
+
             // Derive key from PIN
-            val salt = "SecureLegion-ContactList-Salt-v1".toByteArray()
             val spec = PBEKeySpec(pin.toCharArray(), salt, 100000, 256)
             val factory = SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256")
             val keyBytes = factory.generateSecret(spec).encoded
             val key = SecretKeySpec(keyBytes, "AES")
 
-            // Extract IV and encrypted data
-            val iv = ciphertext.sliceArray(0 until 12)
-            val encrypted = ciphertext.sliceArray(12 until ciphertext.size)
-
             // Decrypt with AES-GCM
             val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-            cipher.init(Cipher.DECRYPT_MODE, key, IvParameterSpec(iv))
+            cipher.init(Cipher.DECRYPT_MODE, key, GCMParameterSpec(128, iv))
             val decrypted = cipher.doFinal(encrypted)
 
             return String(decrypted, Charsets.UTF_8)

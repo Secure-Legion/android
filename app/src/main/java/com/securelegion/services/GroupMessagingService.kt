@@ -81,7 +81,7 @@ class GroupMessagingService private constructor(private val context: Context) {
             val pingId = generatePingId()
             val pingTimestamp = System.currentTimeMillis()
 
-            Log.d(TAG, "Sending group invite Ping to $onionAddress")
+            Log.d(TAG, "Sending group invite Ping")
             val pingResponse = RustBridge.sendPing(
                 recipientEd25519PubKey,
                 recipientX25519PubKey,
@@ -162,7 +162,7 @@ class GroupMessagingService private constructor(private val context: Context) {
                     val pingId = generatePingId()
                     val pingTimestamp = System.currentTimeMillis()
 
-                    Log.d(TAG, "Sending group message to ${member.displayName} at $onionAddress")
+                    Log.d(TAG, "Sending group message to ${member.displayName}")
                     val pingResponse = RustBridge.sendPing(
                         recipientEd25519PubKey,
                         recipientX25519PubKey,

@@ -231,7 +231,7 @@ class SecureLegionApplication : Application() {
         torManager.initializeAsync { success, onionAddress ->
             if (success && onionAddress != null) {
                 Log.i(TAG, "Tor initialized successfully")
-                Log.i(TAG, "Our .onion address: $onionAddress")
+                Log.i(TAG, "Our .onion address initialized")
             } else {
                 Log.e(TAG, "Tor initialization failed!")
             }

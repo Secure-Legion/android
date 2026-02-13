@@ -686,12 +686,9 @@ class AddFriendActivity : BaseActivity() {
 
                 if (isOnion) {
                     Log.d(TAG, "Downloading contact card via Tor from .onion address...")
-                    Log.d(TAG, "Friend Request .onion: $cidOrOnion")
                 } else {
                     Log.d(TAG, "Downloading contact card from IPFS...")
-                    Log.d(TAG, "CID: $cidOrOnion")
                 }
-                Log.d(TAG, "PIN: $pin")
 
                 val loadingText = if (isAccepting) "Accepting friend request..." else "Downloading contact card..."
                 val loadingSubtext = if (isOnion) "Connecting via Tor..." else "Downloading from IPFS..."
@@ -737,10 +734,7 @@ class AddFriendActivity : BaseActivity() {
     }
 
     private fun handleContactCardDownloaded(contactCard: ContactCard, cid: String, pin: String) {
-        Log.i(TAG, "Successfully downloaded contact card:")
-        Log.i(TAG, "  Name: ${contactCard.displayName}")
-        Log.i(TAG, "  Solana: ${contactCard.solanaAddress}")
-        Log.i(TAG, "  Onion: ${contactCard.torOnionAddress}")
+        Log.i(TAG, "Successfully downloaded contact card for: ${contactCard.displayName}")
 
         // Save contact to encrypted database
         CoroutineScope(Dispatchers.Main).launch {
@@ -786,8 +780,7 @@ class AddFriendActivity : BaseActivity() {
                     val backupResult = contactListManager.backupToIPFS()
                     if (backupResult.isSuccess) {
                         val ourCID = backupResult.getOrThrow()
-                        Log.i(TAG, "✓✓✓ SUCCESS: OUR contact list backed up to IPFS: $ourCID")
-                        Log.i(TAG, "  Friends can now fetch it via: http://[our-onion]/contact-list/$ourCID")
+                        Log.i(TAG, "✓✓✓ SUCCESS: OUR contact list backed up to IPFS")
                     } else {
                         Log.e(TAG, "❌ FAILED to backup OUR contact list: ${backupResult.exceptionOrNull()?.message}")
                         backupResult.exceptionOrNull()?.printStackTrace()
@@ -797,8 +790,6 @@ class AddFriendActivity : BaseActivity() {
                     // Fetch friend's contact list via their .onion HTTP and pin it locally
                     if (contactCard.ipfsCid != null) {
                         Log.d(TAG, "⬇ Starting contact list pinning for ${contactCard.displayName}")
-                        Log.d(TAG, "  Friend's contact list CID: ${contactCard.ipfsCid}")
-                        Log.d(TAG, "  Friend's .onion: ${contactCard.friendRequestOnion}")
 
                         val ipfsManager = com.securelegion.services.IPFSManager.getInstance(this@AddFriendActivity)
                         val pinResult = ipfsManager.pinFriendContactList(
@@ -889,7 +880,7 @@ class AddFriendActivity : BaseActivity() {
                         val theirMessagingOnion = contact.messagingOnion ?: contactCard.messagingOnion
 
                         if (ourMessagingOnion.isNullOrEmpty() || theirMessagingOnion.isNullOrEmpty()) {
-                            Log.e(TAG, "Cannot initialize key chain: missing onion address (ours=$ourMessagingOnion, theirs=$theirMessagingOnion) for ${contact.displayName}")
+                            Log.e(TAG, "Cannot initialize key chain: missing onion address for ${contact.displayName}")
                         } else {
                             com.securelegion.crypto.KeyChainManager.initializeKeyChain(
                                 context = this@AddFriendActivity,
@@ -998,7 +989,7 @@ class AddFriendActivity : BaseActivity() {
                     .removeSuffix("/")
                     .trim()
 
-                Log.d(TAG, "Phase 2: Accepting friend request from: $sanitizedOnion (original: $senderOnion)")
+                Log.d(TAG, "Phase 2: Accepting friend request...")
 
                 // Find the pending incoming request by onion address (stored in ipfsCid field for v2.0)
                 val prefs = getSharedPreferences("friend_requests", Context.MODE_PRIVATE)
@@ -1073,11 +1064,7 @@ class AddFriendActivity : BaseActivity() {
                     Log.w(TAG, "⚠️  Phase 1 has no signature (legacy friend request)")
                 }
 
-                Log.i(TAG, "Phase 1 decrypted successfully:")
-                Log.i(TAG, "  Sender: $senderUsername")
-                Log.i(TAG, "  Sender .onion: $senderFriendRequestOnion")
-                Log.i(TAG, "  Sender X25519 key: ${senderX25519PublicKey.size} bytes")
-                Log.i(TAG, "  Sender Kyber key: ${senderKyberPublicKey?.size ?: 0} bytes (quantum=${senderKyberPublicKey != null})")
+                Log.i(TAG, "Phase 1 decrypted successfully for sender: $senderUsername")
 
                 // Build YOUR full contact card
                 val keyManager = KeyManager.getInstance(this@AddFriendActivity)

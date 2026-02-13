@@ -298,7 +298,7 @@ class SplashActivity : AppCompatActivity() {
         torManager.initializeAsync { success, onionAddress ->
             runOnUiThread {
                 if (success) {
-                    Log.i("SplashActivity", "Tor initialized: $onionAddress")
+                    Log.i("SplashActivity", "Tor initialized successfully")
                     // Bootstrap polling is already running
                 } else {
                     Log.e("SplashActivity", "Tor initialization failed")
@@ -329,7 +329,7 @@ class SplashActivity : AppCompatActivity() {
                         val onionAddress = torManager.getOnionAddress()
                         if (onionAddress != null) {
                             // All ready!
-                            Log.i("SplashActivity", "✓ Tor ready: $onionAddress")
+                            Log.i("SplashActivity", "✓ Tor ready")
                             runOnUiThread {
                                 val progressBar = findViewById<ProgressBar>(R.id.torProgressBar)
                                 progressBar?.progress = 100
@@ -577,7 +577,7 @@ class SplashActivity : AppCompatActivity() {
         torManager.initializeAsync { success, onionAddress ->
             runOnUiThread {
                 if (success) {
-                    Log.i("SplashActivity", "Tor connected with bridges: $onionAddress")
+                    Log.i("SplashActivity", "Tor connected with bridges")
                     updateStatus("Connected to Tor!")
                     Handler(Looper.getMainLooper()).postDelayed({
                         navigateToLock()
