@@ -92,8 +92,7 @@ class RecentTransactionsActivity : AppCompatActivity() {
                     keyManager.getSolanaAddress()
                 }
 
-                Log.d("RecentTransactions", "Fetching transactions for wallet: $walletName")
-                Log.d("RecentTransactions", "Address: $solanaAddress (this may take 30-60 seconds)")
+                Log.d("RecentTransactions", "Fetching transactions for wallet: $walletName (this may take 30-60 seconds)")
 
                 // Fetch transactions from blockchain (may take time for API to index new transactions)
                 val solanaService = SolanaService(this@RecentTransactionsActivity)

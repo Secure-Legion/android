@@ -217,7 +217,7 @@ class ReceiveActivity : BaseActivity() {
                         // Generate QR code with full address
                         generateQRCode(solanaAddress)
 
-                        Log.i("ReceiveActivity", "Loaded Solana address: $solanaAddress")
+                        Log.i("ReceiveActivity", "Loaded Solana address")
                     }
                 } else {
                     withContext(Dispatchers.Main) {

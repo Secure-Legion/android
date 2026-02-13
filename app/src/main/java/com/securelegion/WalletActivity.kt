@@ -711,7 +711,7 @@ class WalletActivity : AppCompatActivity() {
                     // Get Solana wallet address from current wallet
                     val solanaAddress = currentWallet?.solanaAddress ?: keyManager.getSolanaAddress()
 
-                Log.d("WalletActivity", "Fetching balance for address: $solanaAddress (wallet: ${currentWallet?.name})")
+                Log.d("WalletActivity", "Fetching balance for wallet: ${currentWallet?.name}")
 
                 // Fetch SOL balance
                 val solanaService = SolanaService(this@WalletActivity)
@@ -1092,7 +1092,7 @@ class WalletActivity : AppCompatActivity() {
             }
 
             val solanaAddress = solWallet?.solanaAddress ?: keyManager.getSolanaAddress()
-            Log.d("WalletActivity", "SOL address: $solanaAddress (wallet: ${solWallet?.name})")
+            Log.d("WalletActivity", "Loading SOL balance for wallet: ${solWallet?.name}")
 
             if (solanaAddress.isEmpty()) {
                 Log.w("WalletActivity", "Solana address not available - keeping cached values")

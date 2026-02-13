@@ -1536,7 +1536,7 @@ class TorService : Service() {
             }
 
             if (onionAddress != null) {
-                Log.i(TAG, "Tor hidden service initialized: $onionAddress")
+                Log.i(TAG, "Tor hidden service initialized")
 
                 // Start SOCKS proxy
                 val socksStarted = startSocksProxy()
@@ -1694,7 +1694,7 @@ class TorService : Service() {
                     Log.d(TAG, "Tor not initialized (or bridge config changed), initializing now...")
                     torManager.initializeAsync { success, onionAddress ->
                         if (success && onionAddress != null) {
-                            Log.i(TAG, "Tor initialized successfully. Hidden service: $onionAddress")
+                            Log.i(TAG, "Tor initialized successfully")
 
                             // Reset reconnection state on success
                             isReconnecting = false
@@ -1729,7 +1729,7 @@ class TorService : Service() {
                     }
                 } else {
                     val onionAddress = torManager.getOnionAddress()
-                    Log.d(TAG, "Tor already initialized. Address: $onionAddress")
+                    Log.d(TAG, "Tor already initialized")
 
                     // Check if Tor is actually still running (e.g., after app restart)
                     val isTorActuallyRunning = try {
@@ -6834,7 +6834,7 @@ class TorService : Service() {
             try {
                 torManager.initializeAsync { success, onionAddress ->
                     if (success && onionAddress != null) {
-                        Log.i(TAG, "Tor reconnected successfully: $onionAddress")
+                        Log.i(TAG, "Tor reconnected successfully")
 
                         // Reset state
                         isReconnecting = false
@@ -7333,7 +7333,7 @@ class TorService : Service() {
      * If we see 3 descriptor upload failures in 30 seconds → mark HS unhealthy
      */
     private fun handleHsDescFailed(address: String, reason: String, now: Long) {
-        Log.w(TAG, "HS descriptor UPLOAD FAILED: $address (reason: $reason)")
+        Log.w(TAG, "HS descriptor UPLOAD FAILED (reason: $reason)")
 
         // Reset window if too old
         if (now - hsDescFailureWindowStart > HS_DESC_FAILURE_WINDOW) {
@@ -7365,7 +7365,7 @@ class TorService : Service() {
         }
         lastHsDescUpload[address] = now
 
-        Log.i(TAG, "HS descriptor UPLOADED: $address")
+        Log.i(TAG, "HS descriptor UPLOADED")
 
         // Reset HS health tracking
         if (!hsDescHealthy || hsDescFailureCount > 0) {

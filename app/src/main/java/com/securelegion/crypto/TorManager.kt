@@ -434,13 +434,13 @@ class TorManager(private val context: Context) {
                     // Sanity check: if we already had a stored onion, verify it matches
                     val storedOnion = getOnionAddress()
                     if (storedOnion != null && storedOnion != address) {
-                        Log.w(TAG, "⚠️ Stored onion differs from filesystem! Stored: $storedOnion, Filesystem: $address")
+                        Log.w(TAG, "⚠️ Stored onion differs from filesystem!")
                         Log.w(TAG, "Using filesystem onion (Tor's source of truth)")
                     }
 
                     saveOnionAddress(address)
                     keyManager.storeMessagingOnion(address)
-                    Log.i(TAG, "✓ Messaging hidden service ready (persistent): $address")
+                    Log.i(TAG, "✓ Messaging hidden service ready (persistent)")
 
                     // Read friend-request .onion address with validation
                     try {
@@ -701,13 +701,13 @@ class TorManager(private val context: Context) {
                         // Sanity check: verify address matches stored onion
                         val storedOnion = getOnionAddress()
                         if (storedOnion != null && storedOnion != address) {
-                            Log.w(TAG, "⚠️ Stored onion differs from filesystem! Stored: $storedOnion, Filesystem: $address")
+                            Log.w(TAG, "⚠️ Stored onion differs from filesystem!")
                             Log.w(TAG, "Using filesystem onion (Tor's source of truth)")
                         }
 
                         saveOnionAddress(address)
                         keyManager.storeMessagingOnion(address)
-                        Log.i(TAG, "✓ Messaging hidden service read (persistent): $address")
+                        Log.i(TAG, "✓ Messaging hidden service read (persistent)")
 
                         // Start listener if not already started
                         if (!listenerStarted) {

@@ -370,7 +370,7 @@ class CreateAccountActivity : AppCompatActivity() {
                                 Log.d("CreateAccount", "Creating hidden service (attempt $createAttempt/$maxCreateAttempts)...")
                                 address = com.securelegion.crypto.RustBridge.createHiddenService(9150, 8080)
                                 torManager.saveOnionAddress(address)
-                                Log.i("CreateAccount", "Hidden service created: $address")
+                                Log.i("CreateAccount", "Hidden service created successfully")
                             } catch (e: Exception) {
                                 lastError = e
                                 Log.e("CreateAccount", "Failed to create hidden service (attempt $createAttempt): ${e.message}", e)
@@ -430,7 +430,7 @@ class CreateAccountActivity : AppCompatActivity() {
                         friendRequestAttempt++
                         Log.d("CreateAccount", "Creating friend request .onion address (attempt $friendRequestAttempt)...")
                         friendRequestOnion = keyManager.createFriendRequestOnion()
-                        Log.i("CreateAccount", "Friend request .onion: $friendRequestOnion")
+                        Log.i("CreateAccount", "Friend request .onion created successfully")
                     } catch (e: Exception) {
                         Log.e("CreateAccount", "Failed to create friend request .onion (attempt $friendRequestAttempt): ${e.message}", e)
                         if (friendRequestAttempt < 5) {
@@ -515,8 +515,6 @@ class CreateAccountActivity : AppCompatActivity() {
                 Log.i("CreateAccount", "Zcash wallet will be created automatically when initialization finishes")
 
                 Log.i("CreateAccount", "Contact card created (local only, not uploaded)")
-                Log.i("CreateAccount", "CID: $ipfsCid (deterministic from seed)")
-                Log.i("CreateAccount", "PIN: $contactCardPin")
 
                 // Mark that seed phrase has NOT been confirmed yet
                 val setupPrefs = getSharedPreferences("account_setup", MODE_PRIVATE)

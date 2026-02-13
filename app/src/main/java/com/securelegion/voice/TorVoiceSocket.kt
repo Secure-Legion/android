@@ -52,7 +52,7 @@ class TorVoiceSocket(
      */
     suspend fun connect(onionAddress: String, port: Int) = withContext(Dispatchers.IO) {
         try {
-            Log.d(TAG, "[$circuitIndex] Connecting to $onionAddress:$port via Tor...")
+            Log.d(TAG, "[$circuitIndex] Connecting via Tor...")
 
             // Create SOCKS5 proxy
             val torProxy = Proxy(Proxy.Type.SOCKS, InetSocketAddress(TOR_SOCKS_HOST, TOR_SOCKS_PORT))
@@ -73,7 +73,7 @@ class TorVoiceSocket(
 
             isConnected = true
 
-            Log.i(TAG, "[$circuitIndex] Connected to $onionAddress:$port (circuit established)")
+            Log.i(TAG, "[$circuitIndex] Voice circuit established")
 
         } catch (e: IOException) {
             Log.e(TAG, "[$circuitIndex] Connection failed: ${e.message}", e)

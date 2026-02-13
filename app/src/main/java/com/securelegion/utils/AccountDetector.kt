@@ -63,7 +63,7 @@ object AccountDetector {
                     contactPin = contactPin ?: "Unknown"
                 )
             } else {
-                Log.d(TAG, "Account info incomplete: username=$username, onion=$onion")
+                Log.d(TAG, "Account info incomplete")
                 null
             }
         } catch (e: Exception) {

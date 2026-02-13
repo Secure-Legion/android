@@ -169,7 +169,7 @@ class KeyManager private constructor(context: Context) {
             // Store the .onion address
             storeFriendRequestOnion(onionAddress)
 
-            Log.i(TAG, "Friend request .onion created: $onionAddress")
+            Log.i(TAG, "Friend request .onion created successfully")
             return onionAddress
         } catch (e: Exception) {
             Log.e(TAG, "Failed to create friend request .onion", e)
@@ -337,7 +337,7 @@ class KeyManager private constructor(context: Context) {
         encryptedPrefs.edit {
             putString(ZCASH_ADDRESS_ALIAS, address)
         }
-        Log.d(TAG, "Zcash address stored: $address")
+        Log.d(TAG, "Zcash address stored")
     }
 
     /**
@@ -355,7 +355,7 @@ class KeyManager private constructor(context: Context) {
         encryptedPrefs.edit {
             putString(ZCASH_TRANSPARENT_ADDRESS_ALIAS, address)
         }
-        Log.d(TAG, "Zcash transparent address stored: $address")
+        Log.d(TAG, "Zcash transparent address stored")
     }
 
     /**
@@ -813,7 +813,7 @@ class KeyManager private constructor(context: Context) {
         encryptedPrefs.edit {
             putString(FRIEND_REQUEST_ONION_ALIAS, onion)
         }
-        Log.i(TAG, "Stored friend request .onion: $onion")
+        Log.i(TAG, "Stored friend request .onion")
     }
 
     /**
@@ -830,7 +830,7 @@ class KeyManager private constructor(context: Context) {
         encryptedPrefs.edit {
             putString(MESSAGING_ONION_ALIAS, onion)
         }
-        Log.i(TAG, "Stored messaging .onion: $onion")
+        Log.i(TAG, "Stored messaging .onion")
     }
 
     /**
@@ -1374,7 +1374,7 @@ class KeyManager private constructor(context: Context) {
             // Get Solana address
             val solanaAddress = base58Encode(ed25519KeyPair.publicKey)
 
-            Log.i(TAG, "New wallet generated: $walletId -> $solanaAddress")
+            Log.i(TAG, "New wallet generated: $walletId")
             return Pair(walletId, solanaAddress)
 
         } catch (e: Exception) {

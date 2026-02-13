@@ -249,7 +249,7 @@ dependencies {
     implementation("net.java.dev.jna:jna:5.17.0@aar")  // Updated for 16KB page size support
 
     // BouncyCastle for SHA3-256 (Tor v3 onion address checksum) - must be first
-    implementation("org.bouncycastle:bcprov-jdk15to18:1.69")
+    implementation("org.bouncycastle:bcprov-jdk15to18:1.79")
 
     // BIP39/BIP44 - exclude BouncyCastle to use our version above
     implementation("org.web3j:crypto:4.9.8") {
