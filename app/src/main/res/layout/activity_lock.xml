@@ -86,7 +86,7 @@
                 android:layout_centerVertical="true"
                 android:layout_marginEnd="16dp"
                 android:src="@android:drawable/ic_menu_view"
-                android:tint="@color/lock_icon_gray"
+                app:tint="@color/lock_icon_gray"
                 android:clickable="true"
                 android:focusable="true"
                 android:contentDescription="Toggle password visibility" />

@@ -55,7 +55,7 @@
             android:layout_height="50dp"
             android:layout_gravity="center"
             android:src="@drawable/ic_contacts"
-            android:tint="#999999"
+            app:tint="#999999"
             android:contentDescription="Group Icon" />
 
     </FrameLayout>
@@ -112,7 +112,7 @@
                     android:layout_height="20dp"
                     android:layout_gravity="center"
                     android:src="@drawable/ic_lock"
-                    android:tint="#CCCCCC"
+                    app:tint="#CCCCCC"
                     android:contentDescription="Lock" />
 
             </FrameLayout>
@@ -136,7 +136,7 @@
                 android:layout_width="20dp"
                 android:layout_height="20dp"
                 android:src="@drawable/ic_arrow_forward"
-                android:tint="#666666"
+                app:tint="#666666"
                 app:layout_constraintTop_toTopOf="parent"
                 app:layout_constraintBottom_toBottomOf="parent"
                 app:layout_constraintEnd_toEndOf="parent"
@@ -169,7 +169,7 @@
                     android:layout_height="20dp"
                     android:layout_gravity="center"
                     android:src="@drawable/ic_contacts"
-                    android:tint="#CCCCCC"
+                    app:tint="#CCCCCC"
                     android:contentDescription="Members" />
 
             </FrameLayout>
@@ -193,7 +193,7 @@
                 android:layout_width="20dp"
                 android:layout_height="20dp"
                 android:src="@drawable/ic_arrow_forward"
-                android:tint="#666666"
+                app:tint="#666666"
                 app:layout_constraintTop_toTopOf="parent"
                 app:layout_constraintBottom_toBottomOf="parent"
                 app:layout_constraintEnd_toEndOf="parent"
@@ -226,7 +226,7 @@
                     android:layout_height="20dp"
                     android:layout_gravity="center"
                     android:src="@android:drawable/ic_menu_info_details"
-                    android:tint="#CCCCCC"
+                    app:tint="#CCCCCC"
                     android:contentDescription="Info" />
 
             </FrameLayout>
@@ -250,7 +250,7 @@
                 android:layout_width="20dp"
                 android:layout_height="20dp"
                 android:src="@drawable/ic_arrow_forward"
-                android:tint="#666666"
+                app:tint="#666666"
                 app:layout_constraintTop_toTopOf="parent"
                 app:layout_constraintBottom_toBottomOf="parent"
                 app:layout_constraintEnd_toEndOf="parent"
@@ -283,7 +283,7 @@
                     android:layout_height="20dp"
                     android:layout_gravity="center"
                     android:src="@android:drawable/ic_menu_info_details"
-                    android:tint="#CCCCCC"
+                    app:tint="#CCCCCC"
                     android:contentDescription="Info" />
 
             </FrameLayout>
@@ -307,7 +307,7 @@
                 android:layout_width="20dp"
                 android:layout_height="20dp"
                 android:src="@drawable/ic_arrow_forward"
-                android:tint="#666666"
+                app:tint="#666666"
                 app:layout_constraintTop_toTopOf="parent"
                 app:layout_constraintBottom_toBottomOf="parent"
                 app:layout_constraintEnd_toEndOf="parent"
@@ -339,7 +339,7 @@
                     android:layout_height="20dp"
                     android:layout_gravity="center"
                     android:src="@android:drawable/ic_menu_edit"
-                    android:tint="#CCCCCC"
+                    app:tint="#CCCCCC"
                     android:contentDescription="Edit" />
 
             </FrameLayout>
@@ -363,7 +363,7 @@
                 android:layout_width="20dp"
                 android:layout_height="20dp"
                 android:src="@drawable/ic_arrow_forward"
-                android:tint="#666666"
+                app:tint="#666666"
                 app:layout_constraintTop_toTopOf="parent"
                 app:layout_constraintBottom_toBottomOf="parent"
                 app:layout_constraintEnd_toEndOf="parent"
@@ -401,7 +401,7 @@
                 android:layout_width="24dp"
                 android:layout_height="24dp"
                 android:src="@android:drawable/sym_action_chat"
-                android:tint="@color/text_gray"
+                app:tint="@color/text_gray"
                 android:layout_marginBottom="4dp"
                 android:contentDescription="Messages" />
 
@@ -432,7 +432,7 @@
                 android:layout_height="24dp"
                 android:src="@drawable/ic_wallet"
                 android:layout_marginBottom="4dp"
-                android:tint="@color/text_gray"
+                app:tint="@color/text_gray"
                 android:contentDescription="Wallet" />
 
             <TextView
@@ -462,7 +462,7 @@
                 android:layout_height="24dp"
                 android:src="@drawable/ic_add_friend"
                 android:layout_marginBottom="4dp"
-                android:tint="@color/text_gray"
+                app:tint="@color/text_gray"
                 android:contentDescription="Add Friend" />
 
             <TextView
@@ -492,7 +492,7 @@
                 android:layout_height="24dp"
                 android:src="@drawable/ic_lock"
                 android:layout_marginBottom="4dp"
-                android:tint="@color/text_gray"
+                app:tint="@color/text_gray"
                 android:contentDescription="Lock" />
 
             <TextView

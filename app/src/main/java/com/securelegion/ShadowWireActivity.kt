@@ -59,9 +59,17 @@ class ShadowWireActivity : AppCompatActivity() {
         shadowWireService = ShadowWireService(this, walletId)
         solanaService = SolanaService(this)
 
+        // Load cached price immediately so toggle works right away
+        currentSolPrice = getCachedPrice("SOL")
+
         initializeViews()
         setupClickListeners()
         loadPoolBalance()
+    }
+
+    private fun getCachedPrice(currency: String): Double {
+        val prefs = getSharedPreferences("wallet_prices", MODE_PRIVATE)
+        return prefs.getFloat("${currency}_price", 0f).toDouble()
     }
 
     private fun initializeViews() {

@@ -1,8 +1,10 @@
 package com.securelegion
 
 import android.app.Activity
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.os.Build
 import android.os.Bundle
 import android.util.Base64
@@ -41,6 +43,14 @@ class AddFriendActivity : BaseActivity() {
     private lateinit var loadingSubtext: TextView
     private var isDeleteMode = false
     private val selectedRequests = mutableSetOf<String>()
+
+    // Live refresh when background friend request send completes
+    private val friendRequestStatusReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            Log.d(TAG, "Friend request status changed — refreshing list")
+            loadPendingFriendRequests()
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -275,6 +285,22 @@ class AddFriendActivity : BaseActivity() {
         // Load and display pending friend requests
         loadPendingFriendRequests()
         updateFriendRequestBadge()
+
+        // Listen for background friend request status changes
+        registerReceiver(
+            friendRequestStatusReceiver,
+            IntentFilter(com.securelegion.services.TorService.ACTION_FRIEND_REQUEST_STATUS_CHANGED),
+            Context.RECEIVER_NOT_EXPORTED
+        )
+    }
+
+    override fun onPause() {
+        super.onPause()
+        try {
+            unregisterReceiver(friendRequestStatusReceiver)
+        } catch (_: IllegalArgumentException) {
+            // Already unregistered
+        }
     }
 
     /**
@@ -317,8 +343,28 @@ class AddFriendActivity : BaseActivity() {
                 }
             }
 
-            // Deduplicate based on CID
-            val uniqueRequests = pendingRequests.distinctBy { it.ipfsCid }
+            // Stale "sending" cleanup: if process died during send, mark as failed after 3 min
+            val now = System.currentTimeMillis()
+            val staleThresholdMs = 3 * 60 * 1000L
+            var hasStale = false
+            for (i in pendingRequests.indices) {
+                val req = pendingRequests[i]
+                if (req.status == com.securelegion.models.PendingFriendRequest.STATUS_SENDING
+                    && now - req.timestamp > staleThresholdMs
+                ) {
+                    pendingRequests[i] = req.copy(status = com.securelegion.models.PendingFriendRequest.STATUS_FAILED)
+                    hasStale = true
+                }
+            }
+            if (hasStale) {
+                // Write cleaned-up list back to prefs
+                val cleanedSet = pendingRequests.map { it.toJson() }.toMutableSet()
+                prefs.edit().putStringSet("pending_requests_v2", cleanedSet).apply()
+                Log.i(TAG, "Cleaned up stale 'sending' requests → marked as failed")
+            }
+
+            // Deduplicate based on id (prefer id), fall back to CID for old entries without id
+            val uniqueRequests = pendingRequests.distinctBy { it.id }
 
             Log.d(TAG, "Loaded ${uniqueRequests.size} unique pending friend requests")
 
@@ -378,8 +424,19 @@ class AddFriendActivity : BaseActivity() {
                 requestCheckbox.visibility = View.GONE
             }
 
+            // Clear any leftover compound drawables from previous state
+            requestStatus.setCompoundDrawablesRelativeWithIntrinsicBounds(0, 0, 0, 0)
+
             // Set status based on direction and status
             when {
+                friendRequest.status == com.securelegion.models.PendingFriendRequest.STATUS_SENDING -> {
+                    requestStatus.text = "Sending..."
+                    requestStatus.setTextColor(getColor(R.color.text_gray))
+                    requestStatus.setCompoundDrawablesRelativeWithIntrinsicBounds(
+                        R.drawable.ic_clock, 0, 0, 0
+                    )
+                    requestStatus.compoundDrawablePadding = 6
+                }
                 friendRequest.direction == com.securelegion.models.PendingFriendRequest.DIRECTION_INCOMING -> {
                     requestStatus.text = "Accept"
                     requestStatus.setTextColor(getColor(R.color.text_gray))
@@ -394,7 +451,11 @@ class AddFriendActivity : BaseActivity() {
                 }
             }
 
-            // Handle status badge click
+            // Handle status badge click (no action while sending)
+            if (friendRequest.status == com.securelegion.models.PendingFriendRequest.STATUS_SENDING) {
+                requestStatus.setOnClickListener(null)
+                requestStatus.isClickable = false
+            } else {
             requestStatus.setOnClickListener {
                 if (friendRequest.direction == com.securelegion.models.PendingFriendRequest.DIRECTION_OUTGOING) {
                     // Outgoing request - show confirmation dialog before resending
@@ -433,6 +494,7 @@ class AddFriendActivity : BaseActivity() {
                     ThemedToast.show(this, "Friend request from ${friendRequest.displayName}. Enter PIN to accept")
                 }
             }
+            } // end else (not sending)
 
             // Handle card click - auto-fill CID field
             requestView.setOnClickListener {
@@ -936,7 +998,6 @@ class AddFriendActivity : BaseActivity() {
                     .removeSuffix("/")
                     .trim()
 
-                showLoading("Accepting friend request...")
                 Log.d(TAG, "Phase 2: Accepting friend request from: $sanitizedOnion (original: $senderOnion)")
 
                 // Find the pending incoming request by onion address (stored in ipfsCid field for v2.0)
@@ -1094,95 +1155,64 @@ class AddFriendActivity : BaseActivity() {
 
                 Log.d(TAG, "Encrypted Phase 2 payload: ${encryptedPhase2.size} bytes (quantum=${kyberCiphertextBase64 != null})")
 
-                // Wait for transport gate before sending (handshake — hard fail on timeout)
-                Log.d(TAG, "Waiting for transport gate before sending Phase 2...")
-                val gateOpened = withContext(Dispatchers.IO) {
-                    com.securelegion.services.TorService.getTransportGate()?.awaitOpen(
-                        com.securelegion.network.TransportGate.TIMEOUT_HANDSHAKE_MS
-                    ) ?: run {
-                        Log.w(TAG, "TransportGate is null — TorService may not be initialized")
-                        false
+                // Remove the old incoming request immediately
+                removeFriendRequestByCid(incomingRequest.ipfsCid)
+
+                // Build partial contact JSON with shared secret for later key chain init
+                val partialContactJson = org.json.JSONObject().apply {
+                    put("username", senderUsername)
+                    put("friend_request_onion", senderFriendRequestOnion)
+                    put("x25519_public_key", senderX25519PublicKeyBase64)
+                    if (senderKyberPublicKey != null) {
+                        put("kyber_public_key", Base64.encodeToString(senderKyberPublicKey, Base64.NO_WRAP))
                     }
-                }
-                if (!gateOpened) {
-                    hideLoading()
-                    ThemedToast.show(this@AddFriendActivity, "Tor is still connecting — please try again in a moment")
-                    return@launch
-                }
-                Log.d(TAG, "Transport gate open - sending Phase 2")
+                    if (hybridSharedSecret != null) {
+                        put("hybrid_shared_secret", Base64.encodeToString(hybridSharedSecret, Base64.NO_WRAP))
+                    }
+                }.toString()
 
-                // Send Phase 2 to sender's friend-request.onion using dedicated channel
-                // Rust side retries up to 24x (2 min) for slow bridges like Snowflake
-                val success = withContext(Dispatchers.IO) {
-                    RustBridge.sendFriendRequestAccepted(
-                        recipientOnion = senderFriendRequestOnion,
-                        encryptedAcceptance = encryptedPhase2
-                    )
-                }
+                // Save as "sending" immediately — background worker will update to pending/failed
+                val requestId = java.util.UUID.randomUUID().toString()
+                val pendingContact = com.securelegion.models.PendingFriendRequest(
+                    displayName = senderUsername,
+                    ipfsCid = senderFriendRequestOnion,
+                    direction = com.securelegion.models.PendingFriendRequest.DIRECTION_OUTGOING,
+                    status = com.securelegion.models.PendingFriendRequest.STATUS_SENDING,
+                    timestamp = System.currentTimeMillis(),
+                    contactCardJson = partialContactJson,
+                    id = requestId
+                )
+                savePendingFriendRequest(pendingContact)
 
-                if (success) {
-                    Log.i(TAG, "✓ Phase 2 sent successfully to $senderUsername")
+                // Immediate feedback — no blocking overlay
+                ThemedToast.show(this@AddFriendActivity, "Accepting friend request from $senderUsername...")
 
-                    // Remove the pending incoming request
-                    removeFriendRequestByCid(incomingRequest.ipfsCid)
+                // Clear form
+                findViewById<EditText>(R.id.cidInput).setText("")
+                findViewById<EditText>(R.id.pinBox1).setText("")
+                findViewById<EditText>(R.id.pinBox2).setText("")
+                findViewById<EditText>(R.id.pinBox3).setText("")
+                findViewById<EditText>(R.id.pinBox4).setText("")
+                findViewById<EditText>(R.id.pinBox5).setText("")
+                findViewById<EditText>(R.id.pinBox6).setText("")
+                findViewById<EditText>(R.id.pinBox7).setText("")
+                findViewById<EditText>(R.id.pinBox8).setText("")
+                findViewById<EditText>(R.id.pinBox9).setText("")
+                findViewById<EditText>(R.id.pinBox10).setText("")
 
-                    // Save sender's partial info as pending (waiting for their Phase 2b with full card)
-                    // For now, we have: username, friend-request.onion, X25519 key, Kyber key, shared secret
-                    // We're waiting for: messaging.onion, solana address, full contact card
-                    val partialContactJson = org.json.JSONObject().apply {
-                        put("username", senderUsername)
-                        put("friend_request_onion", senderFriendRequestOnion)
-                        put("x25519_public_key", senderX25519PublicKeyBase64)
-                        if (senderKyberPublicKey != null) {
-                            put("kyber_public_key", Base64.encodeToString(senderKyberPublicKey, Base64.NO_WRAP))
-                        }
-                        // CRITICAL: Store the shared secret we generated during encapsulation
-                        // This will be used to initialize the key chain when we receive their Phase 2b
-                        if (hybridSharedSecret != null) {
-                            put("hybrid_shared_secret", Base64.encodeToString(hybridSharedSecret, Base64.NO_WRAP))
-                        }
-                    }.toString()
+                // Reset button text
+                findViewById<TextView>(R.id.searchButton).text = "Send Friend Request"
 
-                    val pendingContact = com.securelegion.models.PendingFriendRequest(
-                        displayName = senderUsername,
-                        ipfsCid = senderFriendRequestOnion,  // Store their onion as identifier
-                        direction = com.securelegion.models.PendingFriendRequest.DIRECTION_OUTGOING,
-                        status = com.securelegion.models.PendingFriendRequest.STATUS_PENDING,
-                        timestamp = System.currentTimeMillis(),
-                        contactCardJson = partialContactJson
-                    )
-                    savePendingFriendRequest(pendingContact)
+                // Reload UI — shows clock icon for "sending" entry
+                loadPendingFriendRequests()
 
-                    hideLoading()
-                    ThemedToast.show(this@AddFriendActivity, "Friend request accepted! ${senderUsername} will be added to your contacts shortly.")
-
-                    // Clear form
-                    findViewById<EditText>(R.id.cidInput).setText("")
-                    findViewById<EditText>(R.id.pinBox1).setText("")
-                    findViewById<EditText>(R.id.pinBox2).setText("")
-                    findViewById<EditText>(R.id.pinBox3).setText("")
-                    findViewById<EditText>(R.id.pinBox4).setText("")
-                    findViewById<EditText>(R.id.pinBox5).setText("")
-                    findViewById<EditText>(R.id.pinBox6).setText("")
-                    findViewById<EditText>(R.id.pinBox7).setText("")
-                    findViewById<EditText>(R.id.pinBox8).setText("")
-                    findViewById<EditText>(R.id.pinBox9).setText("")
-                    findViewById<EditText>(R.id.pinBox10).setText("")
-
-                    // Reset button text
-                    findViewById<TextView>(R.id.searchButton).text = "Send Friend Request"
-
-                    // Reload pending requests
-                    loadPendingFriendRequests()
-
-                } else {
-                    hideLoading()
-                    ThemedToast.show(this@AddFriendActivity, "Failed to send response to $senderUsername")
-                }
+                // Kick off background send via TorService (survives Activity navigation)
+                com.securelegion.services.TorService.acceptFriendRequestInBackground(
+                    requestId, senderFriendRequestOnion, encryptedPhase2, applicationContext
+                )
 
             } catch (e: Exception) {
                 Log.e(TAG, "Phase 2 acceptance failed", e)
-                hideLoading()
                 val errorMsg = when {
                     e.message?.contains("invalid PIN", ignoreCase = true) == true ||
                     e.message?.contains("decryption failed", ignoreCase = true) == true ->
@@ -1209,7 +1239,6 @@ class AddFriendActivity : BaseActivity() {
                     .removeSuffix("/")
                     .trim()
 
-                showLoading("Sending friend request...")
                 Log.d(TAG, "Phase 1: Initiating friend request to: $sanitizedOnion (original: $friendOnion)")
 
                 // Get YOUR info for Phase 1
@@ -1256,87 +1285,45 @@ class AddFriendActivity : BaseActivity() {
 
                 Log.d(TAG, "Encrypted Phase 1 payload: ${encryptedPhase1.size} bytes")
 
-                // Wait for transport gate before sending (handshake — hard fail on timeout)
-                Log.d(TAG, "Waiting for transport gate before sending Phase 1...")
-                val gateOpened = withContext(Dispatchers.IO) {
-                    com.securelegion.services.TorService.getTransportGate()?.awaitOpen(
-                        com.securelegion.network.TransportGate.TIMEOUT_HANDSHAKE_MS
-                    ) ?: run {
-                        Log.w(TAG, "TransportGate is null — TorService may not be initialized")
-                        false
-                    }
-                }
-                if (!gateOpened) {
-                    hideLoading()
-                    ThemedToast.show(this@AddFriendActivity, "Tor is still connecting — please try again in a moment")
-                    return@launch
-                }
-                Log.d(TAG, "Transport gate open - sending Phase 1")
+                // Save as "sending" immediately — background worker will update to pending/failed
+                val requestId = java.util.UUID.randomUUID().toString()
+                val pendingRequest = com.securelegion.models.PendingFriendRequest(
+                    displayName = "Pending Friend",
+                    ipfsCid = sanitizedOnion,
+                    direction = com.securelegion.models.PendingFriendRequest.DIRECTION_OUTGOING,
+                    status = com.securelegion.models.PendingFriendRequest.STATUS_SENDING,
+                    timestamp = System.currentTimeMillis(),
+                    contactCardJson = phase1Payload,
+                    id = requestId
+                )
+                savePendingFriendRequest(pendingRequest)
 
-                // Send Phase 1 via Tor using dedicated friend request channel
-                // Rust side retries up to 24x (2 min) for slow bridges like Snowflake
-                val success = withContext(Dispatchers.IO) {
-                    com.securelegion.crypto.RustBridge.sendFriendRequest(
-                        recipientOnion = sanitizedOnion,
-                        encryptedFriendRequest = encryptedPhase1
-                    )
-                }
+                // Immediate feedback — no blocking overlay
+                ThemedToast.show(this@AddFriendActivity, "Sending friend request...")
 
-                if (success) {
-                    Log.i(TAG, "✓ Phase 1 sent successfully")
+                // Clear form
+                findViewById<EditText>(R.id.cidInput).setText("")
+                findViewById<EditText>(R.id.pinBox1).setText("")
+                findViewById<EditText>(R.id.pinBox2).setText("")
+                findViewById<EditText>(R.id.pinBox3).setText("")
+                findViewById<EditText>(R.id.pinBox4).setText("")
+                findViewById<EditText>(R.id.pinBox5).setText("")
+                findViewById<EditText>(R.id.pinBox6).setText("")
+                findViewById<EditText>(R.id.pinBox7).setText("")
+                findViewById<EditText>(R.id.pinBox8).setText("")
+                findViewById<EditText>(R.id.pinBox9).setText("")
+                findViewById<EditText>(R.id.pinBox10).setText("")
 
-                    // Save as outgoing pending request (awaiting Phase 2)
-                    val pendingRequest = com.securelegion.models.PendingFriendRequest(
-                        displayName = "Pending Friend",
-                        ipfsCid = sanitizedOnion, // Store recipient's .onion address for retry
-                        direction = com.securelegion.models.PendingFriendRequest.DIRECTION_OUTGOING,
-                        status = com.securelegion.models.PendingFriendRequest.STATUS_PENDING,
-                        timestamp = System.currentTimeMillis(),
-                        contactCardJson = phase1Payload // Store Phase 1 for Phase 2 matching
-                    )
-                    savePendingFriendRequest(pendingRequest)
+                // Reload UI — shows clock icon for "sending" entry
+                loadPendingFriendRequests()
 
-                    hideLoading()
-                    ThemedToast.show(this@AddFriendActivity, "Friend request sent!")
-
-                    // Clear form
-                    findViewById<EditText>(R.id.cidInput).setText("")
-                    findViewById<EditText>(R.id.pinBox1).setText("")
-                    findViewById<EditText>(R.id.pinBox2).setText("")
-                    findViewById<EditText>(R.id.pinBox3).setText("")
-                    findViewById<EditText>(R.id.pinBox4).setText("")
-                    findViewById<EditText>(R.id.pinBox5).setText("")
-                    findViewById<EditText>(R.id.pinBox6).setText("")
-                    findViewById<EditText>(R.id.pinBox7).setText("")
-                    findViewById<EditText>(R.id.pinBox8).setText("")
-                    findViewById<EditText>(R.id.pinBox9).setText("")
-                    findViewById<EditText>(R.id.pinBox10).setText("")
-
-                    // Reload pending requests
-                    loadPendingFriendRequests()
-                } else {
-                    hideLoading()
-
-                    // Save as failed pending request so user can retry
-                    val pendingRequest = com.securelegion.models.PendingFriendRequest(
-                        displayName = "Pending Friend",
-                        ipfsCid = friendOnion, // Store recipient's .onion address for retry
-                        direction = com.securelegion.models.PendingFriendRequest.DIRECTION_OUTGOING,
-                        status = com.securelegion.models.PendingFriendRequest.STATUS_FAILED,
-                        timestamp = System.currentTimeMillis(),
-                        contactCardJson = phase1Payload // Store Phase 1 for retry
-                    )
-                    savePendingFriendRequest(pendingRequest)
-
-                    ThemedToast.show(this@AddFriendActivity, "Failed to send friend request - saved to retry later")
-
-                    // Reload pending requests to show the failed request
-                    loadPendingFriendRequests()
-                }
+                // Kick off background send via TorService (survives Activity navigation)
+                com.securelegion.services.TorService.sendFriendRequestInBackground(
+                    requestId, sanitizedOnion, encryptedPhase1, applicationContext
+                )
 
             } catch (e: Exception) {
                 Log.e(TAG, "Phase 1 failed", e)
-                hideLoading()
                 ThemedToast.show(this@AddFriendActivity, "Failed to send: ${e.message}")
             }
         }

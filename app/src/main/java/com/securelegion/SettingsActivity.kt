@@ -85,6 +85,11 @@ class SettingsActivity : BaseActivity() {
             startActivity(Intent(this, BridgeActivity::class.java))
         }
 
+        // Communication Mode
+        findViewById<View>(R.id.communicationModeItem).setOnClickListener {
+            startActivity(Intent(this, CommunicationModeActivity::class.java))
+        }
+
         // Developer (master flavor only)
         val developerItem = findViewById<View>(R.id.developerItem)
         if (BuildConfig.ENABLE_DEVELOPER_MENU) {

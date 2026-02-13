@@ -1,8 +1,5 @@
 package com.securelegion
 
-import android.content.ClipData
-import android.content.ClipboardManager
-import android.content.Context
 import android.content.Intent
 import android.os.Bundle
 import android.text.SpannableString
@@ -19,11 +16,8 @@ import com.securelegion.crypto.KeyManager
 import com.securelegion.utils.ThemedToast
 
 /**
- * AccountCreatedActivity - Shows account info after successful creation
- * Displays:
- * - Contact card CID
- * - Contact card PIN
- * - Account recovery seed phrase (12 words)
+ * AccountCreatedActivity - Shows recovery seed phrase after successful creation
+ * User must confirm they have written down the 12-word seed before continuing.
  */
 class AccountCreatedActivity : AppCompatActivity() {
 
@@ -146,40 +140,6 @@ class AccountCreatedActivity : AppCompatActivity() {
         try {
             val keyManager = KeyManager.getInstance(this)
 
-            // Load account info
-            val friendRequestOnion = keyManager.getFriendRequestOnion()
-            val pin = keyManager.getContactPin()
-
-            // Display friend request .onion address (instead of CID)
-            if (friendRequestOnion != null) {
-                findViewById<TextView>(R.id.contactCardCid).text = friendRequestOnion
-                Log.i("AccountCreated", "Friend Request .onion: $friendRequestOnion")
-            } else {
-                Log.w("AccountCreated", "Friend request .onion not available")
-            }
-
-            // Display 10-digit PIN
-            if (pin != null) {
-                if (pin.length == 10) {
-                    // Display all 10 digits
-                    findViewById<TextView>(R.id.pinDigit1).text = pin[0].toString()
-                    findViewById<TextView>(R.id.pinDigit2).text = pin[1].toString()
-                    findViewById<TextView>(R.id.pinDigit3).text = pin[2].toString()
-                    findViewById<TextView>(R.id.pinDigit4).text = pin[3].toString()
-                    findViewById<TextView>(R.id.pinDigit5).text = pin[4].toString()
-                    findViewById<TextView>(R.id.pinDigit6).text = pin[5].toString()
-                    findViewById<TextView>(R.id.pinDigit7).text = pin[6].toString()
-                    findViewById<TextView>(R.id.pinDigit8).text = pin[7].toString()
-                    findViewById<TextView>(R.id.pinDigit9).text = pin[8].toString()
-                    findViewById<TextView>(R.id.pinDigit10).text = pin[9].toString()
-                    Log.i("AccountCreated", "10-digit PIN: $pin")
-                } else {
-                    Log.e("AccountCreated", "Invalid PIN length: ${pin.length} (expected 10)")
-                }
-            } else {
-                Log.w("AccountCreated", "PIN not available")
-            }
-
             // Load seed phrase
             val seedPhrase = keyManager.getSeedPhrase()
             if (seedPhrase != null) {
@@ -203,31 +163,6 @@ class AccountCreatedActivity : AppCompatActivity() {
     }
 
     private fun setupClickListeners() {
-        // Make CID clickable to copy
-        findViewById<TextView>(R.id.contactCardCid).setOnClickListener {
-            val cid = (it as TextView).text.toString()
-            copyToClipboard(cid, "CID")
-        }
-
-        // Make PIN boxes clickable to copy the full PIN
-        val pinClickListener = View.OnClickListener {
-            val keyManager = KeyManager.getInstance(this)
-            val pin = keyManager.getContactPin()
-            if (pin != null) {
-                copyToClipboard(pin, "PIN")
-            }
-        }
-
-        findViewById<View>(R.id.pinDigit1).setOnClickListener(pinClickListener)
-        findViewById<View>(R.id.pinDigit2).setOnClickListener(pinClickListener)
-        findViewById<View>(R.id.pinDigit3).setOnClickListener(pinClickListener)
-        findViewById<View>(R.id.pinDigit4).setOnClickListener(pinClickListener)
-        findViewById<View>(R.id.pinDigit5).setOnClickListener(pinClickListener)
-        findViewById<View>(R.id.pinDigit6).setOnClickListener(pinClickListener)
-
-        // Also make the PIN container clickable
-        findViewById<View>(R.id.pinBoxesContainer).setOnClickListener(pinClickListener)
-
         // Continue button - navigate to MainActivity
         findViewById<View>(R.id.continueButton).setOnClickListener {
             Log.i("AccountCreated", "User confirmed they have written down the keys")
@@ -245,14 +180,6 @@ class AccountCreatedActivity : AppCompatActivity() {
             startActivity(intent)
             finish()
         }
-    }
-
-    private fun copyToClipboard(text: String, label: String) {
-        val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-        val clip = ClipData.newPlainText(label, text)
-        clipboard.setPrimaryClip(clip)
-        ThemedToast.show(this, "$label copied to clipboard")
-        Log.i("AccountCreated", "$label copied to clipboard")
     }
 
 }

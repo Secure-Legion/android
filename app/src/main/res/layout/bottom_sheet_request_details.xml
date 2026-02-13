@@ -3,10 +3,12 @@
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
-    android:orientation="vertical"
     android:background="@drawable/bottom_sheet_bg"
+    android:orientation="vertical"
+    android:paddingStart="24dp"
+    android:paddingEnd="24dp"
     android:paddingTop="8dp"
-    android:paddingBottom="32dp">
+    android:paddingBottom="24dp">
 
     <!-- Handle Bar -->
     <View
@@ -14,116 +16,103 @@
         android:layout_height="5dp"
         android:layout_gravity="center_horizontal"
         android:background="#4A4A4A"
-        android:layout_marginBottom="24dp" />
+        android:layout_marginBottom="16dp" />
 
-    <!-- Status Icon / Spinner -->
-    <FrameLayout
-        android:layout_width="80dp"
-        android:layout_height="80dp"
-        android:layout_gravity="center_horizontal"
-        android:layout_marginBottom="24dp">
-
-        <!-- Background Circle -->
-        <View
-            android:layout_width="80dp"
-            android:layout_height="80dp"
-            android:background="@drawable/circle_bg" />
-
-        <!-- Loading Spinner (shown during transaction) -->
-        <ProgressBar
-            android:id="@+id/txStatusSpinner"
-            android:layout_width="48dp"
-            android:layout_height="48dp"
-            android:layout_gravity="center"
-            android:indeterminateTint="#6BA4FF"
-            android:visibility="visible" />
-
-        <!-- Success Icon (shown on success) -->
-        <ImageView
-            android:id="@+id/txStatusSuccessIcon"
-            android:layout_width="48dp"
-            android:layout_height="48dp"
-            android:layout_gravity="center"
-            android:src="@drawable/ic_check"
-            app:tint="#4CAF50"
-            android:visibility="gone"
-            android:contentDescription="Success" />
-
-        <!-- Error Icon (shown on failure) -->
-        <ImageView
-            android:id="@+id/txStatusErrorIcon"
-            android:layout_width="48dp"
-            android:layout_height="48dp"
-            android:layout_gravity="center"
-            android:src="@drawable/ic_close_x"
-            app:tint="#FF5252"
-            android:visibility="gone"
-            android:contentDescription="Error" />
-
-    </FrameLayout>
-
-    <!-- Title -->
-    <TextView
-        android:id="@+id/txStatusTitle"
+    <!-- Header with title and share -->
+    <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="Sending Transaction"
-        android:textSize="24sp"
-        android:textColor="@color/text_white"
-        android:fontFamily="@font/space_grotesk_bold"
-        android:gravity="center"
-        android:layout_marginBottom="8dp" />
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:layout_marginBottom="16dp">
+
+        <TextView
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="Request Details"
+            android:textSize="22sp"
+            android:textColor="#FFFFFF"
+            android:fontFamily="@font/space_grotesk_bold"
+            android:gravity="center" />
+
+        <FrameLayout
+            android:id="@+id/detailsShareButton"
+            android:layout_width="36dp"
+            android:layout_height="36dp"
+            android:background="@drawable/top_icon_bg"
+            android:clickable="true"
+            android:focusable="true">
+
+            <ImageView
+                android:layout_width="18dp"
+                android:layout_height="18dp"
+                android:layout_gravity="center"
+                android:src="@android:drawable/ic_menu_share"
+                app:tint="#888888"
+                android:contentDescription="Share" />
+
+        </FrameLayout>
+
+    </LinearLayout>
 
     <!-- Status Message -->
     <TextView
-        android:id="@+id/txStatusMessage"
+        android:id="@+id/detailsStatusMessage"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="Preparing transaction..."
+        android:text="You have successfully requested!"
         android:textSize="14sp"
         android:textColor="#888888"
         android:fontFamily="@font/poppins_regular"
         android:gravity="center"
-        android:layout_marginBottom="32dp"
-        android:paddingStart="24dp"
-        android:paddingEnd="24dp" />
+        android:layout_marginBottom="8dp" />
 
-    <!-- Transaction Details -->
+    <!-- Amount Display -->
+    <TextView
+        android:id="@+id/detailsAmount"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="$0.00"
+        android:textSize="42sp"
+        android:textColor="#C0C0C0"
+        android:fontFamily="@font/space_grotesk_bold"
+        android:gravity="center"
+        android:layout_marginBottom="24dp" />
+
+    <!-- Details Card -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="vertical"
-        android:background="@drawable/settings_box_bg"
-        android:padding="20dp"
-        android:layout_marginStart="24dp"
-        android:layout_marginEnd="24dp"
+        android:background="@drawable/wallet_token_bg"
+        android:padding="16dp"
         android:layout_marginBottom="24dp">
 
-        <!-- Amount -->
+        <!-- Requested (crypto) -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="horizontal"
-            android:layout_marginBottom="16dp">
+            android:layout_marginBottom="12dp">
 
             <TextView
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
-                android:text="Amount"
+                android:text="Requested"
                 android:textSize="14sp"
                 android:textColor="#888888"
                 android:fontFamily="@font/poppins_regular" />
 
             <TextView
-                android:id="@+id/txStatusAmount"
+                android:id="@+id/detailsCryptoAmount"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="0.5 SOL"
+                android:text="0.00 SOL"
                 android:textSize="14sp"
                 android:textColor="@color/text_white"
                 android:fontFamily="@font/poppins_medium" />
-
         </LinearLayout>
 
         <!-- USD Value -->
@@ -131,114 +120,59 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="horizontal"
-            android:layout_marginBottom="16dp">
+            android:layout_marginBottom="12dp">
 
             <TextView
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
-                android:text="Value"
+                android:text="USD Value"
                 android:textSize="14sp"
                 android:textColor="#888888"
                 android:fontFamily="@font/poppins_regular" />
 
             <TextView
-                android:id="@+id/txStatusUsdValue"
+                android:id="@+id/detailsUsdValue"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="≈ $75.00 USD"
+                android:text="$0.00"
                 android:textSize="14sp"
                 android:textColor="@color/text_white"
                 android:fontFamily="@font/poppins_medium" />
-
         </LinearLayout>
 
-        <!-- From -->
+        <!-- Payment Type -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="horizontal"
-            android:layout_marginBottom="16dp">
+            android:layout_marginBottom="12dp">
 
             <TextView
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
-                android:text="From"
+                android:text="Payment Type"
                 android:textSize="14sp"
                 android:textColor="#888888"
                 android:fontFamily="@font/poppins_regular" />
 
             <TextView
-                android:id="@+id/txStatusFromWallet"
+                android:id="@+id/detailsPaymentType"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="Wallet 1"
+                android:text="Private"
                 android:textSize="14sp"
                 android:textColor="@color/text_white"
                 android:fontFamily="@font/poppins_medium" />
-
-        </LinearLayout>
-
-        <!-- To -->
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="horizontal"
-            android:layout_marginBottom="16dp">
-
-            <TextView
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:text="To"
-                android:textSize="14sp"
-                android:textColor="#888888"
-                android:fontFamily="@font/poppins_regular" />
-
-            <TextView
-                android:id="@+id/txStatusToAddress"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="0x1234...5678"
-                android:textSize="14sp"
-                android:textColor="@color/text_white"
-                android:fontFamily="@font/poppins_medium" />
-
-        </LinearLayout>
-
-        <!-- Network -->
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="horizontal"
-            android:layout_marginBottom="16dp">
-
-            <TextView
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:text="Network"
-                android:textSize="14sp"
-                android:textColor="#888888"
-                android:fontFamily="@font/poppins_regular" />
-
-            <TextView
-                android:id="@+id/txStatusNetwork"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="Solana"
-                android:textSize="14sp"
-                android:textColor="@color/text_white"
-                android:fontFamily="@font/poppins_medium" />
-
         </LinearLayout>
 
         <!-- Network Fee -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:orientation="horizontal">
+            android:orientation="horizontal"
+            android:layout_marginBottom="12dp">
 
             <TextView
                 android:layout_width="0dp"
@@ -250,82 +184,108 @@
                 android:fontFamily="@font/poppins_regular" />
 
             <TextView
-                android:id="@+id/txStatusNetworkFee"
+                android:id="@+id/detailsNetworkFee"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:text="~0.000005 SOL"
                 android:textSize="14sp"
                 android:textColor="@color/text_white"
                 android:fontFamily="@font/poppins_medium" />
+        </LinearLayout>
 
+        <!-- Request ID -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:layout_marginBottom="12dp">
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="Request ID"
+                android:textSize="14sp"
+                android:textColor="#888888"
+                android:fontFamily="@font/poppins_regular" />
+
+            <TextView
+                android:id="@+id/detailsRequestId"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:gravity="end"
+                android:text=""
+                android:textSize="14sp"
+                android:textColor="@color/text_white"
+                android:fontFamily="@font/poppins_medium"
+                android:ellipsize="middle"
+                android:singleLine="true" />
+        </LinearLayout>
+
+        <!-- Time -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:layout_marginBottom="12dp">
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="Time"
+                android:textSize="14sp"
+                android:textColor="#888888"
+                android:fontFamily="@font/poppins_regular" />
+
+            <TextView
+                android:id="@+id/detailsTime"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text=""
+                android:textSize="14sp"
+                android:textColor="@color/text_white"
+                android:fontFamily="@font/poppins_medium" />
+        </LinearLayout>
+
+        <!-- Date -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal">
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="Date"
+                android:textSize="14sp"
+                android:textColor="#888888"
+                android:fontFamily="@font/poppins_regular" />
+
+            <TextView
+                android:id="@+id/detailsDate"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text=""
+                android:textSize="14sp"
+                android:textColor="@color/text_white"
+                android:fontFamily="@font/poppins_medium" />
         </LinearLayout>
 
     </LinearLayout>
 
-    <!-- Transaction Hash (shown on success) -->
-    <LinearLayout
-        android:id="@+id/txHashContainer"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:orientation="horizontal"
-        android:background="@drawable/settings_box_bg"
-        android:padding="16dp"
-        android:layout_marginStart="24dp"
-        android:layout_marginEnd="24dp"
-        android:layout_marginBottom="24dp"
-        android:gravity="center_vertical"
-        android:visibility="gone">
-
-        <TextView
-            android:id="@+id/txHashText"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:text="abc123..."
-            android:textSize="14sp"
-            android:textColor="@color/text_white"
-            android:fontFamily="monospace"
-            android:layout_marginEnd="12dp" />
-
-        <ImageView
-            android:id="@+id/copyTxHashIcon"
-            android:layout_width="20dp"
-            android:layout_height="20dp"
-            android:src="@drawable/ic_copy"
-            app:tint="@color/text_gray"
-            android:contentDescription="Copy transaction hash" />
-
-    </LinearLayout>
-
-    <!-- Error Message (shown on failure) -->
-    <TextView
-        android:id="@+id/txErrorMessage"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:text="Transaction failed: Insufficient funds"
-        android:textSize="14sp"
-        android:textColor="#FF5252"
-        android:fontFamily="@font/poppins_regular"
-        android:gravity="center"
-        android:layout_marginBottom="24dp"
-        android:paddingStart="24dp"
-        android:paddingEnd="24dp"
-        android:visibility="gone" />
-
-    <!-- Close Button -->
+    <!-- Done Button -->
     <androidx.appcompat.widget.AppCompatButton
-        android:id="@+id/txStatusCloseButton"
+        android:id="@+id/detailsDoneButton"
         android:layout_width="match_parent"
         android:layout_height="56dp"
-        android:layout_marginStart="24dp"
-        android:layout_marginEnd="24dp"
         android:background="@drawable/swap_button_bg"
-        android:fontFamily="@font/poppins_medium"
-        android:text="Close"
+        android:fontFamily="@font/poppins_semibold"
+        android:text="Done"
         android:textAllCaps="false"
         android:textColor="@color/text_white"
-        android:textSize="16sp"
-        android:enabled="false"
-        android:alpha="0.5" />
+        android:textSize="16sp" />
 
 </LinearLayout>

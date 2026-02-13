@@ -80,7 +80,7 @@
                 android:layout_height="20dp"
                 android:layout_gravity="center"
                 android:src="@drawable/ic_call"
-                android:tint="#888888"
+                app:tint="#888888"
                 android:contentDescription="Voice Call" />
 
         </FrameLayout>
@@ -133,7 +133,7 @@
                     android:layout_height="24dp"
                     android:layout_gravity="center"
                     android:src="@drawable/ic_add"
-                    android:tint="#888888"
+                    app:tint="#888888"
                     android:contentDescription="Add attachment" />
 
             </FrameLayout>
@@ -174,7 +174,7 @@
                     android:layout_height="24dp"
                     android:layout_gravity="center"
                     android:src="@drawable/ic_mic"
-                    android:tint="#888888"
+                    app:tint="#888888"
                     android:contentDescription="Voice message or send" />
 
             </FrameLayout>

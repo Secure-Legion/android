@@ -28,6 +28,13 @@ import kotlinx.coroutines.withContext
 class WalletActivity : AppCompatActivity() {
     private lateinit var swipeRefreshLayout: SwipeRefreshLayout
 
+    // Aggressive balance auto-refresh polling
+    private val balanceRefreshHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    private var balanceRefreshRunnable: Runnable? = null
+    private companion object {
+        const val BALANCE_REFRESH_INTERVAL_MS = 10_000L // 10 seconds
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_wallet)
@@ -66,6 +73,32 @@ class WalletActivity : AppCompatActivity() {
         super.onResume()
         // Auto-refresh balance when returning to wallet screen
         loadWalletBalance()
+        // Start aggressive periodic balance polling
+        startBalancePolling()
+    }
+
+    override fun onPause() {
+        super.onPause()
+        // Stop polling when screen is not visible
+        stopBalancePolling()
+    }
+
+    private fun startBalancePolling() {
+        stopBalancePolling() // Clear any existing callbacks
+        balanceRefreshRunnable = object : Runnable {
+            override fun run() {
+                if (!isFinishing && !isDestroyed) {
+                    loadWalletBalance()
+                    balanceRefreshHandler.postDelayed(this, BALANCE_REFRESH_INTERVAL_MS)
+                }
+            }
+        }
+        balanceRefreshHandler.postDelayed(balanceRefreshRunnable!!, BALANCE_REFRESH_INTERVAL_MS)
+    }
+
+    private fun stopBalancePolling() {
+        balanceRefreshRunnable?.let { balanceRefreshHandler.removeCallbacks(it) }
+        balanceRefreshRunnable = null
     }
 
     private fun ensureZcashInitialized() {
@@ -555,7 +588,14 @@ class WalletActivity : AppCompatActivity() {
                 val database = SecureLegionDatabase.getInstance(this@WalletActivity, dbPassphrase)
                 val allWallets = database.walletDao().getAllWallets()
                 val wallets = allWallets.filter { it.walletId != "main" }
-                val currentWallet = wallets.maxByOrNull { it.lastUsedAt }
+
+                // Prefer Solana wallet on initial load
+                val solanaWallets = wallets.filter { it.solanaAddress.isNotEmpty() }
+                val currentWallet = if (solanaWallets.isNotEmpty()) {
+                    solanaWallets.maxByOrNull { it.lastUsedAt }
+                } else {
+                    wallets.maxByOrNull { it.lastUsedAt }
+                }
                 val walletId = currentWallet?.walletId ?: "main"
 
                 val solBalance = prefs.getFloat("${walletId}_SOL_balance", 0f).toDouble()
@@ -584,19 +624,18 @@ class WalletActivity : AppCompatActivity() {
                         Log.d("WalletActivity", "Loaded cached ZEC balance: $zecBalance ($$zecUSD)")
                     }
 
-                    // Set main balance display based on wallet type
-                    val isZcashWallet = (!currentWallet?.zcashUnifiedAddress.isNullOrEmpty() || !currentWallet?.zcashAddress.isNullOrEmpty())
-                    if (isZcashWallet && zecBalance > 0) {
-                        if (isShowingUSD && zecPrice > 0) {
-                            balanceText?.text = String.format("$%,.2f", zecBalance * zecPrice)
-                        } else {
-                            balanceText?.text = String.format("%.4f ZEC", zecBalance)
-                        }
-                    } else if (solBalance > 0) {
+                    // Always show SOL balance as main display on initial load
+                    if (solBalance > 0) {
                         if (isShowingUSD && solPrice > 0) {
                             balanceText?.text = String.format("$%,.2f", solBalance * solPrice)
                         } else {
                             balanceText?.text = String.format("%.4f SOL", solBalance)
+                        }
+                    } else if (zecBalance > 0) {
+                        if (isShowingUSD && zecPrice > 0) {
+                            balanceText?.text = String.format("$%,.2f", zecBalance * zecPrice)
+                        } else {
+                            balanceText?.text = String.format("%.4f ZEC", zecBalance)
                         }
                     }
                 }
@@ -648,10 +687,18 @@ class WalletActivity : AppCompatActivity() {
                 val database = SecureLegionDatabase.getInstance(this@WalletActivity, dbPassphrase)
                 val allWallets = database.walletDao().getAllWallets()
                 val wallets = allWallets.filter { it.walletId != "main" }
-                val currentWallet = wallets.maxByOrNull { it.lastUsedAt }
 
-                // Check if this is a Zcash wallet or Solana wallet
-                val isZcashWallet = (!currentWallet?.zcashUnifiedAddress.isNullOrEmpty() || !currentWallet?.zcashAddress.isNullOrEmpty())
+                // Prefer Solana wallet on initial load
+                val solanaWallets = wallets.filter { it.solanaAddress.isNotEmpty() }
+                val currentWallet = if (solanaWallets.isNotEmpty()) {
+                    solanaWallets.maxByOrNull { it.lastUsedAt }
+                } else {
+                    wallets.maxByOrNull { it.lastUsedAt }
+                }
+
+                // Check if this is a Zcash-only wallet (no Solana address)
+                val isZcashWallet = currentWallet?.solanaAddress.isNullOrEmpty() &&
+                    (!currentWallet?.zcashUnifiedAddress.isNullOrEmpty() || !currentWallet?.zcashAddress.isNullOrEmpty())
 
                 if (isZcashWallet) {
                     Log.d("WalletActivity", "Loading ZEC wallet balance")
@@ -697,11 +744,17 @@ class WalletActivity : AppCompatActivity() {
                                         Log.d("WalletActivity", "Set solBalanceText to: ${solBalanceText?.text}")
                                     }
                                 } else {
-                                    Log.e("WalletActivity", "Failed to get SOL price")
-                                    withContext(Dispatchers.Main) {
-                                        balanceText?.text = "$0.00"
-                                        solBalanceText?.text = "$0.00"
-                                        solAmountText?.text = "0.0000 SOL"
+                                    Log.e("WalletActivity", "Failed to get SOL price - keeping cached values")
+                                    // Don't overwrite with zero - keep showing cached/stale data
+                                    // Only update if we have a cached price
+                                    val cachedPrice = getCachedPrice("SOL")
+                                    if (cachedPrice > 0) {
+                                        val balanceUSDValue = balanceSOL * cachedPrice
+                                        withContext(Dispatchers.Main) {
+                                            solBalanceText?.text = String.format("$%.2f", balanceUSDValue)
+                                            solAmountText?.text = String.format("%.4f SOL", balanceSOL)
+                                            updateMainBalanceDisplay()
+                                        }
                                     }
                                 }
                             }
@@ -716,17 +769,9 @@ class WalletActivity : AppCompatActivity() {
 
                         Log.i("WalletActivity", "Balance loaded successfully")
                     } else {
-                        walletBalanceSOL = 0.0
-                        if (isShowingUSD) {
-                            balanceText?.text = "$0.00"
-                            solBalanceText?.text = "$0.00"
-                            solAmountText?.text = "0.0000 SOL"
-                        } else {
-                            balanceText?.text = "0.0000"
-                            solBalanceText?.text = "0.0000 SOL"
-                            solAmountText?.text = "0.0000 SOL"
-                        }
-                        Log.e("WalletActivity", "Failed to load balance: ${result.exceptionOrNull()?.message}")
+                        // Balance fetch failed - keep showing cached values, don't flash to zero
+                        Log.e("WalletActivity", "Failed to load balance: ${result.exceptionOrNull()?.message} - keeping cached values")
+                        // walletBalanceSOL remains unchanged (keeps previous value)
                     }
                 }
 
@@ -743,10 +788,9 @@ class WalletActivity : AppCompatActivity() {
                 }
 
             } catch (e: Exception) {
-                Log.e("WalletActivity", "Failed to load wallet balance", e)
+                Log.e("WalletActivity", "Failed to load wallet balance: ${e.message} - keeping cached values")
+                // Don't overwrite with zero on error - keep showing cached/stale data
                 withContext(Dispatchers.Main) {
-                    val balanceText = findViewById<TextView>(R.id.balanceAmount)
-                    balanceText?.text = "$0"
                     swipeRefreshLayout.isRefreshing = false
                 }
             }
@@ -791,10 +835,8 @@ class WalletActivity : AppCompatActivity() {
                             shieldedAmountText?.text = String.format("%.4f SOL", available)
                         }
                     } else {
-                        poolBalanceSOL = 0.0
-                        Log.e("WalletActivity", "Pool balance failed: ${result.exceptionOrNull()?.message}")
-                        shieldedBalanceText?.text = if (isShowingUSD) "$0.00" else "0.0000"
-                        shieldedAmountText?.text = "0.0000 SOL"
+                        // Pool balance failed - keep existing display, don't flash to zero
+                        Log.e("WalletActivity", "Pool balance failed: ${result.exceptionOrNull()?.message} - keeping cached values")
                     }
 
                     // Update main balance to include pool balance
@@ -829,12 +871,12 @@ class WalletActivity : AppCompatActivity() {
                             shieldedAmountText?.text = String.format("%.4f ZEC", shieldedZEC)
                         }
                     } else {
-                        shieldedBalanceText?.text = if (isShowingUSD) "$0.00" else "0.0000"
-                        shieldedAmountText?.text = "0.0000 ZEC"
+                        // Shielded ZEC breakdown failed - keep existing display
+                        Log.w("WalletActivity", "Shielded ZEC breakdown failed - keeping cached values")
                     }
                 }
             } catch (e: Exception) {
-                Log.e("WalletActivity", "Failed to load shielded ZEC balance", e)
+                Log.e("WalletActivity", "Failed to load shielded ZEC balance - keeping cached values", e)
             }
         }
     }
@@ -851,13 +893,8 @@ class WalletActivity : AppCompatActivity() {
             Log.d("WalletActivity", "Transparent address: $transparentAddress")
 
             if (zcashAddress == null) {
-                Log.w("WalletActivity", "Zcash address not available")
-                withContext(Dispatchers.Main) {
-                    val balanceText = findViewById<TextView>(R.id.balanceAmount)
-                    val zecBalanceText = findViewById<TextView>(R.id.zecBalance)
-                    balanceText?.text = "$0.00"
-                    zecBalanceText?.text = "$0.00"
-                }
+                Log.w("WalletActivity", "Zcash address not available - keeping cached values")
+                // Don't overwrite with zero - keep cached values
                 return
             }
 
@@ -921,33 +958,42 @@ class WalletActivity : AppCompatActivity() {
                                     }
                                 }
                             } else {
+                                // Price fetch failed - use cached price or show ZEC amount
+                                Log.w("WalletActivity", "ZEC price fetch failed - using cached price")
+                                val cachedPrice = getCachedPrice("ZEC")
                                 withContext(Dispatchers.Main) {
-                                    if (isShowingUSD) {
-                                        balanceText?.text = "$0.00"
+                                    if (isShowingUSD && cachedPrice > 0) {
+                                        val cachedUsdValue = balanceZEC * cachedPrice
+                                        balanceText?.text = String.format("$%.2f", cachedUsdValue)
+                                        zecBalanceText?.text = String.format("$%.2f", cachedUsdValue)
                                     } else {
                                         balanceText?.text = String.format("%.4f ZEC", balanceZEC)
+                                        zecBalanceText?.text = String.format("%.4f ZEC", balanceZEC)
                                     }
-                                    zecBalanceText?.text = "$0.00"
                                     zecAmountText?.text = String.format("%.4f ZEC", balanceZEC)
                                 }
                             }
                         } else {
+                            // Price fetch failed - use cached price or show ZEC amount
+                            Log.w("WalletActivity", "ZEC price fetch failed - using cached price")
+                            val cachedPrice = getCachedPrice("ZEC")
                             withContext(Dispatchers.Main) {
-                                if (isShowingUSD) {
-                                    balanceText?.text = "$0.00"
+                                if (isShowingUSD && cachedPrice > 0) {
+                                    val cachedUsdValue = balanceZEC * cachedPrice
+                                    balanceText?.text = String.format("$%.2f", cachedUsdValue)
+                                    zecBalanceText?.text = String.format("$%.2f", cachedUsdValue)
                                 } else {
                                     balanceText?.text = String.format("%.4f ZEC", balanceZEC)
+                                    zecBalanceText?.text = String.format("%.4f ZEC", balanceZEC)
                                 }
-                                zecBalanceText?.text = "$0.00"
                                 zecAmountText?.text = String.format("%.4f ZEC", balanceZEC)
                             }
                         }
                     }
                 } else {
-                    balanceText?.text = "$0.00"
-                    zecBalanceText?.text = "$0.00"
+                    // Balance fetch failed - keep cached values
                     val errorMsg = balanceResult.exceptionOrNull()?.message ?: "Unknown error"
-                    Log.e("WalletActivity", "Failed to load ZEC balance: $errorMsg")
+                    Log.e("WalletActivity", "Failed to load ZEC balance: $errorMsg - keeping cached values")
                 }
             }
 
@@ -964,13 +1010,8 @@ class WalletActivity : AppCompatActivity() {
             val zcashAddress = keyManager.getZcashAddress()
 
             if (zcashAddress == null) {
-                Log.w("WalletActivity", "Zcash address not available")
-                withContext(Dispatchers.Main) {
-                    val zecBalanceText = findViewById<TextView>(R.id.zecBalance)
-                    val zecAmountText = findViewById<TextView>(R.id.zecAmount)
-                    zecBalanceText?.text = "$0.00"
-                    zecAmountText?.text = "0.0000 ZEC"
-                }
+                Log.w("WalletActivity", "Zcash address not available - keeping cached values")
+                // Don't overwrite with zero - keep cached values
                 return
             }
 
@@ -996,27 +1037,40 @@ class WalletActivity : AppCompatActivity() {
                                     zecAmountText?.text = String.format("%.4f ZEC", balanceZEC)
                                 }
                             } else {
+                                // Price fetch failed - use cached price
+                                Log.w("WalletActivity", "ZEC price fetch failed - using cached")
+                                val cachedPrice = getCachedPrice("ZEC")
                                 withContext(Dispatchers.Main) {
-                                    zecBalanceText?.text = "$0.00"
+                                    if (cachedPrice > 0) {
+                                        zecBalanceText?.text = String.format("$%.2f", balanceZEC * cachedPrice)
+                                    } else {
+                                        zecBalanceText?.text = String.format("%.4f ZEC", balanceZEC)
+                                    }
                                     zecAmountText?.text = String.format("%.4f ZEC", balanceZEC)
                                 }
                             }
                         } else {
+                            // Price fetch failed - use cached price
+                            Log.w("WalletActivity", "ZEC price fetch failed - using cached")
+                            val cachedPrice = getCachedPrice("ZEC")
                             withContext(Dispatchers.Main) {
-                                zecBalanceText?.text = "$0.00"
+                                if (cachedPrice > 0) {
+                                    zecBalanceText?.text = String.format("$%.2f", balanceZEC * cachedPrice)
+                                } else {
+                                    zecBalanceText?.text = String.format("%.4f ZEC", balanceZEC)
+                                }
                                 zecAmountText?.text = String.format("%.4f ZEC", balanceZEC)
                             }
                         }
                     }
                 } else {
-                    zecBalanceText?.text = "$0.00"
-                    zecAmountText?.text = "0.0000 ZEC"
-                    Log.e("WalletActivity", "Failed to load ZEC balance: ${balanceResult.exceptionOrNull()?.message}")
+                    // Balance fetch failed - keep cached values
+                    Log.e("WalletActivity", "Failed to load ZEC balance: ${balanceResult.exceptionOrNull()?.message} - keeping cached")
                 }
             }
 
         } catch (e: Exception) {
-            Log.e("WalletActivity", "Failed to load Zcash balance", e)
+            Log.e("WalletActivity", "Failed to load Zcash balance - keeping cached", e)
         }
     }
 
@@ -1041,11 +1095,8 @@ class WalletActivity : AppCompatActivity() {
             Log.d("WalletActivity", "SOL address: $solanaAddress (wallet: ${solWallet?.name})")
 
             if (solanaAddress.isEmpty()) {
-                Log.w("WalletActivity", "Solana address not available")
-                withContext(Dispatchers.Main) {
-                    val solBalanceText = findViewById<TextView>(R.id.solBalance)
-                    solBalanceText?.text = "$0.00"
-                }
+                Log.w("WalletActivity", "Solana address not available - keeping cached values")
+                // Don't overwrite with zero - keep cached values
                 return
             }
 
@@ -1073,25 +1124,34 @@ class WalletActivity : AppCompatActivity() {
                                     Log.d("WalletActivity", "Set solBalanceText (side) to: ${solBalanceText?.text}")
                                 }
                             } else {
-                                withContext(Dispatchers.Main) {
-                                    solBalanceText?.text = "$0.00"
+                                // Price is zero - use cached price
+                                val cachedPrice = getCachedPrice("SOL")
+                                if (cachedPrice > 0) {
+                                    withContext(Dispatchers.Main) {
+                                        solBalanceText?.text = String.format("$%.2f", balanceSOL * cachedPrice)
+                                    }
                                 }
+                                // else keep existing display
                             }
                         } else {
-                            Log.e("WalletActivity", "Failed to get SOL price (side)")
-                            withContext(Dispatchers.Main) {
-                                solBalanceText?.text = "$0.00"
+                            Log.e("WalletActivity", "Failed to get SOL price (side) - using cached")
+                            val cachedPrice = getCachedPrice("SOL")
+                            if (cachedPrice > 0) {
+                                withContext(Dispatchers.Main) {
+                                    solBalanceText?.text = String.format("$%.2f", balanceSOL * cachedPrice)
+                                }
                             }
+                            // else keep existing display
                         }
                     }
                 } else {
-                    solBalanceText?.text = "$0.00"
-                    Log.e("WalletActivity", "Failed to load SOL balance (side): ${balanceResult.exceptionOrNull()?.message}")
+                    // Balance fetch failed - keep cached values
+                    Log.e("WalletActivity", "Failed to load SOL balance (side): ${balanceResult.exceptionOrNull()?.message} - keeping cached")
                 }
             }
 
         } catch (e: Exception) {
-            Log.e("WalletActivity", "Failed to load Solana balance (side)", e)
+            Log.e("WalletActivity", "Failed to load Solana balance (side) - keeping cached", e)
         }
     }
 
@@ -1112,18 +1172,22 @@ class WalletActivity : AppCompatActivity() {
                     val shieldButtonLabel = findViewById<TextView>(R.id.shieldButtonLabel)
 
                     if (wallets.isNotEmpty()) {
-                        // Get the most recently used wallet
-                        val currentWallet = wallets.maxByOrNull { it.lastUsedAt }
+                        // Prefer a Solana wallet on initial load, then fall back to most recently used
+                        val solanaWallets = wallets.filter { it.solanaAddress.isNotEmpty() }
+                        val currentWallet = if (solanaWallets.isNotEmpty()) {
+                            solanaWallets.maxByOrNull { it.lastUsedAt }
+                        } else {
+                            wallets.maxByOrNull { it.lastUsedAt }
+                        }
                         walletTitle?.text = currentWallet?.name ?: "Wallet"
 
                         // Update chain icon based on wallet type
                         updateChainIcon(walletChainIcon, currentWallet)
 
-                        // Update shield button label based on wallet type
-                        val isZcashWallet = !currentWallet?.zcashUnifiedAddress.isNullOrEmpty() || !currentWallet?.zcashAddress.isNullOrEmpty()
-                        shieldButtonLabel?.text = if (isZcashWallet) "Shield" else "Private"
+                        // Update shield button label - Solana wallet gets "Private"
+                        shieldButtonLabel?.text = "Private"
 
-                        // Update visible tokens based on wallet type
+                        // Update visible tokens - show Solana tokens first
                         updateVisibleTokens(currentWallet)
                     } else {
                         walletTitle?.text = "Wallet"

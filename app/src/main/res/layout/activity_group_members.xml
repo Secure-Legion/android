@@ -87,7 +87,7 @@
             android:layout_width="24dp"
             android:layout_height="24dp"
             android:src="@android:drawable/ic_menu_search"
-            android:tint="@color/text_gray"
+            app:tint="@color/text_gray"
             app:layout_constraintTop_toTopOf="parent"
             app:layout_constraintBottom_toBottomOf="parent"
             app:layout_constraintStart_toStartOf="parent"
@@ -117,7 +117,7 @@
             android:src="@android:drawable/ic_input_add"
             android:clickable="true"
             android:focusable="true"
-            android:tint="@color/text_gray"
+            app:tint="@color/text_gray"
             app:layout_constraintTop_toTopOf="parent"
             app:layout_constraintBottom_toBottomOf="parent"
             app:layout_constraintEnd_toEndOf="parent"
@@ -317,7 +317,7 @@
                 android:layout_width="24dp"
                 android:layout_height="24dp"
                 android:src="@android:drawable/sym_action_chat"
-                android:tint="@color/text_gray"
+                app:tint="@color/text_gray"
                 android:layout_marginBottom="4dp"
                 android:contentDescription="Messages" />
 
@@ -348,7 +348,7 @@
                 android:layout_height="24dp"
                 android:src="@drawable/ic_wallet"
                 android:layout_marginBottom="4dp"
-                android:tint="@color/text_gray"
+                app:tint="@color/text_gray"
                 android:contentDescription="Wallet" />
 
             <TextView
@@ -378,7 +378,7 @@
                 android:layout_height="24dp"
                 android:src="@drawable/ic_add_friend"
                 android:layout_marginBottom="4dp"
-                android:tint="@color/text_gray"
+                app:tint="@color/text_gray"
                 android:contentDescription="Add Friend" />
 
             <TextView
@@ -408,7 +408,7 @@
                 android:layout_height="24dp"
                 android:src="@drawable/ic_lock"
                 android:layout_marginBottom="4dp"
-                android:tint="@color/text_gray"
+                app:tint="@color/text_gray"
                 android:contentDescription="Lock" />
 
             <TextView

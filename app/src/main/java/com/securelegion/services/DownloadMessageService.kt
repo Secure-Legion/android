@@ -346,19 +346,13 @@ class DownloadMessageService : Service() {
         }
         Log.i(TAG, "  ✓ SOCKS proxy: running")
 
-        val socksWorking = withContext(Dispatchers.IO) {
-            try {
-                com.securelegion.crypto.RustBridge.testSocksConnectivity()
-            } catch (e: Exception) {
-                Log.w(TAG, "SOCKS connectivity test failed", e)
-                false
-            }
-        }
+        // Check circuit status from the already-authenticated event listener (no raw control-port probe)
+        val circuitsEstablished = com.securelegion.crypto.RustBridge.getCircuitEstablished() >= 1
 
-        if (!socksWorking) {
-            Log.w(TAG, "  ⚠ SOCKS connectivity: test failed (non-critical)")
+        if (!circuitsEstablished) {
+            Log.w(TAG, "  ⚠ Circuits not established yet (non-critical)")
         } else {
-            Log.i(TAG, "  ✓ SOCKS connectivity: working")
+            Log.i(TAG, "  ✓ Circuits established")
         }
 
         Log.i(TAG, "✓ All critical pre-flight checks passed")

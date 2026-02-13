@@ -68,7 +68,7 @@
                 android:layout_height="20dp"
                 android:layout_gravity="center"
                 android:src="@drawable/ic_settings_cog"
-                android:tint="#888888"
+                app:tint="#888888"
                 android:contentDescription="Settings" />
 
         </FrameLayout>
@@ -134,7 +134,7 @@
                     android:layout_width="24dp"
                     android:layout_height="24dp"
                     android:src="@drawable/ic_swap"
-                    android:tint="#888888"
+                    app:tint="#888888"
                     android:clickable="true"
                     android:focusable="true"
                     android:background="?attr/selectableItemBackgroundBorderless"
@@ -169,7 +169,7 @@
                         android:layout_width="28dp"
                         android:layout_height="28dp"
                         android:src="@drawable/ic_arrow_up"
-                        android:tint="#888888"
+                        app:tint="#888888"
                         android:layout_marginBottom="6dp"
                         android:contentDescription="Send" />
 
@@ -200,7 +200,7 @@
                         android:layout_width="28dp"
                         android:layout_height="28dp"
                         android:src="@drawable/ic_qr_code"
-                        android:tint="#888888"
+                        app:tint="#888888"
                         android:layout_marginBottom="6dp"
                         android:contentDescription="Receive" />
 
@@ -230,7 +230,7 @@
                         android:layout_width="28dp"
                         android:layout_height="28dp"
                         android:src="@drawable/ic_radr_logo"
-                        android:tint="#888888"
+                        app:tint="#888888"
                         android:layout_marginBottom="6dp"
                         android:contentDescription="Private" />
 

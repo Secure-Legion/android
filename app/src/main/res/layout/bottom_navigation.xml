@@ -2,6 +2,7 @@
 <!-- Bottom Navigation - Reusable Component -->
 <LinearLayout
     xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
     android:id="@+id/bottomNav"
     android:layout_width="match_parent"
     android:layout_height="110dp"
@@ -27,7 +28,7 @@
             android:layout_width="24dp"
             android:layout_height="24dp"
             android:src="@android:drawable/sym_action_chat"
-            android:tint="@color/text_gray"
+            app:tint="@color/text_gray"
             android:layout_marginBottom="4dp"
             android:contentDescription="Messages" />
 
@@ -59,7 +60,7 @@
             android:layout_height="24dp"
             android:src="@drawable/ic_wallet"
             android:layout_marginBottom="4dp"
-            android:tint="@color/text_gray"
+            app:tint="@color/text_gray"
             android:contentDescription="Wallet" />
 
         <TextView
@@ -95,7 +96,7 @@
                 android:layout_width="24dp"
                 android:layout_height="24dp"
                 android:src="@drawable/ic_add_friend"
-                android:tint="@color/text_gray"
+                app:tint="@color/text_gray"
                 android:contentDescription="Add Friend" />
 
             <!-- Badge for pending friend requests -->
@@ -142,7 +143,7 @@
             android:layout_height="24dp"
             android:src="@drawable/ic_call"
             android:layout_marginBottom="4dp"
-            android:tint="@color/text_gray"
+            app:tint="@color/text_gray"
             android:contentDescription="Phone" />
 
         <TextView

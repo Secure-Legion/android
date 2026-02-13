@@ -39,24 +39,6 @@
             android:textColor="#C0C0C0"
             android:textSize="48sp" />
 
-        <!-- Arrow Icon -->
-        <ImageView
-            android:layout_width="24dp"
-            android:layout_height="24dp"
-            android:layout_marginVertical="8dp"
-            android:src="@drawable/ic_arrow_up"
-            android:rotation="270"
-            app:tint="#666666" />
-
-        <!-- Request From -->
-        <TextView
-            android:id="@+id/confirmRequestFrom"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:fontFamily="@font/poppins_medium"
-            android:text="Contact Name"
-            android:textColor="#888888"
-            android:textSize="16sp" />
     </LinearLayout>
 
     <!-- Details Card -->
@@ -163,7 +145,7 @@
                     android:layout_height="wrap_content"
                     android:layout_weight="1"
                     android:fontFamily="@font/poppins_regular"
-                    android:text="Expires In"
+                    android:text="Payment Type"
                     android:textColor="#888888"
                     android:textSize="14sp" />
 

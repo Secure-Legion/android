@@ -200,7 +200,7 @@
                         android:layout_height="24dp"
                         android:layout_gravity="center"
                         android:src="@android:drawable/ic_lock_idle_lock"
-                        android:tint="#888888" />
+                        app:tint="#888888" />
 
                 </FrameLayout>
 
@@ -254,7 +254,7 @@
                         android:layout_height="24dp"
                         android:layout_gravity="center"
                         android:src="@drawable/ic_fingerprint"
-                        android:tint="#888888" />
+                        app:tint="#888888" />
 
                 </FrameLayout>
 
@@ -547,6 +547,60 @@
 
             </LinearLayout>
 
+            <!-- Communication Mode -->
+            <LinearLayout
+                android:id="@+id/communicationModeItem"
+                android:layout_width="match_parent"
+                android:layout_height="80dp"
+                android:orientation="horizontal"
+                android:background="@drawable/settings_box_bg"
+                android:paddingStart="10dp"
+                android:paddingEnd="10dp"
+                android:layout_marginBottom="12dp"
+                android:gravity="center_vertical"
+                android:clickable="true"
+                android:focusable="true">
+
+                <FrameLayout
+                    android:layout_width="50dp"
+                    android:layout_height="50dp"
+                    android:background="@drawable/settings_icon_bg"
+                    android:layout_marginStart="8dp"
+                    android:layout_marginEnd="16dp">
+
+                    <ImageView
+                        android:layout_width="24dp"
+                        android:layout_height="24dp"
+                        android:layout_gravity="center"
+                        android:src="@drawable/ic_mesh" />
+
+                </FrameLayout>
+
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="Communication Mode"
+                    android:textSize="16sp"
+                    android:textColor="#CCCCCC"
+                    android:fontFamily="@font/poppins_medium" />
+
+                <FrameLayout
+                    android:layout_width="36dp"
+                    android:layout_height="36dp"
+                    android:layout_marginEnd="8dp"
+                    android:background="@drawable/arrow_bg">
+
+                    <ImageView
+                        android:layout_width="18dp"
+                        android:layout_height="18dp"
+                        android:layout_gravity="center"
+                        android:src="@drawable/ic_arrow_forward" />
+
+                </FrameLayout>
+
+            </LinearLayout>
+
             <!-- Tor Mode (VPN) -->
             <LinearLayout
                 android:id="@+id/torModeItem"
@@ -571,7 +625,7 @@
                         android:layout_height="24dp"
                         android:layout_gravity="center"
                         android:src="@drawable/ic_onion"
-                        android:tint="#888888" />
+                        app:tint="#888888" />
 
                 </FrameLayout>
 
@@ -619,7 +673,7 @@
                         android:layout_height="24dp"
                         android:layout_gravity="center"
                         android:src="@android:drawable/ic_menu_manage"
-                        android:tint="#888888" />
+                        app:tint="#888888" />
 
                 </FrameLayout>
 
@@ -680,7 +734,7 @@
                 android:layout_width="24dp"
                 android:layout_height="24dp"
                 android:src="@android:drawable/sym_action_chat"
-                android:tint="@color/text_gray"
+                app:tint="@color/text_gray"
                 android:layout_marginBottom="4dp"
                 android:contentDescription="Messages" />
 
@@ -712,7 +766,7 @@
                 android:layout_height="24dp"
                 android:src="@drawable/ic_wallet"
                 android:layout_marginBottom="4dp"
-                android:tint="@color/text_gray"
+                app:tint="@color/text_gray"
                 android:contentDescription="Wallet" />
 
             <TextView
@@ -748,7 +802,7 @@
                     android:layout_width="24dp"
                     android:layout_height="24dp"
                     android:src="@drawable/ic_add_friend"
-                    android:tint="@color/text_gray"
+                    app:tint="@color/text_gray"
                     android:contentDescription="Add Friend" />
 
                 <!-- Badge for pending friend requests -->
@@ -795,7 +849,7 @@
                 android:layout_height="24dp"
                 android:src="@drawable/ic_call"
                 android:layout_marginBottom="4dp"
-                android:tint="@color/text_gray"
+                app:tint="@color/text_gray"
                 android:contentDescription="Phone" />
 
             <TextView

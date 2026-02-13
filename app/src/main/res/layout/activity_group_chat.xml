@@ -113,7 +113,7 @@
                 android:layout_height="20dp"
                 android:layout_gravity="center"
                 android:src="@android:drawable/ic_input_add"
-                android:tint="#FFFFFF"
+                app:tint="#FFFFFF"
                 android:contentDescription="Add" />
 
         </FrameLayout>
@@ -156,7 +156,7 @@
                 android:layout_height="20dp"
                 android:layout_gravity="center"
                 android:src="@drawable/ic_mic"
-                android:tint="#FFFFFF"
+                app:tint="#FFFFFF"
                 android:contentDescription="Voice Message" />
 
         </FrameLayout>
@@ -201,7 +201,7 @@
                 android:layout_width="24dp"
                 android:layout_height="24dp"
                 android:src="@drawable/ic_image_placeholder"
-                android:tint="#FFFFFF"
+                app:tint="#FFFFFF"
                 app:layout_constraintStart_toStartOf="parent"
                 app:layout_constraintTop_toTopOf="parent"
                 app:layout_constraintBottom_toBottomOf="parent"
@@ -245,7 +245,7 @@
                 android:layout_width="24dp"
                 android:layout_height="24dp"
                 android:src="@drawable/ic_add_friend"
-                android:tint="#FFFFFF"
+                app:tint="#FFFFFF"
                 app:layout_constraintStart_toStartOf="parent"
                 app:layout_constraintTop_toTopOf="parent"
                 app:layout_constraintBottom_toBottomOf="parent"

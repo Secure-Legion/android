@@ -65,7 +65,7 @@
                 android:layout_height="20dp"
                 android:layout_gravity="center"
                 android:src="@drawable/ic_settings_cog"
-                android:tint="#888888"
+                app:tint="#888888"
                 android:contentDescription="Menu" />
 
         </FrameLayout>
@@ -129,7 +129,7 @@
                         android:layout_height="18dp"
                         android:layout_gravity="center"
                         android:src="@drawable/ic_edit"
-                        android:tint="#888888"
+                        app:tint="#888888"
                         android:contentDescription="Edit" />
 
                 </FrameLayout>
@@ -404,7 +404,7 @@
                 android:layout_height="24dp"
                 android:layout_gravity="center"
                 android:src="@android:drawable/ic_menu_share"
-                android:tint="#888888"
+                app:tint="#888888"
                 android:contentDescription="Share" />
 
         </FrameLayout>

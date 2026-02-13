@@ -314,45 +314,11 @@ class SendActivity : BaseActivity() {
     }
 
     private fun setupAmountInput() {
-        val amountInput = findViewById<EditText>(R.id.amountInput)
-        val amountUsdValue = findViewById<TextView>(R.id.amountUsdValue)
-
-        amountInput.addTextChangedListener(object : TextWatcher {
-            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
-            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
-            override fun afterTextChanged(s: Editable?) {
-                val amountText = s?.toString() ?: ""
-                val amount = amountText.toDoubleOrNull() ?: 0.0
-
-                if (currentTokenPrice > 0 && amount > 0) {
-                    val usdValue = amount * currentTokenPrice
-                    amountUsdValue.text = String.format("≈ $%,.2f USD", usdValue)
-                } else {
-                    amountUsdValue.text = "≈ $0.00 USD"
-                }
-            }
-        })
-
-        // Click on USD value to refresh price
-        amountUsdValue.setOnClickListener {
-            ThemedToast.show(this, "Refreshing price...")
-            loadWalletBalance()
-        }
+        // Amount input handled by toggle currency display in activity_send.xml
     }
 
-
     private fun updateAmountUsdValue() {
-        val amountInput = findViewById<EditText>(R.id.amountInput)
-        val amountUsdValue = findViewById<TextView>(R.id.amountUsdValue)
-        val amountText = amountInput.text?.toString() ?: ""
-        val amount = amountText.toDoubleOrNull() ?: 0.0
-
-        if (currentTokenPrice > 0 && amount > 0) {
-            val usdValue = amount * currentTokenPrice
-            amountUsdValue.text = String.format("≈ $%,.2f USD", usdValue)
-        } else {
-            amountUsdValue.text = "≈ $0.00 USD"
-        }
+        // No longer needed — toggle currency handles display
     }
 
     private fun setupPriceRefresh() {

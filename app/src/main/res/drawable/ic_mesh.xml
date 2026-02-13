@@ -1,0 +1,59 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <!-- LoRa/Mesh network icon - nodes connected with radio waves -->
+
+    <!-- Center node (larger) -->
+    <path
+        android:fillColor="#888888"
+        android:pathData="M12,10 A2,2 0 1,1 12,14 A2,2 0 1,1 12,10"/>
+
+    <!-- Top node -->
+    <path
+        android:fillColor="#888888"
+        android:pathData="M12,3 A1.5,1.5 0 1,1 12,6 A1.5,1.5 0 1,1 12,3"/>
+
+    <!-- Bottom left node -->
+    <path
+        android:fillColor="#888888"
+        android:pathData="M5,17 A1.5,1.5 0 1,1 5,20 A1.5,1.5 0 1,1 5,17"/>
+
+    <!-- Bottom right node -->
+    <path
+        android:fillColor="#888888"
+        android:pathData="M19,17 A1.5,1.5 0 1,1 19,20 A1.5,1.5 0 1,1 19,17"/>
+
+    <!-- Connection line: center to top -->
+    <path
+        android:strokeColor="#888888"
+        android:strokeWidth="1"
+        android:pathData="M12,10 L12,6"/>
+
+    <!-- Connection line: center to bottom left -->
+    <path
+        android:strokeColor="#888888"
+        android:strokeWidth="1"
+        android:pathData="M10.5,13 L6.5,17"/>
+
+    <!-- Connection line: center to bottom right -->
+    <path
+        android:strokeColor="#888888"
+        android:strokeWidth="1"
+        android:pathData="M13.5,13 L17.5,17"/>
+
+    <!-- Radio wave arc 1 (left of center) -->
+    <path
+        android:strokeColor="#888888"
+        android:strokeWidth="0.8"
+        android:pathData="M7,9 Q 6,12 7,15"
+        android:fillColor="@android:color/transparent"/>
+
+    <!-- Radio wave arc 2 (right of center) -->
+    <path
+        android:strokeColor="#888888"
+        android:strokeWidth="0.8"
+        android:pathData="M17,9 Q 18,12 17,15"
+        android:fillColor="@android:color/transparent"/>
+</vector>

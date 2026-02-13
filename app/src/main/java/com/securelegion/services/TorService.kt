@@ -171,6 +171,7 @@ class TorService : Service() {
 
     // Lifecycle management (prevent repeated resets)
     private val startupCompleted = AtomicBoolean(false)  // Latch: only run startup setup once
+    private val startTorRequested = AtomicBoolean(false) // Guard: prevent concurrent startTor() calls
     @Volatile private var lastGlobalResetAt: Long = 0L  // Rate limiter: prevent reset spam
 
     // Fast message retry loop (runs in TorService, not subject to WorkManager 15-min limit)
@@ -667,17 +668,24 @@ class TorService : Service() {
             //
             // Stream-level failures (SOCKS status 1/4/6) are NORMAL and retryable.
             if (gate.isOpenNow()) {
-                // Verify SOCKS proxy is actually dead before closing gate
-                val socksReachable = RustBridge.isSocksProxyRunning()
+                // Only check SOCKS reachability if bootstrap is complete
+                // During bootstrap (< 100%), SOCKS probe failures are expected (CPU contention,
+                // proxy thread busy) and should NOT close the gate
+                if (bootstrapPercent >= 100) {
+                    // Verify SOCKS proxy is actually dead before closing gate
+                    val socksReachable = RustBridge.isSocksProxyRunning()
 
-                if (!socksReachable) {
-                    Log.e(TAG, "⚠️ SOCKS proxy UNREACHABLE (127.0.0.1:9050) → closing gate")
-                    gate.close("SOCKS_PROXY_DEAD")
-                    lastTorUnstableAt = System.currentTimeMillis()
+                    if (!socksReachable) {
+                        Log.e(TAG, "⚠️ SOCKS proxy UNREACHABLE (127.0.0.1:9050) → closing gate")
+                        gate.close("SOCKS_PROXY_DEAD")
+                        lastTorUnstableAt = System.currentTimeMillis()
+                    } else {
+                        // SOCKS is alive - DO NOT close gate even if circuits=0 or bootstrap<100%
+                        // This is normal Tor behavior (circuit rotation, guard changes, descriptor delays)
+                        Log.w(TAG, "Tor metrics unhealthy BUT SOCKS proxy reachable → gate stays OPEN (stream failures are retryable)")
+                    }
                 } else {
-                    // SOCKS is alive - DO NOT close gate even if circuits=0 or bootstrap<100%
-                    // This is normal Tor behavior (circuit rotation, guard changes, descriptor delays)
-                    Log.w(TAG, "Tor metrics unhealthy BUT SOCKS proxy reachable → gate stays OPEN (stream failures are retryable)")
+                    Log.d(TAG, "Bootstrap at $bootstrapPercent% — skipping SOCKS gate check (failures expected during bootstrap)")
                 }
             }
 
@@ -858,23 +866,31 @@ class TorService : Service() {
             Log.i(TAG, "Starting SOCKS proxy health monitor (5s interval)")
 
             // Monitor SOCKS in all active states (STARTING, BOOTSTRAPPING, RUNNING)
-            // SOCKS starts in STARTING state, so we need to monitor it from the beginning
+            // But gate actual health actions behind bootstrap >= 100 — before that,
+            // SOCKS probe failures are expected (Tor busy bootstrapping, CPU contention)
             while (isActive && torState != TorState.OFF && torState != TorState.STOPPING && torState != TorState.ERROR) {
                 try {
-                    val socksAlive = RustBridge.isSocksProxyRunning()
+                    val bootstrap = RustBridge.getBootstrapStatus()
 
-                    if (!socksAlive) {
-                        Log.w(TAG, "⚠️ SOCKS proxy DEAD - restarting immediately...")
-
-                        // Try to restart
-                        val restarted = RustBridge.startSocksProxy()
-                        if (restarted) {
-                            Log.i(TAG, "✓ SOCKS proxy restarted successfully")
-                        } else {
-                            Log.e(TAG, "✗ SOCKS proxy restart FAILED")
-                        }
+                    if (bootstrap < 100) {
+                        // Still bootstrapping — skip SOCKS check, failures are expected
+                        Log.d(TAG, "SOCKS health monitor: bootstrap at $bootstrap%, skipping check")
                     } else {
-                        Log.d(TAG, "SOCKS proxy health check: alive")
+                        val socksAlive = RustBridge.isSocksProxyRunning()
+
+                        if (!socksAlive) {
+                            Log.w(TAG, "⚠️ SOCKS proxy DEAD (bootstrap=$bootstrap%) - restarting immediately...")
+
+                            // Try to restart
+                            val restarted = RustBridge.startSocksProxy()
+                            if (restarted) {
+                                Log.i(TAG, "✓ SOCKS proxy restarted successfully")
+                            } else {
+                                Log.e(TAG, "✗ SOCKS proxy restart FAILED")
+                            }
+                        } else {
+                            Log.d(TAG, "SOCKS proxy health check: alive")
+                        }
                     }
                 } catch (e: Exception) {
                     Log.e(TAG, "Error checking SOCKS proxy health", e)
@@ -943,11 +959,13 @@ class TorService : Service() {
     private val eventRingBuffer = mutableListOf<TorEvent>()
     private val MAX_EVENTS = 50
 
-    // Circuit failure tracking (for fast restart)
+    // Circuit failure tracking (NEWNYM trigger for excessive churn)
     private var circFailureCount = 0
     private var circFailureWindowStart = 0L
-    private val CIRC_FAILURE_THRESHOLD = 5  // Restart if 5 CIRC_FAILED in 10 seconds
-    private val CIRC_FAILURE_WINDOW = 10000L  // 10 second window
+    private val CIRC_FAILURE_NEWNYM_THRESHOLD = 20  // NEWNYM after 20 failures in window
+    private val CIRC_FAILURE_NEWNYM_WINDOW = 60_000L  // 60 second window
+    private val NEWNYM_COOLDOWN_MS = 5 * 60 * 1000L  // 5 minutes between NEWNYMs
+    private var lastNewnymSentAt = 0L
 
     // HS descriptor failure tracking (for backoff)
     private var hsDescFailureCount = 0
@@ -1095,6 +1113,149 @@ class TorService : Service() {
             }
             context.startService(intent)
         }
+
+        // Lock for atomic SharedPreferences writes (prevents concurrent clobbering)
+        private val prefsLock = Any()
+
+        const val ACTION_FRIEND_REQUEST_STATUS_CHANGED = "com.securelegion.FRIEND_REQUEST_STATUS_CHANGED"
+
+        /**
+         * Send a friend request in the background via TorService's serviceScope.
+         * Survives Activity navigation — caller gets immediate return.
+         */
+        fun sendFriendRequestInBackground(
+            requestId: String,
+            recipientOnion: String,
+            encryptedPayload: ByteArray,
+            context: Context
+        ) {
+            val svc = instance
+            if (svc == null) {
+                Log.e(TAG, "sendFriendRequestInBackground: TorService not running, marking failed")
+                updatePendingRequestStatus(context, requestId, com.securelegion.models.PendingFriendRequest.STATUS_FAILED)
+                context.sendBroadcast(Intent(ACTION_FRIEND_REQUEST_STATUS_CHANGED))
+                return
+            }
+
+            svc.serviceScope.launch(Dispatchers.IO) {
+                Log.i(TAG, "Background friend request send started (id=$requestId, target=$recipientOnion)")
+
+                val gateOpened = getTransportGate()?.awaitOpen(
+                    com.securelegion.network.TransportGate.TIMEOUT_HANDSHAKE_MS
+                ) ?: false
+
+                val success = if (gateOpened) {
+                    try {
+                        com.securelegion.crypto.RustBridge.sendFriendRequest(
+                            recipientOnion, encryptedPayload
+                        )
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Background friend request failed", e)
+                        false
+                    }
+                } else {
+                    Log.w(TAG, "Transport gate timed out for background friend request")
+                    false
+                }
+
+                val newStatus = if (success)
+                    com.securelegion.models.PendingFriendRequest.STATUS_PENDING
+                else
+                    com.securelegion.models.PendingFriendRequest.STATUS_FAILED
+
+                Log.i(TAG, "Background friend request finished (id=$requestId, success=$success, newStatus=$newStatus)")
+                updatePendingRequestStatus(context, requestId, newStatus)
+                context.sendBroadcast(Intent(ACTION_FRIEND_REQUEST_STATUS_CHANGED))
+            }
+        }
+
+        /**
+         * Accept a friend request (Phase 2) in the background via TorService's serviceScope.
+         * Same pattern as sendFriendRequestInBackground but uses sendFriendRequestAccepted.
+         */
+        fun acceptFriendRequestInBackground(
+            requestId: String,
+            recipientOnion: String,
+            encryptedAcceptance: ByteArray,
+            context: Context
+        ) {
+            val svc = instance
+            if (svc == null) {
+                Log.e(TAG, "acceptFriendRequestInBackground: TorService not running, marking failed")
+                updatePendingRequestStatus(context, requestId, com.securelegion.models.PendingFriendRequest.STATUS_FAILED)
+                context.sendBroadcast(Intent(ACTION_FRIEND_REQUEST_STATUS_CHANGED))
+                return
+            }
+
+            svc.serviceScope.launch(Dispatchers.IO) {
+                Log.i(TAG, "Background Phase 2 accept started (id=$requestId, target=$recipientOnion)")
+
+                val gateOpened = getTransportGate()?.awaitOpen(
+                    com.securelegion.network.TransportGate.TIMEOUT_HANDSHAKE_MS
+                ) ?: false
+
+                val success = if (gateOpened) {
+                    try {
+                        com.securelegion.crypto.RustBridge.sendFriendRequestAccepted(
+                            recipientOnion, encryptedAcceptance
+                        )
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Background Phase 2 accept failed", e)
+                        false
+                    }
+                } else {
+                    Log.w(TAG, "Transport gate timed out for background Phase 2 accept")
+                    false
+                }
+
+                val newStatus = if (success)
+                    com.securelegion.models.PendingFriendRequest.STATUS_PENDING
+                else
+                    com.securelegion.models.PendingFriendRequest.STATUS_FAILED
+
+                Log.i(TAG, "Background Phase 2 accept finished (id=$requestId, success=$success, newStatus=$newStatus)")
+                updatePendingRequestStatus(context, requestId, newStatus)
+                context.sendBroadcast(Intent(ACTION_FRIEND_REQUEST_STATUS_CHANGED))
+            }
+        }
+
+        /**
+         * Atomically update a pending request's status by its ID.
+         * Thread-safe: synchronized on prefsLock to prevent concurrent clobbering.
+         */
+        fun updatePendingRequestStatus(context: Context, requestId: String, newStatus: String) {
+            synchronized(prefsLock) {
+                try {
+                    val prefs = context.getSharedPreferences("friend_requests", Context.MODE_PRIVATE)
+                    val pendingSet = prefs.getStringSet("pending_requests_v2", mutableSetOf()) ?: mutableSetOf()
+
+                    val updatedSet = mutableSetOf<String>()
+                    var found = false
+                    for (json in pendingSet) {
+                        try {
+                            val req = com.securelegion.models.PendingFriendRequest.fromJson(json)
+                            if (req.id == requestId) {
+                                found = true
+                                val updated = req.copy(status = newStatus)
+                                updatedSet.add(updated.toJson())
+                            } else {
+                                updatedSet.add(json)
+                            }
+                        } catch (e: Exception) {
+                            updatedSet.add(json) // preserve unparseable entries
+                        }
+                    }
+
+                    if (!found) {
+                        Log.w(TAG, "updatePendingRequestStatus: request $requestId not found")
+                    }
+
+                    prefs.edit().putStringSet("pending_requests_v2", updatedSet).apply()
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to update pending request status", e)
+                }
+            }
+        }
     }
 
     override fun onCreate() {
@@ -1164,12 +1325,21 @@ class TorService : Service() {
                 startForeground(NOTIFICATION_ID, notification)
             }
             Log.i(TAG, "startForeground() called immediately in onStartCommand")
+
+            // CRITICAL: Mark service as running so poller threads don't immediately exit.
+            // Previously only set in onTorReady() or deprecated startTorService(),
+            // but reconnection paths (KEEP_ALIVE + network change) bypass those methods.
+            isServiceRunning = true
+            running = true
         }
 
         when (intent?.action) {
             ACTION_START_TOR -> {
-                // Start using new state machine
-                serviceScope.launch { startTor() }
+                if (startTorRequested.compareAndSet(false, true)) {
+                    serviceScope.launch { startTor() }
+                } else {
+                    Log.d(TAG, "START_TOR: startTor already requested; skipping")
+                }
             }
             ACTION_STOP_TOR -> {
                 // Stop using new state machine
@@ -1180,13 +1350,23 @@ class TorService : Service() {
             ACTION_DECLINE_MESSAGE -> handleDeclineMessage(intent)
             "com.securelegion.action.REPORT_SOCKS_FAILURE" -> handleSocksFailure()
             ACTION_KEEP_ALIVE -> {
-                // Just keep the foreground service alive (startForeground already called above)
-                // TorManager.initializeAsync() will handle starting the GP TorService daemon
-                Log.i(TAG, "KEEP_ALIVE: Foreground service started, waiting for Tor daemon")
+                // TorManager sends KEEP_ALIVE to get the foreground service running while it
+                // handles the GP TorService daemon separately. We still need to start the
+                // bootstrap monitor + event listener so onTorReady() fires and the gate opens.
+                // torManager.initializeAsync() inside startTor() guards against double-init.
+                if (startTorRequested.compareAndSet(false, true)) {
+                    Log.i(TAG, "KEEP_ALIVE: Starting bootstrap monitoring alongside TorManager")
+                    serviceScope.launch { startTor() }
+                } else {
+                    Log.i(TAG, "KEEP_ALIVE: startTor already requested; skipping")
+                }
             }
             else -> {
-                // Default: start using new state machine
-                serviceScope.launch { startTor() }
+                if (startTorRequested.compareAndSet(false, true)) {
+                    serviceScope.launch { startTor() }
+                } else {
+                    Log.d(TAG, "Default action: startTor already requested; skipping")
+                }
             }
         }
 
@@ -1322,6 +1502,10 @@ class TorService : Service() {
         lastHealthyMs = SystemClock.elapsedRealtime()  // Reset health timer
 
         try {
+            // Stop any previous event listener before spawning a new one
+            // Prevents duplicate listeners when startTor() is called multiple times
+            RustBridge.stopBootstrapListener()
+
             // Start bootstrap listener (Rust side)
             RustBridge.startBootstrapListener()
 
@@ -1386,10 +1570,12 @@ class TorService : Service() {
         }
 
         setState(TorState.STOPPING, "user requested")
+        startTorRequested.set(false)
         bootstrapWatchdogJob?.cancel()
         stopFastRetryLoop()
         stopMetricsHealthMonitor()
         stopSocksHealthMonitor()
+        RustBridge.stopBootstrapListener()
 
         try {
             // Stop SOCKS proxy
@@ -1813,6 +1999,7 @@ class TorService : Service() {
                     Log.e(TAG, "Error polling for pings", e)
                 }
             }
+            isPingPollerRunning = false
             Log.d(TAG, "Ping poller thread stopped")
         }.start()
     }
@@ -1856,6 +2043,7 @@ class TorService : Service() {
                     Log.e(TAG, "Error polling for messages", e)
                 }
             }
+            isMessagePollerRunning = false
             Log.d(TAG, "MESSAGE poller thread stopped")
         }.start()
     }
@@ -1899,6 +2087,7 @@ class TorService : Service() {
                     Log.e(TAG, "Error polling for voice call signaling", e)
                 }
             }
+            isVoicePollerRunning = false
             Log.d(TAG, "VOICE poller thread stopped")
         }.start()
     }
@@ -1934,6 +2123,7 @@ class TorService : Service() {
                     Log.e(TAG, "Error polling for taps", e)
                 }
             }
+            isTapPollerRunning = false
             Log.d(TAG, "Tap poller thread stopped")
         }.start()
     }
@@ -1970,6 +2160,7 @@ class TorService : Service() {
                     Log.e(TAG, "Error polling for friend requests", e)
                 }
             }
+            isFriendRequestPollerRunning = false
             Log.d(TAG, "Friend request poller thread stopped")
         }.start()
     }
@@ -2013,6 +2204,7 @@ class TorService : Service() {
                     Log.e(TAG, "Error polling for pongs", e)
                 }
             }
+            isPongPollerRunning = false
             Log.d(TAG, "Pong poller thread stopped")
         }.start()
     }
@@ -2907,6 +3099,7 @@ class TorService : Service() {
                     Log.e(TAG, "Error polling for ACKs", e)
                 }
             }
+            isAckPollerRunning = false
             Log.d(TAG, "ACK poller thread stopped")
         }.start()
     }
@@ -6398,6 +6591,8 @@ class TorService : Service() {
                     torConnected = true
                     isReconnecting = false
                     reconnectAttempts = 0
+                    isServiceRunning = true
+                    running = true
 
                     // Reset SOCKS failure count on successful reconnect
                     socksFailureCount = 0
@@ -6645,6 +6840,8 @@ class TorService : Service() {
                         isReconnecting = false
                         reconnectAttempts = 0
                         torConnected = true
+                        isServiceRunning = true
+                        running = true
 
                         // Ensure SOCKS proxy is running for outgoing connections
                         ensureSocksProxyRunning()
@@ -6753,6 +6950,7 @@ class TorService : Service() {
         torConnected = false
         listenersReady = false
         isServiceRunning = false
+        startTorRequested.set(false)
 
         // Stop Guardian Project's :tor process to prevent SIGABRT on next start
         try {
@@ -7064,10 +7262,6 @@ class TorService : Service() {
     }
 
     /**
-     * Handle CIRC_FAILED event
-     * If we see 5 circuit failures in 10 seconds → restart Tor immediately
-     */
-    /**
      * Handle CIRC_FAILED event (INFORMATIONAL ONLY)
      *
      * CRITICAL: Circuit failures are NORMAL Tor behavior and do NOT indicate transport failure.
@@ -7075,19 +7269,18 @@ class TorService : Service() {
      *
      * Per severity model:
      * - CIRC events → INFO level (no action)
-     * - Excessive churn (>20 in 60s) → NEWNYM (rate-limited)
+     * - Excessive churn (>20 in 60s) → NEWNYM (with 5-min cooldown)
      * - Never restart Tor on circuit events alone
      *
-     * Health is derived from MetricsPort (bootstrap + circuits), NOT from events.
+     * NEWNYM is the "nuclear option" — it destroys all circuits and rotates guards.
+     * Without a cooldown, repeated NEWNYMs create a death spiral where Tor never
+     * stabilizes long enough to publish hidden service descriptors.
      */
     private fun handleCircuitFailed(circId: String, reason: String, now: Long) {
         Log.i(TAG, "Circuit event: FAILED $circId (reason: $reason) [INFORMATIONAL ONLY]")
 
-        // ALL circuit events are informational - just count them
-        // Do NOT treat as failures or trigger restarts
-
         // Reset window if too old
-        if (now - circFailureWindowStart > 60000L) {  // 60 second window
+        if (now - circFailureWindowStart > CIRC_FAILURE_NEWNYM_WINDOW) {
             circFailureCount = 0
             circFailureWindowStart = now
         }
@@ -7101,14 +7294,25 @@ class TorService : Service() {
 
         // NEWNYM is the ONLY allowed soft action for excessive churn
         // Never restart Tor based on circuit events
-        if (circFailureCount >= 20) {
-            Log.w(TAG, "Excessive circuit churn: $circFailureCount failures in 60s → issuing NEWNYM (rate-limited)")
+        if (circFailureCount >= CIRC_FAILURE_NEWNYM_THRESHOLD) {
+            // Cooldown gate: avoid NEWNYM storms (common on emulators / flaky networks)
+            if (now - lastNewnymSentAt < NEWNYM_COOLDOWN_MS) {
+                Log.w(TAG, "NEWNYM suppressed (cooldown active). " +
+                           "failures=$circFailureCount window=${now - circFailureWindowStart}ms")
+                // Reset window so it doesn't instantly re-trigger
+                circFailureCount = 0
+                circFailureWindowStart = now
+                return
+            }
+
+            lastNewnymSentAt = now
+            Log.w(TAG, "Sending NEWNYM due to excessive circuit failures: $circFailureCount in window")
 
             // Reset counter
             circFailureCount = 0
             circFailureWindowStart = now
 
-            // Issue NEWNYM via ControlPort (rate-limited at Tor level)
+            // Issue NEWNYM via ControlPort
             serviceScope.launch(Dispatchers.IO) {
                 try {
                     val result = RustBridge.sendNewnym()

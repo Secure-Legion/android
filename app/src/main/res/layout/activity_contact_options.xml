@@ -66,7 +66,7 @@
                 android:layout_height="20dp"
                 android:layout_gravity="center"
                 android:src="@drawable/ic_edit"
-                android:tint="#888888"
+                app:tint="#888888"
                 android:contentDescription="Edit" />
 
         </FrameLayout>
@@ -139,7 +139,7 @@
                         android:layout_height="20dp"
                         android:layout_gravity="center"
                         android:src="@drawable/ic_edit"
-                        android:tint="#888888"
+                        app:tint="#888888"
                         android:contentDescription="Edit" />
 
                 </FrameLayout>
@@ -158,7 +158,7 @@
                     android:layout_width="20dp"
                     android:layout_height="20dp"
                     android:src="@drawable/ic_arrow_forward"
-                    android:tint="#666666"
+                    app:tint="#666666"
                     android:contentDescription="Arrow" />
 
             </LinearLayout>
@@ -188,7 +188,7 @@
                         android:layout_height="20dp"
                         android:layout_gravity="center"
                         android:src="@drawable/ic_person"
-                        android:tint="#888888"
+                        app:tint="#888888"
                         android:contentDescription="Person" />
 
                 </FrameLayout>
@@ -237,7 +237,7 @@
                         android:layout_height="20dp"
                         android:layout_gravity="center"
                         android:src="@drawable/ic_star_outline"
-                        android:tint="#888888"
+                        app:tint="#888888"
                         android:contentDescription="Star" />
 
                 </FrameLayout>
@@ -287,7 +287,7 @@
                         android:layout_height="20dp"
                         android:layout_gravity="center"
                         android:src="@drawable/ic_delete"
-                        android:tint="#FF3B30"
+                        app:tint="#FF3B30"
                         android:contentDescription="Delete" />
 
                 </FrameLayout>
@@ -306,7 +306,7 @@
                     android:layout_width="20dp"
                     android:layout_height="20dp"
                     android:src="@drawable/ic_arrow_forward"
-                    android:tint="#666666"
+                    app:tint="#666666"
                     android:contentDescription="Arrow" />
 
             </LinearLayout>
@@ -380,7 +380,7 @@
                 android:layout_width="24dp"
                 android:layout_height="24dp"
                 android:src="@android:drawable/sym_action_chat"
-                android:tint="@color/text_gray"
+                app:tint="@color/text_gray"
                 android:layout_marginBottom="4dp"
                 android:contentDescription="Messages" />
 
@@ -411,7 +411,7 @@
                 android:layout_height="24dp"
                 android:src="@drawable/ic_wallet"
                 android:layout_marginBottom="4dp"
-                android:tint="@color/text_gray"
+                app:tint="@color/text_gray"
                 android:contentDescription="Wallet" />
 
             <TextView
@@ -440,7 +440,7 @@
                 android:layout_width="24dp"
                 android:layout_height="24dp"
                 android:src="@drawable/ic_add_friend"
-                android:tint="@color/text_gray"
+                app:tint="@color/text_gray"
                 android:layout_marginBottom="4dp"
                 android:contentDescription="Add Friend" />
 
@@ -471,7 +471,7 @@
                 android:layout_height="24dp"
                 android:src="@drawable/ic_lock"
                 android:layout_marginBottom="4dp"
-                android:tint="@color/text_gray"
+                app:tint="@color/text_gray"
                 android:contentDescription="Lock" />
 
             <TextView

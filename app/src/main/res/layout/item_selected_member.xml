@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="wrap_content"
     android:layout_height="wrap_content"
     android:orientation="vertical"
@@ -37,7 +38,7 @@
             android:layout_gravity="top|end"
             android:src="@android:drawable/ic_menu_close_clear_cancel"
             android:background="@drawable/profile_circle_bg"
-            android:tint="#FF0000"
+            app:tint="#FF0000"
             android:padding="2dp"
             android:clickable="true"
             android:focusable="true"

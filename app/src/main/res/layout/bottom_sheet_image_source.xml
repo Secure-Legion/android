@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
     android:orientation="vertical"
@@ -46,7 +47,7 @@
                 android:layout_height="20dp"
                 android:layout_gravity="center"
                 android:src="@android:drawable/ic_menu_camera"
-                android:tint="#888888"
+                app:tint="#888888"
                 android:contentDescription="Camera" />
 
         </FrameLayout>
@@ -65,7 +66,7 @@
             android:layout_width="20dp"
             android:layout_height="20dp"
             android:src="@drawable/ic_arrow_forward"
-            android:tint="#666666"
+            app:tint="#666666"
             android:contentDescription="Arrow" />
 
     </LinearLayout>
@@ -95,7 +96,7 @@
                 android:layout_height="20dp"
                 android:layout_gravity="center"
                 android:src="@android:drawable/ic_menu_gallery"
-                android:tint="#888888"
+                app:tint="#888888"
                 android:contentDescription="Gallery" />
 
         </FrameLayout>
@@ -114,7 +115,7 @@
             android:layout_width="20dp"
             android:layout_height="20dp"
             android:src="@drawable/ic_arrow_forward"
-            android:tint="#666666"
+            app:tint="#666666"
             android:contentDescription="Arrow" />
 
     </LinearLayout>

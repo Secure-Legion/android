@@ -16,6 +16,7 @@ import com.securelegion.crypto.NLx402Manager
 import com.securelegion.database.SecureLegionDatabase
 import com.securelegion.database.entities.Wallet
 import com.securelegion.services.MessageService
+import com.securelegion.services.ShadowWireService
 import com.securelegion.services.SolanaService
 import com.securelegion.services.ZcashService
 import com.securelegion.utils.ThemedToast
@@ -37,18 +38,22 @@ class RequestMoneyActivity : AppCompatActivity() {
 
     private lateinit var backButton: View
     private lateinit var menuButton: View
-    private lateinit var recipientName: TextView
     private lateinit var fromWalletDropdown: View
     private lateinit var fromWalletNameText: TextView
     private lateinit var fromAddressShort: TextView
     private lateinit var amountInput: EditText
     private lateinit var currencyIcon: ImageView
-    private lateinit var expiryDropdown: View
-    private lateinit var expiryText: TextView
     private lateinit var requestNowButton: View
+    private lateinit var sendNowButton: View
+    private lateinit var toggleCurrency: ImageView
+    private lateinit var paymentTypeIcon: ImageView
+    private lateinit var paymentTypeText: TextView
+    private lateinit var paymentTypeDropdown: View
 
     private var selectedToken = "SOL"  // SOL or ZEC
-    private var selectedExpirySecs = NLx402Manager.EXPIRY_24_HOURS
+    private var showingUsd = false  // false = native token, true = USD
+    // SOL: "private" or "anonymous" | ZEC: "transparent" or "shielded"
+    private var selectedPaymentType = "private"
     private var currentSolPrice: Double = 0.0
     private var currentZecPrice: Double = 0.0
 
@@ -78,7 +83,7 @@ class RequestMoneyActivity : AppCompatActivity() {
         initializeViews()
         setupClickListeners()
         setupAmountInput()
-        loadRecipientInfo()
+        updatePaymentTypeUI()
         loadWalletInfo()
         fetchTokenPrices()
     }
@@ -86,15 +91,17 @@ class RequestMoneyActivity : AppCompatActivity() {
     private fun initializeViews() {
         backButton = findViewById(R.id.backButton)
         menuButton = findViewById(R.id.menuButton)
-        recipientName = findViewById(R.id.recipientName)
         fromWalletDropdown = findViewById(R.id.fromWalletDropdown)
         fromWalletNameText = findViewById(R.id.fromWalletNameText)
         fromAddressShort = findViewById(R.id.fromAddressShort)
         amountInput = findViewById(R.id.amountInput)
         currencyIcon = findViewById(R.id.currencyIcon)
-        expiryDropdown = findViewById(R.id.expiryDropdown)
-        expiryText = findViewById(R.id.expiryText)
         requestNowButton = findViewById(R.id.requestNowButton)
+        sendNowButton = findViewById(R.id.sendNowButton)
+        toggleCurrency = findViewById(R.id.toggleCurrency)
+        paymentTypeIcon = findViewById(R.id.paymentTypeIcon)
+        paymentTypeText = findViewById(R.id.paymentTypeText)
+        paymentTypeDropdown = findViewById(R.id.paymentTypeDropdown)
     }
 
     private fun setupClickListeners() {
@@ -110,13 +117,58 @@ class RequestMoneyActivity : AppCompatActivity() {
             showWalletSelector()
         }
 
-        expiryDropdown.setOnClickListener {
-            showExpirySelector()
-        }
-
         requestNowButton.setOnClickListener {
             requestMoney()
         }
+
+        sendNowButton.setOnClickListener {
+            sendMoney()
+        }
+
+        paymentTypeDropdown.setOnClickListener {
+            showPaymentTypeSelector()
+        }
+
+        toggleCurrency.setOnClickListener {
+            toggleAmountDisplay()
+        }
+    }
+
+    private fun toggleAmountDisplay() {
+        val currentText = amountInput.text.toString()
+        val currentAmount = currentText.toDoubleOrNull() ?: 0.0
+        val price = when (selectedToken) {
+            "SOL" -> currentSolPrice
+            "ZEC" -> currentZecPrice
+            else -> 0.0
+        }
+
+        showingUsd = !showingUsd
+
+        if (showingUsd) {
+            // Convert native → USD
+            if (currentAmount > 0 && price > 0) {
+                amountInput.setText(String.format("%.2f", currentAmount * price))
+            } else {
+                amountInput.text.clear()
+            }
+            amountInput.hint = "$0.00"
+        } else {
+            // Convert USD → native
+            if (currentAmount > 0 && price > 0) {
+                amountInput.setText(String.format("%.4f", currentAmount / price))
+            } else {
+                amountInput.text.clear()
+            }
+            amountInput.hint = "0.00"
+        }
+
+        amountInput.setSelection(amountInput.text.length)
+        updateCurrencyLabel()
+    }
+
+    private fun updateCurrencyLabel() {
+        // No-op: icon already set by token selection
     }
 
     private fun loadWalletInfoForChain(chain: String) {
@@ -139,10 +191,10 @@ class RequestMoneyActivity : AppCompatActivity() {
                     currentWalletId = firstWallet.walletId
                     currentWalletName = firstWallet.name
                     currentWalletAddress = firstWallet.solanaAddress
-                    currentZcashAddress = firstWallet.zcashAddress
+                    currentZcashAddress = firstWallet.zcashAddress ?: firstWallet.zcashUnifiedAddress
 
                     val displayAddress = when (chain) {
-                        "ZEC" -> firstWallet.zcashAddress ?: ""
+                        "ZEC" -> firstWallet.zcashAddress ?: firstWallet.zcashUnifiedAddress ?: ""
                         else -> firstWallet.solanaAddress
                     }
 
@@ -162,17 +214,39 @@ class RequestMoneyActivity : AppCompatActivity() {
         }
     }
 
-    private fun showExpirySelector() {
+    private fun updatePaymentTypeUI() {
+        if (selectedToken == "ZEC") {
+            paymentTypeIcon.setImageResource(R.drawable.ic_shield)
+            paymentTypeIcon.clearColorFilter()
+            // Map SOL types to ZEC equivalents
+            if (selectedPaymentType == "normal" || selectedPaymentType == "private" || selectedPaymentType == "anonymous") {
+                selectedPaymentType = "transparent"
+            }
+            paymentTypeText.text = if (selectedPaymentType == "shielded") "Shielded" else "Transparent"
+        } else {
+            paymentTypeIcon.setImageResource(R.drawable.ic_radr_logo)
+            paymentTypeIcon.clearColorFilter()
+            // Map ZEC types to SOL equivalents
+            if (selectedPaymentType == "transparent" || selectedPaymentType == "shielded") {
+                selectedPaymentType = "private"
+            }
+            paymentTypeText.text = when (selectedPaymentType) {
+                "normal" -> "Normal"
+                "anonymous" -> "Anonymous"
+                else -> "Private"
+            }
+        }
+    }
+
+    private fun showPaymentTypeSelector() {
         val bottomSheet = BottomSheetDialog(this)
-        val view = layoutInflater.inflate(R.layout.bottom_sheet_expiry_selector, null)
+        val view = layoutInflater.inflate(R.layout.bottom_sheet_payment_type, null)
         bottomSheet.setContentView(view)
 
-        // Configure bottom sheet behavior
         bottomSheet.behavior.isDraggable = true
         bottomSheet.behavior.isFitToContents = true
         bottomSheet.behavior.skipCollapsed = true
 
-        // Make backgrounds transparent
         bottomSheet.window?.setBackgroundDrawableResource(android.R.color.transparent)
         bottomSheet.window?.findViewById<View>(com.google.android.material.R.id.design_bottom_sheet)?.setBackgroundResource(android.R.color.transparent)
         view.post {
@@ -180,56 +254,63 @@ class RequestMoneyActivity : AppCompatActivity() {
             parentView?.setBackgroundResource(android.R.color.transparent)
         }
 
-        // Get all check marks
-        val check15Min = view.findViewById<ImageView>(R.id.check15Min)
-        val check1Hour = view.findViewById<ImageView>(R.id.check1Hour)
-        val check6Hours = view.findViewById<ImageView>(R.id.check6Hours)
-        val check24Hours = view.findViewById<ImageView>(R.id.check24Hours)
-        val check48Hours = view.findViewById<ImageView>(R.id.check48Hours)
-        val check7Days = view.findViewById<ImageView>(R.id.check7Days)
+        val option1Check = view.findViewById<ImageView>(R.id.option1Check)
+        val option2Check = view.findViewById<ImageView>(R.id.option2Check)
+        val option3Check = view.findViewById<ImageView>(R.id.option3Check)
+        val option1Title = view.findViewById<TextView>(R.id.option1Title)
+        val option2Title = view.findViewById<TextView>(R.id.option2Title)
+        val option3Title = view.findViewById<TextView>(R.id.option3Title)
+        val option1Desc = view.findViewById<TextView>(R.id.option1Desc)
+        val option2Desc = view.findViewById<TextView>(R.id.option2Desc)
+        val option3Desc = view.findViewById<TextView>(R.id.option3Desc)
+        val option1Icon = view.findViewById<ImageView>(R.id.option1Icon)
+        val option2Icon = view.findViewById<ImageView>(R.id.option2Icon)
+        val option3Icon = view.findViewById<ImageView>(R.id.option3Icon)
+        val option3View = view.findViewById<View>(R.id.paymentTypeOption3)
 
-        // Helper to update check marks
-        fun updateChecks(selected: Long) {
-            check15Min.visibility = if (selected == NLx402Manager.EXPIRY_15_MIN) View.VISIBLE else View.GONE
-            check1Hour.visibility = if (selected == NLx402Manager.EXPIRY_1_HOUR) View.VISIBLE else View.GONE
-            check6Hours.visibility = if (selected == NLx402Manager.EXPIRY_6_HOURS) View.VISIBLE else View.GONE
-            check24Hours.visibility = if (selected == NLx402Manager.EXPIRY_24_HOURS) View.VISIBLE else View.GONE
-            check48Hours.visibility = if (selected == NLx402Manager.EXPIRY_48_HOURS) View.VISIBLE else View.GONE
-            check7Days.visibility = if (selected == NLx402Manager.EXPIRY_7_DAYS) View.VISIBLE else View.GONE
+        if (selectedToken == "ZEC") {
+            // Zcash: Transparent / Shielded (2 options)
+            option1Icon.setImageResource(R.drawable.ic_shield)
+            option2Icon.setImageResource(R.drawable.ic_shield)
+            option1Title.text = "Transparent"
+            option2Title.text = "Shielded"
+            option1Desc.text = "Standard Zcash transaction"
+            option2Desc.text = "Fully shielded Zcash transaction"
+            option1Check.visibility = if (selectedPaymentType == "transparent") View.VISIBLE else View.GONE
+            option2Check.visibility = if (selectedPaymentType == "shielded") View.VISIBLE else View.GONE
+            option3View.visibility = View.GONE
+        } else {
+            // Solana: Normal / Private / Anonymous (3 options)
+            option1Icon.setImageResource(R.drawable.ic_solana)
+            option2Icon.setImageResource(R.drawable.ic_radr_logo)
+            option3Icon.setImageResource(R.drawable.ic_radr_logo)
+            option1Title.text = "Normal"
+            option2Title.text = "Private"
+            option3Title.text = "Anonymous"
+            option1Desc.text = "Standard Solana transaction"
+            option2Desc.text = "Powered by Radr · 0.5% fee"
+            option3Desc.text = "Powered by Radr · 0.5% fee"
+            option1Check.visibility = if (selectedPaymentType == "normal") View.VISIBLE else View.GONE
+            option2Check.visibility = if (selectedPaymentType == "private") View.VISIBLE else View.GONE
+            option3Check.visibility = if (selectedPaymentType == "anonymous") View.VISIBLE else View.GONE
+            option3View.visibility = View.VISIBLE
         }
 
-        // Show current selection
-        updateChecks(selectedExpirySecs)
+        view.findViewById<View>(R.id.paymentTypeOption1).setOnClickListener {
+            selectedPaymentType = if (selectedToken == "ZEC") "transparent" else "normal"
+            updatePaymentTypeUI()
+            bottomSheet.dismiss()
+        }
 
-        // Set click listeners
-        view.findViewById<View>(R.id.option15Min).setOnClickListener {
-            selectedExpirySecs = NLx402Manager.EXPIRY_15_MIN
-            expiryText.text = "15 minutes"
+        view.findViewById<View>(R.id.paymentTypeOption2).setOnClickListener {
+            selectedPaymentType = if (selectedToken == "ZEC") "shielded" else "private"
+            updatePaymentTypeUI()
             bottomSheet.dismiss()
         }
-        view.findViewById<View>(R.id.option1Hour).setOnClickListener {
-            selectedExpirySecs = NLx402Manager.EXPIRY_1_HOUR
-            expiryText.text = "1 hour"
-            bottomSheet.dismiss()
-        }
-        view.findViewById<View>(R.id.option6Hours).setOnClickListener {
-            selectedExpirySecs = NLx402Manager.EXPIRY_6_HOURS
-            expiryText.text = "6 hours"
-            bottomSheet.dismiss()
-        }
-        view.findViewById<View>(R.id.option24Hours).setOnClickListener {
-            selectedExpirySecs = NLx402Manager.EXPIRY_24_HOURS
-            expiryText.text = "24 hours"
-            bottomSheet.dismiss()
-        }
-        view.findViewById<View>(R.id.option48Hours).setOnClickListener {
-            selectedExpirySecs = NLx402Manager.EXPIRY_48_HOURS
-            expiryText.text = "48 hours"
-            bottomSheet.dismiss()
-        }
-        view.findViewById<View>(R.id.option7Days).setOnClickListener {
-            selectedExpirySecs = NLx402Manager.EXPIRY_7_DAYS
-            expiryText.text = "7 days"
+
+        view.findViewById<View>(R.id.paymentTypeOption3).setOnClickListener {
+            selectedPaymentType = "anonymous"
+            updatePaymentTypeUI()
             bottomSheet.dismiss()
         }
 
@@ -366,6 +447,7 @@ class RequestMoneyActivity : AppCompatActivity() {
                                 // Update selected token to match the chain tab
                                 selectedToken = chain
                                 currencyIcon.setImageResource(if (selectedToken == "ZEC") R.drawable.ic_zcash else R.drawable.ic_solana)
+                                updatePaymentTypeUI()
                                 switchToWallet(wallet)
                                 bottomSheet.dismiss()
                             }
@@ -404,7 +486,7 @@ class RequestMoneyActivity : AppCompatActivity() {
                 currentWalletId = wallet.walletId
                 currentWalletName = wallet.name
                 currentWalletAddress = wallet.solanaAddress
-                currentZcashAddress = wallet.zcashAddress
+                currentZcashAddress = wallet.zcashAddress ?: wallet.zcashUnifiedAddress
 
                 val dbPassphrase = keyManager.getDatabasePassphrase()
                 val database = SecureLegionDatabase.getInstance(this@RequestMoneyActivity, dbPassphrase)
@@ -412,7 +494,7 @@ class RequestMoneyActivity : AppCompatActivity() {
 
                 // Display appropriate address based on selected chain
                 val displayAddress = when (selectedToken) {
-                    "ZEC" -> wallet.zcashAddress ?: ""
+                    "ZEC" -> wallet.zcashAddress ?: wallet.zcashUnifiedAddress ?: ""
                     else -> wallet.solanaAddress
                 }
 
@@ -429,11 +511,6 @@ class RequestMoneyActivity : AppCompatActivity() {
         }
     }
 
-    private fun loadRecipientInfo() {
-        val name = intent.getStringExtra(EXTRA_RECIPIENT_NAME) ?: "User"
-        recipientName.text = name
-    }
-
     private fun loadWalletInfo() {
         // If wallet info was passed in intent, use it
         if (currentWalletAddress.isNotEmpty()) {
@@ -441,6 +518,12 @@ class RequestMoneyActivity : AppCompatActivity() {
             fromAddressShort.text = formatAddressShort(currentWalletAddress)
             return
         }
+
+        // Set KeyManager address immediately as fallback while DB loads
+        val fallbackAddress = keyManager.getSolanaAddress()
+        currentWalletAddress = fallbackAddress
+        fromWalletNameText.text = "Wallet"
+        fromAddressShort.text = formatAddressShort(fallbackAddress)
 
         // Load most recently used wallet from database
         lifecycleScope.launch(Dispatchers.IO) {
@@ -459,39 +542,31 @@ class RequestMoneyActivity : AppCompatActivity() {
                     currentWalletId = firstWallet.walletId
                     currentWalletName = firstWallet.name
                     currentWalletAddress = firstWallet.solanaAddress
-                    currentZcashAddress = firstWallet.zcashAddress
+                    currentZcashAddress = firstWallet.zcashAddress ?: firstWallet.zcashUnifiedAddress
 
                     // Detect wallet type and sync currency selector
                     val isZcashWallet = (!firstWallet.zcashAddress.isNullOrEmpty() || !firstWallet.zcashUnifiedAddress.isNullOrEmpty()) && firstWallet.solanaAddress.isEmpty()
                     selectedToken = if (isZcashWallet) "ZEC" else "SOL"
 
                     val displayAddress = if (isZcashWallet) {
-                        firstWallet.zcashAddress ?: ""
+                        firstWallet.zcashAddress ?: firstWallet.zcashUnifiedAddress ?: ""
                     } else {
                         firstWallet.solanaAddress
                     }
 
-                    withContext(Dispatchers.Main) {
-                        fromWalletNameText.text = currentWalletName
-                        fromAddressShort.text = formatAddressShort(displayAddress)
-                        currencyIcon.setImageResource(if (selectedToken == "ZEC") R.drawable.ic_zcash else R.drawable.ic_solana)
-                    }
-                } else {
-                    // Fallback to KeyManager address
-                    val solanaAddress = keyManager.getSolanaAddress()
-                    currentWalletAddress = solanaAddress
+                    // Only update if we got a real address
+                    val finalAddress = displayAddress.ifEmpty { fallbackAddress }
+                    val finalName = currentWalletName.ifEmpty { "Wallet" }
 
                     withContext(Dispatchers.Main) {
-                        fromWalletNameText.text = "Wallet"
-                        fromAddressShort.text = formatAddressShort(solanaAddress)
+                        fromWalletNameText.text = finalName
+                        fromAddressShort.text = formatAddressShort(finalAddress)
+                        currencyIcon.setImageResource(if (selectedToken == "ZEC") R.drawable.ic_zcash else R.drawable.ic_solana)
+                        updatePaymentTypeUI()
                     }
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to load wallet info", e)
-                withContext(Dispatchers.Main) {
-                    fromWalletNameText.text = "Wallet"
-                    fromAddressShort.text = "..."
-                }
             }
         }
     }
@@ -514,8 +589,6 @@ class RequestMoneyActivity : AppCompatActivity() {
                     Log.d(TAG, "ZEC price: $currentZecPrice")
                 }
 
-                // Update USD value
-                updateAmountUsdValue()
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to fetch token prices", e)
             }
@@ -523,61 +596,241 @@ class RequestMoneyActivity : AppCompatActivity() {
     }
 
     private fun setupAmountInput() {
-        amountInput.addTextChangedListener(object : android.text.TextWatcher {
-            override fun afterTextChanged(s: android.text.Editable?) {
-                updateAmountUsdValue()
-            }
-
-            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
-            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
-        })
-    }
-
-    private fun updateAmountUsdValue() {
-        val amountText = amountInput.text.toString()
-        val amount = amountText.toDoubleOrNull()
-
-        val amountUsdValue = findViewById<TextView>(R.id.amountUsdValue)
-
-        if (amount != null && amount > 0) {
-            val currentPrice = when (selectedToken) {
-                "SOL" -> currentSolPrice
-                "ZEC" -> currentZecPrice
-                else -> 0.0
-            }
-
-            val usdValue = amount * currentPrice
-            amountUsdValue.text = String.format("≈ $%,.2f USD", usdValue)
-        } else {
-            amountUsdValue.text = "≈ $0.00 USD"
-        }
+        // Amount input is now direct — toggle button switches between USD and native
     }
 
     private fun formatAddressShort(address: String): String {
-        return if (address.length > 12) {
-            "${address.take(6)}...${address.takeLast(4)}"
+        return if (address.length > 20) {
+            "${address.take(10)}...${address.takeLast(8)}"
         } else {
             address
         }
     }
 
 
-    private fun requestMoney() {
+    private fun getNativeAmount(): Double? {
         val amountText = amountInput.text.toString().replace("$", "").replace(",", "")
+        val amount = amountText.toDoubleOrNull() ?: return null
+        if (amount <= 0) return null
 
-        if (amountText.isEmpty()) {
-            ThemedToast.show(this, "Please enter an amount")
-            return
+        return if (showingUsd) {
+            val price = when (selectedToken) {
+                "SOL" -> currentSolPrice
+                "ZEC" -> currentZecPrice
+                else -> 0.0
+            }
+            if (price > 0) amount / price else null
+        } else {
+            amount
         }
+    }
 
-        val amount = amountText.toDoubleOrNull()
-        if (amount == null || amount <= 0) {
+    private fun requestMoney() {
+        val amount = getNativeAmount()
+
+        if (amount == null) {
             ThemedToast.show(this, "Please enter a valid amount")
             return
         }
 
         // Show confirmation dialog
         showRequestConfirmation(amount)
+    }
+
+    private fun sendMoney() {
+        val amount = getNativeAmount()
+
+        if (amount == null) {
+            ThemedToast.show(this, "Please enter a valid amount")
+            return
+        }
+
+        showSendConfirmation(amount)
+    }
+
+    private fun showSendConfirmation(amount: Double) {
+        val bottomSheet = BottomSheetDialog(this)
+        val view = layoutInflater.inflate(R.layout.bottom_sheet_send_confirm, null)
+
+        val displayMetrics = resources.displayMetrics
+        val screenHeight = displayMetrics.heightPixels
+        val desiredHeight = (screenHeight * 0.7).toInt()
+        view.minimumHeight = desiredHeight
+
+        bottomSheet.setContentView(view)
+
+        bottomSheet.behavior.isDraggable = true
+        bottomSheet.behavior.isFitToContents = true
+        bottomSheet.behavior.skipCollapsed = true
+
+        bottomSheet.window?.setBackgroundDrawableResource(android.R.color.transparent)
+        bottomSheet.window?.findViewById<View>(com.google.android.material.R.id.design_bottom_sheet)?.setBackgroundResource(android.R.color.transparent)
+        view.post {
+            val parentView = view.parent as? View
+            parentView?.setBackgroundResource(android.R.color.transparent)
+        }
+
+        // Populate confirmation details
+        val confirmSendAmount = view.findViewById<TextView>(R.id.confirmSendAmount)
+        val confirmSendAmountUSD = view.findViewById<TextView>(R.id.confirmSendAmountUSD)
+        val confirmSendTo = view.findViewById<TextView>(R.id.confirmSendTo)
+        val confirmSendFromWallet = view.findViewById<TextView>(R.id.confirmSendFromWallet)
+        val confirmSendCurrency = view.findViewById<TextView>(R.id.confirmSendCurrency)
+        val confirmSendPaymentType = view.findViewById<TextView>(R.id.confirmSendPaymentType)
+        val confirmSendNetworkFee = view.findViewById<TextView>(R.id.confirmSendNetworkFee)
+
+        val formattedAmount = String.format("%.4f %s", amount, selectedToken)
+        confirmSendAmount.text = formattedAmount
+
+        // USD equivalent
+        val price = when (selectedToken) {
+            "SOL" -> currentSolPrice
+            "ZEC" -> currentZecPrice
+            else -> 0.0
+        }
+        if (price > 0) {
+            confirmSendAmountUSD.text = String.format("≈ $%,.2f USD", amount * price)
+            confirmSendAmountUSD.visibility = View.VISIBLE
+        } else {
+            confirmSendAmountUSD.visibility = View.GONE
+        }
+
+        val recipientAddress = intent.getStringExtra(EXTRA_RECIPIENT_ADDRESS) ?: ""
+        confirmSendTo.text = formatAddressShort(recipientAddress)
+        confirmSendFromWallet.text = currentWalletName
+        confirmSendCurrency.text = if (selectedToken == "ZEC") "Zcash" else "Solana"
+
+        // Payment type
+        confirmSendPaymentType.text = when (selectedPaymentType) {
+            "normal" -> "Normal"
+            "private" -> "Private"
+            "anonymous" -> "Anonymous"
+            "transparent" -> "Transparent"
+            "shielded" -> "Shielded"
+            else -> selectedPaymentType.replaceFirstChar { it.uppercase() }
+        }
+
+        // Network fee — add 0.5% Radr fee for private/anonymous on SOL
+        val isPrivacyFee = selectedPaymentType == "private" || selectedPaymentType == "anonymous"
+        if (selectedToken == "ZEC") {
+            confirmSendNetworkFee.text = "~0.0001 ZEC"
+        } else if (isPrivacyFee) {
+            val radrFee = amount * 0.005
+            confirmSendNetworkFee.text = String.format("~%.6f SOL + %.4f SOL (0.5%%)", 0.000005, radrFee)
+        } else {
+            confirmSendNetworkFee.text = "~0.000005 SOL"
+        }
+
+        // Confirm button
+        view.findViewById<View>(R.id.confirmSendButton).setOnClickListener {
+            bottomSheet.dismiss()
+            proceedWithSend(amount)
+        }
+
+        // Cancel button
+        view.findViewById<View>(R.id.cancelSendButton).setOnClickListener {
+            bottomSheet.dismiss()
+        }
+
+        bottomSheet.show()
+    }
+
+    private fun proceedWithSend(amount: Double) {
+        sendNowButton.isEnabled = false
+        ThemedToast.show(this, "Sending payment...")
+
+        lifecycleScope.launch {
+            try {
+                val recipientAddress = intent.getStringExtra(EXTRA_RECIPIENT_ADDRESS) ?: ""
+                if (recipientAddress.isEmpty()) {
+                    withContext(Dispatchers.Main) {
+                        sendNowButton.isEnabled = true
+                        ThemedToast.show(this@RequestMoneyActivity, "No recipient address")
+                    }
+                    return@launch
+                }
+
+                val myAddress = when (selectedToken) {
+                    "ZEC" -> currentZcashAddress ?: keyManager.getZcashAddress() ?: run {
+                        withContext(Dispatchers.Main) {
+                            sendNowButton.isEnabled = true
+                            ThemedToast.show(this@RequestMoneyActivity, "Zcash wallet not set up")
+                        }
+                        return@launch
+                    }
+                    else -> currentWalletAddress.ifEmpty { keyManager.getSolanaAddress() }
+                }
+
+                val txSignature: String
+                when {
+                    selectedToken == "ZEC" -> {
+                        val zcashService = ZcashService.getInstance(this@RequestMoneyActivity)
+                        val result = zcashService.sendTransaction(recipientAddress, amount)
+                        if (result.isFailure) {
+                            withContext(Dispatchers.Main) {
+                                sendNowButton.isEnabled = true
+                                ThemedToast.show(this@RequestMoneyActivity, "Failed to send: ${result.exceptionOrNull()?.message}")
+                            }
+                            return@launch
+                        }
+                        txSignature = result.getOrNull() ?: "unknown"
+                    }
+                    selectedPaymentType == "private" -> {
+                        // ShadowWire internal transfer (hidden amount + hidden sender)
+                        val shadowWire = ShadowWireService(this@RequestMoneyActivity, currentWalletId.ifEmpty { "main" })
+                        val amountLamports = (amount * 1_000_000_000L).toLong()
+                        val result = shadowWire.internalTransfer(recipientAddress, amountLamports)
+                        if (result.isFailure) {
+                            withContext(Dispatchers.Main) {
+                                sendNowButton.isEnabled = true
+                                ThemedToast.show(this@RequestMoneyActivity, "Private send failed: ${result.exceptionOrNull()?.message}")
+                            }
+                            return@launch
+                        }
+                        txSignature = result.getOrNull()?.txSignature ?: "unknown"
+                    }
+                    selectedPaymentType == "anonymous" -> {
+                        // ShadowWire external transfer (hidden sender, visible amount)
+                        val shadowWire = ShadowWireService(this@RequestMoneyActivity, currentWalletId.ifEmpty { "main" })
+                        val amountLamports = (amount * 1_000_000_000L).toLong()
+                        val result = shadowWire.externalTransfer(recipientAddress, amountLamports)
+                        if (result.isFailure) {
+                            withContext(Dispatchers.Main) {
+                                sendNowButton.isEnabled = true
+                                ThemedToast.show(this@RequestMoneyActivity, "Anonymous send failed: ${result.exceptionOrNull()?.message}")
+                            }
+                            return@launch
+                        }
+                        txSignature = result.getOrNull()?.txSignature ?: "unknown"
+                    }
+                    else -> {
+                        // Normal Solana transfer
+                        val result = solanaService.sendTransaction(myAddress, recipientAddress, amount, keyManager, currentWalletId)
+                        if (result.isFailure) {
+                            withContext(Dispatchers.Main) {
+                                sendNowButton.isEnabled = true
+                                ThemedToast.show(this@RequestMoneyActivity, "Failed to send: ${result.exceptionOrNull()?.message}")
+                            }
+                            return@launch
+                        }
+                        txSignature = result.getOrNull() ?: "unknown"
+                    }
+                }
+
+                Log.i(TAG, "Send successful: $txSignature (type: $selectedPaymentType)")
+
+                withContext(Dispatchers.Main) {
+                    ThemedToast.show(this@RequestMoneyActivity, "Payment sent successfully")
+                    finish()
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Send error", e)
+                withContext(Dispatchers.Main) {
+                    sendNowButton.isEnabled = true
+                    ThemedToast.show(this@RequestMoneyActivity, "Error: ${e.message}")
+                }
+            }
+        }
     }
 
     private fun showRequestConfirmation(amount: Double) {
@@ -610,7 +863,6 @@ class RequestMoneyActivity : AppCompatActivity() {
 
         // Populate confirmation details
         val confirmRequestAmount = view.findViewById<TextView>(R.id.confirmRequestAmount)
-        val confirmRequestFrom = view.findViewById<TextView>(R.id.confirmRequestFrom)
         val confirmRequestRecipient = view.findViewById<TextView>(R.id.confirmRequestRecipient)
         val confirmRequestToWallet = view.findViewById<TextView>(R.id.confirmRequestToWallet)
         val confirmRequestCurrency = view.findViewById<TextView>(R.id.confirmRequestCurrency)
@@ -619,12 +871,19 @@ class RequestMoneyActivity : AppCompatActivity() {
         // Set values using the selected token
         val formattedAmount = String.format("%.4f %s", amount, selectedToken)
 
+        val displayName = intent.getStringExtra(EXTRA_RECIPIENT_NAME) ?: "User"
         confirmRequestAmount.text = formattedAmount
-        confirmRequestFrom.text = recipientName.text
-        confirmRequestRecipient.text = recipientName.text
+        confirmRequestRecipient.text = displayName
         confirmRequestToWallet.text = currentWalletName
         confirmRequestCurrency.text = selectedToken
-        confirmRequestExpiry.text = NLx402Manager.getExpiryLabel(selectedExpirySecs)
+        confirmRequestExpiry.text = when (selectedPaymentType) {
+            "normal" -> "Normal"
+            "private" -> "Private"
+            "anonymous" -> "Anonymous"
+            "transparent" -> "Transparent"
+            "shielded" -> "Shielded"
+            else -> selectedPaymentType.replaceFirstChar { it.uppercase() }
+        }
 
         // Confirm button
         val confirmButton = view.findViewById<View>(R.id.confirmRequestButton)
@@ -679,7 +938,7 @@ class RequestMoneyActivity : AppCompatActivity() {
                     description = "Payment request",
                     senderHandle = intent.getStringExtra(EXTRA_RECIPIENT_NAME),
                     recipientHandle = null,
-                    expirySecs = selectedExpirySecs
+                    expirySecs = 0L
                 )
 
                 if (quote == null) {
@@ -716,8 +975,6 @@ class RequestMoneyActivity : AppCompatActivity() {
 
                 // Generate transaction details for display
                 val currentTime = Calendar.getInstance()
-                val expiryLabel = NLx402Manager.getExpiryLabel(selectedExpirySecs)
-
                 val timeFormat = SimpleDateFormat("hh:mm a", Locale.getDefault())
                 val time = timeFormat.format(currentTime.time)
 
@@ -725,19 +982,8 @@ class RequestMoneyActivity : AppCompatActivity() {
                 val date = dateFormat.format(currentTime.time)
 
                 withContext(Dispatchers.Main) {
-                    // Launch Request Details screen
-                    val detailsIntent = Intent(this@RequestMoneyActivity, RequestDetailsActivity::class.java).apply {
-                        putExtra(RequestDetailsActivity.EXTRA_RECIPIENT_NAME, recipientName.text.toString())
-                        putExtra(RequestDetailsActivity.EXTRA_AMOUNT, amount)
-                        putExtra(RequestDetailsActivity.EXTRA_CURRENCY, selectedToken)
-                        putExtra(RequestDetailsActivity.EXTRA_TRANSACTION_NUMBER, quote.quoteId)
-                        putExtra(RequestDetailsActivity.EXTRA_QUOTE_JSON, quote.rawJson)
-                        putExtra(RequestDetailsActivity.EXTRA_EXPIRY_DATETIME, "Expires in $expiryLabel")
-                        putExtra(RequestDetailsActivity.EXTRA_TIME, time)
-                        putExtra(RequestDetailsActivity.EXTRA_DATE, date)
-                    }
-                    startActivity(detailsIntent)
-                    finish()
+                    requestNowButton.isEnabled = true
+                    showRequestDetailsBottomSheet(amount, quote.quoteId, time, date)
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to create payment request", e)
@@ -747,5 +993,106 @@ class RequestMoneyActivity : AppCompatActivity() {
                 }
             }
         }
+    }
+
+    private fun showRequestDetailsBottomSheet(amount: Double, requestId: String, time: String, date: String) {
+        val bottomSheet = BottomSheetDialog(this)
+        val view = layoutInflater.inflate(R.layout.bottom_sheet_request_details, null)
+
+        val displayMetrics = resources.displayMetrics
+        val screenHeight = displayMetrics.heightPixels
+        val desiredHeight = (screenHeight * 0.7).toInt()
+        view.minimumHeight = desiredHeight
+
+        bottomSheet.setContentView(view)
+        bottomSheet.behavior.isDraggable = true
+        bottomSheet.behavior.isFitToContents = true
+        bottomSheet.behavior.skipCollapsed = true
+
+        bottomSheet.window?.setBackgroundDrawableResource(android.R.color.transparent)
+        bottomSheet.window?.findViewById<View>(com.google.android.material.R.id.design_bottom_sheet)?.setBackgroundResource(android.R.color.transparent)
+        view.post {
+            val parentView = view.parent as? View
+            parentView?.setBackgroundResource(android.R.color.transparent)
+        }
+
+        val detailsAmount = view.findViewById<TextView>(R.id.detailsAmount)
+        val detailsCryptoAmount = view.findViewById<TextView>(R.id.detailsCryptoAmount)
+        val detailsUsdValue = view.findViewById<TextView>(R.id.detailsUsdValue)
+        val detailsPaymentType = view.findViewById<TextView>(R.id.detailsPaymentType)
+        val detailsNetworkFee = view.findViewById<TextView>(R.id.detailsNetworkFee)
+        val detailsRequestId = view.findViewById<TextView>(R.id.detailsRequestId)
+        val detailsTime = view.findViewById<TextView>(R.id.detailsTime)
+        val detailsDate = view.findViewById<TextView>(R.id.detailsDate)
+
+        // Crypto amount
+        val formattedCrypto = String.format("%.4f %s", amount, selectedToken)
+        detailsCryptoAmount.text = formattedCrypto
+
+        // USD value from cached price
+        val price = when (selectedToken) {
+            "SOL" -> currentSolPrice
+            "ZEC" -> currentZecPrice
+            else -> 0.0
+        }
+        if (price > 0) {
+            val usdValue = amount * price
+            detailsAmount.text = String.format("$%,.2f", usdValue)
+            detailsUsdValue.text = String.format("$%,.2f", usdValue)
+        } else {
+            detailsAmount.text = formattedCrypto
+            detailsUsdValue.text = "Price unavailable"
+        }
+
+        // Payment type
+        detailsPaymentType.text = when (selectedPaymentType) {
+            "normal" -> "Normal"
+            "private" -> "Private"
+            "anonymous" -> "Anonymous"
+            "transparent" -> "Transparent"
+            "shielded" -> "Shielded"
+            else -> selectedPaymentType.replaceFirstChar { it.uppercase() }
+        }
+
+        // Network fee
+        val isPrivacyFee = selectedPaymentType == "private" || selectedPaymentType == "anonymous"
+        if (selectedToken == "ZEC") {
+            detailsNetworkFee.text = "~0.0001 ZEC"
+        } else if (isPrivacyFee) {
+            val radrFee = amount * 0.005
+            detailsNetworkFee.text = String.format("~%.6f SOL + %.4f SOL (0.5%%)", 0.000005, radrFee)
+        } else {
+            detailsNetworkFee.text = "~0.000005 SOL"
+        }
+
+        detailsRequestId.text = requestId
+        detailsTime.text = time
+        detailsDate.text = date
+
+        // Share button
+        view.findViewById<View>(R.id.detailsShareButton).setOnClickListener {
+            val details = """
+                Request Details
+
+                Amount: $formattedCrypto
+                USD Value: ${detailsUsdValue.text}
+                Payment Type: ${detailsPaymentType.text}
+                Request ID: $requestId
+                Date: $date $time
+            """.trimIndent()
+
+            val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                type = "text/plain"
+                putExtra(Intent.EXTRA_TEXT, details)
+            }
+            startActivity(Intent.createChooser(shareIntent, "Share Request Details"))
+        }
+
+        // Done button
+        view.findViewById<View>(R.id.detailsDoneButton).setOnClickListener {
+            bottomSheet.dismiss()
+        }
+
+        bottomSheet.show()
     }
 }

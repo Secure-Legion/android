@@ -65,7 +65,7 @@
                 android:layout_height="20dp"
                 android:layout_gravity="center"
                 android:src="@drawable/ic_settings_cog"
-                android:tint="#888888"
+                app:tint="#888888"
                 android:contentDescription="Settings" />
 
         </FrameLayout>
@@ -203,7 +203,7 @@
                                 android:layout_height="20dp"
                                 android:src="@drawable/ic_arrow_forward"
                                 android:rotation="90"
-                                android:tint="#888888"
+                                app:tint="#888888"
                                 android:contentDescription="Dropdown" />
                         </LinearLayout>
                     </LinearLayout>

@@ -134,7 +134,7 @@
                         android:layout_height="24dp"
                         android:layout_gravity="center"
                         android:src="@drawable/ic_qr_code"
-                        android:tint="#888888"
+                        app:tint="#888888"
                         android:contentDescription="Scan QR Code" />
 
                 </FrameLayout>
@@ -410,7 +410,7 @@
                 android:layout_width="24dp"
                 android:layout_height="24dp"
                 android:src="@android:drawable/sym_action_chat"
-                android:tint="@color/text_gray"
+                app:tint="@color/text_gray"
                 android:layout_marginBottom="4dp"
                 android:contentDescription="Messages" />
 
@@ -441,7 +441,7 @@
                 android:layout_height="24dp"
                 android:src="@drawable/ic_wallet"
                 android:layout_marginBottom="4dp"
-                android:tint="@color/text_gray"
+                app:tint="@color/text_gray"
                 android:contentDescription="Wallet" />
 
             <TextView
@@ -470,7 +470,7 @@
                 android:layout_width="24dp"
                 android:layout_height="24dp"
                 android:src="@drawable/ic_add_friend"
-                android:tint="@color/text_gray"
+                app:tint="@color/text_gray"
                 android:layout_marginBottom="4dp"
                 android:contentDescription="Add Friend" />
 
@@ -501,7 +501,7 @@
                 android:layout_height="24dp"
                 android:src="@drawable/ic_lock"
                 android:layout_marginBottom="4dp"
-                android:tint="@color/text_gray"
+                app:tint="@color/text_gray"
                 android:contentDescription="Lock" />
 
             <TextView

@@ -186,6 +186,10 @@
             android:exported="false" />
 
         <activity
+            android:name=".CommunicationModeActivity"
+            android:exported="false" />
+
+        <activity
             android:name=".AutoLockActivity"
             android:exported="false" />
 
@@ -286,7 +290,8 @@
 
         <activity
             android:name=".stresstest.StressTestActivity"
-            android:exported="false" />
+            android:exported="false"
+            android:windowSoftInputMode="adjustNothing" />
 
         <activity
             android:name=".RequestDetailsActivity"

@@ -64,10 +64,11 @@ class LockActivity : AppCompatActivity() {
         Log.d("LockActivity", "App locked - user on lock screen")
 
         // Security: Prevent screenshots and screen recording on lock screen
-        window.setFlags(
-            WindowManager.LayoutParams.FLAG_SECURE,
-            WindowManager.LayoutParams.FLAG_SECURE
-        )
+        // TODO: Re-enable FLAG_SECURE after demo recording
+        // window.setFlags(
+        //     WindowManager.LayoutParams.FLAG_SECURE,
+        //     WindowManager.LayoutParams.FLAG_SECURE
+        // )
 
         // Wallet exists - show lock screen UI
         Log.d("LockActivity", "Wallet exists, showing password unlock")

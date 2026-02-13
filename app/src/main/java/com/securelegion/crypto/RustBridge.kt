@@ -636,6 +636,12 @@ object RustBridge {
     external fun startBootstrapListener()
 
     /**
+     * Stop the bootstrap event listener (call before restart to allow a fresh listener)
+     * Signals the listener to exit; the guard is cleared so a new one can be spawned.
+     */
+    external fun stopBootstrapListener()
+
+    /**
      * Get Tor bootstrap status (0-100%)
      * @return Bootstrap percentage (0-100), or -1 on error
      */

@@ -104,7 +104,7 @@
                         android:layout_height="18dp"
                         android:layout_gravity="center"
                         android:src="@drawable/ic_edit"
-                        android:tint="#888888" />
+                        app:tint="#888888" />
 
                 </FrameLayout>
 
@@ -167,7 +167,7 @@
                         android:layout_height="20dp"
                         android:layout_gravity="center"
                         android:src="@android:drawable/ic_menu_share"
-                        android:tint="#888888" />
+                        app:tint="#888888" />
 
                 </FrameLayout>
 
@@ -348,7 +348,7 @@
                         android:layout_height="20dp"
                         android:layout_gravity="center"
                         android:src="@android:drawable/ic_menu_share"
-                        android:tint="#888888" />
+                        app:tint="#888888" />
 
                 </FrameLayout>
 
@@ -380,7 +380,7 @@
                         android:layout_height="24dp"
                         android:layout_gravity="center"
                         android:src="@drawable/ic_qr_code"
-                        android:tint="#888888" />
+                        app:tint="#888888" />
 
                 </FrameLayout>
 
@@ -435,7 +435,7 @@
                         android:layout_height="24dp"
                         android:layout_gravity="center"
                         android:src="@drawable/ic_person"
-                        android:tint="#888888" />
+                        app:tint="#888888" />
 
                 </FrameLayout>
 
@@ -497,7 +497,7 @@
                 android:layout_width="24dp"
                 android:layout_height="24dp"
                 android:src="@android:drawable/sym_action_chat"
-                android:tint="@color/text_gray"
+                app:tint="@color/text_gray"
                 android:layout_marginBottom="4dp"
                 android:contentDescription="Messages" />
 
@@ -528,7 +528,7 @@
                 android:layout_height="24dp"
                 android:src="@drawable/ic_wallet"
                 android:layout_marginBottom="4dp"
-                android:tint="@color/text_gray"
+                app:tint="@color/text_gray"
                 android:contentDescription="Wallet" />
 
             <TextView
@@ -557,7 +557,7 @@
                 android:layout_width="24dp"
                 android:layout_height="24dp"
                 android:src="@drawable/ic_add_friend"
-                android:tint="@color/text_gray"
+                app:tint="@color/text_gray"
                 android:layout_marginBottom="4dp"
                 android:contentDescription="Add Friend" />
 
@@ -588,7 +588,7 @@
                 android:layout_height="24dp"
                 android:src="@drawable/ic_call"
                 android:layout_marginBottom="4dp"
-                android:tint="@color/text_gray"
+                app:tint="@color/text_gray"
                 android:contentDescription="Phone" />
 
             <TextView

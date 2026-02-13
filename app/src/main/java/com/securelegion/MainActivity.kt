@@ -596,8 +596,14 @@ class MainActivity : BaseActivity() {
                 }
 
                 // Update UI on main thread
-                Log.d("MainActivity", "Showing chat list UI")
-                chatList.visibility = View.VISIBLE
+                val messagesEmptyState = findViewById<View>(R.id.messagesEmptyState)
+                if (chats.isEmpty()) {
+                    chatList.visibility = View.GONE
+                    messagesEmptyState.visibility = View.VISIBLE
+                } else {
+                    chatList.visibility = View.VISIBLE
+                    messagesEmptyState.visibility = View.GONE
+                }
 
                 Log.d("MainActivity", "Setting up RecyclerView adapter with ${chats.size} items")
                 // Set adapter
@@ -634,6 +640,7 @@ class MainActivity : BaseActivity() {
                 withContext(Dispatchers.Main) {
                     // Keep chat list visible even on error
                     chatList.visibility = View.VISIBLE
+                    findViewById<View>(R.id.messagesEmptyState).visibility = View.GONE
                 }
             }
         }
@@ -1087,7 +1094,7 @@ class MainActivity : BaseActivity() {
             typeface = android.graphics.Typeface.create("@font/space_grotesk_bold", android.graphics.Typeface.NORMAL)
         }
 
-        findViewById<android.widget.ImageView>(R.id.tabContacts).apply {
+        findViewById<android.widget.ImageView>(R.id.tabContactsIcon).apply {
             setColorFilter(ContextCompat.getColor(context, R.color.text_gray))
         }
     }
@@ -1119,7 +1126,7 @@ class MainActivity : BaseActivity() {
             typeface = android.graphics.Typeface.create("@font/space_grotesk_bold", android.graphics.Typeface.BOLD)
         }
 
-        findViewById<android.widget.ImageView>(R.id.tabContacts).apply {
+        findViewById<android.widget.ImageView>(R.id.tabContactsIcon).apply {
             setColorFilter(ContextCompat.getColor(context, R.color.text_gray))
         }
     }
@@ -1151,7 +1158,7 @@ class MainActivity : BaseActivity() {
             typeface = android.graphics.Typeface.create("@font/space_grotesk_bold", android.graphics.Typeface.NORMAL)
         }
 
-        findViewById<android.widget.ImageView>(R.id.tabContacts).apply {
+        findViewById<android.widget.ImageView>(R.id.tabContactsIcon).apply {
             setColorFilter(ContextCompat.getColor(context, R.color.text_white))
         }
     }

@@ -147,6 +147,32 @@
                 android:textSize="14sp" />
         </LinearLayout>
 
+        <!-- Payment Type -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="12dp"
+            android:orientation="horizontal">
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:fontFamily="@font/poppins_regular"
+                android:text="Payment Type"
+                android:textColor="#888888"
+                android:textSize="14sp" />
+
+            <TextView
+                android:id="@+id/confirmSendPaymentType"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:fontFamily="@font/poppins_medium"
+                android:text="Private"
+                android:textColor="@color/text_white"
+                android:textSize="14sp" />
+        </LinearLayout>
+
         <!-- Network Fee -->
         <LinearLayout
             android:layout_width="match_parent"

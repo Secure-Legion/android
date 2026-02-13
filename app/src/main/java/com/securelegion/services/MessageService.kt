@@ -430,7 +430,7 @@ class MessageService(private val context: Context) {
                 voiceFilePath = voiceFilePath,
                 isSentByMe = true,
                 timestamp = currentTime,
-                status = Message.STATUS_PENDING,
+                status = Message.STATUS_PING_SENT, // Start as PING_SENT so pollForPongsAndSendMessages() can find it
                 signatureBase64 = signatureBase64,
                 nonceBase64 = nonceBase64,
                 messageNonce = messageNonce,        // CRITICAL: Stored once, reused on all retries
@@ -623,7 +623,7 @@ class MessageService(private val context: Context) {
                 attachmentData = imageBase64, // Store original for display
                 isSentByMe = true,
                 timestamp = currentTime,
-                status = Message.STATUS_PENDING,
+                status = Message.STATUS_PING_SENT, // Start as PING_SENT so pollForPongsAndSendMessages() can find it
                 signatureBase64 = signatureBase64,
                 nonceBase64 = nonceBase64,
                 messageNonce = messageNonce,        // CRITICAL: Stored once, reused on all retries
@@ -1039,7 +1039,7 @@ class MessageService(private val context: Context) {
                 messageType = Message.MESSAGE_TYPE_PAYMENT_REQUEST,
                 isSentByMe = true,
                 timestamp = currentTime,
-                status = Message.STATUS_PENDING,
+                status = Message.STATUS_PING_SENT, // Start as PING_SENT so pollForPongsAndSendMessages() can find it
                 signatureBase64 = signatureBase64,
                 nonceBase64 = nonceBase64,
                 messageNonce = messageNonce,        // CRITICAL: Stored once, reused on all retries
@@ -1228,7 +1228,7 @@ class MessageService(private val context: Context) {
                 messageType = Message.MESSAGE_TYPE_PAYMENT_SENT,
                 isSentByMe = true,
                 timestamp = currentTime,
-                status = Message.STATUS_PENDING,
+                status = Message.STATUS_PING_SENT, // Start as PING_SENT so pollForPongsAndSendMessages() can find it
                 signatureBase64 = signatureBase64,
                 nonceBase64 = nonceBase64,
                 messageNonce = messageNonce,        // CRITICAL: Stored once, reused on all retries
@@ -1378,7 +1378,7 @@ class MessageService(private val context: Context) {
                 messageType = Message.MESSAGE_TYPE_PAYMENT_ACCEPTED,
                 isSentByMe = true,
                 timestamp = currentTime,
-                status = Message.STATUS_PENDING,
+                status = Message.STATUS_PING_SENT, // Start as PING_SENT so pollForPongsAndSendMessages() can find it
                 signatureBase64 = signatureBase64,
                 nonceBase64 = nonceBase64,
                 messageNonce = messageNonce,        // CRITICAL: Stored once, reused on all retries

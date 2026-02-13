@@ -78,13 +78,16 @@ class SolanaService(private val context: Context) {
             Log.d(TAG, "Fetching SOL balance for: $publicKey")
             Log.d(TAG, "Making request to: $HELIUS_RPC_URL")
 
-            // Build JSON-RPC 2.0 request
+            // Build JSON-RPC 2.0 request with "processed" commitment for fastest balance updates
             val rpcRequest = JSONObject().apply {
                 put("jsonrpc", "2.0")
                 put("id", 1)
                 put("method", "getBalance")
                 put("params", JSONArray().apply {
                     put(publicKey)
+                    put(JSONObject().apply {
+                        put("commitment", "processed")
+                    })
                 })
             }
 

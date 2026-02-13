@@ -92,7 +92,7 @@
             android:layout_width="24dp"
             android:layout_height="24dp"
             android:src="@android:drawable/ic_menu_search"
-            android:tint="@color/text_gray"
+            app:tint="@color/text_gray"
             app:layout_constraintTop_toTopOf="parent"
             app:layout_constraintBottom_toBottomOf="parent"
             app:layout_constraintStart_toStartOf="parent"
@@ -115,18 +115,26 @@
             app:layout_constraintStart_toEndOf="@id/searchIcon"
             app:layout_constraintEnd_toStartOf="@id/newMessageBtn" />
 
-        <ImageView
+        <FrameLayout
             android:id="@+id/newMessageBtn"
-            android:layout_width="24dp"
-            android:layout_height="24dp"
-            android:src="@drawable/ic_compose"
+            android:layout_width="36dp"
+            android:layout_height="36dp"
+            android:background="@drawable/top_icon_bg"
             android:clickable="true"
             android:focusable="true"
-            android:tint="@color/text_gray"
             app:layout_constraintTop_toTopOf="parent"
             app:layout_constraintBottom_toBottomOf="parent"
-            app:layout_constraintEnd_toEndOf="parent"
-            android:contentDescription="New Message" />
+            app:layout_constraintEnd_toEndOf="parent">
+
+            <ImageView
+                android:layout_width="18dp"
+                android:layout_height="18dp"
+                android:layout_gravity="center"
+                android:src="@drawable/ic_compose"
+                app:tint="@color/text_gray"
+                android:contentDescription="New Message" />
+
+        </FrameLayout>
 
     </androidx.constraintlayout.widget.ConstraintLayout>
 
@@ -173,15 +181,23 @@
             android:layout_height="1dp"
             android:layout_weight="1" />
 
-        <ImageView
+        <FrameLayout
             android:id="@+id/tabContacts"
-            android:layout_width="18dp"
-            android:layout_height="20dp"
-            android:src="@drawable/ic_contacts"
+            android:layout_width="36dp"
+            android:layout_height="36dp"
+            android:background="@drawable/top_icon_bg"
             android:clickable="true"
-            android:focusable="true"
-            android:background="?attr/selectableItemBackgroundBorderless"
-            android:contentDescription="Contacts" />
+            android:focusable="true">
+
+            <ImageView
+                android:id="@+id/tabContactsIcon"
+                android:layout_width="18dp"
+                android:layout_height="18dp"
+                android:layout_gravity="center"
+                android:src="@drawable/ic_contacts"
+                android:contentDescription="Contacts" />
+
+        </FrameLayout>
 
     </LinearLayout>
 
@@ -210,6 +226,42 @@
                 android:paddingEnd="20dp"
                 android:paddingTop="8dp"
                 android:background="#000000" />
+
+            <!-- Messages Empty State -->
+            <LinearLayout
+                android:id="@+id/messagesEmptyState"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:orientation="vertical"
+                android:gravity="center"
+                android:visibility="gone">
+
+                <ImageView
+                    android:layout_width="80dp"
+                    android:layout_height="80dp"
+                    android:src="@drawable/ic_compose"
+                    app:tint="#333333"
+                    android:contentDescription="No Messages" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="16dp"
+                    android:text="No Messages Yet"
+                    android:textColor="#999999"
+                    android:textSize="16sp"
+                    android:fontFamily="@font/poppins_medium" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:text="Start a conversation to get started"
+                    android:textColor="#666666"
+                    android:textSize="13sp"
+                    android:fontFamily="@font/poppins_regular" />
+
+            </LinearLayout>
 
         </LinearLayout>
 
@@ -268,7 +320,7 @@
                 android:layout_width="24dp"
                 android:layout_height="24dp"
                 android:src="@android:drawable/sym_action_chat"
-                android:tint="@color/text_gray"
+                app:tint="@color/text_gray"
                 android:layout_marginBottom="4dp"
                 android:contentDescription="Messages" />
 
@@ -300,7 +352,7 @@
                 android:layout_height="24dp"
                 android:src="@drawable/ic_wallet"
                 android:layout_marginBottom="4dp"
-                android:tint="@color/text_gray"
+                app:tint="@color/text_gray"
                 android:contentDescription="Wallet" />
 
             <TextView
@@ -336,7 +388,7 @@
                     android:layout_width="24dp"
                     android:layout_height="24dp"
                     android:src="@drawable/ic_add_friend"
-                    android:tint="@color/text_gray"
+                    app:tint="@color/text_gray"
                     android:contentDescription="Add Friend" />
 
                 <!-- Badge for pending friend requests -->
@@ -383,7 +435,7 @@
                 android:layout_height="24dp"
                 android:src="@drawable/ic_call"
                 android:layout_marginBottom="4dp"
-                android:tint="@color/text_gray"
+                app:tint="@color/text_gray"
                 android:contentDescription="Phone" />
 
             <TextView

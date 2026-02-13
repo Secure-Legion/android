@@ -37,10 +37,11 @@ class SplashActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
 
         // Security: Prevent screenshots and screen recording
-        window.setFlags(
-            WindowManager.LayoutParams.FLAG_SECURE,
-            WindowManager.LayoutParams.FLAG_SECURE
-        )
+        // TODO: Re-enable FLAG_SECURE after demo recording
+        // window.setFlags(
+        //     WindowManager.LayoutParams.FLAG_SECURE,
+        //     WindowManager.LayoutParams.FLAG_SECURE
+        // )
 
         // Keep status bar dark gray (matches splash screen theme)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
@@ -177,6 +178,7 @@ class SplashActivity : AppCompatActivity() {
                     }
 
                     if (!controlPortAlive) {
+                        // Control port dead = Tor daemon not running at all
                         Log.i("SplashActivity", "Tor control port not responding - starting fresh initialization")
                         checksComplete = true
                         runOnUiThread {
@@ -186,18 +188,16 @@ class SplashActivity : AppCompatActivity() {
                         return@Thread
                     }
 
-                    val socksRunning = RustBridge.isSocksProxyRunning()
-                    val socksConnected = if (socksRunning) {
-                        RustBridge.testSocksConnectivity()
-                    } else {
-                        false
-                    }
+                    // Control port alive — check bootstrap FIRST (gate SOCKS on bootstrap==100)
+                    val bootstrapStatus = RustBridge.getBootstrapStatus()
 
-                    if (socksConnected) {
-                        Log.i("SplashActivity", "SOCKS proxy running - checking bootstrap status...")
-                        val bootstrapStatus = RustBridge.getBootstrapStatus()
+                    if (bootstrapStatus >= 100) {
+                        // Bootstrap complete — check circuit status from the already-authenticated
+                        // event listener (no raw control-port probes needed)
+                        val circuitsEstablished = RustBridge.getCircuitEstablished() >= 1
+                        val socksRunning = RustBridge.isSocksProxyRunning()
 
-                        if (bootstrapStatus >= 100) {
+                        if (circuitsEstablished && socksRunning) {
                             Log.i("SplashActivity", "✓ Tor fully bootstrapped (100%) - checking services...")
 
                             if (TorService.isRunning() && TorService.isMessagingReady()) {
@@ -223,25 +223,34 @@ class SplashActivity : AppCompatActivity() {
                                     }, 500)
                                 }
                             }
-                        } else if (bootstrapStatus > 0) {
-                            Log.i("SplashActivity", "Tor bootstrapping at $bootstrapStatus% - verifying progress...")
+                        } else if (TorService.isRunning()) {
+                            // Bootstrap 100% but SOCKS not ready — circuits still forming, don't reinit
+                            Log.i("SplashActivity", "Bootstrap 100% but SOCKS not ready yet — waiting for circuits (TorService running)")
                             checksComplete = true
-
-                            // Don't duplicate TorService's watchdog — just wait and monitor.
-                            // TorService has its own stall detector (180s for bridges, 60s direct)
-                            // that will restart Tor if needed. SplashActivity should only observe.
-                            Log.i("SplashActivity", "Bootstrap at $bootstrapStatus% - deferring to TorService watchdog")
                             runOnUiThread {
-                                updateStatus("Connecting to Tor network... ($bootstrapStatus%)")
+                                updateStatus("Establishing circuits...")
                             }
                             waitForBootstrap()
                         } else {
-                            Log.w("SplashActivity", "Bootstrap status is $bootstrapStatus - reinitializing")
+                            // Bootstrap 100% but TorService not running — need reinit
+                            Log.w("SplashActivity", "Bootstrap 100% but TorService not running — reinitializing")
                             checksComplete = true
                             startFreshTorInitialization(torManager)
                         }
+                    } else if (bootstrapStatus > 0 || TorService.isRunning()) {
+                        // Still bootstrapping, or TorService running but bootstrap at 0% (early startup)
+                        // Don't duplicate TorService's watchdog — just wait and monitor.
+                        // TorService has its own stall detector (180s for bridges, 60s direct)
+                        // that will restart Tor if needed. SplashActivity should only observe.
+                        Log.i("SplashActivity", "Bootstrap at $bootstrapStatus% (TorService running=${TorService.isRunning()}) - deferring to TorService watchdog")
+                        checksComplete = true
+                        runOnUiThread {
+                            updateStatus("Connecting to Tor network... ($bootstrapStatus%)")
+                        }
+                        waitForBootstrap()
                     } else {
-                        Log.i("SplashActivity", "Tor not connected - initializing...")
+                        // bootstrap == 0 and TorService not running — need reinit
+                        Log.w("SplashActivity", "Bootstrap at 0% and TorService not running - reinitializing")
                         checksComplete = true
                         startFreshTorInitialization(torManager)
                     }
@@ -466,12 +475,14 @@ class SplashActivity : AppCompatActivity() {
                     }
 
                     // Check if bootstrap is complete
-                    if (status >= 100 && !bootstrapComplete) {
+                    // Tor reports 95% when bootstrap is done; 100% only comes when a circuit is first used
+                    // Accept 95% as complete since circuits are already being built at that point
+                    if (status >= 95 && !bootstrapComplete) {
                         bootstrapComplete = true
                         if (isFirstTimeSetup) {
-                            Log.i("SplashActivity", "✓ Tor bootstrap complete (100%) - proceeding to setup")
+                            Log.i("SplashActivity", "✓ Tor bootstrap complete ($status%) - proceeding to setup")
                         } else {
-                            Log.i("SplashActivity", "✓ Tor bootstrap complete (100%) - waiting for listeners...")
+                            Log.i("SplashActivity", "✓ Tor bootstrap complete ($status%) - waiting for listeners...")
                         }
                     }
 

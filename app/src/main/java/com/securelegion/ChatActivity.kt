@@ -727,19 +727,8 @@ class ChatActivity : BaseActivity() {
             parentView?.setBackgroundResource(android.R.color.transparent)
         }
 
-        // Send Money option
-        view.findViewById<View>(R.id.sendMoneyOption).setOnClickListener {
-            bottomSheet.dismiss()
-            val intent = Intent(this, SendMoneyActivity::class.java).apply {
-                putExtra(SendMoneyActivity.EXTRA_RECIPIENT_NAME, contactName)
-                putExtra(SendMoneyActivity.EXTRA_RECIPIENT_ADDRESS, contactAddress)
-                putExtra(SendMoneyActivity.EXTRA_CONTACT_ID, contactId)
-            }
-            startActivity(intent)
-        }
-
-        // Request Money option
-        view.findViewById<View>(R.id.requestMoneyOption).setOnClickListener {
+        // SecurePay option (combined Send & Request)
+        view.findViewById<View>(R.id.securePayOption).setOnClickListener {
             bottomSheet.dismiss()
             val intent = Intent(this, RequestMoneyActivity::class.java).apply {
                 putExtra(RequestMoneyActivity.EXTRA_RECIPIENT_NAME, contactName)
@@ -749,24 +738,10 @@ class ChatActivity : BaseActivity() {
             startActivity(intent)
         }
 
-        // Send File option
-        view.findViewById<View>(R.id.sendFileOption).setOnClickListener {
-            bottomSheet.dismiss()
-            ThemedToast.show(this, "Send File - Coming soon")
-            // TODO: Implement send file functionality
-        }
-
         // Send Image option
         view.findViewById<View>(R.id.sendImageOption).setOnClickListener {
             bottomSheet.dismiss()
             showImageSourceDialog()
-        }
-
-        // Send Video option
-        view.findViewById<View>(R.id.sendVideoOption).setOnClickListener {
-            bottomSheet.dismiss()
-            ThemedToast.show(this, "Send Video - Coming soon")
-            // TODO: Implement send video functionality
         }
 
         bottomSheet.show()
@@ -1926,6 +1901,7 @@ class ChatActivity : BaseActivity() {
                 putExtra(SendMoneyActivity.EXTRA_PAYMENT_AMOUNT, message.paymentAmount ?: 0L)
                 putExtra(SendMoneyActivity.EXTRA_PAYMENT_TOKEN, message.paymentToken ?: "SOL")
                 putExtra(SendMoneyActivity.EXTRA_IS_PAYMENT_REQUEST, true)
+                putExtra(SendMoneyActivity.EXTRA_MESSAGE_ID, message.messageId)
             }
             startActivity(intent)
         }

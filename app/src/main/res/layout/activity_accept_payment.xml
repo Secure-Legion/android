@@ -207,7 +207,7 @@
                             android:layout_height="16dp"
                             android:src="@drawable/ic_arrow_forward"
                             android:rotation="90"
-                            android:tint="#888888"
+                            app:tint="#888888"
                             android:contentDescription="Dropdown" />
 
                     </LinearLayout>

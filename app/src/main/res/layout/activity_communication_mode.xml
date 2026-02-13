@@ -1,0 +1,422 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.constraintlayout.widget.ConstraintLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#000000">
+
+    <!-- Header -->
+    <LinearLayout
+        android:id="@+id/header"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:paddingStart="20dp"
+        android:paddingEnd="20dp"
+        android:paddingTop="16dp"
+        android:paddingBottom="16dp"
+        android:fitsSystemWindows="true"
+        app:layout_constraintTop_toTopOf="parent">
+
+        <!-- Back Button -->
+        <FrameLayout
+            android:id="@+id/backButton"
+            android:layout_width="42dp"
+            android:layout_height="42dp"
+            android:background="@drawable/top_icon_bg"
+            android:clickable="true"
+            android:focusable="true">
+
+            <ImageView
+                android:layout_width="20dp"
+                android:layout_height="20dp"
+                android:layout_gravity="center"
+                android:src="@drawable/ic_back_arrow"
+                android:contentDescription="Back" />
+
+        </FrameLayout>
+
+        <!-- Title -->
+        <TextView
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="Communication"
+            android:textSize="24sp"
+            android:textColor="#999999"
+            android:fontFamily="@font/space_grotesk_bold"
+            android:gravity="center" />
+
+        <!-- Spacer for alignment -->
+        <View
+            android:layout_width="42dp"
+            android:layout_height="42dp" />
+
+    </LinearLayout>
+
+    <!-- Content -->
+    <ScrollView
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:fillViewport="false"
+        android:scrollbars="none"
+        app:layout_constraintTop_toBottomOf="@id/header"
+        app:layout_constraintBottom_toBottomOf="parent">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:paddingStart="20dp"
+            android:paddingEnd="20dp"
+            android:paddingTop="16dp"
+            android:paddingBottom="24dp">
+
+            <!-- SecureMesh Section Header -->
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="SecureMesh"
+                android:textSize="18sp"
+                android:textColor="#FFFFFF"
+                android:fontFamily="@font/space_grotesk_bold"
+                android:layout_marginBottom="8dp" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="LoRa mesh network for off-grid encrypted communication"
+                android:textSize="13sp"
+                android:textColor="#666666"
+                android:fontFamily="@font/poppins_regular"
+                android:layout_marginBottom="20dp" />
+
+            <!-- SecureMesh Toggle -->
+            <LinearLayout
+                android:id="@+id/secureMeshItem"
+                android:layout_width="match_parent"
+                android:layout_height="80dp"
+                android:orientation="horizontal"
+                android:background="@drawable/settings_box_bg"
+                android:paddingStart="10dp"
+                android:paddingEnd="10dp"
+                android:layout_marginBottom="12dp"
+                android:gravity="center_vertical">
+
+                <FrameLayout
+                    android:layout_width="50dp"
+                    android:layout_height="50dp"
+                    android:background="@drawable/settings_icon_bg"
+                    android:layout_marginStart="8dp"
+                    android:layout_marginEnd="16dp">
+
+                    <ImageView
+                        android:layout_width="24dp"
+                        android:layout_height="24dp"
+                        android:layout_gravity="center"
+                        android:src="@drawable/ic_mesh" />
+
+                </FrameLayout>
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:orientation="vertical">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Enable SecureMesh"
+                        android:textSize="16sp"
+                        android:textColor="#CCCCCC"
+                        android:fontFamily="@font/poppins_medium" />
+
+                    <TextView
+                        android:id="@+id/secureMeshStatus"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Disconnected"
+                        android:textSize="12sp"
+                        android:textColor="#666666"
+                        android:fontFamily="@font/poppins_regular" />
+
+                </LinearLayout>
+
+                <androidx.appcompat.widget.SwitchCompat
+                    android:id="@+id/secureMeshSwitch"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:checked="false"
+                    app:thumbTint="#333333"
+                    app:trackTint="#888888" />
+
+            </LinearLayout>
+
+            <!-- Connection Status Card (visible when enabled) -->
+            <LinearLayout
+                android:id="@+id/connectionStatusCard"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:background="@drawable/settings_box_bg"
+                android:padding="16dp"
+                android:layout_marginBottom="12dp"
+                android:visibility="gone">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Network Status"
+                    android:textSize="14sp"
+                    android:textColor="#888888"
+                    android:fontFamily="@font/poppins_medium"
+                    android:layout_marginBottom="12dp" />
+
+                <!-- Nodes Connected -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:layout_marginBottom="8dp">
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="Nodes Connected"
+                        android:textSize="14sp"
+                        android:textColor="#666666"
+                        android:fontFamily="@font/poppins_regular" />
+
+                    <TextView
+                        android:id="@+id/nodesConnected"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="0"
+                        android:textSize="14sp"
+                        android:textColor="#CCCCCC"
+                        android:fontFamily="@font/poppins_medium" />
+
+                </LinearLayout>
+
+                <!-- Signal Strength -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:layout_marginBottom="8dp">
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="Signal Strength"
+                        android:textSize="14sp"
+                        android:textColor="#666666"
+                        android:fontFamily="@font/poppins_regular" />
+
+                    <TextView
+                        android:id="@+id/signalStrength"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="--"
+                        android:textSize="14sp"
+                        android:textColor="#CCCCCC"
+                        android:fontFamily="@font/poppins_medium" />
+
+                </LinearLayout>
+
+                <!-- Channel -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal">
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="Channel"
+                        android:textSize="14sp"
+                        android:textColor="#666666"
+                        android:fontFamily="@font/poppins_regular" />
+
+                    <TextView
+                        android:id="@+id/meshChannel"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Default"
+                        android:textSize="14sp"
+                        android:textColor="#CCCCCC"
+                        android:fontFamily="@font/poppins_medium" />
+
+                </LinearLayout>
+
+            </LinearLayout>
+
+            <!-- Info Section -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:background="@drawable/settings_box_bg"
+                android:padding="16dp"
+                android:layout_marginTop="8dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="About SecureMesh"
+                    android:textSize="14sp"
+                    android:textColor="#888888"
+                    android:fontFamily="@font/poppins_medium"
+                    android:layout_marginBottom="8dp" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="SecureMesh uses LoRa radio technology to create a decentralized mesh network for secure communication without cellular or internet connectivity.\n\nRequirements:\n\u2022 Meshtastic-compatible LoRa device\n\u2022 Bluetooth enabled\n\u2022 Device paired via Bluetooth"
+                    android:textSize="13sp"
+                    android:textColor="#666666"
+                    android:fontFamily="@font/poppins_regular"
+                    android:lineSpacingExtra="4dp" />
+
+            </LinearLayout>
+
+            <!-- Device Settings (visible when enabled) -->
+            <LinearLayout
+                android:id="@+id/deviceSettingsSection"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:layout_marginTop="20dp"
+                android:visibility="gone">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Device Settings"
+                    android:textSize="18sp"
+                    android:textColor="#FFFFFF"
+                    android:fontFamily="@font/space_grotesk_bold"
+                    android:layout_marginBottom="16dp" />
+
+                <!-- Pair Device -->
+                <LinearLayout
+                    android:id="@+id/pairDeviceItem"
+                    android:layout_width="match_parent"
+                    android:layout_height="80dp"
+                    android:orientation="horizontal"
+                    android:background="@drawable/settings_box_bg"
+                    android:paddingStart="10dp"
+                    android:paddingEnd="10dp"
+                    android:layout_marginBottom="12dp"
+                    android:gravity="center_vertical"
+                    android:clickable="true"
+                    android:focusable="true">
+
+                    <FrameLayout
+                        android:layout_width="50dp"
+                        android:layout_height="50dp"
+                        android:background="@drawable/settings_icon_bg"
+                        android:layout_marginStart="8dp"
+                        android:layout_marginEnd="16dp">
+
+                        <ImageView
+                            android:layout_width="24dp"
+                            android:layout_height="24dp"
+                            android:layout_gravity="center"
+                            android:src="@android:drawable/stat_sys_data_bluetooth"
+                            app:tint="#888888" />
+
+                    </FrameLayout>
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="Pair LoRa Device"
+                        android:textSize="16sp"
+                        android:textColor="#CCCCCC"
+                        android:fontFamily="@font/poppins_medium" />
+
+                    <FrameLayout
+                        android:layout_width="36dp"
+                        android:layout_height="36dp"
+                        android:layout_marginEnd="8dp"
+                        android:background="@drawable/arrow_bg">
+
+                        <ImageView
+                            android:layout_width="18dp"
+                            android:layout_height="18dp"
+                            android:layout_gravity="center"
+                            android:src="@drawable/ic_arrow_forward" />
+
+                    </FrameLayout>
+
+                </LinearLayout>
+
+                <!-- Channel Settings -->
+                <LinearLayout
+                    android:id="@+id/channelSettingsItem"
+                    android:layout_width="match_parent"
+                    android:layout_height="80dp"
+                    android:orientation="horizontal"
+                    android:background="@drawable/settings_box_bg"
+                    android:paddingStart="10dp"
+                    android:paddingEnd="10dp"
+                    android:layout_marginBottom="12dp"
+                    android:gravity="center_vertical"
+                    android:clickable="true"
+                    android:focusable="true">
+
+                    <FrameLayout
+                        android:layout_width="50dp"
+                        android:layout_height="50dp"
+                        android:background="@drawable/settings_icon_bg"
+                        android:layout_marginStart="8dp"
+                        android:layout_marginEnd="16dp">
+
+                        <ImageView
+                            android:layout_width="24dp"
+                            android:layout_height="24dp"
+                            android:layout_gravity="center"
+                            android:src="@drawable/ic_settings_cog" />
+
+                    </FrameLayout>
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="Channel Settings"
+                        android:textSize="16sp"
+                        android:textColor="#CCCCCC"
+                        android:fontFamily="@font/poppins_medium" />
+
+                    <FrameLayout
+                        android:layout_width="36dp"
+                        android:layout_height="36dp"
+                        android:layout_marginEnd="8dp"
+                        android:background="@drawable/arrow_bg">
+
+                        <ImageView
+                            android:layout_width="18dp"
+                            android:layout_height="18dp"
+                            android:layout_gravity="center"
+                            android:src="@drawable/ic_arrow_forward" />
+
+                    </FrameLayout>
+
+                </LinearLayout>
+
+            </LinearLayout>
+
+        </LinearLayout>
+
+    </ScrollView>
+
+</androidx.constraintlayout.widget.ConstraintLayout>

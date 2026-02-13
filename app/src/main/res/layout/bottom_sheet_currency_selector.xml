@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
     android:orientation="vertical"
@@ -78,7 +79,7 @@
                 android:layout_width="24dp"
                 android:layout_height="24dp"
                 android:src="@drawable/ic_check"
-                android:tint="#00D4AA"
+                app:tint="#00D4AA"
                 android:visibility="visible"
                 android:contentDescription="Selected" />
 
@@ -126,7 +127,7 @@
                 android:layout_width="24dp"
                 android:layout_height="24dp"
                 android:src="@drawable/ic_check"
-                android:tint="#00D4AA"
+                app:tint="#00D4AA"
                 android:visibility="gone"
                 android:contentDescription="Selected" />
 

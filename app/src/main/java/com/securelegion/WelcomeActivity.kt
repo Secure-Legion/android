@@ -28,10 +28,11 @@ class WelcomeActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
 
         // Security: Prevent screenshots and screen recording
-        window.setFlags(
-            WindowManager.LayoutParams.FLAG_SECURE,
-            WindowManager.LayoutParams.FLAG_SECURE
-        )
+        // TODO: Re-enable FLAG_SECURE after demo recording
+        // window.setFlags(
+        //     WindowManager.LayoutParams.FLAG_SECURE,
+        //     WindowManager.LayoutParams.FLAG_SECURE
+        // )
 
         // Make status bar white with dark icons
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
