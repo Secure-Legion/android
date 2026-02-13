@@ -56,7 +56,7 @@ README MAIN.md
 *.keystore
 keystore.properties
 release-keystore.jks
-gradlew.bat
+*.bat
 *.png
 notification_*.png
 screenshot_*.png
