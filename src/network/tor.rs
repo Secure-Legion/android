@@ -5,7 +5,7 @@
 
 use std::error::Error;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU8, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering};
 use tokio::io::{AsyncWriteExt, AsyncReadExt, BufReader, AsyncBufReadExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::Mutex;
@@ -22,10 +22,123 @@ pub static BOOTSTRAP_STATUS: AtomicU32 = AtomicU32::new(0);
 /// Updated by event listener polling GETINFO status/circuit-established
 pub static CIRCUIT_ESTABLISHED: AtomicU8 = AtomicU8::new(0);
 
-/// Get bootstrap status from the global atomic (fast, no control port query)
-/// This is updated in real-time by the event listener
+/// Get bootstrap status — always returns immediately (atomic read).
+/// When the atomic is 0 (event listener hasn't caught up), spawns a background
+/// thread that keeps a persistent control port connection and polls every 500ms
+/// until bootstrap reaches 100% or 10 seconds elapse.
 pub fn get_bootstrap_status_fast() -> u32 {
-    BOOTSTRAP_STATUS.load(Ordering::SeqCst)
+    let cached = BOOTSTRAP_STATUS.load(Ordering::SeqCst);
+    if cached > 0 {
+        return cached;
+    }
+
+    // Atomic is 0 — kick off a persistent background poller (at most one at a time)
+    static QUERY_RUNNING: AtomicBool = AtomicBool::new(false);
+    if QUERY_RUNNING.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst).is_ok() {
+        std::thread::spawn(move || {
+            bootstrap_direct_poll_loop();
+            QUERY_RUNNING.store(false, Ordering::SeqCst);
+        });
+    }
+
+    0 // Return immediately; background thread will update atomic for next poll
+}
+
+/// Background polling loop: opens one TCP connection to the control port,
+/// then queries GETINFO status/bootstrap-phase every 500ms until 100%.
+fn bootstrap_direct_poll_loop() {
+    use std::io::{Read, Write};
+    use std::net::TcpStream as StdTcpStream;
+    use std::time::Duration;
+
+    // Try to connect (retry up to 30 times = 6 seconds at 200ms)
+    let mut stream = None;
+    for _ in 0..30 {
+        let addr: std::net::SocketAddr = match "127.0.0.1:9051".parse() {
+            Ok(a) => a,
+            Err(_) => return,
+        };
+        match StdTcpStream::connect_timeout(&addr, Duration::from_millis(300)) {
+            Ok(s) => {
+                stream = Some(s);
+                break;
+            }
+            Err(_) => {
+                std::thread::sleep(Duration::from_millis(200));
+            }
+        }
+    }
+
+    let mut stream = match stream {
+        Some(s) => s,
+        None => return, // Control port not available
+    };
+
+    let _ = stream.set_read_timeout(Some(Duration::from_millis(500)));
+    let _ = stream.set_write_timeout(Some(Duration::from_millis(300)));
+
+    // Authenticate (same empty auth as event listener)
+    if stream.write_all(b"AUTHENTICATE\r\n").is_err() {
+        return;
+    }
+    let mut buf = vec![0u8; 2048];
+    let n = match stream.read(&mut buf) {
+        Ok(n) => n,
+        Err(_) => return,
+    };
+    let response = String::from_utf8_lossy(&buf[..n]);
+    if !response.contains("250 OK") {
+        return;
+    }
+
+    log::info!("Direct bootstrap poller: connected and authenticated");
+
+    // Poll loop: query every 500ms until bootstrap >= 100 or 20 iterations (10s)
+    for i in 0..20 {
+        // If the event listener has already updated the atomic, we can stop
+        let current = BOOTSTRAP_STATUS.load(Ordering::SeqCst);
+        if current >= 100 {
+            log::info!("Direct bootstrap poller: event listener caught up ({}%), stopping", current);
+            break;
+        }
+
+        // Send GETINFO
+        if stream.write_all(b"GETINFO status/bootstrap-phase\r\n").is_err() {
+            break;
+        }
+
+        // Accumulate response until "250 OK"
+        let mut resp = String::new();
+        loop {
+            let n = match stream.read(&mut buf) {
+                Ok(0) => { resp.clear(); break; }
+                Ok(n) => n,
+                Err(_) => { break; }
+            };
+            resp.push_str(&String::from_utf8_lossy(&buf[..n]));
+            if resp.contains("\r\n250 OK\r\n") || resp.ends_with("250 OK\r\n") {
+                break;
+            }
+            if resp.len() > 8192 {
+                break;
+            }
+        }
+
+        if let Some(progress) = parse_bootstrap_progress(&resp) {
+            let old = BOOTSTRAP_STATUS.swap(progress, Ordering::SeqCst);
+            if progress != old {
+                log::info!("Direct bootstrap poller: {}% (poll #{})", progress, i + 1);
+            }
+            if progress >= 100 {
+                break;
+            }
+        }
+
+        std::thread::sleep(Duration::from_millis(500));
+    }
+
+    let _ = stream.write_all(b"QUIT\r\n");
+    log::info!("Direct bootstrap poller: done");
 }
 
 /// Get circuit established status from the global atomic (fast, no control port query)
@@ -37,6 +150,13 @@ pub fn get_circuit_established_fast() -> u8 {
 /// HS descriptor upload counter - incremented by event listener each time Tor confirms UPLOADED to an HSDir
 /// v3 onion services upload to multiple HSDirs (typically 6-8), so count >= 1 means partially reachable
 pub static HS_DESC_UPLOAD_COUNT: AtomicU32 = AtomicU32::new(0);
+
+/// Guard: ensures only one event listener is spawned at a time
+/// swap(true) returns the old value — if it was already true, a listener is running
+static EVENT_LISTENER_RUNNING: AtomicBool = AtomicBool::new(false);
+
+/// Shutdown signal for the event listener — set to true to tell it to exit
+static EVENT_LISTENER_SHUTDOWN: AtomicBool = AtomicBool::new(false);
 
 /// Get HS descriptor upload count (fast, no control port query)
 pub fn get_hs_desc_upload_count() -> u32 {
@@ -85,10 +205,29 @@ fn forward_tor_event(event: TorEventType) {
     }
 }
 
+/// Stop the event listener (call before restart to allow a fresh listener)
+pub fn stop_bootstrap_event_listener() {
+    EVENT_LISTENER_SHUTDOWN.store(true, Ordering::SeqCst);
+    log::info!("Event listener shutdown signal sent");
+    // The listener thread checks this flag and will exit on next iteration.
+    // The RUNNING flag is cleared by the listener itself on exit.
+}
+
 /// Start the bootstrap event listener on a separate control port connection
 /// This spawns a background task that listens for STATUS_CLIENT events
 /// and updates BOOTSTRAP_STATUS in real-time
+///
+/// Guarded: only one listener can run at a time. If already running, this is a no-op.
 pub fn start_bootstrap_event_listener() {
+    // Atomically swap true → if old value was already true, a listener is running
+    if EVENT_LISTENER_RUNNING.swap(true, Ordering::SeqCst) {
+        log::warn!("Bootstrap event listener already running; skipping spawn");
+        return;
+    }
+
+    // Clear shutdown signal for the new listener
+    EVENT_LISTENER_SHUTDOWN.store(false, Ordering::SeqCst);
+
     std::thread::spawn(|| {
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
@@ -100,6 +239,10 @@ pub fn start_bootstrap_event_listener() {
                 log::error!("Bootstrap event listener failed: {}", e);
             }
         });
+
+        // Clear the guard so a new listener can be spawned after this one exits
+        EVENT_LISTENER_RUNNING.store(false, Ordering::SeqCst);
+        log::info!("Event listener thread exited, guard cleared");
     });
 }
 
@@ -112,9 +255,10 @@ async fn bootstrap_event_listener_task() -> Result<(), Box<dyn Error + Send + Sy
     log::info!("Starting bootstrap event listener...");
 
     // Connect to control port (separate connection from main TorManager)
-    // Retry up to 60 times (60 seconds) if control port not ready yet
+    // Retry up to 300 times (60s at 200ms intervals) if control port not ready yet.
+    // Fast retries so we catch early bootstrap progress on fast networks.
     let mut control = None;
-    for attempt in 1..=60 {
+    for attempt in 1..=300 {
         match TcpStream::connect("127.0.0.1:9051").await {
             Ok(s) => {
                 log::info!("Event listener: Connected to control port on attempt {}", attempt);
@@ -125,25 +269,38 @@ async fn bootstrap_event_listener_task() -> Result<(), Box<dyn Error + Send + Sy
                 if attempt == 1 {
                     log::info!("Event listener: Waiting for control port to become ready...");
                 }
-                if attempt == 60 {
+                if attempt == 300 {
                     log::error!("Event listener: Failed to connect to control port after {} attempts: {}", attempt, e);
                     return Err(e.into());
                 }
-                sleep(Duration::from_secs(1)).await;
+                sleep(Duration::from_millis(200)).await;
             }
         }
     }
 
     let mut control = control.unwrap();
 
-    // Authenticate
+    // Authenticate (accumulate until 250 OK in case of split reads)
     control.write_all(b"AUTHENTICATE\r\n").await?;
     let mut buf = vec![0u8; 1024];
-    let n = control.read(&mut buf).await?;
-    let response = String::from_utf8_lossy(&buf[..n]);
+    let mut auth_resp = String::new();
+    let auth_deadline = tokio::time::Instant::now() + Duration::from_secs(3);
+    loop {
+        let remaining = auth_deadline.saturating_duration_since(tokio::time::Instant::now());
+        if remaining.is_zero() { break; }
+        let n = match tokio::time::timeout(remaining, control.read(&mut buf)).await {
+            Ok(Ok(0)) => break,
+            Ok(Ok(n)) => n,
+            Ok(Err(e)) => return Err(e.into()),
+            Err(_) => break,
+        };
+        auth_resp.push_str(&String::from_utf8_lossy(&buf[..n]));
+        if auth_resp.contains("250 OK") { break; }
+        if auth_resp.len() > 4096 { break; }
+    }
 
-    if !response.contains("250 OK") {
-        log::error!("Event listener: Auth failed: {}", response);
+    if !auth_resp.contains("250 OK") {
+        log::error!("Event listener: Auth failed: {}", auth_resp);
         return Err("Event listener auth failed".into());
     }
 
@@ -155,64 +312,216 @@ async fn bootstrap_event_listener_task() -> Result<(), Box<dyn Error + Send + Sy
     // HS_DESC: Onion service descriptor upload/download events
     // STATUS_GENERAL: General Tor state changes
     control.write_all(b"SETEVENTS STATUS_CLIENT CIRC HS_DESC STATUS_GENERAL\r\n").await?;
-    let n = control.read(&mut buf).await?;
-    let response = String::from_utf8_lossy(&buf[..n]);
+    let mut sub_resp = String::new();
+    let sub_deadline = tokio::time::Instant::now() + Duration::from_secs(3);
+    loop {
+        let remaining = sub_deadline.saturating_duration_since(tokio::time::Instant::now());
+        if remaining.is_zero() { break; }
+        let n = match tokio::time::timeout(remaining, control.read(&mut buf)).await {
+            Ok(Ok(0)) => break,
+            Ok(Ok(n)) => n,
+            Ok(Err(e)) => return Err(e.into()),
+            Err(_) => break,
+        };
+        sub_resp.push_str(&String::from_utf8_lossy(&buf[..n]));
+        if sub_resp.contains("250 OK") { break; }
+        if sub_resp.len() > 4096 { break; }
+    }
 
-    if !response.contains("250 OK") {
-        log::error!("Event listener: Failed to subscribe to events: {}", response);
+    if !sub_resp.contains("250 OK") {
+        log::error!("Event listener: Failed to subscribe to events: {}", sub_resp);
         return Err("Failed to subscribe to events".into());
     }
 
     log::info!("Event listener: Subscribed to STATUS_CLIENT, CIRC, HS_DESC, STATUS_GENERAL events");
 
-    // Get initial bootstrap status
+    // Get initial bootstrap status (hardened: accumulate until 250 OK,
+    // ignoring any buffered 650 async events from SETEVENTS)
     control.write_all(b"GETINFO status/bootstrap-phase\r\n").await?;
-    let n = control.read(&mut buf).await?;
-    let response = String::from_utf8_lossy(&buf[..n]);
-
-    // Parse initial status
-    if let Some(progress) = parse_bootstrap_progress(&response) {
-        BOOTSTRAP_STATUS.store(progress, Ordering::SeqCst);
-        log::info!("Event listener: Initial bootstrap status: {}%", progress);
+    {
+        let mut resp = String::new();
+        let deadline = tokio::time::Instant::now() + Duration::from_millis(1500);
+        loop {
+            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+            if remaining.is_zero() {
+                log::warn!("Event listener: Initial bootstrap GETINFO timed out after 1.5s");
+                break;
+            }
+            let n = match tokio::time::timeout(remaining, control.read(&mut buf)).await {
+                Ok(Ok(n)) => n,
+                Ok(Err(e)) => {
+                    log::error!("Event listener: Failed to read initial bootstrap: {}", e);
+                    break;
+                }
+                Err(_) => {
+                    log::warn!("Event listener: Initial bootstrap read timed out");
+                    break;
+                }
+            };
+            resp.push_str(&String::from_utf8_lossy(&buf[..n]));
+            if resp.contains("\r\n250 OK\r\n") || resp.ends_with("250 OK\r\n") {
+                break;
+            }
+            if resp.len() > 16_384 {
+                break;
+            }
+        }
+        if let Some(progress) = parse_bootstrap_progress(&resp) {
+            BOOTSTRAP_STATUS.store(progress, Ordering::SeqCst);
+            log::info!("Event listener: Initial bootstrap status: {}%", progress);
+        } else {
+            log::warn!("Event listener: Could not parse initial bootstrap status");
+        }
     }
 
-    // Get initial circuit-established status
+    // Get initial circuit-established status (same hardened read)
     control.write_all(b"GETINFO status/circuit-established\r\n").await?;
-    let n = control.read(&mut buf).await?;
-    let response = String::from_utf8_lossy(&buf[..n]);
-    let circuits_established = if response.contains("circuit-established=1") { 1 } else { 0 };
-    CIRCUIT_ESTABLISHED.store(circuits_established, Ordering::SeqCst);
-    log::info!("Event listener: Initial circuit-established: {}", circuits_established);
+    {
+        let mut resp = String::new();
+        let deadline = tokio::time::Instant::now() + Duration::from_millis(1500);
+        loop {
+            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+            if remaining.is_zero() {
+                break;
+            }
+            let n = match tokio::time::timeout(remaining, control.read(&mut buf)).await {
+                Ok(Ok(n)) => n,
+                Ok(Err(e)) => {
+                    log::error!("Event listener: Failed to read initial circuit-established: {}", e);
+                    break;
+                }
+                Err(_) => break,
+            };
+            resp.push_str(&String::from_utf8_lossy(&buf[..n]));
+            if resp.contains("\r\n250 OK\r\n") || resp.ends_with("250 OK\r\n") {
+                break;
+            }
+            if resp.len() > 16_384 {
+                break;
+            }
+        }
+        let circuits_established = if resp.contains("circuit-established=1") { 1 } else { 0 };
+        CIRCUIT_ESTABLISHED.store(circuits_established, Ordering::SeqCst);
+        log::info!("Event listener: Initial circuit-established: {}", circuits_established);
+    }
 
     // Now continuously read events
     log::info!("Event listener: Listening for bootstrap events...");
     let mut event_buf = vec![0u8; 4096];
-    let mut poll_interval = tokio::time::interval(Duration::from_secs(5));
+    // Start fast (1s) during bootstrap, switch to 5s once at 100%
+    let mut poll_interval = tokio::time::interval(Duration::from_secs(1));
 
     loop {
+        // Check shutdown signal
+        if EVENT_LISTENER_SHUTDOWN.load(Ordering::SeqCst) {
+            log::info!("Event listener: Shutdown signal received, exiting");
+            break;
+        }
+
         tokio::select! {
             // Poll circuit-established every 5 seconds
             _ = poll_interval.tick() => {
-                // Poll circuit-established status
+                // Check shutdown signal on each tick
+                if EVENT_LISTENER_SHUTDOWN.load(Ordering::SeqCst) {
+                    log::info!("Event listener: Shutdown signal received during tick, exiting");
+                    break;
+                }
+                // Poll circuit-established status (accumulate until 250 OK,
+                // forwarding any 650 async events that arrive interleaved)
                 if let Err(e) = control.write_all(b"GETINFO status/circuit-established\r\n").await {
                     log::error!("Event listener: Failed to query circuit-established: {}", e);
                     break;
                 }
 
-                let n = match control.read(&mut buf).await {
-                    Ok(n) => n,
-                    Err(e) => {
-                        log::error!("Event listener: Failed to read circuit-established response: {}", e);
+                let mut circ_resp = String::new();
+                let circ_deadline = tokio::time::Instant::now() + Duration::from_secs(3);
+                loop {
+                    let remaining = circ_deadline.saturating_duration_since(tokio::time::Instant::now());
+                    if remaining.is_zero() {
+                        log::warn!("Event listener: circuit-established poll timed out");
                         break;
                     }
-                };
+                    let n = match tokio::time::timeout(remaining, control.read(&mut buf)).await {
+                        Ok(Ok(0)) => break,
+                        Ok(Ok(n)) => n,
+                        Ok(Err(e)) => {
+                            log::error!("Event listener: Failed to read circuit-established: {}", e);
+                            circ_resp.clear();
+                            break;
+                        }
+                        Err(_) => break,
+                    };
+                    let chunk = String::from_utf8_lossy(&buf[..n]);
+                    // Forward any 650 events so they're not lost
+                    for line in chunk.lines() {
+                        if line.starts_with("650 ") {
+                            if let Some(evt) = parse_tor_event(line) {
+                                if let TorEventType::Bootstrap { progress } = evt {
+                                    let old = BOOTSTRAP_STATUS.swap(progress, Ordering::SeqCst);
+                                    if progress != old {
+                                        log::info!("Bootstrap progress (during poll): {}%", progress);
+                                    }
+                                }
+                                forward_tor_event(evt);
+                            }
+                        }
+                    }
+                    circ_resp.push_str(&chunk);
+                    if circ_resp.contains("\r\n250 OK\r\n") || circ_resp.ends_with("250 OK\r\n") {
+                        break;
+                    }
+                    if circ_resp.len() > 16_384 {
+                        break;
+                    }
+                }
 
-                let response = String::from_utf8_lossy(&buf[..n]);
-                let new_status = if response.contains("circuit-established=1") { 1 } else { 0 };
+                let new_status = if circ_resp.contains("circuit-established=1") { 1 } else { 0 };
                 let old_status = CIRCUIT_ESTABLISHED.swap(new_status, Ordering::SeqCst);
 
                 if new_status != old_status {
                     log::info!("Circuit established status changed: {} → {}", old_status, new_status);
+                }
+
+                // Poll bootstrap status if not yet at 100%.
+                // Runs every 1s during bootstrap for responsive splash screen progress.
+                // Switches to 5s interval once bootstrap complete.
+                if BOOTSTRAP_STATUS.load(Ordering::SeqCst) < 100 {
+                    if let Err(e) = control.write_all(b"GETINFO status/bootstrap-phase\r\n").await {
+                        log::error!("Event listener: Failed to query bootstrap status: {}", e);
+                        break;
+                    }
+                    // Accumulate reads until we see "250 OK" (response may be split across reads
+                    // or interleaved with async 650 events)
+                    let mut resp = String::new();
+                    loop {
+                        let n = match control.read(&mut buf).await {
+                            Ok(n) => n,
+                            Err(e) => {
+                                log::error!("Event listener: Failed to read bootstrap response: {}", e);
+                                resp.clear();
+                                break;
+                            }
+                        };
+                        resp.push_str(&String::from_utf8_lossy(&buf[..n]));
+                        if resp.contains("\r\n250 OK\r\n") || resp.ends_with("250 OK\r\n") {
+                            break;
+                        }
+                        if resp.len() > 16_384 {
+                            log::warn!("Event listener: Bootstrap response too large, giving up");
+                            break;
+                        }
+                    }
+                    if let Some(progress) = parse_bootstrap_progress(&resp) {
+                        let old = BOOTSTRAP_STATUS.swap(progress, Ordering::SeqCst);
+                        if progress != old {
+                            log::info!("Bootstrap status updated via periodic poll: {}%", progress);
+                        }
+                        // Switch to slow poll once bootstrap complete
+                        if progress >= 100 {
+                            log::info!("Bootstrap complete — switching poll interval to 5s");
+                            poll_interval = tokio::time::interval(Duration::from_secs(5));
+                        }
+                    }
                 }
             }
 
@@ -1900,11 +2209,11 @@ impl TorManager {
 
         match TcpStream::connect_timeout(
             &std::net::SocketAddr::from(([127, 0, 0, 1], self.socks_port)),
-            Duration::from_millis(500)
+            Duration::from_millis(2000)
         ) {
             Ok(mut stream) => {
                 // Set read timeout so we don't block forever
-                if let Err(e) = stream.set_read_timeout(Some(Duration::from_millis(500))) {
+                if let Err(e) = stream.set_read_timeout(Some(Duration::from_millis(2000))) {
                     log::warn!("SOCKS health: Failed to set read timeout: {}", e);
                     return false;
                 }

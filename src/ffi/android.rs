@@ -4049,6 +4049,19 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_startBootstrapListener
     }, ())
 }
 
+/// Stop the bootstrap event listener (signal it to exit)
+/// Call this before restarting Tor so a fresh listener can be spawned
+#[no_mangle]
+pub extern "C" fn Java_com_securelegion_crypto_RustBridge_stopBootstrapListener(
+    mut env: JNIEnv,
+    _class: JClass,
+) {
+    catch_panic!(env, {
+        log::info!("Stopping bootstrap event listener...");
+        crate::network::tor::stop_bootstrap_event_listener();
+    }, ())
+}
+
 /// Get Tor bootstrap status (0-100%)
 /// Returns the current bootstrap percentage from the global atomic (updated by event listener)
 /// This is much faster than querying the control port and provides real-time updates
