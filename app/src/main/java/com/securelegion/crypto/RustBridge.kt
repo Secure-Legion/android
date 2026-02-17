@@ -1428,11 +1428,11 @@ object RustBridge {
                     "normalizeWireBytes: type mismatch! expected=0x%02x, found=0x%02x (len=%d)"
                         .format(expectedType, firstByte, wireBytes.size))
             }
-            wireBytes  // Already typed, return as-is
+            wireBytes // Already typed, return as-is
         } else {
             // Legacy format without type byte - prepend expected type
             android.util.Log.i("RustBridge",
-                "✓ LEGACY_WIRE_MIGRATED: prepending type=0x%02x to %d-byte legacy wire blob"
+                "LEGACY_WIRE_MIGRATED: prepending type=0x%02x to %d-byte legacy wire blob"
                     .format(expectedType, wireBytes.size))
             byteArrayOf(expectedType) + wireBytes
         }

@@ -5,7 +5,7 @@
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="#000000">
+    android:background="?attr/colorSurface">
 
     <!-- Header -->
     <LinearLayout
@@ -48,7 +48,7 @@
             android:layout_weight="1"
             android:text="Wallet 1"
             android:textSize="28sp"
-            android:textColor="#999999"
+            android:textColor="?attr/colorOnSurfaceVariant"
             android:fontFamily="@font/space_grotesk_bold"
             android:textStyle="bold"
             android:gravity="center" />
@@ -68,7 +68,7 @@
                 android:layout_height="20dp"
                 android:layout_gravity="center"
                 android:src="@drawable/ic_settings_cog"
-                app:tint="#888888"
+                app:tint="?attr/colorOnSurfaceVariant"
                 android:contentDescription="Settings" />
 
         </FrameLayout>
@@ -126,7 +126,7 @@
                     android:layout_weight="1"
                     android:text="$0.00"
                     android:textSize="28sp"
-                    android:textColor="#FFFFFF"
+                    android:textColor="?attr/colorOnSurface"
                     android:fontFamily="@font/space_grotesk_bold" />
 
                 <ImageView
@@ -134,7 +134,7 @@
                     android:layout_width="24dp"
                     android:layout_height="24dp"
                     android:src="@drawable/ic_swap"
-                    app:tint="#888888"
+                    app:tint="?attr/colorOnSurfaceVariant"
                     android:clickable="true"
                     android:focusable="true"
                     android:background="?attr/selectableItemBackgroundBorderless"
@@ -169,7 +169,7 @@
                         android:layout_width="28dp"
                         android:layout_height="28dp"
                         android:src="@drawable/ic_arrow_up"
-                        app:tint="#888888"
+                        app:tint="?attr/colorOnSurfaceVariant"
                         android:layout_marginBottom="6dp"
                         android:contentDescription="Send" />
 
@@ -200,7 +200,7 @@
                         android:layout_width="28dp"
                         android:layout_height="28dp"
                         android:src="@drawable/ic_qr_code"
-                        app:tint="#888888"
+                        app:tint="?attr/colorOnSurfaceVariant"
                         android:layout_marginBottom="6dp"
                         android:contentDescription="Receive" />
 
@@ -230,7 +230,7 @@
                         android:layout_width="28dp"
                         android:layout_height="28dp"
                         android:src="@drawable/ic_radr_logo"
-                        app:tint="#888888"
+                        app:tint="?attr/colorOnSurfaceVariant"
                         android:layout_marginBottom="6dp"
                         android:contentDescription="Private" />
 
@@ -263,7 +263,7 @@
                     android:layout_height="wrap_content"
                     android:text="Tokens"
                     android:textSize="18sp"
-                    android:textColor="@color/text_white"
+                    android:textColor="?attr/colorOnSurface"
                     android:fontFamily="@font/space_grotesk_bold"
                     android:paddingBottom="16dp" />
 
@@ -305,7 +305,7 @@
                             android:layout_height="wrap_content"
                             android:text="Solana"
                             android:textSize="16sp"
-                            android:textColor="@color/text_white"
+                            android:textColor="?attr/colorOnSurface"
                             android:fontFamily="@font/poppins_medium" />
 
                         <TextView
@@ -313,7 +313,7 @@
                             android:layout_height="wrap_content"
                             android:text="SOL"
                             android:textSize="12sp"
-                            android:textColor="#888888"
+                            android:textColor="?attr/colorOnSurfaceVariant"
                             android:fontFamily="@font/poppins_regular" />
 
                     </LinearLayout>
@@ -330,7 +330,7 @@
                             android:layout_height="wrap_content"
                             android:text="$0.00"
                             android:textSize="16sp"
-                            android:textColor="@color/text_white"
+                            android:textColor="?attr/colorOnSurface"
                             android:fontFamily="@font/poppins_medium" />
 
                         <TextView
@@ -339,7 +339,7 @@
                             android:layout_height="wrap_content"
                             android:text="0.0000 SOL"
                             android:textSize="12sp"
-                            android:textColor="#888888"
+                            android:textColor="?attr/colorOnSurfaceVariant"
                             android:fontFamily="@font/poppins_regular"
                             android:layout_marginTop="2dp" />
 
@@ -385,7 +385,7 @@
                             android:layout_height="wrap_content"
                             android:text="Zcash"
                             android:textSize="16sp"
-                            android:textColor="@color/text_white"
+                            android:textColor="?attr/colorOnSurface"
                             android:fontFamily="@font/poppins_medium" />
 
                         <TextView
@@ -393,7 +393,7 @@
                             android:layout_height="wrap_content"
                             android:text="ZEC"
                             android:textSize="12sp"
-                            android:textColor="#888888"
+                            android:textColor="?attr/colorOnSurfaceVariant"
                             android:fontFamily="@font/poppins_regular" />
 
                     </LinearLayout>
@@ -410,7 +410,7 @@
                             android:layout_height="wrap_content"
                             android:text="$0.00"
                             android:textSize="16sp"
-                            android:textColor="@color/text_white"
+                            android:textColor="?attr/colorOnSurface"
                             android:fontFamily="@font/poppins_medium" />
 
                         <TextView
@@ -419,7 +419,7 @@
                             android:layout_height="wrap_content"
                             android:text="0.0000 ZEC"
                             android:textSize="12sp"
-                            android:textColor="#888888"
+                            android:textColor="?attr/colorOnSurfaceVariant"
                             android:fontFamily="@font/poppins_regular"
                             android:layout_marginTop="2dp" />
 
@@ -444,7 +444,7 @@
                     android:layout_height="wrap_content"
                     android:text="Shielded"
                     android:textSize="18sp"
-                    android:textColor="@color/text_white"
+                    android:textColor="?attr/colorOnSurface"
                     android:fontFamily="@font/space_grotesk_bold"
                     android:paddingBottom="16dp" />
 
@@ -487,7 +487,7 @@
                             android:layout_height="wrap_content"
                             android:text="Solana"
                             android:textSize="16sp"
-                            android:textColor="@color/text_white"
+                            android:textColor="?attr/colorOnSurface"
                             android:fontFamily="@font/poppins_medium" />
 
                         <TextView
@@ -495,7 +495,7 @@
                             android:layout_height="wrap_content"
                             android:text="SOL"
                             android:textSize="12sp"
-                            android:textColor="#888888"
+                            android:textColor="?attr/colorOnSurfaceVariant"
                             android:fontFamily="@font/poppins_regular" />
 
                     </LinearLayout>
@@ -512,7 +512,7 @@
                             android:layout_height="wrap_content"
                             android:text="$0.00"
                             android:textSize="16sp"
-                            android:textColor="@color/text_white"
+                            android:textColor="?attr/colorOnSurface"
                             android:fontFamily="@font/poppins_medium" />
 
                         <TextView
@@ -521,7 +521,7 @@
                             android:layout_height="wrap_content"
                             android:text="0.0000 SOL"
                             android:textSize="12sp"
-                            android:textColor="#888888"
+                            android:textColor="?attr/colorOnSurfaceVariant"
                             android:fontFamily="@font/poppins_regular"
                             android:layout_marginTop="2dp" />
 
@@ -568,7 +568,7 @@
                             android:layout_height="wrap_content"
                             android:text="Zcash"
                             android:textSize="16sp"
-                            android:textColor="@color/text_white"
+                            android:textColor="?attr/colorOnSurface"
                             android:fontFamily="@font/poppins_medium" />
 
                         <TextView
@@ -576,7 +576,7 @@
                             android:layout_height="wrap_content"
                             android:text="ZEC"
                             android:textSize="12sp"
-                            android:textColor="#888888"
+                            android:textColor="?attr/colorOnSurfaceVariant"
                             android:fontFamily="@font/poppins_regular" />
 
                     </LinearLayout>
@@ -593,7 +593,7 @@
                             android:layout_height="wrap_content"
                             android:text="$0.00"
                             android:textSize="16sp"
-                            android:textColor="@color/text_white"
+                            android:textColor="?attr/colorOnSurface"
                             android:fontFamily="@font/poppins_medium" />
 
                         <TextView
@@ -602,7 +602,7 @@
                             android:layout_height="wrap_content"
                             android:text="0.0000 ZEC"
                             android:textSize="12sp"
-                            android:textColor="#888888"
+                            android:textColor="?attr/colorOnSurfaceVariant"
                             android:fontFamily="@font/poppins_regular"
                             android:layout_marginTop="2dp" />
 

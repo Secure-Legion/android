@@ -44,7 +44,7 @@ class KeyManager private constructor(context: Context) {
         private const val WALLET_SEED_ALIAS = "${KEYSTORE_ALIAS_PREFIX}wallet_seed"
         private const val ED25519_SIGNING_KEY_ALIAS = "${KEYSTORE_ALIAS_PREFIX}signing_key"
         private const val X25519_ENCRYPTION_KEY_ALIAS = "${KEYSTORE_ALIAS_PREFIX}encryption_key"
-        private const val KYBER_KEY_ALIAS = "${KEYSTORE_ALIAS_PREFIX}kyber_key"  // Post-quantum Kyber-1024 keys
+        private const val KYBER_KEY_ALIAS = "${KEYSTORE_ALIAS_PREFIX}kyber_key" // Post-quantum Kyber-1024 keys
         private const val HIDDEN_SERVICE_KEY_ALIAS = "${KEYSTORE_ALIAS_PREFIX}hidden_service_key"
         private const val DEVICE_PASSWORD_HASH_ALIAS = "${KEYSTORE_ALIAS_PREFIX}device_password_hash"
         private const val DEVICE_PASSWORD_SALT_ALIAS = "${KEYSTORE_ALIAS_PREFIX}device_password_salt"
@@ -157,9 +157,9 @@ class KeyManager private constructor(context: Context) {
             // Call Rust native function to generate/read persistent keys and derive .onion address
             // This does NOT start Tor - it just creates the keypair and derives the address locally
             val onionAddress = RustBridge.createFriendRequestHiddenService(
-                servicePort = 9151,  // Public port for friend requests (not used in new implementation)
-                localPort = 9151,    // Local wire protocol listener (not used in new implementation)
-                directory = friendRequestHiddenServiceDir.absolutePath  // Full path to persistent directory
+                servicePort = 9151, // Public port for friend requests (not used in new implementation)
+                localPort = 9151, // Local wire protocol listener (not used in new implementation)
+                directory = friendRequestHiddenServiceDir.absolutePath // Full path to persistent directory
             )
 
             if (onionAddress.isEmpty()) {

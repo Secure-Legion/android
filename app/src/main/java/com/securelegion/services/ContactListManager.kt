@@ -50,22 +50,22 @@ class ContactListManager private constructor(private val context: Context) {
     /**
      * Contact List JSON Format:
      * {
-     *   "version": 1,
-     *   "timestamp": 1234567890,
-     *   "totalContacts": 50,
-     *   "contacts": [
-     *     {
-     *       "displayName": "Alice",
-     *       "onionAddress": "abc123...onion",
-     *       "publicKey": "...",
-     *       "profilePictureHash": "...",
-     *       "isDistressContact": false,
-     *       "isBlocked": false,
-     *       "ipfsCid": "Qm...",
-     *       "addedTimestamp": 1234567890
-     *     },
-     *     ...
-     *   ]
+     * "version": 1,
+     * "timestamp": 1234567890,
+     * "totalContacts": 50,
+     * "contacts": [
+     * {
+     * "displayName": "Alice",
+     * "onionAddress": "abc123...onion",
+     * "publicKey": "...",
+     * "profilePictureHash": "...",
+     * "isDistressContact": false,
+     * "isBlocked": false,
+     * "ipfsCid": "Qm...",
+     * "addedTimestamp": 1234567890
+     * },
+     * ...
+     * ]
      * }
      */
 
@@ -117,7 +117,7 @@ class ContactListManager private constructor(private val context: Context) {
             val pin = keyManager.deriveContactPinFromSeed(seedPhrase)
             val encryptedData = encryptContactList(json.toString(), pin)
 
-            Log.i(TAG, "✓ Contact list exported and encrypted (${encryptedData.size} bytes)")
+            Log.i(TAG, "Contact list exported and encrypted (${encryptedData.size} bytes)")
             Result.success(encryptedData)
 
         } catch (e: Exception) {
@@ -184,7 +184,7 @@ class ContactListManager private constructor(private val context: Context) {
                 database.contactDao().insertContact(contact)
             }
 
-            Log.i(TAG, "✓ Contact list imported: ${contacts.size} contacts restored")
+            Log.i(TAG, "Contact list imported: ${contacts.size} contacts restored")
             Result.success(contacts.size)
 
         } catch (e: Exception) {
@@ -220,7 +220,7 @@ class ContactListManager private constructor(private val context: Context) {
             val storeResult = ipfsManager.storeContactList(contactListCID, encryptedData)
 
             if (storeResult.isSuccess) {
-                Log.i(TAG, "✓ Contact list backed up to IPFS: $contactListCID")
+                Log.i(TAG, "Contact list backed up to IPFS: $contactListCID")
                 Result.success(contactListCID)
             } else {
                 Result.failure(storeResult.exceptionOrNull()!!)
@@ -259,7 +259,7 @@ class ContactListManager private constructor(private val context: Context) {
                 return Result.success(null)
             }
 
-            Log.i(TAG, "✓ Contact list found in IPFS mesh (${encryptedData.size} bytes)")
+            Log.i(TAG, "Contact list found in IPFS mesh (${encryptedData.size} bytes)")
 
             // Derive PIN from seed
             val pin = keyManager.deriveContactPinFromSeed(seedPhrase)
@@ -271,7 +271,7 @@ class ContactListManager private constructor(private val context: Context) {
             }
 
             val contactsRestored = importResult.getOrThrow()
-            Log.i(TAG, "✓ Contact list recovered from IPFS: $contactsRestored contacts restored")
+            Log.i(TAG, "Contact list recovered from IPFS: $contactsRestored contacts restored")
 
             // Re-pin all friends' contact lists (restore mesh participation)
             repinFriendsContactLists()
@@ -307,12 +307,12 @@ class ContactListManager private constructor(private val context: Context) {
                     // In v5, each friend has a contact list CID stored in ipfsCid field
                     val pinResult = ipfsManager.pinFriendContactList(contact.ipfsCid, contact.displayName)
                     if (pinResult.isSuccess) {
-                        Log.d(TAG, "✓ Re-pinned ${contact.displayName}'s contact list")
+                        Log.d(TAG, "Re-pinned ${contact.displayName}'s contact list")
                     }
                 }
             }
 
-            Log.i(TAG, "✓ Re-pinned all friends' contact lists")
+            Log.i(TAG, "Re-pinned all friends' contact lists")
 
         } catch (e: Exception) {
             Log.e(TAG, "Failed to re-pin friends' contact lists", e)

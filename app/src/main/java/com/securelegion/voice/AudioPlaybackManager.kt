@@ -42,32 +42,32 @@ class AudioPlaybackManager(
         // Jitter buffer configuration (optimized for Tor)
         // Tor has high variance - we prioritize smoothness over low latency
         // Start big, grow immediately on underrun, shrink slowly after long stability
-        private const val MIN_BUFFER_MS = 500        // Minimum target buffer (was 150ms - TOO SMALL for Tor)
-        private const val MAX_BUFFER_MS = 1400       // Maximum target buffer (was 450ms - increased for Tor variance)
-        private const val INITIAL_BUFFER_MS = 700    // Start with 700ms for Tor stability
-        private const val HARD_CAP_MS = 1600         // Hard cap at 1600ms (drop frames beyond)
-        private const val FRAME_DURATION_MS = 20     // CRITICAL FIX: 20ms per frame (matches OpusCodec.FRAME_SIZE_MS)
-        private const val MAX_OUT_OF_ORDER = 10      // Max frames to buffer before considering lost
+        private const val MIN_BUFFER_MS = 500 // Minimum target buffer (was 150ms - TOO SMALL for Tor)
+        private const val MAX_BUFFER_MS = 1400 // Maximum target buffer (was 450ms - increased for Tor variance)
+        private const val INITIAL_BUFFER_MS = 700 // Start with 700ms for Tor stability
+        private const val HARD_CAP_MS = 1600 // Hard cap at 1600ms (drop frames beyond)
+        private const val FRAME_DURATION_MS = 20 // CRITICAL FIX: 20ms per frame (matches OpusCodec.FRAME_SIZE_MS)
+        private const val MAX_OUT_OF_ORDER = 10 // Max frames to buffer before considering lost
 
         // FEC grace window (v2 - wait for next packet before PLCing)
-        private const val FEC_GRACE_WINDOW_MS = 60L  // Wait 60ms for next packet (3 frames @ 20ms)
-        private const val FEC_MAX_RETRIES = 2        // Check for next frame 2 times during grace window
+        private const val FEC_GRACE_WINDOW_MS = 60L // Wait 60ms for next packet (3 frames @ 20ms)
+        private const val FEC_MAX_RETRIES = 2 // Check for next frame 2 times during grace window
 
         // Reorder grace window (v3 - wait for out-of-order frames before missing)
-        private const val REORDER_GRACE_MS = 80L     // Wait 80ms for out-of-order frames (4 frames @ 20ms)
+        private const val REORDER_GRACE_MS = 80L // Wait 80ms for out-of-order frames (4 frames @ 20ms)
 
         // Adaptive buffer tuning (more tolerant for Tor jitter)
-        private const val LATE_FRAME_THRESHOLD = 0.10f  // If >10% frames late, increase buffer (was 5%)
+        private const val LATE_FRAME_THRESHOLD = 0.10f // If >10% frames late, increase buffer (was 5%)
         private const val EARLY_FRAME_THRESHOLD = 0.95f // If >95% frames early, decrease buffer (was 90%)
 
         // Resynchronization (recover from dead circuits by skipping forward)
         // This is the ONLY delay control mechanism - latency clamp removed (incompatible with Tor)
-        private const val RESYNC_PLC_THRESHOLD = 15  // Skip forward after 15 consecutive PLC frames (300ms dead)
+        private const val RESYNC_PLC_THRESHOLD = 15 // Skip forward after 15 consecutive PLC frames (300ms dead)
 
         // Buffer adaptation tuning (immediate growth, slow shrinking)
-        private const val UNDERRUN_GROWTH_MS = 150    // Immediate +150ms on underrun (not gradual)
-        private const val SHRINK_STEP_MS = 20         // Tiny -20ms shrink steps (slow)
-        private const val SHRINK_STABILITY_MS = 20_000L  // Wait 20 seconds stable before shrinking
+        private const val UNDERRUN_GROWTH_MS = 150 // Immediate +150ms on underrun (not gradual)
+        private const val SHRINK_STEP_MS = 20 // Tiny -20ms shrink steps (slow)
+        private const val SHRINK_STABILITY_MS = 20_000L // Wait 20 seconds stable before shrinking
     }
 
     private var audioTrack: AudioTrack? = null
@@ -89,17 +89,17 @@ class AudioPlaybackManager(
     @Volatile
     private var nextExpectedSeq: Long = 0
     @Volatile
-    private var maxSeqSeen: Long = 0          // Track highest sequence number received (for buffer depth)
+    private var maxSeqSeen: Long = 0 // Track highest sequence number received (for buffer depth)
     private var jitterBufferMs: Int = INITIAL_BUFFER_MS
     private var framesReceived: Long = 0
     private var framesLate: Long = 0
     private var framesLost: Long = 0
-    private var framesLateToBuffer: Long = 0  // Arrived after playout deadline (v3)
-    private var framesPanicTrimmed: Long = 0  // Dropped due to exceeding HARD_CAP_MS
+    private var framesLateToBuffer: Long = 0 // Arrived after playout deadline (v3)
+    private var framesPanicTrimmed: Long = 0 // Dropped due to exceeding HARD_CAP_MS
 
     // Buffer adaptation tracking
-    private var lastUnderrunTime: Long = 0   // Last time we had an underrun (for stability tracking)
-    private var underrunCount: Long = 0      // Total underruns during call
+    private var lastUnderrunTime: Long = 0 // Last time we had an underrun (for stability tracking)
+    private var underrunCount: Long = 0 // Total underruns during call
     private var playbackFrameCount: Long = 0 // Frame counter for periodic buffer adaptation
 
     // FEC statistics
@@ -108,8 +108,8 @@ class AudioPlaybackManager(
     private var plcFrames: Long = 0
 
     // Resynchronization statistics
-    private var consecutivePLCFrames: Int = 0   // Track consecutive PLC for resync detection
-    private var resyncCount: Long = 0           // Number of times we've resynchronized
+    private var consecutivePLCFrames: Int = 0 // Track consecutive PLC for resync detection
+    private var resyncCount: Long = 0 // Number of times we've resynchronized
 
     // Seq → Circuit mapping for PLC attribution (v3)
     // Thread-safe map of sequence numbers to their circuit index (ConcurrentHashMap prevents ConcurrentModificationException)
@@ -153,7 +153,7 @@ class AudioPlaybackManager(
                     Log.d(TAG, "Set AudioManager mode to MODE_IN_COMMUNICATION (prev: $previousAudioMode)")
                 } else {
                     // Mode already set by VoiceCallActivity - don't change it
-                    previousAudioMode = AudioManager.MODE_NORMAL  // Will restore to NORMAL on release
+                    previousAudioMode = AudioManager.MODE_NORMAL // Will restore to NORMAL on release
                     Log.d(TAG, "AudioManager already in MODE_IN_COMMUNICATION - preserving existing settings")
                 }
 
@@ -245,8 +245,8 @@ class AudioPlaybackManager(
                 jitterBuffer.clear()
                 seqToCircuit.clear()
                 seqOrder.clear()
-                playbackFrameCount = 0  // Reset frame counter for buffer adaptation
-                lastUnderrunTime = System.currentTimeMillis()  // Initialize stability timer
+                playbackFrameCount = 0 // Reset frame counter for buffer adaptation
+                lastUnderrunTime = System.currentTimeMillis() // Initialize stability timer
             }
 
             // Launch playback loop
@@ -363,7 +363,7 @@ class AudioPlaybackManager(
 
                 if (frame != null) {
                     // Case A: Perfect in-order packet (latency clamp removed - incompatible with Tor's variable latency)
-                    consecutivePLCFrames = 0  // Reset PLC counter on successful frame
+                    consecutivePLCFrames = 0 // Reset PLC counter on successful frame
                     try {
                         val pcmSamples = opusCodec.decode(frame.opusFrame)
 
@@ -395,7 +395,7 @@ class AudioPlaybackManager(
                         val earliestFrame = jitterBuffer.peek()
                         if (earliestFrame != null && earliestFrame.sequenceNumber > nextExpectedSeq) {
                             val gap = earliestFrame.sequenceNumber - nextExpectedSeq
-                            Log.w(TAG, "⚡ RESYNC: Skipping forward from seq=$nextExpectedSeq to ${earliestFrame.sequenceNumber} (gap=$gap frames, ${gap * FRAME_DURATION_MS}ms) after $consecutivePLCFrames consecutive PLC")
+                            Log.w(TAG, "RESYNC: Skipping forward from seq=$nextExpectedSeq to ${earliestFrame.sequenceNumber} (gap=$gap frames, ${gap * FRAME_DURATION_MS}ms) after $consecutivePLCFrames consecutive PLC")
 
                             // JUMP FORWARD to recover from dead circuit
                             nextExpectedSeq = earliestFrame.sequenceNumber
@@ -414,7 +414,7 @@ class AudioPlaybackManager(
                     if (frame != null) {
                         Log.d(TAG, "Frame arrived during reorder grace: seq=${frame.sequenceNumber} (expected=$nextExpectedSeq)")
 
-                        consecutivePLCFrames = 0  // Reset on success
+                        consecutivePLCFrames = 0 // Reset on success
 
                         // Decode and play the reordered frame
                         try {
@@ -446,7 +446,7 @@ class AudioPlaybackManager(
                         if (!recovered) {
                             // FEC failed after grace window - fallback to PLC
                             // THIS IS AN UNDERRUN - buffer was too small
-                            onUnderrun()  // Immediate buffer growth
+                            onUnderrun() // Immediate buffer growth
 
                             framesLost++
                             plcFrames++
@@ -461,7 +461,7 @@ class AudioPlaybackManager(
                             nextExpectedSeq++
                         } else {
                             // FEC recovered and played frame(s)
-                            consecutivePLCFrames = 0  // Reset on FEC success
+                            consecutivePLCFrames = 0 // Reset on FEC success
                             // nextExpectedSeq already advanced in attemptFECRecovery
                             // Skip regular delay since we handled timing in attemptFECRecovery
                             continue
@@ -471,7 +471,7 @@ class AudioPlaybackManager(
 
                 // Periodically check if we can shrink buffer (slow shrinking)
                 playbackFrameCount++
-                if (playbackFrameCount % 250 == 0L) {  // Every 5 seconds (250 frames * 20ms)
+                if (playbackFrameCount % 250 == 0L) { // Every 5 seconds (250 frames * 20ms)
                     adaptJitterBuffer()
                     telemetry?.updateJitterBuffer(jitterBufferMs)
                 }
@@ -492,12 +492,12 @@ class AudioPlaybackManager(
      *
      * CRITICAL BEHAVIOR (per spec § 6.1-6.2):
      * - If frame N is missing and frame N+1 is available:
-     *   1. Decode N using FEC data from packet N+1
-     *   2. Then decode N+1 normally
+     * 1. Decode N using FEC data from packet N+1
+     * 2. Then decode N+1 normally
      * - If N+1 is NOT available:
-     *   1. Wait up to FEC_GRACE_WINDOW_MS (30ms) for it to arrive
-     *   2. If it arrives → use FEC recovery
-     *   3. If timeout → return false (caller will use PLC)
+     * 1. Wait up to FEC_GRACE_WINDOW_MS (30ms) for it to arrive
+     * 2. If it arrives → use FEC recovery
+     * 3. If timeout → return false (caller will use PLC)
      *
      * GUARANTEES:
      * - Only attempts FEC for EXACTLY one-frame gaps (N missing, N+1 present)
@@ -550,7 +550,7 @@ class AudioPlaybackManager(
                     FRAME_SIZE_SAMPLES,
                     AudioTrack.WRITE_BLOCKING
                 )
-                Log.d(TAG, "✓ FEC recovered seq=$missingSeq (success rate: ${(fecSuccess*100/fecAttempts)}%)")
+                Log.d(TAG, "FEC recovered seq=$missingSeq (success rate: ${(fecSuccess*100/fecAttempts)}%)")
 
                 nextExpectedSeq = missingSeq + 1
 
@@ -583,7 +583,7 @@ class AudioPlaybackManager(
             } else {
                 // FEC decode returned null or wrong size - not enough redundancy in packet
                 telemetry?.reportFECAttempt(success = false)
-                Log.d(TAG, "✗ FEC failed for seq=$missingSeq (no redundancy data)")
+                Log.d(TAG, "FEC failed for seq=$missingSeq (no redundancy data)")
                 return false
             }
 
@@ -678,7 +678,7 @@ class AudioPlaybackManager(
         lastUnderrunTime = now
         underrunCount++
 
-        Log.w(TAG, "⚡ UNDERRUN #$underrunCount! Grew buffer ${oldBuffer}ms → ${jitterBufferMs}ms")
+        Log.w(TAG, "UNDERRUN #$underrunCount! Grew buffer ${oldBuffer}ms → ${jitterBufferMs}ms")
     }
 
     /**
@@ -695,9 +695,9 @@ class AudioPlaybackManager(
         if (stableDuration > SHRINK_STABILITY_MS && jitterBufferMs > MIN_BUFFER_MS) {
             val oldBuffer = jitterBufferMs
             jitterBufferMs = max(MIN_BUFFER_MS, jitterBufferMs - SHRINK_STEP_MS)
-            lastUnderrunTime = now  // Reset stability timer after shrink
+            lastUnderrunTime = now // Reset stability timer after shrink
 
-            Log.d(TAG, "📉 Stable for ${stableDuration/1000}s, shrunk buffer ${oldBuffer}ms → ${jitterBufferMs}ms")
+            Log.d(TAG, "Stable for ${stableDuration/1000}s, shrunk buffer ${oldBuffer}ms → ${jitterBufferMs}ms")
         }
     }
 
@@ -761,13 +761,13 @@ class AudioPlaybackManager(
                         }
                         if (speakerDevice != null) {
                             val success = am.setCommunicationDevice(speakerDevice)
-                            Log.i(TAG, "✓ Speaker ON via setCommunicationDevice: success=$success")
+                            Log.i(TAG, "Speaker ON via setCommunicationDevice: success=$success")
                         } else {
                             Log.e(TAG, "No built-in speaker device found in available devices")
                         }
                     } else {
                         am.clearCommunicationDevice()
-                        Log.i(TAG, "✓ Speaker OFF via clearCommunicationDevice (earpiece)")
+                        Log.i(TAG, "Speaker OFF via clearCommunicationDevice (earpiece)")
                     }
                 } else {
                     // Android 11 and below: Use legacy API
@@ -775,9 +775,9 @@ class AudioPlaybackManager(
                     am.isSpeakerphoneOn = enabled
 
                     if (enabled) {
-                        Log.i(TAG, "✓ Speaker ON via isSpeakerphoneOn")
+                        Log.i(TAG, "Speaker ON via isSpeakerphoneOn")
                     } else {
-                        Log.i(TAG, "✓ Speaker OFF via isSpeakerphoneOn")
+                        Log.i(TAG, "Speaker OFF via isSpeakerphoneOn")
                     }
                 }
 
@@ -892,7 +892,7 @@ class AudioPlaybackManager(
         val fecSuccess: Long,
         val fecSuccessRate: Float,
         val plcFrames: Long,
-        val framesLateToBuffer: Long = 0,      // v3: Frames that missed playout deadline
-        val lateToBufferRate: Float = 0f       // v3: Percentage of deadline misses
+        val framesLateToBuffer: Long = 0, // v3: Frames that missed playout deadline
+        val lateToBufferRate: Float = 0f // v3: Percentage of deadline misses
     )
 }

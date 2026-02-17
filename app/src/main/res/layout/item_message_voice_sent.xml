@@ -20,7 +20,7 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:text="12:34 PM"
-            android:textColor="#999999"
+            android:textColor="?attr/colorOnSurfaceVariant"
             android:textSize="11sp" />
 
         <ImageView
@@ -133,7 +133,7 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:text="0:00"
-                android:textColor="#FFFFFF"
+                android:textColor="?attr/colorOnSurface"
                 android:textSize="11sp"
                 android:layout_marginStart="8dp" />
         </LinearLayout>

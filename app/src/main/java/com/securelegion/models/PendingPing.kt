@@ -7,10 +7,10 @@ import org.json.JSONObject
  * State machine for pending ping downloads
  */
 enum class PingState {
-    PENDING,      // Waiting to download (shows "Download" button)
-    DOWNLOADING,  // Fetching message via Tor from sender's .onion (shows "Downloading...")
-    DECRYPTING,   // Decrypting message blob with X25519 (shows "Decrypting...")
-    READY         // Fully processed, ready to swap to message atomically
+    PENDING, // Waiting to download (shows "Download" button)
+    DOWNLOADING, // Fetching message via Tor from sender's .onion (shows "Downloading...")
+    DECRYPTING, // Decrypting message blob with X25519 (shows "Decrypting...")
+    READY // Fully processed, ready to swap to message atomically
 }
 
 /**
@@ -21,9 +21,9 @@ data class PendingPing(
     val connectionId: Long,
     val senderName: String,
     val timestamp: Long,
-    val encryptedPingData: String,  // Base64 encoded encrypted ping wire bytes
+    val encryptedPingData: String, // Base64 encoded encrypted ping wire bytes
     val senderOnionAddress: String,
-    val state: PingState = PingState.PENDING  // Current state in download pipeline
+    val state: PingState = PingState.PENDING // Current state in download pipeline
 ) {
     companion object {
         fun fromJson(json: String): PendingPing {
@@ -88,11 +88,11 @@ data class PendingPing(
                     if (cached != null) {
                         // Use cached version (has all fields)
                         pendingPings.add(cached)
-                        android.util.Log.d("PendingPing", "  Using cached data for ping ${entry.pingId.take(8)}")
+                        android.util.Log.d("PendingPing", "Using cached data for ping ${entry.pingId.take(8)}")
                     } else {
                         // Cache miss - reconstruct from what we have
                         // This can happen after app data clear or first launch after DB migration
-                        android.util.Log.w("PendingPing", "  Cache miss for ping ${entry.pingId.take(8)} - needs re-download")
+                        android.util.Log.w("PendingPing", "Cache miss for ping ${entry.pingId.take(8)} - needs re-download")
 
                         // We can't fully reconstruct without the encrypted ping wire bytes,
                         // so we'll need to wait for sender to retry the PING
@@ -145,9 +145,9 @@ data class PendingPing(
 
             val editor = prefs.edit().putString("ping_queue_$contactId", jsonArray.toString())
             if (synchronous) {
-                editor.commit()  // Synchronous write for immediate consistency
+                editor.commit() // Synchronous write for immediate consistency
             } else {
-                editor.apply()  // Async write for better performance
+                editor.apply() // Async write for better performance
             }
         }
 

@@ -23,18 +23,18 @@ class WaveformView @JvmOverloads constructor(
         strokeCap = Paint.Cap.ROUND
     }
 
-    private val barCount = 60  // Number of bars around the circle
-    private val barHeights = FloatArray(barCount) { 0.0f }  // Height of each bar (0.0 to 1.0)
+    private val barCount = 60 // Number of bars around the circle
+    private val barHeights = FloatArray(barCount) { 0.0f } // Height of each bar (0.0 to 1.0)
     private var animationPhase = 0f
-    private var currentAmplitude = 0f  // Current audio amplitude
-    private var targetAmplitude = 0f   // Target amplitude to animate towards
-    private var lastAmplitudeUpdate = 0L  // Last time amplitude was updated
+    private var currentAmplitude = 0f // Current audio amplitude
+    private var targetAmplitude = 0f // Target amplitude to animate towards
+    private var lastAmplitudeUpdate = 0L // Last time amplitude was updated
 
     // Colors for the waveform (gradient from blue to green)
     private val barColors = intArrayOf(
-        0xFF4A9EFF.toInt(),  // Blue
+        0xFF4A9EFF.toInt(), // Blue
         0xFF58ACF7.toInt(),
-        0xFF1BC88B.toInt(),  // Green
+        0xFF1BC88B.toInt(), // Green
         0xFF58ADF9.toInt()
     )
 
@@ -53,7 +53,7 @@ class WaveformView @JvmOverloads constructor(
 
             // Only animate phase when there's audio activity
             if (currentAmplitude > 0.01f) {
-                animationPhase += 0.15f * currentAmplitude  // Animation speed based on amplitude
+                animationPhase += 0.15f * currentAmplitude // Animation speed based on amplitude
                 if (animationPhase > 2 * Math.PI) {
                     animationPhase -= (2 * Math.PI).toFloat()
                 }
@@ -72,7 +72,7 @@ class WaveformView @JvmOverloads constructor(
             }
 
             invalidate()
-            postDelayed(this, 50)  // 20 FPS
+            postDelayed(this, 50) // 20 FPS
         }
     }
 
@@ -95,12 +95,12 @@ class WaveformView @JvmOverloads constructor(
 
         val centerX = width / 2f
         val centerY = height / 2f
-        val radius = min(width, height) / 2f * 0.7f  // 70% of available radius
+        val radius = min(width, height) / 2f * 0.7f // 70% of available radius
 
         // Draw bars in a circle
         for (i in 0 until barCount) {
             val angle = (i.toFloat() / barCount) * 2 * Math.PI - Math.PI / 2
-            val barHeight = barHeights[i] * radius * 0.5f  // Bar extends from circle
+            val barHeight = barHeights[i] * radius * 0.5f // Bar extends from circle
 
             // Calculate start and end points
             val startX = centerX + (radius * kotlin.math.cos(angle)).toFloat()

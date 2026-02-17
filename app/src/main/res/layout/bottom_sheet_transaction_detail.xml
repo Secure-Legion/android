@@ -25,7 +25,7 @@
         android:layout_height="wrap_content"
         android:text="Sent"
         android:textSize="28sp"
-        android:textColor="#FFFFFF"
+        android:textColor="?attr/colorOnSurface"
         android:fontFamily="@font/space_grotesk_bold"
         android:gravity="center"
         android:layout_marginBottom="32dp" />
@@ -67,7 +67,7 @@
             android:layout_height="wrap_content"
             android:text="-0.03619 SOL"
             android:textSize="36sp"
-            android:textColor="#FFFFFF"
+            android:textColor="?attr/colorOnSurface"
             android:fontFamily="@font/space_grotesk_bold"
             android:gravity="center" />
 
@@ -94,7 +94,7 @@
                 android:layout_weight="1"
                 android:text="Date"
                 android:textSize="14sp"
-                android:textColor="#888888"
+                android:textColor="?attr/colorOnSurfaceVariant"
                 android:fontFamily="@font/poppins_regular" />
 
             <TextView
@@ -103,7 +103,7 @@
                 android:layout_height="wrap_content"
                 android:text="Jan 11, 2026 at 1:49 pm"
                 android:textSize="14sp"
-                android:textColor="#FFFFFF"
+                android:textColor="?attr/colorOnSurface"
                 android:fontFamily="@font/poppins_medium" />
         </LinearLayout>
 
@@ -120,7 +120,7 @@
                 android:layout_weight="1"
                 android:text="Status"
                 android:textSize="14sp"
-                android:textColor="#888888"
+                android:textColor="?attr/colorOnSurfaceVariant"
                 android:fontFamily="@font/poppins_regular" />
 
             <TextView
@@ -147,7 +147,7 @@
                 android:layout_weight="1"
                 android:text="To"
                 android:textSize="14sp"
-                android:textColor="#888888"
+                android:textColor="?attr/colorOnSurfaceVariant"
                 android:fontFamily="@font/poppins_regular" />
 
             <LinearLayout
@@ -162,7 +162,7 @@
                     android:layout_height="wrap_content"
                     android:text="DKwi...iQtW"
                     android:textSize="14sp"
-                    android:textColor="#FFFFFF"
+                    android:textColor="?attr/colorOnSurface"
                     android:fontFamily="@font/poppins_medium" />
 
                 <ImageView
@@ -191,7 +191,7 @@
                 android:layout_weight="1"
                 android:text="Network"
                 android:textSize="14sp"
-                android:textColor="#888888"
+                android:textColor="?attr/colorOnSurfaceVariant"
                 android:fontFamily="@font/poppins_regular" />
 
             <TextView
@@ -200,7 +200,7 @@
                 android:layout_height="wrap_content"
                 android:text="Solana"
                 android:textSize="14sp"
-                android:textColor="#FFFFFF"
+                android:textColor="?attr/colorOnSurface"
                 android:fontFamily="@font/poppins_medium" />
         </LinearLayout>
 
@@ -216,7 +216,7 @@
                 android:layout_weight="1"
                 android:text="Network Fee"
                 android:textSize="14sp"
-                android:textColor="#888888"
+                android:textColor="?attr/colorOnSurfaceVariant"
                 android:fontFamily="@font/poppins_regular" />
 
             <TextView
@@ -225,7 +225,7 @@
                 android:layout_height="wrap_content"
                 android:text="~&lt; 0.00001 SOL"
                 android:textSize="14sp"
-                android:textColor="#FFFFFF"
+                android:textColor="?attr/colorOnSurface"
                 android:fontFamily="@font/poppins_medium" />
         </LinearLayout>
 

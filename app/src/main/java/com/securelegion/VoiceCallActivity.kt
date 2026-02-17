@@ -326,7 +326,7 @@ class VoiceCallActivity : BaseActivity() {
             // Hide progress bar and update status
             connectionProgressBar.visibility = View.GONE
             updateCallStatus("Calling...")
-            android.util.Log.i(TAG, "✓ Connectivity test passed - updated UI to 'Calling...'")
+            android.util.Log.i(TAG, "Connectivity test passed - updated UI to 'Calling...'")
             // The caller will now send CALL_OFFER and we'll wait for CALL_ANSWER
             waitingForAnswer = true
         }
@@ -337,7 +337,7 @@ class VoiceCallActivity : BaseActivity() {
             // Hide progress bar and show error
             connectionProgressBar.visibility = View.GONE
             updateCallStatus("Connection failed")
-            android.util.Log.e(TAG, "✗ Connectivity test failed: $error")
+            android.util.Log.e(TAG, "Connectivity test failed: $error")
 
             // Show toast and close activity
             ThemedToast.show(this, "Cannot reach $contactName\n$error")
@@ -909,9 +909,9 @@ class VoiceCallActivity : BaseActivity() {
                     android.util.Log.i(TAG, "Contact ${contact.displayName} voiceOnion from DB: '${contactVoiceOnion}'")
 
                     if (contactVoiceOnion.isEmpty()) {
-                        android.util.Log.e(TAG, "❌ Contact has no voice onion address - cannot establish voice call")
-                        android.util.Log.e(TAG, "   This means the contact never sent their voice.onion in CALL_OFFER")
-                        android.util.Log.e(TAG, "   OR the auto-population failed")
+                        android.util.Log.e(TAG, "Contact has no voice onion address - cannot establish voice call")
+                        android.util.Log.e(TAG, "This means the contact never sent their voice.onion in CALL_OFFER")
+                        android.util.Log.e(TAG, "OR the auto-population failed")
 
                         // Get contact info from intent for rejection
                         val contactVoiceOnionFromIntent = intent.getStringExtra(EXTRA_CONTACT_ONION) ?: "" // This is the voice onion from CALL_OFFER
@@ -932,7 +932,7 @@ class VoiceCallActivity : BaseActivity() {
                         return@launch
                     }
 
-                    android.util.Log.i(TAG, "✓ Contact has voice onion: ${contactVoiceOnion}")
+                    android.util.Log.i(TAG, "Contact has voice onion: ${contactVoiceOnion}")
 
                     // CRITICAL: Generate ephemeral keypair ONCE before answering call
                     // This keypair must be used for BOTH encryption AND in CALL_ANSWER message
@@ -952,11 +952,11 @@ class VoiceCallActivity : BaseActivity() {
                     val contactX25519PublicKey = intent.getByteArrayExtra(EXTRA_CONTACT_X25519_PUBLIC_KEY) ?: ByteArray(0)
 
                     android.util.Log.i(TAG, "Sending CALL_ANSWER via HTTP POST immediately (before creating Tor circuits)...")
-                    android.util.Log.d(TAG, "  contactCallerVoiceOnion: $contactCallerVoiceOnion")
-                    android.util.Log.d(TAG, "  contactX25519PublicKey size: ${contactX25519PublicKey.size}")
-                    android.util.Log.d(TAG, "  callId: $callId")
-                    android.util.Log.d(TAG, "  myVoiceOnion: $myVoiceOnion")
-                    android.util.Log.d(TAG, "  ourEphemeralKeypair.publicKey size: ${ourEphemeralKeypair.publicKey.asBytes.size}")
+                    android.util.Log.d(TAG, "contactCallerVoiceOnion: $contactCallerVoiceOnion")
+                    android.util.Log.d(TAG, "contactX25519PublicKey size: ${contactX25519PublicKey.size}")
+                    android.util.Log.d(TAG, "callId: $callId")
+                    android.util.Log.d(TAG, "myVoiceOnion: $myVoiceOnion")
+                    android.util.Log.d(TAG, "ourEphemeralKeypair.publicKey size: ${ourEphemeralKeypair.publicKey.asBytes.size}")
 
                     // Get our X25519 public key for HTTP wire format
                     val keyManager = com.securelegion.crypto.KeyManager.getInstance(this@VoiceCallActivity)
@@ -970,7 +970,7 @@ class VoiceCallActivity : BaseActivity() {
                     val success = withContext(kotlinx.coroutines.Dispatchers.IO) {
                         com.securelegion.voice.CallSignaling.sendCallAnswer(
                             contactX25519PublicKey,
-                            contactCallerVoiceOnion,  // Caller's voice onion from CALL_OFFER
+                            contactCallerVoiceOnion, // Caller's voice onion from CALL_OFFER
                             callId,
                             ourEphemeralKeypair.publicKey.asBytes,
                             myVoiceOnion,
@@ -983,7 +983,7 @@ class VoiceCallActivity : BaseActivity() {
                         handleCallEnded("Failed to establish connection - please try again")
                         return@launch
                     }
-                    android.util.Log.i(TAG, "✓ CALL_ANSWER sent successfully")
+                    android.util.Log.i(TAG, "CALL_ANSWER sent successfully")
 
                     // Now answer call in call manager (this will create Tor circuits - takes 5-10s)
                     android.util.Log.d(TAG, "Calling answerCall with callId: $callId")
@@ -992,7 +992,7 @@ class VoiceCallActivity : BaseActivity() {
                         contactVoiceOnion = contactVoiceOnion,
                         ourEphemeralSecretKey = ourEphemeralKeypair.secretKey.asBytes,
                         contactX25519PublicKey = contactX25519PublicKey,
-                        contactMessagingOnion = contact.messagingOnion!!,  // Use contact's messaging onion
+                        contactMessagingOnion = contact.messagingOnion!!, // Use contact's messaging onion
                         ourEphemeralPublicKey = ourEphemeralKeypair.publicKey.asBytes,
                         myVoiceOnion = myVoiceOnion
                     )
@@ -1003,7 +1003,7 @@ class VoiceCallActivity : BaseActivity() {
 
                         com.securelegion.voice.CallSignaling.sendCallReject(
                             contactX25519PublicKey,
-                            contactCallerVoiceOnion,  // Caller's voice onion
+                            contactCallerVoiceOnion, // Caller's voice onion
                             callId,
                             "Failed to establish call",
                             ourX25519PublicKey
@@ -1053,7 +1053,7 @@ class VoiceCallActivity : BaseActivity() {
         }
     }
 
-    @Suppress("GestureBackNavigation")  // Minimize call to background instead of ending
+    @Suppress("GestureBackNavigation") // Minimize call to background instead of ending
     override fun onBackPressed() {
         // Back button should minimize app, not end call (like real phone apps)
         // Call continues in background, user can return via ongoing notification
@@ -1161,14 +1161,14 @@ class VoiceCallActivity : BaseActivity() {
             .setContentTitle("Call in progress")
             .setContentText(contactName)
             .setSmallIcon(R.drawable.ic_call)
-            .setOngoing(true)  // Can't be swiped away
+            .setOngoing(true) // Can't be swiped away
             .setContentIntent(pendingIntent)
-            .setPriority(NotificationCompat.PRIORITY_LOW)  // Low priority = silent, no heads-up
+            .setPriority(NotificationCompat.PRIORITY_LOW) // Low priority = silent, no heads-up
             .setCategory(NotificationCompat.CATEGORY_CALL)
-            .setSound(null)  // No sound
-            .setVibrate(longArrayOf(0))  // No vibration
-            .setDefaults(0)  // Disable all defaults
-            .setSilent(true)  // Explicitly mark as silent
+            .setSound(null) // No sound
+            .setVibrate(longArrayOf(0)) // No vibration
+            .setDefaults(0) // Disable all defaults
+            .setSilent(true) // Explicitly mark as silent
             .build()
 
         notificationManager?.notify(ONGOING_CALL_NOTIFICATION_ID, notification)
@@ -1196,12 +1196,12 @@ class VoiceCallActivity : BaseActivity() {
             .setSmallIcon(R.drawable.ic_call)
             .setOngoing(true)
             .setContentIntent(pendingIntent)
-            .setPriority(NotificationCompat.PRIORITY_LOW)  // Low priority = silent, no heads-up
+            .setPriority(NotificationCompat.PRIORITY_LOW) // Low priority = silent, no heads-up
             .setCategory(NotificationCompat.CATEGORY_CALL)
-            .setSound(null)  // No sound
-            .setVibrate(longArrayOf(0))  // No vibration
-            .setDefaults(0)  // Disable all defaults
-            .setSilent(true)  // Explicitly mark as silent
+            .setSound(null) // No sound
+            .setVibrate(longArrayOf(0)) // No vibration
+            .setDefaults(0) // Disable all defaults
+            .setSilent(true) // Explicitly mark as silent
             .build()
 
         notificationManager?.notify(ONGOING_CALL_NOTIFICATION_ID, notification)

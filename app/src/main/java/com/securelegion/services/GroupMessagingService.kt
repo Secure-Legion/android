@@ -27,9 +27,9 @@ class GroupMessagingService private constructor(private val context: Context) {
         private const val TAG = "GroupMessagingService"
 
         // Message type bytes for wire protocol
-        private const val TYPE_GROUP_INVITE: Byte = 0x20  // Group invite with encrypted key
-        private const val TYPE_GROUP_MESSAGE: Byte = 0x21  // Regular group message
-        private const val TYPE_GROUP_ACK: Byte = 0x22      // Group message acknowledgment
+        private const val TYPE_GROUP_INVITE: Byte = 0x20 // Group invite with encrypted key
+        private const val TYPE_GROUP_MESSAGE: Byte = 0x21 // Regular group message
+        private const val TYPE_GROUP_ACK: Byte = 0x22 // Group message acknowledgment
 
         @Volatile
         private var INSTANCE: GroupMessagingService? = null
@@ -92,7 +92,7 @@ class GroupMessagingService private constructor(private val context: Context) {
                 pingTimestamp
             )
 
-            Log.i(TAG, "✓ Group invite sent to ${contact.displayName}")
+            Log.i(TAG, "Group invite sent to ${contact.displayName}")
             Result.success(Unit)
 
         } catch (e: Exception) {
@@ -174,7 +174,7 @@ class GroupMessagingService private constructor(private val context: Context) {
                     )
 
                     successfulSends.add(member.displayName)
-                    Log.d(TAG, "✓ Sent to ${member.displayName}")
+                    Log.d(TAG, "Sent to ${member.displayName}")
 
                 } catch (e: Exception) {
                     Log.e(TAG, "Failed to send to ${member.displayName}", e)
@@ -185,7 +185,7 @@ class GroupMessagingService private constructor(private val context: Context) {
             // Update message status based on results
             val newStatus = when {
                 successfulSends.size == members.size -> GroupMessage.STATUS_SENT
-                successfulSends.isNotEmpty() -> GroupMessage.STATUS_SENT  // Partial success
+                successfulSends.isNotEmpty() -> GroupMessage.STATUS_SENT // Partial success
                 else -> GroupMessage.STATUS_FAILED
             }
 
@@ -197,7 +197,7 @@ class GroupMessagingService private constructor(private val context: Context) {
                 Log.w(TAG, "Failed to send to ${failedSends.size} members: ${failedSends.joinToString()}")
             }
 
-            Log.i(TAG, "✓ Group message sent to ${successfulSends.size}/${members.size} members")
+            Log.i(TAG, "Group message sent to ${successfulSends.size}/${members.size} members")
             Result.success(successfulSends)
 
         } catch (e: Exception) {
@@ -287,7 +287,7 @@ class GroupMessagingService private constructor(private val context: Context) {
 
             // Save to database
             database.groupMessageDao().insertGroupMessage(groupMessage)
-            Log.i(TAG, "✓ Group message saved: $messageId")
+            Log.i(TAG, "Group message saved: $messageId")
 
             // Update group last activity
             database.groupDao().updateLastActivity(groupId, timestamp)
@@ -365,7 +365,7 @@ class GroupMessagingService private constructor(private val context: Context) {
                 apply()
             }
 
-            Log.i(TAG, "✓ Group invite stored: $groupName from ${sender.displayName}")
+            Log.i(TAG, "Group invite stored: $groupName from ${sender.displayName}")
 
             // Broadcast to update UI
             val intent = android.content.Intent("com.securelegion.GROUP_INVITE_RECEIVED")

@@ -140,17 +140,17 @@ class MessageService(private val context: Context) {
          *
          * SCENARIO (why this matters):
          * Alice sends to Bob:
-         *   Alice computes: conversationId = sort([AlicePubKey, BobPubKey])
-         *   → "AlicePubKey|BobPubKey" (alphabetically sorted)
+         * Alice computes: conversationId = sort([AlicePubKey, BobPubKey])
+         * → "AlicePubKey|BobPubKey" (alphabetically sorted)
          *
          * Bob receives from Alice:
-         *   Bob computes: conversationId = sort([AlicePubKey, BobPubKey])
-         *   → "AlicePubKey|BobPubKey" (SAME order, because it's sorted)
+         * Bob computes: conversationId = sort([AlicePubKey, BobPubKey])
+         * → "AlicePubKey|BobPubKey" (SAME order, because it's sorted)
          *
          * WITHOUT SORTING (broken):
-         *   Alice: conversationId = "AlicePubKey|BobPubKey"
-         *   Bob: conversationId = "BobPubKey|AlicePubKey" ← DIFFERENT!
-         *   → Two separate threads, broken dedup, "why do I see two chats?" bug
+         * Alice: conversationId = "AlicePubKey|BobPubKey"
+         * Bob: conversationId = "BobPubKey|AlicePubKey" ← DIFFERENT!
+         * → Two separate threads, broken dedup, "why do I see two chats?" bug
          *
          * Hash inputs (in this exact order for consistent ordering):
          * v1 || conversationId || senderEd25519 || recipientEd25519 || plaintextHash || messageNonce
@@ -198,7 +198,7 @@ class MessageService(private val context: Context) {
             // PHASE 1.2: SORTED PUBKEYS (MANDATORY)
             // Sort keys lexicographically to ensure Alice and Bob derive the same conversationId
             // Alice: sort([AlicePubKey, BobPubKey]) → "AlicePubKey|BobPubKey"
-            // Bob:   sort([AlicePubKey, BobPubKey]) → "AlicePubKey|BobPubKey" (SAME!)
+            // Bob: sort([AlicePubKey, BobPubKey]) → "AlicePubKey|BobPubKey" (SAME!)
             // Without sorting: Alice gets "A|B", Bob gets "B|A" → TWO SEPARATE THREADS
             // DO NOT REMOVE SORTING or 1-to-1 chats will break
             val sortedKeys = listOf(senderEd25519Base64, recipientEd25519Base64).sorted()
@@ -277,7 +277,7 @@ class MessageService(private val context: Context) {
                 val lostRanges = buffer.checkForGapTimeout()
                 if (lostRanges.isNotEmpty()) {
                     lostGaps[contactId] = lostRanges
-                    Log.w(TAG, "⚠️ Gap timeout detected for contact $contactId: ${lostRanges.size} gaps")
+                    Log.w(TAG, "Gap timeout detected for contact $contactId: ${lostRanges.size} gaps")
                 }
             }
 
@@ -338,16 +338,16 @@ class MessageService(private val context: Context) {
 
             // Get key chain for this contact (for progressive ephemeral key evolution)
             Log.d(TAG, "SEND KEY CHAIN LOAD (VOICE): Loading key chain from database...")
-            Log.d(TAG, "  contactId=$contactId (${contact.displayName})")
-            Log.d(TAG, "  Audio bytes: ${audioBytes.size} bytes")
-            Log.d(TAG, "  Duration: ${durationSeconds}s")
+            Log.d(TAG, "contactId=$contactId (${contact.displayName})")
+            Log.d(TAG, "Audio bytes: ${audioBytes.size} bytes")
+            Log.d(TAG, "Duration: ${durationSeconds}s")
 
             val keyChain = KeyChainManager.getKeyChain(context, contactId)
                 ?: throw Exception("Key chain not found for contact ${contact.displayName} (ID: $contactId)")
             Log.d(TAG, "SEND KEY CHAIN LOAD (VOICE): Loaded from database successfully")
-            Log.d(TAG, "  sendCounter=${keyChain.sendCounter} <- will use this for encryption")
+            Log.d(TAG, "sendCounter=${keyChain.sendCounter} <- will use this for encryption")
 
-            // ✅ NEW: Prepend message type and duration INSIDE plaintext BEFORE encryption
+            // NEW: Prepend message type and duration INSIDE plaintext BEFORE encryption
             // VOICE format: [0x01][duration:4 BE][audioBytes...]
             val durationBytes = byteArrayOf(
                 (durationSeconds shr 24).toByte(),
@@ -394,8 +394,8 @@ class MessageService(private val context: Context) {
             val encryptedWithMetadata = ourX25519PublicKey + encryptedBytes
             val encryptedBase64 = Base64.encodeToString(encryptedWithMetadata, Base64.NO_WRAP)
 
-            Log.d(TAG, "  Metadata: 1 byte type + 4 bytes duration + 32 bytes X25519")
-            Log.d(TAG, "  Total payload: ${encryptedWithMetadata.size} bytes (${encryptedBase64.length} Base64 chars)")
+            Log.d(TAG, "Metadata: 1 byte type + 4 bytes duration + 32 bytes X25519")
+            Log.d(TAG, "Total payload: ${encryptedWithMetadata.size} bytes (${encryptedBase64.length} Base64 chars)")
 
             // Extract nonce from wire format (bytes 9-32, after version and sequence)
             val nonce = encryptedBytes.sliceArray(9 until 33)
@@ -416,7 +416,7 @@ class MessageService(private val context: Context) {
             val selfDestructAt = selfDestructDurationMs?.let { currentTime + it }
 
             // Generate Ping ID and timestamp ONCE (never changes, prevents ghost pings)
-            val pingId = generatePingId()  // 24-byte nonce as hex string
+            val pingId = generatePingId() // 24-byte nonce as hex string
             val pingTimestamp = currentTime
             Log.d(TAG, "Generated Ping ID: ${pingId.take(16)}... (timestamp: $pingTimestamp)")
 
@@ -433,7 +433,7 @@ class MessageService(private val context: Context) {
                 status = Message.STATUS_PING_SENT, // Start as PING_SENT so pollForPongsAndSendMessages() can find it
                 signatureBase64 = signatureBase64,
                 nonceBase64 = nonceBase64,
-                messageNonce = messageNonce,        // CRITICAL: Stored once, reused on all retries
+                messageNonce = messageNonce, // CRITICAL: Stored once, reused on all retries
                 selfDestructAt = selfDestructAt,
                 requiresReadReceipt = false, // Voice messages don't need read receipts
                 pingId = pingId,
@@ -467,10 +467,10 @@ class MessageService(private val context: Context) {
             try {
                 val sendResult = sendPingForMessage(savedMessage)
                 if (sendResult.isSuccess) {
-                    Log.i(TAG, "✓ Ping sent successfully, will poll for Pong later")
+                    Log.i(TAG, "Ping sent successfully, will poll for Pong later")
                 } else {
                     val errorMsg = sendResult.exceptionOrNull()?.message ?: "Unknown error"
-                    Log.w(TAG, "⚠️ Ping send failed: $errorMsg")
+                    Log.w(TAG, "Ping send failed: $errorMsg")
 
                     // Immediate retry with delay if Tor is warming up
                     if (errorMsg.contains("warming up")) {
@@ -481,7 +481,7 @@ class MessageService(private val context: Context) {
                             try {
                                 val retryResult = sendPingForMessage(savedMessage)
                                 if (retryResult.isSuccess) {
-                                    Log.i(TAG, "✓ Retry Ping sent successfully after warm-up delay")
+                                    Log.i(TAG, "Retry Ping sent successfully after warm-up delay")
                                 } else {
                                     Log.w(TAG, "Retry after warm-up still failed: ${retryResult.exceptionOrNull()?.message}")
                                 }
@@ -553,16 +553,16 @@ class MessageService(private val context: Context) {
             // Get key chain for this contact (for progressive ephemeral key evolution)
             Log.d(TAG, "Encrypting image message with key evolution...")
             val imageBytes = Base64.decode(imageBase64, Base64.NO_WRAP)
-            Log.d(TAG, "  Image bytes: ${imageBytes.size} bytes")
+            Log.d(TAG, "Image bytes: ${imageBytes.size} bytes")
 
             val keyChain = KeyChainManager.getKeyChain(context, contactId)
                 ?: throw Exception("Key chain not found for contact ${contact.displayName} (ID: $contactId)")
 
-            // ✅ NEW: Prepend message type INSIDE plaintext BEFORE encryption
+            // NEW: Prepend message type INSIDE plaintext BEFORE encryption
             // IMAGE format: [0x02][imageBytes...]
             val plaintextWithType = byteArrayOf(0x02) + imageBytes
             val plaintextForEncryption = String(plaintextWithType, Charsets.ISO_8859_1)
-            Log.d(TAG, "  Plaintext with type: ${plaintextWithType.size} bytes (type=0x02 IMAGE)")
+            Log.d(TAG, "Plaintext with type: ${plaintextWithType.size} bytes (type=0x02 IMAGE)")
 
             // Encrypt using current send chain key and counter (ATOMIC key evolution)
             // Wire format: [version:1][sequence:8][nonce:24][ciphertext][tag:16]
@@ -572,7 +572,7 @@ class MessageService(private val context: Context) {
                 keyChain.sendCounter
             )
             val encryptedBytes = result.ciphertext
-            Log.d(TAG, "  Encrypted: ${encryptedBytes.size} bytes (sequence ${keyChain.sendCounter})")
+            Log.d(TAG, "Encrypted: ${encryptedBytes.size} bytes (sequence ${keyChain.sendCounter})")
 
             // Save evolved key to database (key evolution happened atomically in Rust)
             database.contactKeyChainDao().updateSendChainKey(
@@ -588,11 +588,11 @@ class MessageService(private val context: Context) {
             // Wire format: [X25519:32][version:1][sequence:8][nonce:24][ciphertext][tag:16]
             // NOTE: Wire protocol type byte (0x09) is added by android.rs sendPing()
             val encryptedWithMetadata = ourX25519PublicKey + encryptedBytes
-            Log.d(TAG, "  Total with metadata: ${encryptedWithMetadata.size} bytes (X25519 + encrypted)")
+            Log.d(TAG, "Total with metadata: ${encryptedWithMetadata.size} bytes (X25519 + encrypted)")
 
             val encryptedBase64 = Base64.encodeToString(encryptedWithMetadata, Base64.NO_WRAP)
 
-            Log.d(TAG, "  Total payload: ${encryptedBytes.size} bytes (${encryptedBase64.length} Base64 chars)")
+            Log.d(TAG, "Total payload: ${encryptedBytes.size} bytes (${encryptedBase64.length} Base64 chars)")
 
             // Extract nonce from wire format (bytes 9-32, after version and sequence)
             val nonce = encryptedBytes.sliceArray(9 until 33)
@@ -609,7 +609,7 @@ class MessageService(private val context: Context) {
             val selfDestructAt = selfDestructDurationMs?.let { currentTime + it }
 
             // Generate Ping ID for persistent messaging
-            val pingId = generatePingId()  // 24-byte nonce as hex string
+            val pingId = generatePingId() // 24-byte nonce as hex string
             val pingTimestamp = currentTime
             Log.d(TAG, "Generated Ping ID: $pingId")
 
@@ -626,7 +626,7 @@ class MessageService(private val context: Context) {
                 status = Message.STATUS_PING_SENT, // Start as PING_SENT so pollForPongsAndSendMessages() can find it
                 signatureBase64 = signatureBase64,
                 nonceBase64 = nonceBase64,
-                messageNonce = messageNonce,        // CRITICAL: Stored once, reused on all retries
+                messageNonce = messageNonce, // CRITICAL: Stored once, reused on all retries
                 selfDestructAt = selfDestructAt,
                 requiresReadReceipt = false, // Image messages don't need read receipts
                 pingId = pingId,
@@ -660,10 +660,10 @@ class MessageService(private val context: Context) {
             try {
                 val sendResult = sendPingForMessage(savedMessage)
                 if (sendResult.isSuccess) {
-                    Log.i(TAG, "✓ Ping sent successfully, will poll for Pong later")
+                    Log.i(TAG, "Ping sent successfully, will poll for Pong later")
                 } else {
                     val errorMsg = sendResult.exceptionOrNull()?.message ?: "Unknown error"
-                    Log.w(TAG, "⚠️ Ping send failed: $errorMsg")
+                    Log.w(TAG, "Ping send failed: $errorMsg")
 
                     // Immediate retry with delay if Tor is warming up
                     if (errorMsg.contains("warming up")) {
@@ -674,7 +674,7 @@ class MessageService(private val context: Context) {
                             try {
                                 val retryResult = sendPingForMessage(savedMessage)
                                 if (retryResult.isSuccess) {
-                                    Log.i(TAG, "✓ Retry Ping sent successfully after warm-up delay")
+                                    Log.i(TAG, "Retry Ping sent successfully after warm-up delay")
                                 } else {
                                     Log.w(TAG, "Retry after warm-up still failed: ${retryResult.exceptionOrNull()?.message}")
                                 }
@@ -711,7 +711,7 @@ class MessageService(private val context: Context) {
         plaintext: String,
         selfDestructDurationMs: Long? = null,
         enableReadReceipt: Boolean = true,
-        correlationId: String? = null,  // For stress test tracing
+        correlationId: String? = null, // For stress test tracing
         onMessageSaved: ((Message) -> Unit)? = null
     ): Result<Message> = withContext(Dispatchers.IO) {
         try {
@@ -750,25 +750,25 @@ class MessageService(private val context: Context) {
 
             // Get key chain for this contact (for progressive ephemeral key evolution)
             Log.d(TAG, "SEND KEY CHAIN LOAD: Loading key chain from database...")
-            Log.d(TAG, "  contactId=$contactId (${contact.displayName})")
+            Log.d(TAG, "contactId=$contactId (${contact.displayName})")
             val keyChain = KeyChainManager.getKeyChain(context, contactId)
                 ?: throw Exception("Key chain not found for contact ${contact.displayName} (ID: $contactId)")
             Log.d(TAG, "SEND KEY CHAIN LOAD: Loaded from database successfully")
-            Log.d(TAG, "  sendCounter=${keyChain.sendCounter} <- will use this for encryption")
-            Log.d(TAG, "  receiveCounter=${keyChain.receiveCounter}")
+            Log.d(TAG, "sendCounter=${keyChain.sendCounter} <- will use this for encryption")
+            Log.d(TAG, "receiveCounter=${keyChain.receiveCounter}")
 
             // ATOMIC ENCRYPTION + KEY EVOLUTION
             // Encrypts and evolves key in one indivisible operation to prevent desync
             // Wire format: [version:1][sequence:8][nonce:24][ciphertext][tag:16]
-            // ✅ NEW: Prepend message type byte INSIDE plaintext before encryption
+            // NEW: Prepend message type byte INSIDE plaintext before encryption
             // TEXT format: [0x00][utf8 text bytes...]
             val plaintextWithType = byteArrayOf(0x00) + plaintext.toByteArray(Charsets.UTF_8)
             val plaintextForEncryption = String(plaintextWithType, Charsets.ISO_8859_1)
             Log.d(TAG, "SEND KEY EVOLUTION: About to encrypt and evolve send chain key")
-            Log.d(TAG, "  contactId=$contactId (${contact.displayName})")
-            Log.d(TAG, "  Current sendCounter=${keyChain.sendCounter}")
-            Log.d(TAG, "  Will encrypt with sequence ${keyChain.sendCounter}")
-            Log.d(TAG, "  Plaintext with type prefix: ${plaintextWithType.size} bytes (type=0x00 TEXT)")
+            Log.d(TAG, "contactId=$contactId (${contact.displayName})")
+            Log.d(TAG, "Current sendCounter=${keyChain.sendCounter}")
+            Log.d(TAG, "Will encrypt with sequence ${keyChain.sendCounter}")
+            Log.d(TAG, "Plaintext with type prefix: ${plaintextWithType.size} bytes (type=0x00 TEXT)")
             val result = RustBridge.encryptMessageWithEvolution(
                 plaintextForEncryption,
                 keyChain.sendChainKeyBytes,
@@ -815,7 +815,7 @@ class MessageService(private val context: Context) {
             val selfDestructAt = selfDestructDurationMs?.let { currentTime + it }
 
             // Generate Ping ID and timestamp ONCE (never changes, prevents ghost pings)
-            val pingId = generatePingId()  // 24-byte nonce as hex string
+            val pingId = generatePingId() // 24-byte nonce as hex string
             val pingTimestamp = currentTime
             Log.d(TAG, "Generated Ping ID: ${pingId.take(16)}... (timestamp: $pingTimestamp)")
 
@@ -829,15 +829,15 @@ class MessageService(private val context: Context) {
                 status = Message.STATUS_PING_SENT, // Start as PING_SENT so pollForPongsAndSendMessages() can find it
                 signatureBase64 = signatureBase64,
                 nonceBase64 = nonceBase64,
-                messageNonce = messageNonce,        // CRITICAL: Stored once, reused on all retries
+                messageNonce = messageNonce, // CRITICAL: Stored once, reused on all retries
                 selfDestructAt = selfDestructAt,
                 requiresReadReceipt = enableReadReceipt,
-                pingId = pingId,                    // Generated ONCE, used for all retries
-                pingTimestamp = pingTimestamp,      // Generated ONCE with pingId
+                pingId = pingId, // Generated ONCE, used for all retries
+                pingTimestamp = pingTimestamp, // Generated ONCE with pingId
                 encryptedPayload = encryptedBase64, // Store encrypted payload to send after Pong
-                retryCount = 0,                     // Initialize retry counter
-                lastRetryTimestamp = currentTime,   // Track when we last attempted
-                correlationId = correlationId       // For stress test tracing (null for normal messages)
+                retryCount = 0, // Initialize retry counter
+                lastRetryTimestamp = currentTime, // Track when we last attempted
+                correlationId = correlationId // For stress test tracing (null for normal messages)
             )
 
             val durationText = selfDestructDurationMs?.let { duration ->
@@ -875,10 +875,10 @@ class MessageService(private val context: Context) {
             try {
                 val sendResult = sendPingForMessage(savedMessage)
                 if (sendResult.isSuccess) {
-                    Log.i(TAG, "✓ Ping sent successfully, will poll for Pong later")
+                    Log.i(TAG, "Ping sent successfully, will poll for Pong later")
                 } else {
                     val errorMsg = sendResult.exceptionOrNull()?.message ?: "Unknown error"
-                    Log.w(TAG, "⚠️ Ping send failed: $errorMsg")
+                    Log.w(TAG, "Ping send failed: $errorMsg")
 
                     // Immediate retry with delay if Tor is warming up (don't wait for 15-min worker)
                     if (errorMsg.contains("warming up")) {
@@ -889,7 +889,7 @@ class MessageService(private val context: Context) {
                             try {
                                 val retryResult = sendPingForMessage(savedMessage)
                                 if (retryResult.isSuccess) {
-                                    Log.i(TAG, "✓ Retry Ping sent successfully after warm-up delay")
+                                    Log.i(TAG, "Retry Ping sent successfully after warm-up delay")
                                 } else {
                                     Log.w(TAG, "Retry after warm-up still failed: ${retryResult.exceptionOrNull()?.message}")
                                 }
@@ -926,12 +926,12 @@ class MessageService(private val context: Context) {
         onMessageSaved: ((Message) -> Unit)? = null
     ): Result<Message> = withContext(Dispatchers.IO) {
         try {
-            Log.i(TAG, "╔════════════════════════════════════════")
-            Log.i(TAG, "║ MessageService.sendPaymentRequest()")
-            Log.i(TAG, "║ Contact ID: $contactId")
-            Log.i(TAG, "║ Quote ID: ${quote.quoteId}")
-            Log.i(TAG, "║ Amount: ${quote.formattedAmount}")
-            Log.i(TAG, "╚════════════════════════════════════════")
+            Log.i(TAG, "")
+            Log.i(TAG, "MessageService.sendPaymentRequest()")
+            Log.i(TAG, "Contact ID: $contactId")
+            Log.i(TAG, "Quote ID: ${quote.quoteId}")
+            Log.i(TAG, "Amount: ${quote.formattedAmount}")
+            Log.i(TAG, "")
 
             // Get database instance
             val dbPassphrase = keyManager.getDatabasePassphrase()
@@ -954,25 +954,25 @@ class MessageService(private val context: Context) {
 
             // Get key chain for this contact (for progressive ephemeral key evolution)
             Log.d(TAG, "SEND KEY CHAIN LOAD: Loading key chain from database...")
-            Log.d(TAG, "  contactId=$contactId (${contact.displayName})")
+            Log.d(TAG, "contactId=$contactId (${contact.displayName})")
             val keyChain = KeyChainManager.getKeyChain(context, contactId)
                 ?: throw Exception("Key chain not found for contact ${contact.displayName} (ID: $contactId)")
             Log.d(TAG, "SEND KEY CHAIN LOAD: Loaded from database successfully")
-            Log.d(TAG, "  sendCounter=${keyChain.sendCounter} <- will use this for encryption")
+            Log.d(TAG, "sendCounter=${keyChain.sendCounter} <- will use this for encryption")
 
-            // ✅ NEW: Prepend message type INSIDE plaintext BEFORE encryption
+            // NEW: Prepend message type INSIDE plaintext BEFORE encryption
             // PAYMENT_REQUEST format: [0x0A][jsonBytes...]
             val plaintextWithType = byteArrayOf(0x0A) + paymentRequestPayload.toByteArray(Charsets.UTF_8)
             val plaintextForEncryption = String(plaintextWithType, Charsets.ISO_8859_1)
-            Log.d(TAG, "  Plaintext with type: ${plaintextWithType.size} bytes (type=0x0A PAYMENT_REQUEST)")
+            Log.d(TAG, "Plaintext with type: ${plaintextWithType.size} bytes (type=0x0A PAYMENT_REQUEST)")
 
             // ATOMIC ENCRYPTION + KEY EVOLUTION
             // Encrypts and evolves key in one indivisible operation to prevent desync
             // Wire format: [version:1][sequence:8][nonce:24][ciphertext][tag:16]
             Log.d(TAG, "SEND KEY EVOLUTION: About to encrypt and evolve send chain key")
-            Log.d(TAG, "  contactId=$contactId (${contact.displayName})")
-            Log.d(TAG, "  Current sendCounter=${keyChain.sendCounter}")
-            Log.d(TAG, "  Will encrypt with sequence ${keyChain.sendCounter}")
+            Log.d(TAG, "contactId=$contactId (${contact.displayName})")
+            Log.d(TAG, "Current sendCounter=${keyChain.sendCounter}")
+            Log.d(TAG, "Will encrypt with sequence ${keyChain.sendCounter}")
             val result = RustBridge.encryptMessageWithEvolution(
                 plaintextForEncryption,
                 keyChain.sendChainKeyBytes,
@@ -1005,7 +1005,7 @@ class MessageService(private val context: Context) {
             // Wire format: [X25519:32][version:1][sequence:8][nonce:24][ciphertext][tag:16]
             // NOTE: Wire protocol type byte (0x0A) is added by android.rs sendPing()
             val encryptedWithMetadata = ourX25519PublicKey + encryptedBytes
-            Log.d(TAG, "  Total with metadata: ${encryptedWithMetadata.size} bytes (X25519 + encrypted)")
+            Log.d(TAG, "Total with metadata: ${encryptedWithMetadata.size} bytes (X25519 + encrypted)")
 
             val encryptedBase64 = Base64.encodeToString(encryptedWithMetadata, Base64.NO_WRAP)
 
@@ -1022,7 +1022,7 @@ class MessageService(private val context: Context) {
             val currentTime = System.currentTimeMillis()
 
             // Generate Ping ID for persistent messaging
-            val pingId = generatePingId()  // 24-byte nonce as hex string
+            val pingId = generatePingId() // 24-byte nonce as hex string
             val pingTimestamp = currentTime
             Log.d(TAG, "Generated Ping ID for payment request: $pingId")
 
@@ -1042,7 +1042,7 @@ class MessageService(private val context: Context) {
                 status = Message.STATUS_PING_SENT, // Start as PING_SENT so pollForPongsAndSendMessages() can find it
                 signatureBase64 = signatureBase64,
                 nonceBase64 = nonceBase64,
-                messageNonce = messageNonce,        // CRITICAL: Stored once, reused on all retries
+                messageNonce = messageNonce, // CRITICAL: Stored once, reused on all retries
                 pingId = pingId,
                 pingTimestamp = pingTimestamp,
                 encryptedPayload = encryptedBase64,
@@ -1086,10 +1086,10 @@ class MessageService(private val context: Context) {
             try {
                 val sendResult = sendPingForMessage(savedMessage)
                 if (sendResult.isSuccess) {
-                    Log.i(TAG, "✓ Ping sent successfully, will poll for Pong later")
+                    Log.i(TAG, "Ping sent successfully, will poll for Pong later")
                 } else {
                     val errorMsg = sendResult.exceptionOrNull()?.message ?: "Unknown error"
-                    Log.w(TAG, "⚠️ Ping send failed: $errorMsg")
+                    Log.w(TAG, "Ping send failed: $errorMsg")
 
                     // Immediate retry with delay if Tor is warming up
                     if (errorMsg.contains("warming up")) {
@@ -1100,7 +1100,7 @@ class MessageService(private val context: Context) {
                             try {
                                 val retryResult = sendPingForMessage(savedMessage)
                                 if (retryResult.isSuccess) {
-                                    Log.i(TAG, "✓ Retry Ping sent successfully after warm-up delay")
+                                    Log.i(TAG, "Retry Ping sent successfully after warm-up delay")
                                 } else {
                                     Log.w(TAG, "Retry after warm-up still failed: ${retryResult.exceptionOrNull()?.message}")
                                 }
@@ -1165,16 +1165,16 @@ class MessageService(private val context: Context) {
 
             // Get key chain for this contact
             Log.d(TAG, "SEND KEY CHAIN LOAD: Loading key chain from database for payment confirmation...")
-            Log.d(TAG, "  contactId=$contactId (${contact.displayName})")
+            Log.d(TAG, "contactId=$contactId (${contact.displayName})")
             val keyChain = KeyChainManager.getKeyChain(context, contactId)
                 ?: throw Exception("Key chain not found for contact ${contact.displayName}")
-            Log.d(TAG, "  sendCounter=${keyChain.sendCounter}")
+            Log.d(TAG, "sendCounter=${keyChain.sendCounter}")
 
-            // ✅ NEW: Prepend message type INSIDE plaintext BEFORE encryption
+            // NEW: Prepend message type INSIDE plaintext BEFORE encryption
             // PAYMENT_SENT format: [0x0B][jsonBytes...]
             val plaintextWithType = byteArrayOf(0x0B) + paymentConfirmPayload.toByteArray(Charsets.UTF_8)
             val plaintextForEncryption = String(plaintextWithType, Charsets.ISO_8859_1)
-            Log.d(TAG, "  Plaintext with type: ${plaintextWithType.size} bytes (type=0x0B PAYMENT_SENT)")
+            Log.d(TAG, "Plaintext with type: ${plaintextWithType.size} bytes (type=0x0B PAYMENT_SENT)")
 
             // ATOMIC ENCRYPTION + KEY EVOLUTION
             Log.d(TAG, "SEND KEY EVOLUTION: Encrypting payment confirmation with sequence ${keyChain.sendCounter}")
@@ -1213,7 +1213,7 @@ class MessageService(private val context: Context) {
             val signatureBase64 = Base64.encodeToString(signature, Base64.NO_WRAP)
 
             val currentTime = System.currentTimeMillis()
-            val pingId = generatePingId()  // 24-byte nonce as hex string
+            val pingId = generatePingId() // 24-byte nonce as hex string
             val pingTimestamp = currentTime
 
             // PHASE 1.1: STABLE IDENTITY
@@ -1231,7 +1231,7 @@ class MessageService(private val context: Context) {
                 status = Message.STATUS_PING_SENT, // Start as PING_SENT so pollForPongsAndSendMessages() can find it
                 signatureBase64 = signatureBase64,
                 nonceBase64 = nonceBase64,
-                messageNonce = messageNonce,        // CRITICAL: Stored once, reused on all retries
+                messageNonce = messageNonce, // CRITICAL: Stored once, reused on all retries
                 pingId = pingId,
                 pingTimestamp = pingTimestamp,
                 encryptedPayload = encryptedBase64,
@@ -1321,16 +1321,16 @@ class MessageService(private val context: Context) {
 
             // Get key chain for this contact
             Log.d(TAG, "SEND KEY CHAIN LOAD: Loading key chain from database for payment acceptance...")
-            Log.d(TAG, "  contactId=$contactId (${contact.displayName})")
+            Log.d(TAG, "contactId=$contactId (${contact.displayName})")
             val keyChain = KeyChainManager.getKeyChain(context, contactId)
                 ?: throw Exception("Key chain not found for contact ${contact.displayName}")
-            Log.d(TAG, "  sendCounter=${keyChain.sendCounter}")
+            Log.d(TAG, "sendCounter=${keyChain.sendCounter}")
 
-            // ✅ NEW: Prepend message type INSIDE plaintext BEFORE encryption
+            // NEW: Prepend message type INSIDE plaintext BEFORE encryption
             // PAYMENT_ACCEPTED format: [0x0C][jsonBytes...]
             val plaintextWithType = byteArrayOf(0x0C) + paymentAcceptPayload.toByteArray(Charsets.UTF_8)
             val plaintextForEncryption = String(plaintextWithType, Charsets.ISO_8859_1)
-            Log.d(TAG, "  Plaintext with type: ${plaintextWithType.size} bytes (type=0x0C PAYMENT_ACCEPTED)")
+            Log.d(TAG, "Plaintext with type: ${plaintextWithType.size} bytes (type=0x0C PAYMENT_ACCEPTED)")
 
             // ATOMIC ENCRYPTION + KEY EVOLUTION
             Log.d(TAG, "SEND KEY EVOLUTION: Encrypting payment acceptance with sequence ${keyChain.sendCounter}")
@@ -1368,7 +1368,7 @@ class MessageService(private val context: Context) {
             val signatureBase64 = Base64.encodeToString(signature, Base64.NO_WRAP)
 
             val currentTime = System.currentTimeMillis()
-            val pingId = generatePingId()  // 24-byte nonce as hex string
+            val pingId = generatePingId() // 24-byte nonce as hex string
             val pingTimestamp = currentTime
 
             val message = Message(
@@ -1381,7 +1381,7 @@ class MessageService(private val context: Context) {
                 status = Message.STATUS_PING_SENT, // Start as PING_SENT so pollForPongsAndSendMessages() can find it
                 signatureBase64 = signatureBase64,
                 nonceBase64 = nonceBase64,
-                messageNonce = messageNonce,        // CRITICAL: Stored once, reused on all retries
+                messageNonce = messageNonce, // CRITICAL: Stored once, reused on all retries
                 pingId = pingId,
                 pingTimestamp = pingTimestamp,
                 encryptedPayload = encryptedBase64,
@@ -1472,14 +1472,14 @@ class MessageService(private val context: Context) {
             Log.d(TAG, "Decrypting message with skipped key support...")
             val keyChain = KeyChainManager.getKeyChain(context, contact.id)
             if (keyChain == null) {
-                Log.e(TAG, "❌ DECRYPTION FAILED: Key chain not found for contact ${contact.id} (${contact.displayName})")
-                Log.e(TAG, "   This contact was probably added before key chain support was implemented.")
-                Log.e(TAG, "   Fix: Remove and re-add this contact to initialize a new key chain.")
+                Log.e(TAG, "DECRYPTION FAILED: Key chain not found for contact ${contact.id} (${contact.displayName})")
+                Log.e(TAG, "This contact was probably added before key chain support was implemented.")
+                Log.e(TAG, "Fix: Remove and re-add this contact to initialize a new key chain.")
                 throw Exception("Key chain not found for contact ${contact.id}")
             }
 
             // Log current key chain state for debugging
-            Log.d(TAG, "📊 Key chain state: sendCounter=${keyChain.sendCounter}, receiveCounter=${keyChain.receiveCounter}")
+            Log.d(TAG, "Key chain state: sendCounter=${keyChain.sendCounter}, receiveCounter=${keyChain.receiveCounter}")
 
             // Wire format: [version:1][sequence:8][nonce:24][ciphertext][tag:16]
             val encryptedBytes = Base64.decode(encryptedData, Base64.NO_WRAP)
@@ -1488,12 +1488,12 @@ class MessageService(private val context: Context) {
             val messageSequence = if (encryptedBytes.size >= 9) {
                 java.nio.ByteBuffer.wrap(encryptedBytes.sliceArray(1..8)).long
             } else {
-                Log.e(TAG, "❌ DECRYPTION FAILED: Ciphertext too short (${encryptedBytes.size} bytes)")
+                Log.e(TAG, "DECRYPTION FAILED: Ciphertext too short (${encryptedBytes.size} bytes)")
                 return@withContext Result.failure(Exception("Ciphertext too short"))
             }
 
             val receiveCounter = keyChain.receiveCounter
-            Log.d(TAG, "📨 Message sequence: $messageSequence (expecting: $receiveCounter)")
+            Log.d(TAG, "Message sequence: $messageSequence (expecting: $receiveCounter)")
 
             // MAX_SKIP security limit to prevent memory exhaustion attacks
             val MAX_SKIP = 100L
@@ -1506,21 +1506,21 @@ class MessageService(private val context: Context) {
             when {
                 // PATH 1: Past message (n < Nr) - check skipped keys table
                 messageSequence < receiveCounter -> {
-                    Log.d(TAG, "📥 PAST MESSAGE: seq=$messageSequence < receiveCounter=$receiveCounter")
-                    Log.d(TAG, "   Checking skipped_message_keys table...")
+                    Log.d(TAG, "PAST MESSAGE: seq=$messageSequence < receiveCounter=$receiveCounter")
+                    Log.d(TAG, "Checking skipped_message_keys table...")
 
                     val skippedKey = database.skippedMessageKeyDao().getKey(contact.id, messageSequence)
                     if (skippedKey == null) {
-                        Log.e(TAG, "❌ SKIPPED KEY NOT FOUND: seq=$messageSequence (too old or never skipped)")
+                        Log.e(TAG, "SKIPPED KEY NOT FOUND: seq=$messageSequence (too old or never skipped)")
                         return@withContext Result.failure(Exception("Message key not found - message too old"))
                     }
 
-                    Log.d(TAG, "✓ Found skipped key for seq=$messageSequence, attempting decryption...")
+                    Log.d(TAG, "Found skipped key for seq=$messageSequence, attempting decryption...")
 
                     // Decrypt using stored message key (no chain key evolution)
                     val plaintext = RustBridge.decryptWithMessageKey(encryptedBytes, skippedKey.messageKey)
                     if (plaintext == null) {
-                        Log.e(TAG, "❌ DECRYPTION FAILED: Invalid message key for seq=$messageSequence")
+                        Log.e(TAG, "DECRYPTION FAILED: Invalid message key for seq=$messageSequence")
                         return@withContext Result.failure(Exception("Decryption failed with skipped key"))
                     }
 
@@ -1528,7 +1528,7 @@ class MessageService(private val context: Context) {
 
                     // Delete used key immediately (forward secrecy)
                     database.skippedMessageKeyDao().deleteKey(contact.id, messageSequence)
-                    Log.d(TAG, "✓ Deleted used skipped key for seq=$messageSequence")
+                    Log.d(TAG, "Deleted used skipped key for seq=$messageSequence")
 
                     // Chain key state unchanged (past message doesn't affect current state)
                     newReceiveCounter = receiveCounter
@@ -1537,14 +1537,14 @@ class MessageService(private val context: Context) {
 
                 // PATH 2: Gap too large (n - Nr > MAX_SKIP) - reject
                 messageSequence - receiveCounter > MAX_SKIP -> {
-                    Log.e(TAG, "⚠️ SEQUENCE TOO FAR: seq=$messageSequence, receiveCounter=$receiveCounter, gap=${messageSequence - receiveCounter} > MAX_SKIP=$MAX_SKIP")
+                    Log.e(TAG, "SEQUENCE TOO FAR: seq=$messageSequence, receiveCounter=$receiveCounter, gap=${messageSequence - receiveCounter} > MAX_SKIP=$MAX_SKIP")
                     return@withContext Result.failure(Exception("Sequence too far ahead - possible desync or attack"))
                 }
 
                 // PATH 3: Future message (n > Nr) - derive and store skipped keys
                 messageSequence > receiveCounter -> {
-                    Log.d(TAG, "⏭️ FUTURE MESSAGE: seq=$messageSequence > receiveCounter=$receiveCounter")
-                    Log.d(TAG, "   Deriving ${messageSequence - receiveCounter} skipped message keys for gap [${receiveCounter}..${messageSequence - 1}]")
+                    Log.d(TAG, "FUTURE MESSAGE: seq=$messageSequence > receiveCounter=$receiveCounter")
+                    Log.d(TAG, "Deriving ${messageSequence - receiveCounter} skipped message keys for gap [${receiveCounter}..${messageSequence - 1}]")
 
                     var currentChainKey = keyChain.receiveChainKeyBytes
                     val skippedKeys = mutableListOf<com.securelegion.database.entities.SkippedMessageKey>()
@@ -1573,7 +1573,7 @@ class MessageService(private val context: Context) {
 
                     // Bulk insert skipped keys
                     database.skippedMessageKeyDao().insertAll(skippedKeys)
-                    Log.d(TAG, "✓ Stored ${skippedKeys.size} skipped message keys")
+                    Log.d(TAG, "Stored ${skippedKeys.size} skipped message keys")
 
                     // currentChainKey is now at sequence n (current message)
                     // Derive message key for current message
@@ -1583,7 +1583,7 @@ class MessageService(private val context: Context) {
                     // Decrypt current message using derived key
                     val plaintext = RustBridge.decryptWithMessageKey(encryptedBytes, currentMessageKey)
                     if (plaintext == null) {
-                        Log.e(TAG, "❌ DECRYPTION FAILED: Message key invalid for seq=$messageSequence")
+                        Log.e(TAG, "DECRYPTION FAILED: Message key invalid for seq=$messageSequence")
                         return@withContext Result.failure(Exception("Decryption failed after skipping"))
                     }
 
@@ -1596,12 +1596,12 @@ class MessageService(private val context: Context) {
                     // Update state: receiveCounter = n + 1
                     newReceiveCounter = messageSequence + 1
                     newReceiveChainKey = evolvedChainKey
-                    Log.d(TAG, "✓ Decrypted message seq=$messageSequence, updated receiveCounter=$newReceiveCounter")
+                    Log.d(TAG, "Decrypted message seq=$messageSequence, updated receiveCounter=$newReceiveCounter")
                 }
 
                 // PATH 4: In-order message (n == Nr) - normal flow
                 else -> {
-                    Log.d(TAG, "✅ IN-ORDER MESSAGE: seq=$messageSequence == receiveCounter=$receiveCounter")
+                    Log.d(TAG, "IN-ORDER MESSAGE: seq=$messageSequence == receiveCounter=$receiveCounter")
 
                     // Normal decryption with atomic key evolution
                     val result = RustBridge.decryptMessageWithEvolution(
@@ -1611,7 +1611,7 @@ class MessageService(private val context: Context) {
                     )
 
                     if (result == null) {
-                        Log.e(TAG, "❌ DECRYPTION FAILED: RustBridge returned null")
+                        Log.e(TAG, "DECRYPTION FAILED: RustBridge returned null")
                         return@withContext Result.failure(Exception("Failed to decrypt message"))
                     }
 
@@ -1620,7 +1620,7 @@ class MessageService(private val context: Context) {
                     // Update state: receiveCounter = n + 1
                     newReceiveCounter = receiveCounter + 1
                     newReceiveChainKey = result.evolvedChainKey
-                    Log.d(TAG, "✓ Decrypted in-order message, updated receiveCounter=$newReceiveCounter")
+                    Log.d(TAG, "Decrypted in-order message, updated receiveCounter=$newReceiveCounter")
                 }
             }
 
@@ -1632,7 +1632,7 @@ class MessageService(private val context: Context) {
                     newReceiveCounter = newReceiveCounter,
                     timestamp = System.currentTimeMillis()
                 )
-                Log.d(TAG, "💾 Saved updated key chain state: receiveCounter=$newReceiveCounter")
+                Log.d(TAG, "Saved updated key chain state: receiveCounter=$newReceiveCounter")
             }
 
             // Extract nonce from wire format (bytes 9-32, after version and sequence)
@@ -1662,7 +1662,7 @@ class MessageService(private val context: Context) {
                         plaintext = audioAsString,
                         senderEd25519Base64 = senderPublicKeyBase64,
                         recipientEd25519Base64 = ourPublicKeyBase64,
-                        messageNonce = messageNonce  // Use the nonce we generated for this received message
+                        messageNonce = messageNonce // Use the nonce we generated for this received message
                     )
 
                     // Check for duplicate
@@ -1683,7 +1683,7 @@ class MessageService(private val context: Context) {
                         status = Message.STATUS_DELIVERED,
                         signatureBase64 = "",
                         nonceBase64 = nonceBase64,
-                        messageNonce = messageNonce,        // CRITICAL: Stored once, reused on all retries
+                        messageNonce = messageNonce, // CRITICAL: Stored once, reused on all retries
                         selfDestructAt = selfDestructAt,
                         requiresReadReceipt = requiresReadReceipt,
                         pingId = pingId
@@ -1720,7 +1720,7 @@ class MessageService(private val context: Context) {
                         status = Message.STATUS_DELIVERED,
                         signatureBase64 = "",
                         nonceBase64 = nonceBase64,
-                        messageNonce = messageNonce,        // CRITICAL: Stored once, reused on all retries
+                        messageNonce = messageNonce, // CRITICAL: Stored once, reused on all retries
                         selfDestructAt = selfDestructAt,
                         requiresReadReceipt = requiresReadReceipt,
                         pingId = pingId
@@ -1758,7 +1758,7 @@ class MessageService(private val context: Context) {
                         status = Message.STATUS_DELIVERED,
                         signatureBase64 = "",
                         nonceBase64 = nonceBase64,
-                        messageNonce = messageNonce,        // CRITICAL: Stored once, reused on all retries
+                        messageNonce = messageNonce, // CRITICAL: Stored once, reused on all retries
                         selfDestructAt = selfDestructAt,
                         requiresReadReceipt = requiresReadReceipt,
                         pingId = pingId
@@ -1799,7 +1799,7 @@ class MessageService(private val context: Context) {
                         status = Message.STATUS_DELIVERED,
                         signatureBase64 = "",
                         nonceBase64 = nonceBase64,
-                        messageNonce = messageNonce,        // CRITICAL: Stored once, reused on all retries
+                        messageNonce = messageNonce, // CRITICAL: Stored once, reused on all retries
                         selfDestructAt = selfDestructAt,
                         requiresReadReceipt = requiresReadReceipt,
                         pingId = pingId
@@ -1835,7 +1835,7 @@ class MessageService(private val context: Context) {
                         status = Message.STATUS_DELIVERED,
                         signatureBase64 = "",
                         nonceBase64 = nonceBase64,
-                        messageNonce = messageNonce,        // CRITICAL: Stored once, reused on all retries
+                        messageNonce = messageNonce, // CRITICAL: Stored once, reused on all retries
                         selfDestructAt = selfDestructAt,
                         requiresReadReceipt = requiresReadReceipt,
                         pingId = pingId
@@ -1870,7 +1870,7 @@ class MessageService(private val context: Context) {
                         status = Message.STATUS_DELIVERED,
                         signatureBase64 = "",
                         nonceBase64 = nonceBase64,
-                        messageNonce = messageNonce,        // CRITICAL: Stored once, reused on all retries
+                        messageNonce = messageNonce, // CRITICAL: Stored once, reused on all retries
                         selfDestructAt = selfDestructAt,
                         requiresReadReceipt = requiresReadReceipt,
                         pingId = pingId
@@ -1968,7 +1968,7 @@ class MessageService(private val context: Context) {
                     // Save updated message if state changed
                     if (updatedMessage != null) {
                         database.messageDao().updateMessage(updatedMessage)
-                        Log.d(TAG, "✓ Updated message status: $currentState for $messageId")
+                        Log.d(TAG, "Updated message status: $currentState for $messageId")
 
                         // Broadcast UI update for all delivery status changes
                         if (currentState == AckState.PING_ACKED || currentState == AckState.PONG_ACKED || currentState == AckState.MESSAGE_ACKED) {
@@ -1982,7 +1982,7 @@ class MessageService(private val context: Context) {
                                 AckState.MESSAGE_ACKED -> "MESSAGE_ACK"
                                 else -> "UNKNOWN"
                             }
-                            Log.d(TAG, "✓ Broadcast MESSAGE_RECEIVED for $statusDesc (contact $contactId)")
+                            Log.d(TAG, "Broadcast MESSAGE_RECEIVED for $statusDesc (contact $contactId)")
                         }
                     }
                 } else {
@@ -2039,31 +2039,31 @@ class MessageService(private val context: Context) {
         contactId: Long? = null
     ): Boolean = withContext(Dispatchers.IO) {
         try {
-            Log.d(TAG, "🔍 handleCallSignaling: Checking if message is call signaling...")
+            Log.d(TAG, "handleCallSignaling: Checking if message is call signaling...")
             // Decrypt message to check if it's call signaling
             // Call signaling uses X25519 encryption keys (not Ed25519 signing keys)
             val encryptedBytes = Base64.decode(encryptedData, Base64.NO_WRAP)
-            Log.d(TAG, "🔍 handleCallSignaling: Encrypted bytes size: ${encryptedBytes.size}")
+            Log.d(TAG, "handleCallSignaling: Encrypted bytes size: ${encryptedBytes.size}")
 
             val ourPrivateKey = keyManager.getEncryptionKeyBytes()
             val decryptedData = RustBridge.decryptMessage(encryptedBytes, senderPublicKey, ourPrivateKey)
 
             if (decryptedData == null) {
-                Log.w(TAG, "🔍 handleCallSignaling: Decryption FAILED - not call signaling")
+                Log.w(TAG, "handleCallSignaling: Decryption FAILED - not call signaling")
                 return@withContext false
             }
 
-            Log.d(TAG, "🔍 handleCallSignaling: Decryption successful, data: ${decryptedData.take(100)}...")
+            Log.d(TAG, "handleCallSignaling: Decryption successful, data: ${decryptedData.take(100)}...")
 
             // Try to parse as call signaling message
             val callMessage = CallSignaling.parseCallMessage(decryptedData)
 
             if (callMessage == null) {
-                Log.w(TAG, "🔍 handleCallSignaling: Parse FAILED - not call signaling JSON")
+                Log.w(TAG, "handleCallSignaling: Parse FAILED - not call signaling JSON")
                 return@withContext false
             }
 
-            Log.i(TAG, "✅ handleCallSignaling: Received call signaling message: ${callMessage.javaClass.simpleName}")
+            Log.i(TAG, "handleCallSignaling: Received call signaling message: ${callMessage.javaClass.simpleName}")
 
             // Get database instance to lookup contact
             val dbPassphrase = keyManager.getDatabasePassphrase()
@@ -2213,7 +2213,7 @@ class MessageService(private val context: Context) {
             val messages = database.messageDao().getMessagesForContact(contactId)
             Log.d(TAG, "Loaded ${messages.size} messages for contact $contactId")
             messages.forEach { msg ->
-                Log.d(TAG, "  - [${msg.messageType}] ${msg.encryptedContent.take(30)}... (id=${msg.id}, status=${msg.status})")
+                Log.d(TAG, "- [${msg.messageType}] ${msg.encryptedContent.take(30)}... (id=${msg.id}, status=${msg.status})")
             }
             messages
         } catch (e: Exception) {
@@ -2328,12 +2328,12 @@ class MessageService(private val context: Context) {
 
             // Convert message type to wire protocol type byte
             val messageTypeByte: Byte = when (message.messageType) {
-                Message.MESSAGE_TYPE_VOICE -> 0x04.toByte()           // VOICE
-                Message.MESSAGE_TYPE_IMAGE -> 0x09.toByte()           // IMAGE
+                Message.MESSAGE_TYPE_VOICE -> 0x04.toByte() // VOICE
+                Message.MESSAGE_TYPE_IMAGE -> 0x09.toByte() // IMAGE
                 Message.MESSAGE_TYPE_PAYMENT_REQUEST -> 0x0A.toByte() // PAYMENT_REQUEST
-                Message.MESSAGE_TYPE_PAYMENT_SENT -> 0x0B.toByte()    // PAYMENT_SENT
+                Message.MESSAGE_TYPE_PAYMENT_SENT -> 0x0B.toByte() // PAYMENT_SENT
                 Message.MESSAGE_TYPE_PAYMENT_ACCEPTED -> 0x0C.toByte() // PAYMENT_ACCEPTED
-                else -> 0x03.toByte()                                  // TEXT (default)
+                else -> 0x03.toByte() // TEXT (default)
             }
             Log.d(TAG, "Message type: ${message.messageType} → wire byte: 0x${messageTypeByte.toString(16).padStart(2, '0')}")
 
@@ -2356,8 +2356,8 @@ class MessageService(private val context: Context) {
                     onionAddress,
                     encryptedBytes,
                     messageTypeByte,
-                    message.pingId!!,  // Generated once when message created
-                    message.pingTimestamp!!  // Generated once when message created
+                    message.pingId!!, // Generated once when message created
+                    message.pingTimestamp!! // Generated once when message created
                 )
             } catch (e: Exception) {
                 val errorMsg = e.message ?: "Unknown error"
@@ -2383,10 +2383,10 @@ class MessageService(private val context: Context) {
                 }
 
                 if (isRetryable) {
-                    Log.w(TAG, "⚠️ Soft failure (retryable): $errorMsg")
+                    Log.w(TAG, "Soft failure (retryable): $errorMsg")
                     return@withContext Result.failure(Exception("RETRYABLE: $errorMsg"))
                 } else {
-                    Log.e(TAG, "❌ Hard failure (not retryable): $errorMsg", e)
+                    Log.e(TAG, "Hard failure (not retryable): $errorMsg", e)
                     return@withContext Result.failure(e)
                 }
             }
@@ -2398,7 +2398,7 @@ class MessageService(private val context: Context) {
                 val json = org.json.JSONObject(pingResponse)
                 pingId = json.getString("pingId")
                 wireBytes = json.getString("wireBytes")
-                Log.i(TAG, "✓ Ping sent successfully (ID: ${pingId.take(8)}...)")
+                Log.i(TAG, "Ping sent successfully (ID: ${pingId.take(8)}...)")
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to parse sendPing response JSON", e)
                 return@withContext Result.failure(e)
@@ -2410,23 +2410,23 @@ class MessageService(private val context: Context) {
                     // CRITICAL: Use partial update to avoid overwriting delivery status
                     // (fixes race where MESSAGE_ACK sets delivered=true between read and write)
                     database.messageDao().updatePingWireBytes(message.id, wireBytes)
-                    Log.d(TAG, "✓ Stored wire bytes for backup retry")
+                    Log.d(TAG, "Stored wire bytes for backup retry")
 
                     // VERIFY the update persisted (fix for race condition)
                     val verifyMessage = database.messageDao().getMessageByPingId(message.pingId ?: "")
                     if (verifyMessage?.pingWireBytes != null) {
-                        Log.d(TAG, "✓ VERIFIED wire bytes persisted to database for pingId=${message.pingId?.take(8)}")
+                        Log.d(TAG, "VERIFIED wire bytes persisted to database for pingId=${message.pingId?.take(8)}")
                     } else {
-                        Log.w(TAG, "⚠ WARNING: Wire bytes NOT persisted to database! Fallback to SharedPreferences may occur")
+                        Log.w(TAG, "WARNING: Wire bytes NOT persisted to database! Fallback to SharedPreferences may occur")
                     }
                 }
             }
 
             // Outgoing ping tracking handled by ping_inbox DB on receiver side
             // Pong lookup uses ping_inbox.contactId — no SharedPrefs needed
-            Log.i(TAG, "✓ Outgoing Ping sent: contact_id=${contact.id}, ping_id=$pingId")
+            Log.i(TAG, "Outgoing Ping sent: contact_id=${contact.id}, ping_id=$pingId")
 
-            Log.i(TAG, "✓ Ping sent successfully: $pingId (waiting for PING_ACK from receiver)")
+            Log.i(TAG, "Ping sent successfully: $pingId (waiting for PING_ACK from receiver)")
             Result.success(pingId)
 
         } catch (e: Exception) {
@@ -2477,7 +2477,7 @@ class MessageService(private val context: Context) {
                 Log.d(TAG, "pollForPong($pingId) returned: $pongReceived")
 
                 if (pongReceived) {
-                    Log.i(TAG, "✓ Pong received for Ping ID $pingId! Sending PONG_ACK and message blob...")
+                    Log.i(TAG, "Pong received for Ping ID $pingId! Sending PONG_ACK and message blob...")
 
                     // Get contact for .onion address
                     val contact = database.contactDao().getContactById(message.contactId)
@@ -2502,12 +2502,12 @@ class MessageService(private val context: Context) {
                                 // CRITICAL: Use partial update to avoid overwriting delivery status
                                 // (fixes race where MESSAGE_ACK sets delivered=true between read and write)
                                 database.messageDao().updatePongDelivered(message.id, true)
-                                Log.i(TAG, "✓ Marked PONG_ACK sent for message ${message.messageId}")
+                                Log.i(TAG, "Marked PONG_ACK sent for message ${message.messageId}")
 
                                 // NOW send message blob (after PONG_ACK confirmed)
                                 sendMessageBlobAfterPongAck(message, contact, pingId)
                             } else {
-                                Log.w(TAG, "✗ Failed to send PONG_ACK for message ${message.messageId}, MESSAGE send skipped (will retry)")
+                                Log.w(TAG, "Failed to send PONG_ACK for message ${message.messageId}, MESSAGE send skipped (will retry)")
                                 // MessageRetryWorker will retry the entire flow
                             }
                         } catch (e: Exception) {
@@ -2585,9 +2585,9 @@ class MessageService(private val context: Context) {
                         contact.messagingOnion ?: contact.torOnionAddress ?: ""
                     )
                     if (success) {
-                        Log.i(TAG, "✓ Ping resent successfully for ${message.messageId}")
+                        Log.i(TAG, "Ping resent successfully for ${message.messageId}")
                     } else {
-                        Log.e(TAG, "✗ Failed to resend Ping for ${message.messageId}")
+                        Log.e(TAG, "Failed to resend Ping for ${message.messageId}")
                         database.messageDao().updateMessageStatus(messageId, com.securelegion.database.entities.Message.STATUS_FAILED)
                         return@withContext Result.failure(Exception("Failed to resend PING"))
                     }
@@ -2624,7 +2624,7 @@ class MessageService(private val context: Context) {
                         com.securelegion.database.entities.Message.MESSAGE_TYPE_PAYMENT_REQUEST -> 0x0A.toByte()
                         com.securelegion.database.entities.Message.MESSAGE_TYPE_PAYMENT_SENT -> 0x0B.toByte()
                         com.securelegion.database.entities.Message.MESSAGE_TYPE_PAYMENT_ACCEPTED -> 0x0C.toByte()
-                        else -> 0x03.toByte()  // TEXT (default)
+                        else -> 0x03.toByte() // TEXT (default)
                     }
 
                     // Recreate PING using RustBridge.sendPing with existing encrypted payload
@@ -2664,7 +2664,7 @@ class MessageService(private val context: Context) {
                     // CRITICAL: Use partial update to avoid overwriting delivery status
                     // (fixes race where MESSAGE_ACK sets delivered=true between read and write)
                     database.messageDao().updatePingWireBytes(message.id, wireBytes)
-                    Log.i(TAG, "✓ Recreated PING and stored wire bytes for future retries")
+                    Log.i(TAG, "Recreated PING and stored wire bytes for future retries")
                 }
             }
 
@@ -2693,7 +2693,7 @@ class MessageService(private val context: Context) {
         // Check if we have the next sequential message buffered
         val buffered = contactBuffer.remove(expectedSeq) ?: return
 
-        Log.d(TAG, "📦 Processing buffered message seq=$expectedSeq (buffer size: ${contactBuffer.size})")
+        Log.d(TAG, "Processing buffered message seq=$expectedSeq (buffer size: ${contactBuffer.size})")
 
         // Recursively process this buffered message
         try {
@@ -2709,13 +2709,13 @@ class MessageService(private val context: Context) {
             )
 
             if (result.isSuccess) {
-                Log.d(TAG, "✅ Buffered message seq=$expectedSeq processed successfully")
+                Log.d(TAG, "Buffered message seq=$expectedSeq processed successfully")
                 // processBufferedMessages will be called recursively from receiveMessage
             } else {
-                Log.w(TAG, "⚠️ Failed to process buffered message seq=$expectedSeq: ${result.exceptionOrNull()?.message}")
+                Log.w(TAG, "Failed to process buffered message seq=$expectedSeq: ${result.exceptionOrNull()?.message}")
             }
         } catch (e: Exception) {
-            Log.e(TAG, "❌ Error processing buffered message seq=$expectedSeq", e)
+            Log.e(TAG, "Error processing buffered message seq=$expectedSeq", e)
         }
 
         // Clean up empty buffers
@@ -2746,7 +2746,7 @@ class MessageService(private val context: Context) {
                 )
 
                 if (success) {
-                    Log.i(TAG, "✓ Sent PONG_ACK for itemId=${itemId.take(8)}...")
+                    Log.i(TAG, "Sent PONG_ACK for itemId=${itemId.take(8)}...")
                     return true
                 }
 
@@ -2799,12 +2799,12 @@ class MessageService(private val context: Context) {
 
             // Convert message type to wire protocol type byte
             val messageTypeByte: Byte = when (message.messageType) {
-                com.securelegion.database.entities.Message.MESSAGE_TYPE_VOICE -> 0x04.toByte()           // VOICE
-                com.securelegion.database.entities.Message.MESSAGE_TYPE_IMAGE -> 0x09.toByte()           // IMAGE
+                com.securelegion.database.entities.Message.MESSAGE_TYPE_VOICE -> 0x04.toByte() // VOICE
+                com.securelegion.database.entities.Message.MESSAGE_TYPE_IMAGE -> 0x09.toByte() // IMAGE
                 com.securelegion.database.entities.Message.MESSAGE_TYPE_PAYMENT_REQUEST -> 0x0A.toByte() // PAYMENT_REQUEST
-                com.securelegion.database.entities.Message.MESSAGE_TYPE_PAYMENT_SENT -> 0x0B.toByte()    // PAYMENT_SENT
+                com.securelegion.database.entities.Message.MESSAGE_TYPE_PAYMENT_SENT -> 0x0B.toByte() // PAYMENT_SENT
                 com.securelegion.database.entities.Message.MESSAGE_TYPE_PAYMENT_ACCEPTED -> 0x0C.toByte() // PAYMENT_ACCEPTED
-                else -> 0x03.toByte()                                                                      // TEXT (default)
+                else -> 0x03.toByte() // TEXT (default)
             }
 
             // Send message blob
@@ -2822,7 +2822,7 @@ class MessageService(private val context: Context) {
                 // This prevents session leaks that cause all future messages to fail
                 try {
                     com.securelegion.crypto.RustBridge.removePongSession(pingId)
-                    Log.d(TAG, "✓ Cleaned up Rust Pong session for pingId=${pingId.take(8)}...")
+                    Log.d(TAG, "Cleaned up Rust Pong session for pingId=${pingId.take(8)}...")
                 } catch (e: Exception) {
                     Log.w(TAG, "Failed to clean up Pong session (non-critical)", e)
                 }

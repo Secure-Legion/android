@@ -19,6 +19,7 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.FileProvider
 import androidx.lifecycle.lifecycleScope
 import com.google.android.material.bottomsheet.BottomSheetDialog
+import com.securelegion.utils.GlassBottomSheetDialog
 import com.google.zxing.BarcodeFormat
 import com.google.zxing.qrcode.QRCodeWriter
 import com.securelegion.crypto.KeyManager
@@ -81,34 +82,24 @@ class WalletIdentityActivity : AppCompatActivity() {
         }
 
         loadUsername()
-        loadContactCardInfo()
         setupBottomNavigation()
         setupProfilePhoto()
 
-        // New Identity button - future feature (commented out in layout)
-        // findViewById<View>(R.id.updateUsernameButton).setOnClickListener {
-        //     showNewIdentityConfirmation()
-        // }
-
-        // Copy friend request address button
-        findViewById<View>(R.id.copyCidButton).setOnClickListener {
-            val friendRequestAddress = findViewById<TextView>(R.id.contactCardCid).text.toString()
-            if (friendRequestAddress.isNotEmpty()) {
-                copyToClipboard(friendRequestAddress, "Friend Request Address")
-            }
-        }
-
-        // Copy PIN button
-        findViewById<View>(R.id.copyPinButton).setOnClickListener {
-            val pin = getPinFromDigits()
-            if (pin.isNotEmpty()) {
-                copyToClipboard(pin, "PIN")
-            }
-        }
-
-        // Identity QR Code button
+        // Contact Card button
         findViewById<View>(R.id.identityQrCodeButton).setOnClickListener {
             showIdentityQrCode()
+        }
+
+        // Wallet button
+        findViewById<View>(R.id.walletButton).setOnClickListener {
+            val intent = android.content.Intent(this, WalletActivity::class.java)
+            startActivity(intent)
+        }
+
+        // Settings button
+        findViewById<View>(R.id.settingsButton).setOnClickListener {
+            val intent = android.content.Intent(this, SettingsActivity::class.java)
+            startActivity(intent)
         }
     }
 
@@ -121,8 +112,10 @@ class WalletIdentityActivity : AppCompatActivity() {
             return
         }
 
+        val pin = keyManager.getContactPin() ?: ""
+
         // Create bottom sheet dialog
-        val bottomSheet = BottomSheetDialog(this)
+        val bottomSheet = GlassBottomSheetDialog(this)
         val view = layoutInflater.inflate(R.layout.bottom_sheet_identity_qr, null)
 
         // Set minimum height
@@ -156,6 +149,26 @@ class WalletIdentityActivity : AppCompatActivity() {
 
         // Set friend request address text
         view.findViewById<TextView>(R.id.cidText).text = friendRequestOnion
+
+        // Set PIN text formatted as XXX-XXX-XXXX
+        if (pin.length == 10) {
+            val formattedPin = "${pin.substring(0, 3)}-${pin.substring(3, 6)}-${pin.substring(6, 10)}"
+            view.findViewById<TextView>(R.id.pinText).text = formattedPin
+        } else {
+            view.findViewById<TextView>(R.id.pinText).text = pin
+        }
+
+        // Copy friend request address button
+        view.findViewById<View>(R.id.copyCidButton).setOnClickListener {
+            copyToClipboard(friendRequestOnion, "Friend Request Address")
+        }
+
+        // Copy PIN button
+        view.findViewById<View>(R.id.copyPinButton).setOnClickListener {
+            if (pin.isNotEmpty()) {
+                copyToClipboard(pin, "Contact PIN")
+            }
+        }
 
         // Share button
         view.findViewById<View>(R.id.shareQrButton).setOnClickListener {
@@ -223,23 +236,9 @@ class WalletIdentityActivity : AppCompatActivity() {
         }
     }
 
-    private fun getPinFromDigits(): String {
-        val digit1 = findViewById<TextView>(R.id.pinDigit1).text.toString()
-        val digit2 = findViewById<TextView>(R.id.pinDigit2).text.toString()
-        val digit3 = findViewById<TextView>(R.id.pinDigit3).text.toString()
-        val digit4 = findViewById<TextView>(R.id.pinDigit4).text.toString()
-        val digit5 = findViewById<TextView>(R.id.pinDigit5).text.toString()
-        val digit6 = findViewById<TextView>(R.id.pinDigit6).text.toString()
-        val digit7 = findViewById<TextView>(R.id.pinDigit7).text.toString()
-        val digit8 = findViewById<TextView>(R.id.pinDigit8).text.toString()
-        val digit9 = findViewById<TextView>(R.id.pinDigit9).text.toString()
-        val digit10 = findViewById<TextView>(R.id.pinDigit10).text.toString()
-        return "$digit1$digit2$digit3$digit4$digit5$digit6$digit7$digit8$digit9$digit10"
-    }
-
     private fun showNewIdentityConfirmation() {
         // Create bottom sheet dialog
-        val bottomSheet = BottomSheetDialog(this)
+        val bottomSheet = GlassBottomSheetDialog(this)
         val view = layoutInflater.inflate(R.layout.bottom_sheet_new_identity_confirm, null)
 
         // Set minimum height on the view itself
@@ -360,7 +359,6 @@ class WalletIdentityActivity : AppCompatActivity() {
 
                 // Refresh UI
                 loadUsername()
-                loadContactCardInfo()
 
                 // Show seed phrase backup screen
                 ThemedToast.showLong(this@WalletIdentityActivity, "New identity created! Backup your seed phrase!")
@@ -412,51 +410,13 @@ class WalletIdentityActivity : AppCompatActivity() {
                 intArrayOf(
                     0x4DFFFFFF.toInt(), // 30% white at start
                     0xE6FFFFFF.toInt(), // 90% white at center
-                    0x4DFFFFFF.toInt()  // 30% white at end
+                    0x4DFFFFFF.toInt() // 30% white at end
                 ),
                 floatArrayOf(0f, 0.49f, 1f),
                 android.graphics.Shader.TileMode.CLAMP
             )
             textView.paint.shader = shader
             textView.invalidate()
-        }
-    }
-
-    private fun loadContactCardInfo() {
-        try {
-            val keyManager = KeyManager.getInstance(this)
-            if (keyManager.hasContactCardInfo()) {
-                val friendRequestOnion = keyManager.getFriendRequestOnion()
-                val pin = keyManager.getContactPin()
-
-                if (friendRequestOnion != null && pin != null) {
-                    // Set friend request .onion address
-                    findViewById<TextView>(R.id.contactCardCid).text = friendRequestOnion
-
-                    // Set PIN digits (10 digits)
-                    if (pin.length == 10) {
-                        findViewById<TextView>(R.id.pinDigit1).text = pin[0].toString()
-                        findViewById<TextView>(R.id.pinDigit2).text = pin[1].toString()
-                        findViewById<TextView>(R.id.pinDigit3).text = pin[2].toString()
-                        findViewById<TextView>(R.id.pinDigit4).text = pin[3].toString()
-                        findViewById<TextView>(R.id.pinDigit5).text = pin[4].toString()
-                        findViewById<TextView>(R.id.pinDigit6).text = pin[5].toString()
-                        findViewById<TextView>(R.id.pinDigit7).text = pin[6].toString()
-                        findViewById<TextView>(R.id.pinDigit8).text = pin[7].toString()
-                        findViewById<TextView>(R.id.pinDigit9).text = pin[8].toString()
-                        findViewById<TextView>(R.id.pinDigit10).text = pin[9].toString()
-                        Log.i("WalletIdentity", "Loaded 10-digit PIN")
-                    } else {
-                        Log.e("WalletIdentity", "Invalid PIN length: ${pin.length} (expected 10)")
-                    }
-
-                    Log.i("WalletIdentity", "Loaded contact card info")
-                }
-            } else {
-                Log.d("WalletIdentity", "No contact card info stored yet")
-            }
-        } catch (e: Exception) {
-            Log.e("WalletIdentity", "Failed to load contact card info", e)
         }
     }
 
@@ -469,33 +429,7 @@ class WalletIdentityActivity : AppCompatActivity() {
     }
 
     private fun setupBottomNavigation() {
-        findViewById<View>(R.id.navMessages).setOnClickListener {
-            val intent = Intent(this, MainActivity::class.java)
-            startActivity(intent)
-            finish()
-        }
-
-        findViewById<View>(R.id.navWallet).setOnClickListener {
-            val intent = Intent(this, MainActivity::class.java)
-            intent.putExtra("SHOW_WALLET", true)
-            intent.flags = Intent.FLAG_ACTIVITY_CLEAR_TOP
-            startActivity(intent)
-            finish()
-        }
-
-        findViewById<View>(R.id.navAddFriend).setOnClickListener {
-            val intent = Intent(this, AddFriendActivity::class.java)
-            startActivity(intent)
-            finish()
-        }
-
-        findViewById<View>(R.id.navPhone).setOnClickListener {
-            val intent = Intent(this, MainActivity::class.java)
-            intent.putExtra("SHOW_PHONE", true)
-            intent.flags = Intent.FLAG_ACTIVITY_CLEAR_TOP
-            startActivity(intent)
-            finish()
-        }
+        BottomNavigationHelper.setupBottomNavigation(this)
     }
 
     // ==================== PROFILE PHOTO ====================

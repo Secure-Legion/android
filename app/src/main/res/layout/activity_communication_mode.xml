@@ -4,7 +4,7 @@
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="#000000">
+    android:background="?attr/colorSurface">
 
     <!-- Header -->
     <LinearLayout
@@ -45,7 +45,7 @@
             android:layout_weight="1"
             android:text="Communication"
             android:textSize="24sp"
-            android:textColor="#999999"
+            android:textColor="?attr/colorOnSurfaceVariant"
             android:fontFamily="@font/space_grotesk_bold"
             android:gravity="center" />
 
@@ -80,7 +80,7 @@
                 android:layout_height="wrap_content"
                 android:text="SecureMesh"
                 android:textSize="18sp"
-                android:textColor="#FFFFFF"
+                android:textColor="?attr/colorOnSurface"
                 android:fontFamily="@font/space_grotesk_bold"
                 android:layout_marginBottom="8dp" />
 
@@ -171,7 +171,7 @@
                     android:layout_height="wrap_content"
                     android:text="Network Status"
                     android:textSize="14sp"
-                    android:textColor="#888888"
+                    android:textColor="?attr/colorOnSurfaceVariant"
                     android:fontFamily="@font/poppins_medium"
                     android:layout_marginBottom="12dp" />
 
@@ -271,7 +271,7 @@
                     android:layout_height="wrap_content"
                     android:text="About SecureMesh"
                     android:textSize="14sp"
-                    android:textColor="#888888"
+                    android:textColor="?attr/colorOnSurfaceVariant"
                     android:fontFamily="@font/poppins_medium"
                     android:layout_marginBottom="8dp" />
 
@@ -300,7 +300,7 @@
                     android:layout_height="wrap_content"
                     android:text="Device Settings"
                     android:textSize="18sp"
-                    android:textColor="#FFFFFF"
+                    android:textColor="?attr/colorOnSurface"
                     android:fontFamily="@font/space_grotesk_bold"
                     android:layout_marginBottom="16dp" />
 
@@ -330,7 +330,7 @@
                             android:layout_height="24dp"
                             android:layout_gravity="center"
                             android:src="@android:drawable/stat_sys_data_bluetooth"
-                            app:tint="#888888" />
+                            app:tint="?attr/colorOnSurfaceVariant" />
 
                     </FrameLayout>
 

@@ -26,6 +26,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import com.google.android.material.bottomsheet.BottomSheetDialog
+import com.securelegion.utils.GlassBottomSheetDialog
 import com.securelegion.database.SecureLegionDatabase
 import com.securelegion.database.entities.Wallet
 

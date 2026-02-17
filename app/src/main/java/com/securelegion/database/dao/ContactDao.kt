@@ -155,4 +155,16 @@ interface ContactDao {
      */
     @Query("UPDATE contacts SET needsTapSync = 0 WHERE id = :contactId")
     suspend fun markTapSent(contactId: Long)
+
+    /**
+     * Get all pinned contacts
+     */
+    @Query("SELECT * FROM contacts WHERE isPinned = 1 ORDER BY displayName ASC")
+    suspend fun getPinnedContacts(): List<Contact>
+
+    /**
+     * Toggle pin status for a contact
+     */
+    @Query("UPDATE contacts SET isPinned = :isPinned WHERE id = :contactId")
+    suspend fun setPinned(contactId: Long, isPinned: Boolean)
 }

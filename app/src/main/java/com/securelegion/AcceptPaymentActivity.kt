@@ -10,6 +10,7 @@ import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
 import com.google.android.material.bottomsheet.BottomSheetDialog
+import com.securelegion.utils.GlassBottomSheetDialog
 import com.securelegion.crypto.KeyManager
 import com.securelegion.crypto.NLx402Manager
 import com.securelegion.database.SecureLegionDatabase
@@ -224,7 +225,7 @@ class AcceptPaymentActivity : AppCompatActivity() {
                         return@withContext
                     }
 
-                    val bottomSheet = BottomSheetDialog(this@AcceptPaymentActivity)
+                    val bottomSheet = GlassBottomSheetDialog(this@AcceptPaymentActivity)
                     val view = layoutInflater.inflate(R.layout.bottom_sheet_wallet_selector, null)
 
                     val displayMetrics = resources.displayMetrics

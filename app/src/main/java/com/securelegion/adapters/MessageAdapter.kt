@@ -21,6 +21,7 @@ import android.widget.LinearLayout
 import android.widget.PopupMenu
 import android.widget.TextView
 import androidx.cardview.widget.CardView
+import androidx.core.content.ContextCompat
 import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.ListAdapter
 import androidx.recyclerview.widget.RecyclerView
@@ -101,14 +102,14 @@ private object ChatListItemDiffCallback : DiffUtil.ItemCallback<ChatListItem>() 
                     oldItem.message.pingDelivered != newItem.message.pingDelivered ||
                     oldItem.message.pongDelivered != newItem.message.pongDelivered ||
                     oldItem.message.messageDelivered != newItem.message.messageDelivered) {
-                    "status_changed"  // Only update status icon, not entire row (handles ACK updates)
+                    "status_changed" // Only update status icon, not entire row (handles ACK updates)
                 } else null
             }
             oldItem is ChatListItem.PendingPingItem && newItem is ChatListItem.PendingPingItem -> {
                 if (oldItem.pingInbox.state != newItem.pingInbox.state) {
-                    "state_changed"  // Update pending state
+                    "state_changed" // Update pending state
                 } else if (oldItem.isDownloading != newItem.isDownloading) {
-                    "downloading_changed"  // Update download status
+                    "downloading_changed" // Update download status
                 } else null
             }
             else -> null
@@ -117,18 +118,18 @@ private object ChatListItemDiffCallback : DiffUtil.ItemCallback<ChatListItem>() 
 }
 
 class MessageAdapter(
-    private var downloadingPingIds: Set<String> = emptySet(),  // Track which pings are being downloaded
-    private var autoPongPingIds: Set<String> = emptySet(),  // Track auto-downloading pings (show typing indicator)
-    private val onDownloadClick: ((String) -> Unit)? = null,  // Now passes ping ID
+    private var downloadingPingIds: Set<String> = emptySet(), // Track which pings are being downloaded
+    private var autoPongPingIds: Set<String> = emptySet(), // Track auto-downloading pings (show typing indicator)
+    private val onDownloadClick: ((String) -> Unit)? = null, // Now passes ping ID
     private val onVoicePlayClick: ((Message) -> Unit)? = null,
     private var currentlyPlayingMessageId: String? = null,
     private val onMessageLongClick: (() -> Unit)? = null,
-    private val onImageClick: ((String) -> Unit)? = null,  // Base64 image data
-    private val onPaymentRequestClick: ((Message) -> Unit)? = null,  // Click on payment request (to pay)
-    private val onPaymentDetailsClick: ((Message) -> Unit)? = null,  // Click on completed payment (for details)
-    private val onPriceRefreshClick: ((Message, TextView, TextView) -> Unit)? = null,  // Refresh price callback
-    private val onDeleteMessage: ((Message) -> Unit)? = null,  // Delete single message callback
-    private val onResendMessage: ((Message) -> Unit)? = null  // Resend failed message callback
+    private val onImageClick: ((String) -> Unit)? = null, // Base64 image data
+    private val onPaymentRequestClick: ((Message) -> Unit)? = null, // Click on payment request (to pay)
+    private val onPaymentDetailsClick: ((Message) -> Unit)? = null, // Click on completed payment (for details)
+    private val onPriceRefreshClick: ((Message, TextView, TextView) -> Unit)? = null, // Refresh price callback
+    private val onDeleteMessage: ((Message) -> Unit)? = null, // Delete single message callback
+    private val onResendMessage: ((Message) -> Unit)? = null // Resend failed message callback
 ) : ListAdapter<ChatListItem, RecyclerView.ViewHolder>(ChatListItemDiffCallback) {
 
     companion object {
@@ -155,7 +156,7 @@ class MessageAdapter(
 
     // Selection mode for deletion
     private var isSelectionMode = false
-    private val selectedMessages = mutableSetOf<String>()  // Use String to support both message IDs and ping IDs
+    private val selectedMessages = mutableSetOf<String>() // Use String to support both message IDs and ping IDs
 
     // Track animated ellipsis for downloading/decrypting states
     private val ellipsisAnimations = mutableMapOf<TextView, Runnable>()
@@ -204,8 +205,8 @@ class MessageAdapter(
             override fun run() {
                 val dots = ".".repeat(dotCount)
                 textView.text = "$baseText$dots"
-                dotCount = (dotCount + 1) % 4  // Cycle 0, 1, 2, 3
-                ellipsisHandler.postDelayed(this, 500)  // Update every 500ms
+                dotCount = (dotCount + 1) % 4 // Cycle 0, 1, 2, 3
+                ellipsisHandler.postDelayed(this, 500) // Update every 500ms
             }
         }
 
@@ -228,7 +229,7 @@ class MessageAdapter(
      * Each dot fades up and down in sequence
      */
     private fun startTypingAnimation(dot1: TextView, dot2: TextView, dot3: TextView) {
-        Log.d(TAG, "🔵 startTypingAnimation() called - starting bounce animation")
+        Log.d(TAG, "startTypingAnimation() called - starting bounce animation")
 
         // Stop any existing animation on these views first (important for RecyclerView recycling)
         stopTypingAnimation(dot1, dot2, dot3)
@@ -246,12 +247,12 @@ class MessageAdapter(
             override fun run() {
                 // Safety check: make sure views are still attached before animating
                 if (dot1.parent == null) {
-                    Log.d(TAG, "🔵 Typing animation stopped - views detached")
+                    Log.d(TAG, "Typing animation stopped - views detached")
                     stopTypingAnimation(dot1, dot2, dot3)
                     return
                 }
 
-                Log.d(TAG, "🔵 Typing animation tick - bouncing dot $currentDot")
+                Log.d(TAG, "Typing animation tick - bouncing dot $currentDot")
 
                 // Reset all dots to normal size
                 dots.forEach {
@@ -272,14 +273,14 @@ class MessageAdapter(
                 // Move to next dot
                 currentDot = (currentDot + 1) % 3
 
-                ellipsisHandler.postDelayed(this, 400)  // Update every 400ms
+                ellipsisHandler.postDelayed(this, 400) // Update every 400ms
             }
         }
 
         // Store runnable using first dot as key (representative)
         ellipsisAnimations[dot1] = runnable
         ellipsisHandler.post(runnable)
-        Log.d(TAG, "🔵 Typing animation runnable posted to handler")
+        Log.d(TAG, "Typing animation runnable posted to handler")
     }
 
     /**
@@ -417,14 +418,14 @@ class MessageAdapter(
 
         if (position >= currentList.size) {
             Log.e(TAG, "getItemViewType: position $position >= currentList.size ${currentList.size}")
-            return VIEW_TYPE_SENT  // Fallback
+            return VIEW_TYPE_SENT // Fallback
         }
 
         val item = currentList[position]
 
         return when (item) {
             is ChatListItem.PendingPingItem -> {
-                Log.d(TAG, "  -> VIEW_TYPE_PENDING (ping: ${item.pingInbox.pingId.take(8)})")
+                Log.d(TAG, "-> VIEW_TYPE_PENDING (ping: ${item.pingInbox.pingId.take(8)})")
                 VIEW_TYPE_PENDING
             }
             is ChatListItem.MessageItem -> {
@@ -441,7 +442,7 @@ class MessageAdapter(
                     message.isSentByMe -> VIEW_TYPE_SENT
                     else -> VIEW_TYPE_RECEIVED
                 }
-                Log.d(TAG, "  -> viewType=$viewType (type=${message.messageType}, sentByMe=${message.isSentByMe})")
+                Log.d(TAG, "-> viewType=$viewType (type=${message.messageType}, sentByMe=${message.isSentByMe})")
                 viewType
             }
         }
@@ -451,13 +452,13 @@ class MessageAdapter(
         Log.d(TAG, "onCreateViewHolder() called for viewType=$viewType")
         return when (viewType) {
             VIEW_TYPE_SENT -> {
-                Log.d(TAG, "  -> Creating SentMessageViewHolder")
+                Log.d(TAG, "-> Creating SentMessageViewHolder")
                 val view = LayoutInflater.from(parent.context)
                     .inflate(R.layout.item_message_sent, parent, false)
                 SentMessageViewHolder(view)
             }
             VIEW_TYPE_PENDING -> {
-                Log.d(TAG, "  -> Creating PendingMessageViewHolder")
+                Log.d(TAG, "-> Creating PendingMessageViewHolder")
                 val view = LayoutInflater.from(parent.context)
                     .inflate(R.layout.item_message_pending, parent, false)
                 PendingMessageViewHolder(view)
@@ -515,7 +516,7 @@ class MessageAdapter(
         val item = getItem(position)
         when (holder) {
             is SentMessageViewHolder -> {
-                Log.d(TAG, "  -> Binding SentMessageViewHolder")
+                Log.d(TAG, "-> Binding SentMessageViewHolder")
                 val message = (item as ChatListItem.MessageItem).message
                 bindSentMessage(holder, message, position)
             }
@@ -781,7 +782,7 @@ class MessageAdapter(
             holder.downloadButton.setOnClickListener {
                 holder.downloadButton.visibility = View.GONE
                 holder.downloadingText.visibility = View.VISIBLE
-                onDownloadClick?.invoke(pingInbox.pingId)  // Pass specific ping ID
+                onDownloadClick?.invoke(pingInbox.pingId) // Pass specific ping ID
             }
         }
 
@@ -1083,11 +1084,12 @@ class MessageAdapter(
         }
 
         // Update status color
+        val ctx = holder.itemView.context
         val statusColor = when (status) {
-            Message.PAYMENT_STATUS_PAID -> 0xFF00D4AA.toInt()     // Green
-            Message.PAYMENT_STATUS_EXPIRED -> 0xFF888888.toInt()  // Gray
-            Message.PAYMENT_STATUS_CANCELLED -> 0xFFFF4444.toInt() // Red
-            else -> 0xFFFFD93D.toInt()                            // Yellow (pending)
+            Message.PAYMENT_STATUS_PAID -> ContextCompat.getColor(ctx, R.color.success_green)
+            Message.PAYMENT_STATUS_EXPIRED -> com.google.android.material.color.MaterialColors.getColor(holder.itemView, com.google.android.material.R.attr.colorOnSurfaceVariant)
+            Message.PAYMENT_STATUS_CANCELLED -> ContextCompat.getColor(ctx, R.color.warning_red)
+            else -> ContextCompat.getColor(ctx, R.color.warning_yellow)
         }
         holder.paymentStatus.setTextColor(statusColor)
 
@@ -1436,7 +1438,7 @@ class MessageAdapter(
 
         bubble.setOnTouchListener { _, event ->
             gestureDetector.onTouchEvent(event)
-            false  // Don't consume touch events - allow RecyclerView scrolling
+            false // Don't consume touch events - allow RecyclerView scrolling
         }
     }
 
@@ -1521,10 +1523,10 @@ class MessageAdapter(
     private fun getStatusIcon(message: Message): Int {
         // Check ACK flags instead of status to show accurate delivery state
         return when {
-            message.status == Message.STATUS_FAILED -> R.drawable.status_failed  // Red circle with X
-            message.messageDelivered -> R.drawable.status_delivered  // Solid circle with 2 checkmarks (message downloaded by receiver)
-            message.pingDelivered -> R.drawable.status_sent  // Circle with 1 checkmark (PING_ACK received, receiver notified)
-            else -> R.drawable.status_pending  // Empty circle (no PING_ACK yet, receiver may be offline)
+            message.status == Message.STATUS_FAILED -> R.drawable.status_failed // Red circle with X
+            message.messageDelivered -> R.drawable.status_delivered // Solid circle with 2 checkmarks (message downloaded by receiver)
+            message.pingDelivered -> R.drawable.status_sent // Circle with 1 checkmark (PING_ACK received, receiver notified)
+            else -> R.drawable.status_pending // Empty circle (no PING_ACK yet, receiver may be offline)
         }
     }
 
@@ -1533,7 +1535,7 @@ class MessageAdapter(
 
         // Stop any running animations when view is recycled to prevent crashes
         if (holder is PendingMessageViewHolder) {
-            Log.d(TAG, "🔴 View recycled - stopping typing animation")
+            Log.d(TAG, "View recycled - stopping typing animation")
             stopTypingAnimation(holder.typingDot1, holder.typingDot2, holder.typingDot3)
             stopEllipsisAnimation(holder.downloadingText)
         }
@@ -1551,7 +1553,7 @@ class MessageAdapter(
      * Stop all running animations (call this in onDestroy to prevent memory leaks)
      */
     fun stopAllAnimations() {
-        Log.d(TAG, "🛑 Stopping all animations in adapter")
+        Log.d(TAG, "Stopping all animations in adapter")
         // Stop all ellipsis animations
         ellipsisAnimations.keys.toList().forEach { textView ->
             ellipsisAnimations[textView]?.let { runnable ->
@@ -1562,7 +1564,7 @@ class MessageAdapter(
 
         // Remove all pending messages from handler
         ellipsisHandler.removeCallbacksAndMessages(null)
-        Log.d(TAG, "🛑 All animations stopped")
+        Log.d(TAG, "All animations stopped")
     }
 
     fun resetSwipeState() {
@@ -1605,7 +1607,7 @@ class MessageAdapter(
             )
         })
 
-        Log.d(TAG, "  Submitting combined list with ${combinedList.size} total items to DiffUtil")
+        Log.d(TAG, "Submitting combined list with ${combinedList.size} total items to DiffUtil")
 
         // Let DiffUtil compute the optimal changes atomically
         submitList(combinedList)
@@ -1689,7 +1691,7 @@ class MessageAdapter(
                 // Clip waveform progress using scaleX
                 val scale = progress / 100f
                 holder.waveformProgress.scaleX = scale
-                holder.waveformProgress.pivotX = 0f  // Scale from left
+                holder.waveformProgress.pivotX = 0f // Scale from left
 
                 // Update time display
                 holder.durationText.text = formatDuration(currentTime / 1000)
@@ -1701,7 +1703,7 @@ class MessageAdapter(
                 // Clip waveform progress using scaleX
                 val scale = progress / 100f
                 holder.waveformProgress.scaleX = scale
-                holder.waveformProgress.pivotX = 0f  // Scale from left
+                holder.waveformProgress.pivotX = 0f // Scale from left
 
                 // Update time display
                 holder.durationText.text = formatDuration(currentTime / 1000)

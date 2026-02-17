@@ -19,9 +19,9 @@ interface ReceivedIdDao {
      * Usage:
      * val rowId = insertReceivedId(ReceivedId(...))
      * if (rowId != -1L) {
-     *     // New ID - process it
+     * // New ID - process it
      * } else {
-     *     // Duplicate ID - skip processing
+     * // Duplicate ID - skip processing
      * }
      */
     @Insert(onConflict = OnConflictStrategy.IGNORE)

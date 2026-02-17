@@ -14,9 +14,9 @@
     <TextView
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="Identity QR Code"
+        android:text="Contact Card"
         android:textSize="24sp"
-        android:textColor="#FFFFFF"
+        android:textColor="?attr/colorOnSurface"
         android:fontFamily="@font/space_grotesk_bold"
         android:gravity="center"
         android:layout_marginBottom="8dp" />
@@ -25,9 +25,9 @@
     <TextView
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="Share this QR code so others can add you"
+        android:text="Share this so others can add you"
         android:textSize="14sp"
-        android:textColor="#888888"
+        android:textColor="?attr/colorOnSurfaceVariant"
         android:fontFamily="@font/poppins_regular"
         android:gravity="center"
         android:layout_marginBottom="24dp" />
@@ -42,27 +42,35 @@
         app:cardCornerRadius="12dp"
         app:cardElevation="0dp">
 
-        <!-- QR Code Image -->
         <ImageView
             android:id="@+id/qrCodeImage"
-            android:layout_width="220dp"
-            android:layout_height="220dp"
+            android:layout_width="200dp"
+            android:layout_height="200dp"
             android:padding="12dp"
             android:scaleType="fitCenter"
-            android:contentDescription="Identity QR Code" />
+            android:contentDescription="Contact Card QR Code" />
 
     </androidx.cardview.widget.CardView>
 
-    <!-- CID Display -->
+    <!-- Friend Request Address -->
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Friend Request Address"
+        android:textSize="14sp"
+        android:fontFamily="@font/poppins_medium"
+        android:textColor="#8C8C8C"
+        android:layout_marginBottom="8dp" />
+
     <LinearLayout
         android:layout_width="match_parent"
-        android:layout_height="50dp"
+        android:layout_height="60dp"
         android:orientation="horizontal"
         android:background="@drawable/lock_password_input_bg"
         android:gravity="center_vertical"
         android:paddingStart="16dp"
         android:paddingEnd="8dp"
-        android:layout_marginBottom="24dp">
+        android:layout_marginBottom="16dp">
 
         <TextView
             android:id="@+id/cidText"
@@ -73,9 +81,78 @@
             android:textSize="12sp"
             android:textColor="#8C8C8C"
             android:fontFamily="@font/poppins_regular"
-            android:gravity="center"
+            android:gravity="start|center_vertical"
             android:ellipsize="middle"
             android:maxLines="1" />
+
+        <FrameLayout
+            android:id="@+id/copyCidButton"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:background="@drawable/settings_icon_bg"
+            android:clickable="true"
+            android:focusable="true">
+
+            <ImageView
+                android:layout_width="20dp"
+                android:layout_height="20dp"
+                android:layout_gravity="center"
+                android:src="@android:drawable/ic_menu_share"
+                app:tint="?attr/colorOnSurfaceVariant" />
+
+        </FrameLayout>
+
+    </LinearLayout>
+
+    <!-- Contact PIN -->
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Contact PIN"
+        android:textSize="14sp"
+        android:fontFamily="@font/poppins_medium"
+        android:textColor="#8C8C8C"
+        android:layout_marginBottom="8dp" />
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="60dp"
+        android:orientation="horizontal"
+        android:background="@drawable/lock_password_input_bg"
+        android:gravity="center_vertical"
+        android:paddingStart="16dp"
+        android:paddingEnd="8dp"
+        android:layout_marginBottom="24dp">
+
+        <TextView
+            android:id="@+id/pinText"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text=""
+            android:textSize="16sp"
+            android:textColor="#8C8C8C"
+            android:fontFamily="@font/poppins_medium"
+            android:gravity="start|center_vertical"
+            android:letterSpacing="0.15"
+            android:maxLines="1" />
+
+        <FrameLayout
+            android:id="@+id/copyPinButton"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:background="@drawable/settings_icon_bg"
+            android:clickable="true"
+            android:focusable="true">
+
+            <ImageView
+                android:layout_width="20dp"
+                android:layout_height="20dp"
+                android:layout_gravity="center"
+                android:src="@android:drawable/ic_menu_share"
+                app:tint="?attr/colorOnSurfaceVariant" />
+
+        </FrameLayout>
 
     </LinearLayout>
 
@@ -88,7 +165,7 @@
         android:gravity="center"
         android:text="Share"
         android:textSize="18sp"
-        android:textColor="@color/text_white"
+        android:textColor="?attr/colorOnSurface"
         android:fontFamily="@font/poppins_semibold"
         android:clickable="true"
         android:focusable="true" />

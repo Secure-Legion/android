@@ -21,7 +21,7 @@
         android:layout_height="wrap_content"
         android:text="Shield Zcash"
         android:textSize="22sp"
-        android:textColor="@color/text_white"
+        android:textColor="?attr/colorOnSurface"
         android:fontFamily="@font/space_grotesk_bold"
         android:gravity="center"
         android:paddingBottom="20dp" />
@@ -42,7 +42,7 @@
             android:layout_height="wrap_content"
             android:text="Current Balance"
             android:textSize="14sp"
-            android:textColor="@color/text_gray"
+            android:textColor="?attr/colorOnSurfaceVariant"
             android:layout_marginBottom="12dp" />
 
         <!-- Transparent Balance -->
@@ -58,7 +58,7 @@
                 android:layout_weight="1"
                 android:text="Transparent:"
                 android:textSize="16sp"
-                android:textColor="@color/text_white" />
+                android:textColor="?attr/colorOnSurface" />
 
             <TextView
                 android:id="@+id/transparentAmount"
@@ -82,7 +82,7 @@
                 android:layout_weight="1"
                 android:text="Shielded:"
                 android:textSize="16sp"
-                android:textColor="@color/text_white" />
+                android:textColor="?attr/colorOnSurface" />
 
             <TextView
                 android:id="@+id/shieldedAmount"
@@ -101,7 +101,7 @@
         android:layout_height="wrap_content"
         android:text="Only shielded funds can be sent. Shield your transparent ZEC to enable payments."
         android:textSize="13sp"
-        android:textColor="#999999"
+        android:textColor="?attr/colorOnSurfaceVariant"
         android:gravity="center"
         android:paddingStart="24dp"
         android:paddingEnd="24dp"
@@ -113,7 +113,7 @@
         android:layout_height="wrap_content"
         android:text="Amount to Shield (ZEC)"
         android:textSize="14sp"
-        android:textColor="@color/text_white"
+        android:textColor="?attr/colorOnSurface"
         android:paddingStart="24dp"
         android:paddingEnd="24dp"
         android:layout_marginBottom="8dp" />
@@ -138,7 +138,7 @@
             android:background="@android:color/transparent"
             android:hint="Enter amount..."
             android:textColorHint="#666666"
-            android:textColor="#FFFFFF"
+            android:textColor="?attr/colorOnSurface"
             android:textSize="16sp"
             android:inputType="numberDecimal"
             android:singleLine="true" />
@@ -163,7 +163,7 @@
             android:text="Shield"
             android:textSize="16sp"
             android:textStyle="bold"
-            android:textColor="@color/text_white"
+            android:textColor="?attr/colorOnSurface"
             android:background="@drawable/lock_button_bg"
             android:backgroundTint="@null" />
 

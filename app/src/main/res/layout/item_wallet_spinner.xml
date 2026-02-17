@@ -13,7 +13,7 @@
         android:text="Wallet 1"
         android:textSize="16sp"
         android:textStyle="bold"
-        android:textColor="@color/text_white" />
+        android:textColor="?attr/colorOnSurface" />
 
     <TextView
         android:id="@+id/walletAddress"
@@ -21,7 +21,7 @@
         android:layout_height="wrap_content"
         android:text="AbcdE123...xyz9"
         android:textSize="13sp"
-        android:textColor="@color/text_gray"
+        android:textColor="?attr/colorOnSurfaceVariant"
         android:layout_marginTop="2dp" />
 
 </LinearLayout>

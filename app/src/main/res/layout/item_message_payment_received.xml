@@ -14,7 +14,7 @@
         android:layout_height="wrap_content"
         android:layout_gravity="center_horizontal"
         android:text="Today"
-        android:textColor="@color/text_gray"
+        android:textColor="?attr/colorOnSurfaceVariant"
         android:textSize="12sp"
         android:paddingBottom="8dp"
         android:visibility="gone" />
@@ -53,7 +53,7 @@
                     <TextView
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="✓"
+                        android:text=""
                         android:textColor="#00D4AA"
                         android:textSize="12sp" />
 
@@ -75,7 +75,7 @@
                     android:layout_height="wrap_content"
                     android:layout_marginTop="4dp"
                     android:text="$0.75"
-                    android:textColor="#FFFFFF"
+                    android:textColor="?attr/colorOnSurface"
                     android:textSize="28sp"
                     android:textStyle="bold" />
 

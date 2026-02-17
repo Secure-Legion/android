@@ -4,7 +4,7 @@
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="#000000"
+    android:background="?attr/colorSurface"
     android:fillViewport="true">
 
     <androidx.constraintlayout.widget.ConstraintLayout
@@ -44,7 +44,7 @@
                 android:text="New Group"
                 android:fontFamily="@font/space_grotesk_bold"
                 android:textSize="20sp"
-                android:textColor="#999999"
+                android:textColor="?attr/colorOnSurfaceVariant"
                 android:gravity="center" />
 
             <!-- Settings Icon -->
@@ -61,7 +61,7 @@
                 android:layout_height="24dp"
                 android:layout_gravity="center"
                 android:src="@drawable/ic_settings_cog"
-                app:tint="#888888"
+                app:tint="?attr/colorOnSurfaceVariant"
                 android:contentDescription="Settings" />
 
         </FrameLayout>
@@ -105,7 +105,7 @@
                     android:layout_height="16dp"
                     android:layout_gravity="center"
                     android:src="@drawable/ic_edit"
-                    app:tint="#888888" />
+                    app:tint="?attr/colorOnSurfaceVariant" />
 
             </FrameLayout>
 
@@ -121,7 +121,7 @@
             android:text="Group Name"
             android:fontFamily="@font/space_grotesk_bold"
             android:textSize="16sp"
-            android:textColor="#999999"
+            android:textColor="?attr/colorOnSurfaceVariant"
             app:layout_constraintTop_toBottomOf="@id/groupIconContainer"
             app:layout_constraintStart_toStartOf="parent" />
 
@@ -146,7 +146,7 @@
                 android:hint="Enter group name"
                 android:inputType="text"
                 android:textColorHint="#666666"
-                android:textColor="#FFFFFF"
+                android:textColor="?attr/colorOnSurface"
                 android:fontFamily="@font/poppins_medium"
                 android:textSize="16sp"
                 android:maxLength="30"
@@ -168,7 +168,7 @@
             android:text="Group PIN"
             android:fontFamily="@font/space_grotesk_bold"
             android:textSize="16sp"
-            android:textColor="#999999"
+            android:textColor="?attr/colorOnSurfaceVariant"
             app:layout_constraintTop_toBottomOf="@id/groupNameContainer"
             app:layout_constraintStart_toStartOf="parent" />
 
@@ -196,7 +196,7 @@
                 android:gravity="center"
                 android:inputType="number"
                 android:maxLength="1"
-                android:textColor="#FFFFFF"
+                android:textColor="?attr/colorOnSurface"
                 android:textSize="20sp"
                 android:fontFamily="@font/poppins_medium"
                 android:nextFocusForward="@id/pinBox2" />
@@ -211,7 +211,7 @@
                 android:gravity="center"
                 android:inputType="number"
                 android:maxLength="1"
-                android:textColor="#FFFFFF"
+                android:textColor="?attr/colorOnSurface"
                 android:textSize="20sp"
                 android:fontFamily="@font/poppins_medium"
                 android:nextFocusForward="@id/pinBox3" />
@@ -226,7 +226,7 @@
                 android:gravity="center"
                 android:inputType="number"
                 android:maxLength="1"
-                android:textColor="#FFFFFF"
+                android:textColor="?attr/colorOnSurface"
                 android:textSize="20sp"
                 android:fontFamily="@font/poppins_medium"
                 android:nextFocusForward="@id/pinBox4" />
@@ -241,7 +241,7 @@
                 android:gravity="center"
                 android:inputType="number"
                 android:maxLength="1"
-                android:textColor="#FFFFFF"
+                android:textColor="?attr/colorOnSurface"
                 android:textSize="20sp"
                 android:fontFamily="@font/poppins_medium"
                 android:nextFocusForward="@id/pinBox5" />
@@ -256,7 +256,7 @@
                 android:gravity="center"
                 android:inputType="number"
                 android:maxLength="1"
-                android:textColor="#FFFFFF"
+                android:textColor="?attr/colorOnSurface"
                 android:textSize="20sp"
                 android:fontFamily="@font/poppins_medium"
                 android:nextFocusForward="@id/pinBox6" />
@@ -270,7 +270,7 @@
                 android:gravity="center"
                 android:inputType="number"
                 android:maxLength="1"
-                android:textColor="#FFFFFF"
+                android:textColor="?attr/colorOnSurface"
                 android:textSize="20sp"
                 android:fontFamily="@font/poppins_medium" />
 
@@ -286,7 +286,7 @@
             android:text="Add Friends"
             android:fontFamily="@font/space_grotesk_bold"
             android:textSize="16sp"
-            android:textColor="#999999"
+            android:textColor="?attr/colorOnSurfaceVariant"
             app:layout_constraintTop_toBottomOf="@id/pinBoxesContainer"
             app:layout_constraintStart_toStartOf="parent" />
 
@@ -354,7 +354,7 @@
             android:layout_marginTop="48dp"
             android:text="Create Group"
             android:textSize="16sp"
-            android:textColor="#FFFFFF"
+            android:textColor="?attr/colorOnSurface"
             android:fontFamily="@font/space_grotesk_bold"
             android:background="@drawable/lock_button_bg"
             android:gravity="center"

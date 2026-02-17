@@ -11,6 +11,7 @@ import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
 import com.google.android.material.bottomsheet.BottomSheetDialog
+import com.securelegion.utils.GlassBottomSheetDialog
 import com.securelegion.crypto.KeyManager
 import com.securelegion.database.SecureLegionDatabase
 import com.securelegion.database.entities.Wallet
@@ -237,7 +238,7 @@ class CreateWalletActivity : AppCompatActivity() {
     }
 
     private fun showWalletCreatedBottomSheet(walletName: String, address: String, privateKey: String?, walletId: String) {
-        val bottomSheet = BottomSheetDialog(this)
+        val bottomSheet = GlassBottomSheetDialog(this)
         val view = layoutInflater.inflate(R.layout.bottom_sheet_wallet_created, null)
 
         // Set wallet details

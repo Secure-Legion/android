@@ -3,7 +3,7 @@
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="#000000"
+    android:background="?attr/colorSurface"
     android:orientation="vertical">
 
     <!-- Header -->
@@ -45,7 +45,7 @@
             android:layout_weight="1"
             android:text="Swap"
             android:textSize="28sp"
-            android:textColor="#999999"
+            android:textColor="?attr/colorOnSurfaceVariant"
             android:fontFamily="@font/space_grotesk_bold"
             android:textStyle="bold"
             android:gravity="center" />
@@ -65,7 +65,7 @@
                 android:layout_height="20dp"
                 android:layout_gravity="center"
                 android:src="@drawable/ic_settings_cog"
-                app:tint="#888888"
+                app:tint="?attr/colorOnSurfaceVariant"
                 android:contentDescription="Settings" />
 
         </FrameLayout>
@@ -121,7 +121,7 @@
                                 android:drawablePadding="8dp"
                                 android:fontFamily="@font/poppins_semibold"
                                 android:text="SOL"
-                                android:textColor="@color/text_white"
+                                android:textColor="?attr/colorOnSurface"
                                 android:textSize="24sp"
                                 android:clickable="true"
                                 android:focusable="true"
@@ -181,7 +181,7 @@
                                 android:maxLength="12"
                                 android:minWidth="80dp"
                                 android:textAlignment="textEnd"
-                                android:textColor="@color/text_white"
+                                android:textColor="?attr/colorOnSurface"
                                 android:textColorHint="#444444"
                                 android:textColorHighlight="#444444"
                                 android:textColorLink="@color/text_white"
@@ -194,7 +194,7 @@
                                 android:layout_height="wrap_content"
                                 android:text="USD"
                                 android:textSize="14sp"
-                                android:textColor="#888888"
+                                android:textColor="?attr/colorOnSurfaceVariant"
                                 android:fontFamily="@font/poppins_medium"
                                 android:layout_marginEnd="4dp" />
 
@@ -203,7 +203,7 @@
                                 android:layout_height="20dp"
                                 android:src="@drawable/ic_arrow_forward"
                                 android:rotation="90"
-                                app:tint="#888888"
+                                app:tint="?attr/colorOnSurfaceVariant"
                                 android:contentDescription="Dropdown" />
                         </LinearLayout>
                     </LinearLayout>
@@ -262,7 +262,7 @@
                                 android:drawablePadding="8dp"
                                 android:fontFamily="@font/poppins_semibold"
                                 android:text="ZEC"
-                                android:textColor="@color/text_white"
+                                android:textColor="?attr/colorOnSurface"
                                 android:textSize="24sp"
                                 android:clickable="true"
                                 android:focusable="true"
@@ -308,7 +308,7 @@
                             android:minWidth="80dp"
                             android:text="$0.00"
                             android:textAlignment="textEnd"
-                            android:textColor="@color/text_white"
+                            android:textColor="?attr/colorOnSurface"
                             android:textSize="40sp" />
                     </LinearLayout>
                 </LinearLayout>
@@ -325,7 +325,7 @@
                 android:gravity="center"
                 android:text="Swap"
                 android:textAllCaps="false"
-                android:textColor="@color/text_white"
+                android:textColor="?attr/colorOnSurface"
                 android:textSize="16sp" />
         </LinearLayout>
     </ScrollView>

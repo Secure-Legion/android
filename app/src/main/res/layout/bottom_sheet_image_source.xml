@@ -47,7 +47,7 @@
                 android:layout_height="20dp"
                 android:layout_gravity="center"
                 android:src="@android:drawable/ic_menu_camera"
-                app:tint="#888888"
+                app:tint="?attr/colorOnSurfaceVariant"
                 android:contentDescription="Camera" />
 
         </FrameLayout>
@@ -58,7 +58,7 @@
             android:layout_weight="1"
             android:text="Take Photo"
             android:textSize="15sp"
-            android:textColor="#FFFFFF"
+            android:textColor="?attr/colorOnSurface"
             android:fontFamily="@font/poppins_regular"
             android:layout_marginStart="16dp" />
 
@@ -96,7 +96,7 @@
                 android:layout_height="20dp"
                 android:layout_gravity="center"
                 android:src="@android:drawable/ic_menu_gallery"
-                app:tint="#888888"
+                app:tint="?attr/colorOnSurfaceVariant"
                 android:contentDescription="Gallery" />
 
         </FrameLayout>
@@ -107,7 +107,7 @@
             android:layout_weight="1"
             android:text="Choose from Gallery"
             android:textSize="15sp"
-            android:textColor="#FFFFFF"
+            android:textColor="?attr/colorOnSurface"
             android:fontFamily="@font/poppins_regular"
             android:layout_marginStart="16dp" />
 

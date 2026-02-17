@@ -14,6 +14,7 @@ import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
 import com.google.android.material.bottomsheet.BottomSheetDialog
+import com.securelegion.utils.GlassBottomSheetDialog
 import com.securelegion.crypto.KeyManager
 import com.securelegion.database.SecureLegionDatabase
 import com.securelegion.database.entities.Wallet
@@ -55,7 +56,7 @@ class SwapActivity : AppCompatActivity() {
     private var toToken = "ZEC"
     private var fromBalance = 0.0
     private var toBalance = 0.0
-    private var showUSD = true  // Toggle between USD and token display
+    private var showUSD = true // Toggle between USD and token display
 
     // Selected wallets
     private var fromWallet: Wallet? = null
@@ -63,7 +64,7 @@ class SwapActivity : AppCompatActivity() {
     private var availableWallets: List<Wallet> = emptyList()
 
     // Exchange rate (example, would come from API)
-    private val exchangeRate = 0.9347  // 1 SOL = 0.9347 ZEC
+    private val exchangeRate = 0.9347 // 1 SOL = 0.9347 ZEC
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -313,8 +314,8 @@ class SwapActivity : AppCompatActivity() {
             toBalanceText.text = "Balance $${String.format("%,.2f", toBalance)}"
         } else {
             // Show token amounts instead of USD
-            val fromTokenBalance = fromBalance / 100.0  // Placeholder conversion
-            val toTokenBalance = toBalance / 100.0  // Placeholder conversion
+            val fromTokenBalance = fromBalance / 100.0 // Placeholder conversion
+            val toTokenBalance = toBalance / 100.0 // Placeholder conversion
             fromBalanceText.text = "Balance ${String.format("%.4f", fromTokenBalance)} $fromToken"
             toBalanceText.text = "Balance ${String.format("%.4f", toTokenBalance)} $toToken"
         }
@@ -372,11 +373,11 @@ class SwapActivity : AppCompatActivity() {
         }
 
         val outputAmount = inputAmount * exchangeRate
-        val exchangeFee = inputAmount * 0.005  // 0.5% fee
+        val exchangeFee = inputAmount * 0.005 // 0.5% fee
         val networkFee = 0.0
 
         // Create and show bottom sheet
-        val bottomSheetDialog = BottomSheetDialog(this)
+        val bottomSheetDialog = GlassBottomSheetDialog(this)
         val view = layoutInflater.inflate(R.layout.bottom_sheet_swap_confirm, null)
         bottomSheetDialog.setContentView(view)
 
@@ -468,7 +469,7 @@ class SwapActivity : AppCompatActivity() {
     }
 
     private fun showSwapSuccess(inputAmount: Double, outputAmount: Double, exchangeFee: Double) {
-        val bottomSheetDialog = BottomSheetDialog(this)
+        val bottomSheetDialog = GlassBottomSheetDialog(this)
         val view = layoutInflater.inflate(R.layout.bottom_sheet_swap_success, null)
         bottomSheetDialog.setContentView(view)
 
@@ -511,7 +512,7 @@ class SwapActivity : AppCompatActivity() {
         }
 
         // Create bottom sheet dialog
-        val bottomSheet = BottomSheetDialog(this)
+        val bottomSheet = GlassBottomSheetDialog(this)
         val view = layoutInflater.inflate(R.layout.bottom_sheet_wallet_selector, null)
         bottomSheet.setContentView(view)
 

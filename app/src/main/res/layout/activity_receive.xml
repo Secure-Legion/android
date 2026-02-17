@@ -4,7 +4,7 @@
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="#000000">
+    android:background="?attr/colorSurface">
 
     <!-- Header -->
     <LinearLayout
@@ -46,7 +46,7 @@
             android:layout_weight="1"
             android:text="Receive"
             android:textSize="28sp"
-            android:textColor="#999999"
+            android:textColor="?attr/colorOnSurfaceVariant"
             android:fontFamily="@font/space_grotesk_bold"
             android:textStyle="bold"
             android:gravity="center" />
@@ -106,7 +106,7 @@
                     android:layout_weight="1"
                     android:text="Wallet 1"
                     android:textSize="16sp"
-                    android:textColor="#FFFFFF"
+                    android:textColor="?attr/colorOnSurface"
                     android:fontFamily="@font/poppins_medium" />
 
                 <FrameLayout
@@ -122,7 +122,7 @@
                         android:layout_height="18dp"
                         android:layout_gravity="center"
                         android:src="@android:drawable/ic_menu_edit"
-                        app:tint="#888888"
+                        app:tint="?attr/colorOnSurfaceVariant"
                         android:contentDescription="Settings" />
 
                 </FrameLayout>
@@ -154,7 +154,7 @@
                     android:layout_height="36dp"
                     android:text="Unified"
                     android:textSize="12sp"
-                    android:textColor="#FFFFFF"
+                    android:textColor="?attr/colorOnSurface"
                     android:fontFamily="@font/poppins_medium"
                     android:background="@drawable/wallet_action_button_bg"
                     android:textAllCaps="false" />
@@ -165,7 +165,7 @@
                     android:layout_height="36dp"
                     android:text="Exchange"
                     android:textSize="12sp"
-                    android:textColor="#888888"
+                    android:textColor="?attr/colorOnSurfaceVariant"
                     android:fontFamily="@font/poppins_medium"
                     android:background="@android:color/transparent"
                     android:textAllCaps="false" />
@@ -190,7 +190,7 @@
                     android:layout_height="wrap_content"
                     android:text="Address"
                     android:textSize="13sp"
-                    android:textColor="#888888"
+                    android:textColor="?attr/colorOnSurfaceVariant"
                     android:fontFamily="@font/poppins_regular"
                     android:layout_marginEnd="16dp" />
 
@@ -201,7 +201,7 @@
                     android:layout_weight="1"
                     android:text="Loading..."
                     android:textSize="13sp"
-                    android:textColor="#FFFFFF"
+                    android:textColor="?attr/colorOnSurface"
                     android:fontFamily="@font/poppins_medium"
                     android:layout_marginEnd="12dp" />
 
@@ -218,7 +218,7 @@
                         android:layout_height="20dp"
                         android:layout_gravity="center"
                         android:src="@drawable/ic_copy"
-                        app:tint="#888888"
+                        app:tint="?attr/colorOnSurfaceVariant"
                         android:contentDescription="Copy" />
 
                 </FrameLayout>
@@ -233,7 +233,7 @@
                 android:text="Share"
                 android:textSize="16sp"
                 android:textStyle="bold"
-                android:textColor="#FFFFFF"
+                android:textColor="?attr/colorOnSurface"
                 android:background="@drawable/wallet_dropdown_bg"
                 android:gravity="center"
                 android:fontFamily="@font/space_grotesk_bold"

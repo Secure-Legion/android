@@ -101,7 +101,7 @@ class AckWorker(
             }
 
             if (sent > 0) {
-                Log.i(TAG, "✓ Sent $sent PING_ACK(s)")
+                Log.i(TAG, "Sent $sent PING_ACK(s)")
             }
 
             Result.success()
@@ -140,12 +140,12 @@ class AckWorker(
                 // Update ping inbox (transport layer)
                 database.pingInboxDao().updatePingAckTime(ping.pingId, now)
 
-                // 🔑 CRITICAL FIX:
+                // CRITICAL FIX:
                 // Update authoritative message state so protocol can advance safely
                 database.messageDao().markPingDelivered(ping.pingId)
 
                 ackCount++
-                Log.d(TAG, "✓ Sent PING_ACK for pingId=${ping.pingId.take(8)}...")
+                Log.d(TAG, "Sent PING_ACK for pingId=${ping.pingId.take(8)}...")
             }
         }
 
@@ -183,7 +183,7 @@ class AckWorker(
                 database.messageDao().markPingDelivered(ping.pingId)
 
                 ackCount++
-                Log.d(TAG, "✓ Sent PING_ACK for pingId=${ping.pingId.take(8)}...")
+                Log.d(TAG, "Sent PING_ACK for pingId=${ping.pingId.take(8)}...")
             }
         }
 

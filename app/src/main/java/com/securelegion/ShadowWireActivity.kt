@@ -15,6 +15,7 @@ import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
 import com.google.android.material.bottomsheet.BottomSheetDialog
+import com.securelegion.utils.GlassBottomSheetDialog
 import android.widget.Button
 import com.securelegion.crypto.KeyManager
 import com.securelegion.services.ShadowWireService
@@ -137,7 +138,7 @@ class ShadowWireActivity : AppCompatActivity() {
     }
 
     private fun showActionDialog(type: ActionType) {
-        val bottomSheet = BottomSheetDialog(this)
+        val bottomSheet = GlassBottomSheetDialog(this)
         val view = layoutInflater.inflate(R.layout.dialog_shadowwire_action, null)
         bottomSheet.setContentView(view)
 
@@ -336,7 +337,7 @@ class ShadowWireActivity : AppCompatActivity() {
     }
 
     private fun showSuccessDialog(type: ActionType, amount: String, details: String) {
-        val bottomSheet = BottomSheetDialog(this)
+        val bottomSheet = GlassBottomSheetDialog(this)
         val view = layoutInflater.inflate(R.layout.bottom_sheet_transaction_detail, null)
 
         val displayMetrics = resources.displayMetrics

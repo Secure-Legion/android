@@ -30,7 +30,7 @@ class TorHealthActivity : AppCompatActivity() {
 
     companion object {
         private const val TAG = "TorHealthActivity"
-        private const val UPDATE_INTERVAL_MS = 2000L  // 2 seconds
+        private const val UPDATE_INTERVAL_MS = 2000L // 2 seconds
     }
 
     // UI Elements

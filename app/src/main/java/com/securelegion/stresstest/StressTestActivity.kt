@@ -212,10 +212,10 @@ class StressTestActivity : AppCompatActivity() {
                     RustBridge.getDebugCountersJson()
                 }
 
-                Log.i(TAG, "╔══════════════════════════════════════════")
-                Log.i(TAG, "║ DEBUG COUNTERS DUMP")
-                Log.i(TAG, "║ $countersJson")
-                Log.i(TAG, "╚══════════════════════════════════════════")
+                Log.i(TAG, "")
+                Log.i(TAG, "DEBUG COUNTERS DUMP")
+                Log.i(TAG, "$countersJson")
+                Log.i(TAG, "")
 
                 withContext(Dispatchers.Main) {
                     ThemedToast.show(this@StressTestActivity, "Counters dumped to logcat")

@@ -36,10 +36,10 @@ class ProfilePictureManager(private val context: Context) {
         private const val TAG = "ProfilePictureManager"
 
         // Image specifications
-        private const val MAX_SIZE_PX = 512            // Max width/height
-        private const val MAX_SIZE_BYTES = 256 * 1024  // 256KB max
-        private const val JPEG_QUALITY_START = 90      // Initial compression quality
-        private const val JPEG_QUALITY_MIN = 60        // Minimum acceptable quality
+        private const val MAX_SIZE_PX = 512 // Max width/height
+        private const val MAX_SIZE_BYTES = 256 * 1024 // 256KB max
+        private const val JPEG_QUALITY_START = 90 // Initial compression quality
+        private const val JPEG_QUALITY_MIN = 60 // Minimum acceptable quality
 
         // Local storage
         private const val PROFILE_PICS_DIR = "profile_pictures"
@@ -84,7 +84,7 @@ class ProfilePictureManager(private val context: Context) {
             originalBitmap.recycle()
             processedBitmap.recycle()
 
-            Log.i(TAG, "✓ Profile picture processed: ${jpegBytes.size} bytes → ${base64.length} chars base64")
+            Log.i(TAG, "Profile picture processed: ${jpegBytes.size} bytes → ${base64.length} chars base64")
 
             Result.success(base64)
 
@@ -111,7 +111,7 @@ class ProfilePictureManager(private val context: Context) {
 
             FileOutputStream(file).use { it.write(bytes) }
 
-            Log.i(TAG, "✓ Saved my profile picture: ${file.absolutePath}")
+            Log.i(TAG, "Saved my profile picture: ${file.absolutePath}")
             Result.success(Unit)
 
         } catch (e: Exception) {
@@ -158,7 +158,7 @@ class ProfilePictureManager(private val context: Context) {
 
             FileOutputStream(file).use { it.write(bytes) }
 
-            Log.d(TAG, "✓ Saved contact profile picture: $filename")
+            Log.d(TAG, "Saved contact profile picture: $filename")
             Result.success(Unit)
 
         } catch (e: Exception) {
@@ -258,7 +258,7 @@ class ProfilePictureManager(private val context: Context) {
         } while (true)
 
         if (compressed.size > MAX_SIZE_BYTES) {
-            Log.w(TAG, "⚠ Warning: Compressed size ${compressed.size} exceeds $MAX_SIZE_BYTES at minimum quality")
+            Log.w(TAG, "Warning: Compressed size ${compressed.size} exceeds $MAX_SIZE_BYTES at minimum quality")
         }
 
         return compressed
@@ -272,7 +272,7 @@ class ProfilePictureManager(private val context: Context) {
             val file = File(context.filesDir, "$PROFILE_PICS_DIR/$MY_PROFILE_PIC")
             if (file.exists()) {
                 file.delete()
-                Log.i(TAG, "✓ Deleted my profile picture")
+                Log.i(TAG, "Deleted my profile picture")
             }
             Result.success(Unit)
         } catch (e: Exception) {
@@ -289,7 +289,7 @@ class ProfilePictureManager(private val context: Context) {
             val picturesDir = File(context.cacheDir, PROFILE_PICS_DIR)
             if (picturesDir.exists()) {
                 picturesDir.listFiles()?.forEach { it.delete() }
-                Log.i(TAG, "✓ Cleared contact profile picture cache")
+                Log.i(TAG, "Cleared contact profile picture cache")
             }
             Result.success(Unit)
         } catch (e: Exception) {

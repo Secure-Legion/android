@@ -27,7 +27,7 @@
             android:layout_gravity="center"
             android:text="A"
             android:textSize="24sp"
-            android:textColor="#FFFFFF"
+            android:textColor="?attr/colorOnSurface"
             android:fontFamily="@font/space_grotesk_bold" />
 
     </FrameLayout>
@@ -47,7 +47,7 @@
             android:layout_height="wrap_content"
             android:text="Alice"
             android:textSize="16sp"
-            android:textColor="#FFFFFF"
+            android:textColor="?attr/colorOnSurface"
             android:fontFamily="@font/poppins_medium" />
 
         <!-- Last Call Status -->
@@ -69,7 +69,7 @@
         android:layout_width="40dp"
         android:layout_height="40dp"
         android:src="@drawable/ic_call"
-        app:tint="#888888"
+        app:tint="?attr/colorOnSurfaceVariant"
         android:padding="8dp"
         android:clickable="true"
         android:focusable="true"

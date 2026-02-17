@@ -23,7 +23,7 @@
             android:layout_height="match_parent"
             android:gravity="center"
             android:text="A"
-            android:textColor="#FFFFFF"
+            android:textColor="?attr/colorOnSurface"
             android:textSize="20sp"
             android:fontFamily="@font/poppins_bold" />
 
@@ -36,7 +36,7 @@
         android:layout_height="wrap_content"
         android:layout_weight="1"
         android:text="Contact Name"
-        android:textColor="#FFFFFF"
+        android:textColor="?attr/colorOnSurface"
         android:textSize="16sp"
         android:fontFamily="@font/poppins_medium" />
 

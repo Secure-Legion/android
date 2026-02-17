@@ -14,6 +14,7 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.lifecycle.lifecycleScope
 import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
 import com.google.android.material.bottomsheet.BottomSheetDialog
+import com.securelegion.utils.GlassBottomSheetDialog
 import com.securelegion.crypto.KeyManager
 import com.securelegion.database.SecureLegionDatabase
 import com.securelegion.database.entities.Wallet
@@ -52,8 +53,7 @@ class WalletActivity : AppCompatActivity() {
                 bottomNav.paddingLeft,
                 bottomNav.paddingTop,
                 bottomNav.paddingRight,
-                insets.bottom
-            )
+                0)
             windowInsets
         }
 
@@ -330,7 +330,7 @@ class WalletActivity : AppCompatActivity() {
     }
 
     private fun showShieldingDialog() {
-        val bottomSheet = com.google.android.material.bottomsheet.BottomSheetDialog(this)
+        val bottomSheet = GlassBottomSheetDialog(this)
         val view = layoutInflater.inflate(R.layout.bottom_sheet_shield_funds, null)
 
         // Get views
@@ -1270,7 +1270,7 @@ class WalletActivity : AppCompatActivity() {
 
                 withContext(Dispatchers.Main) {
                     // Create bottom sheet dialog
-                    val bottomSheet = BottomSheetDialog(this@WalletActivity)
+                    val bottomSheet = GlassBottomSheetDialog(this@WalletActivity)
                     val view = layoutInflater.inflate(R.layout.bottom_sheet_wallet_selector, null)
 
                     // Set minimum height on the view itself
@@ -1725,7 +1725,7 @@ class WalletActivity : AppCompatActivity() {
                     val isZcashWallet = !currentWallet.zcashUnifiedAddress.isNullOrEmpty() || !currentWallet.zcashAddress.isNullOrEmpty()
 
                     // Create bottom sheet dialog
-                    val bottomSheet = BottomSheetDialog(this@WalletActivity)
+                    val bottomSheet = GlassBottomSheetDialog(this@WalletActivity)
                     val view = layoutInflater.inflate(R.layout.bottom_sheet_token_selector, null)
 
                     // Set minimum height

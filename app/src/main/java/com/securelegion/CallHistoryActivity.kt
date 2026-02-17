@@ -68,27 +68,7 @@ class CallHistoryActivity : BaseActivity() {
     }
 
     private fun setupBottomNavigation() {
-        findViewById<View>(R.id.navMessages)?.setOnClickListener {
-            val intent = Intent(this, MainActivity::class.java)
-            startActivity(intent)
-            finish()
-        }
-
-        findViewById<View>(R.id.navWallet)?.setOnClickListener {
-            val intent = Intent(this, WalletIdentityActivity::class.java)
-            startActivity(intent)
-        }
-
-        findViewById<View>(R.id.navAddFriend)?.setOnClickListener {
-            val intent = Intent(this, AddFriendActivity::class.java)
-            startActivity(intent)
-        }
-
-        findViewById<View>(R.id.navPhone)?.setOnClickListener {
-            val intent = Intent(this, NewCallActivity::class.java)
-            startActivity(intent)
-            finish()
-        }
+        BottomNavigationHelper.setupBottomNavigation(this)
     }
 
     private fun loadCallHistory() {

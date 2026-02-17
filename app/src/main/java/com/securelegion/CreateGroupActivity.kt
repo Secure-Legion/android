@@ -17,6 +17,7 @@ import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.google.android.material.bottomsheet.BottomSheetDialog
+import com.securelegion.utils.GlassBottomSheetDialog
 import android.content.Intent
 import com.securelegion.crypto.KeyManager
 import com.securelegion.database.SecureLegionDatabase
@@ -229,7 +230,7 @@ class CreateGroupActivity : BaseActivity() {
                 }
 
                 // Create bottom sheet
-                val bottomSheetDialog = BottomSheetDialog(this@CreateGroupActivity)
+                val bottomSheetDialog = GlassBottomSheetDialog(this@CreateGroupActivity)
                 val view = layoutInflater.inflate(R.layout.bottom_sheet_select_contacts, null)
                 bottomSheetDialog.setContentView(view)
 
@@ -315,9 +316,9 @@ class CreateGroupActivity : BaseActivity() {
             try {
                 val groupId = withContext(Dispatchers.IO) {
                     Log.d(TAG, "Creating group: $groupName")
-                    Log.i(TAG, "  Members: ${selectedMembers.size}")
+                    Log.i(TAG, "Members: ${selectedMembers.size}")
                     selectedMembers.forEach { contact ->
-                        Log.i(TAG, "    - ${contact.displayName}")
+                        Log.i(TAG, "- ${contact.displayName}")
                     }
 
                     // Create group using GroupManager
@@ -330,7 +331,7 @@ class CreateGroupActivity : BaseActivity() {
                     )
 
                     if (result.isSuccess) {
-                        Log.i(TAG, "✓ Group created successfully: ${result.getOrNull()}")
+                        Log.i(TAG, "Group created successfully: ${result.getOrNull()}")
                         result.getOrNull() // Return group ID
                     } else {
                         Log.e(TAG, "Failed to create group", result.exceptionOrNull())

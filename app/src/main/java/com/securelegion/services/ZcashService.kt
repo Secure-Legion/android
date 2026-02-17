@@ -115,10 +115,10 @@ class ZcashService(private val context: Context) {
             // 0' = 0x80000000 (account - hardened)
             // 0 = external chain (not hardened)
             // addressIndex = address index (not hardened)
-            val purpose = 44 or 0x80000000.toInt()  // 44' (hardened)
+            val purpose = 44 or 0x80000000.toInt() // 44' (hardened)
             val coinType = 133 or 0x80000000.toInt() // 133' (Zcash, hardened)
-            val account = 0 or 0x80000000.toInt()   // 0' (hardened)
-            val chain = 0                            // 0 (external, not hardened)
+            val account = 0 or 0x80000000.toInt() // 0' (hardened)
+            val chain = 0 // 0 (external, not hardened)
 
             // Build the full derivation path as an array
             val derivationPath = intArrayOf(purpose, coinType, account, chain, addressIndex)
@@ -300,7 +300,7 @@ class ZcashService(private val context: Context) {
                     keySource = null,
                     seed = FirstClassByteArray(seedBytes)
                 ),
-                isTorEnabled = true,  // ✅ Route all blockchain sync through Tor (uses 127.0.0.1:9050)
+                isTorEnabled = true, // Route all blockchain sync through Tor (uses 127.0.0.1:9050)
                 isExchangeRateEnabled = false
             )
 
@@ -434,7 +434,7 @@ class ZcashService(private val context: Context) {
             synchronizer = Synchronizer.newBlocking(
                 context = context,
                 zcashNetwork = network,
-                alias = walletAlias,  // ✅ Per-wallet data directory
+                alias = walletAlias, // Per-wallet data directory
                 lightWalletEndpoint = endpoint,
                 birthday = birthday,
                 walletInitMode = WalletInitMode.RestoreWallet,
@@ -604,9 +604,9 @@ class ZcashService(private val context: Context) {
                         cachedBalance = totalZEC
 
                         Log.d(TAG, "ZEC Balance - Sapling: ${saplingAvailable + saplingPending}")
-                        Log.d(TAG, "             Orchard: ${orchardAvailable + orchardPending}")
-                        Log.d(TAG, "             Transparent: $unshieldedZEC")
-                        Log.d(TAG, "             Total: $totalZEC ZEC")
+                        Log.d(TAG, "Orchard: ${orchardAvailable + orchardPending}")
+                        Log.d(TAG, "Transparent: $unshieldedZEC")
+                        Log.d(TAG, "Total: $totalZEC ZEC")
                     }
                 }
             } catch (e: Exception) {

@@ -46,7 +46,7 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:text="Group Name"
-                android:textColor="#FFFFFF"
+                android:textColor="?attr/colorOnSurface"
                 android:textSize="16sp"
                 android:fontFamily="@font/poppins_medium" />
 
@@ -55,7 +55,7 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:text="Invited by Alice"
-                android:textColor="#999999"
+                android:textColor="?attr/colorOnSurfaceVariant"
                 android:textSize="13sp"
                 android:fontFamily="@font/poppins_regular" />
 
@@ -79,7 +79,7 @@
             android:paddingEnd="20dp"
             android:text="Decline"
             android:textSize="14sp"
-            android:textColor="#999999"
+            android:textColor="?attr/colorOnSurfaceVariant"
             android:fontFamily="@font/poppins_medium"
             android:background="@drawable/lock_password_input_bg"
             android:gravity="center"
@@ -95,7 +95,7 @@
             android:paddingEnd="20dp"
             android:text="Accept"
             android:textSize="14sp"
-            android:textColor="#FFFFFF"
+            android:textColor="?attr/colorOnSurface"
             android:fontFamily="@font/poppins_bold"
             android:background="@drawable/lock_button_bg"
             android:gravity="center"

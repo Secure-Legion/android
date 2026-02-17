@@ -33,7 +33,7 @@ class VoiceCallCrypto {
         const val MASTER_KEY_SIZE = 32
         const val CIRCUIT_KEY_SIZE = 32
         const val XCHACHA20_NONCE_SIZE = 24
-        const val KDF_CONTEXTBYTES = 8  // libsodium KDF context is exactly 8 bytes
+        const val KDF_CONTEXTBYTES = 8 // libsodium KDF context is exactly 8 bytes
 
         // HKDF context strings
         const val HKDF_MASTER_CONTEXT = "SecureLegion-Voice-Call-Master-Key"

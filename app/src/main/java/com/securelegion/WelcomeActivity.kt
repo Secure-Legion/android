@@ -30,8 +30,8 @@ class WelcomeActivity : AppCompatActivity() {
         // Security: Prevent screenshots and screen recording
         // TODO: Re-enable FLAG_SECURE after demo recording
         // window.setFlags(
-        //     WindowManager.LayoutParams.FLAG_SECURE,
-        //     WindowManager.LayoutParams.FLAG_SECURE
+        // WindowManager.LayoutParams.FLAG_SECURE,
+        // WindowManager.LayoutParams.FLAG_SECURE
         // )
 
         // Make status bar white with dark icons
@@ -73,7 +73,7 @@ class WelcomeActivity : AppCompatActivity() {
 
                 override fun updateDrawState(ds: TextPaint) {
                     super.updateDrawState(ds)
-                    ds.color = Color.parseColor("#FFFFFF")  // White color for "Import"
+                    ds.color = Color.parseColor("#FFFFFF") // White color for "Import"
                     ds.isUnderlineText = false
                 }
             }
@@ -88,8 +88,8 @@ class WelcomeActivity : AppCompatActivity() {
 
         // Set the color for the first part
         importTextView.text = spannableString
-        importTextView.setTextColor(Color.parseColor("#666666"))  // Gray for main text
+        importTextView.setTextColor(Color.parseColor("#666666")) // Gray for main text
         importTextView.movementMethod = LinkMovementMethod.getInstance()
-        importTextView.highlightColor = Color.TRANSPARENT  // Remove highlight on click
+        importTextView.highlightColor = Color.TRANSPARENT // Remove highlight on click
     }
 }

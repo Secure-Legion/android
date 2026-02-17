@@ -23,22 +23,22 @@ import java.nio.ByteOrder
 class OpusCodec {
     companion object {
         // Opus configuration constants (40ms frames for Tor)
-        const val SAMPLE_RATE = 48000          // 48 kHz (Opus native)
-        const val CHANNELS = 1                 // Mono
-        const val FRAME_SIZE_MS = 40           // 40ms frames (better for Tor latency)
-        const val FRAME_SIZE_SAMPLES = 1920    // 40ms at 48kHz = 1920 samples
-        const val BITRATE = 32000              // 32 kbps (high quality)
-        const val MAX_PACKET_SIZE = 4000       // Maximum Opus packet size
+        const val SAMPLE_RATE = 48000 // 48 kHz (Opus native)
+        const val CHANNELS = 1 // Mono
+        const val FRAME_SIZE_MS = 40 // 40ms frames (better for Tor latency)
+        const val FRAME_SIZE_SAMPLES = 1920 // 40ms at 48kHz = 1920 samples
+        const val BITRATE = 32000 // 32 kbps (high quality)
+        const val MAX_PACKET_SIZE = 4000 // Maximum Opus packet size
 
         // PCM format
-        const val PCM_BIT_DEPTH = 16           // 16-bit signed PCM
+        const val PCM_BIT_DEPTH = 16 // 16-bit signed PCM
         const val PCM_FRAME_SIZE_BYTES = FRAME_SIZE_SAMPLES * CHANNELS * (PCM_BIT_DEPTH / 8) // 3840 bytes
 
         // FEC (Forward Error Correction) configuration for Tor voice calls
         // Aggressive settings for high packet loss tolerance
-        const val ENABLE_FEC = true            // Enable in-band FEC
-        const val PACKET_LOSS_PERC = 25        // Expected packet loss % (25% for Tor)
-        const val DTX_ENABLED = false          // DTX disabled (continuous transmission)
+        const val ENABLE_FEC = true // Enable in-band FEC
+        const val PACKET_LOSS_PERC = 25 // Expected packet loss % (25% for Tor)
+        const val DTX_ENABLED = false // DTX disabled (continuous transmission)
     }
 
     private var encoderHandle: Long = 0
@@ -79,7 +79,7 @@ class OpusCodec {
     /**
      * Encode PCM audio frame to Opus
      * @param pcmData 16-bit signed PCM samples (little-endian)
-     *                Must be exactly FRAME_SIZE_SAMPLES (960 samples for 20ms)
+     * Must be exactly FRAME_SIZE_SAMPLES (960 samples for 20ms)
      * @return Compressed Opus packet (typically 20-120 bytes for voice)
      */
     fun encode(pcmData: ShortArray): ByteArray {

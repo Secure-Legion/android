@@ -8,11 +8,11 @@ import androidx.room.Index
  *
  * State machine (existing states unchanged, new states added above max):
  *
- * Manual path:  PING_SEEN (0) → PONG_SENT (1) → MSG_STORED (2)
- * Auto path:    PING_SEEN (0) → DOWNLOAD_QUEUED (10) → PONG_SENT (1) → MSG_STORED (2)
+ * Manual path: PING_SEEN (0) → PONG_SENT (1) → MSG_STORED (2)
+ * Auto path: PING_SEEN (0) → DOWNLOAD_QUEUED (10) → PONG_SENT (1) → MSG_STORED (2)
  * Auto failure: DOWNLOAD_QUEUED (10) → FAILED_TEMP (11) → DOWNLOAD_QUEUED (10) [retry]
- *               FAILED_TEMP (11) → MANUAL_REQUIRED (12) [retries exhausted, show lock icon]
- *               MANUAL_REQUIRED (12) → DOWNLOAD_QUEUED (10) [user tapped lock]
+ * FAILED_TEMP (11) → MANUAL_REQUIRED (12) [retries exhausted, show lock icon]
+ * MANUAL_REQUIRED (12) → DOWNLOAD_QUEUED (10) [user tapped lock]
  *
  * Watchdog: DOWNLOAD_QUEUED older than 5 min → FAILED_TEMP (process died)
  *
@@ -26,8 +26,8 @@ import androidx.room.Index
 @Entity(
     tableName = "ping_inbox",
     indices = [
-        Index(value = ["contactId", "state"]),  // Query pending locks per contact
-        Index(value = ["state"])                // Query all pending locks
+        Index(value = ["contactId", "state"]), // Query pending locks per contact
+        Index(value = ["state"]) // Query all pending locks
     ],
     primaryKeys = ["pingId"]
 )
@@ -102,13 +102,13 @@ data class PingInbox(
 ) {
     companion object {
         // Existing states (unchanged)
-        const val STATE_PING_SEEN = 0    // PING received, PING_ACK sent
-        const val STATE_PONG_SENT = 1    // User authorized, PONG sent
-        const val STATE_MSG_STORED = 2   // Message in DB, MESSAGE_ACK sent
+        const val STATE_PING_SEEN = 0 // PING received, PING_ACK sent
+        const val STATE_PONG_SENT = 1 // User authorized, PONG sent
+        const val STATE_MSG_STORED = 2 // Message in DB, MESSAGE_ACK sent
 
         // New states (added above existing max — no renumbering)
-        const val STATE_DOWNLOAD_QUEUED = 10   // Claimed for auto-download
-        const val STATE_FAILED_TEMP = 11       // Auto-download failed, will retry
-        const val STATE_MANUAL_REQUIRED = 12   // Retries exhausted, show lock icon once
+        const val STATE_DOWNLOAD_QUEUED = 10 // Claimed for auto-download
+        const val STATE_FAILED_TEMP = 11 // Auto-download failed, will retry
+        const val STATE_MANUAL_REQUIRED = 12 // Retries exhausted, show lock icon once
     }
 }

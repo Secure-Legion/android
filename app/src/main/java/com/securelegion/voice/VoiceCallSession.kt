@@ -38,12 +38,12 @@ class VoiceCallSession(
 
         // Call states
         enum class CallState {
-            IDLE,           // Not yet started
-            CONNECTING,     // Establishing Tor circuit and key exchange
-            RINGING,        // Waiting for answer (outgoing) or alerting user (incoming)
-            ACTIVE,         // Call in progress
-            ENDING,         // Gracefully terminating
-            ENDED           // Call finished
+            IDLE, // Not yet started
+            CONNECTING, // Establishing Tor circuit and key exchange
+            RINGING, // Waiting for answer (outgoing) or alerting user (incoming)
+            ACTIVE, // Call in progress
+            ENDING, // Gracefully terminating
+            ENDED // Call finished
         }
     }
 
@@ -96,10 +96,10 @@ class VoiceCallSession(
                     )
 
                     if (success) {
-                        Log.i(TAG, "✓ Circuit $circuitIndex rebuild SUCCESS (epoch=$rebuildEpoch)")
+                        Log.i(TAG, "Circuit $circuitIndex rebuild SUCCESS (epoch=$rebuildEpoch)")
                         circuitScheduler.onCircuitRebuilt(circuitIndex, rebuildEpoch)
                     } else {
-                        Log.e(TAG, "✗ Circuit $circuitIndex rebuild FAILED (epoch=$rebuildEpoch)")
+                        Log.e(TAG, "Circuit $circuitIndex rebuild FAILED (epoch=$rebuildEpoch)")
                         circuitScheduler.onCircuitRebuildFailed(circuitIndex)
                     }
                 } catch (e: Exception) {
@@ -179,7 +179,7 @@ class VoiceCallSession(
                 Log.e(TAG, "RustBridge.createVoiceSession returned false")
                 throw Exception("Failed to create voice session to $contactVoiceOnion")
             }
-            Log.i(TAG, "✓ Created Rust voice session with $numCircuits circuits to $contactVoiceOnion")
+            Log.i(TAG, "Created Rust voice session with $numCircuits circuits to $contactVoiceOnion")
 
             // Initialize audio managers (blocking native calls - run on IO thread)
             withContext(Dispatchers.IO) {
@@ -198,7 +198,7 @@ class VoiceCallSession(
                 pendingSpeakerEnabled?.let { enabled ->
                     audioPlaybackManager.setSpeakerEnabled(enabled)
                     Log.d(TAG, "Applied pending speaker state: $enabled")
-                    pendingSpeakerEnabled = null  // Clear pending state
+                    pendingSpeakerEnabled = null // Clear pending state
                 }
             }
 
@@ -282,7 +282,7 @@ class VoiceCallSession(
                 Log.e(TAG, "RustBridge.createVoiceSession returned false")
                 throw Exception("Failed to create voice session to $contactVoiceOnion")
             }
-            Log.i(TAG, "✓ Created Rust voice session with $numCircuits circuits to $contactVoiceOnion")
+            Log.i(TAG, "Created Rust voice session with $numCircuits circuits to $contactVoiceOnion")
 
             // Initialize audio managers (blocking native calls - run on IO thread)
             withContext(Dispatchers.IO) {
@@ -301,7 +301,7 @@ class VoiceCallSession(
                 pendingSpeakerEnabled?.let { enabled ->
                     audioPlaybackManager.setSpeakerEnabled(enabled)
                     Log.d(TAG, "Applied pending speaker state: $enabled")
-                    pendingSpeakerEnabled = null  // Clear pending state
+                    pendingSpeakerEnabled = null // Clear pending state
                 }
             }
 
@@ -419,15 +419,15 @@ class VoiceCallSession(
 
                     val sent = CallSignaling.sendCallEnd(
                         recipientX25519PublicKey = x25519Key,
-                        recipientOnion = contactVoiceOnion,  // Use voice onion for HTTP POST
+                        recipientOnion = contactVoiceOnion, // Use voice onion for HTTP POST
                         callId = callId,
                         reason = reason,
                         ourX25519PublicKey = ourX25519PublicKey
                     )
                     if (sent) {
-                        Log.i(TAG, "✓ Sent CALL_END notification via HTTP POST to voice onion")
+                        Log.i(TAG, "Sent CALL_END notification via HTTP POST to voice onion")
                     } else {
-                        Log.w(TAG, "✗ Failed to send CALL_END notification")
+                        Log.w(TAG, "Failed to send CALL_END notification")
                     }
                 } catch (e: Exception) {
                     Log.e(TAG, "Error sending CALL_END notification", e)
@@ -439,7 +439,7 @@ class VoiceCallSession(
         CoroutineScope(Dispatchers.IO).launch {
             try {
                 // Wrap cleanup in timeout to prevent hanging forever
-                withTimeout(5000L) {  // 5 second timeout for cleanup
+                withTimeout(5000L) { // 5 second timeout for cleanup
                     // Stop audio (blocking operations)
                     if (::audioCaptureManager.isInitialized) {
                         audioCaptureManager.stopCapture()
@@ -599,10 +599,10 @@ class VoiceCallSession(
                 // AAD format: callId (16) || sequenceNumber (8) || direction (1) || circuitIndex (1) = 26 bytes
                 // CRITICAL: Use circuitIndex from header, not derived from sequence!
                 val aad = java.nio.ByteBuffer.allocate(26)
-                aad.put(callIdBytes)                                    // 16 bytes
-                aad.putLong(sequence.toLong())                          // 8 bytes
+                aad.put(callIdBytes) // 16 bytes
+                aad.putLong(sequence.toLong()) // 8 bytes
                 aad.put(if (direction == 0.toByte()) 1.toByte() else 0.toByte()) // 1 byte - opposite direction
-                aad.put(circuitIndex)                                   // 1 byte - FROM HEADER, NOT seq % numCircuits
+                aad.put(circuitIndex) // 1 byte - FROM HEADER, NOT seq % numCircuits
 
                 // Decrypt the payload
                 val decryptedPayload = crypto.decryptFrame(
@@ -760,7 +760,7 @@ class VoiceCallSession(
             // FIX #4: Missing% is NOT sent by receiver (receiver doesn't know sender's framesSent)
             // Sender will calculate missing% locally using: (framesSent - framesReceived) / framesSent
             // Send 0 as placeholder (receiver cannot calculate this metric correctly)
-            val missingPermille = 0.toShort()  // Receiver sends 0 (sender calculates locally)
+            val missingPermille = 0.toShort() // Receiver sends 0 (sender calculates locally)
             buffer.putShort(missingPermille)
 
             // FIX #4: PLC% as permille (0-1000)

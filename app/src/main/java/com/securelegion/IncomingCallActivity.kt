@@ -167,7 +167,7 @@ class IncomingCallActivity : AppCompatActivity() {
             // Wait for layout to complete to get accurate measurements
             if (containerWidth == 0f) {
                 containerWidth = slideToAnswerContainer.width.toFloat()
-                buttonStartX = 4f * resources.displayMetrics.density  // 4dp margin
+                buttonStartX = 4f * resources.displayMetrics.density // 4dp margin
             }
 
             when (event.action) {
@@ -379,7 +379,7 @@ class IncomingCallActivity : AppCompatActivity() {
         finish() // Close incoming call screen immediately
     }
 
-    @Suppress("GestureBackNavigation")  // Handled via declineCall()
+    @Suppress("GestureBackNavigation") // Handled via declineCall()
     override fun onBackPressed() {
         // Decline call on back press
         declineCall()

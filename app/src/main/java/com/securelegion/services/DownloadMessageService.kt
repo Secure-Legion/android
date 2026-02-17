@@ -144,9 +144,9 @@ class DownloadMessageService : Service() {
         serviceScope.cancel()
     }
 
-    // ═══════════════════════════════════════════════════════════════
+    // 
     // Download state (shared between watchdog + poll loop)
-    // ═══════════════════════════════════════════════════════════════
+    // 
 
     private var currentContactId: Long = -1L
     private var currentContactName: String = ""
@@ -169,9 +169,9 @@ class DownloadMessageService : Service() {
         val startTime: Long,
     )
 
-    // ═══════════════════════════════════════════════════════════════
+    // 
     // Main download orchestrator (split into phases for instruction limit)
-    // ═══════════════════════════════════════════════════════════════
+    // 
 
     private suspend fun downloadMessage(contactId: Long, contactName: String, pingId: String) {
         currentContactId = contactId
@@ -222,9 +222,9 @@ class DownloadMessageService : Service() {
         }
     }
 
-    // ═══════════════════════════════════════════════════════════════
+    // 
     // Phase 1: Load and validate ping data
-    // ═══════════════════════════════════════════════════════════════
+    // 
 
     private suspend fun loadAndValidatePing(
         contactId: Long,
@@ -239,9 +239,9 @@ class DownloadMessageService : Service() {
         }
 
         if (pingWireBytesFromDb != null) {
-            Log.i(TAG, "✓ Found ping wire bytes in ping_inbox for pingId=$pingId (${pingWireBytesFromDb.length} chars)")
+            Log.i(TAG, "Found ping wire bytes in ping_inbox for pingId=$pingId (${pingWireBytesFromDb.length} chars)")
         } else {
-            Log.w(TAG, "✗ Ping wire bytes NOT FOUND in ping_inbox for pingId=$pingId")
+            Log.w(TAG, "Ping wire bytes NOT FOUND in ping_inbox for pingId=$pingId")
         }
 
         val contact = withContext(Dispatchers.IO) {
@@ -267,7 +267,7 @@ class DownloadMessageService : Service() {
         val raw = android.util.Base64.decode(pingWireBytesFromDb, android.util.Base64.NO_WRAP)
 
         if (raw.size < 33) {
-            Log.e(TAG, "❌ Invalid ping wire bytes too short (${raw.size} bytes, need >= 33) pingId=${pingId.take(8)}")
+            Log.e(TAG, "Invalid ping wire bytes too short (${raw.size} bytes, need >= 33) pingId=${pingId.take(8)}")
             showFailureNotification(contactName, "Corrupted message data", pingId, contactId)
             return null
         }
@@ -275,18 +275,18 @@ class DownloadMessageService : Service() {
         val normalized = com.securelegion.crypto.RustBridge.normalizeWireBytes(0x01, raw)
 
         if (normalized.size != raw.size) {
-            Log.i(TAG, "✓ Normalized ping wire bytes: ${raw.size} → ${normalized.size} bytes (pingId=${pingId.take(8)})")
+            Log.i(TAG, "Normalized ping wire bytes: ${raw.size} → ${normalized.size} bytes (pingId=${pingId.take(8)})")
         }
 
         val typeByte = normalized[0].toInt() and 0xFF
         if (typeByte != 0x01) {
-            Log.e(TAG, "❌ Normalized wire has wrong type: 0x${typeByte.toString(16)} expected 0x01 pingId=${pingId.take(8)}")
+            Log.e(TAG, "Normalized wire has wrong type: 0x${typeByte.toString(16)} expected 0x01 pingId=${pingId.take(8)}")
             showFailureNotification(contactName, "Invalid message format", pingId, contactId)
             return null
         }
 
         val pingWireBytesNormalized = android.util.Base64.encodeToString(normalized, android.util.Base64.NO_WRAP)
-        Log.i(TAG, "✓ Ping metadata loaded successfully for contact $contactName")
+        Log.i(TAG, "Ping metadata loaded successfully for contact $contactName")
 
         return DownloadCtx(
             contactId = contactId,
@@ -301,9 +301,9 @@ class DownloadMessageService : Service() {
         )
     }
 
-    // ═══════════════════════════════════════════════════════════════
+    // 
     // Phase 2: Pre-flight health checks
-    // ═══════════════════════════════════════════════════════════════
+    // 
 
     private suspend fun runPreFlightChecks(ctx: DownloadCtx): Boolean {
         Log.i(TAG, "========== PRE-FLIGHT HEALTH CHECKS ==========")
@@ -328,7 +328,7 @@ class DownloadMessageService : Service() {
             showFailureNotification(ctx.contactName, errorMsg, ctx.pingId, ctx.contactId)
             return false
         }
-        Log.i(TAG, "  ✓ Tor bootstrap: 100%")
+        Log.i(TAG, "Tor bootstrap: 100%")
 
         val socksRunning = withContext(Dispatchers.IO) {
             try {
@@ -344,24 +344,24 @@ class DownloadMessageService : Service() {
             showFailureNotification(ctx.contactName, "SOCKS proxy not running", ctx.pingId, ctx.contactId)
             return false
         }
-        Log.i(TAG, "  ✓ SOCKS proxy: running")
+        Log.i(TAG, "SOCKS proxy: running")
 
         // Check circuit status from the already-authenticated event listener (no raw control-port probe)
         val circuitsEstablished = com.securelegion.crypto.RustBridge.getCircuitEstablished() >= 1
 
         if (!circuitsEstablished) {
-            Log.w(TAG, "  ⚠ Circuits not established yet (non-critical)")
+            Log.w(TAG, "Circuits not established yet (non-critical)")
         } else {
-            Log.i(TAG, "  ✓ Circuits established")
+            Log.i(TAG, "Circuits established")
         }
 
-        Log.i(TAG, "✓ All critical pre-flight checks passed")
+        Log.i(TAG, "All critical pre-flight checks passed")
         return true
     }
 
-    // ═══════════════════════════════════════════════════════════════
+    // 
     // Phase 3: Restore ping session + expiry check
-    // ═══════════════════════════════════════════════════════════════
+    // 
 
     private suspend fun restorePingSession(ctx: DownloadCtx): Boolean {
         updateNotification(ctx.contactName, "[1/4] Preparing download...")
@@ -418,7 +418,7 @@ class DownloadMessageService : Service() {
         if (pingAge > PING_EXPIRY_MS) {
             val ageHours = pingAge / (60 * 60 * 1000)
             val ageDays = ageHours / 24
-            Log.w(TAG, "⚠️  Rejecting expired PING from ${ctx.contactName} (age: ${ageDays}d ${ageHours % 24}h, limit: 7 days)")
+            Log.w(TAG, "Rejecting expired PING from ${ctx.contactName} (age: ${ageDays}d ${ageHours % 24}h, limit: 7 days)")
 
             withContext(Dispatchers.IO) {
                 try {
@@ -433,13 +433,13 @@ class DownloadMessageService : Service() {
             return false
         }
 
-        Log.i(TAG, "✓ PING age check passed (age: ${pingAge / 1000}s, limit: ${PING_EXPIRY_MS / 1000}s)")
+        Log.i(TAG, "PING age check passed (age: ${pingAge / 1000}s, limit: ${PING_EXPIRY_MS / 1000}s)")
         return true
     }
 
-    // ═══════════════════════════════════════════════════════════════
+    // 
     // Phase 4: Send PONG (instant or listener path)
-    // ═══════════════════════════════════════════════════════════════
+    // 
 
     /**
      * Returns: true = instant message received, false = go to polling, null = fatal pong failure
@@ -459,7 +459,7 @@ class DownloadMessageService : Service() {
             return null
         }
 
-        Log.i(TAG, "✓ Pong created: ${pongBytes.size} bytes")
+        Log.i(TAG, "Pong created: ${pongBytes.size} bytes")
         Log.i(TAG, "========== STAGE 3/4: DOWNLOADING MESSAGE ==========")
 
         // DEDUPLICATION GUARD: Check if PONG was already sent for this pingId
@@ -485,7 +485,7 @@ class DownloadMessageService : Service() {
         broadcastStateUpdate(ctx.contactId)
 
         // DUAL-PATH APPROACH: Try instant reply first, then fall back to listener
-        var pongSent = alreadySentPong  // Pre-set to true if already sent
+        var pongSent = alreadySentPong // Pre-set to true if already sent
         var instantMessageReceived = false
 
         if (!alreadySentPong) {
@@ -516,16 +516,16 @@ class DownloadMessageService : Service() {
                         try {
                             val messageBytes = com.securelegion.crypto.RustBridge.sendPongBytes(ctx.connectionId, pongBytes)
                             if (messageBytes != null) {
-                                Log.i(TAG, "✓ Pong sent on original connection! Received message blob: ${messageBytes.size} bytes")
+                                Log.i(TAG, "Pong sent on original connection! Received message blob: ${messageBytes.size} bytes")
                                 handleInstantMessageBlob(messageBytes, ctx.contactId, ctx.contactName, ctx.pingId, ctx.connectionId)
                                 instantMessageReceived = true
                                 true
                             } else {
-                                Log.w(TAG, "✗ sendPongBytes returned null (connection likely closed)")
+                                Log.w(TAG, "sendPongBytes returned null (connection likely closed)")
                                 false
                             }
                         } catch (e: Exception) {
-                            Log.w(TAG, "✗ Instant Pong reply failed (connection closed): ${e.message}")
+                            Log.w(TAG, "Instant Pong reply failed (connection closed): ${e.message}")
                             false
                         }
                     }
@@ -555,27 +555,27 @@ class DownloadMessageService : Service() {
                         try {
                             com.securelegion.crypto.RustBridge.sendPongToListener(ctx.senderOnion, pongBytes)
                         } catch (e: Exception) {
-                            Log.e(TAG, "✗ Failed to send Pong to listener (attempt $pongAttempt/$maxPongRetries)", e)
+                            Log.e(TAG, "Failed to send Pong to listener (attempt $pongAttempt/$maxPongRetries)", e)
                             false
                         }
                     }
                     if (pongSent) {
-                        Log.i(TAG, "✓ Pong sent via listener (attempt $pongAttempt/$maxPongRetries)")
+                        Log.i(TAG, "Pong sent via listener (attempt $pongAttempt/$maxPongRetries)")
                         break
                     }
                     if (pongAttempt < maxPongRetries) {
-                        Log.w(TAG, "⚠️ Pong send failed (attempt $pongAttempt/$maxPongRetries), retrying in ${pongDelay}ms...")
+                        Log.w(TAG, "Pong send failed (attempt $pongAttempt/$maxPongRetries), retrying in ${pongDelay}ms...")
                         delay(pongDelay)
                         pongDelay = (pongDelay * 2).coerceAtMost(10_000L)
                     } else {
-                        Log.e(TAG, "✗ Pong send FAILED after $maxPongRetries attempts")
+                        Log.e(TAG, "Pong send FAILED after $maxPongRetries attempts")
                     }
                 }
             }
-        }  // Close if (!alreadySentPong) block
+        } // Close if (!alreadySentPong) block
 
         if (!pongSent) {
-            Log.e(TAG, "✗ Pong send failed")
+            Log.e(TAG, "Pong send failed")
             showFailureNotification(ctx.contactName, "Failed to send response", ctx.pingId, ctx.contactId)
             return null
         }
@@ -592,15 +592,15 @@ class DownloadMessageService : Service() {
         return instantMessageReceived
     }
 
-    // ═══════════════════════════════════════════════════════════════
+    // 
     // Phase 5: Poll for message
-    // ═══════════════════════════════════════════════════════════════
+    // 
 
     private suspend fun pollForMessage(ctx: DownloadCtx): Boolean {
-        Log.i(TAG, "✓ Pong sent! Now waiting for message payload...")
+        Log.i(TAG, "Pong sent! Now waiting for message payload...")
 
         // DB state PONG_SENT tracks active download — TorService reads ping_inbox directly
-        Log.d(TAG, "⚡ Active download tracked via ping_inbox (state=PONG_SENT): pingId=${ctx.pingId.take(8)}")
+        Log.d(TAG, "Active download tracked via ping_inbox (state=PONG_SENT): pingId=${ctx.pingId.take(8)}")
 
         updateNotification(ctx.contactName, "Waiting for message...")
 
@@ -618,14 +618,14 @@ class DownloadMessageService : Service() {
             Log.d(TAG, "Polling attempt $attempt...")
             updateNotification(ctx.contactName, "Downloading... (${attempt}s)")
 
-            delay(1000)  // 1s per poll
+            delay(1000) // 1s per poll
 
             val currentMessageCount = withContext(Dispatchers.IO) {
                 ctx.database.messageDao().getMessagesForContact(ctx.contactId).size
             }
 
             if (currentMessageCount > initialMessageCount) {
-                Log.i(TAG, "✓ NEW message found in database! ($initialMessageCount → $currentMessageCount)")
+                Log.i(TAG, "NEW message found in database! ($initialMessageCount → $currentMessageCount)")
                 return true
             } else {
                 Log.d(TAG, "No new messages yet (count still $currentMessageCount)")
@@ -637,9 +637,9 @@ class DownloadMessageService : Service() {
         return false
     }
 
-    // ═══════════════════════════════════════════════════════════════
+    // 
     // Phase 6: Download success
-    // ═══════════════════════════════════════════════════════════════
+    // 
 
     private suspend fun onDownloadSuccess(ctx: DownloadCtx) {
         // Transition ping_inbox to MSG_STORED
@@ -647,7 +647,7 @@ class DownloadMessageService : Service() {
             Log.i(TAG, "→ Transitioning pingId=${ctx.pingId} to MSG_STORED (listener path)")
             val now = System.currentTimeMillis()
             ctx.database.pingInboxDao().transitionToMsgStored(ctx.pingId, now)
-            ctx.database.pingInboxDao().clearPingWireBytes(ctx.pingId, now)  // Free up DB space
+            ctx.database.pingInboxDao().clearPingWireBytes(ctx.pingId, now) // Free up DB space
         }
 
         // Send MESSAGE_ACK to sender after successfully receiving the message
@@ -665,27 +665,27 @@ class DownloadMessageService : Service() {
         intent.setPackage(packageName)
         intent.putExtra("CONTACT_ID", ctx.contactId)
         sendBroadcast(intent)
-        Log.i(TAG, "✓ Broadcast sent to refresh UI")
+        Log.i(TAG, "Broadcast sent to refresh UI")
 
         showSuccessNotification(ctx.contactName)
-        Log.d(TAG, "✓ Download completed in ${System.currentTimeMillis() - ctx.startTime}ms")
+        Log.d(TAG, "Download completed in ${System.currentTimeMillis() - ctx.startTime}ms")
     }
 
-    // ═══════════════════════════════════════════════════════════════
+    // 
     // Timeout handlers
-    // ═══════════════════════════════════════════════════════════════
+    // 
 
     private suspend fun onWatchdogTimeout(ctx: DownloadCtx) {
         val elapsed = System.currentTimeMillis() - ctx.startTime
-        Log.e(TAG, "⚠️  WATCHDOG TIMEOUT after ${elapsed}ms")
-        Log.e(TAG, "  Contact: ${ctx.contactName} (ID: ${ctx.contactId})")
-        Log.e(TAG, "  Ping ID: ${ctx.pingId}")
+        Log.e(TAG, "WATCHDOG TIMEOUT after ${elapsed}ms")
+        Log.e(TAG, "Contact: ${ctx.contactName} (ID: ${ctx.contactId})")
+        Log.e(TAG, "Ping ID: ${ctx.pingId}")
 
         try {
             val torStatus = checkTorStatus()
-            Log.e(TAG, "  Tor Status: $torStatus")
+            Log.e(TAG, "Tor Status: $torStatus")
         } catch (e: Exception) {
-            Log.e(TAG, "  Tor Status: Error - ${e.message}")
+            Log.e(TAG, "Tor Status: Error - ${e.message}")
         }
 
         // Mark completed FIRST to stop poll loop
@@ -716,9 +716,9 @@ class DownloadMessageService : Service() {
     }
 
 
-    // ═══════════════════════════════════════════════════════════════
+    // 
     // Helper methods
-    // ═══════════════════════════════════════════════════════════════
+    // 
 
     private fun checkTorStatus(): String {
         return try {
@@ -840,7 +840,7 @@ class DownloadMessageService : Service() {
                     failIntent.setPackage(packageName)
                     failIntent.putExtra("CONTACT_ID", contactId)
                     sendBroadcast(failIntent)
-                    Log.d(TAG, "✓ DOWNLOAD_FAILED broadcast sent for pingId=${pingId.take(8)}")
+                    Log.d(TAG, "DOWNLOAD_FAILED broadcast sent for pingId=${pingId.take(8)}")
                 } catch (e: Exception) {
                     Log.w(TAG, "Failed to transition ping state on download failure: ${e.message}")
                 }
@@ -966,15 +966,15 @@ class DownloadMessageService : Service() {
             }
 
             // PING INBOX STATE CHECK: Verify state and transition to PONG_SENT
-            Log.d(TAG, "═══ PING INBOX CHECK: pingId=$pingId ═══")
+            Log.d(TAG, "PING INBOX CHECK: pingId=$pingId ")
             val pingInbox = database.pingInboxDao().getByPingId(pingId)
 
             if (pingInbox == null) {
-                Log.w(TAG, "⚠️ Ping $pingId not in ping_inbox - this shouldn't happen")
+                Log.w(TAG, "Ping $pingId not in ping_inbox - this shouldn't happen")
                 // Fallback: check messages DB
                 val existingMessage = database.messageDao().getMessageByPingId(pingId)
                 if (existingMessage != null) {
-                    Log.i(TAG, "✓ Message $pingId found in DB (fallback check)")
+                    Log.i(TAG, "Message $pingId found in DB (fallback check)")
 
                     // Send MESSAGE_ACK
                     sendMessageAck(contactId, contactName, connectionId, pingId)
@@ -990,7 +990,7 @@ class DownloadMessageService : Service() {
                 // Continue with download if not in DB
             } else if (pingInbox.state == com.securelegion.database.entities.PingInbox.STATE_MSG_STORED) {
                 // Already stored - send MESSAGE_ACK and skip
-                Log.i(TAG, "✓ Message $pingId already stored (state=MSG_STORED)")
+                Log.i(TAG, "Message $pingId already stored (state=MSG_STORED)")
 
                 // Send MESSAGE_ACK (idempotent)
                 sendMessageAck(contactId, contactName, connectionId, pingId)
@@ -1010,7 +1010,7 @@ class DownloadMessageService : Service() {
                 }
             }
 
-            Log.i(TAG, "✓ Message $pingId not yet stored - proceeding with download")
+            Log.i(TAG, "Message $pingId not yet stored - proceeding with download")
 
             // Get sender's Ed25519 public key for decryption
             val senderPublicKey = android.util.Base64.decode(contact.publicKeyBase64, android.util.Base64.NO_WRAP)
@@ -1042,13 +1042,13 @@ class DownloadMessageService : Service() {
 
                             if (existingMessage != null) {
                                 // Duplicate detected - message already in DB
-                                Log.i(TAG, "✓ Message $pingId already in DB (duplicate insert via multipath/retry)")
+                                Log.i(TAG, "Message $pingId already in DB (duplicate insert via multipath/retry)")
 
                                 // CRITICAL: Still transition ping_inbox to MSG_STORED (idempotent, monotonic guard)
                                 // This ensures duplicates don't get stuck in PONG_SENT state
                                 val now = System.currentTimeMillis()
                                 database.pingInboxDao().transitionToMsgStored(pingId, now)
-                                database.pingInboxDao().clearPingWireBytes(pingId, now)  // Free up DB space
+                                database.pingInboxDao().clearPingWireBytes(pingId, now) // Free up DB space
 
                                 // Return success with existing message (not a failure!)
                                 Result.success(existingMessage)
@@ -1066,7 +1066,7 @@ class DownloadMessageService : Service() {
                                     Log.i(TAG, "→ Transitioning pingId=$pingId to MSG_STORED (atomic)")
                                     val now = System.currentTimeMillis()
                                     database.pingInboxDao().transitionToMsgStored(pingId, now)
-                                    database.pingInboxDao().clearPingWireBytes(pingId, now)  // Free up DB space
+                                    database.pingInboxDao().clearPingWireBytes(pingId, now) // Free up DB space
                                 }
 
                                 insertResult
@@ -1075,26 +1075,26 @@ class DownloadMessageService : Service() {
                     }
 
                     if (result.isSuccess && result.getOrNull()?.isSuccess == true) {
-                        Log.i(TAG, "✓ TEXT message saved to database (atomic transaction)")
+                        Log.i(TAG, "TEXT message saved to database (atomic transaction)")
 
                         // Broadcast to refresh UI
                         val intent = Intent("com.securelegion.MESSAGE_RECEIVED")
                         intent.setPackage(packageName)
                         intent.putExtra("CONTACT_ID", contactId)
                         sendBroadcast(intent)
-                        Log.i(TAG, "✓ Broadcast sent to refresh UI")
+                        Log.i(TAG, "Broadcast sent to refresh UI")
 
                         // Send MESSAGE_ACK ("I stored the message")
                         serviceScope.launch(Dispatchers.IO) {
                             try {
                                 sendMessageAck(contactId, contactName, connectionId, pingId)
-                                Log.i(TAG, "✓ MESSAGE_ACK sent")
+                                Log.i(TAG, "MESSAGE_ACK sent")
 
                                 // Clean up Rust Ping session AFTER MESSAGE_ACK sent successfully
                                 // This prevents orphaned messages if there's a delay between Pong and MESSAGE
                                 try {
                                     com.securelegion.crypto.RustBridge.removePingSession(pingId)
-                                    Log.d(TAG, "✓ Cleaned up Rust Ping session for pingId: $pingId")
+                                    Log.d(TAG, "Cleaned up Rust Ping session for pingId: $pingId")
                                 } catch (cleanupError: Exception) {
                                     Log.w(TAG, "Failed to clean up Ping session (non-critical)", cleanupError)
                                 }
@@ -1136,12 +1136,12 @@ class DownloadMessageService : Service() {
 
                             if (existingMessage != null) {
                                 // Duplicate detected - message already in DB
-                                Log.i(TAG, "✓ VOICE message $pingId already in DB (duplicate insert via multipath/retry)")
+                                Log.i(TAG, "VOICE message $pingId already in DB (duplicate insert via multipath/retry)")
 
                                 // CRITICAL: Still transition ping_inbox to MSG_STORED (idempotent, monotonic guard)
                                 val now = System.currentTimeMillis()
                                 database.pingInboxDao().transitionToMsgStored(pingId, now)
-                                database.pingInboxDao().clearPingWireBytes(pingId, now)  // Free up DB space
+                                database.pingInboxDao().clearPingWireBytes(pingId, now) // Free up DB space
 
                                 // Return success with existing message (not a failure!)
                                 Result.success(existingMessage)
@@ -1152,7 +1152,7 @@ class DownloadMessageService : Service() {
                                     senderPublicKey = senderPublicKey,
                                     senderOnionAddress = contact.messagingOnion ?: contact.torOnionAddress ?: "",
                                     messageType = com.securelegion.database.entities.Message.MESSAGE_TYPE_VOICE,
-                                    voiceDuration = voiceDuration ?: 0,  // Safe default instead of crash
+                                    voiceDuration = voiceDuration ?: 0, // Safe default instead of crash
                                     pingId = pingId
                                 )
 
@@ -1160,7 +1160,7 @@ class DownloadMessageService : Service() {
                                     Log.i(TAG, "→ Transitioning pingId=$pingId to MSG_STORED (atomic)")
                                     val now = System.currentTimeMillis()
                                     database.pingInboxDao().transitionToMsgStored(pingId, now)
-                                    database.pingInboxDao().clearPingWireBytes(pingId, now)  // Free up DB space
+                                    database.pingInboxDao().clearPingWireBytes(pingId, now) // Free up DB space
                                 }
 
                                 insertResult
@@ -1169,14 +1169,14 @@ class DownloadMessageService : Service() {
                     }
 
                     if (result.isSuccess && result.getOrNull()?.isSuccess == true) {
-                        Log.i(TAG, "✓ VOICE message saved to database (atomic transaction)")
+                        Log.i(TAG, "VOICE message saved to database (atomic transaction)")
 
                         // Broadcast to refresh UI
                         val intent = Intent("com.securelegion.MESSAGE_RECEIVED")
                         intent.setPackage(packageName)
                         intent.putExtra("CONTACT_ID", contactId)
                         sendBroadcast(intent)
-                        Log.i(TAG, "✓ Broadcast sent to refresh UI")
+                        Log.i(TAG, "Broadcast sent to refresh UI")
 
                         // Send MESSAGE_ACK to sender
                         sendMessageAck(contactId, contactName, connectionId, pingId)
@@ -1216,12 +1216,12 @@ class DownloadMessageService : Service() {
 
                             if (existingMessage != null) {
                                 // Duplicate detected - message already in DB
-                                Log.i(TAG, "✓ IMAGE message $pingId already in DB (duplicate insert via multipath/retry)")
+                                Log.i(TAG, "IMAGE message $pingId already in DB (duplicate insert via multipath/retry)")
 
                                 // CRITICAL: Still transition ping_inbox to MSG_STORED (idempotent, monotonic guard)
                                 val now = System.currentTimeMillis()
                                 database.pingInboxDao().transitionToMsgStored(pingId, now)
-                                database.pingInboxDao().clearPingWireBytes(pingId, now)  // Free up DB space
+                                database.pingInboxDao().clearPingWireBytes(pingId, now) // Free up DB space
 
                                 // Return success with existing message (not a failure!)
                                 Result.success(existingMessage)
@@ -1239,7 +1239,7 @@ class DownloadMessageService : Service() {
                                     Log.i(TAG, "→ Transitioning pingId=$pingId to MSG_STORED (atomic)")
                                     val now = System.currentTimeMillis()
                                     database.pingInboxDao().transitionToMsgStored(pingId, now)
-                                    database.pingInboxDao().clearPingWireBytes(pingId, now)  // Free up DB space
+                                    database.pingInboxDao().clearPingWireBytes(pingId, now) // Free up DB space
                                 }
 
                                 insertResult
@@ -1248,14 +1248,14 @@ class DownloadMessageService : Service() {
                     }
 
                     if (result.isSuccess && result.getOrNull()?.isSuccess == true) {
-                        Log.i(TAG, "✓ IMAGE message saved to database (atomic transaction)")
+                        Log.i(TAG, "IMAGE message saved to database (atomic transaction)")
 
                         // Broadcast to refresh UI
                         val intent = Intent("com.securelegion.MESSAGE_RECEIVED")
                         intent.setPackage(packageName)
                         intent.putExtra("CONTACT_ID", contactId)
                         sendBroadcast(intent)
-                        Log.i(TAG, "✓ Broadcast sent to refresh UI")
+                        Log.i(TAG, "Broadcast sent to refresh UI")
 
                         // Send MESSAGE_ACK to sender
                         sendMessageAck(contactId, contactName, connectionId, pingId)
@@ -1295,14 +1295,14 @@ class DownloadMessageService : Service() {
                     )
 
                     if (result.isSuccess) {
-                        Log.i(TAG, "✓ PAYMENT_REQUEST message saved to database")
+                        Log.i(TAG, "PAYMENT_REQUEST message saved to database")
 
                         // Broadcast to trigger ChatActivity refresh
                         val intent = Intent("com.securelegion.MESSAGE_RECEIVED")
                         intent.setPackage(packageName)
                         intent.putExtra("CONTACT_ID", contactId)
                         sendBroadcast(intent)
-                        Log.i(TAG, "✓ Broadcast sent to refresh UI")
+                        Log.i(TAG, "Broadcast sent to refresh UI")
 
                         sendMessageAck(contactId, contactName, connectionId, pingId)
                         val notifMgr = getSystemService(android.app.NotificationManager::class.java)
@@ -1337,14 +1337,14 @@ class DownloadMessageService : Service() {
                     )
 
                     if (result.isSuccess) {
-                        Log.i(TAG, "✓ PAYMENT_SENT message saved to database")
+                        Log.i(TAG, "PAYMENT_SENT message saved to database")
 
                         // Broadcast to trigger ChatActivity refresh
                         val intent = Intent("com.securelegion.MESSAGE_RECEIVED")
                         intent.setPackage(packageName)
                         intent.putExtra("CONTACT_ID", contactId)
                         sendBroadcast(intent)
-                        Log.i(TAG, "✓ Broadcast sent to refresh UI")
+                        Log.i(TAG, "Broadcast sent to refresh UI")
 
                         sendMessageAck(contactId, contactName, connectionId, pingId)
                         val notifMgr = getSystemService(android.app.NotificationManager::class.java)
@@ -1379,14 +1379,14 @@ class DownloadMessageService : Service() {
                     )
 
                     if (result.isSuccess) {
-                        Log.i(TAG, "✓ PAYMENT_ACCEPTED message saved to database")
+                        Log.i(TAG, "PAYMENT_ACCEPTED message saved to database")
 
                         // Broadcast to trigger ChatActivity refresh
                         val intent = Intent("com.securelegion.MESSAGE_RECEIVED")
                         intent.setPackage(packageName)
                         intent.putExtra("CONTACT_ID", contactId)
                         sendBroadcast(intent)
-                        Log.i(TAG, "✓ Broadcast sent to refresh UI")
+                        Log.i(TAG, "Broadcast sent to refresh UI")
 
                         sendMessageAck(contactId, contactName, connectionId, pingId)
                         val notifMgr = getSystemService(android.app.NotificationManager::class.java)
@@ -1456,10 +1456,10 @@ class DownloadMessageService : Service() {
 
                     // ARCHITECTURAL DECISION: All ACKs MUST go to peer's messaging .onion, NOT on incoming connection.
                     // Connection reuse optimization is disabled because:
-                    //   1. Incoming connections are ephemeral (closed after message received)
-                    //   2. Reusing non-existent connections fails with "Connection not found"
-                    //   3. Sending ACKs as new outgoing messages to peer's .onion is reliable
-                    //   4. Clean architecture > micro-optimization
+                    // 1. Incoming connections are ephemeral (closed after message received)
+                    // 2. Reusing non-existent connections fails with "Connection not found"
+                    // 3. Sending ACKs as new outgoing messages to peer's .onion is reliable
+                    // 4. Clean architecture > micro-optimization
                     //
                     // Connection reuse code preserved but disabled:
                     if (false && connectionId >= 0) {
@@ -1473,7 +1473,7 @@ class DownloadMessageService : Service() {
                         }
 
                         if (ackSuccess) {
-                            Log.i(TAG, "✓ MESSAGE_ACK sent successfully on existing connection for pingId=$pingId (attempt ${attempt + 1})")
+                            Log.i(TAG, "MESSAGE_ACK sent successfully on existing connection for pingId=$pingId (attempt ${attempt + 1})")
                             return // Success!
                         }
 
@@ -1495,18 +1495,18 @@ class DownloadMessageService : Service() {
                     }
 
                     if (ackSuccess) {
-                        Log.i(TAG, "✓ MESSAGE_ACK sent successfully via new connection for pingId=$pingId (attempt ${attempt + 1})")
+                        Log.i(TAG, "MESSAGE_ACK sent successfully via new connection for pingId=$pingId (attempt ${attempt + 1})")
                         return // Success!
                     }
 
                     // Both paths failed
                     attempt++
                     if (attempt < maxRetries) {
-                        Log.w(TAG, "⚠️ MESSAGE_ACK send failed (attempt $attempt/$maxRetries), retrying in ${delayMs}ms...")
+                        Log.w(TAG, "MESSAGE_ACK send failed (attempt $attempt/$maxRetries), retrying in ${delayMs}ms...")
                         kotlinx.coroutines.delay(delayMs)
                         delayMs *= 2 // Exponential backoff: 1s, 2s, 4s
                     } else {
-                        Log.e(TAG, "✗ MESSAGE_ACK send FAILED after $maxRetries attempts for pingId=$pingId")
+                        Log.e(TAG, "MESSAGE_ACK send FAILED after $maxRetries attempts for pingId=$pingId")
                         Log.e(TAG, "→ Sender will retry MESSAGE, which is acceptable")
                     }
 

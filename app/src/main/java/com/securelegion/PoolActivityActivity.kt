@@ -14,6 +14,7 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.google.android.material.bottomsheet.BottomSheetDialog
+import com.securelegion.utils.GlassBottomSheetDialog
 import com.securelegion.adapters.PoolActivityAdapter
 import com.securelegion.services.ShadowWireService
 import com.securelegion.utils.ThemedToast
@@ -93,7 +94,7 @@ class PoolActivityActivity : AppCompatActivity() {
     }
 
     private fun openActivityDetail(item: ShadowWireService.PoolActivityItem) {
-        val bottomSheet = BottomSheetDialog(this)
+        val bottomSheet = GlassBottomSheetDialog(this)
         val view = layoutInflater.inflate(R.layout.bottom_sheet_transaction_detail, null)
 
         val displayMetrics = resources.displayMetrics

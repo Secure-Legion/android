@@ -27,7 +27,7 @@ import androidx.core.view.WindowCompat
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
-import androidx.recyclerview.widget.ItemTouchHelper
+
 import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
@@ -54,7 +54,9 @@ import com.securelegion.workers.SkippedKeyCleanupWorker
 import com.securelegion.database.entities.ed25519PublicKeyBytes
 import com.securelegion.database.entities.x25519PublicKeyBytes
 import java.util.UUID
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -72,6 +74,7 @@ class MainActivity : BaseActivity() {
     private var isCallMode = false // Track if we're in call mode (Phone icon clicked)
     private var pendingCallContact: Contact? = null // Temporary storage for pending call after permission request
     private var isInitiatingCall = false // Prevent duplicate call initiations
+    private var dbDeferred: Deferred<SecureLegionDatabase>? = null // Pre-warmed DB connection
 
     // BroadcastReceiver to listen for incoming Pings and message status updates
     private val pingReceiver = object : BroadcastReceiver() {
@@ -79,27 +82,21 @@ class MainActivity : BaseActivity() {
             when (intent?.action) {
                 "com.securelegion.NEW_PING" -> {
                     Log.d("MainActivity", "Received NEW_PING broadcast - refreshing chat list")
-                    // Update UI immediately on main thread
                     runOnUiThread {
                         if (currentTab == "messages") {
-                            Log.d("MainActivity", "Refreshing chat list from NEW_PING broadcast")
                             setupChatList()
-                        } else {
-                            Log.d("MainActivity", "Not on messages tab, skipping refresh")
                         }
+                        updateUnreadMessagesBadge()
                     }
                 }
                 "com.securelegion.MESSAGE_RECEIVED" -> {
                     val contactId = intent.getLongExtra("CONTACT_ID", -1)
-                    Log.d("MainActivity", "⚡ Received MESSAGE_RECEIVED broadcast for contact $contactId - refreshing chat list for status update")
-                    // Update UI immediately on main thread
+                    Log.d("MainActivity", "Received MESSAGE_RECEIVED broadcast for contact $contactId")
                     runOnUiThread {
                         if (currentTab == "messages") {
-                            Log.d("MainActivity", "⚡ Refreshing chat list from MESSAGE_RECEIVED broadcast (contact $contactId)")
                             setupChatList()
-                        } else {
-                            Log.d("MainActivity", "Not on messages tab (current: $currentTab), skipping refresh")
                         }
+                        updateUnreadMessagesBadge()
                     }
                 }
             }
@@ -110,9 +107,13 @@ class MainActivity : BaseActivity() {
     private val friendRequestReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             if (intent?.action == "com.securelegion.FRIEND_REQUEST_RECEIVED") {
-                Log.d("MainActivity", "Received FRIEND_REQUEST_RECEIVED broadcast - updating badge")
+                Log.d("MainActivity", "Received FRIEND_REQUEST_RECEIVED broadcast - updating badges")
                 runOnUiThread {
                     updateFriendRequestBadge()
+                    // Also refresh the add friend page if on contacts tab
+                    if (currentTab == "contacts") {
+                        setupContactsList()
+                    }
                 }
             }
         }
@@ -161,6 +162,12 @@ class MainActivity : BaseActivity() {
             return
         }
 
+        // Pre-warm SQLCipher database while views inflate
+        dbDeferred = lifecycleScope.async(Dispatchers.IO) {
+            val dbPassphrase = keyManager.getDatabasePassphrase()
+            SecureLegionDatabase.getInstance(this@MainActivity, dbPassphrase)
+        }
+
         setContentView(R.layout.activity_main)
 
         // Enable edge-to-edge display (important for display cutouts)
@@ -177,21 +184,17 @@ class MainActivity : BaseActivity() {
                 WindowInsetsCompat.Type.displayCutout()
             )
 
-            // Apply top inset to top bar (for status bar and display cutout)
-            topBar.setPadding(
-                insets.left,
-                insets.top + topBar.paddingTop,
-                insets.right,
-                topBar.paddingBottom
-            )
+            // Apply top inset to top bar spacer (for status bar and display cutout)
+            topBar.layoutParams = topBar.layoutParams.apply {
+                height = insets.top
+            }
 
             // Apply bottom inset to bottom navigation (for gesture bar)
             bottomNav.setPadding(
                 bottomNav.paddingLeft,
                 bottomNav.paddingTop,
                 bottomNav.paddingRight,
-                insets.bottom
-            )
+                0)
 
             Log.d("MainActivity", "Applied window insets - top: ${insets.top}, bottom: ${insets.bottom}, left: ${insets.left}, right: ${insets.right}")
 
@@ -305,11 +308,37 @@ class MainActivity : BaseActivity() {
     }
 
     /**
-     * Update the friend request badge count on the Add Friend navigation icon
+     * Update the friend request badge on the Contacts nav icon and compose button
      */
     private fun updateFriendRequestBadge() {
         val rootView = findViewById<View>(android.R.id.content)
         BadgeUtils.updateFriendRequestBadge(this, rootView)
+
+        // Also update compose button badge if on contacts tab
+        val count = BadgeUtils.getPendingFriendRequestCount(this)
+        if (currentTab == "contacts") {
+            BadgeUtils.updateComposeBadge(rootView, count)
+        } else {
+            BadgeUtils.updateComposeBadge(rootView, 0)
+        }
+    }
+
+    /**
+     * Update the unread messages badge on the Chats nav icon
+     */
+    private fun updateUnreadMessagesBadge() {
+        lifecycleScope.launch {
+            try {
+                val database = dbDeferred?.await() ?: return@launch
+                val count = withContext(Dispatchers.IO) {
+                    database.messageDao().getTotalUnreadCount()
+                }
+                val rootView = findViewById<View>(android.R.id.content)
+                BadgeUtils.updateUnreadMessagesBadge(rootView, count)
+            } catch (e: Exception) {
+                Log.e("MainActivity", "Failed to update unread messages badge", e)
+            }
+        }
     }
 
 
@@ -467,8 +496,9 @@ class MainActivity : BaseActivity() {
             setupContactsList()
         }
 
-        // Update friend request badge count
+        // Update badge counts
         updateFriendRequestBadge()
+        updateUnreadMessagesBadge()
     }
 
     override fun onPause() {
@@ -535,47 +565,57 @@ class MainActivity : BaseActivity() {
         // Load real message threads from database
         lifecycleScope.launch {
             try {
-                val keyManager = KeyManager.getInstance(this@MainActivity)
-                val dbPassphrase = keyManager.getDatabasePassphrase()
-                val database = SecureLegionDatabase.getInstance(this@MainActivity, dbPassphrase)
+                // Use pre-warmed DB if available, otherwise open fresh
+                val database = dbDeferred?.await() ?: run {
+                    val km = KeyManager.getInstance(this@MainActivity)
+                    val pass = km.getDatabasePassphrase()
+                    SecureLegionDatabase.getInstance(this@MainActivity, pass)
+                }
 
-                // Do all database queries in one IO block for better performance
+                // Batch all DB queries (4 queries total instead of 3N+1)
                 val chatsWithTimestamp = withContext(Dispatchers.IO) {
                     val allContacts = database.contactDao().getAllContacts()
                     Log.d("MainActivity", "Found ${allContacts.size} contacts")
 
+                    // Batch: last message per contact, unread counts, pending pings
+                    val lastMessages = database.messageDao().getLastMessagePerContact()
+                    val lastMessageMap = lastMessages.associateBy { it.contactId }
+
+                    val unreadCounts = database.messageDao().getUnreadCountsGrouped()
+                    val unreadMap = unreadCounts.associate { it.contactId to it.cnt }
+
+                    val pendingCounts = database.pingInboxDao().countPendingPerContact()
+                    val pendingMap = pendingCounts.associate { it.contactId to it.cnt }
+
                     val chatsList = mutableListOf<Pair<Chat, Long>>()
 
-                    // Process each contact
                     for (contact in allContacts) {
-                        val lastMessage = database.messageDao().getLastMessage(contact.id)
-                        // Count pending pings from ping_inbox DB
-                        val pendingPingCount = database.pingInboxDao().countPendingByContact(contact.id)
+                        val lastMessage = lastMessageMap[contact.id]
+                        val pendingPingCount = pendingMap[contact.id] ?: 0
                         val hasPendingPing = pendingPingCount > 0
 
-                        // Include contacts with messages OR pending Pings
                         if (lastMessage != null || hasPendingPing) {
-                            val unreadCount = database.messageDao().getUnreadCount(contact.id)
+                            val unreadCount = unreadMap[contact.id] ?: 0
 
                             val messageStatus = if (lastMessage != null && lastMessage.isSentByMe) lastMessage.status else 0
                             val isSent = lastMessage?.isSentByMe ?: false
                             val pingDelivered = lastMessage?.pingDelivered ?: false
                             val messageDelivered = lastMessage?.messageDelivered ?: false
-                            Log.d("MainActivity", "Contact ${contact.displayName}: status=$messageStatus, isSent=$isSent, pingDelivered=$pingDelivered, messageDelivered=$messageDelivered, messageId=${lastMessage?.messageId}")
 
                             val chat = Chat(
                                 id = contact.id.toString(),
                                 nickname = contact.displayName,
                                 lastMessage = if (lastMessage != null) lastMessage.encryptedContent else "New message",
                                 time = if (lastMessage != null) formatTimestamp(lastMessage.timestamp) else formatTimestamp(System.currentTimeMillis()),
-                                unreadCount = unreadCount + pendingPingCount,  // Add count of ALL pending pings
+                                unreadCount = unreadCount + pendingPingCount,
                                 isOnline = false,
                                 avatar = contact.displayName.firstOrNull()?.toString()?.uppercase() ?: "?",
                                 securityBadge = "",
                                 lastMessageStatus = messageStatus,
                                 lastMessageIsSent = isSent,
                                 lastMessagePingDelivered = pingDelivered,
-                                lastMessageMessageDelivered = messageDelivered
+                                lastMessageMessageDelivered = messageDelivered,
+                                isPinned = contact.isPinned
                             )
                             val timestamp = if (lastMessage != null) lastMessage.timestamp else System.currentTimeMillis()
                             chatsList.add(Pair(chat, timestamp))
@@ -585,9 +625,9 @@ class MainActivity : BaseActivity() {
                     chatsList
                 }
 
-                // Sort by most recent message timestamp
+                // Sort: pinned first, then by most recent message timestamp
                 val chats = chatsWithTimestamp
-                    .sortedByDescending { it.second }
+                    .sortedWith(compareByDescending<Pair<Chat, Long>> { it.first.isPinned }.thenByDescending { it.second })
                     .map { it.first }
 
                 Log.d("MainActivity", "Loaded ${chats.size} chat threads")
@@ -629,6 +669,12 @@ class MainActivity : BaseActivity() {
                     },
                     onDeleteClick = { chat ->
                         deleteThread(chat)
+                    },
+                    onMuteClick = { chat ->
+                        ThemedToast.show(this@MainActivity, "${chat.nickname} muted")
+                    },
+                    onPinClick = { chat ->
+                        togglePin(chat)
                     }
                 )
                 Log.d("MainActivity", "RecyclerView adapter set successfully")
@@ -642,6 +688,28 @@ class MainActivity : BaseActivity() {
                     chatList.visibility = View.VISIBLE
                     findViewById<View>(R.id.messagesEmptyState).visibility = View.GONE
                 }
+            }
+        }
+    }
+
+    private fun togglePin(chat: Chat) {
+        lifecycleScope.launch {
+            try {
+                val database = dbDeferred?.await() ?: run {
+                    val km = KeyManager.getInstance(this@MainActivity)
+                    val pass = km.getDatabasePassphrase()
+                    SecureLegionDatabase.getInstance(this@MainActivity, pass)
+                }
+
+                val contactId = chat.id.toLong()
+                val newPinned = !chat.isPinned
+                withContext(Dispatchers.IO) {
+                    database.contactDao().setPinned(contactId, newPinned)
+                }
+                ThemedToast.show(this@MainActivity, "${chat.nickname} ${if (newPinned) "pinned" else "unpinned"}")
+                setupChatList()
+            } catch (e: Exception) {
+                Log.e("MainActivity", "Failed to toggle pin", e)
             }
         }
     }
@@ -666,11 +734,11 @@ class MainActivity : BaseActivity() {
                     try {
                         val messageService = com.securelegion.services.MessageService(this@MainActivity)
                         messageService.clearAckStateForThread(messageIds)
-                        Log.d("MainActivity", "✓ Cleared ACK state for ${messageIds.size} messages")
+                        Log.d("MainActivity", "Cleared ACK state for ${messageIds.size} messages")
 
                         // Also clear gap timeout buffer to free memory
                         com.securelegion.services.MessageService.clearGapTimeoutBuffer(chat.id.toLong())
-                        Log.d("MainActivity", "✓ Cleared gap timeout buffer")
+                        Log.d("MainActivity", "Cleared gap timeout buffer")
                     } catch (e: Exception) {
                         Log.e("MainActivity", "Failed to clear ACK state or gap buffer", e)
                     }
@@ -684,7 +752,7 @@ class MainActivity : BaseActivity() {
                                 val voiceFile = java.io.File(message.voiceFilePath)
                                 if (voiceFile.exists()) {
                                     com.securelegion.utils.SecureWipe.secureDeleteFile(voiceFile)
-                                    Log.d("MainActivity", "✓ Securely wiped voice file: ${voiceFile.name}")
+                                    Log.d("MainActivity", "Securely wiped voice file: ${voiceFile.name}")
                                 }
                             } catch (e: Exception) {
                                 Log.e("MainActivity", "Failed to securely wipe voice file", e)
@@ -698,12 +766,12 @@ class MainActivity : BaseActivity() {
                         messages.forEach { message ->
                             if (message.pingId != null) {
                                 // Delete tracking entries for this message's phases
-                                database.receivedIdDao().deleteById(message.pingId)           // Ping ID
+                                database.receivedIdDao().deleteById(message.pingId) // Ping ID
                                 database.receivedIdDao().deleteById("pong_${message.pingId}") // Pong ID
-                                database.receivedIdDao().deleteById(message.messageId)        // Message ID
+                                database.receivedIdDao().deleteById(message.messageId) // Message ID
                             }
                         }
-                        Log.d("MainActivity", "✓ Cleared ReceivedId entries for ${messageIds.size} messages")
+                        Log.d("MainActivity", "Cleared ReceivedId entries for ${messageIds.size} messages")
                     } catch (e: Exception) {
                         Log.e("MainActivity", "Failed to clear ReceivedId entries", e)
                     }
@@ -711,13 +779,13 @@ class MainActivity : BaseActivity() {
                     // ==================== PHASE 4: Delete Messages from Database ====================
                     // Delete all messages from database
                     database.messageDao().deleteMessagesForContact(chat.id.toLong())
-                    Log.d("MainActivity", "✓ Deleted ${messages.size} messages from database")
+                    Log.d("MainActivity", "Deleted ${messages.size} messages from database")
 
                     // ==================== PHASE 5: VACUUM Database ====================
                     // VACUUM database to compact and remove deleted records
                     try {
                         database.openHelper.writableDatabase.execSQL("VACUUM")
-                        Log.d("MainActivity", "✓ Database vacuumed after thread deletion")
+                        Log.d("MainActivity", "Database vacuumed after thread deletion")
                     } catch (e: Exception) {
                         Log.e("MainActivity", "Failed to vacuum database", e)
                     }
@@ -785,29 +853,29 @@ class MainActivity : BaseActivity() {
 
                 // Update UI on main thread
                 withContext(Dispatchers.Main) {
-                    Log.i("MainActivity", "Displaying ${contacts.size} contacts in UI")
-                    contacts.forEach { contact ->
-                        Log.i("MainActivity", "  - ${contact.name} (${contact.address})")
-                    }
-                    contactsList.visibility = View.VISIBLE
-                    contactsList.layoutManager = LinearLayoutManager(this@MainActivity)
-                    contactsList.adapter = ContactAdapter(contacts) { contact ->
-                        if (isCallMode) {
-                            // Start voice call
-                            startVoiceCallWithContact(contact)
-                        } else {
-                            // Open contact options screen
-                            val intent = android.content.Intent(this@MainActivity, ContactOptionsActivity::class.java)
-                            intent.putExtra("CONTACT_ID", contact.id.toLong())
-                            intent.putExtra("CONTACT_NAME", contact.name)
-                            intent.putExtra("CONTACT_ADDRESS", contact.address)
-                            startActivityWithSlideAnimation(intent)
+                    val emptyContactsState = contactsView.findViewById<View>(R.id.emptyContactsState)
+
+                    if (contacts.isEmpty()) {
+                        contactsList.visibility = View.GONE
+                        emptyContactsState.visibility = View.VISIBLE
+                    } else {
+                        contactsList.visibility = View.VISIBLE
+                        emptyContactsState.visibility = View.GONE
+
+                        contactsList.layoutManager = LinearLayoutManager(this@MainActivity)
+                        contactsList.adapter = ContactAdapter(contacts) { contact ->
+                            if (isCallMode) {
+                                startVoiceCallWithContact(contact)
+                            } else {
+                                val intent = android.content.Intent(this@MainActivity, ContactOptionsActivity::class.java)
+                                intent.putExtra("CONTACT_ID", contact.id.toLong())
+                                intent.putExtra("CONTACT_NAME", contact.name)
+                                intent.putExtra("CONTACT_ADDRESS", contact.address)
+                                startActivityWithSlideAnimation(intent)
+                            }
                         }
                     }
-                    Log.i("MainActivity", "RecyclerView adapter set with ${contacts.size} items")
-
-                    // Setup alphabet index click handlers
-                    setupAlphabetIndex(contactsView, contactsList, contacts)
+                    Log.i("MainActivity", "Displaying ${contacts.size} contacts in UI")
                 }
             } catch (e: Exception) {
                 Log.e("MainActivity", "Failed to load contacts from database", e)
@@ -816,36 +884,6 @@ class MainActivity : BaseActivity() {
                     contactsList.visibility = View.VISIBLE
                 }
             }
-        }
-    }
-
-    private fun setupAlphabetIndex(contactsView: View, contactsList: RecyclerView, contacts: List<Contact>) {
-        val alphabetIndex = contactsView.findViewById<android.widget.LinearLayout>(R.id.alphabetIndex)
-
-        // Get all letter TextViews from the alphabet index
-        val letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
-
-        for (i in 0 until alphabetIndex.childCount) {
-            val letterView = alphabetIndex.getChildAt(i) as? android.widget.TextView
-            letterView?.setOnClickListener {
-                val letter = letterView.text.toString()
-                scrollToLetter(contactsList, contacts, letter)
-            }
-        }
-    }
-
-    private fun scrollToLetter(contactsList: RecyclerView, contacts: List<Contact>, letter: String) {
-        // Find the first contact that starts with this letter
-        val position = contacts.indexOfFirst { contact ->
-            contact.name.removePrefix("@").uppercase().startsWith(letter)
-        }
-
-        if (position != -1) {
-            // Scroll to the position smoothly
-            contactsList.smoothScrollToPosition(position)
-            Log.i("MainActivity", "Scrolling to letter $letter at position $position")
-        } else {
-            Log.i("MainActivity", "No contacts found starting with letter $letter")
         }
     }
 
@@ -932,62 +970,39 @@ class MainActivity : BaseActivity() {
     }
 
     private fun setupClickListeners() {
-        // New Message/Group Button (in search bar)
+        // Compose New Message / Add Friend Button
         findViewById<View>(R.id.newMessageBtn).setOnClickListener {
-            if (currentTab == "groups") {
-                val intent = android.content.Intent(this, CreateGroupActivity::class.java)
-                startActivityWithSlideAnimation(intent)
-            } else {
-                val intent = android.content.Intent(this, ComposeActivity::class.java)
-                startActivityWithSlideAnimation(intent)
+            when (currentTab) {
+                "contacts" -> {
+                    val intent = android.content.Intent(this, AddFriendActivity::class.java)
+                    startActivityWithSlideAnimation(intent)
+                }
+                "groups" -> {
+                    val intent = android.content.Intent(this, CreateGroupActivity::class.java)
+                    startActivityWithSlideAnimation(intent)
+                }
+                else -> {
+                    val intent = android.content.Intent(this, ComposeActivity::class.java)
+                    startActivityWithSlideAnimation(intent)
+                }
             }
         }
 
         // Bottom Navigation
         findViewById<View>(R.id.navMessages)?.setOnClickListener {
-            Log.d("MainActivity", "Messages nav clicked")
+            Log.d("MainActivity", "Chats nav clicked")
             showAllChatsTab()
         }
 
-        findViewById<View>(R.id.navWallet)?.setOnClickListener {
-            Log.d("MainActivity", "Wallet nav clicked")
-            val intent = Intent(this, WalletActivity::class.java)
-            startActivity(intent)
+        findViewById<View>(R.id.navContacts)?.setOnClickListener {
+            Log.d("MainActivity", "Contacts nav clicked")
+            isCallMode = false
+            showContactsTab()
         }
 
-        findViewById<View>(R.id.navAddFriend)?.setOnClickListener {
-            Log.d("MainActivity", "Add Friend nav clicked")
-            val intent = android.content.Intent(this, AddFriendActivity::class.java)
-            startActivity(intent)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                overrideActivityTransition(Activity.OVERRIDE_TRANSITION_OPEN, 0, 0)
-            } else {
-                @Suppress("DEPRECATION")
-                overridePendingTransition(0, 0)
-            }
-        }
-
-        findViewById<View>(R.id.navPhone)?.setOnClickListener {
-            Log.d("MainActivity", "Phone nav clicked")
-            val intent = Intent(this, NewCallActivity::class.java)
-            startActivity(intent)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                overrideActivityTransition(Activity.OVERRIDE_TRANSITION_OPEN, 0, 0)
-            } else {
-                @Suppress("DEPRECATION")
-                overridePendingTransition(0, 0)
-            }
-        }
-
-        // Profile Icon (navigate to user profile)
-        findViewById<View>(R.id.profileIcon).setOnClickListener {
+        findViewById<View>(R.id.navProfile)?.setOnClickListener {
+            Log.d("MainActivity", "Profile nav clicked")
             val intent = android.content.Intent(this, WalletIdentityActivity::class.java)
-            startActivityWithSlideAnimation(intent)
-        }
-
-        // Settings Icon
-        findViewById<View>(R.id.settingsIcon).setOnClickListener {
-            val intent = android.content.Intent(this, SettingsActivity::class.java)
             startActivityWithSlideAnimation(intent)
         }
 
@@ -998,11 +1013,6 @@ class MainActivity : BaseActivity() {
 
         findViewById<View>(R.id.tabGroups).setOnClickListener {
             showGroupsTab()
-        }
-
-        findViewById<View>(R.id.tabContacts).setOnClickListener {
-            isCallMode = false  // Regular contacts mode
-            showContactsTab()
         }
     }
 
@@ -1074,28 +1084,29 @@ class MainActivity : BaseActivity() {
         findViewById<View>(R.id.groupsView).visibility = View.GONE
         findViewById<View>(R.id.contactsView).visibility = View.GONE
 
-        // Show tabs
+        // Show header and tabs
         findViewById<View>(R.id.tabsContainer).visibility = View.VISIBLE
+        findViewById<TextView>(R.id.headerTitle).text = "Chats"
+
+        // Restore compose icon and hide compose badge
+        setNewMessageIcon(R.drawable.ic_compose)
+        BadgeUtils.updateComposeBadge(findViewById(android.R.id.content), 0)
 
         // Update search bar hint
-        findViewById<android.widget.EditText>(R.id.searchBar).hint = "Search conversations..."
+        findViewById<android.widget.EditText>(R.id.searchBar).hint = "Search"
 
         // Reload message threads when switching back to messages tab
         setupChatList()
 
-        // Update tab styling - Messages active, Groups and Contacts inactive
+        // Update tab pill styling - Messages active, Groups inactive
         findViewById<android.widget.TextView>(R.id.tabMessages).apply {
             setTextColor(ContextCompat.getColor(context, R.color.text_white))
-            typeface = android.graphics.Typeface.create("@font/space_grotesk_bold", android.graphics.Typeface.BOLD)
+            setBackgroundResource(R.drawable.tab_pill_active_bg)
         }
 
         findViewById<android.widget.TextView>(R.id.tabGroups).apply {
             setTextColor(ContextCompat.getColor(context, R.color.text_gray))
-            typeface = android.graphics.Typeface.create("@font/space_grotesk_bold", android.graphics.Typeface.NORMAL)
-        }
-
-        findViewById<android.widget.ImageView>(R.id.tabContactsIcon).apply {
-            setColorFilter(ContextCompat.getColor(context, R.color.text_gray))
+            setBackgroundResource(R.drawable.tab_pill_bg)
         }
     }
 
@@ -1106,28 +1117,29 @@ class MainActivity : BaseActivity() {
         findViewById<View>(R.id.groupsView).visibility = View.VISIBLE
         findViewById<View>(R.id.contactsView).visibility = View.GONE
 
-        // Show tabs
+        // Show header and tabs
         findViewById<View>(R.id.tabsContainer).visibility = View.VISIBLE
+        findViewById<TextView>(R.id.headerTitle).text = "Chats"
+
+        // Restore compose icon and hide compose badge
+        setNewMessageIcon(R.drawable.ic_compose)
+        BadgeUtils.updateComposeBadge(findViewById(android.R.id.content), 0)
 
         // Update search bar hint
-        findViewById<android.widget.EditText>(R.id.searchBar).hint = "Search your groups..."
+        findViewById<android.widget.EditText>(R.id.searchBar).hint = "Search"
 
         // Load groups and invites
         setupGroupsList()
 
-        // Update tab styling - Groups active, Messages and Contacts inactive
+        // Update tab pill styling - Groups active, Messages inactive
         findViewById<android.widget.TextView>(R.id.tabMessages).apply {
             setTextColor(ContextCompat.getColor(context, R.color.text_gray))
-            typeface = android.graphics.Typeface.create("@font/space_grotesk_bold", android.graphics.Typeface.NORMAL)
+            setBackgroundResource(R.drawable.tab_pill_bg)
         }
 
         findViewById<android.widget.TextView>(R.id.tabGroups).apply {
             setTextColor(ContextCompat.getColor(context, R.color.text_white))
-            typeface = android.graphics.Typeface.create("@font/space_grotesk_bold", android.graphics.Typeface.BOLD)
-        }
-
-        findViewById<android.widget.ImageView>(R.id.tabContactsIcon).apply {
-            setColorFilter(ContextCompat.getColor(context, R.color.text_gray))
+            setBackgroundResource(R.drawable.tab_pill_active_bg)
         }
     }
 
@@ -1138,29 +1150,29 @@ class MainActivity : BaseActivity() {
         findViewById<View>(R.id.groupsView).visibility = View.GONE
         findViewById<View>(R.id.contactsView).visibility = View.VISIBLE
 
-        // Show tabs
-        findViewById<View>(R.id.tabsContainer).visibility = View.VISIBLE
+        // Hide tabs row — contacts is accessed from bottom nav, not tabs
+        findViewById<View>(R.id.tabsContainer).visibility = View.GONE
+        findViewById<TextView>(R.id.headerTitle).text = "Contacts"
+
+        // Swap compose icon to add-friend
+        setNewMessageIcon(R.drawable.ic_add_friend)
+
+        // Show pending friend request count on compose button
+        val count = BadgeUtils.getPendingFriendRequestCount(this)
+        val rootView = findViewById<View>(android.R.id.content)
+        BadgeUtils.updateComposeBadge(rootView, count)
 
         // Update search bar hint
         findViewById<android.widget.EditText>(R.id.searchBar).hint = "Search contacts..."
 
         // Reload contacts list
         setupContactsList()
+    }
 
-        // Update tab styling - Contacts active, Messages and Groups inactive
-        findViewById<android.widget.TextView>(R.id.tabMessages).apply {
-            setTextColor(ContextCompat.getColor(context, R.color.text_gray))
-            typeface = android.graphics.Typeface.create("@font/poppins_medium", android.graphics.Typeface.NORMAL)
-        }
-
-        findViewById<android.widget.TextView>(R.id.tabGroups).apply {
-            setTextColor(ContextCompat.getColor(context, R.color.text_gray))
-            typeface = android.graphics.Typeface.create("@font/space_grotesk_bold", android.graphics.Typeface.NORMAL)
-        }
-
-        findViewById<android.widget.ImageView>(R.id.tabContactsIcon).apply {
-            setColorFilter(ContextCompat.getColor(context, R.color.text_white))
-        }
+    private fun setNewMessageIcon(drawableRes: Int) {
+        val btn = findViewById<android.view.ViewGroup>(R.id.newMessageBtn)
+        val icon = btn.getChildAt(0) as? android.widget.ImageView
+        icon?.setImageResource(drawableRes)
     }
 
     /**
@@ -1222,7 +1234,7 @@ class MainActivity : BaseActivity() {
     private fun startVoiceCallWithContact(contact: Contact) {
         // Prevent duplicate call initiations
         if (isInitiatingCall) {
-            Log.w(TAG, "⚠️ Call initiation already in progress - ignoring duplicate request")
+            Log.w(TAG, "Call initiation already in progress - ignoring duplicate request")
             return
         }
         isInitiatingCall = true
@@ -1292,7 +1304,7 @@ class MainActivity : BaseActivity() {
                 val torManager = com.securelegion.crypto.TorManager.getInstance(this@MainActivity)
                 val myVoiceOnion = torManager.getVoiceOnionAddress() ?: ""
                 if (myVoiceOnion.isEmpty()) {
-                    Log.w("MainActivity", "⚠️ Voice onion address not yet created - call may fail")
+                    Log.w("MainActivity", "Voice onion address not yet created - call may fail")
                 } else {
                     Log.i("MainActivity", "My voice onion: $myVoiceOnion")
                 }

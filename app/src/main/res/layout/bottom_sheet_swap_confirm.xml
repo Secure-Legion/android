@@ -76,7 +76,7 @@
                     android:layout_weight="1"
                     android:fontFamily="@font/poppins_regular"
                     android:text="From"
-                    android:textColor="#888888"
+                    android:textColor="?attr/colorOnSurfaceVariant"
                     android:textSize="14sp" />
 
                 <TextView
@@ -85,7 +85,7 @@
                     android:layout_height="wrap_content"
                     android:fontFamily="@font/poppins_medium"
                     android:text="SOL - Wallet 1"
-                    android:textColor="@color/text_white"
+                    android:textColor="?attr/colorOnSurface"
                     android:textSize="14sp" />
             </LinearLayout>
 
@@ -102,7 +102,7 @@
                     android:layout_weight="1"
                     android:fontFamily="@font/poppins_regular"
                     android:text="TO"
-                    android:textColor="#888888"
+                    android:textColor="?attr/colorOnSurfaceVariant"
                     android:textSize="14sp" />
 
                 <TextView
@@ -111,7 +111,7 @@
                     android:layout_height="wrap_content"
                     android:fontFamily="@font/poppins_medium"
                     android:text="ZEC - Wallet 2"
-                    android:textColor="@color/text_white"
+                    android:textColor="?attr/colorOnSurface"
                     android:textSize="14sp" />
             </LinearLayout>
 
@@ -128,7 +128,7 @@
                     android:layout_weight="1"
                     android:fontFamily="@font/poppins_regular"
                     android:text="Exchange fee"
-                    android:textColor="#888888"
+                    android:textColor="?attr/colorOnSurfaceVariant"
                     android:textSize="14sp" />
 
                 <TextView
@@ -137,7 +137,7 @@
                     android:layout_height="wrap_content"
                     android:fontFamily="@font/poppins_medium"
                     android:text="3.08"
-                    android:textColor="@color/text_white"
+                    android:textColor="?attr/colorOnSurface"
                     android:textSize="14sp" />
             </LinearLayout>
 
@@ -153,7 +153,7 @@
                     android:layout_weight="1"
                     android:fontFamily="@font/poppins_regular"
                     android:text="Fee"
-                    android:textColor="#888888"
+                    android:textColor="?attr/colorOnSurfaceVariant"
                     android:textSize="14sp" />
 
                 <TextView
@@ -162,7 +162,7 @@
                     android:layout_height="wrap_content"
                     android:fontFamily="@font/poppins_medium"
                     android:text="0"
-                    android:textColor="@color/text_white"
+                    android:textColor="?attr/colorOnSurface"
                     android:textSize="14sp" />
             </LinearLayout>
         </LinearLayout>
@@ -183,7 +183,7 @@
             android:fontFamily="@font/poppins_semibold"
             android:text="CONFIRM"
             android:textAllCaps="true"
-            android:textColor="@color/text_white"
+            android:textColor="?attr/colorOnSurface"
             android:textSize="16sp" />
     </LinearLayout>
 </LinearLayout>

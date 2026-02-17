@@ -14,6 +14,7 @@ import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
 import com.google.android.material.bottomsheet.BottomSheetDialog
+import com.securelegion.utils.GlassBottomSheetDialog
 import com.securelegion.crypto.KeyManager
 import com.securelegion.database.SecureLegionDatabase
 import com.securelegion.database.entities.Wallet
@@ -309,7 +310,7 @@ class WalletSettingsActivity : AppCompatActivity() {
     }
 
     private fun showWalletSelectorBottomSheet(wallets: List<Wallet>, onSelect: (Wallet) -> Unit) {
-        val bottomSheet = BottomSheetDialog(this)
+        val bottomSheet = GlassBottomSheetDialog(this)
         val view = layoutInflater.inflate(R.layout.bottom_sheet_wallet_selector, null)
 
         bottomSheet.setContentView(view)
@@ -448,7 +449,7 @@ class WalletSettingsActivity : AppCompatActivity() {
     }
 
     private fun showExportSolanaWalletBottomSheet(seedPhrase: String, privateKey: String) {
-        val bottomSheet = BottomSheetDialog(this)
+        val bottomSheet = GlassBottomSheetDialog(this)
         val view = layoutInflater.inflate(R.layout.bottom_sheet_private_key, null)
 
         // Get UI elements
@@ -552,7 +553,7 @@ class WalletSettingsActivity : AppCompatActivity() {
     }
 
     private fun showExportZcashWalletBottomSheet(seedPhrase: String, birthdayHeight: Long) {
-        val bottomSheet = BottomSheetDialog(this)
+        val bottomSheet = GlassBottomSheetDialog(this)
         val view = layoutInflater.inflate(R.layout.bottom_sheet_private_key, null)
 
         // Get UI elements
@@ -623,7 +624,7 @@ class WalletSettingsActivity : AppCompatActivity() {
     }
 
     private fun showDeleteConfirmation(wallet: Wallet) {
-        val bottomSheet = BottomSheetDialog(this)
+        val bottomSheet = GlassBottomSheetDialog(this)
         val view = layoutInflater.inflate(R.layout.bottom_sheet_delete_wallet, null)
 
         view.findViewById<TextView>(R.id.walletNameText).text = wallet.name

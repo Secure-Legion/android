@@ -4,7 +4,7 @@
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="#000000">
+    android:background="?attr/colorSurface">
 
     <!-- Header -->
     <LinearLayout
@@ -46,7 +46,7 @@
             android:layout_weight="1"
             android:text="Notifications"
             android:textSize="24sp"
-            android:textColor="#999999"
+            android:textColor="?attr/colorOnSurfaceVariant"
             android:fontFamily="@font/space_grotesk_bold"
             android:textStyle="bold"
             android:gravity="center" />
@@ -83,7 +83,7 @@
                 android:text="MESSAGE ALERTS"
                 android:textSize="12sp"
                 android:fontFamily="@font/poppins_medium"
-                android:textColor="#888888"
+                android:textColor="?attr/colorOnSurfaceVariant"
                 android:layout_marginBottom="12dp" />
 
             <!-- Enable Notifications -->
@@ -111,14 +111,14 @@
                         android:text="Enable Notifications"
                         android:textSize="16sp"
                         android:fontFamily="@font/poppins_medium"
-                        android:textColor="#FFFFFF" />
+                        android:textColor="?attr/colorOnSurface" />
 
                     <TextView
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:text="Show notifications for new messages"
                         android:textSize="12sp"
-                        android:textColor="#888888"
+                        android:textColor="?attr/colorOnSurfaceVariant"
                         android:fontFamily="@font/poppins_regular"
                         android:layout_marginTop="2dp" />
 
@@ -159,14 +159,14 @@
                         android:text="Show Message Content"
                         android:textSize="16sp"
                         android:fontFamily="@font/poppins_medium"
-                        android:textColor="#FFFFFF" />
+                        android:textColor="?attr/colorOnSurface" />
 
                     <TextView
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:text="Show message content in notifications"
                         android:textSize="12sp"
-                        android:textColor="#888888"
+                        android:textColor="?attr/colorOnSurfaceVariant"
                         android:fontFamily="@font/poppins_regular"
                         android:layout_marginTop="2dp" />
 
@@ -206,14 +206,14 @@
                         android:text="Notification Sound"
                         android:textSize="16sp"
                         android:fontFamily="@font/poppins_medium"
-                        android:textColor="#FFFFFF" />
+                        android:textColor="?attr/colorOnSurface" />
 
                     <TextView
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:text="Play sound for notifications"
                         android:textSize="12sp"
-                        android:textColor="#888888"
+                        android:textColor="?attr/colorOnSurfaceVariant"
                         android:fontFamily="@font/poppins_regular"
                         android:layout_marginTop="2dp" />
 
@@ -235,12 +235,15 @@
 
 <!-- Bottom Navigation -->
 <include
-    android:id="@+id/bottomNav"
-    layout="@layout/bottom_navigation"
-    android:layout_width="match_parent"
-    android:layout_height="110dp"
-    app:layout_constraintBottom_toBottomOf="parent"
-    app:layout_constraintStart_toStartOf="parent"
-    app:layout_constraintEnd_toEndOf="parent" />
+        android:id="@+id/bottomNav"
+        layout="@layout/bottom_navigation"
+        android:layout_width="0dp"
+        android:layout_height="72dp"
+        android:layout_marginStart="16dp"
+        android:layout_marginEnd="16dp"
+        android:layout_marginBottom="20dp"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent" />
 
 </androidx.constraintlayout.widget.ConstraintLayout>

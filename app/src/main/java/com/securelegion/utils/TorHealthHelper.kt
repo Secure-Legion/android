@@ -17,7 +17,7 @@ object TorHealthHelper {
         val prefs = context.getSharedPreferences("tor_health", Context.MODE_PRIVATE)
         val prefsString = prefs.getString("snapshot", "")
         return if (prefsString.isNullOrEmpty()) {
-            TorHealthSnapshot()  // Default to HEALTHY if no data
+            TorHealthSnapshot() // Default to HEALTHY if no data
         } else {
             TorHealthSnapshot.fromPrefsString(prefsString)
         }
@@ -54,8 +54,8 @@ object TorHealthHelper {
         val snapshot = getTorHealthSnapshot(context)
         return buildString {
             append(snapshot.status.name)
-            if (snapshot.failCount > 0) append(" (failures: ${snapshot.failCount})")
-            if (snapshot.lastError.isNotEmpty()) append(" - ${snapshot.lastError.take(50)}")
+            if (snapshot.failCount > 0) append("(failures: ${snapshot.failCount})")
+            if (snapshot.lastError.isNotEmpty()) append("- ${snapshot.lastError.take(50)}")
         }
     }
 }

@@ -48,7 +48,7 @@
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
                 android:text="Group Name"
-                android:textColor="#FFFFFF"
+                android:textColor="?attr/colorOnSurface"
                 android:textSize="16sp"
                 android:fontFamily="@font/poppins_medium"
                 android:maxLines="1"
@@ -59,7 +59,7 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:text="2m"
-                android:textColor="#999999"
+                android:textColor="?attr/colorOnSurfaceVariant"
                 android:textSize="12sp"
                 android:fontFamily="@font/poppins_regular" />
 
@@ -77,7 +77,7 @@
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
                 android:text="5 members"
-                android:textColor="#999999"
+                android:textColor="?attr/colorOnSurfaceVariant"
                 android:textSize="13sp"
                 android:fontFamily="@font/poppins_regular"
                 android:maxLines="1"
@@ -92,7 +92,7 @@
                 android:gravity="center"
                 android:textSize="10sp"
                 android:textStyle="bold"
-                android:textColor="#FFFFFF"
+                android:textColor="?attr/colorOnSurface"
                 android:visibility="gone" />
 
         </LinearLayout>

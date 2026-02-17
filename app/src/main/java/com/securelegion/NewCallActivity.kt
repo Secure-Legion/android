@@ -78,25 +78,7 @@ class NewCallActivity : BaseActivity() {
     }
 
     private fun setupBottomNavigation() {
-        findViewById<View>(R.id.navMessages)?.setOnClickListener {
-            val intent = Intent(this, MainActivity::class.java)
-            startActivity(intent)
-            finish()
-        }
-
-        findViewById<View>(R.id.navWallet)?.setOnClickListener {
-            val intent = Intent(this, WalletIdentityActivity::class.java)
-            startActivity(intent)
-        }
-
-        findViewById<View>(R.id.navAddFriend)?.setOnClickListener {
-            val intent = Intent(this, AddFriendActivity::class.java)
-            startActivity(intent)
-        }
-
-        findViewById<View>(R.id.navPhone)?.setOnClickListener {
-            // Already on phone screen - do nothing or scroll to top
-        }
+        BottomNavigationHelper.setupBottomNavigation(this)
     }
 
     private fun loadContacts() {

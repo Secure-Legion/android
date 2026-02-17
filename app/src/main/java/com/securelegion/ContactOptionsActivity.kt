@@ -1,18 +1,12 @@
 package com.securelegion
 
-import android.content.ClipData
-import android.content.ClipboardManager
-import android.content.Context
 import android.content.Intent
 import android.os.Bundle
 import android.util.Log
 import android.view.View
-import android.widget.EditText
 import android.widget.ImageView
 import android.widget.TextView
-import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
-import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
@@ -32,13 +26,12 @@ class ContactOptionsActivity : BaseActivity() {
 
     private lateinit var contactName: TextView
     private lateinit var profilePicture: ImageView
-    private lateinit var changeUsernameButton: View
     private lateinit var blockContactSwitch: androidx.appcompat.widget.SwitchCompat
-    private lateinit var favoriteSwitch: androidx.appcompat.widget.SwitchCompat
-    private lateinit var favoriteIcon: ImageView
+    private lateinit var trustedContactSwitch: androidx.appcompat.widget.SwitchCompat
+    private lateinit var trustedContactIcon: ImageView
     private var fullAddress: String = ""
     private var contactId: Long = -1
-    private var isFavorite: Boolean = false
+    private var isTrustedContact: Boolean = false
     private var isBlocked: Boolean = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -52,7 +45,7 @@ class ContactOptionsActivity : BaseActivity() {
         fullAddress = address
 
         initializeViews()
-        setupContactInfo(name, address)
+        setupContactInfo(name)
         loadContactStatus()
         setupClickListeners(name)
         setupBottomNav()
@@ -61,22 +54,19 @@ class ContactOptionsActivity : BaseActivity() {
     private fun initializeViews() {
         contactName = findViewById(R.id.contactName)
         profilePicture = findViewById(R.id.profilePicture)
-        changeUsernameButton = findViewById(R.id.changeUsernameButton)
         blockContactSwitch = findViewById(R.id.blockContactSwitch)
-        favoriteSwitch = findViewById(R.id.favoriteSwitch)
-        favoriteIcon = findViewById(R.id.favoriteIcon)
+        trustedContactSwitch = findViewById(R.id.trustedContactSwitch)
+        trustedContactIcon = findViewById(R.id.trustedContactIcon)
     }
 
-    private fun setupContactInfo(name: String, address: String) {
+    private fun setupContactInfo(name: String) {
         contactName.text = name
     }
 
     private fun loadContactStatus() {
         CoroutineScope(Dispatchers.Main).launch {
             try {
-                if (contactId == -1L) {
-                    return@launch
-                }
+                if (contactId == -1L) return@launch
 
                 val keyManager = KeyManager.getInstance(this@ContactOptionsActivity)
                 val dbPassphrase = keyManager.getDatabasePassphrase()
@@ -87,9 +77,9 @@ class ContactOptionsActivity : BaseActivity() {
                 }
 
                 if (contact != null) {
-                    isFavorite = contact.isDistressContact
+                    isTrustedContact = contact.isDistressContact
                     isBlocked = contact.isBlocked
-                    updateFavoriteUI()
+                    updateTrustedContactUI()
                     updateBlockUI()
                 }
             } catch (e: Exception) {
@@ -102,16 +92,16 @@ class ContactOptionsActivity : BaseActivity() {
         blockContactSwitch.isChecked = isBlocked
     }
 
-    private fun updateFavoriteUI() {
-        favoriteSwitch.isChecked = isFavorite
-        if (isFavorite) {
-            favoriteIcon.setImageResource(R.drawable.ic_star_filled)
+    private fun updateTrustedContactUI() {
+        trustedContactSwitch.isChecked = isTrustedContact
+        if (isTrustedContact) {
+            trustedContactIcon.setImageResource(R.drawable.ic_star_filled)
         } else {
-            favoriteIcon.setImageResource(R.drawable.ic_star_outline)
+            trustedContactIcon.setImageResource(R.drawable.ic_star_outline)
         }
     }
 
-    private fun toggleFavoriteStatus() {
+    private fun toggleTrustedContactStatus() {
         CoroutineScope(Dispatchers.Main).launch {
             try {
                 if (contactId == -1L) {
@@ -119,24 +109,23 @@ class ContactOptionsActivity : BaseActivity() {
                     return@launch
                 }
 
-                // Toggle the status
-                isFavorite = !isFavorite
+                isTrustedContact = !isTrustedContact
 
                 val keyManager = KeyManager.getInstance(this@ContactOptionsActivity)
                 val dbPassphrase = keyManager.getDatabasePassphrase()
                 val database = SecureLegionDatabase.getInstance(this@ContactOptionsActivity, dbPassphrase)
 
-                // Update in database
                 withContext(Dispatchers.IO) {
-                    database.contactDao().updateDistressContactStatus(contactId, isFavorite)
+                    database.contactDao().updateDistressContactStatus(contactId, isTrustedContact)
                 }
 
-                // Update UI
-                updateFavoriteUI()
+                updateTrustedContactUI()
 
-                Log.i(TAG, "Favorite status updated: $isFavorite")
+                val message = if (isTrustedContact) "Trusted contact enabled" else "Trusted contact disabled"
+                ThemedToast.show(this@ContactOptionsActivity, message)
+                Log.i(TAG, "Trusted contact status updated: $isTrustedContact")
             } catch (e: Exception) {
-                Log.e(TAG, "Failed to toggle favorite status", e)
+                Log.e(TAG, "Failed to toggle trusted contact status", e)
                 ThemedToast.show(this@ContactOptionsActivity, "Failed to update status")
             }
         }
@@ -150,28 +139,20 @@ class ContactOptionsActivity : BaseActivity() {
                     return@launch
                 }
 
-                // Toggle the status
                 isBlocked = !isBlocked
 
                 val keyManager = KeyManager.getInstance(this@ContactOptionsActivity)
                 val dbPassphrase = keyManager.getDatabasePassphrase()
                 val database = SecureLegionDatabase.getInstance(this@ContactOptionsActivity, dbPassphrase)
 
-                // Update in database
                 withContext(Dispatchers.IO) {
                     database.contactDao().updateBlockedStatus(contactId, isBlocked)
                 }
 
-                // Update UI
                 updateBlockUI()
 
-                val message = if (isBlocked) {
-                    "Contact blocked"
-                } else {
-                    "Contact unblocked"
-                }
+                val message = if (isBlocked) "Contact blocked" else "Contact unblocked"
                 ThemedToast.show(this@ContactOptionsActivity, message)
-
                 Log.i(TAG, "Blocked status updated: $isBlocked")
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to toggle blocked status", e)
@@ -186,8 +167,18 @@ class ContactOptionsActivity : BaseActivity() {
             finish()
         }
 
-        // Compose button - opens chat with this contact
-        findViewById<View>(R.id.composeButton)?.setOnClickListener {
+        // Call action
+        findViewById<View>(R.id.actionCall).setOnClickListener {
+            val intent = Intent(this, VoiceCallActivity::class.java)
+            intent.putExtra("CONTACT_ID", contactId)
+            intent.putExtra("CONTACT_NAME", name)
+            intent.putExtra("CONTACT_ADDRESS", fullAddress)
+            intent.putExtra("IS_OUTGOING", true)
+            startActivity(intent)
+        }
+
+        // Message action
+        findViewById<View>(R.id.actionMessage).setOnClickListener {
             val intent = Intent(this, ChatActivity::class.java)
             intent.putExtra(ChatActivity.EXTRA_CONTACT_ID, contactId)
             intent.putExtra(ChatActivity.EXTRA_CONTACT_NAME, name)
@@ -195,9 +186,9 @@ class ContactOptionsActivity : BaseActivity() {
             startActivity(intent)
         }
 
-        // Change Username button
-        changeUsernameButton.setOnClickListener {
-            showChangeUsernameDialog(name)
+        // Delete action
+        findViewById<View>(R.id.actionDelete).setOnClickListener {
+            showDeleteConfirmationDialog(name)
         }
 
         // Block contact switch
@@ -207,66 +198,10 @@ class ContactOptionsActivity : BaseActivity() {
             }
         }
 
-        // Favorite switch
-        favoriteSwitch.setOnCheckedChangeListener { _, isChecked ->
-            if (isChecked != isFavorite) {
-                toggleFavoriteStatus()
-            }
-        }
-
-        // Delete contact button
-        findViewById<View>(R.id.deleteContactOption)?.setOnClickListener {
-            showDeleteConfirmationDialog(name)
-        }
-    }
-
-    private fun showChangeUsernameDialog(currentName: String) {
-        val input = EditText(this)
-        input.hint = "Enter new display name"
-        input.setText(currentName)
-        input.setTextColor(getColor(R.color.text_white))
-        input.setHintTextColor(getColor(R.color.text_gray))
-        input.setPadding(50, 30, 50, 30)
-
-        AlertDialog.Builder(this, R.style.CustomAlertDialog)
-            .setTitle("Change Display Name")
-            .setView(input)
-            .setPositiveButton("Save") { _, _ ->
-                val newDisplayName = input.text.toString().trim()
-                if (newDisplayName.isNotEmpty() && newDisplayName != currentName) {
-                    saveDisplayName(newDisplayName)
-                } else if (newDisplayName.isEmpty()) {
-                    ThemedToast.show(this, "Name cannot be empty")
-                }
-            }
-            .setNegativeButton("Cancel", null)
-            .show()
-    }
-
-    private fun saveDisplayName(newDisplayName: String) {
-        CoroutineScope(Dispatchers.Main).launch {
-            try {
-                Log.d(TAG, "Updating display name for contact ID: $contactId to: $newDisplayName")
-
-                val keyManager = KeyManager.getInstance(this@ContactOptionsActivity)
-                val dbPassphrase = keyManager.getDatabasePassphrase()
-                val database = SecureLegionDatabase.getInstance(this@ContactOptionsActivity, dbPassphrase)
-
-                // Update the contact display name in the database
-                withContext(Dispatchers.IO) {
-                    database.contactDao().updateContactDisplayName(contactId, newDisplayName)
-                }
-
-                Log.i(TAG, "Display name updated successfully")
-
-                // Update the UI
-                contactName.text = newDisplayName
-
-                ThemedToast.show(this@ContactOptionsActivity, "Name updated")
-
-            } catch (e: Exception) {
-                Log.e(TAG, "Failed to update display name", e)
-                ThemedToast.show(this@ContactOptionsActivity, "Failed to update name")
+        // Trusted contact switch
+        trustedContactSwitch.setOnCheckedChangeListener { _, isChecked ->
+            if (isChecked != isTrustedContact) {
+                toggleTrustedContactStatus()
             }
         }
     }
@@ -291,7 +226,6 @@ class ContactOptionsActivity : BaseActivity() {
                 val dbPassphrase = keyManager.getDatabasePassphrase()
                 val database = SecureLegionDatabase.getInstance(this@ContactOptionsActivity, dbPassphrase)
 
-                // Get contact by ID
                 val contact = withContext(Dispatchers.IO) {
                     database.contactDao().getContactById(contactId)
                 }
@@ -309,7 +243,7 @@ class ContactOptionsActivity : BaseActivity() {
                                     val voiceFile = java.io.File(message.voiceFilePath)
                                     if (voiceFile.exists()) {
                                         com.securelegion.utils.SecureWipe.secureDeleteFile(voiceFile)
-                                        Log.d(TAG, "✓ Securely wiped voice file: ${voiceFile.name}")
+                                        Log.d(TAG, "Securely wiped voice file: ${voiceFile.name}")
                                     }
                                 } catch (e: Exception) {
                                     Log.e(TAG, "Failed to securely wipe voice file", e)
@@ -326,18 +260,18 @@ class ContactOptionsActivity : BaseActivity() {
                         // VACUUM database to compact and remove deleted records
                         try {
                             database.openHelper.writableDatabase.execSQL("VACUUM")
-                            Log.d(TAG, "✓ Database vacuumed after contact deletion")
+                            Log.d(TAG, "Database vacuumed after contact deletion")
                         } catch (e: Exception) {
                             Log.e(TAG, "Failed to vacuum database", e)
                         }
 
-                        // Unpin friend's contact list from IPFS mesh (v5 architecture)
+                        // Unpin friend's contact list from IPFS mesh
                         if (contact.ipfsCid != null) {
                             try {
                                 val ipfsManager = com.securelegion.services.IPFSManager.getInstance(this@ContactOptionsActivity)
                                 val unpinResult = ipfsManager.unpinFriendContactList(contact.ipfsCid)
                                 if (unpinResult.isSuccess) {
-                                    Log.i(TAG, "✓ Unpinned friend's contact list from IPFS mesh: ${contact.ipfsCid}")
+                                    Log.i(TAG, "Unpinned friend's contact list from IPFS mesh: ${contact.ipfsCid}")
                                 } else {
                                     Log.w(TAG, "Failed to unpin friend's contact list: ${unpinResult.exceptionOrNull()?.message}")
                                 }
@@ -352,7 +286,7 @@ class ContactOptionsActivity : BaseActivity() {
                             val backupResult = contactListManager.backupToIPFS()
                             if (backupResult.isSuccess) {
                                 val ourCID = backupResult.getOrThrow()
-                                Log.i(TAG, "✓ Contact list backed up after deletion: $ourCID")
+                                Log.i(TAG, "Contact list backed up after deletion: $ourCID")
                             } else {
                                 Log.w(TAG, "Failed to backup contact list: ${backupResult.exceptionOrNull()?.message}")
                             }
@@ -364,12 +298,10 @@ class ContactOptionsActivity : BaseActivity() {
                         database.pingInboxDao().deleteByContact(contact.id)
 
                         Log.i(TAG, "Contact and all messages securely deleted (DOD 3-pass): ${contact.displayName}")
-                        Log.i(TAG, "Pending Pings cleared for contact ${contact.id} (if any)")
                     }
 
                     ThemedToast.show(this@ContactOptionsActivity, "Contact deleted")
 
-                    // Navigate back to MainActivity
                     val intent = Intent(this@ContactOptionsActivity, MainActivity::class.java)
                     startActivity(intent)
                     finish()
@@ -389,34 +321,10 @@ class ContactOptionsActivity : BaseActivity() {
         val bottomNav = findViewById<View>(R.id.bottomNav)
         ViewCompat.setOnApplyWindowInsetsListener(findViewById(android.R.id.content)) { _, windowInsets ->
             val insets = windowInsets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())
-            bottomNav.setPadding(bottomNav.paddingLeft, bottomNav.paddingTop, bottomNav.paddingRight, insets.bottom)
+            bottomNav.setPadding(bottomNav.paddingLeft, bottomNav.paddingTop, bottomNav.paddingRight, 0)
             windowInsets
         }
 
-        findViewById<View>(R.id.navMessages).setOnClickListener {
-            val intent = Intent(this, MainActivity::class.java)
-            intent.flags = Intent.FLAG_ACTIVITY_CLEAR_TOP
-            startActivity(intent)
-            finish()
-        }
-
-        findViewById<View>(R.id.navWallet).setOnClickListener {
-            val intent = Intent(this, MainActivity::class.java)
-            intent.putExtra("SHOW_WALLET", true)
-            intent.flags = Intent.FLAG_ACTIVITY_CLEAR_TOP
-            startActivity(intent)
-            finish()
-        }
-
-        findViewById<View>(R.id.navAddFriend).setOnClickListener {
-            val intent = Intent(this, AddFriendActivity::class.java)
-            startActivity(intent)
-        }
-
-        findViewById<View>(R.id.navLock).setOnClickListener {
-            val intent = Intent(this, LockActivity::class.java)
-            startActivity(intent)
-            finish()
-        }
+        BottomNavigationHelper.setupBottomNavigation(this)
     }
 }

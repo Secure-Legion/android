@@ -13,8 +13,8 @@ import android.util.Base64
     tableName = "contacts",
     indices = [
         Index(value = ["solanaAddress"], unique = true),
-        Index(value = ["friendRequestOnion"], unique = false),  // NEW - not unique (can be empty for migrated)
-        Index(value = ["messagingOnion"], unique = false)       // NEW
+        Index(value = ["friendRequestOnion"], unique = false), // NEW - not unique (can be empty for migrated)
+        Index(value = ["messagingOnion"], unique = false) // NEW
     ]
 )
 data class Contact(
@@ -141,7 +141,12 @@ data class Contact(
      * Set to true when we want to trigger convergence (ACK sending + message retry)
      * Cleared after TAP is successfully sent
      */
-    val needsTapSync: Boolean = false
+    val needsTapSync: Boolean = false,
+
+    /**
+     * Whether this chat is pinned to the top
+     */
+    val isPinned: Boolean = false
 ) {
     companion object {
         // Trust levels

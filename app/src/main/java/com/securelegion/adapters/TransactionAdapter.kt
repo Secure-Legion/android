@@ -6,6 +6,7 @@ import android.view.ViewGroup
 import android.widget.TextView
 import androidx.core.content.ContextCompat
 import androidx.recyclerview.widget.RecyclerView
+import com.google.android.material.color.MaterialColors
 import com.securelegion.R
 import com.securelegion.services.SolanaService
 
@@ -48,7 +49,7 @@ class TransactionAdapter(
 
         // Set color based on type
         val color = if (transaction.type == "send") {
-            ContextCompat.getColor(holder.itemView.context, R.color.text_white)
+            MaterialColors.getColor(holder.itemView, com.google.android.material.R.attr.colorOnSurface)
         } else {
             ContextCompat.getColor(holder.itemView.context, R.color.success_green)
         }

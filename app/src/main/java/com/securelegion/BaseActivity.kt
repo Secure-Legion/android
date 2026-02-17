@@ -37,8 +37,8 @@ abstract class BaseActivity : AppCompatActivity() {
         // Security: Prevent screenshots and screen recording app-wide
         // TODO: Re-enable FLAG_SECURE after demo recording
         // window.setFlags(
-        //     WindowManager.LayoutParams.FLAG_SECURE,
-        //     WindowManager.LayoutParams.FLAG_SECURE
+        // WindowManager.LayoutParams.FLAG_SECURE,
+        // WindowManager.LayoutParams.FLAG_SECURE
         // )
     }
 

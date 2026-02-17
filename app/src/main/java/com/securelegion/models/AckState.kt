@@ -39,8 +39,8 @@ enum class AckState {
     fun canTransitionTo(ackType: String): Boolean = when {
         this == NONE && ackType == "PING_ACK" -> true
         this == PING_ACKED && ackType == "MESSAGE_ACK" -> true
-        this == PING_ACKED && ackType == "PONG_ACK" -> true  // Allow PONG_ACK for backward compat
-        this == PONG_ACKED && ackType == "MESSAGE_ACK" -> true  // Allow if already PONG_ACKED
+        this == PING_ACKED && ackType == "PONG_ACK" -> true // Allow PONG_ACK for backward compat
+        this == PONG_ACKED && ackType == "MESSAGE_ACK" -> true // Allow if already PONG_ACKED
         else -> false
     }
 
@@ -50,8 +50,8 @@ enum class AckState {
      */
     fun transitionTo(ackType: String): AckState? = when {
         this == NONE && ackType == "PING_ACK" -> PING_ACKED
-        this == PING_ACKED && ackType == "MESSAGE_ACK" -> MESSAGE_ACKED  // Direct transition (no PONG_ACK requirement)
-        this == PING_ACKED && ackType == "PONG_ACK" -> PONG_ACKED  // Allow PONG_ACK for backward compat
+        this == PING_ACKED && ackType == "MESSAGE_ACK" -> MESSAGE_ACKED // Direct transition (no PONG_ACK requirement)
+        this == PING_ACKED && ackType == "PONG_ACK" -> PONG_ACKED // Allow PONG_ACK for backward compat
         this == PONG_ACKED && ackType == "MESSAGE_ACK" -> MESSAGE_ACKED
         else -> null
     }
@@ -105,8 +105,8 @@ class AckStateTracker {
 
         // Guard 1: Handle duplicate ACKs (idempotency)
         if (processedAcks.contains(ackKey)) {
-            Log.d(TAG, "✓ Duplicate ACK (idempotent): $messageId/$ackType - already processed, returning success")
-            return true  // CHANGED: Return true for duplicates (they were successfully processed before)
+            Log.d(TAG, "Duplicate ACK (idempotent): $messageId/$ackType - already processed, returning success")
+            return true // CHANGED: Return true for duplicates (they were successfully processed before)
         }
 
         // Get current state (default to NONE if new message)
@@ -131,12 +131,12 @@ class AckStateTracker {
                     "PONG_ACK" -> AckState.PONG_ACKED
                     else -> return false
                 }
-                Log.w(TAG, "⚠️  Out-of-order ACK allowed (forward progress): $current -> $next for $messageId")
+                Log.w(TAG, "Out-of-order ACK allowed (forward progress): $current -> $next for $messageId")
                 ackStates[messageId] = next
                 processedAcks.add(ackKey)
                 return true
             } else {
-                Log.w(TAG, "⚠️  Out-of-order ACK rejected (backward or no progress): $current -> $ackType for $messageId")
+                Log.w(TAG, "Out-of-order ACK rejected (backward or no progress): $current -> $ackType for $messageId")
                 return false
             }
         }
@@ -146,7 +146,7 @@ class AckStateTracker {
         ackStates[messageId] = next
         processedAcks.add(ackKey)
 
-        Log.d(TAG, "✓ ACK processed (new): $messageId | $current -> $next")
+        Log.d(TAG, "ACK processed (new): $messageId | $current -> $next")
         return true
     }
 
@@ -211,7 +211,7 @@ class AckStateTracker {
         Log.d(TAG, "Total messages tracked: ${ackStates.size}")
         Log.d(TAG, "Pending messages: ${getPendingMessages().size}")
         ackStates.forEach { (messageId, state) ->
-            Log.d(TAG, "  $messageId: $state")
+            Log.d(TAG, "$messageId: $state")
         }
         Log.d(TAG, "=========================================")
     }

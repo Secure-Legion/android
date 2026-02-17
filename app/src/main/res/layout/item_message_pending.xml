@@ -14,7 +14,7 @@
         android:layout_height="wrap_content"
         android:layout_gravity="center_horizontal"
         android:text="Today"
-        android:textColor="@color/text_gray"
+        android:textColor="?attr/colorOnSurfaceVariant"
         android:textSize="12sp"
         android:paddingBottom="8dp"
         android:visibility="gone" />
@@ -42,7 +42,7 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:text="12:34 PM"
-            android:textColor="@color/text_gray"
+            android:textColor="?attr/colorOnSurfaceVariant"
             android:textSize="11sp"
             android:layout_gravity="center_vertical"
             android:layout_marginEnd="8dp"
@@ -76,7 +76,7 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:text="Downloading..."
-                android:textColor="@color/text_gray"
+                android:textColor="?attr/colorOnSurfaceVariant"
                 android:textSize="11sp"
                 android:layout_marginTop="4dp"
                 android:visibility="gone" />
@@ -99,7 +99,7 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="●"
-                    android:textColor="@color/text_gray"
+                    android:textColor="?attr/colorOnSurfaceVariant"
                     android:textSize="14sp"
                     android:gravity="center"
                     android:layout_marginEnd="6dp" />
@@ -109,7 +109,7 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="●"
-                    android:textColor="@color/text_gray"
+                    android:textColor="?attr/colorOnSurfaceVariant"
                     android:textSize="14sp"
                     android:gravity="center"
                     android:layout_marginEnd="6dp" />
@@ -119,7 +119,7 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="●"
-                    android:textColor="@color/text_gray"
+                    android:textColor="?attr/colorOnSurfaceVariant"
                     android:textSize="14sp"
                     android:gravity="center" />
 

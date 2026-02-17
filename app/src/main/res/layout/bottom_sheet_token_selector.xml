@@ -21,7 +21,7 @@
         android:layout_height="wrap_content"
         android:text="Select Token"
         android:textSize="20sp"
-        android:textColor="@color/text_white"
+        android:textColor="?attr/colorOnSurface"
         android:fontFamily="@font/space_grotesk_bold"
         android:layout_marginStart="24dp"
         android:layout_marginEnd="24dp"

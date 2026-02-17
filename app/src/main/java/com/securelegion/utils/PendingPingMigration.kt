@@ -51,7 +51,7 @@ object PendingPingMigration {
 
             // Mark migration as complete
             prefs.edit().putBoolean(MIGRATION_PREF_KEY, true).apply()
-            Log.i(TAG, "✓ Migration complete")
+            Log.i(TAG, "Migration complete")
 
         } catch (e: Exception) {
             Log.e(TAG, "Migration failed (non-critical)", e)
@@ -93,11 +93,11 @@ object PendingPingMigration {
                 remove("ping_${contactId}_timestamp")
                 remove("ping_${contactId}_data")
                 remove("ping_${contactId}_onion")
-                remove("ping_${contactId}_sender")  // Legacy key
+                remove("ping_${contactId}_sender") // Legacy key
                 apply()
             }
 
-            Log.i(TAG, "✓ Migrated ping $pingId for contact $contactId")
+            Log.i(TAG, "Migrated ping $pingId for contact $contactId")
 
         } catch (e: Exception) {
             Log.e(TAG, "Failed to migrate ping for contact $contactId", e)

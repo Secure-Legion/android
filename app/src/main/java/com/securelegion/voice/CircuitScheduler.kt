@@ -28,20 +28,20 @@ class CircuitScheduler(
         private const val TAG = "CircuitScheduler"
 
         // Phase 2.1: Adaptive monitoring window (Donar paper: 2s window prevents thrashing)
-        private const val MONITORING_WINDOW_MS = 2000L  // 2 seconds
+        private const val MONITORING_WINDOW_MS = 2000L // 2 seconds
 
         // Phase 1: Round-robin rotation interval
-        private const val ROTATION_INTERVAL_MS = 100L  // 100ms = 5 frames @ 20ms
+        private const val ROTATION_INTERVAL_MS = 100L // 100ms = 5 frames @ 20ms
 
         // Circuit stickiness: stay on same circuit for 500ms (25 frames @ 20ms)
-        private const val STICKY_EPOCH_MS = 500L  // 500ms = 25 frames
+        private const val STICKY_EPOCH_MS = 500L // 500ms = 25 frames
 
         // Immediate failover thresholds (switch before epoch expires)
-        private const val BAD_LATE_THRESHOLD = 12.0  // % late frames
-        private const val BAD_MISSING_THRESHOLD = 5.0  // % missing frames
+        private const val BAD_LATE_THRESHOLD = 12.0 // % late frames
+        private const val BAD_MISSING_THRESHOLD = 5.0 // % missing frames
 
         // Hysteresis for circuit switching (prevents flapping)
-        private const val SWITCH_MARGIN = 0.15  // New circuit must be 15% better
+        private const val SWITCH_MARGIN = 0.15 // New circuit must be 15% better
 
         // Cooldown duration for failing circuits (milliseconds)
         private const val COOLDOWN_DURATION_MS = 8000L // 8 seconds (increased for Tor recovery)
@@ -53,9 +53,9 @@ class CircuitScheduler(
         private val CIRCUIT_WEIGHTS = doubleArrayOf(0.70, 0.20, 0.10)
 
         // WARMUP + STAGED CONTROL: Phase durations (milliseconds)
-        private const val ESTABLISHMENT_PHASE_MS = 3000L   // 0-3s: equal probing
-        private const val WARMUP_PHASE_MS = 15000L         // 0-15s: no cooldowns (except hard failures)
-        private const val RELAXED_PHASE_MS = 45000L        // 15-45s: relaxed thresholds
+        private const val ESTABLISHMENT_PHASE_MS = 3000L // 0-3s: equal probing
+        private const val WARMUP_PHASE_MS = 15000L // 0-15s: no cooldowns (except hard failures)
+        private const val RELAXED_PHASE_MS = 45000L // 15-45s: relaxed thresholds
         // 45s+: strict thresholds
 
         // Minimum frames received before computing missing% (avoids early false positives)
@@ -69,10 +69,10 @@ class CircuitScheduler(
      * Call phase for staged threshold control
      */
     private enum class CallPhase {
-        ESTABLISHMENT,  // 0-3s: Equal probing (33/33/33), no cooldowns
-        WARMUP,         // 3-15s: Soft steering only, no cooldowns
-        RELAXED,        // 15-45s: Relaxed thresholds (missing% > 15%, PLC% > 10%)
-        STRICT          // 45s+: Strict thresholds (missing% > 5%, PLC% > 5%)
+        ESTABLISHMENT, // 0-3s: Equal probing (33/33/33), no cooldowns
+        WARMUP, // 3-15s: Soft steering only, no cooldowns
+        RELAXED, // 15-45s: Relaxed thresholds (missing% > 15%, PLC% > 10%)
+        STRICT // 45s+: Strict thresholds (missing% > 5%, PLC% > 5%)
     }
 
     /**
@@ -82,9 +82,9 @@ class CircuitScheduler(
      * LINACTIVE: Remaining circuits (monitored but idle)
      */
     private enum class CircuitGroup {
-        L1ST,       // Top 3 fastest circuits
-        L2ND,       // Next 3 circuits
-        LINACTIVE   // Remaining circuits
+        L1ST, // Top 3 fastest circuits
+        L2ND, // Next 3 circuits
+        LINACTIVE // Remaining circuits
     }
 
     // Track call start time for phase detection
@@ -94,49 +94,49 @@ class CircuitScheduler(
      * Cooldown reason for debugging
      */
     private enum class CooldownReason {
-        SEND_FAILURE,       // Socket send failures
-        DELIVERY_RATE,      // < 92% delivery with PLC > 3%
-        HIGH_MISSING,       // missing% > threshold
-        HIGH_PLC            // PLC% > threshold
+        SEND_FAILURE, // Socket send failures
+        DELIVERY_RATE, // < 92% delivery with PLC > 3%
+        HIGH_MISSING, // missing% > threshold
+        HIGH_PLC // PLC% > threshold
     }
 
     /**
      * Per-circuit health tracking
      */
     private data class CircuitHealth(
-        var sendFailures: Int = 0,              // Consecutive send failures
-        var lateFramePercent: Double = 0.0,     // Receiver-reported late % (raw)
-        var missingFramePercent: Double = 0.0,  // Receiver-reported missing % (raw)
-        var plcPercent: Double = 0.0,           // Receiver-reported PLC % (raw)
-        var cooldownUntil: Long = 0,            // Timestamp when cooldown expires
-        var totalFramesSent: Long = 0,          // Total frames WE sent on this circuit
-        var peerFramesReceived: Long = 0,       // Total frames PEER received (from CONTROL feedback)
-        var rampUpWeight: Double = 1.0,         // Weight multiplier during ramp-up (0.05-1.0)
-        var cleanWindowsCount: Int = 0,         // Consecutive clean windows for ramp-up
-        var badDeliveryWindows: Int = 0,        // Consecutive bad delivery windows (persistence)
-        var lastCooldownReason: CooldownReason? = null,  // Last reason for cooldown
+        var sendFailures: Int = 0, // Consecutive send failures
+        var lateFramePercent: Double = 0.0, // Receiver-reported late % (raw)
+        var missingFramePercent: Double = 0.0, // Receiver-reported missing % (raw)
+        var plcPercent: Double = 0.0, // Receiver-reported PLC % (raw)
+        var cooldownUntil: Long = 0, // Timestamp when cooldown expires
+        var totalFramesSent: Long = 0, // Total frames WE sent on this circuit
+        var peerFramesReceived: Long = 0, // Total frames PEER received (from CONTROL feedback)
+        var rampUpWeight: Double = 1.0, // Weight multiplier during ramp-up (0.05-1.0)
+        var cleanWindowsCount: Int = 0, // Consecutive clean windows for ramp-up
+        var badDeliveryWindows: Int = 0, // Consecutive bad delivery windows (persistence)
+        var lastCooldownReason: CooldownReason? = null, // Last reason for cooldown
 
         // EMA smoothing (alpha=0.2, ~2s memory at 500ms updates)
-        var lateEma: Double = 0.0,              // Smoothed late %
-        var missingEma: Double = 0.0,           // Smoothed missing %
-        var plcEma: Double = 0.0,               // Smoothed PLC %
+        var lateEma: Double = 0.0, // Smoothed late %
+        var missingEma: Double = 0.0, // Smoothed missing %
+        var plcEma: Double = 0.0, // Smoothed PLC %
 
         // Circuit rebuild policy (v3 - Quarantine → Replace → Ramp)
-        var badWindowsCount: Int = 0,           // Consecutive bad 5s windows (for rebuild)
-        var quarantineUntil: Long = 0,          // Quarantine timestamp (10s test period)
+        var badWindowsCount: Int = 0, // Consecutive bad 5s windows (for rebuild)
+        var quarantineUntil: Long = 0, // Quarantine timestamp (10s test period)
         var isRebuildCandidate: Boolean = false,// Marked for rebuild after quarantine
-        var framesLateToBufferPercent: Double = 0.0,  // % frames that missed deadline
-        var rebuildFailures: Int = 0,           // Count of rebuild failures (for backoff)
-        var rebuildBackoffMs: Long = 10000L,    // Current backoff duration (10s → 20s → 40s → 60s)
-        var rebuildEpoch: Int = 0               // Incremented on each rebuild (forces fresh Tor path)
+        var framesLateToBufferPercent: Double = 0.0, // % frames that missed deadline
+        var rebuildFailures: Int = 0, // Count of rebuild failures (for backoff)
+        var rebuildBackoffMs: Long = 10000L, // Current backoff duration (10s → 20s → 40s → 60s)
+        var rebuildEpoch: Int = 0 // Incremented on each rebuild (forces fresh Tor path)
     ) {
         fun isInCooldown(): Boolean = System.currentTimeMillis() < cooldownUntil
 
         fun triggerCooldown(telemetry: CallQualityTelemetry?, circuitIndex: Int, reason: CooldownReason) {
             cooldownUntil = System.currentTimeMillis() + COOLDOWN_DURATION_MS
-            rampUpWeight = 0.05  // Start at 5% weight when cooldown expires
+            rampUpWeight = 0.05 // Start at 5% weight when cooldown expires
             cleanWindowsCount = 0
-            badDeliveryWindows = 0  // Reset persistence counter
+            badDeliveryWindows = 0 // Reset persistence counter
             lastCooldownReason = reason
             telemetry?.reportCircuitCooldown(circuitIndex)
             Log.w(TAG, "Circuit $circuitIndex cooldown triggered (reason=$reason), will ramp from 5%")
@@ -172,12 +172,12 @@ class CircuitScheduler(
          */
         fun score(): Double {
             var penalties = 0.0
-            penalties += lateEma * 0.5        // Late frames = timing issues (smoothed)
-            penalties += missingEma * 1.5     // Missing frames = packet loss (smoothed)
-            penalties += plcEma * 2.0         // PLC = severe quality hit (smoothed)
-            penalties += sendFailures * 5.0   // Send failures (instant)
+            penalties += lateEma * 0.5 // Late frames = timing issues (smoothed)
+            penalties += missingEma * 1.5 // Missing frames = packet loss (smoothed)
+            penalties += plcEma * 2.0 // PLC = severe quality hit (smoothed)
+            penalties += sendFailures * 5.0 // Send failures (instant)
 
-            return penalties  // Lower = better
+            return penalties // Lower = better
         }
 
         /**
@@ -203,7 +203,7 @@ class CircuitScheduler(
             val threshold = when (phase) {
                 CallPhase.STRICT -> 0.92
                 CallPhase.RELAXED -> 0.85
-                else -> return false  // No delivery checks in WARMUP/ESTABLISHMENT
+                else -> return false // No delivery checks in WARMUP/ESTABLISHMENT
             }
 
             if (deliveryRate >= threshold) {
@@ -254,18 +254,18 @@ class CircuitScheduler(
     private val circuitHealth = Array(numCircuits) { CircuitHealth() }
 
     // Round-robin state (Phase 1: simple rotation through all circuits)
-    private var currentCircuit: Int = 0  // Current circuit index (0 to numCircuits-1)
-    private var lastRotationMs: Long = 0L  // Last time we rotated to next circuit
-    private var lastPhase: CallPhase? = null  // Track phase transitions
+    private var currentCircuit: Int = 0 // Current circuit index (0 to numCircuits-1)
+    private var lastRotationMs: Long = 0L // Last time we rotated to next circuit
+    private var lastPhase: CallPhase? = null // Track phase transitions
 
     // Phase 2.2: Circuit group state
-    private val circuitGroups = mutableMapOf<Int, CircuitGroup>()  // Circuit index → group
-    private var lastGroupClassificationMs: Long = 0L  // Last time we reclassified groups
-    private var useL1stGroup: Boolean = true  // Alternate between L1ST and L2ND groups
+    private val circuitGroups = mutableMapOf<Int, CircuitGroup>() // Circuit index → group
+    private var lastGroupClassificationMs: Long = 0L // Last time we reclassified groups
+    private var useL1stGroup: Boolean = true // Alternate between L1ST and L2ND groups
 
     // Circuit rebuild policy (v3 - Quarantine → Replace → Ramp)
     private var rebuildInProgress: Boolean = false
-    var onCircuitRebuildRequested: ((Int, Int) -> Unit)? = null  // Callback to VoiceCallSession (circuitIndex, rebuildEpoch)
+    var onCircuitRebuildRequested: ((Int, Int) -> Unit)? = null // Callback to VoiceCallSession (circuitIndex, rebuildEpoch)
 
     /**
      * Get current call phase based on elapsed time
@@ -294,7 +294,7 @@ class CircuitScheduler(
         // Initialize on first call - select best circuit from L1ST group
         if (lastRotationMs == 0L) {
             lastRotationMs = nowMs
-            classifyCircuitGroups()  // Initial classification
+            classifyCircuitGroups() // Initial classification
             currentCircuit = getBestCircuitFromGroup(CircuitGroup.L1ST) ?: 0
             Log.d(TAG, "Stable primary initialized: selected circuit $currentCircuit from L1ST group")
             return currentCircuit
@@ -324,7 +324,7 @@ class CircuitScheduler(
             // Failover: select best available circuit from L1ST or L2ND
             val newCircuit = getBestCircuitFromGroup(CircuitGroup.L1ST)
                 ?: getBestCircuitFromGroup(CircuitGroup.L2ND)
-                ?: ((currentCircuit + 1) % numCircuits)  // Last resort
+                ?: ((currentCircuit + 1) % numCircuits) // Last resort
 
             if (newCircuit != currentCircuit) {
                 Log.w(TAG, "FAILOVER: circuit $currentCircuit → $newCircuit (reason: $reason)")
@@ -344,8 +344,8 @@ class CircuitScheduler(
         val candidates = circuitGroups.filter { it.value == targetGroup }.keys
 
         return candidates
-            .filter { circuitHealth[it].cooldownUntil <= nowMs }  // Not in cooldown
-            .minByOrNull { circuitHealth[it].score() }  // Lowest score = best
+            .filter { circuitHealth[it].cooldownUntil <= nowMs } // Not in cooldown
+            .minByOrNull { circuitHealth[it].score() } // Lowest score = best
     }
 
     /**
@@ -463,8 +463,8 @@ class CircuitScheduler(
         val leastBadCircuit = circuitHealth.indices.minByOrNull { circuitHealth[it].score() } ?: 0
 
         val health = circuitHealth[leastBadCircuit]
-        health.cooldownUntil = 0  // Clear cooldown
-        health.rampUpWeight = MIN_CIRCUIT_WEIGHT  // Set to minimum weight (5%)
+        health.cooldownUntil = 0 // Clear cooldown
+        health.rampUpWeight = MIN_CIRCUIT_WEIGHT // Set to minimum weight (5%)
 
         Log.w(TAG, "Rescued circuit $leastBadCircuit from all-cooldown deadlock (score=${String.format("%.1f", health.score())})")
 
@@ -525,7 +525,7 @@ class CircuitScheduler(
                 health.lateFramePercent = stats.latePercent
                 health.missingFramePercent = stats.missingPercent
                 health.plcPercent = stats.plcPercent
-                health.peerFramesReceived = stats.framesReceived  // CRITICAL: Peer's received count!
+                health.peerFramesReceived = stats.framesReceived // CRITICAL: Peer's received count!
 
                 // Update EMA smoothing for stable circuit selection
                 health.updateEma()
@@ -544,9 +544,9 @@ class CircuitScheduler(
 
                 // Determine thresholds based on current phase
                 val (missingThreshold, plcThreshold) = when (phase) {
-                    CallPhase.RELAXED -> Pair(15.0, 10.0)  // Relaxed: 15-45s
-                    CallPhase.STRICT -> Pair(5.0, 5.0)     // Strict: 45s+
-                    else -> continue  // Should never reach here
+                    CallPhase.RELAXED -> Pair(15.0, 10.0) // Relaxed: 15-45s
+                    CallPhase.STRICT -> Pair(5.0, 5.0) // Strict: 45s+
+                    else -> continue // Should never reach here
                 }
 
                 // Check for cooldown conditions (with reasons for logging)
@@ -634,10 +634,10 @@ class CircuitScheduler(
      * Policy:
      * 1. Only evaluate after warmup (30s+)
      * 2. Define "persistently bad": 3 consecutive bad windows (15s total)
-     *    - PLC% >= 12% OR
-     *    - (PLC% >= 8% AND missing% >= 5%) OR
-     *    - (PLC% >= 10% AND lateToBufferRate% < 1.0 - network-side loss)
-     *    - BUT: only count if circuit carried enough traffic (sent >= 50 frames)
+     * - PLC% >= 12% OR
+     * - (PLC% >= 8% AND missing% >= 5%) OR
+     * - (PLC% >= 10% AND lateToBufferRate% < 1.0 - network-side loss)
+     * - BUT: only count if circuit carried enough traffic (sent >= 50 frames)
      * 3. Quarantine first (weight=0 for 10s) before rebuild
      * 4. Rebuild only one circuit at a time (rebuildInProgress lock)
      * 5. After rebuild: ramp from 5%, require 2-3 clean windows to climb
@@ -656,7 +656,7 @@ class CircuitScheduler(
 
         // Gate: only evaluate if circuit carried enough traffic in this window
         // Prevents tiny sample noise (e.g., circuit at 5% weight with 10 frames)
-        val sentLastWindow = health.totalFramesSent  // TODO: track per-window sent count
+        val sentLastWindow = health.totalFramesSent // TODO: track per-window sent count
         if (sentLastWindow < MIN_FRAMES_FOR_MISSING_CALC) {
             // Not enough samples - skip evaluation
             return
@@ -668,7 +668,7 @@ class CircuitScheduler(
         val isBadWindow = (
             plc >= 12.0 ||
             (plc >= 8.0 && missing >= 5.0) ||
-            (plc >= 10.0 && lateToBufferRate < 1.0)  // Network-side loss (lateToBufferRate is 0-100%)
+            (plc >= 10.0 && lateToBufferRate < 1.0) // Network-side loss (lateToBufferRate is 0-100%)
         )
 
         if (isBadWindow) {
@@ -699,8 +699,8 @@ class CircuitScheduler(
 
         val backoffSeconds = health.rebuildBackoffMs / 1000
         health.quarantineUntil = System.currentTimeMillis() + health.rebuildBackoffMs
-        health.rampUpWeight = 0.0  // 0% weight during quarantine
-        health.isRebuildCandidate = true  // Mark for potential rebuild
+        health.rampUpWeight = 0.0 // 0% weight during quarantine
+        health.isRebuildCandidate = true // Mark for potential rebuild
 
         Log.w(TAG, "Circuit $circuitIndex QUARANTINED for ${backoffSeconds}s (PLC=${String.format("%.1f", health.plcPercent)}%, ${health.badWindowsCount} bad windows, failures=${health.rebuildFailures})")
 
@@ -716,7 +716,7 @@ class CircuitScheduler(
 
         // Check if still past quarantine time
         if (System.currentTimeMillis() < health.quarantineUntil) {
-            return  // Still in quarantine
+            return // Still in quarantine
         }
 
         // Quarantine expired - check if circuit recovered
@@ -726,7 +726,7 @@ class CircuitScheduler(
             triggerCircuitRebuild(circuitIndex)
         } else {
             // Recovered during quarantine - slowly ramp back up
-            health.rampUpWeight = 0.05  // Start at 5%
+            health.rampUpWeight = 0.05 // Start at 5%
             health.cleanWindowsCount = 0
             health.isRebuildCandidate = false
             health.badWindowsCount = 0
@@ -765,7 +765,7 @@ class CircuitScheduler(
         // Reset circuit state for fresh start
         health.badWindowsCount = 0
         health.isRebuildCandidate = false
-        health.rampUpWeight = 0.0  // ⚠️ KEEP AT 0% UNTIL REBUILD COMPLETES (set to 0.05 in onCircuitRebuilt)
+        health.rampUpWeight = 0.0 // KEEP AT 0% UNTIL REBUILD COMPLETES (set to 0.05 in onCircuitRebuilt)
         health.cleanWindowsCount = 0
         health.sendFailures = 0
         health.badDeliveryWindows = 0
@@ -782,7 +782,7 @@ class CircuitScheduler(
 
         // Reset rebuild failure tracking on success
         health.rebuildFailures = 0
-        health.rebuildBackoffMs = 10000L  // Reset to 10s
+        health.rebuildBackoffMs = 10000L // Reset to 10s
 
         Log.i(TAG, "Circuit $circuitIndex rebuild SUCCESS (epoch=$rebuildEpoch), starting at 5% weight")
 
@@ -809,7 +809,7 @@ class CircuitScheduler(
 
         // Mark for re-quarantine on next evaluation
         health.isRebuildCandidate = false
-        health.badWindowsCount = 0  // Reset so it can be re-evaluated
+        health.badWindowsCount = 0 // Reset so it can be re-evaluated
     }
 
     /**
@@ -843,7 +843,7 @@ class CircuitScheduler(
                 // Show delivery rate if available
                 val deliveryRate = health.getDeliveryRate()
                 if (deliveryRate != null) {
-                    append(" (${String.format("%.0f%%", deliveryRate * 100)})")
+                    append("(${String.format("%.0f%%", deliveryRate * 100)})")
                 }
                 append("] ")
             }

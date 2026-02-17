@@ -93,18 +93,18 @@ class CallLogActivity : BaseActivity() {
 
                         appendLine("=== Call ${index + 1}: $timestamp ===")
                         appendLine()
-                        appendLine("Contact:      ${log.contactName}")
-                        appendLine("Duration:     ${formatDuration(log.durationSeconds)}")
-                        appendLine("Quality:      $qualityText")
+                        appendLine("Contact: ${log.contactName}")
+                        appendLine("Duration: ${formatDuration(log.durationSeconds)}")
+                        appendLine("Quality: $qualityText")
                         appendLine()
                         appendLine("Overall Metrics:")
-                        appendLine("   Total Frames:     ${log.totalFrames}")
-                        appendLine("   Late%:            ${String.format("%.2f%%", log.latePercent)}")
-                        appendLine("   PLC%:             ${String.format("%.2f%%", log.plcPercent)}")
-                        appendLine("   FEC Success%:     ${String.format("%.2f%%", log.fecSuccessPercent)}")
-                        appendLine("   Out-of-Order%:    ${String.format("%.2f%%", log.outOfOrderPercent)}")
-                        appendLine("   Jitter Buffer:    ${log.jitterBufferMs}ms")
-                        appendLine("   Underruns:        ${log.audioUnderruns}")
+                        appendLine(" Total Frames: ${log.totalFrames}")
+                        appendLine(" Late%: ${String.format("%.2f%%", log.latePercent)}")
+                        appendLine(" PLC%: ${String.format("%.2f%%", log.plcPercent)}")
+                        appendLine(" FEC Success%: ${String.format("%.2f%%", log.fecSuccessPercent)}")
+                        appendLine(" Out-of-Order%: ${String.format("%.2f%%", log.outOfOrderPercent)}")
+                        appendLine(" Jitter Buffer: ${log.jitterBufferMs}ms")
+                        appendLine(" Underruns: ${log.audioUnderruns}")
                         appendLine()
 
                         // Parse circuit stats JSON
@@ -114,29 +114,29 @@ class CallLogActivity : BaseActivity() {
                                 appendLine("Per-Circuit:")
                                 for (i in 0 until circuitStats.length()) {
                                     val circuit = circuitStats.getJSONObject(i)
-                                    appendLine("   Circuit ${circuit.getInt("circuitIndex")}:")
-                                    appendLine("      Late%:     ${String.format("%.1f%%", circuit.getDouble("latePercent"))}")
+                                    appendLine(" Circuit ${circuit.getInt("circuitIndex")}:")
+                                    appendLine(" Late%: ${String.format("%.1f%%", circuit.getDouble("latePercent"))}")
 
                                     // FIX #4: Display missing% and PLC% if available (v3 telemetry)
                                     if (circuit.has("missingPercent")) {
-                                        appendLine("      Missing%:  ${String.format("%.1f%%", circuit.getDouble("missingPercent"))}")
+                                        appendLine(" Missing%: ${String.format("%.1f%%", circuit.getDouble("missingPercent"))}")
                                     }
                                     if (circuit.has("plcPercent")) {
-                                        appendLine("      PLC%:      ${String.format("%.1f%%", circuit.getDouble("plcPercent"))}")
+                                        appendLine(" PLC%: ${String.format("%.1f%%", circuit.getDouble("plcPercent"))}")
                                     }
 
-                                    appendLine("      Sent:      ${circuit.getLong("framesSent")}")
-                                    appendLine("      Received:  ${circuit.getLong("framesReceived")}")
-                                    appendLine("      Cooldowns: ${circuit.getInt("cooldownEvents")}")
+                                    appendLine(" Sent: ${circuit.getLong("framesSent")}")
+                                    appendLine(" Received: ${circuit.getLong("framesReceived")}")
+                                    appendLine(" Cooldowns: ${circuit.getInt("cooldownEvents")}")
 
                                     // Show burst loss events if present
                                     if (circuit.has("burstLossEvents") && circuit.getInt("burstLossEvents") > 0) {
-                                        appendLine("      Burst Loss: ${circuit.getInt("burstLossEvents")} events")
+                                        appendLine(" Burst Loss: ${circuit.getInt("burstLossEvents")} events")
                                     }
                                 }
                             }
                         } catch (e: Exception) {
-                            appendLine("   (Circuit stats unavailable)")
+                            appendLine(" (Circuit stats unavailable)")
                         }
 
                         appendLine()

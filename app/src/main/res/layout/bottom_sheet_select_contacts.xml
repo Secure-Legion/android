@@ -12,7 +12,7 @@
         android:layout_height="wrap_content"
         android:text="Select Contacts"
         android:textSize="20sp"
-        android:textColor="#FFFFFF"
+        android:textColor="?attr/colorOnSurface"
         android:fontFamily="@font/space_grotesk_bold"
         android:layout_marginBottom="16dp" />
 
@@ -31,7 +31,7 @@
         android:layout_height="56dp"
         android:text="Done"
         android:textSize="16sp"
-        android:textColor="#FFFFFF"
+        android:textColor="?attr/colorOnSurface"
         android:fontFamily="@font/space_grotesk_bold"
         android:background="@drawable/lock_button_bg"
         android:gravity="center"

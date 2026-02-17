@@ -33,7 +33,7 @@
                 android:layout_height="wrap_content"
                 android:text="Total Balance"
                 android:textSize="10sp"
-                android:textColor="@color/text_gray"
+                android:textColor="?attr/colorOnSurfaceVariant"
                 android:textAllCaps="true"
                 android:letterSpacing="0.1" />
 
@@ -58,7 +58,7 @@
                         android:text="0.0008 SOL"
                         android:textSize="20sp"
                         android:textStyle="bold"
-                        android:textColor="@color/text_white"
+                        android:textColor="?attr/colorOnSurface"
                         android:layout_marginBottom="1dp" />
 
                     <!-- USD Value -->
@@ -68,7 +68,7 @@
                         android:layout_height="wrap_content"
                         android:text="$0.18 USD"
                         android:textSize="12sp"
-                        android:textColor="@color/text_gray" />
+                        android:textColor="?attr/colorOnSurfaceVariant" />
 
                 </LinearLayout>
 
@@ -77,7 +77,7 @@
                     android:layout_width="40dp"
                     android:layout_height="40dp"
                     android:src="@drawable/ic_refresh"
-                    app:tint="@color/text_gray"
+                    app:tint="?attr/colorOnSurfaceVariant"
                     android:clickable="true"
                     android:focusable="true"
                     android:background="?attr/selectableItemBackgroundBorderless"
@@ -129,7 +129,7 @@
                 android:text="Receive"
                 android:textSize="15sp"
                 android:textStyle="bold"
-                android:textColor="@color/text_white" />
+                android:textColor="?attr/colorOnSurface" />
 
         </LinearLayout>
 
@@ -162,7 +162,7 @@
                 android:text="Send"
                 android:textSize="15sp"
                 android:textStyle="bold"
-                android:textColor="@color/text_white" />
+                android:textColor="?attr/colorOnSurface" />
 
         </LinearLayout>
 

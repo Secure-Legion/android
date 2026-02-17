@@ -33,8 +33,8 @@ class VoiceTorService : Service() {
         const val ACTION_STOP = "com.securelegion.services.VoiceTorService.STOP"
 
         // Share TorService's notification so no separate notification appears
-        private const val NOTIFICATION_ID = 1001  // Same as TorService
-        private const val CHANNEL_ID = "tor_service_channel"  // Same as TorService
+        private const val NOTIFICATION_ID = 1001 // Same as TorService
+        private const val CHANNEL_ID = "tor_service_channel" // Same as TorService
         private const val CHANNEL_NAME = "Tor Hidden Service"
 
         // Voice Tor health status (accessible from UI)
@@ -111,7 +111,7 @@ class VoiceTorService : Service() {
                 processBuilder.redirectErrorStream(true)
                 torProcess = processBuilder.start()
 
-                Log.i(TAG, "✓ Voice Tor process started")
+                Log.i(TAG, "Voice Tor process started")
 
                 // Start health monitoring after a delay (give Tor time to start)
                 serviceScope.launch {
@@ -170,7 +170,7 @@ class VoiceTorService : Service() {
                     isHealthy = false
                 }
 
-                delay(5000)  // Poll every 5 seconds (voice is latency-sensitive)
+                delay(5000) // Poll every 5 seconds (voice is latency-sensitive)
             }
         }
     }
@@ -268,7 +268,7 @@ class VoiceTorService : Service() {
             circuitEstablished = null
             networkLiveness = null
 
-            Log.i(TAG, "✓ Voice Tor stopped")
+            Log.i(TAG, "Voice Tor stopped")
         } catch (e: Exception) {
             Log.e(TAG, "Error stopping voice Tor", e)
         }

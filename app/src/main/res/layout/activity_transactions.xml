@@ -4,7 +4,7 @@
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="@color/header_bg">
+    android:background="?attr/colorSurface">
 
     <!-- Header -->
     <LinearLayout
@@ -26,7 +26,7 @@
             android:layout_height="40dp"
             android:text="‹"
             android:textSize="32sp"
-            android:textColor="@color/text_white"
+            android:textColor="?attr/colorOnSurface"
             android:gravity="center"
             android:clickable="true"
             android:focusable="true"
@@ -45,7 +45,7 @@
             android:text="TRANSACTIONS"
             android:textSize="18sp"
             android:textStyle="bold"
-            android:textColor="@color/text_white"
+            android:textColor="?attr/colorOnSurface"
             android:gravity="center"
             android:layout_marginEnd="64dp" />
 
@@ -94,7 +94,7 @@
                         android:text="Received SOL"
                         android:textSize="16sp"
                         android:textStyle="bold"
-                        android:textColor="@color/text_white"
+                        android:textColor="?attr/colorOnSurface"
                         android:layout_marginBottom="4dp" />
 
                     <TextView
@@ -102,7 +102,7 @@
                         android:layout_height="wrap_content"
                         android:text="2 days ago"
                         android:textSize="13sp"
-                        android:textColor="@color/text_gray" />
+                        android:textColor="?attr/colorOnSurfaceVariant" />
 
                 </LinearLayout>
 
@@ -140,7 +140,7 @@
                         android:text="Sent SOL"
                         android:textSize="16sp"
                         android:textStyle="bold"
-                        android:textColor="@color/text_white"
+                        android:textColor="?attr/colorOnSurface"
                         android:layout_marginBottom="4dp" />
 
                     <TextView
@@ -148,7 +148,7 @@
                         android:layout_height="wrap_content"
                         android:text="5 days ago"
                         android:textSize="13sp"
-                        android:textColor="@color/text_gray" />
+                        android:textColor="?attr/colorOnSurfaceVariant" />
 
                 </LinearLayout>
 
@@ -158,7 +158,7 @@
                     android:text="-0.0002 SOL"
                     android:textSize="16sp"
                     android:textStyle="bold"
-                    android:textColor="@color/text_white"
+                    android:textColor="?attr/colorOnSurface"
                     android:gravity="end" />
 
             </LinearLayout>
@@ -186,7 +186,7 @@
                         android:text="Received USDC"
                         android:textSize="16sp"
                         android:textStyle="bold"
-                        android:textColor="@color/text_white"
+                        android:textColor="?attr/colorOnSurface"
                         android:layout_marginBottom="4dp" />
 
                     <TextView
@@ -194,7 +194,7 @@
                         android:layout_height="wrap_content"
                         android:text="1 week ago"
                         android:textSize="13sp"
-                        android:textColor="@color/text_gray" />
+                        android:textColor="?attr/colorOnSurfaceVariant" />
 
                 </LinearLayout>
 
@@ -232,7 +232,7 @@
                         android:text="Sent USDC"
                         android:textSize="16sp"
                         android:textStyle="bold"
-                        android:textColor="@color/text_white"
+                        android:textColor="?attr/colorOnSurface"
                         android:layout_marginBottom="4dp" />
 
                     <TextView
@@ -240,7 +240,7 @@
                         android:layout_height="wrap_content"
                         android:text="2 weeks ago"
                         android:textSize="13sp"
-                        android:textColor="@color/text_gray" />
+                        android:textColor="?attr/colorOnSurfaceVariant" />
 
                 </LinearLayout>
 
@@ -250,7 +250,7 @@
                     android:text="-5.00 USDC"
                     android:textSize="16sp"
                     android:textStyle="bold"
-                    android:textColor="@color/text_white"
+                    android:textColor="?attr/colorOnSurface"
                     android:gravity="end" />
 
             </LinearLayout>
@@ -277,7 +277,7 @@
                         android:text="Received SOL"
                         android:textSize="16sp"
                         android:textStyle="bold"
-                        android:textColor="@color/text_white"
+                        android:textColor="?attr/colorOnSurface"
                         android:layout_marginBottom="4dp" />
 
                     <TextView
@@ -285,7 +285,7 @@
                         android:layout_height="wrap_content"
                         android:text="3 weeks ago"
                         android:textSize="13sp"
-                        android:textColor="@color/text_gray" />
+                        android:textColor="?attr/colorOnSurfaceVariant" />
 
                 </LinearLayout>
 
@@ -310,8 +310,11 @@
     <include
         android:id="@+id/bottomNav"
         layout="@layout/bottom_navigation"
-        android:layout_width="match_parent"
-        android:layout_height="90dp"
+        android:layout_width="0dp"
+        android:layout_height="72dp"
+        android:layout_marginStart="16dp"
+        android:layout_marginEnd="16dp"
+        android:layout_marginBottom="20dp"
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent" />

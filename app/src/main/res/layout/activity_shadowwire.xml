@@ -5,7 +5,7 @@
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="#000000">
+    android:background="?attr/colorSurface">
 
     <!-- Header -->
     <LinearLayout
@@ -47,7 +47,7 @@
             android:layout_weight="1"
             android:text="Privacy Pool"
             android:textSize="28sp"
-            android:textColor="#999999"
+            android:textColor="?attr/colorOnSurfaceVariant"
             android:fontFamily="@font/space_grotesk_bold"
             android:textStyle="bold"
             android:gravity="center" />
@@ -67,7 +67,7 @@
                 android:layout_height="20dp"
                 android:layout_gravity="center"
                 android:src="@drawable/ic_clock"
-                app:tint="#888888"
+                app:tint="?attr/colorOnSurfaceVariant"
                 android:contentDescription="Pool Activity" />
 
         </FrameLayout>
@@ -117,7 +117,7 @@
                     android:layout_weight="1"
                     android:text="-- SOL"
                     android:textSize="28sp"
-                    android:textColor="#FFFFFF"
+                    android:textColor="?attr/colorOnSurface"
                     android:fontFamily="@font/space_grotesk_bold" />
 
                 <FrameLayout
@@ -133,7 +133,7 @@
                         android:layout_height="24dp"
                         android:layout_gravity="center"
                         android:src="@drawable/ic_swap"
-                        app:tint="#888888"
+                        app:tint="?attr/colorOnSurfaceVariant"
                         android:contentDescription="Toggle currency display" />
 
                 </FrameLayout>
@@ -180,7 +180,7 @@
                         android:layout_width="28dp"
                         android:layout_height="28dp"
                         android:src="@drawable/ic_deposit"
-                        app:tint="#888888"
+                        app:tint="?attr/colorOnSurfaceVariant"
                         android:layout_marginBottom="6dp"
                         android:contentDescription="Deposit" />
 
@@ -212,7 +212,7 @@
                         android:layout_width="28dp"
                         android:layout_height="28dp"
                         android:src="@drawable/ic_withdraw"
-                        app:tint="#888888"
+                        app:tint="?attr/colorOnSurfaceVariant"
                         android:layout_marginBottom="6dp"
                         android:contentDescription="Withdraw" />
 
@@ -244,7 +244,7 @@
                         android:layout_width="28dp"
                         android:layout_height="28dp"
                         android:src="@drawable/ic_shield"
-                        app:tint="#888888"
+                        app:tint="?attr/colorOnSurfaceVariant"
                         android:layout_marginBottom="6dp"
                         android:contentDescription="Private Send" />
 
@@ -275,7 +275,7 @@
                         android:layout_width="28dp"
                         android:layout_height="28dp"
                         android:src="@drawable/ic_incognito"
-                        app:tint="#888888"
+                        app:tint="?attr/colorOnSurfaceVariant"
                         android:layout_marginBottom="6dp"
                         android:contentDescription="Anonymous Send" />
 
@@ -305,7 +305,7 @@
                     android:layout_height="wrap_content"
                     android:text="How It Works"
                     android:textSize="18sp"
-                    android:textColor="@color/text_white"
+                    android:textColor="?attr/colorOnSurface"
                     android:fontFamily="@font/space_grotesk_bold"
                     android:paddingBottom="12dp" />
 

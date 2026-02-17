@@ -46,7 +46,7 @@
             android:layout_weight="1"
             android:text="Add Friend"
             android:textSize="24sp"
-            android:textColor="#999999"
+            android:textColor="?attr/colorOnSurfaceVariant"
             android:fontFamily="@font/space_grotesk_bold"
             android:textStyle="bold"
             android:gravity="center" />
@@ -134,7 +134,7 @@
                         android:layout_height="24dp"
                         android:layout_gravity="center"
                         android:src="@drawable/ic_qr_code"
-                        app:tint="#888888"
+                        app:tint="?attr/colorOnSurfaceVariant"
                         android:contentDescription="Scan QR Code" />
 
                 </FrameLayout>
@@ -371,7 +371,7 @@
                 android:text="Send Friend Request"
                 android:textSize="16sp"
                 android:fontFamily="@font/space_grotesk_bold"
-                android:textColor="#FFFFFF"
+                android:textColor="?attr/colorOnSurface"
                 android:background="@drawable/settings_box_bg"
                 android:gravity="center"
                 android:clickable="true"
@@ -383,144 +383,23 @@
     </ScrollView>
 
     <!-- Bottom Navigation -->
-    <LinearLayout
-        android:id="@+id/bottomNav"
-        android:layout_width="match_parent"
-        android:layout_height="110dp"
-        android:orientation="horizontal"
-        android:background="#0A0A0A"
-        android:gravity="center"
-        android:paddingTop="12dp"
-        android:paddingBottom="12dp"
-        app:layout_constraintBottom_toBottomOf="parent">
-
-        <!-- Messages Nav Item -->
-        <LinearLayout
-            android:id="@+id/navMessages"
-            android:layout_width="0dp"
-            android:layout_height="match_parent"
-            android:layout_weight="1"
-            android:orientation="vertical"
-            android:gravity="center"
-            android:background="@drawable/nav_item_ripple"
-            android:clickable="true"
-            android:focusable="true">
-
-            <ImageView
-                android:layout_width="24dp"
-                android:layout_height="24dp"
-                android:src="@android:drawable/sym_action_chat"
-                app:tint="@color/text_gray"
-                android:layout_marginBottom="4dp"
-                android:contentDescription="Messages" />
-
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="Messages"
-                android:textSize="11sp"
-                android:textColor="@color/text_gray"
-                android:fontFamily="@font/poppins_medium" />
-
-        </LinearLayout>
-
-        <!-- Wallet Nav Item -->
-        <LinearLayout
-            android:id="@+id/navWallet"
-            android:layout_width="0dp"
-            android:layout_height="match_parent"
-            android:layout_weight="1"
-            android:orientation="vertical"
-            android:gravity="center"
-            android:background="@drawable/nav_item_ripple"
-            android:clickable="true"
-            android:focusable="true">
-
-            <ImageView
-                android:layout_width="24dp"
-                android:layout_height="24dp"
-                android:src="@drawable/ic_wallet"
-                android:layout_marginBottom="4dp"
-                app:tint="@color/text_gray"
-                android:contentDescription="Wallet" />
-
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="Wallet"
-                android:textSize="11sp"
-                android:textColor="@color/text_gray"
-                android:fontFamily="@font/poppins_medium" />
-
-        </LinearLayout>
-
-        <!-- Add Friend Nav Item -->
-        <LinearLayout
-            android:id="@+id/navAddFriend"
-            android:layout_width="0dp"
-            android:layout_height="match_parent"
-            android:layout_weight="1"
-            android:orientation="vertical"
-            android:gravity="center"
-            android:background="@drawable/nav_item_ripple"
-            android:clickable="true"
-            android:focusable="true">
-
-            <ImageView
-                android:layout_width="24dp"
-                android:layout_height="24dp"
-                android:src="@drawable/ic_add_friend"
-                app:tint="@color/text_gray"
-                android:layout_marginBottom="4dp"
-                android:contentDescription="Add Friend" />
-
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="Add Friend"
-                android:textSize="11sp"
-                android:textColor="@color/text_gray"
-                android:fontFamily="@font/poppins_medium" />
-
-        </LinearLayout>
-
-        <!-- Lock Nav Item -->
-        <LinearLayout
-            android:id="@+id/navLock"
-            android:layout_width="0dp"
-            android:layout_height="match_parent"
-            android:layout_weight="1"
-            android:orientation="vertical"
-            android:gravity="center"
-            android:background="@drawable/nav_item_ripple"
-            android:clickable="true"
-            android:focusable="true">
-
-            <ImageView
-                android:layout_width="24dp"
-                android:layout_height="24dp"
-                android:src="@drawable/ic_lock"
-                android:layout_marginBottom="4dp"
-                app:tint="@color/text_gray"
-                android:contentDescription="Lock" />
-
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="Lock"
-                android:textSize="11sp"
-                android:textColor="@color/text_gray"
-                android:fontFamily="@font/poppins_medium" />
-
-        </LinearLayout>
-
-    </LinearLayout>
+    <include
+        layout="@layout/bottom_navigation"
+        android:layout_width="0dp"
+        android:layout_height="80dp"
+        android:layout_marginStart="40dp"
+        android:layout_marginEnd="40dp"
+        android:layout_marginBottom="20dp"
+        android:elevation="8dp"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent" />
 
     <!-- Loading Overlay -->
     <FrameLayout
         android:id="@+id/loadingOverlay"
         android:layout_width="match_parent"
-        android:layout_height="match_parent"
+        android:layout_height="wrap_content"
         android:background="#CC000000"
         android:visibility="gone"
         android:clickable="true"
@@ -546,7 +425,7 @@
                 android:layout_height="wrap_content"
                 android:text="Sending request..."
                 android:textSize="16sp"
-                android:textColor="#FFFFFF"
+                android:textColor="?attr/colorOnSurface"
                 android:fontFamily="@font/poppins_medium" />
 
             <TextView

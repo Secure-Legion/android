@@ -38,7 +38,7 @@
             android:layout_height="wrap_content"
             android:text="Alice"
             android:textSize="16sp"
-            android:textColor="#FFFFFF"
+            android:textColor="?attr/colorOnSurface"
             android:fontFamily="@font/poppins_medium" />
 
         <!-- Call Details -->
@@ -48,7 +48,7 @@
             android:layout_height="wrap_content"
             android:text="Incoming • Yesterday • 12:45"
             android:textSize="13sp"
-            android:textColor="#888888"
+            android:textColor="?attr/colorOnSurfaceVariant"
             android:fontFamily="@font/poppins_regular"
             android:layout_marginTop="2dp" />
 
@@ -60,7 +60,7 @@
         android:layout_width="40dp"
         android:layout_height="40dp"
         android:src="@drawable/ic_call"
-        app:tint="#888888"
+        app:tint="?attr/colorOnSurfaceVariant"
         android:padding="8dp"
         android:clickable="true"
         android:focusable="true"

@@ -144,11 +144,11 @@ data class StressRunId(val id: String) {
  * Stress test scenarios
  */
 enum class Scenario {
-    BURST,              // Send N messages as fast as possible
-    CASCADE,            // Test session leak fix (force first to fail, verify second works)
-    CONCURRENT_CONTACTS,  // Round-robin sends to multiple contacts
-    RETRY_STORM,        // Resend all failed messages
-    MIXED               // Mixed message types (TEXT small, TEXT large, VOICE, IMAGE)
+    BURST, // Send N messages as fast as possible
+    CASCADE, // Test session leak fix (force first to fail, verify second works)
+    CONCURRENT_CONTACTS, // Round-robin sends to multiple contacts
+    RETRY_STORM, // Resend all failed messages
+    MIXED // Mixed message types (TEXT small, TEXT large, VOICE, IMAGE)
 }
 
 /**
@@ -166,7 +166,7 @@ sealed class StressEvent(val timestampMs: Long = System.currentTimeMillis()) {
 
     data class Phase(
         val correlationId: String,
-        val phase: String,  // "PING_SENT", "PONG_RECEIVED", "MESSAGE_SENT", "DELIVERED", "FAILED"
+        val phase: String, // "PING_SENT", "PONG_RECEIVED", "MESSAGE_SENT", "DELIVERED", "FAILED"
         val ok: Boolean,
         val detail: String? = null
     ) : StressEvent()
@@ -190,7 +190,7 @@ data class StressTestConfig(
     val scenario: Scenario,
     val messageCount: Int,
     val delayMs: Long = 0,
-    val messageSize: Int = 256,  // bytes
+    val messageSize: Int = 256, // bytes
     val contactId: Long,
     val includeMixedTypes: Boolean = false
 )

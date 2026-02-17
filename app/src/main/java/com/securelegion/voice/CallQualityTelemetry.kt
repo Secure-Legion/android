@@ -25,11 +25,11 @@ import java.util.concurrent.atomic.AtomicLong
  * - Audio underruns
  *
  * Usage:
- *   val telemetry = CallQualityTelemetry()
- *   telemetry.start(coroutineScope)
- *   telemetry.reportLateFrame(circuitIndex)
- *   telemetry.reportFECAttempt(success = true)
- *   // ... telemetry.getSnapshot() for UI display
+ * val telemetry = CallQualityTelemetry()
+ * telemetry.start(coroutineScope)
+ * telemetry.reportLateFrame(circuitIndex)
+ * telemetry.reportFECAttempt(success = true)
+ * // ... telemetry.getSnapshot() for UI display
  */
 class CallQualityTelemetry {
     companion object {
@@ -65,15 +65,15 @@ class CallQualityTelemetry {
 
     // === Per-Circuit Metrics ===
     private data class CircuitMetrics(
-        val framesReceived: AtomicLong = AtomicLong(0),      // Frames WE received on this circuit (incoming)
+        val framesReceived: AtomicLong = AtomicLong(0), // Frames WE received on this circuit (incoming)
         val lateFrames: AtomicLong = AtomicLong(0),
-        val framesSent: AtomicLong = AtomicLong(0),          // Frames WE sent on this circuit (outgoing)
+        val framesSent: AtomicLong = AtomicLong(0), // Frames WE sent on this circuit (outgoing)
         val cooldownEvents: AtomicInteger = AtomicInteger(0),
         // FIX #4: Add missing% and PLC% tracking per circuit
-        val plcFrames: AtomicLong = AtomicLong(0),           // PLC used on this circuit
-        var lastReceivedSeq: Long = -1,                      // Last sequence seen (for burst detection)
+        val plcFrames: AtomicLong = AtomicLong(0), // PLC used on this circuit
+        var lastReceivedSeq: Long = -1, // Last sequence seen (for burst detection)
         var burstLossEvents: AtomicInteger = AtomicInteger(0), // Consecutive loss events
-        val peerFramesReceived: AtomicLong = AtomicLong(0)   // Frames PEER received (from their feedback) - CRITICAL FIX!
+        val peerFramesReceived: AtomicLong = AtomicLong(0) // Frames PEER received (from their feedback) - CRITICAL FIX!
     )
 
     private val circuitMetrics = mutableMapOf<Int, CircuitMetrics>()
@@ -265,15 +265,15 @@ class CallQualityTelemetry {
             // Fields 14 and 15 are utime and stime (in clock ticks)
             val utime = parts.getOrNull(13)?.toLongOrNull() ?: return 0.0
             val stime = parts.getOrNull(14)?.toLongOrNull() ?: return 0.0
-            val totalCpuTime = utime + stime  // Total CPU time in clock ticks
+            val totalCpuTime = utime + stime // Total CPU time in clock ticks
 
             // Get wall time
             val currentWallTime = System.currentTimeMillis()
 
             // Calculate CPU usage since last measurement
             if (lastCpuTime > 0 && lastWallTime > 0) {
-                val cpuTimeDelta = totalCpuTime - lastCpuTime  // Clock ticks
-                val wallTimeDelta = currentWallTime - lastWallTime  // Milliseconds
+                val cpuTimeDelta = totalCpuTime - lastCpuTime // Clock ticks
+                val wallTimeDelta = currentWallTime - lastWallTime // Milliseconds
 
                 if (wallTimeDelta > 0) {
                     // Convert clock ticks to milliseconds (100 ticks per second on Android)
@@ -321,9 +321,9 @@ class CallQualityTelemetry {
 
         // Per-circuit stats (v3 - with missing% and PLC%)
         val perCircuit = circuitMetrics.map { (idx, metrics) ->
-            val received = metrics.framesReceived.get()         // Frames WE received (incoming)
+            val received = metrics.framesReceived.get() // Frames WE received (incoming)
             val circuitLate = metrics.lateFrames.get()
-            val sent = metrics.framesSent.get()                 // Frames WE sent (outgoing)
+            val sent = metrics.framesSent.get() // Frames WE sent (outgoing)
             val cooldowns = metrics.cooldownEvents.get()
             val plc = metrics.plcFrames.get()
             val burstEvents = metrics.burstLossEvents.get()
@@ -385,11 +385,11 @@ class CallQualityTelemetry {
      *
      * Quality criteria:
      * - 5 bars (Excellent): Late% < 2%, PLC% < 1%, Jitter < 300ms
-     * - 4 bars (Good):      Late% < 5%, PLC% < 3%, Jitter < 400ms
-     * - 3 bars (Fair):      Late% < 10%, PLC% < 5%, Jitter < 500ms
-     * - 2 bars (Poor):      Late% < 20%, PLC% < 10%, Jitter < 600ms
-     * - 1 bar  (Bad):       Late% < 30%, PLC% < 15%
-     * - 0 bars (Terrible):  Worse than above
+     * - 4 bars (Good): Late% < 5%, PLC% < 3%, Jitter < 400ms
+     * - 3 bars (Fair): Late% < 10%, PLC% < 5%, Jitter < 500ms
+     * - 2 bars (Poor): Late% < 20%, PLC% < 10%, Jitter < 600ms
+     * - 1 bar (Bad): Late% < 30%, PLC% < 15%
+     * - 0 bars (Terrible): Worse than above
      */
     fun getQualityScore(): Int {
         val snapshot = getSnapshot()
@@ -437,14 +437,14 @@ class CallQualityTelemetry {
             appendLine("=======================================================")
             appendLine()
             appendLine("Overall Metrics:")
-            appendLine("   Total Frames:     ${snapshot.totalFrames}")
-            appendLine("   Late%:            ${String.format("%.2f%%", snapshot.latePercent)}")
-            appendLine("   PLC%:             ${String.format("%.2f%%", snapshot.plcPercent)}")
-            appendLine("   FEC Success%:     ${String.format("%.2f%%", snapshot.fecSuccessPercent)}")
-            appendLine("   Out-of-Order%:    ${String.format("%.2f%%", snapshot.outOfOrderPercent)}")
-            appendLine("   Jitter Buffer:    ${snapshot.jitterBufferMs}ms")
-            appendLine("   Audio Underruns:  ${snapshot.audioUnderruns}")
-            appendLine("   CPU Usage:        ${String.format("%.1f%%", snapshot.cpuUsagePercent)} (${Runtime.getRuntime().availableProcessors()} cores)")
+            appendLine(" Total Frames: ${snapshot.totalFrames}")
+            appendLine(" Late%: ${String.format("%.2f%%", snapshot.latePercent)}")
+            appendLine(" PLC%: ${String.format("%.2f%%", snapshot.plcPercent)}")
+            appendLine(" FEC Success%: ${String.format("%.2f%%", snapshot.fecSuccessPercent)}")
+            appendLine(" Out-of-Order%: ${String.format("%.2f%%", snapshot.outOfOrderPercent)}")
+            appendLine(" Jitter Buffer: ${snapshot.jitterBufferMs}ms")
+            appendLine(" Audio Underruns: ${snapshot.audioUnderruns}")
+            appendLine(" CPU Usage: ${String.format("%.1f%%", snapshot.cpuUsagePercent)} (${Runtime.getRuntime().availableProcessors()} cores)")
             appendLine()
             appendLine("Per-Circuit Stats:")
             snapshot.perCircuitStats.forEachIndexed { idx, circuit ->
@@ -453,16 +453,16 @@ class CallQualityTelemetry {
                 } else {
                     0.0
                 }
-                appendLine("   Circuit ${circuit.circuitIndex}:")
-                appendLine("      Late%:        ${String.format("%.2f%%", circuit.latePercent)}")
+                appendLine(" Circuit ${circuit.circuitIndex}:")
+                appendLine(" Late%: ${String.format("%.2f%%", circuit.latePercent)}")
                 // FIX #4: Show missing% and PLC% in telemetry logs
-                appendLine("      Missing%:     ${String.format("%.2f%%", circuit.missingPercent)}")
-                appendLine("      PLC%:         ${String.format("%.2f%%", circuit.plcPercent)}")
-                appendLine("      Distribution: ${String.format("%.1f%%", distribution)} (target: ${getTargetDistribution(idx)}%)")
-                appendLine("      Sent/Recv:    ${circuit.framesSent}/${circuit.framesReceived}")
-                appendLine("      Cooldowns:    ${circuit.cooldownEvents}")
+                appendLine(" Missing%: ${String.format("%.2f%%", circuit.missingPercent)}")
+                appendLine(" PLC%: ${String.format("%.2f%%", circuit.plcPercent)}")
+                appendLine(" Distribution: ${String.format("%.1f%%", distribution)} (target: ${getTargetDistribution(idx)}%)")
+                appendLine(" Sent/Recv: ${circuit.framesSent}/${circuit.framesReceived}")
+                appendLine(" Cooldowns: ${circuit.cooldownEvents}")
                 if (circuit.burstLossEvents > 0) {
-                    appendLine("      Burst Loss:   ${circuit.burstLossEvents} events")
+                    appendLine(" Burst Loss: ${circuit.burstLossEvents} events")
                 }
             }
             appendLine()
@@ -526,8 +526,8 @@ class CallQualityTelemetry {
         val framesSent: Long,
         val cooldownEvents: Int,
         // FIX #4: New fields for better circuit health monitoring
-        val missingPercent: Double,    // (sent - received) / sent * 100
-        val plcPercent: Double,         // PLC frames / received * 100
-        val burstLossEvents: Int        // Number of burst loss events detected
+        val missingPercent: Double, // (sent - received) / sent * 100
+        val plcPercent: Double, // PLC frames / received * 100
+        val burstLossEvents: Int // Number of burst loss events detected
     )
 }

@@ -26,9 +26,9 @@ class DeveloperActivity : AppCompatActivity() {
         // Log Opus version for debugging
         try {
             val opusVersion = RustBridge.getOpusVersion()
-            Log.i(TAG, "════════════════════════════════════════════════════")
+            Log.i(TAG, "")
             Log.i(TAG, "Opus Library Version: $opusVersion")
-            Log.i(TAG, "════════════════════════════════════════════════════")
+            Log.i(TAG, "")
         } catch (e: Exception) {
             Log.e(TAG, "Failed to get Opus version: ${e.message}", e)
         }

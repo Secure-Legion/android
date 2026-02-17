@@ -38,7 +38,7 @@ class TorVpnService : VpnService(), ISocketProtect {
 
         // Use same channel AND same ID as TorService for unified notification
         private const val NOTIFICATION_CHANNEL_ID = "tor_service_channel"
-        private const val NOTIFICATION_ID = 1001  // Same ID as TorService - they share one notification
+        private const val NOTIFICATION_ID = 1001 // Same ID as TorService - they share one notification
 
         @Volatile
         private var running = AtomicBoolean(false)
@@ -136,12 +136,12 @@ class TorVpnService : VpnService(), ISocketProtect {
             // Build VPN profile
             val builder = Builder()
                 .setSession("SecureLegion Tor VPN")
-                .addAddress("169.254.42.1", 16)  // IPv4 local address
-                .addAddress("fc00::", 7)          // IPv6 local address
-                .addRoute("0.0.0.0", 0)           // Route all IPv4
-                .addRoute("::", 0)                // Route all IPv6
-                .addDnsServer("169.254.42.53")    // Local DNS
-                .addDnsServer("fe80::53")         // Local IPv6 DNS
+                .addAddress("169.254.42.1", 16) // IPv4 local address
+                .addAddress("fc00::", 7) // IPv6 local address
+                .addRoute("0.0.0.0", 0) // Route all IPv4
+                .addRoute("::", 0) // Route all IPv6
+                .addDnsServer("169.254.42.53") // Local DNS
+                .addDnsServer("fe80::53") // Local IPv6 DNS
                 .allowFamily(OsConstants.AF_INET)
                 .allowFamily(OsConstants.AF_INET6)
                 .setMtu(1500)
@@ -152,7 +152,7 @@ class TorVpnService : VpnService(), ISocketProtect {
             try {
                 val myUid = android.os.Process.myUid()
                 builder.addDisallowedApplication(packageName)
-                Log.i(TAG, "✓ Excluded SecureLegion (UID $myUid) from VPN routing")
+                Log.i(TAG, "Excluded SecureLegion (UID $myUid) from VPN routing")
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to exclude SecureLegion from VPN", e)
             }
@@ -184,7 +184,7 @@ class TorVpnService : VpnService(), ISocketProtect {
                     Log.d(TAG, "Starting OnionMasq with fd=$fd")
 
                     // Start OnionMasq proxy (this blocks until stopped)
-                    OnionMasq.start(fd, null)  // null = no bridges, direct Tor
+                    OnionMasq.start(fd, null) // null = no bridges, direct Tor
 
                     Log.i(TAG, "OnionMasq stopped normally")
                 } catch (e: OnionmasqException) {
@@ -287,13 +287,13 @@ class TorVpnService : VpnService(), ISocketProtect {
     private fun broadcastVpnStats(bytesRx: Long, bytesTx: Long, active: Boolean) {
         Log.d(TAG, "Broadcasting VPN stats: active=$active, rx=$bytesRx, tx=$bytesTx")
         val intent = Intent(TorService.ACTION_VPN_BANDWIDTH_UPDATE).apply {
-            setPackage(packageName)  // Explicit package for Android 8.0+ broadcast restrictions
+            setPackage(packageName) // Explicit package for Android 8.0+ broadcast restrictions
             putExtra(TorService.EXTRA_VPN_RX_BYTES, bytesRx)
             putExtra(TorService.EXTRA_VPN_TX_BYTES, bytesTx)
             putExtra(TorService.EXTRA_VPN_ACTIVE, active)
         }
         sendBroadcast(intent)
-        Log.d(TAG, "✓ Broadcast sent to package: $packageName")
+        Log.d(TAG, "Broadcast sent to package: $packageName")
     }
 
     private fun createNotification(message: String): Notification {

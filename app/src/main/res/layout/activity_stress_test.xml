@@ -3,7 +3,7 @@
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="#000000">
+    android:background="?attr/colorSurface">
 
     <!-- Header -->
     <LinearLayout
@@ -76,7 +76,7 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:text="Scenario"
-        android:textColor="@color/text_gray"
+        android:textColor="?attr/colorOnSurfaceVariant"
         android:textSize="12sp"
         android:fontFamily="@font/poppins_regular"
         android:layout_marginBottom="4dp"/>
@@ -85,7 +85,7 @@
         android:id="@+id/scenarioSpinner"
         android:layout_width="match_parent"
         android:layout_height="48dp"
-        android:background="@color/card_bg"
+        android:background="?attr/colorSurfaceContainer"
         android:padding="12dp"
         android:layout_marginBottom="16dp"/>
 
@@ -94,7 +94,7 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:text="Message Count"
-        android:textColor="@color/text_gray"
+        android:textColor="?attr/colorOnSurfaceVariant"
         android:textSize="12sp"
         android:fontFamily="@font/poppins_regular"
         android:layout_marginBottom="4dp"/>
@@ -103,8 +103,8 @@
         android:id="@+id/messageCountInput"
         android:layout_width="match_parent"
         android:layout_height="48dp"
-        android:background="@color/card_bg"
-        android:textColor="@color/text_white"
+        android:background="?attr/colorSurfaceContainer"
+        android:textColor="?attr/colorOnSurface"
         android:textColorHint="@color/text_gray"
         android:hint="10"
         android:inputType="number"
@@ -117,7 +117,7 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:text="Test Contact"
-        android:textColor="@color/text_gray"
+        android:textColor="?attr/colorOnSurfaceVariant"
         android:textSize="12sp"
         android:fontFamily="@font/poppins_regular"
         android:layout_marginBottom="4dp"/>
@@ -126,7 +126,7 @@
         android:id="@+id/contactSpinner"
         android:layout_width="match_parent"
         android:layout_height="48dp"
-        android:background="@color/card_bg"
+        android:background="?attr/colorSurfaceContainer"
         android:padding="12dp"
         android:layout_marginBottom="16dp"/>
 
@@ -153,7 +153,7 @@
                 android:layout_gravity="center"
                 android:text="START"
                 android:textSize="16sp"
-                android:textColor="#FFFFFF"
+                android:textColor="?attr/colorOnSurface"
                 android:fontFamily="@font/space_grotesk_bold"
                 android:textStyle="bold" />
         </FrameLayout>
@@ -196,7 +196,7 @@
             android:layout_height="wrap_content"
             android:layout_weight="1"
             android:text="Sent: 0"
-            android:textColor="@color/text_white"
+            android:textColor="?attr/colorOnSurface"
             android:textSize="12sp"
             android:fontFamily="@font/poppins_regular"/>
 
@@ -226,7 +226,7 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:text="Event Log"
-        android:textColor="@color/text_gray"
+        android:textColor="?attr/colorOnSurfaceVariant"
         android:textSize="12sp"
         android:fontFamily="@font/poppins_regular"
         android:layout_marginBottom="4dp"/>
@@ -263,7 +263,7 @@
                 android:layout_gravity="center"
                 android:text="DUMP COUNTERS"
                 android:textSize="12sp"
-                android:textColor="#FFFFFF"
+                android:textColor="?attr/colorOnSurface"
                 android:fontFamily="@font/poppins_medium" />
         </FrameLayout>
 
@@ -283,7 +283,7 @@
                 android:layout_gravity="center"
                 android:text="RESET STATE"
                 android:textSize="12sp"
-                android:textColor="#FFFFFF"
+                android:textColor="?attr/colorOnSurface"
                 android:fontFamily="@font/poppins_medium" />
         </FrameLayout>
     </LinearLayout>

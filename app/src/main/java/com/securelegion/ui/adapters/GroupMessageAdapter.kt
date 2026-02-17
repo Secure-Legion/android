@@ -75,12 +75,12 @@ class GroupMessageAdapter(
 
             // Show delivery status
             messageStatus.text = when (message.status) {
-                GroupMessage.STATUS_PENDING -> "○"
-                GroupMessage.STATUS_SENT -> "✓"
-                GroupMessage.STATUS_DELIVERED -> "✓✓"
-                GroupMessage.STATUS_READ -> "✓✓"
-                GroupMessage.STATUS_FAILED -> "✗"
-                else -> "✓"
+                GroupMessage.STATUS_PENDING -> "-"
+                GroupMessage.STATUS_SENT -> "Sent"
+                GroupMessage.STATUS_DELIVERED -> "Delivered"
+                GroupMessage.STATUS_READ -> "Read"
+                GroupMessage.STATUS_FAILED -> "Failed"
+                else -> "Sent"
             }
             messageStatus.visibility = View.VISIBLE
 

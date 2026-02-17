@@ -619,12 +619,12 @@ class ShadowWireService(private val context: Context, private val walletId: Stri
     )
 
     data class PoolActivityItem(
-        val type: String,           // "deposit", "withdraw", "internal_transfer", "external_transfer"
-        val amount: Double,         // SOL amount
-        val timestamp: Long,        // epoch millis
-        val txSignature: String,    // on-chain tx signature
-        val recipient: String,      // recipient address (for transfers)
-        val status: String          // "confirmed", "pending", "failed"
+        val type: String, // "deposit", "withdraw", "internal_transfer", "external_transfer"
+        val amount: Double, // SOL amount
+        val timestamp: Long, // epoch millis
+        val txSignature: String, // on-chain tx signature
+        val recipient: String, // recipient address (for transfers)
+        val status: String // "confirmed", "pending", "failed"
     )
 
     data class DepositResult(

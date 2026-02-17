@@ -69,8 +69,7 @@ class AddFriendActivity : BaseActivity() {
                 bottomNav.paddingLeft,
                 bottomNav.paddingTop,
                 bottomNav.paddingRight,
-                insets.bottom
-            )
+                0)
             windowInsets
         }
 
@@ -638,7 +637,7 @@ class AddFriendActivity : BaseActivity() {
             val updatedRequests = pendingRequestsV2.filter { requestJson ->
                 try {
                     val request = com.securelegion.models.PendingFriendRequest.fromJson(requestJson)
-                    request.ipfsCid != cid  // Keep if CID doesn't match
+                    request.ipfsCid != cid // Keep if CID doesn't match
                 } catch (e: Exception) {
                     true // Keep if can't parse
                 }
@@ -776,20 +775,20 @@ class AddFriendActivity : BaseActivity() {
                     val contactListManager = com.securelegion.services.ContactListManager.getInstance(this@AddFriendActivity)
 
                     // Backup our own contact list (now includes this new friend)
-                    Log.d(TAG, "⬆ Starting OUR contact list backup...")
+                    Log.d(TAG, "Starting OUR contact list backup...")
                     val backupResult = contactListManager.backupToIPFS()
                     if (backupResult.isSuccess) {
                         val ourCID = backupResult.getOrThrow()
-                        Log.i(TAG, "✓✓✓ SUCCESS: OUR contact list backed up to IPFS")
+                        Log.i(TAG, "SUCCESS: OUR contact list backed up to IPFS")
                     } else {
-                        Log.e(TAG, "❌ FAILED to backup OUR contact list: ${backupResult.exceptionOrNull()?.message}")
+                        Log.e(TAG, "FAILED to backup OUR contact list: ${backupResult.exceptionOrNull()?.message}")
                         backupResult.exceptionOrNull()?.printStackTrace()
                     }
 
                     // Pin friend's contact list for redundancy (v5 architecture)
                     // Fetch friend's contact list via their .onion HTTP and pin it locally
                     if (contactCard.ipfsCid != null) {
-                        Log.d(TAG, "⬇ Starting contact list pinning for ${contactCard.displayName}")
+                        Log.d(TAG, "Starting contact list pinning for ${contactCard.displayName}")
 
                         val ipfsManager = com.securelegion.services.IPFSManager.getInstance(this@AddFriendActivity)
                         val pinResult = ipfsManager.pinFriendContactList(
@@ -798,12 +797,12 @@ class AddFriendActivity : BaseActivity() {
                             friendOnion = contactCard.friendRequestOnion // Fetch via friend's .onion
                         )
                         if (pinResult.isSuccess) {
-                            Log.i(TAG, "✓✓✓ SUCCESS: Pinned ${contactCard.displayName}'s contact list")
+                            Log.i(TAG, "SUCCESS: Pinned ${contactCard.displayName}'s contact list")
                         } else {
-                            Log.e(TAG, "❌ FAILED to pin ${contactCard.displayName}'s contact list: ${pinResult.exceptionOrNull()?.message}")
+                            Log.e(TAG, "FAILED to pin ${contactCard.displayName}'s contact list: ${pinResult.exceptionOrNull()?.message}")
                         }
                     } else {
-                        Log.w(TAG, "⚠ Friend's contact list CID is NULL - cannot pin (they may be using old version)")
+                        Log.w(TAG, "Friend's contact list CID is NULL - cannot pin (they may be using old version)")
                     }
                 } catch (e: Exception) {
                     Log.w(TAG, "Non-critical error during contact list backup", e)
@@ -890,7 +889,7 @@ class AddFriendActivity : BaseActivity() {
                                 ourMessagingOnion = ourMessagingOnion,
                                 theirMessagingOnion = theirMessagingOnion
                             )
-                            Log.i(TAG, "✓ Key chain initialized for ${contact.displayName}")
+                            Log.i(TAG, "Key chain initialized for ${contact.displayName}")
                         }
                     } catch (e: Exception) {
                         Log.e(TAG, "Failed to initialize key chain for ${contact.displayName}", e)
@@ -1003,7 +1002,7 @@ class AddFriendActivity : BaseActivity() {
                     }
                 }.find {
                     it.direction == com.securelegion.models.PendingFriendRequest.DIRECTION_INCOMING &&
-                    it.contactCardJson != null  // Must have Phase 1 encrypted data
+                    it.contactCardJson != null // Must have Phase 1 encrypted data
                 }
 
                 if (incomingRequest == null || incomingRequest.contactCardJson == null) {
@@ -1059,9 +1058,9 @@ class AddFriendActivity : BaseActivity() {
                         Log.e(TAG, "Phase 1 signature verification FAILED - rejecting friend request")
                         return@launch
                     }
-                    Log.i(TAG, "✓ Phase 1 signature verified (Ed25519)")
+                    Log.i(TAG, "Phase 1 signature verified (Ed25519)")
                 } else {
-                    Log.w(TAG, "⚠️  Phase 1 has no signature (legacy friend request)")
+                    Log.w(TAG, "Phase 1 has no signature (legacy friend request)")
                 }
 
                 Log.i(TAG, "Phase 1 decrypted successfully for sender: $senderUsername")
@@ -1462,46 +1461,7 @@ class AddFriendActivity : BaseActivity() {
     }
 
     private fun setupBottomNav() {
-        findViewById<View>(R.id.navMessages).setOnClickListener {
-            val intent = Intent(this, MainActivity::class.java)
-            startActivity(intent)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                overrideActivityTransition(Activity.OVERRIDE_TRANSITION_OPEN, 0, 0)
-            } else {
-                @Suppress("DEPRECATION")
-                overridePendingTransition(0, 0)
-            }
-            finish()
-        }
-
-        findViewById<View>(R.id.navWallet).setOnClickListener {
-            val intent = Intent(this, MainActivity::class.java)
-            intent.putExtra("SHOW_WALLET", true)
-            startActivity(intent)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                overrideActivityTransition(Activity.OVERRIDE_TRANSITION_OPEN, 0, 0)
-            } else {
-                @Suppress("DEPRECATION")
-                overridePendingTransition(0, 0)
-            }
-            finish()
-        }
-
-        findViewById<View>(R.id.navAddFriend).setOnClickListener {
-            // Already on Add Friend screen, do nothing
-        }
-
-        findViewById<View>(R.id.navLock).setOnClickListener {
-            val intent = Intent(this, LockActivity::class.java)
-            startActivity(intent)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                overrideActivityTransition(Activity.OVERRIDE_TRANSITION_OPEN, 0, 0)
-            } else {
-                @Suppress("DEPRECATION")
-                overridePendingTransition(0, 0)
-            }
-            finish()
-        }
+        BottomNavigationHelper.setupBottomNavigation(this)
     }
 
     private fun enterDeleteMode() {

@@ -4,6 +4,8 @@ import android.content.Context
 import android.graphics.*
 import android.util.AttributeSet
 import android.view.View
+import com.google.android.material.color.MaterialColors
+import com.securelegion.R
 import com.securelegion.utils.ImagePicker
 import kotlin.math.min
 
@@ -19,7 +21,7 @@ class AvatarView @JvmOverloads constructor(
 
     private var bitmap: Bitmap? = null
     private var initials: String = "?"
-    private var backgroundColor: Int = Color.parseColor("#666666")
+    private var backgroundColor: Int = 0
 
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -60,7 +62,7 @@ class AvatarView @JvmOverloads constructor(
     fun setName(name: String?) {
         if (name.isNullOrEmpty()) {
             initials = "?"
-            backgroundColor = Color.parseColor("#666666")
+            backgroundColor = MaterialColors.getColor(this, com.google.android.material.R.attr.colorOutlineVariant, Color.GRAY)
         } else {
             initials = generateInitials(name)
             backgroundColor = generateColor(name)
@@ -95,7 +97,7 @@ class AvatarView @JvmOverloads constructor(
         } else {
             // Draw initials only (transparent background - shows parent background)
             textPaint.textSize = size * 0.4f
-            textPaint.color = Color.parseColor("#888888")
+            textPaint.color = MaterialColors.getColor(this, com.google.android.material.R.attr.colorOnSurfaceVariant, Color.GRAY)
             val yPos = (height / 2f) - ((textPaint.descent() + textPaint.ascent()) / 2f)
             canvas.drawText(initials, width / 2f, yPos, textPaint)
         }

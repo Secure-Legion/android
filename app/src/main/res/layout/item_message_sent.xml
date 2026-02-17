@@ -13,7 +13,7 @@
         android:layout_height="wrap_content"
         android:layout_gravity="center_horizontal"
         android:text="Today"
-        android:textColor="@color/text_gray"
+        android:textColor="?attr/colorOnSurfaceVariant"
         android:textSize="12sp"
         android:paddingBottom="8dp"
         android:visibility="gone" />
@@ -42,7 +42,7 @@
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
                 android:text="Message content"
-                android:textColor="@color/text_white"
+                android:textColor="?attr/colorOnSurface"
                 android:textSize="17sp"
                 android:fontFamily="sans-serif-medium"
                 android:lineSpacingMultiplier="1.2" />
@@ -67,7 +67,7 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:text="12:34 PM"
-            android:textColor="@color/text_gray"
+            android:textColor="?attr/colorOnSurfaceVariant"
             android:textSize="11sp"
             android:layout_gravity="center_vertical"
             android:layout_marginStart="8dp"

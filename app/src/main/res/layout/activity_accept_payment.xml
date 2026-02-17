@@ -3,7 +3,7 @@
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="#000000"
+    android:background="?attr/colorSurface"
     android:orientation="vertical">
 
     <!-- Header -->
@@ -44,7 +44,7 @@
             android:layout_weight="1"
             android:text="Accept Payment"
             android:textSize="28sp"
-            android:textColor="#999999"
+            android:textColor="?attr/colorOnSurfaceVariant"
             android:fontFamily="@font/space_grotesk_bold"
             android:textStyle="bold"
             android:gravity="center" />
@@ -103,7 +103,7 @@
                         android:layout_height="wrap_content"
                         android:text="Bob"
                         android:textSize="18sp"
-                        android:textColor="#FFFFFF"
+                        android:textColor="?attr/colorOnSurface"
                         android:fontFamily="@font/poppins_semibold" />
 
                     <TextView
@@ -111,7 +111,7 @@
                         android:layout_height="wrap_content"
                         android:text="wants to send you"
                         android:textSize="12sp"
-                        android:textColor="#888888"
+                        android:textColor="?attr/colorOnSurfaceVariant"
                         android:fontFamily="@font/poppins_regular" />
 
                 </LinearLayout>
@@ -142,7 +142,7 @@
                     android:layout_height="wrap_content"
                     android:text="~ $150.00 USD"
                     android:textSize="14sp"
-                    android:textColor="#888888"
+                    android:textColor="?attr/colorOnSurfaceVariant"
                     android:fontFamily="@font/poppins_regular"
                     android:layout_marginTop="4dp" />
 
@@ -162,7 +162,7 @@
                     android:layout_height="wrap_content"
                     android:text="RECEIVE TO:"
                     android:textSize="13sp"
-                    android:textColor="#888888"
+                    android:textColor="?attr/colorOnSurfaceVariant"
                     android:fontFamily="@font/poppins_regular"
                     android:layout_marginBottom="12dp" />
 
@@ -179,7 +179,7 @@
                         android:layout_weight="1"
                         android:text="Wallet Name"
                         android:textSize="12sp"
-                        android:textColor="#888888"
+                        android:textColor="?attr/colorOnSurfaceVariant"
                         android:fontFamily="@font/poppins_regular" />
 
                     <LinearLayout
@@ -198,7 +198,7 @@
                             android:layout_height="wrap_content"
                             android:text="Wallet 1"
                             android:textSize="14sp"
-                            android:textColor="#FFFFFF"
+                            android:textColor="?attr/colorOnSurface"
                             android:fontFamily="@font/poppins_medium"
                             android:layout_marginEnd="4dp" />
 
@@ -207,7 +207,7 @@
                             android:layout_height="16dp"
                             android:src="@drawable/ic_arrow_forward"
                             android:rotation="90"
-                            app:tint="#888888"
+                            app:tint="?attr/colorOnSurfaceVariant"
                             android:contentDescription="Dropdown" />
 
                     </LinearLayout>
@@ -226,7 +226,7 @@
                         android:layout_weight="1"
                         android:text="Address"
                         android:textSize="12sp"
-                        android:textColor="#888888"
+                        android:textColor="?attr/colorOnSurfaceVariant"
                         android:fontFamily="@font/poppins_regular" />
 
                     <TextView
@@ -235,7 +235,7 @@
                         android:layout_height="wrap_content"
                         android:text="ADm9P.....2eoLX5"
                         android:textSize="12sp"
-                        android:textColor="#FFFFFF"
+                        android:textColor="?attr/colorOnSurface"
                         android:fontFamily="monospace" />
 
                 </LinearLayout>
@@ -258,7 +258,7 @@
                     android:layout_weight="1"
                     android:text="Expires"
                     android:textSize="14sp"
-                    android:textColor="#888888"
+                    android:textColor="?attr/colorOnSurfaceVariant"
                     android:fontFamily="@font/poppins_regular" />
 
                 <TextView
@@ -267,7 +267,7 @@
                     android:layout_height="wrap_content"
                     android:text="in 24 hours"
                     android:textSize="14sp"
-                    android:textColor="#FFFFFF"
+                    android:textColor="?attr/colorOnSurface"
                     android:fontFamily="@font/poppins_medium" />
 
             </LinearLayout>
@@ -282,7 +282,7 @@
                 android:fontFamily="@font/poppins_semibold"
                 android:text="Accept Payment"
                 android:textAllCaps="false"
-                android:textColor="@color/text_white"
+                android:textColor="?attr/colorOnSurface"
                 android:textSize="16sp" />
 
             <!-- Decline Button -->
@@ -295,7 +295,7 @@
                 android:fontFamily="@font/poppins_medium"
                 android:text="Decline"
                 android:textAllCaps="false"
-                android:textColor="#888888"
+                android:textColor="?attr/colorOnSurfaceVariant"
                 android:textSize="16sp" />
 
         </LinearLayout>

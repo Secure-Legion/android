@@ -183,9 +183,9 @@ class GroupManager private constructor(private val context: Context) {
                     )
 
                     if (result.isSuccess) {
-                        Log.i(TAG, "✓ Group invite sent to: ${member.displayName}")
+                        Log.i(TAG, "Group invite sent to: ${member.displayName}")
                     } else {
-                        Log.e(TAG, "✗ Failed to send invite to: ${member.displayName}")
+                        Log.e(TAG, "Failed to send invite to: ${member.displayName}")
                     }
                 } catch (e: Exception) {
                     Log.e(TAG, "Error sending invite to ${member.displayName}", e)
@@ -327,9 +327,9 @@ class GroupManager private constructor(private val context: Context) {
 
             if (sendResult.isSuccess) {
                 val successfulSends = sendResult.getOrNull() ?: emptyList()
-                Log.i(TAG, "✓ Message sent to ${successfulSends.size} members via Tor")
+                Log.i(TAG, "Message sent to ${successfulSends.size} members via Tor")
             } else {
-                Log.e(TAG, "✗ Failed to send message via Tor: ${sendResult.exceptionOrNull()?.message}")
+                Log.e(TAG, "Failed to send message via Tor: ${sendResult.exceptionOrNull()?.message}")
                 // Don't fail the whole operation - message is stored locally
             }
 

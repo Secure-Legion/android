@@ -73,7 +73,7 @@ class AudioCaptureManager(
      * Initialize AudioRecord for microphone capture
      * Must call this before startCapture()
      */
-    @Suppress("MissingPermission")  // Permission check via require() above
+    @Suppress("MissingPermission") // Permission check via require() above
     fun initialize() {
         require(hasPermission()) { "RECORD_AUDIO permission not granted" }
 
@@ -126,12 +126,12 @@ class AudioCaptureManager(
                 acousticEchoCanceler = AcousticEchoCanceler.create(audioSessionId)
                 if (acousticEchoCanceler != null) {
                     acousticEchoCanceler?.enabled = true
-                    Log.i(TAG, "✓ Acoustic Echo Canceler enabled")
+                    Log.i(TAG, "Acoustic Echo Canceler enabled")
                 } else {
-                    Log.w(TAG, "✗ AcousticEchoCanceler.create returned null")
+                    Log.w(TAG, "AcousticEchoCanceler.create returned null")
                 }
             } else {
-                Log.w(TAG, "✗ Acoustic Echo Canceler not available on this device")
+                Log.w(TAG, "Acoustic Echo Canceler not available on this device")
             }
 
             // Noise Suppressor (NS) - Removes background noise (traffic, keyboard, etc)
@@ -139,12 +139,12 @@ class AudioCaptureManager(
                 noiseSuppressor = NoiseSuppressor.create(audioSessionId)
                 if (noiseSuppressor != null) {
                     noiseSuppressor?.enabled = true
-                    Log.i(TAG, "✓ Noise Suppressor enabled")
+                    Log.i(TAG, "Noise Suppressor enabled")
                 } else {
-                    Log.w(TAG, "✗ NoiseSuppressor.create returned null")
+                    Log.w(TAG, "NoiseSuppressor.create returned null")
                 }
             } else {
-                Log.w(TAG, "✗ Noise Suppressor not available on this device")
+                Log.w(TAG, "Noise Suppressor not available on this device")
             }
 
             // Automatic Gain Control (AGC) - Normalizes audio volume
@@ -152,12 +152,12 @@ class AudioCaptureManager(
                 automaticGainControl = AutomaticGainControl.create(audioSessionId)
                 if (automaticGainControl != null) {
                     automaticGainControl?.enabled = true
-                    Log.i(TAG, "✓ Automatic Gain Control enabled")
+                    Log.i(TAG, "Automatic Gain Control enabled")
                 } else {
-                    Log.w(TAG, "✗ AutomaticGainControl.create returned null")
+                    Log.w(TAG, "AutomaticGainControl.create returned null")
                 }
             } else {
-                Log.w(TAG, "✗ Automatic Gain Control not available on this device")
+                Log.w(TAG, "Automatic Gain Control not available on this device")
             }
 
             val enabledEffects = listOfNotNull(

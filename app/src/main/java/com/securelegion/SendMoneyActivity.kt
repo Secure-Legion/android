@@ -11,6 +11,7 @@ import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
 import com.google.android.material.bottomsheet.BottomSheetDialog
+import com.securelegion.utils.GlassBottomSheetDialog
 import com.securelegion.crypto.KeyManager
 import com.securelegion.crypto.NLx402Manager
 import com.securelegion.database.SecureLegionDatabase
@@ -298,7 +299,7 @@ class SendMoneyActivity : AppCompatActivity() {
     }
 
     private fun showPaymentTypeSelector() {
-        val bottomSheet = BottomSheetDialog(this)
+        val bottomSheet = GlassBottomSheetDialog(this)
         val view = layoutInflater.inflate(R.layout.bottom_sheet_payment_type, null)
         bottomSheet.setContentView(view)
 
@@ -382,7 +383,7 @@ class SendMoneyActivity : AppCompatActivity() {
                 val allWallets = database.walletDao().getAllWallets()
 
                 withContext(Dispatchers.Main) {
-                    val bottomSheet = BottomSheetDialog(this@SendMoneyActivity)
+                    val bottomSheet = GlassBottomSheetDialog(this@SendMoneyActivity)
                     val view = layoutInflater.inflate(R.layout.bottom_sheet_wallet_selector, null)
 
                     val displayMetrics = resources.displayMetrics
@@ -604,7 +605,7 @@ class SendMoneyActivity : AppCompatActivity() {
     }
 
     private fun showSendConfirmation(amount: Double) {
-        val bottomSheet = BottomSheetDialog(this)
+        val bottomSheet = GlassBottomSheetDialog(this)
         val view = layoutInflater.inflate(R.layout.bottom_sheet_send_confirm, null)
 
         val displayMetrics = resources.displayMetrics
@@ -717,7 +718,7 @@ class SendMoneyActivity : AppCompatActivity() {
                 // For "Send Money" offers, use empty recipient - recipient will provide their wallet when accepting
                 // This distinguishes it from "Request Money" where sender puts their own wallet
                 val quote = NLx402Manager.createQuoteFromAmount(
-                    recipientAddress = "",  // Empty = sender will pay to recipient's chosen wallet
+                    recipientAddress = "", // Empty = sender will pay to recipient's chosen wallet
                     amount = BigDecimal(amount),
                     token = selectedToken,
                     description = "Payment to ${recipientName.text}",
@@ -885,7 +886,7 @@ class SendMoneyActivity : AppCompatActivity() {
     }
 
     private fun showCancelPaymentConfirmation() {
-        val bottomSheet = BottomSheetDialog(this)
+        val bottomSheet = GlassBottomSheetDialog(this)
         val view = layoutInflater.inflate(R.layout.bottom_sheet_send_confirm, null)
         bottomSheet.setContentView(view)
 

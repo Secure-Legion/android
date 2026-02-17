@@ -37,32 +37,10 @@ class ManageTokensActivity : AppCompatActivity() {
         val bottomNav = findViewById<View>(R.id.bottomNav)
         ViewCompat.setOnApplyWindowInsetsListener(findViewById(android.R.id.content)) { _, windowInsets ->
             val insets = windowInsets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())
-            bottomNav.setPadding(bottomNav.paddingLeft, bottomNav.paddingTop, bottomNav.paddingRight, insets.bottom)
+            bottomNav.setPadding(bottomNav.paddingLeft, bottomNav.paddingTop, bottomNav.paddingRight, 0)
             windowInsets
         }
 
-        findViewById<View>(R.id.navMessages).setOnClickListener {
-            val intent = Intent(this, MainActivity::class.java)
-            startActivity(intent)
-            finish()
-        }
-
-        findViewById<View>(R.id.navWallet).setOnClickListener {
-            val intent = Intent(this, MainActivity::class.java)
-            intent.putExtra("SHOW_WALLET", true)
-            startActivity(intent)
-            finish()
-        }
-
-        findViewById<View>(R.id.navAddFriend).setOnClickListener {
-            val intent = Intent(this, AddFriendActivity::class.java)
-            startActivity(intent)
-        }
-
-        findViewById<View>(R.id.navLock).setOnClickListener {
-            val intent = Intent(this, LockActivity::class.java)
-            startActivity(intent)
-            finish()
-        }
+        BottomNavigationHelper.setupBottomNavigation(this)
     }
 }

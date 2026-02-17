@@ -45,7 +45,7 @@
                 android:layout_gravity="center"
                 android:text="+"
                 android:textSize="28sp"
-                android:textColor="#FFFFFF"
+                android:textColor="?attr/colorOnSurface"
                 android:fontFamily="@font/space_grotesk_bold"
                 android:textStyle="bold" />
 
@@ -60,7 +60,7 @@
             android:layout_marginStart="16dp"
             android:text="@Wizard"
             android:textSize="16sp"
-            android:textColor="#FFFFFF"
+            android:textColor="?attr/colorOnSurface"
             android:fontFamily="@font/poppins_medium" />
 
         <!-- Status Badge (Pending/Accept/Retry) -->
@@ -70,7 +70,7 @@
             android:layout_height="wrap_content"
             android:text="Pending"
             android:textSize="13sp"
-            android:textColor="#888888"
+            android:textColor="?attr/colorOnSurfaceVariant"
             android:fontFamily="@font/poppins_regular"
             android:paddingStart="12dp"
             android:paddingEnd="12dp"

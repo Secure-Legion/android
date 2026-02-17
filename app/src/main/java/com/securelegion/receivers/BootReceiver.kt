@@ -65,11 +65,11 @@ class BootReceiver : BroadcastReceiver() {
             val torIntent = Intent(context, TorService::class.java)
             torIntent.action = TorService.ACTION_START_TOR
             context.startForegroundService(torIntent)
-            Log.i(TAG, "✓ TorService started")
+            Log.i(TAG, "TorService started")
 
             // 2. Schedule MessageRetryWorker (periodic background task)
             MessageRetryWorker.schedule(context)
-            Log.i(TAG, "✓ MessageRetryWorker scheduled")
+            Log.i(TAG, "MessageRetryWorker scheduled")
 
             Log.i(TAG, "All background services initialized successfully")
 

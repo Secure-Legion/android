@@ -189,7 +189,7 @@ object SecureWipe {
         try {
             // List of SharedPreferences to preserve during wipe
             val preservedPrefs = setOf(
-                "duress_settings"  // Preserve duress PIN so it can be used again
+                "duress_settings" // Preserve duress PIN so it can be used again
             )
 
             // Get all SharedPreferences files

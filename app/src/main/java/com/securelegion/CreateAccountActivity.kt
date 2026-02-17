@@ -56,8 +56,8 @@ class CreateAccountActivity : AppCompatActivity() {
         // Security: Prevent screenshots and screen recording
         // TODO: Re-enable FLAG_SECURE after demo recording
         // window.setFlags(
-        //     WindowManager.LayoutParams.FLAG_SECURE,
-        //     WindowManager.LayoutParams.FLAG_SECURE
+        // WindowManager.LayoutParams.FLAG_SECURE,
+        // WindowManager.LayoutParams.FLAG_SECURE
         // )
 
         // Make status bar white with dark icons
@@ -391,14 +391,14 @@ class CreateAccountActivity : AppCompatActivity() {
                 // Wait for HS descriptor propagation before proceeding
                 // This ensures our .onion is reachable before friend requests can be sent to us
                 run {
-                    val minUploads = 1  // At least 1 HSDir confirmed (partially reachable)
+                    val minUploads = 1 // At least 1 HSDir confirmed (partially reachable)
                     val maxWaitSecs = 60 // Max wait time
                     var waited = 0
                     Log.i("CreateAccount", "Waiting for HS descriptor propagation (need >= $minUploads uploads)...")
                     while (waited < maxWaitSecs) {
                         val uploads = com.securelegion.crypto.RustBridge.getHsDescUploadCount()
                         if (uploads >= minUploads) {
-                            Log.i("CreateAccount", "✓ HS descriptors propagated ($uploads HSDirs confirmed)")
+                            Log.i("CreateAccount", "HS descriptors propagated ($uploads HSDirs confirmed)")
                             break
                         }
                         if (waited % 10 == 0) {

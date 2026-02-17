@@ -62,12 +62,12 @@ class StressTestEngine(
         val startTime = System.currentTimeMillis()
 
         store.addEvent(StressEvent.RunStarted(runId))
-        Log.i(TAG, "╔══════════════════════════════════════════")
-        Log.i(TAG, "║ STRESS TEST RUN STARTED")
-        Log.i(TAG, "║ Run ID: ${runId.id}")
-        Log.i(TAG, "║ Scenario: ${config.scenario}")
-        Log.i(TAG, "║ Message count: ${config.messageCount}")
-        Log.i(TAG, "╚══════════════════════════════════════════")
+        Log.i(TAG, "")
+        Log.i(TAG, "STRESS TEST RUN STARTED")
+        Log.i(TAG, "Run ID: ${runId.id}")
+        Log.i(TAG, "Scenario: ${config.scenario}")
+        Log.i(TAG, "Message count: ${config.messageCount}")
+        Log.i(TAG, "")
 
         try {
             when (config.scenario) {
@@ -81,11 +81,11 @@ class StressTestEngine(
             val duration = System.currentTimeMillis() - startTime
             store.addEvent(StressEvent.RunFinished(runId, duration))
 
-            Log.i(TAG, "╔══════════════════════════════════════════")
-            Log.i(TAG, "║ STRESS TEST RUN FINISHED")
-            Log.i(TAG, "║ Duration: ${duration}ms")
-            Log.i(TAG, "║ Summary: ${store.getSummary()}")
-            Log.i(TAG, "╚══════════════════════════════════════════")
+            Log.i(TAG, "")
+            Log.i(TAG, "STRESS TEST RUN FINISHED")
+            Log.i(TAG, "Duration: ${duration}ms")
+            Log.i(TAG, "Summary: ${store.getSummary()}")
+            Log.i(TAG, "")
 
         } catch (e: CancellationException) {
             Log.i(TAG, "Stress test run cancelled")
@@ -125,7 +125,7 @@ class StressTestEngine(
                     // Record attempt
                     store.addEvent(StressEvent.MessageAttempt(
                         correlationId = correlationId,
-                        localMessageId = 0,  // Will be set after send
+                        localMessageId = 0, // Will be set after send
                         contactId = config.contactId,
                         size = testMessage.length
                     ))
@@ -135,7 +135,7 @@ class StressTestEngine(
                         val result = messageService.sendMessage(
                             contactId = config.contactId,
                             plaintext = testMessage,
-                            correlationId = correlationId  // Pass correlation ID for tracing
+                            correlationId = correlationId // Pass correlation ID for tracing
                         )
 
                         if (result.isSuccess) {
@@ -225,7 +225,7 @@ class StressTestEngine(
             // Poll message status every 500ms for up to 60 seconds
             var lastStatus = Message.STATUS_PENDING
             val startTime = System.currentTimeMillis()
-            val timeout = 60_000L  // 60 seconds
+            val timeout = 60_000L // 60 seconds
 
             while (System.currentTimeMillis() - startTime < timeout) {
                 val message = database.messageDao().getMessageById(messageId)

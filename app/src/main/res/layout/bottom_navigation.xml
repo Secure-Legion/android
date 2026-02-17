@@ -1,84 +1,26 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Bottom Navigation - Reusable Component -->
+<!-- Bottom Navigation - Floating Glass Pill -->
 <LinearLayout
     xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:id="@+id/bottomNav"
     android:layout_width="match_parent"
-    android:layout_height="110dp"
+    android:layout_height="80dp"
+    android:layout_marginStart="40dp"
+    android:layout_marginEnd="40dp"
+    android:layout_marginBottom="20dp"
     android:orientation="horizontal"
-    android:background="#0A0A0A"
-    android:gravity="center"
-    android:paddingTop="12dp"
-    android:paddingBottom="12dp">
+    android:background="@drawable/glass_nav_bg"
+    android:clipToOutline="true"
+    android:gravity="center_vertical"
+    android:baselineAligned="false">
 
-    <!-- Messages Nav Item -->
+    <!-- Chats Nav Item -->
     <LinearLayout
         android:id="@+id/navMessages"
+        android:layout_gravity="center_vertical"
         android:layout_width="0dp"
-        android:layout_height="match_parent"
-        android:layout_weight="1"
-        android:orientation="vertical"
-        android:gravity="center"
-        android:background="@drawable/nav_item_ripple"
-        android:clickable="true"
-        android:focusable="true">
-
-        <ImageView
-            android:layout_width="24dp"
-            android:layout_height="24dp"
-            android:src="@android:drawable/sym_action_chat"
-            app:tint="@color/text_gray"
-            android:layout_marginBottom="4dp"
-            android:contentDescription="Messages" />
-
-        <TextView
-            android:id="@+id/navMessagesLabel"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="Messages"
-            android:textSize="11sp"
-            android:textColor="@color/text_gray"
-            android:fontFamily="@font/poppins_medium" />
-
-    </LinearLayout>
-
-    <!-- Wallet Nav Item -->
-    <LinearLayout
-        android:id="@+id/navWallet"
-        android:layout_width="0dp"
-        android:layout_height="match_parent"
-        android:layout_weight="1"
-        android:orientation="vertical"
-        android:gravity="center"
-        android:background="@drawable/nav_item_ripple"
-        android:clickable="true"
-        android:focusable="true">
-
-        <ImageView
-            android:layout_width="24dp"
-            android:layout_height="24dp"
-            android:src="@drawable/ic_wallet"
-            android:layout_marginBottom="4dp"
-            app:tint="@color/text_gray"
-            android:contentDescription="Wallet" />
-
-        <TextView
-            android:id="@+id/navWalletLabel"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="Wallet"
-            android:textSize="11sp"
-            android:textColor="@color/text_gray"
-            android:fontFamily="@font/poppins_medium" />
-
-    </LinearLayout>
-
-    <!-- Add Friend Nav Item -->
-    <LinearLayout
-        android:id="@+id/navAddFriend"
-        android:layout_width="0dp"
-        android:layout_height="match_parent"
+        android:layout_height="wrap_content"
         android:layout_weight="1"
         android:orientation="vertical"
         android:gravity="center"
@@ -89,15 +31,67 @@
         <FrameLayout
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_marginTop="2dp"
-            android:layout_marginBottom="4dp">
+            android:layout_marginBottom="2dp">
 
             <ImageView
-                android:layout_width="24dp"
-                android:layout_height="24dp"
-                android:src="@drawable/ic_add_friend"
-                app:tint="@color/text_gray"
-                android:contentDescription="Add Friend" />
+                android:layout_width="22dp"
+                android:layout_height="22dp"
+                android:src="@drawable/ic_nav_chat"
+                app:tint="?attr/colorOnSurfaceVariant"
+                android:contentDescription="Chats" />
+
+            <!-- Badge for unread messages -->
+            <TextView
+                android:id="@+id/unreadMessagesBadge"
+                android:layout_width="16dp"
+                android:layout_height="16dp"
+                android:layout_gravity="top|end"
+                android:layout_marginTop="-4dp"
+                android:layout_marginEnd="-4dp"
+                android:background="@drawable/badge_bg"
+                android:gravity="center"
+                android:textSize="9sp"
+                android:textStyle="bold"
+                android:textColor="?attr/colorOnSurface"
+                android:visibility="gone" />
+
+        </FrameLayout>
+
+        <TextView
+            android:id="@+id/navMessagesLabel"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Chats"
+            android:textSize="10sp"
+            android:textColor="?attr/colorOnSurfaceVariant"
+            android:fontFamily="@font/poppins_medium" />
+
+    </LinearLayout>
+
+    <!-- Contacts Nav Item -->
+    <LinearLayout
+        android:id="@+id/navContacts"
+        android:layout_gravity="center_vertical"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="1"
+        android:orientation="vertical"
+        android:gravity="center"
+        android:background="@drawable/nav_item_ripple"
+        android:clickable="true"
+        android:focusable="true">
+
+        <FrameLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="2dp">
+
+            <ImageView
+                android:layout_width="22dp"
+                android:layout_height="22dp"
+                android:src="@drawable/ic_nav_contacts"
+                app:tint="?attr/colorOnSurfaceVariant"
+                android:contentDescription="Contacts" />
 
             <!-- Badge for pending friend requests -->
             <TextView
@@ -111,7 +105,7 @@
                 android:gravity="center"
                 android:textSize="9sp"
                 android:textStyle="bold"
-                android:textColor="@color/text_white"
+                android:textColor="?attr/colorOnSurface"
                 android:visibility="gone" />
 
         </FrameLayout>
@@ -119,18 +113,19 @@
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="Add Friend"
-            android:textSize="11sp"
-            android:textColor="@color/text_gray"
+            android:text="Contacts"
+            android:textSize="10sp"
+            android:textColor="?attr/colorOnSurfaceVariant"
             android:fontFamily="@font/poppins_medium" />
 
     </LinearLayout>
 
-    <!-- Phone Nav Item -->
+    <!-- Profile Nav Item -->
     <LinearLayout
-        android:id="@+id/navPhone"
+        android:id="@+id/navProfile"
+        android:layout_gravity="center_vertical"
         android:layout_width="0dp"
-        android:layout_height="match_parent"
+        android:layout_height="wrap_content"
         android:layout_weight="1"
         android:orientation="vertical"
         android:gravity="center"
@@ -139,19 +134,19 @@
         android:focusable="true">
 
         <ImageView
-            android:layout_width="24dp"
-            android:layout_height="24dp"
-            android:src="@drawable/ic_call"
-            android:layout_marginBottom="4dp"
-            app:tint="@color/text_gray"
-            android:contentDescription="Phone" />
+            android:layout_width="22dp"
+            android:layout_height="22dp"
+            android:src="@drawable/ic_nav_profile"
+            app:tint="?attr/colorOnSurfaceVariant"
+            android:layout_marginBottom="2dp"
+            android:contentDescription="Profile" />
 
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="Phone"
-            android:textSize="11sp"
-            android:textColor="@color/text_gray"
+            android:text="Profile"
+            android:textSize="10sp"
+            android:textColor="?attr/colorOnSurfaceVariant"
             android:fontFamily="@font/poppins_medium" />
 
     </LinearLayout>

@@ -23,11 +23,11 @@ class TransportGate {
         private const val TAG = "TransportGate"
 
         // Per-operation timeouts (tune by intent, not just bridge vs normal)
-        const val TIMEOUT_QUICK_MS = 10_000L       // Background polls, inbox checks
-        const val TIMEOUT_SEND_MS = 20_000L         // User-facing message send
-        const val TIMEOUT_DEFAULT_MS = 30_000L      // General operations
-        const val TIMEOUT_HANDSHAKE_MS = 45_000L    // Friend requests, key exchange
-        const val TIMEOUT_BOOTSTRAP_MS = 90_000L    // Account publish, HS descriptor upload
+        const val TIMEOUT_QUICK_MS = 10_000L // Background polls, inbox checks
+        const val TIMEOUT_SEND_MS = 20_000L // User-facing message send
+        const val TIMEOUT_DEFAULT_MS = 30_000L // General operations
+        const val TIMEOUT_HANDSHAKE_MS = 45_000L // Friend requests, key exchange
+        const val TIMEOUT_BOOTSTRAP_MS = 90_000L // Account publish, HS descriptor upload
     }
 
     private val isOpen = MutableStateFlow(false)

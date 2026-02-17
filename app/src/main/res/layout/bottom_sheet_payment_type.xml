@@ -17,7 +17,7 @@
         android:layout_height="wrap_content"
         android:text="Payment Type"
         android:textSize="20sp"
-        android:textColor="#FFFFFF"
+        android:textColor="?attr/colorOnSurface"
         android:fontFamily="@font/space_grotesk_bold"
         android:gravity="center"
         android:layout_marginBottom="16dp" />
@@ -59,7 +59,7 @@
                 android:layout_height="wrap_content"
                 android:text="Normal"
                 android:textSize="16sp"
-                android:textColor="#FFFFFF"
+                android:textColor="?attr/colorOnSurface"
                 android:fontFamily="@font/poppins_medium" />
 
             <TextView
@@ -68,7 +68,7 @@
                 android:layout_height="wrap_content"
                 android:text="Standard transaction"
                 android:textSize="12sp"
-                android:textColor="#888888"
+                android:textColor="?attr/colorOnSurfaceVariant"
                 android:fontFamily="@font/poppins_regular" />
 
         </LinearLayout>
@@ -78,7 +78,7 @@
             android:layout_width="20dp"
             android:layout_height="20dp"
             android:src="@android:drawable/checkbox_on_background"
-            app:tint="#888888"
+            app:tint="?attr/colorOnSurfaceVariant"
             android:visibility="gone"
             android:contentDescription="Selected" />
 
@@ -121,7 +121,7 @@
                 android:layout_height="wrap_content"
                 android:text="Private"
                 android:textSize="16sp"
-                android:textColor="#FFFFFF"
+                android:textColor="?attr/colorOnSurface"
                 android:fontFamily="@font/poppins_medium" />
 
             <TextView
@@ -130,7 +130,7 @@
                 android:layout_height="wrap_content"
                 android:text="Powered by Radr · 0.5% fee"
                 android:textSize="12sp"
-                android:textColor="#888888"
+                android:textColor="?attr/colorOnSurfaceVariant"
                 android:fontFamily="@font/poppins_regular" />
 
         </LinearLayout>
@@ -140,7 +140,7 @@
             android:layout_width="20dp"
             android:layout_height="20dp"
             android:src="@android:drawable/checkbox_on_background"
-            app:tint="#888888"
+            app:tint="?attr/colorOnSurfaceVariant"
             android:visibility="visible"
             android:contentDescription="Selected" />
 
@@ -182,7 +182,7 @@
                 android:layout_height="wrap_content"
                 android:text="Anonymous"
                 android:textSize="16sp"
-                android:textColor="#FFFFFF"
+                android:textColor="?attr/colorOnSurface"
                 android:fontFamily="@font/poppins_medium" />
 
             <TextView
@@ -191,7 +191,7 @@
                 android:layout_height="wrap_content"
                 android:text="Powered by Radr · 0.5% fee"
                 android:textSize="12sp"
-                android:textColor="#888888"
+                android:textColor="?attr/colorOnSurfaceVariant"
                 android:fontFamily="@font/poppins_regular" />
 
         </LinearLayout>
@@ -201,7 +201,7 @@
             android:layout_width="20dp"
             android:layout_height="20dp"
             android:src="@android:drawable/checkbox_on_background"
-            app:tint="#888888"
+            app:tint="?attr/colorOnSurfaceVariant"
             android:visibility="gone"
             android:contentDescription="Selected" />
 

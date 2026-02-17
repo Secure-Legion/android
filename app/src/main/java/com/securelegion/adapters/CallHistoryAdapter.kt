@@ -6,6 +6,8 @@ import android.view.ViewGroup
 import android.widget.ImageView
 import android.widget.TextView
 import androidx.recyclerview.widget.RecyclerView
+import androidx.core.content.ContextCompat
+import com.google.android.material.color.MaterialColors
 import com.securelegion.R
 import com.securelegion.database.entities.CallHistory
 import com.securelegion.database.entities.CallType
@@ -46,15 +48,15 @@ class CallHistoryAdapter(
         when (call.type) {
             CallType.OUTGOING -> {
                 holder.callTypeIcon.setImageResource(R.drawable.ic_call)
-                holder.callTypeIcon.setColorFilter(0xFF4CAF50.toInt()) // Green
+                holder.callTypeIcon.setColorFilter(ContextCompat.getColor(holder.itemView.context, R.color.success_green))
             }
             CallType.INCOMING -> {
                 holder.callTypeIcon.setImageResource(R.drawable.ic_call)
-                holder.callTypeIcon.setColorFilter(0xFF2196F3.toInt()) // Blue
+                holder.callTypeIcon.setColorFilter(MaterialColors.getColor(holder.itemView, androidx.appcompat.R.attr.colorPrimary))
             }
             CallType.MISSED -> {
                 holder.callTypeIcon.setImageResource(R.drawable.ic_call)
-                holder.callTypeIcon.setColorFilter(0xFFF44336.toInt()) // Red
+                holder.callTypeIcon.setColorFilter(ContextCompat.getColor(holder.itemView.context, R.color.warning_red))
             }
         }
 

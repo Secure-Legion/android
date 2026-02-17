@@ -35,7 +35,7 @@ class TorVoiceSocket(
 
         // Connection timeouts
         private const val CONNECT_TIMEOUT_MS = 60000 // 60 seconds for Tor circuit building
-        private const val READ_TIMEOUT_MS = 10000     // 10 seconds for read operations
+        private const val READ_TIMEOUT_MS = 10000 // 10 seconds for read operations
     }
 
     private var socket: Socket? = null

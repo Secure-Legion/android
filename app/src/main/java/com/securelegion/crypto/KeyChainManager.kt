@@ -25,7 +25,7 @@ object KeyChainManager {
     private fun deriveOutgoingChainKey(rootKey: ByteArray): ByteArray {
         val mac = Mac.getInstance("HmacSHA256")
         mac.init(SecretKeySpec(rootKey, "HmacSHA256"))
-        return mac.doFinal(byteArrayOf(0x03))  // HMAC(root_key, 0x03)
+        return mac.doFinal(byteArrayOf(0x03)) // HMAC(root_key, 0x03)
     }
 
     /**
@@ -35,7 +35,7 @@ object KeyChainManager {
     private fun deriveIncomingChainKey(rootKey: ByteArray): ByteArray {
         val mac = Mac.getInstance("HmacSHA256")
         mac.init(SecretKeySpec(rootKey, "HmacSHA256"))
-        return mac.doFinal(byteArrayOf(0x04))  // HMAC(root_key, 0x04)
+        return mac.doFinal(byteArrayOf(0x04)) // HMAC(root_key, 0x04)
     }
 
     /**
@@ -64,8 +64,8 @@ object KeyChainManager {
      * @param ourMessagingOnion Our messaging .onion address (for deterministic direction mapping)
      * @param theirMessagingOnion Their messaging .onion address (for deterministic direction mapping)
      * @param kyberCiphertext Optional hybrid ciphertext (1600 bytes: 32-byte X25519 ephemeral + 1568-byte Kyber ciphertext)
-     *                        - Null = we are initiating (will encapsulate and generate new ciphertext)
-     *                        - Non-null = we are responding (will decapsulate using provided ciphertext)
+     * - Null = we are initiating (will encapsulate and generate new ciphertext)
+     * - Non-null = we are responding (will decapsulate using provided ciphertext)
      */
     suspend fun initializeKeyChain(
         context: Context,
@@ -74,8 +74,8 @@ object KeyChainManager {
         theirKyberPublicKey: ByteArray? = null,
         ourMessagingOnion: String,
         theirMessagingOnion: String,
-        kyberCiphertext: ByteArray? = null,  // Null = we are sender (encapsulate), non-null = we are receiver (decapsulate)
-        precomputedSharedSecret: ByteArray? = null  // If provided, skip KEM entirely and use this shared secret
+        kyberCiphertext: ByteArray? = null, // Null = we are sender (encapsulate), non-null = we are receiver (decapsulate)
+        precomputedSharedSecret: ByteArray? = null // If provided, skip KEM entirely and use this shared secret
     ) {
         withContext(Dispatchers.IO) {
             try {
@@ -85,7 +85,7 @@ object KeyChainManager {
                 val modeDesc = if (isHybridMode) "hybrid post-quantum" else "legacy X25519-only"
 
                 if (theirKyberPublicKey != null && !hasValidKyberKey) {
-                    Log.w(TAG, "⚠️  Contact has zero-filled Kyber key (${theirKyberPublicKey.size} bytes) - falling back to legacy X25519 mode")
+                    Log.w(TAG, "Contact has zero-filled Kyber key (${theirKyberPublicKey.size} bytes) - falling back to legacy X25519 mode")
                 }
 
                 Log.i(TAG, "Initializing $modeDesc key chain for contact $contactId")
@@ -106,9 +106,9 @@ object KeyChainManager {
                     val ourKyberSecretKey = keyManager.getKyberSecretKey()
 
                     if (kyberCiphertext == null) {
-                        // ❌ ERROR: This path should NOT be hit anymore!
+                        // ERROR: This path should NOT be hit anymore!
                         // Both devices should either use precomputedSharedSecret OR kyberCiphertext
-                        Log.e(TAG, "⚠️  WARNING: Hybrid mode with null ciphertext and null precomputed secret - this is the OLD BUG!")
+                        Log.e(TAG, "WARNING: Hybrid mode with null ciphertext and null precomputed secret - this is the OLD BUG!")
                         Log.e(TAG, "This will generate a DIFFERENT shared secret! Key chain will fail!")
                         // Fallback to legacy mode to avoid crash
                         sharedSecret = RustBridge.deriveSharedSecret(ourX25519PrivateKey, theirX25519PublicKey)
@@ -129,8 +129,8 @@ object KeyChainManager {
                 val rootKey = RustBridge.deriveRootKey(sharedSecret, ROOT_KEY_INFO)
 
                 // Derive two directional chain keys from root key
-                val outgoingKey = deriveOutgoingChainKey(rootKey)  // HMAC(rootKey, 0x03)
-                val incomingKey = deriveIncomingChainKey(rootKey)  // HMAC(rootKey, 0x04)
+                val outgoingKey = deriveOutgoingChainKey(rootKey) // HMAC(rootKey, 0x03)
+                val incomingKey = deriveIncomingChainKey(rootKey) // HMAC(rootKey, 0x04)
 
                 // Determine which key is for send vs receive based on messaging onion address comparison
                 // This ensures both parties agree on the direction mapping (using persistent identities)
@@ -161,7 +161,7 @@ object KeyChainManager {
                 val database = SecureLegionDatabase.getInstance(context, dbPassphrase)
                 database.contactKeyChainDao().insertKeyChain(keyChain)
 
-                Log.i(TAG, "✓ Key chain initialized for contact $contactId")
+                Log.i(TAG, "Key chain initialized for contact $contactId")
 
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to initialize key chain for contact $contactId", e)
@@ -216,7 +216,7 @@ object KeyChainManager {
                     timestamp = System.currentTimeMillis()
                 )
 
-                Log.d(TAG, "✓ Send chain key evolved for contact $contactId (seq: $newSendCounter)")
+                Log.d(TAG, "Send chain key evolved for contact $contactId (seq: $newSendCounter)")
                 Pair(newSendChainKey, newSendCounter)
 
             } catch (e: Exception) {
@@ -254,7 +254,7 @@ object KeyChainManager {
                     timestamp = System.currentTimeMillis()
                 )
 
-                Log.d(TAG, "✓ Receive chain key evolved for contact $contactId (seq: $newReceiveCounter)")
+                Log.d(TAG, "Receive chain key evolved for contact $contactId (seq: $newReceiveCounter)")
                 Pair(newReceiveChainKey, newReceiveCounter)
 
             } catch (e: Exception) {
@@ -272,7 +272,7 @@ object KeyChainManager {
     suspend fun resetKeyChainCounters(context: Context, contactId: Long) {
         withContext(Dispatchers.IO) {
             try {
-                Log.w(TAG, "🔍 DEBUG: ⚠️  RESETTING key chain counters to 0 for contact $contactId")
+                Log.w(TAG, "DEBUG: RESETTING key chain counters to 0 for contact $contactId")
 
                 // Get current key chain state BEFORE reset
                 val keyManager = KeyManager.getInstance(context)
@@ -280,26 +280,26 @@ object KeyChainManager {
                 val database = SecureLegionDatabase.getInstance(context, dbPassphrase)
 
                 val keyChainBefore = database.contactKeyChainDao().getKeyChainByContactId(contactId)
-                Log.d(TAG, "🔍 DEBUG: Key chain BEFORE reset: sendCounter=${keyChainBefore?.sendCounter}, receiveCounter=${keyChainBefore?.receiveCounter}")
+                Log.d(TAG, "DEBUG: Key chain BEFORE reset: sendCounter=${keyChainBefore?.sendCounter}, receiveCounter=${keyChainBefore?.receiveCounter}")
 
                 // Reset both counters to 0
                 val timestamp = System.currentTimeMillis()
-                Log.d(TAG, "🔍 DEBUG: Calling database.contactKeyChainDao().resetCounters(contactId=$contactId, timestamp=$timestamp)")
+                Log.d(TAG, "DEBUG: Calling database.contactKeyChainDao().resetCounters(contactId=$contactId, timestamp=$timestamp)")
                 database.contactKeyChainDao().resetCounters(contactId, timestamp)
-                Log.d(TAG, "🔍 DEBUG: Database update call completed")
+                Log.d(TAG, "DEBUG: Database update call completed")
 
                 // Verify counters were actually reset
                 val keyChainAfter = database.contactKeyChainDao().getKeyChainByContactId(contactId)
-                Log.d(TAG, "🔍 DEBUG: Key chain AFTER reset: sendCounter=${keyChainAfter?.sendCounter}, receiveCounter=${keyChainAfter?.receiveCounter}")
+                Log.d(TAG, "DEBUG: Key chain AFTER reset: sendCounter=${keyChainAfter?.sendCounter}, receiveCounter=${keyChainAfter?.receiveCounter}")
 
                 if (keyChainAfter?.sendCounter == 0L && keyChainAfter?.receiveCounter == 0L) {
-                    Log.i(TAG, "🔍 DEBUG: ✓✓✓ VERIFIED: Key chain counters successfully reset to 0 for contact $contactId")
+                    Log.i(TAG, "DEBUG: VERIFIED: Key chain counters successfully reset to 0 for contact $contactId")
                 } else {
-                    Log.e(TAG, "🔍 DEBUG: ❌ VERIFICATION FAILED: Counters NOT at 0 after reset!")
+                    Log.e(TAG, "DEBUG: VERIFICATION FAILED: Counters NOT at 0 after reset!")
                 }
 
             } catch (e: Exception) {
-                Log.e(TAG, "🔍 DEBUG: Failed to reset key chain counters for contact $contactId", e)
+                Log.e(TAG, "DEBUG: Failed to reset key chain counters for contact $contactId", e)
                 throw e
             }
         }

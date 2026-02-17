@@ -228,7 +228,7 @@ class FriendRequestWorker(
                 retryCount = request.retryCount + 1,
                 nextRetryAt = nextRetryAt
             )
-            Log.i(TAG, "✓ Phase 1 retry successful for request ${request.id}")
+            Log.i(TAG, "Phase 1 retry successful for request ${request.id}")
         } else {
             // Failure: Keep needsRetry = 1 for next attempt
             database.pendingFriendRequestDao().updateRetryTracking(
@@ -289,7 +289,7 @@ class FriendRequestWorker(
                 retryCount = request.retryCount + 1,
                 nextRetryAt = nextRetryAt
             )
-            Log.i(TAG, "✓ Phase 2 retry successful for request ${request.id}")
+            Log.i(TAG, "Phase 2 retry successful for request ${request.id}")
         } else {
             // Failure: Keep needsRetry = 1 for next attempt
             database.pendingFriendRequestDao().updateRetryTracking(
@@ -373,7 +373,7 @@ class FriendRequestWorker(
                 requestId = request.id,
                 timestamp = timestamp
             )
-            Log.i(TAG, "✓ Phase 3 ACK sent - friend request ${request.id} complete")
+            Log.i(TAG, "Phase 3 ACK sent - friend request ${request.id} complete")
         } else {
             // Failure: Keep needsRetry = 1 for next attempt
             val nextRetryAt = calculateNextRetryTime(request.retryCount + 1)

@@ -178,7 +178,7 @@ class VoiceRecorder(private val context: Context) {
         val voiceDir = File(context.filesDir, "voice_messages")
         voiceDir.mkdirs()
 
-        val fileName = "voice_${System.currentTimeMillis()}.enc"  // .enc for encrypted
+        val fileName = "voice_${System.currentTimeMillis()}.enc" // .enc for encrypted
         val voiceFile = File(voiceDir, fileName)
 
         // Encrypt audio before saving to disk

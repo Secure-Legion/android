@@ -53,11 +53,11 @@ class TorHealthMonitorWorker(
         private const val TAG = "TorHealthMonitor"
         private const val SOCKS_HOST = "127.0.0.1"
         private const val SOCKS_PORT = 9050
-        private const val SOCKS_TIMEOUT_MS = 2000  // Fast fail if SOCKS not responding
+        private const val SOCKS_TIMEOUT_MS = 2000 // Fast fail if SOCKS not responding
 
-        private const val WARMUP_WINDOW_MS = 120000  // 2 minutes: Tor/HS needs time to stabilize after restart
-        private const val FAILURE_THRESHOLD = 5      // Go UNHEALTHY after 5 failures
-        private const val TIME_SINCE_OK_THRESHOLD_MS = 120000  // 2 minutes: only restart if Tor has been good in last 2m
+        private const val WARMUP_WINDOW_MS = 120000 // 2 minutes: Tor/HS needs time to stabilize after restart
+        private const val FAILURE_THRESHOLD = 5 // Go UNHEALTHY after 5 failures
+        private const val TIME_SINCE_OK_THRESHOLD_MS = 120000 // 2 minutes: only restart if Tor has been good in last 2m
 
         /**
          * Schedule periodic Tor health checks
@@ -65,7 +65,7 @@ class TorHealthMonitorWorker(
          */
         fun schedulePeriodicCheck(context: Context) {
             val healthCheckRequest = PeriodicWorkRequestBuilder<TorHealthMonitorWorker>(
-                60,  // Run every 60 seconds
+                60, // Run every 60 seconds
                 TimeUnit.SECONDS
             ).build()
 
@@ -75,7 +75,7 @@ class TorHealthMonitorWorker(
                 healthCheckRequest
             )
 
-            Log.i(TAG, "✓ Scheduled periodic Tor health monitor (60s)")
+            Log.i(TAG, "Scheduled periodic Tor health monitor (60s)")
         }
     }
 
@@ -139,7 +139,7 @@ class TorHealthMonitorWorker(
             Log.d(TAG, "Tor still bootstrapping ($bootstrapPercent%), staying RECOVERING")
             return current.copy(
                 status = TorHealthStatus.RECOVERING,
-                failCount = 0,  // Reset failCount while bootstrapping
+                failCount = 0, // Reset failCount while bootstrapping
                 lastCheckElapsedMs = now,
                 lastFailureType = TorFailureType.BOOTSTRAP_NOT_READY,
                 lastError = "Bootstrapping ($bootstrapPercent%)",
@@ -171,7 +171,7 @@ class TorHealthMonitorWorker(
             // Run circuit test for telemetry (helps diagnose HS descriptor issues)
             val circuitWorking = checkCircuitToOnion(ownOnion, 9150)
             if (circuitWorking) {
-                Log.i(TAG, "Circuit telemetry: Can reach own .onion:9150 ✓")
+                Log.i(TAG, "Circuit telemetry: Can reach own .onion:9150 ")
             } else {
                 Log.i(TAG, "Circuit telemetry: Cannot reach own .onion:9150 (normal - descriptor delay, circuit churn, or listener not ready)")
             }
@@ -227,7 +227,7 @@ class TorHealthMonitorWorker(
     /**
      * Test if Tor can route to an onion via SOCKS5 CONNECT
      *
-     * ⚠️ TELEMETRY ONLY - NEVER USE THIS TO TRIGGER RESTARTS ⚠️
+     * TELEMETRY ONLY - NEVER USE THIS TO TRIGGER RESTARTS 
      *
      * This test is useful for diagnosing HS descriptor issues, but failures
      * do NOT indicate local Tor is broken. Common normal failures:
@@ -247,14 +247,14 @@ class TorHealthMonitorWorker(
         return withContext(Dispatchers.IO) {
             try {
                 val socket = Socket()
-                socket.soTimeout = 3000  // 3s timeout for SOCKS handshake
+                socket.soTimeout = 3000 // 3s timeout for SOCKS handshake
                 socket.connect(InetSocketAddress(SOCKS_HOST, SOCKS_PORT), 2000)
 
                 val output = socket.getOutputStream()
                 val input = socket.getInputStream()
 
                 // SOCKS5 auth handshake: no auth required
-                output.write(byteArrayOf(0x05, 0x01, 0x00))  // VER=5, NMETHODS=1, METHOD=0
+                output.write(byteArrayOf(0x05, 0x01, 0x00)) // VER=5, NMETHODS=1, METHOD=0
                 output.flush()
 
                 val authResp = ByteArray(2)
@@ -271,20 +271,20 @@ class TorHealthMonitorWorker(
                 // SOCKS5 CONNECT request to onion
                 val onionBytes = onionAddress.toByteArray()
                 val connectReq = ByteArray(6 + onionBytes.size)
-                connectReq[0] = 0x05  // VER
-                connectReq[1] = 0x01  // CMD=CONNECT
-                connectReq[2] = 0x00  // RSV
-                connectReq[3] = 0x03  // ATYP=DOMAINNAME
-                connectReq[4] = onionBytes.size.toByte()  // domain length
+                connectReq[0] = 0x05 // VER
+                connectReq[1] = 0x01 // CMD=CONNECT
+                connectReq[2] = 0x00 // RSV
+                connectReq[3] = 0x03 // ATYP=DOMAINNAME
+                connectReq[4] = onionBytes.size.toByte() // domain length
                 onionBytes.copyInto(connectReq, 5)
-                connectReq[5 + onionBytes.size] = (port shr 8).toByte()      // port high byte
-                connectReq[6 + onionBytes.size] = (port and 0xFF).toByte()    // port low byte
+                connectReq[5 + onionBytes.size] = (port shr 8).toByte() // port high byte
+                connectReq[6 + onionBytes.size] = (port and 0xFF).toByte() // port low byte
 
                 output.write(connectReq)
                 output.flush()
 
                 // Read CONNECT response
-                val connectResp = ByteArray(4 + 256)  // max domain response
+                val connectResp = ByteArray(4 + 256) // max domain response
                 val bytesRead = input.read(connectResp)
                 socket.close()
 

@@ -203,13 +203,13 @@ class SolanaService(private val context: Context) {
                     if (txResult.isSuccess) {
                         txResult.getOrNull()?.let {
                             transactions.add(it)
-                            Log.d(TAG, "  ✓ Transaction ${index + 1} loaded: ${it.type} ${it.amount} SOL")
+                            Log.d(TAG, "Transaction ${index + 1} loaded: ${it.type} ${it.amount} SOL")
                         }
                     } else {
-                        Log.w(TAG, "  ✗ Transaction ${index + 1} failed: ${txResult.exceptionOrNull()?.message}")
+                        Log.w(TAG, "Transaction ${index + 1} failed: ${txResult.exceptionOrNull()?.message}")
                     }
                 } catch (e: Exception) {
-                    Log.w(TAG, "  ✗ Failed to get transaction $signature: ${e.message}", e)
+                    Log.w(TAG, "Failed to get transaction $signature: ${e.message}", e)
                     // Continue with other transactions
                 }
             }
@@ -642,7 +642,7 @@ class SolanaService(private val context: Context) {
         // Account addresses (compact-u16 array)
         buffer.put(3.toByte()) // 3 accounts total
         buffer.put(fromPubKey) // Account 0: sender (writable, signer)
-        buffer.put(toPubKey)    // Account 1: recipient (writable)
+        buffer.put(toPubKey) // Account 1: recipient (writable)
         buffer.put(systemProgramId) // Account 2: SystemProgram (readonly)
 
         // Recent blockhash
@@ -701,9 +701,9 @@ class SolanaService(private val context: Context) {
         // Account addresses (compact-u16 array)
         buffer.put(4.toByte()) // 4 accounts total
         buffer.put(fromPubKey) // Account 0: sender (writable, signer)
-        buffer.put(toPubKey)   // Account 1: recipient (writable)
+        buffer.put(toPubKey) // Account 1: recipient (writable)
         buffer.put(systemProgramId) // Account 2: SystemProgram (readonly)
-        buffer.put(memoProgramId)   // Account 3: MemoProgram (readonly)
+        buffer.put(memoProgramId) // Account 3: MemoProgram (readonly)
 
         // Recent blockhash
         buffer.put(recentBlockhash)
@@ -815,7 +815,7 @@ class SolanaService(private val context: Context) {
                     val logs = data?.optJSONArray("logs")
                     if (logs != null) {
                         for (i in 0 until logs.length()) {
-                            Log.e(TAG, "  TX log[$i]: ${logs.optString(i)}")
+                            Log.e(TAG, "TX log[$i]: ${logs.optString(i)}")
                         }
                     }
                     return Result.failure(IOException("Transaction failed: $errorMessage"))

@@ -6,6 +6,8 @@ import android.view.ViewGroup
 import android.widget.ImageView
 import android.widget.TextView
 import androidx.recyclerview.widget.RecyclerView
+import androidx.core.content.ContextCompat
+import com.google.android.material.color.MaterialColors
 import com.securelegion.R
 import com.securelegion.services.ShadowWireService
 import java.text.SimpleDateFormat
@@ -74,9 +76,10 @@ class PoolActivityAdapter(
         }
         holder.amount.text = "$prefix${String.format("%.4f", item.amount)} SOL"
 
-        // Color: green for deposits, white for others
+        // Color: green for deposits, onSurface for others
         holder.amount.setTextColor(
-            if (item.type == "deposit") 0xFF4CAF50.toInt() else 0xFFFFFFFF.toInt()
+            if (item.type == "deposit") ContextCompat.getColor(holder.itemView.context, R.color.success_green)
+            else MaterialColors.getColor(holder.itemView, com.google.android.material.R.attr.colorOnSurface)
         )
 
         holder.itemView.setOnClickListener { onItemClick(item) }

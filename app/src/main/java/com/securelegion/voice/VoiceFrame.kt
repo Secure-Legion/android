@@ -16,11 +16,11 @@ import java.nio.ByteBuffer
  * Total header: 30 bytes + variable payload
  */
 data class VoiceFrame(
-    val callId: ByteArray,           // 16 bytes (UUID)
-    val sequenceNumber: Long,        // 8 bytes
-    val direction: Byte,             // 1 byte (0 or 1)
-    val circuitIndex: Int,           // 1 byte (0-4)
-    val encryptedPayload: ByteArray  // Variable (typically 20-120 bytes for 20ms Opus frames)
+    val callId: ByteArray, // 16 bytes (UUID)
+    val sequenceNumber: Long, // 8 bytes
+    val direction: Byte, // 1 byte (0 or 1)
+    val circuitIndex: Int, // 1 byte (0-4)
+    val encryptedPayload: ByteArray // Variable (typically 20-120 bytes for 20ms Opus frames)
 ) {
     companion object {
         const val HEADER_SIZE = 30
@@ -95,9 +95,9 @@ data class VoiceFrame(
      */
     fun encodeAAD(): ByteArray {
         val buffer = ByteBuffer.allocate(26)
-        buffer.put(callId)           // 16 bytes
+        buffer.put(callId) // 16 bytes
         buffer.putLong(sequenceNumber) // 8 bytes
-        buffer.put(direction)         // 1 byte
+        buffer.put(direction) // 1 byte
         buffer.put(circuitIndex.toByte()) // 1 byte
         return buffer.array()
     }

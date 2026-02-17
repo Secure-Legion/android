@@ -4,7 +4,7 @@
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="#000000">
+    android:background="?attr/colorSurface">
 
     <!-- Top Bar -->
     <LinearLayout
@@ -87,7 +87,7 @@
             android:layout_width="24dp"
             android:layout_height="24dp"
             android:src="@android:drawable/ic_menu_search"
-            app:tint="@color/text_gray"
+            app:tint="?attr/colorOnSurfaceVariant"
             app:layout_constraintTop_toTopOf="parent"
             app:layout_constraintBottom_toBottomOf="parent"
             app:layout_constraintStart_toStartOf="parent"
@@ -102,7 +102,7 @@
             android:background="@android:color/transparent"
             android:hint="Search Members.."
             android:textColorHint="@color/text_gray"
-            android:textColor="@color/text_white"
+            android:textColor="?attr/colorOnSurface"
             android:textSize="16sp"
             android:fontFamily="@font/poppins_regular"
             app:layout_constraintTop_toTopOf="parent"
@@ -117,7 +117,7 @@
             android:src="@android:drawable/ic_input_add"
             android:clickable="true"
             android:focusable="true"
-            app:tint="@color/text_gray"
+            app:tint="?attr/colorOnSurfaceVariant"
             app:layout_constraintTop_toTopOf="parent"
             app:layout_constraintBottom_toBottomOf="parent"
             app:layout_constraintEnd_toEndOf="parent"
@@ -142,7 +142,7 @@
             android:paddingStart="20dp"
             android:paddingEnd="40dp"
             android:clipToPadding="false"
-            android:background="#000000" />
+            android:background="?attr/colorSurface" />
 
         <!-- Alphabet Index (Right Side) -->
         <LinearLayout
@@ -290,22 +290,29 @@
     </FrameLayout>
 
     <!-- Bottom Navigation -->
-    <LinearLayout
+        <LinearLayout
         android:id="@+id/bottomNav"
-        android:layout_width="match_parent"
-        android:layout_height="110dp"
+        android:layout_width="0dp"
+        android:layout_height="72dp"
+        android:layout_marginStart="16dp"
+        android:layout_marginEnd="16dp"
+        android:layout_marginBottom="20dp"
         android:orientation="horizontal"
-        android:background="#0A0A0A"
-        android:gravity="center"
-        android:paddingTop="12dp"
-        android:paddingBottom="12dp"
-        app:layout_constraintBottom_toBottomOf="parent">
+        android:background="@drawable/glass_nav_bg"
+        android:clipToOutline="true"
+        android:gravity="center_vertical"
+                android:paddingBottom="0dp"
+        android:elevation="8dp"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent">
 
         <!-- Messages Nav Item -->
         <LinearLayout
             android:id="@+id/navMessages"
+            android:layout_gravity="center_vertical"
             android:layout_width="0dp"
-            android:layout_height="match_parent"
+            android:layout_height="wrap_content"
             android:layout_weight="1"
             android:orientation="vertical"
             android:gravity="center"
@@ -314,19 +321,19 @@
             android:focusable="true">
 
             <ImageView
-                android:layout_width="24dp"
-                android:layout_height="24dp"
+                android:layout_width="22dp"
+                android:layout_height="22dp"
                 android:src="@android:drawable/sym_action_chat"
-                app:tint="@color/text_gray"
-                android:layout_marginBottom="4dp"
+                app:tint="?attr/colorOnSurfaceVariant"
+                android:layout_marginBottom="2dp"
                 android:contentDescription="Messages" />
 
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:text="Messages"
-                android:textSize="11sp"
-                android:textColor="@color/text_gray"
+                android:textSize="10sp"
+                android:textColor="?attr/colorOnSurfaceVariant"
                 android:fontFamily="@font/poppins_medium" />
 
         </LinearLayout>
@@ -334,8 +341,9 @@
         <!-- Wallet Nav Item -->
         <LinearLayout
             android:id="@+id/navWallet"
+            android:layout_gravity="center_vertical"
             android:layout_width="0dp"
-            android:layout_height="match_parent"
+            android:layout_height="wrap_content"
             android:layout_weight="1"
             android:orientation="vertical"
             android:gravity="center"
@@ -344,19 +352,19 @@
             android:focusable="true">
 
             <ImageView
-                android:layout_width="24dp"
-                android:layout_height="24dp"
+                android:layout_width="22dp"
+                android:layout_height="22dp"
                 android:src="@drawable/ic_wallet"
-                android:layout_marginBottom="4dp"
-                app:tint="@color/text_gray"
+                android:layout_marginBottom="2dp"
+                app:tint="?attr/colorOnSurfaceVariant"
                 android:contentDescription="Wallet" />
 
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:text="Wallet"
-                android:textSize="11sp"
-                android:textColor="@color/text_gray"
+                android:textSize="10sp"
+                android:textColor="?attr/colorOnSurfaceVariant"
                 android:fontFamily="@font/poppins_medium" />
 
         </LinearLayout>
@@ -364,8 +372,9 @@
         <!-- Add Friend Nav Item -->
         <LinearLayout
             android:id="@+id/navAddFriend"
+            android:layout_gravity="center_vertical"
             android:layout_width="0dp"
-            android:layout_height="match_parent"
+            android:layout_height="wrap_content"
             android:layout_weight="1"
             android:orientation="vertical"
             android:gravity="center"
@@ -374,19 +383,19 @@
             android:focusable="true">
 
             <ImageView
-                android:layout_width="24dp"
-                android:layout_height="24dp"
+                android:layout_width="22dp"
+                android:layout_height="22dp"
                 android:src="@drawable/ic_add_friend"
-                android:layout_marginBottom="4dp"
-                app:tint="@color/text_gray"
+                android:layout_marginBottom="2dp"
+                app:tint="?attr/colorOnSurfaceVariant"
                 android:contentDescription="Add Friend" />
 
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:text="Add Friend"
-                android:textSize="11sp"
-                android:textColor="@color/text_gray"
+                android:textSize="10sp"
+                android:textColor="?attr/colorOnSurfaceVariant"
                 android:fontFamily="@font/poppins_medium" />
 
         </LinearLayout>
@@ -395,7 +404,7 @@
         <LinearLayout
             android:id="@+id/navLock"
             android:layout_width="0dp"
-            android:layout_height="match_parent"
+            android:layout_height="wrap_content"
             android:layout_weight="1"
             android:orientation="vertical"
             android:gravity="center"
@@ -404,19 +413,19 @@
             android:focusable="true">
 
             <ImageView
-                android:layout_width="24dp"
-                android:layout_height="24dp"
+                android:layout_width="22dp"
+                android:layout_height="22dp"
                 android:src="@drawable/ic_lock"
-                android:layout_marginBottom="4dp"
-                app:tint="@color/text_gray"
+                android:layout_marginBottom="2dp"
+                app:tint="?attr/colorOnSurfaceVariant"
                 android:contentDescription="Lock" />
 
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:text="Lock"
-                android:textSize="11sp"
-                android:textColor="@color/text_gray"
+                android:textSize="10sp"
+                android:textColor="?attr/colorOnSurfaceVariant"
                 android:fontFamily="@font/poppins_medium" />
 
         </LinearLayout>

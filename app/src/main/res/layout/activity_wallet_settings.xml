@@ -5,7 +5,7 @@
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="#000000">
+    android:background="?attr/colorSurface">
 
     <!-- Header -->
     <LinearLayout
@@ -47,7 +47,7 @@
             android:layout_weight="1"
             android:text="Wallet Settings"
             android:textSize="24sp"
-            android:textColor="#999999"
+            android:textColor="?attr/colorOnSurfaceVariant"
             android:fontFamily="@font/space_grotesk_bold"
             android:gravity="center" />
 
@@ -77,7 +77,7 @@
                 android:layout_height="wrap_content"
                 android:text="SELECT CHAIN"
                 android:textSize="11sp"
-                android:textColor="@color/text_gray"
+                android:textColor="?attr/colorOnSurfaceVariant"
                 android:textAllCaps="true"
                 android:letterSpacing="0.1"
                 android:layout_marginBottom="12dp" />
@@ -116,7 +116,7 @@
                         android:layout_height="wrap_content"
                         android:text="Solana"
                         android:textSize="14sp"
-                        android:textColor="@color/text_white"
+                        android:textColor="?attr/colorOnSurface"
                         android:fontFamily="@font/poppins_medium" />
 
                 </LinearLayout>
@@ -148,7 +148,7 @@
                         android:layout_height="wrap_content"
                         android:text="Zcash"
                         android:textSize="14sp"
-                        android:textColor="@color/text_white"
+                        android:textColor="?attr/colorOnSurface"
                         android:fontFamily="@font/poppins_medium" />
 
                 </LinearLayout>
@@ -196,7 +196,7 @@
                         android:layout_height="wrap_content"
                         android:text="Wallet 1"
                         android:textSize="15sp"
-                        android:textColor="@color/text_white"
+                        android:textColor="?attr/colorOnSurface"
                         android:fontFamily="@font/poppins_medium" />
 
                     <TextView
@@ -205,7 +205,7 @@
                         android:layout_height="wrap_content"
                         android:text="$0.00"
                         android:textSize="12sp"
-                        android:textColor="#888888"
+                        android:textColor="?attr/colorOnSurfaceVariant"
                         android:fontFamily="@font/poppins_regular" />
 
                 </LinearLayout>
@@ -215,7 +215,7 @@
                     android:layout_width="20dp"
                     android:layout_height="20dp"
                     android:src="@drawable/ic_arrow_down"
-                    app:tint="#888888"
+                    app:tint="?attr/colorOnSurfaceVariant"
                     android:contentDescription="Select Wallet" />
 
             </LinearLayout>
@@ -226,7 +226,7 @@
                 android:layout_height="wrap_content"
                 android:text="WALLET ACTIONS"
                 android:textSize="11sp"
-                android:textColor="@color/text_gray"
+                android:textColor="?attr/colorOnSurfaceVariant"
                 android:textAllCaps="true"
                 android:letterSpacing="0.1"
                 android:layout_marginBottom="12dp" />
@@ -266,7 +266,7 @@
                     android:layout_weight="1"
                     android:text="Create New Wallet"
                     android:textSize="16sp"
-                    android:textColor="@color/text_white" />
+                    android:textColor="?attr/colorOnSurface" />
 
             </LinearLayout>
 
@@ -310,14 +310,14 @@
                         android:layout_height="wrap_content"
                         android:text="Import Wallet"
                         android:textSize="16sp"
-                        android:textColor="@color/text_white" />
+                        android:textColor="?attr/colorOnSurface" />
 
                     <TextView
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:text="Import existing SOL or ZEC wallet"
                         android:textSize="12sp"
-                        android:textColor="@color/text_gray"
+                        android:textColor="?attr/colorOnSurfaceVariant"
                         android:layout_marginTop="2dp" />
 
                 </LinearLayout>
@@ -364,7 +364,7 @@
                         android:layout_height="wrap_content"
                         android:text="Export Seed Phrase"
                         android:textSize="16sp"
-                        android:textColor="@color/text_white" />
+                        android:textColor="?attr/colorOnSurface" />
 
                     <TextView
                         android:id="@+id/exportKeySubtext"
@@ -372,7 +372,7 @@
                         android:layout_height="wrap_content"
                         android:text="Export seed phrase for wallet"
                         android:textSize="12sp"
-                        android:textColor="@color/text_gray"
+                        android:textColor="?attr/colorOnSurfaceVariant"
                         android:layout_marginTop="2dp" />
 
                 </LinearLayout>
@@ -419,7 +419,7 @@
                         android:layout_height="wrap_content"
                         android:text="Delete Wallet"
                         android:textSize="16sp"
-                        android:textColor="@color/text_white" />
+                        android:textColor="?attr/colorOnSurface" />
 
                     <TextView
                         android:id="@+id/deleteWalletSubtext"
@@ -427,7 +427,7 @@
                         android:layout_height="wrap_content"
                         android:text="Permanently remove this wallet"
                         android:textSize="12sp"
-                        android:textColor="@color/text_gray"
+                        android:textColor="?attr/colorOnSurfaceVariant"
                         android:layout_marginTop="2dp" />
 
                 </LinearLayout>

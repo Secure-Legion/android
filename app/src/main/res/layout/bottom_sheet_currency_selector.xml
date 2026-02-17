@@ -22,7 +22,7 @@
         android:layout_height="wrap_content"
         android:text="Select Currency"
         android:textSize="22sp"
-        android:textColor="@color/text_white"
+        android:textColor="?attr/colorOnSurface"
         android:fontFamily="@font/space_grotesk_bold"
         android:gravity="center"
         android:paddingBottom="24dp" />
@@ -61,7 +61,7 @@
                     android:layout_height="wrap_content"
                     android:text="SOL"
                     android:textSize="16sp"
-                    android:textColor="@color/text_white"
+                    android:textColor="?attr/colorOnSurface"
                     android:fontFamily="@font/poppins_semibold" />
 
                 <TextView
@@ -69,7 +69,7 @@
                     android:layout_height="wrap_content"
                     android:text="Solana"
                     android:textSize="12sp"
-                    android:textColor="#888888"
+                    android:textColor="?attr/colorOnSurfaceVariant"
                     android:fontFamily="@font/poppins_regular" />
 
             </LinearLayout>
@@ -109,7 +109,7 @@
                     android:layout_height="wrap_content"
                     android:text="ZEC"
                     android:textSize="16sp"
-                    android:textColor="@color/text_white"
+                    android:textColor="?attr/colorOnSurface"
                     android:fontFamily="@font/poppins_semibold" />
 
                 <TextView
@@ -117,7 +117,7 @@
                     android:layout_height="wrap_content"
                     android:text="Zcash (Shielded)"
                     android:textSize="12sp"
-                    android:textColor="#888888"
+                    android:textColor="?attr/colorOnSurfaceVariant"
                     android:fontFamily="@font/poppins_regular" />
 
             </LinearLayout>

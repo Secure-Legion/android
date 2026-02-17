@@ -19,6 +19,6 @@
         android:layout_height="wrap_content"
         android:text="Loading..."
         android:textSize="16sp"
-        android:textColor="@color/text_gray" />
+        android:textColor="?attr/colorOnSurfaceVariant" />
 
 </LinearLayout>

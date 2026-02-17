@@ -318,33 +318,11 @@ class GroupProfileActivity : BaseActivity() {
         val bottomNav = findViewById<View>(R.id.bottomNav)
         ViewCompat.setOnApplyWindowInsetsListener(findViewById(android.R.id.content)) { _, windowInsets ->
             val insets = windowInsets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())
-            bottomNav?.setPadding(bottomNav.paddingLeft, bottomNav.paddingTop, bottomNav.paddingRight, insets.bottom)
+            bottomNav?.setPadding(bottomNav.paddingLeft, bottomNav.paddingTop, bottomNav.paddingRight, 0)
             windowInsets
         }
 
-        // Messages
-        findViewById<View>(R.id.navMessages)?.setOnClickListener {
-            val intent = Intent(this, MainActivity::class.java)
-            intent.flags = Intent.FLAG_ACTIVITY_CLEAR_TOP
-            startActivity(intent)
-        }
-
-        // Wallet
-        findViewById<View>(R.id.navWallet)?.setOnClickListener {
-            val intent = Intent(this, WalletActivity::class.java)
-            startActivityWithSlideAnimation(intent)
-        }
-
-        // Add Friend
-        findViewById<View>(R.id.navAddFriend)?.setOnClickListener {
-            val intent = Intent(this, AddFriendActivity::class.java)
-            startActivityWithSlideAnimation(intent)
-        }
-
-        // Lock
-        findViewById<View>(R.id.navLock)?.setOnClickListener {
-            lockApp()
-        }
+        BottomNavigationHelper.setupBottomNavigation(this)
     }
 
     private fun startActivityWithSlideAnimation(intent: Intent) {

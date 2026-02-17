@@ -458,7 +458,7 @@ class GroupChatActivity : BaseActivity() {
         }
     }
 
-    @Suppress("GestureBackNavigation")  // Bottom sheet handling handled via hideBottomSheet()
+    @Suppress("GestureBackNavigation") // Bottom sheet handling handled via hideBottomSheet()
     override fun onBackPressed() {
         if (isBottomSheetVisible) {
             hideBottomSheet()
@@ -474,7 +474,7 @@ class GroupChatActivity : BaseActivity() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             registerReceiver(groupMessageReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
         } else {
-            @Suppress("UnspecifiedRegisterReceiverFlag")  // RECEIVER_NOT_EXPORTED not available in API < 31
+            @Suppress("UnspecifiedRegisterReceiverFlag") // RECEIVER_NOT_EXPORTED not available in API < 31
             registerReceiver(groupMessageReceiver, filter)
         }
         Log.d(TAG, "Registered NEW_GROUP_MESSAGE receiver")

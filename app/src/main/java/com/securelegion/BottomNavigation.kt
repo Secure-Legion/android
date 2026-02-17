@@ -6,6 +6,7 @@ import android.view.View
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
+import com.securelegion.utils.BadgeUtils
 
 object BottomNavigationHelper {
 
@@ -24,11 +25,14 @@ object BottomNavigationHelper {
                     bottomNav.paddingLeft,
                     bottomNav.paddingTop,
                     bottomNav.paddingRight,
-                    insets.bottom
-                )
+                    0)
                 windowInsets
             }
         }
+
+        // Update badges on the shared nav
+        val rootView = activity.findViewById<View>(android.R.id.content)
+        BadgeUtils.updateFriendRequestBadge(activity, rootView)
 
         activity.findViewById<View>(R.id.navMessages)?.setOnClickListener {
             if (activity !is MainActivity) {
@@ -39,34 +43,21 @@ object BottomNavigationHelper {
             }
         }
 
-        activity.findViewById<View>(R.id.navWallet)?.setOnClickListener {
+        activity.findViewById<View>(R.id.navContacts)?.setOnClickListener {
             if (activity is MainActivity) {
-                // Show wallet tab if we're in MainActivity
-                (activity as? MainActivity)?.let {
-                    // MainActivity will handle showing wallet tab
-                }
+                // MainActivity will handle showing contacts tab
             } else {
-                // Navigate to MainActivity and show wallet
                 val intent = Intent(activity, MainActivity::class.java)
-                intent.putExtra("SHOW_WALLET", true)
+                intent.putExtra("SHOW_CONTACTS", true)
                 intent.flags = Intent.FLAG_ACTIVITY_CLEAR_TOP
                 activity.startActivity(intent)
                 activity.finish()
             }
         }
 
-        activity.findViewById<View>(R.id.navAddFriend)?.setOnClickListener {
-            if (activity !is AddFriendActivity) {
-                val intent = Intent(activity, AddFriendActivity::class.java)
-                activity.startActivity(intent)
-            }
-        }
-
-        activity.findViewById<View>(R.id.navLock)?.setOnClickListener {
-            val intent = Intent(activity, LockActivity::class.java)
-            intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+        activity.findViewById<View>(R.id.navProfile)?.setOnClickListener {
+            val intent = Intent(activity, WalletIdentityActivity::class.java)
             activity.startActivity(intent)
-            activity.finish()
         }
     }
 }

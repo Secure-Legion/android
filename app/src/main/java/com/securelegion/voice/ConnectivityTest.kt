@@ -27,15 +27,15 @@ object ConnectivityTest {
     private const val TAG = "ConnectivityTest"
 
     // Message type for Rust protocol
-    private const val MSG_TYPE_PING_PONG: Byte = 0x0E  // New message type for connectivity tests
+    private const val MSG_TYPE_PING_PONG: Byte = 0x0E // New message type for connectivity tests
 
     // Protocol messages
     const val TYPE_PING = "PING"
     const val TYPE_PONG = "PONG"
 
     // Test timeout
-    private const val PING_TIMEOUT_MS = 30000L  // 30 seconds for full round trip
-    private const val PONG_POLL_INTERVAL_MS = 100L  // Poll for PONG every 100ms
+    private const val PING_TIMEOUT_MS = 30000L // 30 seconds for full round trip
+    private const val PONG_POLL_INTERVAL_MS = 100L // Poll for PONG every 100ms
 
     // Track pending PONGs (testId -> received timestamp)
     private val pendingPongs = java.util.concurrent.ConcurrentHashMap<String, Long>()
@@ -79,7 +79,7 @@ object ConnectivityTest {
 
             // Encrypt the message with metadata
             val encryptedMessage = RustBridge.encryptMessage(
-                String(messageWithMetadata, Charsets.ISO_8859_1),  // Binary string for JNI
+                String(messageWithMetadata, Charsets.ISO_8859_1), // Binary string for JNI
                 recipientX25519PublicKey
             )
 
@@ -108,7 +108,7 @@ object ConnectivityTest {
             }
 
             if (!sendResult) {
-                Log.e(TAG, "✗ RustBridge.sendMessageBlob returned false")
+                Log.e(TAG, "RustBridge.sendMessageBlob returned false")
                 Log.e(TAG, "Phase 1 Failed: Could not send PING")
                 return@withContext ConnectivityResult(
                     success = false,
@@ -119,7 +119,7 @@ object ConnectivityTest {
             }
 
             val pingTime = System.currentTimeMillis() - startTime
-            Log.i(TAG, "✓ Phase 1 Complete: PING sent successfully (${pingTime}ms)")
+            Log.i(TAG, "Phase 1 Complete: PING sent successfully (${pingTime}ms)")
 
             // Phase 2: Wait for PONG
             Log.d(TAG, "Phase 2: Waiting for PONG response...")
@@ -137,11 +137,11 @@ object ConnectivityTest {
                     val roundTripTime = pongTime - startTime
 
                     Log.i(TAG, "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-                    Log.i(TAG, "✓ CONNECTIVITY TEST PASSED (Full Round-Trip)")
-                    Log.i(TAG, "  Test ID: $testId")
-                    Log.i(TAG, "  Round-trip time: ${roundTripTime}ms")
-                    Log.i(TAG, "  Status: PING sent + PONG received")
-                    Log.i(TAG, "  Interpretation: Bidirectional Tor circuit working!")
+                    Log.i(TAG, "CONNECTIVITY TEST PASSED (Full Round-Trip)")
+                    Log.i(TAG, "Test ID: $testId")
+                    Log.i(TAG, "Round-trip time: ${roundTripTime}ms")
+                    Log.i(TAG, "Status: PING sent + PONG received")
+                    Log.i(TAG, "Interpretation: Bidirectional Tor circuit working!")
                     Log.i(TAG, "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
 
                     return@withContext ConnectivityResult(
@@ -158,12 +158,12 @@ object ConnectivityTest {
 
             // PONG timeout - circuit might be unidirectional
             Log.e(TAG, "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-            Log.e(TAG, "✗ CONNECTIVITY TEST FAILED")
-            Log.e(TAG, "  Test ID: $testId")
-            Log.e(TAG, "  Phase: PONG timeout")
-            Log.e(TAG, "  PING was sent successfully")
-            Log.e(TAG, "  But PONG was NOT received after ${PING_TIMEOUT_MS}ms")
-            Log.e(TAG, "  Likely cause: Reverse Tor circuit not established")
+            Log.e(TAG, "CONNECTIVITY TEST FAILED")
+            Log.e(TAG, "Test ID: $testId")
+            Log.e(TAG, "Phase: PONG timeout")
+            Log.e(TAG, "PING was sent successfully")
+            Log.e(TAG, "But PONG was NOT received after ${PING_TIMEOUT_MS}ms")
+            Log.e(TAG, "Likely cause: Reverse Tor circuit not established")
             Log.e(TAG, "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
 
             ConnectivityResult(
@@ -176,10 +176,10 @@ object ConnectivityTest {
         } catch (e: Exception) {
             val totalTime = System.currentTimeMillis() - startTime
             Log.e(TAG, "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-            Log.e(TAG, "✗ CONNECTIVITY TEST FAILED")
-            Log.e(TAG, "  Test ID: $testId")
-            Log.e(TAG, "  Total time: ${totalTime}ms")
-            Log.e(TAG, "  Error: ${e.message}", e)
+            Log.e(TAG, "CONNECTIVITY TEST FAILED")
+            Log.e(TAG, "Test ID: $testId")
+            Log.e(TAG, "Total time: ${totalTime}ms")
+            Log.e(TAG, "Error: ${e.message}", e)
             Log.e(TAG, "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
 
             ConnectivityResult(
@@ -196,7 +196,7 @@ object ConnectivityTest {
      */
     fun markPongReceived(testId: String) {
         pendingPongs[testId] = System.currentTimeMillis()
-        Log.i(TAG, "✓ PONG received and marked for test ID: $testId")
+        Log.i(TAG, "PONG received and marked for test ID: $testId")
     }
 
     /**
@@ -259,7 +259,7 @@ object ConnectivityTest {
 
             // Encrypt the message with metadata
             val encryptedMessage = RustBridge.encryptMessage(
-                String(messageWithMetadata, Charsets.ISO_8859_1),  // Binary string for JNI
+                String(messageWithMetadata, Charsets.ISO_8859_1), // Binary string for JNI
                 senderX25519PublicKey
             )
 
@@ -270,9 +270,9 @@ object ConnectivityTest {
             )
 
             if (success) {
-                Log.i(TAG, "✓ PONG sent successfully")
+                Log.i(TAG, "PONG sent successfully")
             } else {
-                Log.e(TAG, "✗ Failed to send PONG")
+                Log.e(TAG, "Failed to send PONG")
             }
 
         } catch (e: Exception) {
@@ -302,17 +302,17 @@ object ConnectivityTest {
      */
     data class ConnectivityResult(
         val success: Boolean,
-        val phase: String,  // Which phase succeeded/failed: PING_SEND, PONG_WAIT, etc.
+        val phase: String, // Which phase succeeded/failed: PING_SEND, PONG_WAIT, etc.
         val error: String?,
         val latencyMs: Long
     ) {
         fun toReadableString(): String = buildString {
             if (success) {
-                append("✓ Connectivity OK")
+                append("Connectivity OK")
                 append("\nLatency: ${latencyMs}ms")
                 append("\nPhase: $phase")
             } else {
-                append("✗ Connectivity Failed")
+                append("Connectivity Failed")
                 append("\nPhase: $phase")
                 append("\nError: $error")
                 append("\nTime: ${latencyMs}ms")

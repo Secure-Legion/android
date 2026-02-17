@@ -39,8 +39,8 @@ class SplashActivity : AppCompatActivity() {
         // Security: Prevent screenshots and screen recording
         // TODO: Re-enable FLAG_SECURE after demo recording
         // window.setFlags(
-        //     WindowManager.LayoutParams.FLAG_SECURE,
-        //     WindowManager.LayoutParams.FLAG_SECURE
+        // WindowManager.LayoutParams.FLAG_SECURE,
+        // WindowManager.LayoutParams.FLAG_SECURE
         // )
 
         // Keep status bar dark gray (matches splash screen theme)
@@ -141,17 +141,17 @@ class SplashActivity : AppCompatActivity() {
             // Watchdog timer: if checks take >5 seconds and TorService is running, just proceed
             var checksComplete = false
             val watchdogThread = Thread {
-                Thread.sleep(5000)  // 5 second timeout
+                Thread.sleep(5000) // 5 second timeout
                 if (!checksComplete) {
                     Log.w("SplashActivity", "Tor checks taking too long - checking if we can skip...")
                     if (TorService.isRunning()) {
-                        Log.i("SplashActivity", "✓ TorService is running - proceeding despite slow checks")
+                        Log.i("SplashActivity", "TorService is running - proceeding despite slow checks")
                         runOnUiThread {
                             val progressBar = findViewById<ProgressBar>(R.id.torProgressBar)
                             progressBar?.progress = 100
                             updateStatus("Connected!")
                             Handler(Looper.getMainLooper()).postDelayed({
-                                checksComplete = true  // Prevent double navigation
+                                checksComplete = true // Prevent double navigation
                                 navigateToLock()
                             }, 300)
                         }
@@ -198,10 +198,10 @@ class SplashActivity : AppCompatActivity() {
                         val socksRunning = RustBridge.isSocksProxyRunning()
 
                         if (circuitsEstablished && socksRunning) {
-                            Log.i("SplashActivity", "✓ Tor fully bootstrapped (100%) - checking services...")
+                            Log.i("SplashActivity", "Tor fully bootstrapped (100%) - checking services...")
 
                             if (TorService.isRunning() && TorService.isMessagingReady()) {
-                                Log.i("SplashActivity", "✓ TorService already running and ready - proceeding immediately")
+                                Log.i("SplashActivity", "TorService already running and ready - proceeding immediately")
                                 checksComplete = true
                                 runOnUiThread {
                                     val progressBar = findViewById<ProgressBar>(R.id.torProgressBar)
@@ -315,12 +315,12 @@ class SplashActivity : AppCompatActivity() {
             try {
                 val torManager = TorManager.getInstance(this)
                 var retries = 0
-                val maxRetries = 10  // Max 10 retries (5 seconds total)
+                val maxRetries = 10 // Max 10 retries (5 seconds total)
 
                 while (retries < maxRetries) {
                     runOnUiThread {
                         val progressBar = findViewById<ProgressBar>(R.id.torProgressBar)
-                        progressBar?.progress = 90 + retries  // 90-100%
+                        progressBar?.progress = 90 + retries // 90-100%
                         updateStatus("Verifying services... (${90 + retries}%)")
                     }
 
@@ -329,7 +329,7 @@ class SplashActivity : AppCompatActivity() {
                         val onionAddress = torManager.getOnionAddress()
                         if (onionAddress != null) {
                             // All ready!
-                            Log.i("SplashActivity", "✓ Tor ready")
+                            Log.i("SplashActivity", "Tor ready")
                             runOnUiThread {
                                 val progressBar = findViewById<ProgressBar>(R.id.torProgressBar)
                                 progressBar?.progress = 100
@@ -387,7 +387,7 @@ class SplashActivity : AppCompatActivity() {
 
             if (!hasAccount) {
                 // No account - go directly to WelcomeActivity
-                Log.i("SplashActivity", "✓ No account found, navigating to WelcomeActivity")
+                Log.i("SplashActivity", "No account found, navigating to WelcomeActivity")
                 val intent = Intent(this, WelcomeActivity::class.java)
                 intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
                 startActivity(intent)
@@ -400,7 +400,7 @@ class SplashActivity : AppCompatActivity() {
                 finish()
             } else {
                 // Account exists - go to LockActivity
-                Log.i("SplashActivity", "✓ Account found, navigating to LockActivity")
+                Log.i("SplashActivity", "Account found, navigating to LockActivity")
                 val intent = Intent(this, LockActivity::class.java)
                 startActivity(intent)
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
@@ -480,9 +480,9 @@ class SplashActivity : AppCompatActivity() {
                     if (status >= 95 && !bootstrapComplete) {
                         bootstrapComplete = true
                         if (isFirstTimeSetup) {
-                            Log.i("SplashActivity", "✓ Tor bootstrap complete ($status%) - proceeding to setup")
+                            Log.i("SplashActivity", "Tor bootstrap complete ($status%) - proceeding to setup")
                         } else {
-                            Log.i("SplashActivity", "✓ Tor bootstrap complete ($status%) - waiting for listeners...")
+                            Log.i("SplashActivity", "Tor bootstrap complete ($status%) - waiting for listeners...")
                         }
                     }
 
@@ -502,7 +502,7 @@ class SplashActivity : AppCompatActivity() {
 
                     // Once bootstrap complete, proceed immediately (don't wait for listeners)
                     if (bootstrapComplete) {
-                        Log.i("SplashActivity", "✓ Tor bootstrap complete - proceeding to app")
+                        Log.i("SplashActivity", "Tor bootstrap complete - proceeding to app")
 
                         // Start TorService in background (it will finish initialization while user uses app)
                         if (!TorService.isRunning()) {

@@ -4,7 +4,7 @@
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:orientation="vertical"
-    android:background="#000000">
+    android:background="?attr/colorSurface">
 
     <!-- Pending Invites Section Header (only shows if there are invites) -->
     <LinearLayout
@@ -23,8 +23,8 @@
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
-            android:text="📩 Pending Invites"
-            android:textColor="#FFFFFF"
+            android:text="Pending Invites"
+            android:textColor="?attr/colorOnSurface"
             android:textSize="14sp"
             android:fontFamily="@font/space_grotesk_bold" />
 
@@ -33,7 +33,7 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:text="2"
-            android:textColor="#999999"
+            android:textColor="?attr/colorOnSurfaceVariant"
             android:textSize="13sp"
             android:fontFamily="@font/poppins_medium" />
 
@@ -63,7 +63,7 @@
             android:layout_height="wrap_content"
             android:layout_weight="1"
             android:text="My Groups"
-            android:textColor="#FFFFFF"
+            android:textColor="?attr/colorOnSurface"
             android:textSize="14sp"
             android:fontFamily="@font/space_grotesk_bold" />
 
@@ -98,7 +98,7 @@
             android:layout_height="wrap_content"
             android:layout_marginTop="16dp"
             android:text="No Groups Yet"
-            android:textColor="#999999"
+            android:textColor="?attr/colorOnSurfaceVariant"
             android:textSize="16sp"
             android:fontFamily="@font/poppins_medium" />
 

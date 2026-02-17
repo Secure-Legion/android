@@ -4,7 +4,7 @@
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="#000000">
+    android:background="?attr/colorSurface">
 
     <!-- Top Bar -->
     <LinearLayout
@@ -12,6 +12,7 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="horizontal"
+        android:background="@drawable/glass_header_bg"
         android:paddingTop="48dp"
         android:paddingBottom="12dp"
         android:paddingStart="20dp"
@@ -79,22 +80,29 @@
         android:paddingStart="16dp"
         android:paddingEnd="16dp"
         android:paddingTop="8dp"
-        android:paddingBottom="8dp"
+        android:paddingBottom="88dp"
         android:clipToPadding="false"
         app:layout_constraintTop_toBottomOf="@id/topBar"
-        app:layout_constraintBottom_toTopOf="@id/messageInputContainer" />
+        app:layout_constraintBottom_toBottomOf="parent" />
 
-    <!-- Message Input Container -->
+    <!-- Message Input Container - Floating Glass Pill -->
     <androidx.constraintlayout.widget.ConstraintLayout
         android:id="@+id/messageInputContainer"
-        android:layout_width="match_parent"
+        android:layout_width="0dp"
         android:layout_height="wrap_content"
-        android:background="#0A0A0A"
-        android:paddingTop="12dp"
-        android:paddingBottom="12dp"
-        android:paddingStart="16dp"
-        android:paddingEnd="16dp"
-        app:layout_constraintBottom_toBottomOf="parent">
+        android:background="@drawable/glass_input_bar_bg"
+        android:clipToOutline="true"
+        android:paddingTop="8dp"
+        android:paddingBottom="8dp"
+        android:paddingStart="8dp"
+        android:paddingEnd="8dp"
+        android:layout_marginStart="12dp"
+        android:layout_marginEnd="12dp"
+        android:layout_marginBottom="12dp"
+        android:elevation="8dp"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent">
 
         <!-- Plus Button -->
         <FrameLayout
@@ -129,7 +137,7 @@
             android:padding="12dp"
             android:hint="Message"
             android:textColorHint="#666666"
-            android:textColor="#FFFFFF"
+            android:textColor="?attr/colorOnSurface"
             android:textSize="16sp"
             android:fontFamily="@font/poppins_regular"
             android:inputType="textMultiLine|textCapSentences"
@@ -213,7 +221,7 @@
                 android:layout_marginStart="16dp"
                 android:text="Send Image"
                 android:textSize="16sp"
-                android:textColor="#FFFFFF"
+                android:textColor="?attr/colorOnSurface"
                 android:fontFamily="@font/poppins_medium"
                 app:layout_constraintStart_toEndOf="@id/imageIcon"
                 app:layout_constraintEnd_toEndOf="parent"
@@ -257,7 +265,7 @@
                 android:layout_marginStart="16dp"
                 android:text="Add Friend"
                 android:textSize="16sp"
-                android:textColor="#FFFFFF"
+                android:textColor="?attr/colorOnSurface"
                 android:fontFamily="@font/poppins_medium"
                 app:layout_constraintStart_toEndOf="@id/addFriendIcon"
                 app:layout_constraintEnd_toEndOf="parent"
@@ -275,7 +283,7 @@
             android:padding="16dp"
             android:text="Cancel"
             android:textSize="16sp"
-            android:textColor="#888888"
+            android:textColor="?attr/colorOnSurfaceVariant"
             android:fontFamily="@font/poppins_medium"
             android:gravity="center"
             android:clickable="true"

@@ -1,5 +1,7 @@
 package com.securelegion
 
+import com.securelegion.utils.GlassBottomSheetDialog
+
 import android.Manifest
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -80,9 +82,9 @@ class ChatActivity : BaseActivity() {
         const val EXTRA_CONTACT_ADDRESS = "CONTACT_ADDRESS"
         private const val PERMISSION_REQUEST_CODE = 100
         private const val CAMERA_PERMISSION_REQUEST_CODE = 101
-        private const val MAX_IMAGE_WIDTH = 1920  // 1080p width
+        private const val MAX_IMAGE_WIDTH = 1920 // 1080p width
         private const val MAX_IMAGE_HEIGHT = 1080 // 1080p height
-        private const val JPEG_QUALITY = 85       // Good quality, reasonable size
+        private const val JPEG_QUALITY = 85 // Good quality, reasonable size
     }
 
     private lateinit var messagesRecyclerView: RecyclerView
@@ -137,19 +139,19 @@ class ChatActivity : BaseActivity() {
     // Image capture
     private var cameraPhotoUri: Uri? = null
     private var cameraPhotoFile: File? = null
-    private var isWaitingForCameraGallery = false  // Prevent auto-lock during external camera/gallery
+    private var isWaitingForCameraGallery = false // Prevent auto-lock during external camera/gallery
 
     // Voice call
-    private var isInitiatingCall = false  // Prevent duplicate call initiations
+    private var isInitiatingCall = false // Prevent duplicate call initiations
 
     // Media picking
-    private var isWaitingForMediaResult = false  // Track if waiting for media picker result
+    private var isWaitingForMediaResult = false // Track if waiting for media picker result
 
     // Activity result launchers for image picking
     private val galleryLauncher = registerForActivityResult(
         ActivityResultContracts.GetContent()
     ) { uri: Uri? ->
-        isWaitingForMediaResult = false  // Clear flag
+        isWaitingForMediaResult = false // Clear flag
         // DON'T clear isWaitingForCameraGallery here - let onResume() clear it
         // after preventing auto-lock (callback runs before onResume)
 
@@ -159,7 +161,7 @@ class ChatActivity : BaseActivity() {
     private val cameraLauncher = registerForActivityResult(
         ActivityResultContracts.TakePicture()
     ) { success: Boolean ->
-        isWaitingForMediaResult = false  // Clear flag
+        isWaitingForMediaResult = false // Clear flag
         // DON'T clear isWaitingForCameraGallery here - let onResume() clear it
         // after preventing auto-lock (callback runs before onResume)
 
@@ -261,7 +263,7 @@ class ChatActivity : BaseActivity() {
                                             Log.i(TAG, "Auto-download active — showing typing indicator for ${pendingPings.size} ping(s)")
                                             pendingPings.forEach { ping ->
                                                 autoPongPingIds.add(ping.pingId)
-                                                Log.d(TAG, "  Typing indicator for ping: ${ping.pingId.take(8)} (state=${ping.state})")
+                                                Log.d(TAG, "Typing indicator for ping: ${ping.pingId.take(8)} (state=${ping.state})")
                                             }
                                         }
                                     } else if (hasDownloadedOnce) {
@@ -275,7 +277,7 @@ class ChatActivity : BaseActivity() {
                                         if (pingSeen.isNotEmpty()) {
                                             Log.i(TAG, "Device Protection ON but user active — auto-sending PONG for ${pingSeen.size} message(s)")
                                             pingSeen.forEach { ping ->
-                                                Log.d(TAG, "  Auto-PONGing ping: ${ping.pingId.take(8)}")
+                                                Log.d(TAG, "Auto-PONGing ping: ${ping.pingId.take(8)}")
                                                 autoPongPingIds.add(ping.pingId)
                                                 com.securelegion.services.DownloadMessageService.start(
                                                     this@ChatActivity,
@@ -326,6 +328,34 @@ class ChatActivity : BaseActivity() {
         val rootView = findViewById<View>(android.R.id.content)
         val chatHeader = findViewById<View>(R.id.chatHeader)
         val messageInputContainer = findViewById<View>(R.id.messageInputContainer)
+        val recyclerView = findViewById<RecyclerView>(R.id.messagesRecyclerView)
+        var wasImeVisible = false
+
+        // Header floats above messages for glass effect
+        chatHeader.elevation = 8 * resources.displayMetrics.density
+
+        // Track current keyboard inset so the layout listener can use it
+        var currentBottomInset = 0
+
+        // Update RecyclerView padding based on header + input bar heights
+        fun updateRecyclerPadding() {
+            val inputContentHeight = messageInputContainer.height - messageInputContainer.paddingBottom
+            val bottomMargin = (28 * resources.displayMetrics.density).toInt() // 12dp margin + 16dp breathing
+            recyclerView.setPadding(
+                recyclerView.paddingLeft,
+                chatHeader.height,
+                recyclerView.paddingRight,
+                currentBottomInset + inputContentHeight + bottomMargin
+            )
+        }
+
+        // Recalculate RV padding whenever the header or input bar is laid out
+        chatHeader.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
+            updateRecyclerPadding()
+        }
+        messageInputContainer.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
+            updateRecyclerPadding()
+        }
 
         ViewCompat.setOnApplyWindowInsetsListener(rootView) { view, windowInsets ->
             val systemInsets = windowInsets.getInsets(
@@ -346,23 +376,30 @@ class ChatActivity : BaseActivity() {
             )
 
             // Apply bottom inset to message input container
-            // Use IME insets when keyboard is visible, otherwise use system insets
-            // Add extra spacing (48px ≈ 16dp) when keyboard is visible for breathing room
-            val extraKeyboardSpacing = if (imeVisible) 48 else 0
-            val bottomInset = if (imeVisible) {
-                imeInsets.bottom + extraKeyboardSpacing
+            // Only apply IME inset when keyboard is visible (floating pill handles its own bottom margin)
+            currentBottomInset = if (imeVisible) {
+                imeInsets.bottom
             } else {
-                systemInsets.bottom
+                0
             }
 
             messageInputContainer.setPadding(
                 messageInputContainer.paddingLeft,
                 messageInputContainer.paddingTop,
                 messageInputContainer.paddingRight,
-                bottomInset
+                currentBottomInset
             )
 
-            Log.d("ChatActivity", "Insets - System bottom: ${systemInsets.bottom}, IME bottom: ${imeInsets.bottom}, IME visible: $imeVisible, Applied bottom: $bottomInset")
+            // Also update RV padding immediately (layout listener will refine after measure)
+            updateRecyclerPadding()
+
+            // Scroll to bottom when keyboard just appeared
+            if (imeVisible && !wasImeVisible) {
+                recyclerView.post { scrollToBottom(smooth = true) }
+            }
+            wasImeVisible = imeVisible
+
+            Log.d("ChatActivity", "Insets - System bottom: ${systemInsets.bottom}, IME bottom: ${imeInsets.bottom}, IME visible: $imeVisible, Applied bottom: $currentBottomInset")
 
             windowInsets
         }
@@ -396,32 +433,32 @@ class ChatActivity : BaseActivity() {
 
         // DEBUG: Long-press contact name to reset key chain counters
         chatNameView.setOnLongClickListener {
-            Log.d(TAG, "🔍 DEBUG: Long-press detected on contact name!")
+            Log.d(TAG, "DEBUG: Long-press detected on contact name!")
             ThemedToast.show(this, "Long-press detected - showing reset dialog")
 
             AlertDialog.Builder(this)
                 .setTitle("Reset Key Chain?")
-                .setMessage("This will reset send/receive counters to 0 for this contact.\n\n⚠️ WARNING: Both devices must reset at the same time!")
+                .setMessage("This will reset send/receive counters to 0 for this contact.\n\n WARNING: Both devices must reset at the same time!")
                 .setPositiveButton("Reset") { _, _ ->
-                    Log.d(TAG, "🔍 DEBUG: User tapped RESET button in dialog")
+                    Log.d(TAG, "DEBUG: User tapped RESET button in dialog")
                     ThemedToast.show(this@ChatActivity, "Resetting key chain counters...")
                     lifecycleScope.launch {
                         try {
-                            Log.d(TAG, "🔍 DEBUG: Calling KeyChainManager.resetKeyChainCounters for contactId=$contactId")
+                            Log.d(TAG, "DEBUG: Calling KeyChainManager.resetKeyChainCounters for contactId=$contactId")
                             KeyChainManager.resetKeyChainCounters(this@ChatActivity, contactId)
-                            Log.d(TAG, "🔍 DEBUG: Reset completed successfully!")
-                            ThemedToast.show(this@ChatActivity, "✓ Key chain counters reset to 0")
+                            Log.d(TAG, "DEBUG: Reset completed successfully!")
+                            ThemedToast.show(this@ChatActivity, "Key chain counters reset to 0")
                         } catch (e: Exception) {
-                            Log.e(TAG, "🔍 DEBUG: Reset failed with exception", e)
+                            Log.e(TAG, "DEBUG: Reset failed with exception", e)
                             ThemedToast.show(this@ChatActivity, "Failed to reset: ${e.message}")
                         }
                     }
                 }
                 .setNegativeButton("Cancel") { _, _ ->
-                    Log.d(TAG, "🔍 DEBUG: User tapped CANCEL button in dialog")
+                    Log.d(TAG, "DEBUG: User tapped CANCEL button in dialog")
                 }
                 .show()
-            Log.d(TAG, "🔍 DEBUG: Reset dialog shown to user")
+            Log.d(TAG, "DEBUG: Reset dialog shown to user")
             true
         }
 
@@ -472,7 +509,7 @@ class ChatActivity : BaseActivity() {
             lifecyclePrefs.edit()
                 .putLong("last_pause_timestamp", 0L)
                 .putBoolean("waiting_for_camera_gallery", false)
-                .commit()  // Intentional: must be synchronous before onResume() completes
+                .commit() // Intentional: must be synchronous before onResume() completes
             Log.d(TAG, "Cleared pause timestamp after camera/gallery - preventing auto-lock")
             isWaitingForCameraGallery = false
         }
@@ -707,7 +744,7 @@ class ChatActivity : BaseActivity() {
     }
 
     private fun showChatActionsBottomSheet() {
-        val bottomSheet = com.google.android.material.bottomsheet.BottomSheetDialog(this)
+        val bottomSheet = GlassBottomSheetDialog(this)
         val view = layoutInflater.inflate(R.layout.bottom_sheet_chat_actions, null)
 
         bottomSheet.setContentView(view)
@@ -750,7 +787,7 @@ class ChatActivity : BaseActivity() {
     // ==================== IMAGE SENDING ====================
 
     private fun showImageSourceDialog() {
-        val bottomSheet = com.google.android.material.bottomsheet.BottomSheetDialog(this)
+        val bottomSheet = GlassBottomSheetDialog(this)
         val view = layoutInflater.inflate(R.layout.bottom_sheet_image_source, null)
         bottomSheet.setContentView(view)
 
@@ -1381,7 +1418,7 @@ class ChatActivity : BaseActivity() {
 
             Log.d(TAG, "Pending pings from DB: ${activePingEntries.size} (${ghostPings.size} ghost cleaned)")
             activePingEntries.forEachIndexed { index, ping ->
-                Log.d(TAG, "  Ping $index: ${ping.pingId.take(8)} - state=${ping.state}")
+                Log.d(TAG, "Ping $index: ${ping.pingId.take(8)} - state=${ping.state}")
             }
 
             // Pass PingInbox entries directly to adapter (no bridge conversion needed)
@@ -1406,7 +1443,7 @@ class ChatActivity : BaseActivity() {
 
             // Clean up autoPongPingIds - remove completed auto-downloads
             val completedAutoPongs = autoPongPingIds.filter { pingId ->
-                pingId in existingMessagePingIds  // Message arrived
+                pingId in existingMessagePingIds // Message arrived
             }
             completedAutoPongs.forEach { autoPongPingIds.remove(it) }
             if (completedAutoPongs.isNotEmpty()) {
@@ -1417,7 +1454,7 @@ class ChatActivity : BaseActivity() {
             // This handles cases where download completed but ping wasn't cleaned up from autoPongPingIds
             val pendingPingIds = pendingPingsToShow.map { it.pingId }.toSet()
             val ghostAutoPongs = autoPongPingIds.filter { pingId ->
-                pingId !in pendingPingIds  // No longer in pending queue
+                pingId !in pendingPingIds // No longer in pending queue
             }
             ghostAutoPongs.forEach { autoPongPingIds.remove(it) }
             if (ghostAutoPongs.isNotEmpty()) {
@@ -1449,7 +1486,7 @@ class ChatActivity : BaseActivity() {
             }
             if (staleDownloadIds.isNotEmpty()) {
                 Log.i(TAG, "Cleaned up ${staleDownloadIds.size} stale download indicators from UI")
-                Log.d(TAG, "  Remaining in downloadingPingIds: ${downloadingPingIds.size}")
+                Log.d(TAG, "Remaining in downloadingPingIds: ${downloadingPingIds.size}")
             }
 
             // GHOST TYPING FIX: Reset isDownloadInProgress if no pending pings in DATABASE and no active downloads
@@ -1467,7 +1504,7 @@ class ChatActivity : BaseActivity() {
             withContext(Dispatchers.Main) {
                 Log.d(TAG, "Updating adapter with ${messages.size} messages + ${pendingPingsToShow.size} pending (${downloadingPingIds.size} downloading, ${autoPongPingIds.size} auto-downloading)")
                 if (autoPongPingIds.isNotEmpty()) {
-                    Log.i(TAG, "🔵 Auto-PONG pings for typing indicator: ${autoPongPingIds.map { it.take(8) }}")
+                    Log.i(TAG, "Auto-PONG pings for typing indicator: ${autoPongPingIds.map { it.take(8) }}")
                 }
                 // Check if user is at bottom before updating (to avoid force-scrolling)
                 // Use findLastVisibleItemPosition() for more reliable detection - treats partially visible items as "at bottom"
@@ -1479,8 +1516,8 @@ class ChatActivity : BaseActivity() {
                 messageAdapter.updateMessages(
                     messages,
                     pendingPingsToShow,
-                    downloadingPingIds,  // Pass downloading state to adapter
-                    autoPongPingIds      // Pass auto-downloading pings to show typing indicator
+                    downloadingPingIds, // Pass downloading state to adapter
+                    autoPongPingIds // Pass auto-downloading pings to show typing indicator
                 )
 
                 // Auto-scroll if user was at bottom (normal reading) or if this is a new incoming message
@@ -1622,7 +1659,7 @@ class ChatActivity : BaseActivity() {
                             val voiceFile = File(message.voiceFilePath)
                             if (voiceFile.exists()) {
                                 SecureWipe.secureDeleteFile(voiceFile)
-                                Log.d(TAG, "✓ Securely wiped voice file: ${voiceFile.name}")
+                                Log.d(TAG, "Securely wiped voice file: ${voiceFile.name}")
                             }
                         } catch (e: Exception) {
                             Log.e(TAG, "Failed to securely wipe voice file", e)
@@ -1634,12 +1671,12 @@ class ChatActivity : BaseActivity() {
 
                     // Delete from database
                     database.messageDao().deleteMessageById(message.id)
-                    Log.d(TAG, "✓ Deleted message ${message.id}")
+                    Log.d(TAG, "Deleted message ${message.id}")
 
                     // VACUUM database to compact and remove deleted records
                     try {
                         database.openHelper.writableDatabase.execSQL("VACUUM")
-                        Log.d(TAG, "✓ Database vacuumed after message deletion")
+                        Log.d(TAG, "Database vacuumed after message deletion")
                     } catch (e: Exception) {
                         Log.e(TAG, "Failed to vacuum database", e)
                     }
@@ -1674,7 +1711,7 @@ class ChatActivity : BaseActivity() {
                 if (result.isSuccess) {
                     withContext(Dispatchers.Main) {
                         ThemedToast.show(this@ChatActivity, "Resending message...")
-                        loadMessages()  // Refresh UI to show updated status
+                        loadMessages() // Refresh UI to show updated status
                     }
                 } else {
                     withContext(Dispatchers.Main) {
@@ -1715,7 +1752,7 @@ class ChatActivity : BaseActivity() {
                     if (pingIds.isNotEmpty()) {
                         pingIds.forEach { pingId ->
                             database.pingInboxDao().delete(pingId)
-                            Log.d(TAG, "✓ Deleted pending ping $pingId from ping_inbox")
+                            Log.d(TAG, "Deleted pending ping $pingId from ping_inbox")
                             deletedPendingMessage = true
                         }
                     }
@@ -1732,7 +1769,7 @@ class ChatActivity : BaseActivity() {
                                 val voiceFile = File(message.voiceFilePath)
                                 if (voiceFile.exists()) {
                                     SecureWipe.secureDeleteFile(voiceFile)
-                                    Log.d(TAG, "✓ Securely wiped voice file: ${voiceFile.name}")
+                                    Log.d(TAG, "Securely wiped voice file: ${voiceFile.name}")
                                 }
                             } catch (e: Exception) {
                                 Log.e(TAG, "Failed to securely wipe voice file", e)
@@ -1747,7 +1784,7 @@ class ChatActivity : BaseActivity() {
                     if (regularMessageIds.isNotEmpty()) {
                         try {
                             database.openHelper.writableDatabase.execSQL("VACUUM")
-                            Log.d(TAG, "✓ Database vacuumed after message deletion")
+                            Log.d(TAG, "Database vacuumed after message deletion")
                         } catch (e: Exception) {
                             Log.e(TAG, "Failed to vacuum database", e)
                         }
@@ -1795,7 +1832,7 @@ class ChatActivity : BaseActivity() {
                                         val voiceFile = File(message.voiceFilePath)
                                         if (voiceFile.exists()) {
                                             SecureWipe.secureDeleteFile(voiceFile)
-                                            Log.d(TAG, "✓ Securely wiped voice file: ${voiceFile.name}")
+                                            Log.d(TAG, "Securely wiped voice file: ${voiceFile.name}")
                                         }
                                     } catch (e: Exception) {
                                         Log.e(TAG, "Failed to securely wipe voice file", e)
@@ -1829,7 +1866,7 @@ class ChatActivity : BaseActivity() {
 
                             // VACUUM database to compact and remove deleted records
                             database.openHelper.writableDatabase.execSQL("VACUUM")
-                            Log.d(TAG, "✓ Thread deleted and database vacuumed")
+                            Log.d(TAG, "Thread deleted and database vacuumed")
                         }
 
                         withContext(Dispatchers.Main) {
@@ -1985,10 +2022,10 @@ class ChatActivity : BaseActivity() {
 
     private fun getTokenDivisor(token: String?): Double {
         return when (token?.uppercase()) {
-            "SOL" -> 1_000_000_000.0  // 9 decimals
-            "ZEC" -> 100_000_000.0    // 8 decimals
-            "USDC", "USDT" -> 1_000_000.0  // 6 decimals
-            else -> 1_000_000_000.0   // Default to SOL
+            "SOL" -> 1_000_000_000.0 // 9 decimals
+            "ZEC" -> 100_000_000.0 // 8 decimals
+            "USDC", "USDT" -> 1_000_000.0 // 6 decimals
+            else -> 1_000_000_000.0 // Default to SOL
         }
     }
 
@@ -2098,7 +2135,7 @@ class ChatActivity : BaseActivity() {
     private fun startVoiceCall() {
         // Prevent duplicate call initiations
         if (isInitiatingCall) {
-            Log.w(TAG, "⚠️ Call initiation already in progress - ignoring duplicate request")
+            Log.w(TAG, "Call initiation already in progress - ignoring duplicate request")
             return
         }
         isInitiatingCall = true

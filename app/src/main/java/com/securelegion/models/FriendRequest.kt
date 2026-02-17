@@ -10,7 +10,7 @@ import org.json.JSONObject
 data class FriendRequest(
     val displayName: String,
     val ipfsCid: String,
-    val kyberCiphertextBase64: String? = null,  // Hybrid KEM ciphertext for quantum-resistant key chain initialization
+    val kyberCiphertextBase64: String? = null, // Hybrid KEM ciphertext for quantum-resistant key chain initialization
     val timestamp: Long = System.currentTimeMillis()
 ) {
     companion object {

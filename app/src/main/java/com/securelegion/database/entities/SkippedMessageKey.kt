@@ -15,10 +15,10 @@ import androidx.room.PrimaryKey
 @Entity(tableName = "skipped_message_keys")
 data class SkippedMessageKey(
     @PrimaryKey
-    val id: String,  // Format: "contactId_sequence"
+    val id: String, // Format: "contactId_sequence"
     val contactId: Long,
-    val sequence: Long,  // Long to match wire format
-    val messageKey: ByteArray,  // 32-byte message key for this specific sequence
+    val sequence: Long, // Long to match wire format
+    val messageKey: ByteArray, // 32-byte message key for this specific sequence
     val timestamp: Long = System.currentTimeMillis()
 ) {
     override fun equals(other: Any?): Boolean {

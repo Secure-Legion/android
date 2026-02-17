@@ -430,7 +430,7 @@ class IPFSManager private constructor(private val context: Context) {
                 if (response != null) {
                     // Response is the raw bytes (base64 encoded by Rust)
                     val bytes = android.util.Base64.decode(response, android.util.Base64.DEFAULT)
-                    Log.i(TAG, "✓ Fetched contact list via Tor: $contactListCID (${bytes.size} bytes)")
+                    Log.i(TAG, "Fetched contact list via Tor: $contactListCID (${bytes.size} bytes)")
                     bytes
                 } else {
                     Log.w(TAG, "Failed to fetch contact list via Tor: $url")
@@ -473,7 +473,7 @@ class IPFSManager private constructor(private val context: Context) {
                         )
                         addPinMetadata(metadata)
 
-                        Log.i(TAG, "✓ Pinned $displayName's contact list: $friendCID (${listData.size} bytes)")
+                        Log.i(TAG, "Pinned $displayName's contact list: $friendCID (${listData.size} bytes)")
                         return@withContext Result.success(Unit)
                     } else {
                         Log.w(TAG, "Could not fetch $displayName's contact list from .onion")

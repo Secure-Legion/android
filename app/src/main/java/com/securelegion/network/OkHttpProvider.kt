@@ -99,12 +99,12 @@ object OkHttpProvider {
 
         // Rate-limit hard resets to prevent thrashing
         if (now - lastResetAt < 30_000) {
-            Log.w(TAG, "⚠️ Skipping OkHttp reset (rate-limited, last reset ${(now - lastResetAt) / 1000}s ago). Reason=\"$reason\"")
+            Log.w(TAG, "Skipping OkHttp reset (rate-limited, last reset ${(now - lastResetAt) / 1000}s ago). Reason=\"$reason\"")
             return
         }
 
         lastResetAt = now
-        Log.e(TAG, "🔥 HARD OkHttp reset triggered. Reason=\"$reason\"")
+        Log.e(TAG, "HARD OkHttp reset triggered. Reason=\"$reason\"")
 
         synchronized(this) {
             // Evict all connections from old clients
@@ -131,7 +131,7 @@ object OkHttpProvider {
             _zcashClient = null
             _genericClient = null
 
-            Log.d(TAG, "✓ All OkHttpClient instances reset")
+            Log.d(TAG, "All OkHttpClient instances reset")
         }
     }
 

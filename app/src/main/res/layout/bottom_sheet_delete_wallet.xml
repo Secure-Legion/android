@@ -21,7 +21,7 @@
         android:layout_height="wrap_content"
         android:text="Delete Wallet"
         android:textSize="24sp"
-        android:textColor="@color/text_white"
+        android:textColor="?attr/colorOnSurface"
         android:fontFamily="@font/space_grotesk_bold"
         android:gravity="center"
         android:layout_marginBottom="8dp" />
@@ -33,7 +33,7 @@
         android:layout_height="wrap_content"
         android:text="Wallet 1"
         android:textSize="18sp"
-        android:textColor="@color/text_white"
+        android:textColor="?attr/colorOnSurface"
         android:fontFamily="@font/poppins_semibold"
         android:gravity="center"
         android:layout_marginBottom="8dp" />
@@ -45,7 +45,7 @@
         android:layout_height="wrap_content"
         android:text="ADm9P...2eoLX5"
         android:textSize="12sp"
-        android:textColor="#888888"
+        android:textColor="?attr/colorOnSurfaceVariant"
         android:fontFamily="@font/poppins_regular"
         android:gravity="center"
         android:layout_marginBottom="24dp" />
@@ -115,7 +115,7 @@
         android:fontFamily="@font/poppins_semibold"
         android:text="Delete Wallet"
         android:textAllCaps="false"
-        android:textColor="@color/text_white"
+        android:textColor="?attr/colorOnSurface"
         android:textSize="16sp"
         android:alpha="0.5"
         android:enabled="false" />
@@ -131,7 +131,7 @@
         android:fontFamily="@font/poppins_medium"
         android:text="Cancel"
         android:textAllCaps="false"
-        android:textColor="#888888"
+        android:textColor="?attr/colorOnSurfaceVariant"
         android:textSize="16sp" />
 
 </LinearLayout>

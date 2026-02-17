@@ -11,6 +11,7 @@ import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
 import com.google.android.material.bottomsheet.BottomSheetDialog
+import com.securelegion.utils.GlassBottomSheetDialog
 import com.securelegion.crypto.KeyManager
 import com.securelegion.crypto.NLx402Manager
 import com.securelegion.database.SecureLegionDatabase
@@ -50,8 +51,8 @@ class RequestMoneyActivity : AppCompatActivity() {
     private lateinit var paymentTypeText: TextView
     private lateinit var paymentTypeDropdown: View
 
-    private var selectedToken = "SOL"  // SOL or ZEC
-    private var showingUsd = false  // false = native token, true = USD
+    private var selectedToken = "SOL" // SOL or ZEC
+    private var showingUsd = false // false = native token, true = USD
     // SOL: "private" or "anonymous" | ZEC: "transparent" or "shielded"
     private var selectedPaymentType = "private"
     private var currentSolPrice: Double = 0.0
@@ -239,7 +240,7 @@ class RequestMoneyActivity : AppCompatActivity() {
     }
 
     private fun showPaymentTypeSelector() {
-        val bottomSheet = BottomSheetDialog(this)
+        val bottomSheet = GlassBottomSheetDialog(this)
         val view = layoutInflater.inflate(R.layout.bottom_sheet_payment_type, null)
         bottomSheet.setContentView(view)
 
@@ -325,7 +326,7 @@ class RequestMoneyActivity : AppCompatActivity() {
                 val allWallets = database.walletDao().getAllWallets()
 
                 withContext(Dispatchers.Main) {
-                    val bottomSheet = BottomSheetDialog(this@RequestMoneyActivity)
+                    val bottomSheet = GlassBottomSheetDialog(this@RequestMoneyActivity)
                     val view = layoutInflater.inflate(R.layout.bottom_sheet_wallet_selector, null)
 
                     val displayMetrics = resources.displayMetrics
@@ -649,7 +650,7 @@ class RequestMoneyActivity : AppCompatActivity() {
     }
 
     private fun showSendConfirmation(amount: Double) {
-        val bottomSheet = BottomSheetDialog(this)
+        val bottomSheet = GlassBottomSheetDialog(this)
         val view = layoutInflater.inflate(R.layout.bottom_sheet_send_confirm, null)
 
         val displayMetrics = resources.displayMetrics
@@ -835,7 +836,7 @@ class RequestMoneyActivity : AppCompatActivity() {
 
     private fun showRequestConfirmation(amount: Double) {
         // Create bottom sheet dialog
-        val bottomSheet = BottomSheetDialog(this)
+        val bottomSheet = GlassBottomSheetDialog(this)
         val view = layoutInflater.inflate(R.layout.bottom_sheet_request_confirm, null)
 
         // Set minimum height on the view itself
@@ -950,11 +951,11 @@ class RequestMoneyActivity : AppCompatActivity() {
                 }
 
                 Log.d(TAG, "Created payment request quote: ${quote.quoteId} for ${quote.formattedAmount}")
-                Log.i(TAG, "╔════════════════════════════════════════")
-                Log.i(TAG, "║ SENDING PAYMENT REQUEST")
-                Log.i(TAG, "║ Contact ID: $contactId")
-                Log.i(TAG, "║ Quote: ${quote.formattedAmount}")
-                Log.i(TAG, "╚════════════════════════════════════════")
+                Log.i(TAG, "")
+                Log.i(TAG, "SENDING PAYMENT REQUEST")
+                Log.i(TAG, "Contact ID: $contactId")
+                Log.i(TAG, "Quote: ${quote.formattedAmount}")
+                Log.i(TAG, "")
 
                 // Send payment request message to contact via MessageService
                 if (contactId > 0) {
@@ -963,14 +964,14 @@ class RequestMoneyActivity : AppCompatActivity() {
                     val sendResult = messageService.sendPaymentRequest(contactId, quote)
 
                     if (sendResult.isSuccess) {
-                        Log.i(TAG, "✓ Payment request message sent successfully")
+                        Log.i(TAG, "Payment request message sent successfully")
                     } else {
-                        Log.e(TAG, "✗ Failed to send payment request message: ${sendResult.exceptionOrNull()?.message}")
+                        Log.e(TAG, "Failed to send payment request message: ${sendResult.exceptionOrNull()?.message}")
                         sendResult.exceptionOrNull()?.printStackTrace()
                         // Continue anyway - the quote was created successfully
                     }
                 } else {
-                    Log.e(TAG, "✗ No contact ID provided (contactId=$contactId) - payment request NOT sent as message!")
+                    Log.e(TAG, "No contact ID provided (contactId=$contactId) - payment request NOT sent as message!")
                 }
 
                 // Generate transaction details for display
@@ -996,7 +997,7 @@ class RequestMoneyActivity : AppCompatActivity() {
     }
 
     private fun showRequestDetailsBottomSheet(amount: Double, requestId: String, time: String, date: String) {
-        val bottomSheet = BottomSheetDialog(this)
+        val bottomSheet = GlassBottomSheetDialog(this)
         val view = layoutInflater.inflate(R.layout.bottom_sheet_request_details, null)
 
         val displayMetrics = resources.displayMetrics

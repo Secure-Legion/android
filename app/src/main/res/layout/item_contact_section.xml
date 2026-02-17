@@ -9,5 +9,5 @@
     android:paddingBottom="8dp"
     android:text="A"
     android:textSize="14sp"
-    android:textColor="@color/text_gray"
+    android:textColor="?attr/colorOnSurfaceVariant"
     android:fontFamily="@font/poppins_medium" />

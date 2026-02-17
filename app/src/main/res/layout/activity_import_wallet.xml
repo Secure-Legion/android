@@ -5,7 +5,7 @@
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="#000000">
+    android:background="?attr/colorSurface">
 
     <!-- Header -->
     <LinearLayout
@@ -47,7 +47,7 @@
             android:layout_weight="1"
             android:text="Import Wallet"
             android:textSize="24sp"
-            android:textColor="#999999"
+            android:textColor="?attr/colorOnSurfaceVariant"
             android:fontFamily="@font/space_grotesk_bold"
             android:gravity="center" />
 
@@ -79,7 +79,7 @@
                 android:layout_height="wrap_content"
                 android:text="SELECT CHAIN"
                 android:textSize="11sp"
-                android:textColor="@color/text_gray"
+                android:textColor="?attr/colorOnSurfaceVariant"
                 android:textAllCaps="true"
                 android:letterSpacing="0.1"
                 android:layout_marginBottom="12dp" />
@@ -118,7 +118,7 @@
                         android:layout_height="wrap_content"
                         android:text="Solana"
                         android:textSize="14sp"
-                        android:textColor="@color/text_white"
+                        android:textColor="?attr/colorOnSurface"
                         android:fontFamily="@font/poppins_medium" />
 
                 </LinearLayout>
@@ -150,7 +150,7 @@
                         android:layout_height="wrap_content"
                         android:text="Zcash"
                         android:textSize="14sp"
-                        android:textColor="@color/text_white"
+                        android:textColor="?attr/colorOnSurface"
                         android:fontFamily="@font/poppins_medium" />
 
                 </LinearLayout>
@@ -163,7 +163,7 @@
                 android:layout_height="wrap_content"
                 android:text="WALLET NAME"
                 android:textSize="11sp"
-                android:textColor="@color/text_gray"
+                android:textColor="?attr/colorOnSurfaceVariant"
                 android:textAllCaps="true"
                 android:letterSpacing="0.1"
                 android:layout_marginBottom="8dp" />
@@ -175,7 +175,7 @@
                 android:background="@drawable/settings_box_bg"
                 android:hint="My Imported Wallet"
                 android:textColorHint="@color/text_gray"
-                android:textColor="@color/text_white"
+                android:textColor="?attr/colorOnSurface"
                 android:textSize="16sp"
                 android:fontFamily="@font/poppins_regular"
                 android:paddingStart="16dp"
@@ -197,7 +197,7 @@
                     android:layout_height="wrap_content"
                     android:text="IMPORT TYPE"
                     android:textSize="11sp"
-                    android:textColor="@color/text_gray"
+                    android:textColor="?attr/colorOnSurfaceVariant"
                     android:textAllCaps="true"
                     android:letterSpacing="0.1"
                     android:layout_marginBottom="12dp" />
@@ -229,7 +229,7 @@
                             android:layout_height="wrap_content"
                             android:text="Seed Phrase"
                             android:textSize="14sp"
-                            android:textColor="@color/text_white"
+                            android:textColor="?attr/colorOnSurface"
                             android:fontFamily="@font/poppins_medium" />
 
                     </LinearLayout>
@@ -254,7 +254,7 @@
                             android:layout_height="wrap_content"
                             android:text="Private Key"
                             android:textSize="14sp"
-                            android:textColor="@color/text_white"
+                            android:textColor="?attr/colorOnSurface"
                             android:fontFamily="@font/poppins_medium" />
 
                     </LinearLayout>
@@ -276,7 +276,7 @@
                     android:layout_height="wrap_content"
                     android:text="SEED PHRASE"
                     android:textSize="11sp"
-                    android:textColor="@color/text_gray"
+                    android:textColor="?attr/colorOnSurfaceVariant"
                     android:textAllCaps="true"
                     android:letterSpacing="0.1"
                     android:layout_marginBottom="8dp" />
@@ -288,7 +288,7 @@
                     android:background="@drawable/settings_box_bg"
                     android:hint="Enter 12 or 24-word seed phrase of Solana wallet"
                     android:textColorHint="@color/text_gray"
-                    android:textColor="@color/text_white"
+                    android:textColor="?attr/colorOnSurface"
                     android:textSize="14sp"
                     android:fontFamily="@font/poppins_regular"
                     android:padding="16dp"
@@ -314,7 +314,7 @@
                     android:layout_height="wrap_content"
                     android:text="PRIVATE KEY"
                     android:textSize="11sp"
-                    android:textColor="@color/text_gray"
+                    android:textColor="?attr/colorOnSurfaceVariant"
                     android:textAllCaps="true"
                     android:letterSpacing="0.1"
                     android:layout_marginBottom="8dp" />
@@ -326,7 +326,7 @@
                     android:background="@drawable/settings_box_bg"
                     android:hint="Base58 string or JSON array [1,2,3,...]"
                     android:textColorHint="@color/text_gray"
-                    android:textColor="@color/text_white"
+                    android:textColor="?attr/colorOnSurface"
                     android:textSize="14sp"
                     android:fontFamily="@font/poppins_regular"
                     android:padding="16dp"
@@ -352,7 +352,7 @@
                     android:layout_height="wrap_content"
                     android:text="SEED PHRASE"
                     android:textSize="11sp"
-                    android:textColor="@color/text_gray"
+                    android:textColor="?attr/colorOnSurfaceVariant"
                     android:textAllCaps="true"
                     android:letterSpacing="0.1"
                     android:layout_marginBottom="8dp" />
@@ -364,7 +364,7 @@
                     android:background="@drawable/settings_box_bg"
                     android:hint="Enter 24-word seed phrase of Zcash wallet"
                     android:textColorHint="@color/text_gray"
-                    android:textColor="@color/text_white"
+                    android:textColor="?attr/colorOnSurface"
                     android:textSize="14sp"
                     android:fontFamily="@font/poppins_regular"
                     android:padding="16dp"
@@ -390,7 +390,7 @@
                     android:layout_height="wrap_content"
                     android:text="BIRTHDAY HEIGHT (OPTIONAL)"
                     android:textSize="11sp"
-                    android:textColor="@color/text_gray"
+                    android:textColor="?attr/colorOnSurfaceVariant"
                     android:textAllCaps="true"
                     android:letterSpacing="0.1"
                     android:layout_marginBottom="8dp" />
@@ -402,7 +402,7 @@
                     android:background="@drawable/settings_box_bg"
                     android:hint="Leave empty to use current height"
                     android:textColorHint="@color/text_gray"
-                    android:textColor="@color/text_white"
+                    android:textColor="?attr/colorOnSurface"
                     android:textSize="16sp"
                     android:fontFamily="@font/poppins_regular"
                     android:paddingStart="16dp"
@@ -437,7 +437,7 @@
                     android:layout_weight="1"
                     android:text="Never share your private key or seed phrase. Anyone with access to it can control your funds."
                     android:textSize="12sp"
-                    android:textColor="@color/text_gray"
+                    android:textColor="?attr/colorOnSurfaceVariant"
                     android:lineSpacingExtra="2dp" />
 
             </LinearLayout>
@@ -456,7 +456,7 @@
         android:fontFamily="@font/poppins_semibold"
         android:text="Import Wallet"
         android:textAllCaps="false"
-        android:textColor="@color/text_white"
+        android:textColor="?attr/colorOnSurface"
         android:textSize="16sp"
         app:layout_constraintBottom_toBottomOf="parent" />
 

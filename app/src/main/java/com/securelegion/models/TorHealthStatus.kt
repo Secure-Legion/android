@@ -102,7 +102,7 @@ data class TorHealthSnapshot(
          */
         fun fromPrefsString(prefsString: String): TorHealthSnapshot {
             return try {
-                val parts = prefsString.split("|", limit = 9)  // Split into max 9 parts
+                val parts = prefsString.split("|", limit = 9) // Split into max 9 parts
                 if (parts.size < 9) {
                     // Malformed: return RECOVERING to avoid false-healthy
                     return TorHealthSnapshot(
@@ -150,10 +150,10 @@ data class TorHealthSnapshot(
      */
     fun nextRestartCooldown(): Long {
         return when {
-            restartCooldownMs == 0L -> 1000    // First attempt: 1s
-            restartCooldownMs < 5000 -> 5000   // Second: 5s
+            restartCooldownMs == 0L -> 1000 // First attempt: 1s
+            restartCooldownMs < 5000 -> 5000 // Second: 5s
             restartCooldownMs < 30000 -> 30000 // Third: 30s
-            else -> 60000                      // Cap at 60s
+            else -> 60000 // Cap at 60s
         }
     }
 
@@ -173,6 +173,6 @@ data class TorHealthSnapshot(
     fun isCheckStale(): Boolean {
         val elapsedNow = SystemClock.elapsedRealtime()
         val timeSinceLastCheck = elapsedNow - lastCheckElapsedMs
-        return timeSinceLastCheck > 120000  // 2 minutes
+        return timeSinceLastCheck > 120000 // 2 minutes
     }
 }

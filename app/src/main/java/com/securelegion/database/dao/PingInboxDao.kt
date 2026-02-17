@@ -1,10 +1,16 @@
 package com.securelegion.database.dao
 
+import androidx.room.ColumnInfo
 import androidx.room.Dao
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import com.securelegion.database.entities.PingInbox
+
+data class PendingCountResult(
+    @ColumnInfo(name = "contactId") val contactId: Long,
+    @ColumnInfo(name = "cnt") val cnt: Int
+)
 
 /**
  * DAO for ping inbox state tracking
@@ -38,7 +44,7 @@ interface PingInboxDao {
     /**
      * Get pings that need UI rendering for a contact.
      * Returns states that should show a row in chat:
-     *   PING_SEEN(0), PONG_SENT(1), DOWNLOAD_QUEUED(10), FAILED_TEMP(11), MANUAL_REQUIRED(12)
+     * PING_SEEN(0), PONG_SENT(1), DOWNLOAD_QUEUED(10), FAILED_TEMP(11), MANUAL_REQUIRED(12)
      * PONG_SENT included to handle stale entries after logout/login (shows lock icon so user can retry).
      * Excludes MSG_STORED(2) only — those have a real message row in chat.
      */
@@ -56,6 +62,12 @@ interface PingInboxDao {
      */
     @Query("SELECT COUNT(*) FROM ping_inbox WHERE contactId = :contactId AND state != ${PingInbox.STATE_MSG_STORED}")
     suspend fun countPendingByContact(contactId: Long): Int
+
+    /**
+     * Count pending locks for ALL contacts in one query
+     */
+    @Query("SELECT contactId, COUNT(*) as cnt FROM ping_inbox WHERE state != ${PingInbox.STATE_MSG_STORED} GROUP BY contactId")
+    suspend fun countPendingPerContact(): List<PendingCountResult>
 
     /**
      * Get all pending locks across all contacts
@@ -146,9 +158,9 @@ interface PingInboxDao {
     @Query("SELECT EXISTS(SELECT 1 FROM ping_inbox WHERE pingId = :pingId LIMIT 1)")
     suspend fun exists(pingId: String): Boolean
 
-    // ═══════════════════════════════════════════════════════════════
+    // 
     // Manual download claim (user tapped lock icon)
-    // ═══════════════════════════════════════════════════════════════
+    // 
 
     /**
      * Atomically claim a ping for manual download (user tapped lock icon).
@@ -167,9 +179,9 @@ interface PingInboxDao {
     """)
     suspend fun claimForManualDownload(pingId: String, now: Long): Int
 
-    // ═══════════════════════════════════════════════════════════════
+    // 
     // Auto-download claim methods (atomic DB-as-lock pattern)
-    // ═══════════════════════════════════════════════════════════════
+    // 
 
     /**
      * Atomically claim a PING_SEEN for auto-download
@@ -252,9 +264,9 @@ interface PingInboxDao {
     @Query("SELECT state, attemptCount FROM ping_inbox WHERE pingId = :pingId")
     suspend fun getStateAndAttempts(pingId: String): PingStateSnapshot?
 
-    // ═══════════════════════════════════════════════════════════════
+    // 
     // Watchdog and retry worker methods
-    // ═══════════════════════════════════════════════════════════════
+    // 
 
     /**
      * Release stuck DOWNLOAD_QUEUED claims (process died mid-download)
@@ -298,9 +310,9 @@ interface PingInboxDao {
     """)
     suspend fun getUnclaimedPingSeen(): List<PingInbox>
 
-    // ═══════════════════════════════════════════════════════════════
+    // 
     // Pressure cap methods (states 0 + 10 + 11 = total pending pressure)
-    // ═══════════════════════════════════════════════════════════════
+    // 
 
     /**
      * Count global pending pressure across all contacts
@@ -324,9 +336,9 @@ interface PingInboxDao {
     """)
     suspend fun countPendingByContactAll(contactId: Long): Int
 
-    // ═══════════════════════════════════════════════════════════════
+    // 
     // Cleanup methods
-    // ═══════════════════════════════════════════════════════════════
+    // 
 
     /**
      * Delete old completed pings (cleanup)

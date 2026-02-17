@@ -26,11 +26,11 @@ object CallSignaling {
     private const val MSG_TYPE_CALL_SIGNALING: Byte = 0x0D
 
     // Wire protocol codes (for future binary protocol optimization)
-    const val CODE_CALL_OFFER = 0x10    // 16: Initiate voice call
-    const val CODE_CALL_ANSWER = 0x11   // 17: Accept incoming call
-    const val CODE_CALL_REJECT = 0x12   // 18: Decline incoming call
-    const val CODE_CALL_END = 0x13      // 19: Hang up active call
-    const val CODE_CALL_BUSY = 0x14     // 20: Recipient busy on another call
+    const val CODE_CALL_OFFER = 0x10 // 16: Initiate voice call
+    const val CODE_CALL_ANSWER = 0x11 // 17: Accept incoming call
+    const val CODE_CALL_REJECT = 0x12 // 18: Decline incoming call
+    const val CODE_CALL_END = 0x13 // 19: Hang up active call
+    const val CODE_CALL_BUSY = 0x14 // 20: Recipient busy on another call
 
     // Message type constants (JSON strings, currently used)
     const val TYPE_CALL_OFFER = "CALL_OFFER"
@@ -61,8 +61,8 @@ object CallSignaling {
     ): Boolean {
         return try {
             Log.d(TAG, "sendCallOffer called:")
-            Log.d(TAG, "  recipientOnion: $recipientOnion")
-            Log.d(TAG, "  callId: $callId")
+            Log.d(TAG, "recipientOnion: $recipientOnion")
+            Log.d(TAG, "callId: $callId")
 
             // Create call offer JSON
             val offerJson = JSONObject().apply {
@@ -101,17 +101,17 @@ object CallSignaling {
             }
 
             if (success) {
-                Log.i(TAG, "✓ Call offer sent via HTTP POST successfully: $callId")
+                Log.i(TAG, "Call offer sent via HTTP POST successfully: $callId")
             } else {
-                Log.e(TAG, "✗ RustBridge.sendHttpToVoiceOnion failed for call: $callId")
-                Log.e(TAG, "  HTTP POST to voice .onion failed - check Tor connection and voice service")
+                Log.e(TAG, "RustBridge.sendHttpToVoiceOnion failed for call: $callId")
+                Log.e(TAG, "HTTP POST to voice .onion failed - check Tor connection and voice service")
             }
 
             success
 
         } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
             Log.e(TAG, "⏱ Timeout sending call offer for call $callId - Tor circuit not ready")
-            Log.e(TAG, "  sendMessageBlob took longer than 10 seconds - circuit establishment failed")
+            Log.e(TAG, "sendMessageBlob took longer than 10 seconds - circuit establishment failed")
             false
         } catch (e: Exception) {
             Log.e(TAG, "Exception in sendCallOffer for call $callId", e)
@@ -139,11 +139,11 @@ object CallSignaling {
     ): Boolean {
         return try {
             Log.d(TAG, "sendCallAnswer called:")
-            Log.d(TAG, "  recipientOnion: $recipientOnion")
-            Log.d(TAG, "  callId: $callId")
-            Log.d(TAG, "  voiceOnion: $voiceOnion")
-            Log.d(TAG, "  recipientX25519PublicKey size: ${recipientX25519PublicKey.size}")
-            Log.d(TAG, "  ephemeralPublicKey size: ${ephemeralPublicKey.size}")
+            Log.d(TAG, "recipientOnion: $recipientOnion")
+            Log.d(TAG, "callId: $callId")
+            Log.d(TAG, "voiceOnion: $voiceOnion")
+            Log.d(TAG, "recipientX25519PublicKey size: ${recipientX25519PublicKey.size}")
+            Log.d(TAG, "ephemeralPublicKey size: ${ephemeralPublicKey.size}")
 
             val answerJson = JSONObject().apply {
                 put("type", TYPE_CALL_ANSWER)
@@ -165,7 +165,7 @@ object CallSignaling {
             // 5 attempts with 15-second timeout = max 75 seconds worst case
             // But successful attempts will complete much faster (typically 2-10 seconds)
             val maxRetries = 5
-            val timeoutMs = 15000L  // 15 seconds per attempt
+            val timeoutMs = 15000L // 15 seconds per attempt
             val baseBackoffMs = 500L
             val maxBackoffMs = 2000L
             val totalStartTime = System.currentTimeMillis()
@@ -282,9 +282,9 @@ object CallSignaling {
             }
 
             if (success) {
-                Log.i(TAG, "✓ Call reject sent via HTTP POST: $callId")
+                Log.i(TAG, "Call reject sent via HTTP POST: $callId")
             } else {
-                Log.e(TAG, "✗ Failed to send call reject via HTTP POST: $callId")
+                Log.e(TAG, "Failed to send call reject via HTTP POST: $callId")
             }
 
             return success
@@ -337,9 +337,9 @@ object CallSignaling {
             }
 
             if (success) {
-                Log.i(TAG, "✓ Call end sent via HTTP POST: $callId")
+                Log.i(TAG, "Call end sent via HTTP POST: $callId")
             } else {
-                Log.e(TAG, "✗ Failed to send call end via HTTP POST: $callId")
+                Log.e(TAG, "Failed to send call end via HTTP POST: $callId")
             }
 
             return success
@@ -389,9 +389,9 @@ object CallSignaling {
             }
 
             if (success) {
-                Log.i(TAG, "✓ Call busy sent via HTTP POST: $callId")
+                Log.i(TAG, "Call busy sent via HTTP POST: $callId")
             } else {
-                Log.e(TAG, "✗ Failed to send call busy via HTTP POST: $callId")
+                Log.e(TAG, "Failed to send call busy via HTTP POST: $callId")
             }
 
             return success

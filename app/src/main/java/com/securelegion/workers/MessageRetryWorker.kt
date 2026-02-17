@@ -36,7 +36,7 @@ class MessageRetryWorker(
     companion object {
         private const val TAG = "MessageRetryWorker"
         private const val WORK_NAME = "message_retry_work"
-        private const val REPEAT_INTERVAL_MINUTES = 3L  // Retry every 3 minutes (was 15)
+        private const val REPEAT_INTERVAL_MINUTES = 3L // Retry every 3 minutes (was 15)
 
         /**
          * Periodic background retry (long-term recovery)
@@ -52,7 +52,7 @@ class MessageRetryWorker(
 
             WorkManager.getInstance(context).enqueueUniquePeriodicWork(
                 WORK_NAME,
-                ExistingPeriodicWorkPolicy.REPLACE,  // REPLACE old schedule (was KEEP - prevented interval change)
+                ExistingPeriodicWorkPolicy.REPLACE, // REPLACE old schedule (was KEEP - prevented interval change)
                 work
             )
 
@@ -150,14 +150,14 @@ class MessageRetryWorker(
         if (torUnavailable) {
             val status = TorHealthHelper.getStatusString(applicationContext)
             Log.w(TAG, "Tor unavailable ($status), skipping retry (will retry when healthy)")
-            return@withContext 0  // Exit early, don't attempt sends
+            return@withContext 0 // Exit early, don't attempt sends
         }
 
         if (circuitsEstablished < 1) {
             Log.w(TAG, "Tor bootstrap ${bootstrapPercent}% but NO CIRCUITS ESTABLISHED - skipping retry (SOCKS would fail with status 1)")
-            Log.w(TAG, "  This is why you see 'SOCKS5 status 1 (general SOCKS server failure)'")
-            Log.w(TAG, "  Waiting for circuits... (will retry in ${REPEAT_INTERVAL_MINUTES} minutes)")
-            return@withContext 0  // Exit early, circuits not ready yet
+            Log.w(TAG, "This is why you see 'SOCKS5 status 1 (general SOCKS server failure)'")
+            Log.w(TAG, "Waiting for circuits... (will retry in ${REPEAT_INTERVAL_MINUTES} minutes)")
+            return@withContext 0 // Exit early, circuits not ready yet
         }
 
         Log.i(TAG, "Tor healthy: bootstrap=${bootstrapPercent}%, circuits=${circuitsEstablished}, proceeding with retries")
@@ -168,7 +168,7 @@ class MessageRetryWorker(
         // - Keep retrying indefinitely (no 7-day limit)
         val messages = database.messageDao().getMessagesNeedingRetry(
             currentTimeMs = now,
-            giveupAfterDays = 365  // Extended from 7 days to 1 year (indefinite for practical purposes)
+            giveupAfterDays = 365 // Extended from 7 days to 1 year (indefinite for practical purposes)
         ).filter { !it.messageDelivered }
 
         var retriedCount = 0
@@ -185,7 +185,7 @@ class MessageRetryWorker(
                 when (ackState) {
                     AckState.NONE, AckState.PING_ACKED -> {
                         // Phase 1: PING not received or not acknowledged - retry PING packet
-                        Log.d(TAG, "  → Retrying PING for ${message.messageId}")
+                        Log.d(TAG, "→ Retrying PING for ${message.messageId}")
                         if (message.pingWireBytes != null) {
                             com.securelegion.crypto.RustBridge.resendPingWithWireBytes(
                                 message.pingWireBytes!!,
@@ -197,14 +197,14 @@ class MessageRetryWorker(
                     }
                     AckState.PONG_ACKED -> {
                         // Phase 2: PONG received but message blob not sent - poll for PONG and advance
-                        Log.d(TAG, "  → PONG received, polling for message download ${message.messageId}")
+                        Log.d(TAG, "→ PONG received, polling for message download ${message.messageId}")
                         messageService.pollForPongsAndSendMessages()
-                        true  // Assume poll was scheduled successfully
+                        true // Assume poll was scheduled successfully
                     }
                     AckState.MESSAGE_ACKED -> {
                         // Phase 3: Message fully delivered - skip retry
-                        Log.d(TAG, "  → Message already delivered, skipping ${message.messageId}")
-                        true  // Skip, don't count as retry
+                        Log.d(TAG, "→ Message already delivered, skipping ${message.messageId}")
+                        true // Skip, don't count as retry
                     }
                 }
             } catch (e: Exception) {
@@ -258,7 +258,7 @@ class MessageRetryWorker(
 
             val messages = database.messageDao().getMessagesNeedingRetry(
                 currentTimeMs = now,
-                giveupAfterDays = 365  // Extended from 7 days to 1 year (indefinite for practical purposes)
+                giveupAfterDays = 365 // Extended from 7 days to 1 year (indefinite for practical purposes)
             ).filter {
                 it.contactId == contactId && !it.messageDelivered
             }
@@ -277,7 +277,7 @@ class MessageRetryWorker(
                     when (ackState) {
                         AckState.NONE, AckState.PING_ACKED -> {
                             // Phase 1: PING not received - retry PING packet
-                            Log.d(TAG, "  → Retrying PING for ${message.messageId}")
+                            Log.d(TAG, "→ Retrying PING for ${message.messageId}")
                             if (message.pingWireBytes != null) {
                                 com.securelegion.crypto.RustBridge.resendPingWithWireBytes(
                                     message.pingWireBytes!!,
@@ -289,13 +289,13 @@ class MessageRetryWorker(
                         }
                         AckState.PONG_ACKED -> {
                             // Phase 2: PONG received - poll for PONG and send message
-                            Log.d(TAG, "  → TAP triggered, polling for message download ${message.messageId}")
+                            Log.d(TAG, "→ TAP triggered, polling for message download ${message.messageId}")
                             messageService.pollForPongsAndSendMessages()
                             true
                         }
                         AckState.MESSAGE_ACKED -> {
                             // Phase 3: Message fully delivered - skip retry
-                            Log.d(TAG, "  → Message already delivered, skipping ${message.messageId}")
+                            Log.d(TAG, "→ Message already delivered, skipping ${message.messageId}")
                             true
                         }
                     }
@@ -327,14 +327,14 @@ class MessageRetryWorker(
      */
     private fun calculateNextRetryTime(retryCount: Int, nowMs: Long): Long {
         val delayMs = when (retryCount) {
-            0 -> 2000L          // First retry: 2 seconds
-            1 -> 5000L          // Second: 5 seconds
-            2 -> 10000L         // Third: 10 seconds
-            3 -> 20000L         // Fourth: 20 seconds
-            4 -> 40000L         // Fifth: 40 seconds
-            5 -> 120000L        // Sixth: 2 minutes
-            6 -> 300000L        // Seventh: 5 minutes
-            else -> 600000L     // Eighth+: 10 minutes (cap)
+            0 -> 2000L // First retry: 2 seconds
+            1 -> 5000L // Second: 5 seconds
+            2 -> 10000L // Third: 10 seconds
+            3 -> 20000L // Fourth: 20 seconds
+            4 -> 40000L // Fifth: 40 seconds
+            5 -> 120000L // Sixth: 2 minutes
+            6 -> 300000L // Seventh: 5 minutes
+            else -> 600000L // Eighth+: 10 minutes (cap)
         }
         return nowMs + delayMs
     }

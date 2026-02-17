@@ -14,25 +14,25 @@ import org.json.JSONObject
  * Matches the Rust ContactCard structure for FFI compatibility
  */
 data class ContactCard(
-    val displayName: String,            // User-facing name (e.g., "John Doe")
-    val solanaPublicKey: ByteArray,     // Ed25519 public key for signing (32 bytes)
-    val x25519PublicKey: ByteArray,     // X25519 public key for encryption (32 bytes)
-    val kyberPublicKey: ByteArray,      // Kyber-1024 public key for post-quantum KEM (1568 bytes)
-    val solanaAddress: String,          // Base58-encoded Solana address
+    val displayName: String, // User-facing name (e.g., "John Doe")
+    val solanaPublicKey: ByteArray, // Ed25519 public key for signing (32 bytes)
+    val x25519PublicKey: ByteArray, // X25519 public key for encryption (32 bytes)
+    val kyberPublicKey: ByteArray, // Kyber-1024 public key for post-quantum KEM (1568 bytes)
+    val solanaAddress: String, // Base58-encoded Solana address
 
     // NEW - Three .onion addresses (v2.0)
-    val friendRequestOnion: String,     // Public .onion for friend requests (port 9151)
-    val messagingOnion: String,         // Private .onion for messaging (port 8080)
-    val voiceOnion: String? = null,     // Voice calling .onion (port 9152) - nullable if not initialized yet
+    val friendRequestOnion: String, // Public .onion for friend requests (port 9151)
+    val messagingOnion: String, // Private .onion for messaging (port 8080)
+    val voiceOnion: String? = null, // Voice calling .onion (port 9152) - nullable if not initialized yet
 
     // NEW - Additional fields
-    val contactPin: String,             // 10-digit PIN (formatted XXX-XXX-XXXX)
-    val ipfsCid: String? = null,        // IPFS CID for this card (deterministic)
+    val contactPin: String, // 10-digit PIN (formatted XXX-XXX-XXXX)
+    val ipfsCid: String? = null, // IPFS CID for this card (deterministic)
 
     // Profile picture (v2.1)
     val profilePictureBase64: String? = null, // Base64-encoded JPEG (max 256KB compressed)
 
-    val timestamp: Long,                // Creation timestamp (Unix seconds)
+    val timestamp: Long, // Creation timestamp (Unix seconds)
 
     // DEPRECATED - Keep for backward compatibility
     @Deprecated("Use messagingOnion instead", ReplaceWith("messagingOnion"))

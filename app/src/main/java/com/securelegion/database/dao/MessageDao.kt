@@ -4,6 +4,11 @@ import androidx.room.*
 import com.securelegion.database.entities.Message
 import kotlinx.coroutines.flow.Flow
 
+data class UnreadCountResult(
+    @ColumnInfo(name = "contactId") val contactId: Long,
+    @ColumnInfo(name = "cnt") val cnt: Int
+)
+
 /**
  * Data Access Object for Message operations
  * All queries run on background thread via coroutines
@@ -150,6 +155,23 @@ interface MessageDao {
      */
     @Query("SELECT * FROM messages WHERE contactId = :contactId ORDER BY timestamp DESC LIMIT 1")
     suspend fun getLastMessage(contactId: Long): Message?
+
+    /**
+     * Get last message for ALL contacts in one query
+     */
+    @Query("""
+        SELECT m.* FROM messages m
+        INNER JOIN (
+            SELECT contactId, MAX(timestamp) as maxTs FROM messages GROUP BY contactId
+        ) latest ON m.contactId = latest.contactId AND m.timestamp = latest.maxTs
+    """)
+    suspend fun getLastMessagePerContact(): List<Message>
+
+    /**
+     * Get unread counts grouped by contact in one query
+     */
+    @Query("SELECT contactId, COUNT(*) as cnt FROM messages WHERE isSentByMe = 0 AND isRead = 0 GROUP BY contactId")
+    suspend fun getUnreadCountsGrouped(): List<UnreadCountResult>
 
     /**
      * Get pending messages (for retry)

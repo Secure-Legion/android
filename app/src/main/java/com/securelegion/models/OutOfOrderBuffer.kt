@@ -20,8 +20,8 @@ import java.util.concurrent.CopyOnWriteArrayList
  * - Check age on each new message
  * - If buffered message exceeds timeout (e.g., 30s), assume message 4 is lost forever
  * - Either:
- *   A. Request resend of the gap (preferred)
- *   B. Skip the gap and advance (acceptable if protocol allows)
+ * A. Request resend of the gap (preferred)
+ * B. Skip the gap and advance (acceptable if protocol allows)
  *
  * THREAD SAFETY: Uses CopyOnWriteArrayList for thread-safe access
  * OutOfOrderBuffer instances are accessed from MessageService (receive path) and gap timeout checks
@@ -72,7 +72,7 @@ class OutOfOrderBuffer(
      */
     fun addMessage(seqNum: Long, message: BufferedMessage): List<BufferedMessage> {
         buffer.add(message)
-        Log.d(TAG, "✓ Buffered message seq=$seqNum, buffer size now: ${buffer.size}, expecting: $expectedSequence")
+        Log.d(TAG, "Buffered message seq=$seqNum, buffer size now: ${buffer.size}, expecting: $expectedSequence")
 
         // Check for timeout on existing buffered messages
         checkForGapTimeout()
@@ -113,7 +113,7 @@ class OutOfOrderBuffer(
         }
 
         if (processable.isNotEmpty()) {
-            Log.d(TAG, "✓ Processed ${processable.size} buffered messages from gap, buffer now: ${buffer.size}")
+            Log.d(TAG, "Processed ${processable.size} buffered messages from gap, buffer now: ${buffer.size}")
         }
 
         return processable
@@ -139,8 +139,8 @@ class OutOfOrderBuffer(
                 val gapStart = expectedSequence
                 val gapEnd = buffered.sequenceNum - 1
 
-                Log.w(TAG, "⚠️ GAP TIMEOUT: Missing seq $gapStart..$gapEnd (${gapEnd - gapStart + 1} messages)")
-                Log.w(TAG, "   Oldest buffered message age: ${age.seconds}s, timeout: ${timeout.seconds}s")
+                Log.w(TAG, "GAP TIMEOUT: Missing seq $gapStart..$gapEnd (${gapEnd - gapStart + 1} messages)")
+                Log.w(TAG, "Oldest buffered message age: ${age.seconds}s, timeout: ${timeout.seconds}s")
 
                 // Mark this range as lost
                 if (gapStart <= gapEnd) {
@@ -165,7 +165,7 @@ class OutOfOrderBuffer(
      * @param nextSeq The sequence number to skip to
      */
     fun skipToSequence(nextSeq: Long) {
-        Log.w(TAG, "⏭️  Skipping gap: advancing from seq=$expectedSequence to seq=$nextSeq")
+        Log.w(TAG, "Skipping gap: advancing from seq=$expectedSequence to seq=$nextSeq")
 
         // Remove all buffered messages before nextSeq
         val beforeGap = buffer.takeWhile { it.sequenceNum < nextSeq }
@@ -177,7 +177,7 @@ class OutOfOrderBuffer(
         }
 
         expectedSequence = nextSeq
-        Log.w(TAG, "✓ Skipped gap, buffer now has ${buffer.size} messages")
+        Log.w(TAG, "Skipped gap, buffer now has ${buffer.size} messages")
     }
 
     /**
@@ -204,7 +204,7 @@ class OutOfOrderBuffer(
         val sorted = buffer.sortedBy { it.sequenceNum }
         for (msg in sorted) {
             val age = Duration.between(msg.bufferedAt, Instant.now())
-            Log.d(TAG, "  seq=${msg.sequenceNum}, age=${age.seconds}s, from=${msg.senderOnionAddress.take(16)}...")
+            Log.d(TAG, "seq=${msg.sequenceNum}, age=${age.seconds}s, from=${msg.senderOnionAddress.take(16)}...")
         }
         Log.d(TAG, "=====================================")
     }

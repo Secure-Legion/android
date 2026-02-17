@@ -4,7 +4,7 @@
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="#000000">
+    android:background="?attr/colorSurface">
 
     <!-- Decorative Gradient Shape - Top Left -->
     <View
@@ -50,7 +50,7 @@
         android:layout_marginTop="80dp"
         android:text="Create New Account"
         android:textSize="16sp"
-        android:textColor="#FFFFFF"
+        android:textColor="?attr/colorOnSurface"
         android:fontFamily="@font/space_grotesk_bold"
         android:background="@drawable/lock_button_bg"
         android:gravity="center"
@@ -81,7 +81,7 @@
         android:text="SECURE LEGION"
         android:fontFamily="@font/space_grotesk_bold"
         android:textSize="20sp"
-        android:textColor="#888888"
+        android:textColor="?attr/colorOnSurfaceVariant"
         android:letterSpacing="0.1"
         android:layout_marginBottom="32dp"
         app:layout_constraintBottom_toBottomOf="parent"

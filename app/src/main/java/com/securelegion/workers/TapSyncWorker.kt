@@ -163,7 +163,7 @@ class TapSyncWorker(
                     // clears needsTapSync flag
                     database.contactDao().markTapSent(contact.id)
                     successCount++
-                    Log.d(TAG, "✓ TAP sent to ${contact.displayName}")
+                    Log.d(TAG, "TAP sent to ${contact.displayName}")
                 } else {
                     failureCount++
                     Log.w(TAG, "TAP failed for ${contact.displayName} (will retry via WorkManager/backoff)")

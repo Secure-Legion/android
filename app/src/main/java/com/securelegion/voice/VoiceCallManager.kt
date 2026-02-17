@@ -24,9 +24,9 @@ import kotlinx.coroutines.cancel
  *
  * // Start outgoing call
  * callManager.startCall(contact) { success, error ->
- *     if (success) {
- *         // Call started
- *     }
+ * if (success) {
+ * // Call started
+ * }
  * }
  *
  * // Answer incoming call
@@ -70,15 +70,15 @@ class VoiceCallManager private constructor(private val context: Context) : RustB
     var onIncomingCall: ((callId: String, contactOnion: String, contactName: String?) -> Unit)? = null
     var onCallStateChanged: ((VoiceCallSession.Companion.CallState) -> Unit)? = null
     var onCallEnded: ((reason: String) -> Unit)? = null
-    var onAudioAmplitude: ((amplitude: Float) -> Unit)? = null  // Audio amplitude for waveform visualization
+    var onAudioAmplitude: ((amplitude: Float) -> Unit)? = null // Audio amplitude for waveform visualization
 
     /**
      * Call state for idempotency
      */
     enum class CallState {
-        RINGING,      // Received CALL_OFFER, showing incoming call UI
-        ANSWER_SENT,  // User pressed Answer, sent CALL_ANSWER
-        ACTIVE        // Voice call connected
+        RINGING, // Received CALL_OFFER, showing incoming call UI
+        ANSWER_SENT, // User pressed Answer, sent CALL_ANSWER
+        ACTIVE // Voice call connected
     }
 
     /**
@@ -116,9 +116,9 @@ class VoiceCallManager private constructor(private val context: Context) : RustB
         val contactName: String?,
         val ourEphemeralPublicKey: ByteArray,
         val onAnswered: (ByteArray) -> Unit, // Called with their ephemeral key
-        val onRejected: (String) -> Unit,     // Called with rejection reason
-        val onBusy: () -> Unit,               // Called when contact is busy
-        val onTimeout: () -> Unit,            // Called after 30 seconds
+        val onRejected: (String) -> Unit, // Called with rejection reason
+        val onBusy: () -> Unit, // Called when contact is busy
+        val onTimeout: () -> Unit, // Called after 30 seconds
         val timestamp: Long = System.currentTimeMillis()
     )
 
@@ -207,11 +207,11 @@ class VoiceCallManager private constructor(private val context: Context) : RustB
             when (existingCall.state) {
                 CallState.RINGING -> {
                     Log.i(TAG, "Duplicate CALL_OFFER for call $callId while RINGING - ignoring (idempotent)")
-                    return false  // Duplicate - don't show UI again
+                    return false // Duplicate - don't show UI again
                 }
                 CallState.ANSWER_SENT, CallState.ACTIVE -> {
                     Log.w(TAG, "Duplicate CALL_OFFER for call $callId after answering - this shouldn't happen")
-                    return false  // Duplicate - don't show UI
+                    return false // Duplicate - don't show UI
                 }
             }
         }
@@ -231,12 +231,12 @@ class VoiceCallManager private constructor(private val context: Context) : RustB
                     ourX25519PublicKey = answeredCall.ourX25519PublicKey
                 )
                 if (success) {
-                    Log.i(TAG, "✓ Re-sent CALL_ANSWER for duplicate offer")
+                    Log.i(TAG, "Re-sent CALL_ANSWER for duplicate offer")
                 } else {
-                    Log.w(TAG, "✗ Failed to re-send CALL_ANSWER for duplicate offer")
+                    Log.w(TAG, "Failed to re-send CALL_ANSWER for duplicate offer")
                 }
             }
-            return false  // Duplicate - don't show UI again
+            return false // Duplicate - don't show UI again
         }
 
         // New call - store it
@@ -255,7 +255,7 @@ class VoiceCallManager private constructor(private val context: Context) : RustB
         // Notify UI (this will trigger the ringtone)
         onIncomingCall?.invoke(callId, contactOnion, contactName)
 
-        return true  // New call - show UI
+        return true // New call - show UI
     }
 
     /**

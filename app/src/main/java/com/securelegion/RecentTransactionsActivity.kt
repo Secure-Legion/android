@@ -1,5 +1,6 @@
 package com.securelegion
 
+import com.securelegion.utils.GlassBottomSheetDialog
 import android.app.Activity
 import android.content.Intent
 import android.os.Build
@@ -137,7 +138,7 @@ class RecentTransactionsActivity : AppCompatActivity() {
 
     private fun openTransactionDetail(transaction: SolanaService.TransactionInfo) {
         // Create bottom sheet dialog
-        val bottomSheet = com.google.android.material.bottomsheet.BottomSheetDialog(this)
+        val bottomSheet = GlassBottomSheetDialog(this)
         val view = layoutInflater.inflate(R.layout.bottom_sheet_transaction_detail, null)
 
         // Set minimum height

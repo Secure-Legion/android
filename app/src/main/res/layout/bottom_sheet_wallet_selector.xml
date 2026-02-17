@@ -50,7 +50,7 @@
                 android:layout_height="wrap_content"
                 android:text="SOL"
                 android:textSize="14sp"
-                android:textColor="@color/text_white"
+                android:textColor="?attr/colorOnSurface"
                 android:fontFamily="@font/poppins_medium" />
 
         </LinearLayout>
@@ -80,7 +80,7 @@
                 android:layout_height="wrap_content"
                 android:text="ZEC"
                 android:textSize="14sp"
-                android:textColor="@color/text_white"
+                android:textColor="?attr/colorOnSurface"
                 android:fontFamily="@font/poppins_medium" />
 
         </LinearLayout>

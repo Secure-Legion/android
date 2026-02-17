@@ -35,7 +35,7 @@
             android:text="Sent"
             android:textSize="16sp"
             android:textStyle="bold"
-            android:textColor="@color/text_white" />
+            android:textColor="?attr/colorOnSurface" />
 
         <!-- Address (first 4 ... last 4) -->
         <TextView
@@ -44,7 +44,7 @@
             android:layout_height="wrap_content"
             android:text="ABC1...XYZ9"
             android:textSize="13sp"
-            android:textColor="@color/text_gray"
+            android:textColor="?attr/colorOnSurfaceVariant"
             android:layout_marginTop="2dp" />
 
     </LinearLayout>
@@ -57,7 +57,7 @@
         android:text="-0.0002 SOL"
         android:textSize="16sp"
         android:textStyle="bold"
-        android:textColor="@color/text_white"
+        android:textColor="?attr/colorOnSurface"
         android:gravity="end" />
 
 </LinearLayout>

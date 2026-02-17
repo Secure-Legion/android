@@ -4,7 +4,7 @@
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="#000000">
+    android:background="?attr/colorSurface">
 
     <!-- Logo at top -->
     <ImageView
@@ -70,7 +70,7 @@
                 android:hint="Password"
                 android:inputType="textPassword"
                 android:textColorHint="@color/lock_password_hint"
-                android:textColor="@color/text_white"
+                android:textColor="?attr/colorOnSurface"
                 android:textSize="14sp"
                 android:paddingStart="19dp"
                 android:paddingEnd="50dp"
@@ -101,7 +101,7 @@
             android:layout_marginEnd="20dp"
             android:text="Sign In"
             android:textSize="16sp"
-            android:textColor="#FFFFFF"
+            android:textColor="?attr/colorOnSurface"
             android:background="@drawable/lock_button_bg"
             android:gravity="center"
             android:fontFamily="@font/space_grotesk_bold"

@@ -23,13 +23,13 @@ import java.util.concurrent.atomic.AtomicLong
  * - No "Address already in use" from concurrent rebinds
  */
 class TorRehydrator(
-    private val onRebindRequest: suspend () -> Unit,  // Callback to TorService
+    private val onRebindRequest: suspend () -> Unit, // Callback to TorService
     private val scope: CoroutineScope
 ) {
     companion object {
         private const val TAG = "TorRehydrator"
-        private const val DEBOUNCE_MS = 2000L  // Wait 2s for network to settle
-        private const val MIN_INTERVAL_MS = 5000L  // Don't rebind more than once per 5s
+        private const val DEBOUNCE_MS = 2000L // Wait 2s for network to settle
+        private const val MIN_INTERVAL_MS = 5000L // Don't rebind more than once per 5s
     }
 
     private val rehydrateInFlight = AtomicBoolean(false)
@@ -61,7 +61,7 @@ class TorRehydrator(
 
         // Schedule debounced rebind request
         debounceJob = scope.launch {
-            delay(DEBOUNCE_MS)  // Wait for network to settle
+            delay(DEBOUNCE_MS) // Wait for network to settle
             requestRebind()
         }
     }

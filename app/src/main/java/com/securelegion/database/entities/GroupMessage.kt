@@ -149,6 +149,6 @@ data class GroupMessage(
         const val MESSAGE_TYPE_TEXT = "TEXT"
         const val MESSAGE_TYPE_VOICE = "VOICE"
         const val MESSAGE_TYPE_IMAGE = "IMAGE"
-        const val MESSAGE_TYPE_SYSTEM = "SYSTEM"  // System messages like "Alice added Bob"
+        const val MESSAGE_TYPE_SYSTEM = "SYSTEM" // System messages like "Alice added Bob"
     }
 }

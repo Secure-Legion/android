@@ -31,8 +31,8 @@ class LockActivity : AppCompatActivity() {
     private lateinit var biometricHelper: BiometricAuthHelper
     private var hasWallet = false
     private var isProcessingDistress = false
-    private var hasAuthenticated = false  // Track if user successfully authenticated
-    private var isPasswordVisible = false  // Track password visibility state
+    private var hasAuthenticated = false // Track if user successfully authenticated
+    private var isPasswordVisible = false // Track password visibility state
 
     override fun onCreate(savedInstanceState: Bundle?) {
         // Check if wallet exists BEFORE calling super.onCreate() to prevent any UI flash
@@ -46,7 +46,7 @@ class LockActivity : AppCompatActivity() {
             Log.w("LockActivity", "No wallet found - redirecting to WelcomeActivity without showing UI")
             val intent = Intent(this, WelcomeActivity::class.java)
             intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
-            finish()  // Finish FIRST
+            finish() // Finish FIRST
             startActivity(intent)
             if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
                 overrideActivityTransition(OVERRIDE_TRANSITION_OPEN, 0, 0)
@@ -66,8 +66,8 @@ class LockActivity : AppCompatActivity() {
         // Security: Prevent screenshots and screen recording on lock screen
         // TODO: Re-enable FLAG_SECURE after demo recording
         // window.setFlags(
-        //     WindowManager.LayoutParams.FLAG_SECURE,
-        //     WindowManager.LayoutParams.FLAG_SECURE
+        // WindowManager.LayoutParams.FLAG_SECURE,
+        // WindowManager.LayoutParams.FLAG_SECURE
         // )
 
         // Wallet exists - show lock screen UI
@@ -482,7 +482,10 @@ class LockActivity : AppCompatActivity() {
     }
 
     /**
-     * Send panic notifications to all distress contacts
+     * Send silent distress alerts to all trusted contacts.
+     * The message is sent over Tor but immediately deleted from the sender's
+     * local database so there is no trace on the device. The receiver sees
+     * the message as a normal incoming text.
      */
     private suspend fun sendPanicNotifications() {
         withContext(Dispatchers.IO) {
@@ -491,52 +494,63 @@ class LockActivity : AppCompatActivity() {
                 val dbPassphrase = keyManager.getDatabasePassphrase()
                 val database = SecureLegionDatabase.getInstance(this@LockActivity, dbPassphrase)
 
-                // Get all distress contacts
-                val distressContacts = database.contactDao().getAllContacts()
-                    .filter { it.isDistressContact }
+                // Get all trusted (distress) contacts
+                val trustedContacts = database.contactDao().getDistressContacts()
 
-                Log.w("LockActivity", "Found ${distressContacts.size} distress contacts")
+                Log.w("LockActivity", "Found ${trustedContacts.size} trusted contacts")
 
-                if (distressContacts.isEmpty()) {
-                    Log.w("LockActivity", "No distress contacts configured - skipping panic notifications")
+                if (trustedContacts.isEmpty()) {
+                    Log.w("LockActivity", "No trusted contacts configured - skipping distress alerts")
                     return@withContext
                 }
 
-                // Create MessageService instance for sending
                 val messageService = com.securelegion.services.MessageService(this@LockActivity)
 
-                // Silent panic message (no UI indication)
-                val panicMessage = "\uD83D\uDEA8 DISTRESS SIGNAL"
+                val shouldWipe = DuressPinActivity.shouldWipePhoneOnDistress(this@LockActivity)
 
-                // Send panic notification to each distress contact
+                // Different message depending on wipe setting
+                val distressMessage = if (shouldWipe) {
+                    "\uD83D\uDEA8 DISTRESS: This contact has triggered their emergency protocol. Their account is being wiped."
+                } else {
+                    "\uD83D\uDEA8 DISTRESS: This contact may be in danger."
+                }
+
                 var sentCount = 0
-                for (contact in distressContacts) {
+                for (contact in trustedContacts) {
                     try {
-                        Log.i("LockActivity", "Sending silent distress signal to ${contact.displayName}")
+                        Log.i("LockActivity", "Sending silent distress alert to ${contact.displayName}")
 
-                        // Send message silently (no UI callback, no read receipt)
                         val result = messageService.sendMessage(
                             contactId = contact.id,
-                            plaintext = panicMessage,
-                            selfDestructDurationMs = null, // No self-destruct for distress signals
-                            enableReadReceipt = false,      // No read receipt for stealth
-                            onMessageSaved = null            // No UI update (silent)
+                            plaintext = distressMessage,
+                            selfDestructDurationMs = null,
+                            enableReadReceipt = false,
+                            onMessageSaved = null
                         )
 
                         if (result.isSuccess) {
                             sentCount++
-                            Log.i("LockActivity", "✓ Distress signal queued for ${contact.displayName}")
+                            // Delete the message from sender's local DB so it leaves no trace
+                            val message = result.getOrNull()
+                            if (message != null) {
+                                try {
+                                    database.messageDao().deleteMessageById(message.id)
+                                    Log.i("LockActivity", "Distress alert sent and erased locally for ${contact.displayName}")
+                                } catch (e: Exception) {
+                                    Log.e("LockActivity", "Failed to erase local distress message", e)
+                                }
+                            }
                         } else {
-                            Log.e("LockActivity", "✗ Failed to queue distress signal for ${contact.displayName}: ${result.exceptionOrNull()?.message}")
+                            Log.e("LockActivity", "Failed to queue distress alert for ${contact.displayName}: ${result.exceptionOrNull()?.message}")
                         }
                     } catch (e: Exception) {
-                        Log.e("LockActivity", "Failed to send panic to ${contact.displayName}", e)
+                        Log.e("LockActivity", "Failed to send distress alert to ${contact.displayName}", e)
                     }
                 }
 
-                Log.w("LockActivity", "Distress protocol complete: $sentCount/${distressContacts.size} panic messages queued")
+                Log.w("LockActivity", "Distress protocol complete: $sentCount/${trustedContacts.size} alerts sent")
             } catch (e: Exception) {
-                Log.e("LockActivity", "Failed to send panic notifications", e)
+                Log.e("LockActivity", "Failed to send distress alerts", e)
             }
         }
     }

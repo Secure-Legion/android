@@ -22,7 +22,7 @@
         android:layout_height="wrap_content"
         android:text="Seed Phrase"
         android:textSize="24sp"
-        android:textColor="@color/text_white"
+        android:textColor="?attr/colorOnSurface"
         android:fontFamily="@font/space_grotesk_bold"
         android:gravity="center"
         android:layout_marginBottom="8dp" />
@@ -57,7 +57,7 @@
             android:layout_weight="1"
             android:text="0x1234...5678"
             android:textSize="14sp"
-            android:textColor="@color/text_white"
+            android:textColor="?attr/colorOnSurface"
             android:fontFamily="@font/poppins_medium"
             android:layout_marginEnd="12dp" />
 
@@ -66,7 +66,7 @@
             android:layout_width="20dp"
             android:layout_height="20dp"
             android:src="@drawable/ic_copy"
-            app:tint="@color/text_gray"
+            app:tint="?attr/colorOnSurfaceVariant"
             android:contentDescription="Copy address" />
 
     </LinearLayout>
@@ -87,7 +87,7 @@
             android:layout_height="wrap_content"
             android:text="EXPORT TYPE"
             android:textSize="11sp"
-            android:textColor="@color/text_gray"
+            android:textColor="?attr/colorOnSurfaceVariant"
             android:textAllCaps="true"
             android:letterSpacing="0.1"
             android:layout_marginBottom="12dp" />
@@ -118,7 +118,7 @@
                     android:layout_height="wrap_content"
                     android:text="Seed Phrase"
                     android:textSize="14sp"
-                    android:textColor="@color/text_white"
+                    android:textColor="?attr/colorOnSurface"
                     android:fontFamily="@font/poppins_medium" />
 
             </LinearLayout>
@@ -143,7 +143,7 @@
                     android:layout_height="wrap_content"
                     android:text="Private Key"
                     android:textSize="14sp"
-                    android:textColor="@color/text_white"
+                    android:textColor="?attr/colorOnSurface"
                     android:fontFamily="@font/poppins_medium" />
 
             </LinearLayout>
@@ -159,7 +159,7 @@
         android:layout_height="wrap_content"
         android:text="Your 12-word seed phrase:"
         android:textSize="12sp"
-        android:textColor="#888888"
+        android:textColor="?attr/colorOnSurfaceVariant"
         android:fontFamily="@font/poppins_regular"
         android:layout_marginStart="24dp"
         android:layout_marginBottom="8dp" />
@@ -184,7 +184,7 @@
             android:layout_weight="1"
             android:text="word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12"
             android:textSize="14sp"
-            android:textColor="@color/text_white"
+            android:textColor="?attr/colorOnSurface"
             android:fontFamily="monospace"
             android:lineSpacingMultiplier="1.4"
             android:layout_marginEnd="12dp" />
@@ -194,7 +194,7 @@
             android:layout_width="20dp"
             android:layout_height="20dp"
             android:src="@drawable/ic_copy"
-            app:tint="@color/text_gray"
+            app:tint="?attr/colorOnSurfaceVariant"
             android:contentDescription="Copy seed phrase" />
 
     </LinearLayout>
@@ -206,7 +206,7 @@
         android:layout_height="wrap_content"
         android:text="Birthday Height:"
         android:textSize="12sp"
-        android:textColor="#888888"
+        android:textColor="?attr/colorOnSurfaceVariant"
         android:fontFamily="@font/poppins_regular"
         android:layout_marginStart="24dp"
         android:layout_marginBottom="8dp"
@@ -234,7 +234,7 @@
             android:layout_weight="1"
             android:text="2500000"
             android:textSize="14sp"
-            android:textColor="@color/text_white"
+            android:textColor="?attr/colorOnSurface"
             android:fontFamily="@font/poppins_medium"
             android:layout_marginEnd="12dp" />
 
@@ -243,7 +243,7 @@
             android:layout_width="20dp"
             android:layout_height="20dp"
             android:src="@drawable/ic_copy"
-            app:tint="@color/text_gray"
+            app:tint="?attr/colorOnSurfaceVariant"
             android:contentDescription="Copy birthday height" />
 
     </LinearLayout>
@@ -259,7 +259,7 @@
         android:fontFamily="@font/poppins_medium"
         android:text="Close"
         android:textAllCaps="false"
-        android:textColor="#888888"
+        android:textColor="?attr/colorOnSurfaceVariant"
         android:textSize="16sp" />
 
 </LinearLayout>

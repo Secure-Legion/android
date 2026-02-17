@@ -6,6 +6,8 @@ import android.view.ViewGroup
 import android.widget.ImageView
 import android.widget.TextView
 import androidx.recyclerview.widget.RecyclerView
+import androidx.core.content.ContextCompat
+import com.google.android.material.color.MaterialColors
 import com.securelegion.R
 import com.securelegion.database.entities.CallHistory
 import com.securelegion.database.entities.CallType
@@ -62,16 +64,16 @@ class NewCallContactsAdapter(
             when (contact.lastCall.type) {
                 CallType.MISSED -> {
                     holder.lastCallStatus.text = "Missed call - $timeAgo"
-                    holder.lastCallStatus.setTextColor(0xFFF44336.toInt()) // Red
+                    holder.lastCallStatus.setTextColor(ContextCompat.getColor(holder.itemView.context, R.color.warning_red))
                 }
                 CallType.INCOMING, CallType.OUTGOING -> {
                     holder.lastCallStatus.text = "Last call: $timeAgo"
-                    holder.lastCallStatus.setTextColor(0xFF666666.toInt()) // Gray
+                    holder.lastCallStatus.setTextColor(MaterialColors.getColor(holder.itemView, com.google.android.material.R.attr.colorOnSurfaceVariant))
                 }
             }
         } else {
             holder.lastCallStatus.text = "Never called"
-            holder.lastCallStatus.setTextColor(0xFF666666.toInt()) // Gray
+            holder.lastCallStatus.setTextColor(MaterialColors.getColor(holder.itemView, com.google.android.material.R.attr.colorOnSurfaceVariant))
         }
 
         // Call button click

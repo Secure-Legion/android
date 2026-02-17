@@ -4,7 +4,7 @@
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="@color/header_bg">
+    android:background="?attr/colorSurface">
 
     <!-- Header -->
     <LinearLayout
@@ -26,7 +26,7 @@
             android:layout_height="40dp"
             android:text="‹"
             android:textSize="32sp"
-            android:textColor="@color/text_white"
+            android:textColor="?attr/colorOnSurface"
             android:gravity="center"
             android:clickable="true"
             android:focusable="true"
@@ -45,7 +45,7 @@
             android:text="TRANSACTION DETAILS"
             android:textSize="18sp"
             android:textStyle="bold"
-            android:textColor="@color/text_white"
+            android:textColor="?attr/colorOnSurface"
             android:gravity="center"
             android:layout_marginEnd="64dp" />
 
@@ -81,7 +81,7 @@
                     android:layout_height="wrap_content"
                     android:text="Received"
                     android:textSize="16sp"
-                    android:textColor="@color/text_gray"
+                    android:textColor="?attr/colorOnSurfaceVariant"
                     android:layout_marginBottom="8dp" />
 
                 <TextView
@@ -98,7 +98,7 @@
                     android:id="@+id/transactionStatus"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="✓ Confirmed"
+                    android:text="Confirmed"
                     android:textSize="14sp"
                     android:textColor="@color/success_green" />
 
@@ -111,7 +111,7 @@
                 android:text="Transaction Details"
                 android:textSize="18sp"
                 android:textStyle="bold"
-                android:textColor="@color/text_white"
+                android:textColor="?attr/colorOnSurface"
                 android:layout_marginBottom="16dp" />
 
             <!-- From -->
@@ -128,7 +128,7 @@
                     android:layout_height="wrap_content"
                     android:text="From"
                     android:textSize="13sp"
-                    android:textColor="@color/text_gray"
+                    android:textColor="?attr/colorOnSurfaceVariant"
                     android:layout_marginBottom="4dp" />
 
                 <TextView
@@ -137,7 +137,7 @@
                     android:layout_height="wrap_content"
                     android:text="7xKXtg2CW87d97TXJSDpbD5jBkheMKvZkRqJa4RsXU9wQ"
                     android:textSize="12sp"
-                    android:textColor="@color/text_white"
+                    android:textColor="?attr/colorOnSurface"
                     android:fontFamily="monospace" />
 
             </LinearLayout>
@@ -156,7 +156,7 @@
                     android:layout_height="wrap_content"
                     android:text="To"
                     android:textSize="13sp"
-                    android:textColor="@color/text_gray"
+                    android:textColor="?attr/colorOnSurfaceVariant"
                     android:layout_marginBottom="4dp" />
 
                 <TextView
@@ -165,7 +165,7 @@
                     android:layout_height="wrap_content"
                     android:text="9vKq7XRmKsH3bCnPfTw4LgYsWdRzNpVxAqBh2FmEuTcK"
                     android:textSize="12sp"
-                    android:textColor="@color/text_white"
+                    android:textColor="?attr/colorOnSurface"
                     android:fontFamily="monospace" />
 
             </LinearLayout>
@@ -184,7 +184,7 @@
                     android:layout_height="wrap_content"
                     android:text="Transaction Hash"
                     android:textSize="13sp"
-                    android:textColor="@color/text_gray"
+                    android:textColor="?attr/colorOnSurfaceVariant"
                     android:layout_marginBottom="4dp" />
 
                 <TextView
@@ -212,7 +212,7 @@
                     android:layout_height="wrap_content"
                     android:text="Date &amp; Time"
                     android:textSize="13sp"
-                    android:textColor="@color/text_gray"
+                    android:textColor="?attr/colorOnSurfaceVariant"
                     android:layout_marginBottom="4dp" />
 
                 <TextView
@@ -221,7 +221,7 @@
                     android:layout_height="wrap_content"
                     android:text="Dec 28, 2024 at 2:45 PM"
                     android:textSize="14sp"
-                    android:textColor="@color/text_white" />
+                    android:textColor="?attr/colorOnSurface" />
 
             </LinearLayout>
 
@@ -239,7 +239,7 @@
                     android:layout_height="wrap_content"
                     android:text="Network Fee"
                     android:textSize="14sp"
-                    android:textColor="@color/text_gray" />
+                    android:textColor="?attr/colorOnSurfaceVariant" />
 
                 <TextView
                     android:id="@+id/transactionFee"
@@ -247,7 +247,7 @@
                     android:layout_height="wrap_content"
                     android:text="0.000005 SOL"
                     android:textSize="14sp"
-                    android:textColor="@color/text_white"
+                    android:textColor="?attr/colorOnSurface"
                     android:fontFamily="monospace" />
 
             </LinearLayout>
@@ -260,7 +260,7 @@
                 android:text="View on Solana Explorer"
                 android:textSize="16sp"
                 android:textStyle="bold"
-                android:textColor="@color/text_white"
+                android:textColor="?attr/colorOnSurface"
                 android:background="@drawable/metallic_button_bg"
                 android:gravity="center"
                 android:padding="16dp"
@@ -276,8 +276,11 @@
     <include
         android:id="@+id/bottomNav"
         layout="@layout/bottom_navigation"
-        android:layout_width="match_parent"
-        android:layout_height="90dp"
+        android:layout_width="0dp"
+        android:layout_height="72dp"
+        android:layout_marginStart="16dp"
+        android:layout_marginEnd="16dp"
+        android:layout_marginBottom="20dp"
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent" />

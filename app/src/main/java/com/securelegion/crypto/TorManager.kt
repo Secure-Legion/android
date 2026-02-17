@@ -96,7 +96,7 @@ class TorManager(private val context: Context) {
                         val txt = hostname.readText().trim()
                         // Validate: must end with .onion and be at least 20 chars (v3 onions are 56 chars)
                         if (txt.endsWith(".onion") && txt.length >= 20) {
-                            Log.i(TAG, "✓ Valid .onion address found: $txt (after ${System.currentTimeMillis() - start}ms)")
+                            Log.i(TAG, "Valid .onion address found: $txt (after ${System.currentTimeMillis() - start}ms)")
                             return txt
                         } else {
                             Log.w(TAG, "Invalid .onion address format: $txt (length: ${txt.length})")
@@ -225,11 +225,11 @@ class TorManager(private val context: Context) {
                 val usingBridges = bridgeConfig.isNotEmpty()
                 val bridgePerformanceConfig = if (usingBridges) {
                     // MaxCircuitDirtiness 1800 = 30 min circuit reuse (default 10 min)
-                    //   Bridge circuits are expensive to rebuild (30-60s), so reuse them longer.
-                    //   Privacy cost is minimal for a messaging app with persistent onion identity.
+                    // Bridge circuits are expensive to rebuild (30-60s), so reuse them longer.
+                    // Privacy cost is minimal for a messaging app with persistent onion identity.
                     // KeepalivePeriod 120 = 2 min keepalive (default 5 min)
-                    //   Mobile NATs can drop idle connections in 30-60s on some carriers.
-                    //   120s balances keeping connections alive vs battery/traffic overhead.
+                    // Mobile NATs can drop idle connections in 30-60s on some carriers.
+                    // 120s balances keeping connections alive vs battery/traffic overhead.
                     Log.i(TAG, "Bridge mode: applying performance profile (MaxCircuitDirtiness=1800, KeepalivePeriod=120)")
                     """
                     MaxCircuitDirtiness 1800
@@ -398,7 +398,7 @@ class TorManager(private val context: Context) {
                         testSocket.connect(java.net.InetSocketAddress("127.0.0.1", 9050), 1000)
                         testSocket.close()
                         socksPortReady = true
-                        Log.i(TAG, "✓ Tor SOCKS proxy ready on 127.0.0.1:9050 after ${socksAttempts + 1} attempts")
+                        Log.i(TAG, "Tor SOCKS proxy ready on 127.0.0.1:9050 after ${socksAttempts + 1} attempts")
                     } catch (e: Exception) {
                         // SOCKS port not ready yet
                         Thread.sleep(1000)
@@ -434,19 +434,19 @@ class TorManager(private val context: Context) {
                     // Sanity check: if we already had a stored onion, verify it matches
                     val storedOnion = getOnionAddress()
                     if (storedOnion != null && storedOnion != address) {
-                        Log.w(TAG, "⚠️ Stored onion differs from filesystem!")
+                        Log.w(TAG, "Stored onion differs from filesystem!")
                         Log.w(TAG, "Using filesystem onion (Tor's source of truth)")
                     }
 
                     saveOnionAddress(address)
                     keyManager.storeMessagingOnion(address)
-                    Log.i(TAG, "✓ Messaging hidden service ready (persistent)")
+                    Log.i(TAG, "Messaging hidden service ready (persistent)")
 
                     // Read friend-request .onion address with validation
                     try {
                         val friendRequestOnion = waitForValidHostname(friendRequestHiddenServiceDir, timeoutMs = 60_000)
                         keyManager.storeFriendRequestOnion(friendRequestOnion)
-                        Log.i(TAG, "✓ Friend-request hidden service ready (persistent): $friendRequestOnion")
+                        Log.i(TAG, "Friend-request hidden service ready (persistent): $friendRequestOnion")
                     } catch (e: Exception) {
                         Log.w(TAG, "Friend-request hidden service not ready: ${e.message}")
                     }
@@ -625,7 +625,7 @@ class TorManager(private val context: Context) {
             // Initialize Rust voice control connection
             val cookiePath = File(context.filesDir, "voice_tor/control_auth_cookie").absolutePath
             val status = RustBridge.initializeVoiceTorControl(cookiePath)
-            Log.i(TAG, "✓ Voice Tor initialized successfully: $status")
+            Log.i(TAG, "Voice Tor initialized successfully: $status")
             true
 
         } catch (e: Exception) {
@@ -701,13 +701,13 @@ class TorManager(private val context: Context) {
                         // Sanity check: verify address matches stored onion
                         val storedOnion = getOnionAddress()
                         if (storedOnion != null && storedOnion != address) {
-                            Log.w(TAG, "⚠️ Stored onion differs from filesystem!")
+                            Log.w(TAG, "Stored onion differs from filesystem!")
                             Log.w(TAG, "Using filesystem onion (Tor's source of truth)")
                         }
 
                         saveOnionAddress(address)
                         keyManager.storeMessagingOnion(address)
-                        Log.i(TAG, "✓ Messaging hidden service read (persistent)")
+                        Log.i(TAG, "Messaging hidden service read (persistent)")
 
                         // Start listener if not already started
                         if (!listenerStarted) {
@@ -810,14 +810,14 @@ class TorManager(private val context: Context) {
                         port = controller.port(IPtProxy.Obfs4)
                         attempts++
                         if (port > 0) {
-                            Log.i(TAG, "✓ obfs4 transport started on port $port after ${attempts}s")
+                            Log.i(TAG, "obfs4 transport started on port $port after ${attempts}s")
                             break
                         }
                         Log.d(TAG, "Waiting for obfs4 to start... (${attempts}s)")
                     }
 
                     if (port == 0L) {
-                        Log.e(TAG, "✗ obfs4 failed to start after 90 seconds")
+                        Log.e(TAG, "obfs4 failed to start after 90 seconds")
                     }
                 }
                 "snowflake" -> {
@@ -839,14 +839,14 @@ class TorManager(private val context: Context) {
                         port = controller.port(IPtProxy.Snowflake)
                         attempts++
                         if (port > 0) {
-                            Log.i(TAG, "✓ Snowflake transport started on port $port after ${attempts}s")
+                            Log.i(TAG, "Snowflake transport started on port $port after ${attempts}s")
                             break
                         }
                         Log.d(TAG, "Waiting for Snowflake to start... (${attempts}s)")
                     }
 
                     if (port == 0L) {
-                        Log.e(TAG, "✗ Snowflake failed to start after 90 seconds")
+                        Log.e(TAG, "Snowflake failed to start after 90 seconds")
                     }
                 }
                 "meek" -> {
@@ -861,14 +861,14 @@ class TorManager(private val context: Context) {
                         port = controller.port(IPtProxy.MeekLite)
                         attempts++
                         if (port > 0) {
-                            Log.i(TAG, "✓ meek_lite transport started on port $port after ${attempts}s")
+                            Log.i(TAG, "meek_lite transport started on port $port after ${attempts}s")
                             break
                         }
                         Log.d(TAG, "Waiting for meek_lite to start... (${attempts}s)")
                     }
 
                     if (port == 0L) {
-                        Log.e(TAG, "✗ meek_lite failed to start after 90 seconds")
+                        Log.e(TAG, "meek_lite failed to start after 90 seconds")
                     }
                 }
                 "webtunnel" -> {
@@ -883,14 +883,14 @@ class TorManager(private val context: Context) {
                         port = controller.port(IPtProxy.Webtunnel)
                         attempts++
                         if (port > 0) {
-                            Log.i(TAG, "✓ webtunnel transport started on port $port after ${attempts}s")
+                            Log.i(TAG, "webtunnel transport started on port $port after ${attempts}s")
                             break
                         }
                         Log.d(TAG, "Waiting for webtunnel to start... (${attempts}s)")
                     }
 
                     if (port == 0L) {
-                        Log.e(TAG, "✗ webtunnel failed to start after 90 seconds")
+                        Log.e(TAG, "webtunnel failed to start after 90 seconds")
                     }
                 }
             }
@@ -1168,9 +1168,9 @@ class TorManager(private val context: Context) {
             if (messagingHiddenServiceDir.exists()) {
                 val deleted = messagingHiddenServiceDir.deleteRecursively()
                 if (deleted) {
-                    Log.i(TAG, "✓ Deleted persistent messaging hidden service directory")
+                    Log.i(TAG, "Deleted persistent messaging hidden service directory")
                 } else {
-                    Log.e(TAG, "✗ Failed to delete messaging hidden service directory (may be locked)")
+                    Log.e(TAG, "Failed to delete messaging hidden service directory (may be locked)")
                 }
             }
 
@@ -1178,9 +1178,9 @@ class TorManager(private val context: Context) {
             if (friendRequestHiddenServiceDir.exists()) {
                 val deleted = friendRequestHiddenServiceDir.deleteRecursively()
                 if (deleted) {
-                    Log.i(TAG, "✓ Deleted persistent friend-request hidden service directory")
+                    Log.i(TAG, "Deleted persistent friend-request hidden service directory")
                 } else {
-                    Log.e(TAG, "✗ Failed to delete friend-request hidden service directory (may be locked)")
+                    Log.e(TAG, "Failed to delete friend-request hidden service directory (may be locked)")
                 }
             }
 
@@ -1189,9 +1189,9 @@ class TorManager(private val context: Context) {
             if (voiceTorDataDir.exists()) {
                 val deleted = voiceTorDataDir.deleteRecursively()
                 if (deleted) {
-                    Log.i(TAG, "✓ Deleted voice Tor data directory")
+                    Log.i(TAG, "Deleted voice Tor data directory")
                 } else {
-                    Log.w(TAG, "✗ Failed to delete voice Tor directory (may be locked)")
+                    Log.w(TAG, "Failed to delete voice Tor directory (may be locked)")
                 }
             }
 

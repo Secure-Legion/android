@@ -4,7 +4,7 @@
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="#000000">
+    android:background="?attr/colorSurface">
 
     <!-- Header -->
     <LinearLayout
@@ -46,7 +46,7 @@
             android:layout_weight="1"
             android:text="New Call"
             android:textSize="24sp"
-            android:textColor="#999999"
+            android:textColor="?attr/colorOnSurfaceVariant"
             android:fontFamily="@font/space_grotesk_bold"
             android:layout_marginStart="16dp" />
 
@@ -83,7 +83,7 @@
         android:paddingEnd="16dp"
         android:hint="Search contacts..."
         android:textColorHint="#666666"
-        android:textColor="#FFFFFF"
+        android:textColor="?attr/colorOnSurface"
         android:textSize="14sp"
         android:fontFamily="@font/poppins_regular"
         android:inputType="text"

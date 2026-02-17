@@ -40,8 +40,8 @@ class RestoreAccountActivity : AppCompatActivity() {
         // Security: Prevent screenshots and screen recording
         // TODO: Re-enable FLAG_SECURE after demo recording
         // window.setFlags(
-        //     WindowManager.LayoutParams.FLAG_SECURE,
-        //     WindowManager.LayoutParams.FLAG_SECURE
+        // WindowManager.LayoutParams.FLAG_SECURE,
+        // WindowManager.LayoutParams.FLAG_SECURE
         // )
 
         // Make status bar white with dark icons
@@ -364,7 +364,7 @@ class RestoreAccountActivity : AppCompatActivity() {
                         if (recoveryResult.isSuccess) {
                             val contactsRecovered = recoveryResult.getOrNull()
                             if (contactsRecovered != null && contactsRecovered > 0) {
-                                Log.i("RestoreAccount", "✓ Recovered $contactsRecovered contacts from IPFS mesh!")
+                                Log.i("RestoreAccount", "Recovered $contactsRecovered contacts from IPFS mesh!")
                             } else {
                                 Log.i("RestoreAccount", "No contacts found in IPFS mesh (this is normal for new accounts)")
                             }

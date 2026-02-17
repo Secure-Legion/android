@@ -25,6 +25,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import com.google.android.material.bottomsheet.BottomSheetDialog
+import com.securelegion.utils.GlassBottomSheetDialog
 import com.securelegion.database.SecureLegionDatabase
 import com.securelegion.database.entities.Wallet
 
@@ -175,8 +176,8 @@ class SendActivity : BaseActivity() {
         findViewById<View>(R.id.maxButton)?.setOnClickListener {
             // Subtract estimated network fee and rent-exempt reserve from available balance
             val (estimatedFee, rentReserve) = when (selectedCurrency) {
-                "SOL" -> Pair(0.000005, 0.00089088)  // Solana: network fee + rent-exempt minimum
-                "ZEC" -> Pair(0.0001, 0.0)           // Zcash: network fee only
+                "SOL" -> Pair(0.000005, 0.00089088) // Solana: network fee + rent-exempt minimum
+                "ZEC" -> Pair(0.0001, 0.0) // Zcash: network fee only
                 else -> Pair(0.0, 0.0)
             }
 
@@ -392,7 +393,7 @@ class SendActivity : BaseActivity() {
                     }
 
                     // Create bottom sheet dialog
-                    val bottomSheet = BottomSheetDialog(this@SendActivity)
+                    val bottomSheet = GlassBottomSheetDialog(this@SendActivity)
                     val view = layoutInflater.inflate(R.layout.bottom_sheet_wallet_selector, null)
 
                     // Set minimum height on the view itself
@@ -543,7 +544,7 @@ class SendActivity : BaseActivity() {
 
     private fun showSendConfirmation(recipientAddress: String, amount: Double) {
         // Create bottom sheet dialog
-        val bottomSheet = BottomSheetDialog(this)
+        val bottomSheet = GlassBottomSheetDialog(this)
         val view = layoutInflater.inflate(R.layout.bottom_sheet_send_confirm, null)
 
         // Set minimum height on the view itself
@@ -650,7 +651,7 @@ class SendActivity : BaseActivity() {
 
     private fun sendSolanaTransaction(recipientAddress: String, amount: Double) {
         // Create transaction status bottom sheet
-        val bottomSheet = BottomSheetDialog(this)
+        val bottomSheet = GlassBottomSheetDialog(this)
         val view = layoutInflater.inflate(R.layout.bottom_sheet_transaction_status, null)
 
         // Set minimum height
@@ -812,7 +813,7 @@ class SendActivity : BaseActivity() {
 
     private fun sendZcashTransaction(recipientAddress: String, amount: Double) {
         // Create transaction status bottom sheet
-        val bottomSheet = BottomSheetDialog(this)
+        val bottomSheet = GlassBottomSheetDialog(this)
         val view = layoutInflater.inflate(R.layout.bottom_sheet_transaction_status, null)
 
         // Set minimum height
@@ -1116,55 +1117,6 @@ class SendActivity : BaseActivity() {
     }
 
     private fun setupBottomNavigation() {
-        findViewById<View>(R.id.navMessages).setOnClickListener {
-            val intent = Intent(this, MainActivity::class.java)
-            intent.flags = Intent.FLAG_ACTIVITY_CLEAR_TOP
-            startActivity(intent)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                overrideActivityTransition(Activity.OVERRIDE_TRANSITION_OPEN, 0, 0)
-            } else {
-                @Suppress("DEPRECATION")
-                overridePendingTransition(0, 0)
-            }
-            finish()
-        }
-
-        findViewById<View>(R.id.navWallet).setOnClickListener {
-            val intent = Intent(this, MainActivity::class.java)
-            intent.putExtra("SHOW_WALLET", true)
-            intent.flags = Intent.FLAG_ACTIVITY_CLEAR_TOP
-            startActivity(intent)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                overrideActivityTransition(Activity.OVERRIDE_TRANSITION_OPEN, 0, 0)
-            } else {
-                @Suppress("DEPRECATION")
-                overridePendingTransition(0, 0)
-            }
-            finish()
-        }
-
-        findViewById<View>(R.id.navAddFriend).setOnClickListener {
-            val intent = Intent(this, AddFriendActivity::class.java)
-            startActivity(intent)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                overrideActivityTransition(Activity.OVERRIDE_TRANSITION_OPEN, 0, 0)
-            } else {
-                @Suppress("DEPRECATION")
-                overridePendingTransition(0, 0)
-            }
-            finish()
-        }
-
-        findViewById<View>(R.id.navLock).setOnClickListener {
-            val intent = Intent(this, LockActivity::class.java)
-            startActivity(intent)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                overrideActivityTransition(Activity.OVERRIDE_TRANSITION_OPEN, 0, 0)
-            } else {
-                @Suppress("DEPRECATION")
-                overridePendingTransition(0, 0)
-            }
-            finish()
-        }
+        BottomNavigationHelper.setupBottomNavigation(this)
     }
 }

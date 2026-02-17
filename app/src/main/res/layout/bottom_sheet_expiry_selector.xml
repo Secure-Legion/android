@@ -22,7 +22,7 @@
         android:layout_height="wrap_content"
         android:text="Request Expires In"
         android:textSize="22sp"
-        android:textColor="@color/text_white"
+        android:textColor="?attr/colorOnSurface"
         android:fontFamily="@font/space_grotesk_bold"
         android:gravity="center"
         android:paddingBottom="24dp" />
@@ -56,7 +56,7 @@
                 android:layout_weight="1"
                 android:text="15 minutes"
                 android:textSize="16sp"
-                android:textColor="@color/text_white"
+                android:textColor="?attr/colorOnSurface"
                 android:fontFamily="@font/poppins_medium" />
 
             <ImageView
@@ -90,7 +90,7 @@
                 android:layout_weight="1"
                 android:text="1 hour"
                 android:textSize="16sp"
-                android:textColor="@color/text_white"
+                android:textColor="?attr/colorOnSurface"
                 android:fontFamily="@font/poppins_medium" />
 
             <ImageView
@@ -124,7 +124,7 @@
                 android:layout_weight="1"
                 android:text="6 hours"
                 android:textSize="16sp"
-                android:textColor="@color/text_white"
+                android:textColor="?attr/colorOnSurface"
                 android:fontFamily="@font/poppins_medium" />
 
             <ImageView
@@ -158,7 +158,7 @@
                 android:layout_weight="1"
                 android:text="24 hours"
                 android:textSize="16sp"
-                android:textColor="@color/text_white"
+                android:textColor="?attr/colorOnSurface"
                 android:fontFamily="@font/poppins_medium" />
 
             <ImageView
@@ -192,7 +192,7 @@
                 android:layout_weight="1"
                 android:text="48 hours"
                 android:textSize="16sp"
-                android:textColor="@color/text_white"
+                android:textColor="?attr/colorOnSurface"
                 android:fontFamily="@font/poppins_medium" />
 
             <ImageView
@@ -225,7 +225,7 @@
                 android:layout_weight="1"
                 android:text="7 days"
                 android:textSize="16sp"
-                android:textColor="@color/text_white"
+                android:textColor="?attr/colorOnSurface"
                 android:fontFamily="@font/poppins_medium" />
 
             <ImageView
