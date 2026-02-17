@@ -109,9 +109,9 @@ impl Socks5Client {
 
         // SOCKS5 handshake: Client greeting
         // +----+----------+----------+
-        // |VER | NMETHODS | METHODS  |
+        // |VER | NMETHODS | METHODS |
         // +----+----------+----------+
-        // | 1  |    1     | 1 to 255 |
+        // | 1 | 1 | 1 to 255 |
         // +----+----------+----------+
         let greeting = [SOCKS5_VERSION, 0x01, AUTH_NO_AUTH];
         stream.write_all(&greeting)?;
@@ -131,9 +131,9 @@ impl Socks5Client {
 
         // SOCKS5 connection request
         // +----+-----+-------+------+----------+----------+
-        // |VER | CMD |  RSV  | ATYP | DST.ADDR | DST.PORT |
+        // |VER | CMD | RSV | ATYP | DST.ADDR | DST.PORT |
         // +----+-----+-------+------+----------+----------+
-        // | 1  |  1  | X'00' |  1   | Variable |    2     |
+        // | 1 | 1 | X'00' | 1 | Variable | 2 |
         // +----+-----+-------+------+----------+----------+
 
         let host_bytes = target_host.as_bytes();

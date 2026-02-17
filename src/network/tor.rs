@@ -703,21 +703,21 @@ fn extract_param(line: &str, param: &str) -> Option<String> {
 /// CRITICAL: All services must use this mapping consistently.
 ///
 /// Message Hidden Service Ports (port 9051 control, SOCKS 9050):
-///   - 9150: PING/PONG/ACK control flow (main listener port 9150→8080)
-///   - 8080:  PONG responses (fallback, port 8080→8080)
-///   - 9151:  TAP messages (reserved for future use)
-///   - 9153:  ACK/Delivery confirmations (dedicated ACK listener)
-///   - All ports also accept: TEXT, VOICE, IMAGE, FRIEND_REQUEST (routed to dedicated channels)
+/// - 9150: PING/PONG/ACK control flow (main listener port 9150→8080)
+/// - 8080: PONG responses (fallback, port 8080→8080)
+/// - 9151: TAP messages (reserved for future use)
+/// - 9153: ACK/Delivery confirmations (dedicated ACK listener)
+/// - All ports also accept: TEXT, VOICE, IMAGE, FRIEND_REQUEST (routed to dedicated channels)
 ///
 /// Voice Hidden Service Ports (port 9052 control, voice Tor only):
-///   - 9152:  Voice streaming (single onion, low-latency, CALL_SIGNALING only)
+/// - 9152: Voice streaming (single onion, low-latency, CALL_SIGNALING only)
 ///
 /// Control Ports (Tor daemon only, not hidden services):
-///   - 9051:  Main Tor daemon control port (message Tor)
-///   - 9052:  Voice Tor daemon control port (single onion voice)
+/// - 9051: Main Tor daemon control port (message Tor)
+/// - 9052: Voice Tor daemon control port (single onion voice)
 ///
 /// SOCKS Proxy (for outbound connections):
-///   - 9050:  SOCKS5 proxy (main Tor)
+/// - 9050: SOCKS5 proxy (main Tor)
 ///
 /// ============================================================================
 
@@ -734,19 +734,19 @@ pub const MSG_TYPE_IMAGE: u8 = 0x09;
 pub const MSG_TYPE_PAYMENT_REQUEST: u8 = 0x0A;
 pub const MSG_TYPE_PAYMENT_SENT: u8 = 0x0B;
 pub const MSG_TYPE_PAYMENT_ACCEPTED: u8 = 0x0C;
-pub const MSG_TYPE_CALL_SIGNALING: u8 = 0x0D;  // Voice call signaling (OFFER/ANSWER/REJECT/END/BUSY)
+pub const MSG_TYPE_CALL_SIGNALING: u8 = 0x0D; // Voice call signaling (OFFER/ANSWER/REJECT/END/BUSY)
 
 /// Canonical port constants (from PORT_MAP.md)
-pub const PORT_HS_PING_PONG: u16 = 9150;     // Message HS: PING/PONG/ACK
-pub const PORT_HS_PONG_LOCAL: u16 = 8080;    // Message HS: Local PONG response fallback
-pub const PORT_HS_TAP: u16 = 9151;           // Message HS: TAP (reserved)
-pub const PORT_HS_ACK: u16 = 9153;           // Message HS: Dedicated ACK listener
-pub const PORT_HS_VOICE: u16 = 9152;         // Voice HS: Voice streaming (single onion)
-pub const PORT_LOCAL_HS: u16 = 8080;         // Local listener port (where HS connects to)
-pub const PORT_VOICE_LOCAL: u16 = 9152;      // Local voice listener port
-pub const PORT_CONTROL_MAIN: u16 = 9051;     // Main Tor control port
-pub const PORT_CONTROL_VOICE: u16 = 9052;    // Voice Tor control port
-pub const PORT_SOCKS: u16 = 9050;            // SOCKS5 proxy port
+pub const PORT_HS_PING_PONG: u16 = 9150; // Message HS: PING/PONG/ACK
+pub const PORT_HS_PONG_LOCAL: u16 = 8080; // Message HS: Local PONG response fallback
+pub const PORT_HS_TAP: u16 = 9151; // Message HS: TAP (reserved)
+pub const PORT_HS_ACK: u16 = 9153; // Message HS: Dedicated ACK listener
+pub const PORT_HS_VOICE: u16 = 9152; // Voice HS: Voice streaming (single onion)
+pub const PORT_LOCAL_HS: u16 = 8080; // Local listener port (where HS connects to)
+pub const PORT_VOICE_LOCAL: u16 = 9152; // Local voice listener port
+pub const PORT_CONTROL_MAIN: u16 = 9051; // Main Tor control port
+pub const PORT_CONTROL_VOICE: u16 = 9052; // Voice Tor control port
+pub const PORT_SOCKS: u16 = 9050; // SOCKS5 proxy port
 
 /// JNI context availability check
 /// CRITICAL: Some Android lifecycle contexts don't have application context
@@ -799,9 +799,9 @@ pub static ACK_TX: once_cell::sync::OnceCell<Arc<StdMutex<tokio::sync::mpsc::Unb
 /// Line-oriented Tor control protocol reader
 /// CRITICAL: Handles multi-line Tor responses properly
 /// Response formats:
-///   SingleLine: "250 OK\r\n"
-///   MultiLine: "250-...\r\n250-...\r\n250 OK\r\n"
-///   Events: "650 EVENT data...\r\n"
+/// SingleLine: "250 OK\r\n"
+/// MultiLine: "250-...\r\n250-...\r\n250 OK\r\n"
+/// Events: "650 EVENT data...\r\n"
 struct TorControlReader {
     reader: BufReader<TcpStream>,
 }
@@ -889,7 +889,7 @@ struct HiddenServiceState {
 
 pub struct TorManager {
     control_stream: Option<Arc<Mutex<TcpStream>>>,
-    voice_control_stream: Option<Arc<Mutex<TcpStream>>>,  // VOICE TOR: port 9052 (Single Onion)
+    voice_control_stream: Option<Arc<Mutex<TcpStream>>>, // VOICE TOR: port 9052 (Single Onion)
     hidden_service_address: Option<String>,
     voice_hidden_service_address: Option<String>,
     listener_handle: Option<tokio::task::JoinHandle<()>>,
@@ -899,7 +899,7 @@ pub struct TorManager {
     hs_service_port: u16,
     hs_local_port: u16,
     socks_port: u16,
-    bound_port: Option<u16>,  // Track currently bound port for idempotency check
+    bound_port: Option<u16>, // Track currently bound port for idempotency check
 }
 
 impl TorManager {
@@ -907,7 +907,7 @@ impl TorManager {
     pub fn new() -> Result<Self, Box<dyn Error>> {
         Ok(TorManager {
             control_stream: None,
-            voice_control_stream: None,  // VOICE TOR initialized separately
+            voice_control_stream: None, // VOICE TOR initialized separately
             hidden_service_address: None,
             voice_hidden_service_address: None,
             listener_handle: None,
@@ -918,10 +918,10 @@ impl TorManager {
                 voice_hs_address: None,
                 subscribed_events: Vec::new(),
             },
-            hs_service_port: PORT_HS_PING_PONG,    // 9150: PING/PONG/ACK
-            hs_local_port: PORT_LOCAL_HS,          // 8080: Local listener
-            socks_port: PORT_SOCKS,                // 9050: SOCKS proxy
-            bound_port: None,  // No port bound initially
+            hs_service_port: PORT_HS_PING_PONG, // 9150: PING/PONG/ACK
+            hs_local_port: PORT_LOCAL_HS, // 8080: Local listener
+            socks_port: PORT_SOCKS, // 9050: SOCKS proxy
+            bound_port: None, // No port bound initially
         })
     }
 
@@ -982,7 +982,7 @@ impl TorManager {
             return Err(format!("Control port authentication failed after reconnect: {}", response).into());
         }
 
-        log::info!("✓ Reconnected to Tor control port");
+        log::info!("Reconnected to Tor control port");
 
         // Re-subscribe to previously subscribed events
         for event in &self.hs_state.subscribed_events.clone() {
@@ -995,13 +995,13 @@ impl TorManager {
             if !resp.contains("250 OK") {
                 log::warn!("Failed to re-subscribe to event {}: {}", event, resp);
             } else {
-                log::info!("✓ Re-subscribed to {} events", event);
+                log::info!("Re-subscribed to {} events", event);
             }
         }
 
         self.control_stream = Some(Arc::new(Mutex::new(control)));
 
-        log::info!("✓ Control port recovery complete");
+        log::info!("Control port recovery complete");
         Ok(())
     }
 
@@ -1066,7 +1066,7 @@ impl TorManager {
 
         // Delete orphaned services
         for service_id in orphaned {
-            log::warn!("⚠️  Deleting orphaned hidden service: {}", service_id);
+            log::warn!("Deleting orphaned hidden service: {}", service_id);
             let del_command = format!("DEL_ONION {}\r\n", service_id);
             stream.write_all(del_command.as_bytes()).await?;
 
@@ -1074,7 +1074,7 @@ impl TorManager {
             let del_response = String::from_utf8_lossy(&buf[..n]);
 
             if del_response.contains("250 OK") {
-                log::info!("✓ Deleted orphaned service: {}", service_id);
+                log::info!("Deleted orphaned service: {}", service_id);
                 // Guess whether it was message or voice based on expected (heuristic)
                 if service_id.len() > 16 { // v3 onion addresses are 56 chars
                     msg_deleted += 1;
@@ -1087,9 +1087,9 @@ impl TorManager {
         }
 
         if msg_deleted > 0 || voice_deleted > 0 {
-            log::info!("✓ Reconciliation complete: deleted {} message HS, {} voice HS", msg_deleted, voice_deleted);
+            log::info!("Reconciliation complete: deleted {} message HS, {} voice HS", msg_deleted, voice_deleted);
         } else {
-            log::info!("✓ No orphaned services found");
+            log::info!("No orphaned services found");
         }
 
         Ok((msg_deleted, voice_deleted))
@@ -1317,10 +1317,10 @@ impl TorManager {
 
         // Now create the hidden service - descriptors will be uploaded and we'll receive events
         // IMPORTANT: Expose FOUR ports for Ping-Pong-Tap-ACK protocol:
-        //   - Port 9150 → local 8080 (Ping listener - main hidden service port)
-        //   - Port 8080 → local 8080 (Pong listener - SAME as main listener for routing)
-        //   - Port 9151 → local 9151 (Tap listener)
-        //   - Port 9153 → local 9153 (ACK/Delivery Confirmation listener)
+        // - Port 9150 → local 8080 (Ping listener - main hidden service port)
+        // - Port 8080 → local 8080 (Pong listener - SAME as main listener for routing)
+        // - Port 9151 → local 9151 (Tap listener)
+        // - Port 9153 → local 9153 (ACK/Delivery Confirmation listener)
         let (actual_onion_address, is_new_service) = {
             let mut stream = control.lock().await;
 
@@ -1490,9 +1490,9 @@ impl TorManager {
         self.voice_hidden_service_address = Some(actual_onion_address.clone());
         self.hs_state.voice_hs_address = Some(actual_onion_address.clone());
 
-        log::info!("✓ VOICE SINGLE ONION SERVICE registered: {}", actual_onion_address);
-        log::info!("✓ Voice service port: 9152 → local 9152 (voice streaming)");
-        log::info!("✓ Service mode: Single Onion (3-hop latency, service location visible)");
+        log::info!("VOICE SINGLE ONION SERVICE registered: {}", actual_onion_address);
+        log::info!("Voice service port: 9152 → local 9152 (voice streaming)");
+        log::info!("Service mode: Single Onion (3-hop latency, service location visible)");
 
         Ok(actual_onion_address)
     }
@@ -1566,15 +1566,15 @@ impl TorManager {
         let socks_addr = format!("127.0.0.1:{}", PORT_SOCKS);
         let mut stream = match TcpStream::connect(&socks_addr).await {
             Ok(s) => {
-                log::info!("✓ Connected to SOCKS5 proxy");
+                log::info!("Connected to SOCKS5 proxy");
                 s
             }
             Err(e) => {
-                log::error!("✗ Failed to connect to SOCKS5 proxy at 127.0.0.1:9050: {}", e);
-                log::error!("  Possible causes:");
-                log::error!("  1. Tor daemon not running");
-                log::error!("  2. SOCKS proxy not listening on port 9050");
-                log::error!("  3. Port blocked by firewall");
+                log::error!("Failed to connect to SOCKS5 proxy at 127.0.0.1:9050: {}", e);
+                log::error!("Possible causes:");
+                log::error!("1. Tor daemon not running");
+                log::error!("2. SOCKS proxy not listening on port 9050");
+                log::error!("3. Port blocked by firewall");
                 return Err(format!("SOCKS proxy unreachable: {}", e).into());
             }
         };
@@ -1583,7 +1583,7 @@ impl TorManager {
         log::info!("Performing SOCKS5 handshake for {}:{}...", onion_address, port);
         self.socks5_connect(&mut stream, onion_address, port).await?;
 
-        log::info!("✓ Successfully connected to {}", onion_address);
+        log::info!("Successfully connected to {}", onion_address);
 
         Ok(TorConnection {
             stream,
@@ -1604,7 +1604,7 @@ impl TorManager {
             log::error!("SOCKS5 auth failed: version={}, method={}", buf[0], buf[1]);
             return Err("SOCKS5 auth failed".into());
         }
-        log::info!("✓ SOCKS5 auth successful");
+        log::info!("SOCKS5 auth successful");
 
         // SOCKS5 connect request: [version, cmd, reserved, addr_type, addr, port]
         let mut request = vec![0x05, 0x01, 0x00, 0x03]; // Ver 5, CONNECT, reserved, domain name
@@ -1634,31 +1634,31 @@ impl TorManager {
                 _ => format!("Unknown error code {}", status_code),
             };
 
-            log::error!("✗ SOCKS5 connect failed: status {} ({})", status_code, error_message);
-            log::error!("  Target: {}:{}", addr, port);
+            log::error!("SOCKS5 connect failed: status {} ({})", status_code, error_message);
+            log::error!("Target: {}:{}", addr, port);
 
             // Provide specific diagnostic hints based on error code
             match status_code {
                 0x05 => {
-                    log::error!("  Diagnosis: Connection refused by Tor proxy");
-                    log::error!("  Possible causes:");
-                    log::error!("    1. Tor not fully bootstrapped (check bootstrap status)");
-                    log::error!("    2. Recipient's hidden service not reachable");
-                    log::error!("    3. Recipient's hidden service listener not running on port {}", port);
-                    log::error!("    4. .onion address is invalid or doesn't exist");
-                    log::error!("  Recommended action: Verify Tor bootstrap is 100% before retrying");
+                    log::error!("Diagnosis: Connection refused by Tor proxy");
+                    log::error!("Possible causes:");
+                    log::error!("1. Tor not fully bootstrapped (check bootstrap status)");
+                    log::error!("2. Recipient's hidden service not reachable");
+                    log::error!("3. Recipient's hidden service listener not running on port {}", port);
+                    log::error!("4. .onion address is invalid or doesn't exist");
+                    log::error!("Recommended action: Verify Tor bootstrap is 100% before retrying");
                 }
                 0x03 => {
-                    log::error!("  Diagnosis: Network unreachable");
-                    log::error!("  Possible causes:");
-                    log::error!("    1. Tor circuits not established");
-                    log::error!("    2. No network connectivity");
+                    log::error!("Diagnosis: Network unreachable");
+                    log::error!("Possible causes:");
+                    log::error!("1. Tor circuits not established");
+                    log::error!("2. No network connectivity");
                 }
                 0x04 => {
-                    log::error!("  Diagnosis: Host unreachable");
-                    log::error!("  Possible causes:");
-                    log::error!("    1. Hidden service descriptors not published");
-                    log::error!("    2. Hidden service offline");
+                    log::error!("Diagnosis: Host unreachable");
+                    log::error!("Possible causes:");
+                    log::error!("1. Hidden service descriptors not published");
+                    log::error!("2. Hidden service offline");
                 }
                 _ => {}
             }
@@ -1666,7 +1666,7 @@ impl TorManager {
             return Err(format!("SOCKS5 connect failed: status {} ({})", status_code, error_message).into());
         }
 
-        log::info!("✓ SOCKS5 handshake complete");
+        log::info!("SOCKS5 handshake complete");
         Ok(())
     }
 
@@ -1680,9 +1680,9 @@ impl TorManager {
     pub async fn start_listener(&mut self, local_port: Option<u16>) -> Result<(tokio::sync::mpsc::UnboundedReceiver<(u64, Vec<u8>)>, tokio::sync::mpsc::UnboundedReceiver<(u64, Vec<u8>)>), Box<dyn Error>> {
         let port = local_port.unwrap_or(self.hs_local_port);
 
-        // ✅ IDEMPOTENCY: If already running on same port, return success (NO-OP)
+        // IDEMPOTENCY: If already running on same port, return success (NO-OP)
         if self.listener_handle.is_some() && self.bound_port == Some(port) {
-            log::info!("✓ Listener already running on port {}, returning success (idempotent NO-OP)", port);
+            log::info!("Listener already running on port {}, returning success (idempotent NO-OP)", port);
 
             // Create dummy channels to satisfy return type (both receivers already stored in FFI)
             // FFI wrapper will try to store them in GLOBAL_PING_RECEIVER and GLOBAL_PONG_RECEIVER (already set),
@@ -1694,8 +1694,8 @@ impl TorManager {
 
         // If port changed or not running, stop existing listener
         // if self.listener_handle.is_some() {
-        //     log::info!("Listener running on different port, stopping before restart...");
-        //     self.stop_listener().await;
+        // log::info!("Listener running on different port, stopping before restart...");
+        // self.stop_listener().await;
         // }
 
         let bind_addr = format!("127.0.0.1:{}", port);
@@ -1705,11 +1705,11 @@ impl TorManager {
         log::info!("Creating TCP socket...");
         let listener = self.bind_with_retry(&bind_addr).await
             .map_err(|e| {
-                log::error!("✗ FATAL: Failed to bind listener on {}: {:?}", bind_addr, e);
+                log::error!("FATAL: Failed to bind listener on {}: {:?}", bind_addr, e);
                 e
             })?;
 
-        log::info!("✓ Successfully bound to {}", bind_addr);
+        log::info!("Successfully bound to {}", bind_addr);
 
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
         let incoming_tx = tx.clone();
@@ -1726,7 +1726,7 @@ impl TorManager {
         // Spawn listener task
         log::info!("Spawning listener accept loop...");
         let handle = tokio::spawn(async move {
-            log::info!("✓ Listener task started, waiting for connections on {}...", bind_addr_for_task);
+            log::info!("Listener task started, waiting for connections on {}...", bind_addr_for_task);
 
             loop {
                 match listener.accept().await {
@@ -1759,7 +1759,7 @@ impl TorManager {
         self.listener_handle = Some(handle);
         self.bound_port = Some(port);
 
-        log::info!("✓ Hidden service listener FULLY STARTED on {}", bind_addr);
+        log::info!("Hidden service listener FULLY STARTED on {}", bind_addr);
 
         // Return both PING and PONG receivers (local channels, no globals)
         Ok((rx, pong_rx))
@@ -1783,47 +1783,47 @@ impl TorManager {
             // Try binding with SO_REUSEADDR
             match tokio::net::TcpSocket::new_v4() {
                 Ok(socket) => {
-                    log::debug!("  ✓ TcpSocket::new_v4() succeeded");
+                    log::debug!("TcpSocket::new_v4() succeeded");
 
                     if let Err(e) = socket.set_reuseaddr(true) {
-                        log::error!("  ✗ set_reuseaddr() failed: {:?}", e);
+                        log::error!("set_reuseaddr() failed: {:?}", e);
                         return Err(e.into());
                     }
-                    log::debug!("  ✓ SO_REUSEADDR set");
+                    log::debug!("SO_REUSEADDR set");
 
                     match socket.bind(addr) {
                         Ok(_) => {
-                            log::info!("  ✓ bind() succeeded on attempt {}", attempt);
+                            log::info!("bind() succeeded on attempt {}", attempt);
                             match socket.listen(1024) {
                                 Ok(listener) => {
-                                    log::info!("  ✓ listen() succeeded, returning TcpListener");
+                                    log::info!("listen() succeeded, returning TcpListener");
                                     return Ok(listener);
                                 }
                                 Err(e) => {
-                                    log::error!("  ✗ listen() failed: {:?}", e);
+                                    log::error!("listen() failed: {:?}", e);
                                     return Err(e.into());
                                 }
                             }
                         }
                         Err(e) if e.kind() == io::ErrorKind::AddrInUse => {
                             if attempt < MAX_ATTEMPTS {
-                                log::warn!("  ✗ bind() EADDRINUSE (attempt {}), retrying in {}ms...", attempt, delay_ms);
+                                log::warn!("bind() EADDRINUSE (attempt {}), retrying in {}ms...", attempt, delay_ms);
                                 sleep(Duration::from_millis(delay_ms)).await;
-                                delay_ms = (delay_ms * 2).min(500);  // Exponential backoff, cap at 500ms
+                                delay_ms = (delay_ms * 2).min(500); // Exponential backoff, cap at 500ms
                                 continue;
                             } else {
-                                log::error!("  ✗ FATAL: bind() EADDRINUSE after {} attempts, giving up", MAX_ATTEMPTS);
+                                log::error!("FATAL: bind() EADDRINUSE after {} attempts, giving up", MAX_ATTEMPTS);
                                 return Err(format!("bind({}) exhausted {} retry attempts (EADDRINUSE)", addr, MAX_ATTEMPTS).into());
                             }
                         }
                         Err(e) => {
-                            log::error!("  ✗ bind() failed with non-EADDRINUSE error: {:?}", e);
+                            log::error!("bind() failed with non-EADDRINUSE error: {:?}", e);
                             return Err(e.into());
                         }
                     }
                 }
                 Err(e) => {
-                    log::error!("  ✗ TcpSocket::new_v4() failed: {:?}", e);
+                    log::error!("TcpSocket::new_v4() failed: {:?}", e);
                     return Err(e.into());
                 }
             }
@@ -1854,21 +1854,21 @@ impl TorManager {
         socket.read_exact(&mut buf).await?;
 
         // DIAGNOSTIC: Log raw wire bytes at earliest receive point
-        log::info!("╔═══ EARLIEST RECEIVE POINT (connection {}) ═══", conn_id);
-        log::info!("║ len: {} bytes", buf.len());
+        log::info!("EARLIEST RECEIVE POINT (connection {}) ", conn_id);
+        log::info!("len: {} bytes", buf.len());
         if !buf.is_empty() {
-            log::info!("║ type_byte: 0x{:02x}", buf[0]);
-            log::info!("║ first 8 bytes: {}",
+            log::info!("type_byte: 0x{:02x}", buf[0]);
+            log::info!("first 8 bytes: {}",
                 buf.iter().take(8).map(|b| format!("{:02x}", b)).collect::<Vec<_>>().join(" "));
             if buf.len() > 1 {
-                log::info!("║ second byte: 0x{:02x}", buf[1]);
+                log::info!("second byte: 0x{:02x}", buf[1]);
             }
             if buf[0] == MSG_TYPE_PING && buf.len() >= 5 {
-                log::info!("║ PING pubkey_first4: {}",
+                log::info!("PING pubkey_first4: {}",
                     buf[1..5].iter().map(|b| format!("{:02x}", b)).collect::<Vec<_>>().join(" "));
             }
         }
-        log::info!("╚════════════════════════════════════════");
+        log::info!("");
 
         // Validate: first byte must be a known message type
         if buf.is_empty() {
@@ -1898,8 +1898,8 @@ impl TorManager {
                 // Valid type, continue to length check
             }
             _ => {
-                log::error!("✗ INVALID_MSG_TYPE_DROP: 0x{:02x} (not in known protocol types)", msg_type);
-                log::error!("  Connection {}, {} bytes, first 4 bytes: {:02x} {:02x} {:02x} {:02x}",
+                log::error!("INVALID_MSG_TYPE_DROP: 0x{:02x} (not in known protocol types)", msg_type);
+                log::error!("Connection {}, {} bytes, first 4 bytes: {:02x} {:02x} {:02x} {:02x}",
                     conn_id, buf.len(),
                     buf.get(0).unwrap_or(&0), buf.get(1).unwrap_or(&0),
                     buf.get(2).unwrap_or(&0), buf.get(3).unwrap_or(&0));
@@ -1911,15 +1911,15 @@ impl TorManager {
         // Minimum encrypted payload is 16 bytes (AES-GCM tag), so absolute minimum is 1+32+16=49 bytes
         const MIN_WIRE_LEN: usize = 1 + 32 + 16; // type + pubkey + smallest possible ciphertext
         if buf.len() < MIN_WIRE_LEN {
-            log::error!("✗ WIRE_TOO_SHORT_DROP: type=0x{:02x}, len={} (min={})", msg_type, buf.len(), MIN_WIRE_LEN);
-            log::error!("  Connection {}, rejecting packet (likely garbage/corruption)", conn_id);
+            log::error!("WIRE_TOO_SHORT_DROP: type=0x{:02x}, len={} (min={})", msg_type, buf.len(), MIN_WIRE_LEN);
+            log::error!("Connection {}, rejecting packet (likely garbage/corruption)", conn_id);
             return Err(format!("Wire message too short: {} bytes (min {})", buf.len(), MIN_WIRE_LEN).into());
         }
 
-        log::info!("╔════════════════════════════════════════");
-        log::info!("║ INCOMING CONNECTION {} (type=0x{:02x}, {} bytes total)", conn_id, msg_type, buf.len());
-        log::info!("║ First byte: 0x{:02x} (validated as known type)", msg_type);
-        log::info!("╚════════════════════════════════════════");
+        log::info!("");
+        log::info!("INCOMING CONNECTION {} (type=0x{:02x}, {} bytes total)", conn_id, msg_type, buf.len());
+        log::info!("First byte: 0x{:02x} (validated as known type)", msg_type);
+        log::info!("");
 
         // ROUTER INVARIANT: Log route decision for debugging
         let head_hex: String = buf.iter().take(8).map(|b| format!("{:02x}", b)).collect::<Vec<_>>().join("");
@@ -1943,7 +1943,7 @@ impl TorManager {
                 // ROUTER INVARIANT: Check send result
                 let buf_len = buf.len();
                 if let Err(_) = ping_tx.send((conn_id, buf)) {
-                    log::error!("✗ ROUTER_DROP: PING_TX send failed (receiver dropped), conn={} len={}", conn_id, buf_len);
+                    log::error!("ROUTER_DROP: PING_TX send failed (receiver dropped), conn={} len={}", conn_id, buf_len);
                 }
             }
             MSG_TYPE_PONG => {
@@ -1952,9 +1952,9 @@ impl TorManager {
                 // Send full buffer (INCLUDING type byte at offset 0) to PONG_TX (NOT PING_TX!)
                 // ROUTER INVARIANT: Check send result
                 if let Err(_) = pong_tx.send((conn_id, buf.clone())) {
-                    log::error!("✗ ROUTER_DROP: PONG_TX send failed (receiver dropped), conn={} len={} head={}", conn_id, buf.len(), head_hex);
+                    log::error!("ROUTER_DROP: PONG_TX send failed (receiver dropped), conn={} len={} head={}", conn_id, buf.len(), head_hex);
                 } else {
-                    log::info!("✓ ROUTER: PONG dispatch ok, conn={} len={}", conn_id, buf.len());
+                    log::info!("ROUTER: PONG dispatch ok, conn={} len={}", conn_id, buf.len());
                 }
             }
             MSG_TYPE_TEXT | MSG_TYPE_VOICE | MSG_TYPE_IMAGE | MSG_TYPE_PAYMENT_REQUEST | MSG_TYPE_PAYMENT_SENT | MSG_TYPE_PAYMENT_ACCEPTED => {
@@ -2025,7 +2025,7 @@ impl TorManager {
                 ping_tx.send((conn_id, buf)).ok();
             }
             MSG_TYPE_DELIVERY_CONFIRMATION => {
-                log::warn!("⚠️  Received ACK on main listener (port 8080) - should go to port 9153!");
+                log::warn!("Received ACK on main listener (port 8080) - should go to port 9153!");
                 log::info!("→ Routing to ACK channel (error recovery - ensures no message loss)");
 
                 // ERROR RECOVERY: ACK arrived on wrong port, but we MUST NOT drop it!
@@ -2037,11 +2037,11 @@ impl TorManager {
                     if let Err(e) = tx_lock.send((conn_id, buf)) {
                         log::error!("Failed to send ACK to ACK channel: {}", e);
                     } else {
-                        log::info!("✓ ACK successfully routed to ACK channel from port 8080");
+                        log::info!("ACK successfully routed to ACK channel from port 8080");
                     }
                 } else {
-                    log::error!("✗ ACK channel not initialized - ACK will be lost!");
-                    log::error!("   Start ACK listener on port 9153 to initialize ACK_TX channel");
+                    log::error!("ACK channel not initialized - ACK will be lost!");
+                    log::error!("Start ACK listener on port 9153 to initialize ACK_TX channel");
                 }
             }
             MSG_TYPE_FRIEND_REQUEST => {
@@ -2063,7 +2063,7 @@ impl TorManager {
                 // buf already includes type byte at offset 0 so Kotlin can distinguish Phase 1 (0x07) from Phase 2 (0x08)
                 if let Some(friend_tx) = FRIEND_REQUEST_TX.get() {
                     let tx_lock = friend_tx.lock().unwrap();
-                    if let Err(e) = tx_lock.send(buf) {  // Changed from constructing wire_data
+                    if let Err(e) = tx_lock.send(buf) { // Changed from constructing wire_data
                         log::error!("Failed to send friend request accepted to channel: {}", e);
                     }
                 } else {
@@ -2071,7 +2071,7 @@ impl TorManager {
                 }
             }
             _ => {
-                log::warn!("⚠️  Unknown message type: 0x{:02x}, treating as PING", msg_type);
+                log::warn!("Unknown message type: 0x{:02x}, treating as PING", msg_type);
 
                 // Default to Ping behavior for unknown types
                 // BRIEF LOCK: Insert only, no async operations held
@@ -2121,7 +2121,7 @@ impl TorManager {
         let count = pending.len();
         if count > 0 {
             log::info!("Closing {} pending connection(s) with stale circuits", count);
-            pending.clear();  // Dropping TcpStream closes the socket
+            pending.clear(); // Dropping TcpStream closes the socket
         }
     }
 
@@ -2176,7 +2176,7 @@ impl TorManager {
             let del_response = String::from_utf8_lossy(&buf[..n]);
 
             if del_response.contains("250 OK") {
-                log::info!("✓ Deleted ephemeral service: {}", service_id);
+                log::info!("Deleted ephemeral service: {}", service_id);
                 deleted_count += 1;
             } else {
                 log::warn!("Failed to delete service {}: {}", service_id, del_response);
@@ -2230,21 +2230,21 @@ impl TorManager {
                 match stream.read_exact(&mut response) {
                     Ok(_) => {
                         if response[0] == 0x05 && response[1] == 0x00 {
-                            log::debug!("SOCKS health: ✓ Proxy reachable and accepting connections (127.0.0.1:{})", self.socks_port);
+                            log::debug!("SOCKS health: Proxy reachable and accepting connections (127.0.0.1:{})", self.socks_port);
                             true
                         } else {
-                            log::warn!("SOCKS health: ✗ Unexpected handshake response: {:?}", response);
+                            log::warn!("SOCKS health: Unexpected handshake response: {:?}", response);
                             false
                         }
                     }
                     Err(e) => {
-                        log::warn!("SOCKS health: ✗ Failed to read handshake response: {}", e);
+                        log::warn!("SOCKS health: Failed to read handshake response: {}", e);
                         false
                     }
                 }
             }
             Err(e) => {
-                log::warn!("SOCKS health: ✗ Cannot connect to 127.0.0.1:{} - {}", self.socks_port, e);
+                log::warn!("SOCKS health: Cannot connect to 127.0.0.1:{} - {}", self.socks_port, e);
                 false
             }
         }
@@ -2270,19 +2270,19 @@ impl TorManager {
         let mut stream = match connect_result {
             Ok(Ok(s)) => s,
             Ok(Err(e)) => {
-                log::error!("✗ Tor control port: Cannot connect - {}", e);
-                log::error!("   Tor daemon may not be running or control port disabled");
+                log::error!("Tor control port: Cannot connect - {}", e);
+                log::error!("Tor daemon may not be running or control port disabled");
                 return false;
             }
             Err(_) => {
-                log::error!("✗ Tor control port: Connection timeout");
+                log::error!("Tor control port: Connection timeout");
                 return false;
             }
         };
 
         // Authenticate (try NULL auth first, common on Android)
         if let Err(e) = stream.write_all(b"AUTHENTICATE\r\n").await {
-            log::error!("✗ Tor control port: Auth write failed - {}", e);
+            log::error!("Tor control port: Auth write failed - {}", e);
             return false;
         }
 
@@ -2290,24 +2290,24 @@ impl TorManager {
         let n = match timeout(Duration::from_secs(2), stream.read(&mut auth_response)).await {
             Ok(Ok(n)) => n,
             Ok(Err(e)) => {
-                log::error!("✗ Tor control port: Auth read failed - {}", e);
+                log::error!("Tor control port: Auth read failed - {}", e);
                 return false;
             }
             Err(_) => {
-                log::error!("✗ Tor control port: Auth timeout");
+                log::error!("Tor control port: Auth timeout");
                 return false;
             }
         };
 
         let auth_str = String::from_utf8_lossy(&auth_response[..n]);
         if !auth_str.starts_with("250") {
-            log::error!("✗ Tor control port: Auth failed - {}", auth_str.trim());
+            log::error!("Tor control port: Auth failed - {}", auth_str.trim());
             return false;
         }
 
         // Query circuit status
         if let Err(e) = stream.write_all(b"GETINFO status/circuit-established\r\n").await {
-            log::error!("✗ Tor control port: Query write failed - {}", e);
+            log::error!("Tor control port: Query write failed - {}", e);
             return false;
         }
 
@@ -2315,11 +2315,11 @@ impl TorManager {
         let n = match timeout(Duration::from_secs(2), stream.read(&mut response)).await {
             Ok(Ok(n)) => n,
             Ok(Err(e)) => {
-                log::error!("✗ Tor control port: Query read failed - {}", e);
+                log::error!("Tor control port: Query read failed - {}", e);
                 return false;
             }
             Err(_) => {
-                log::error!("✗ Tor control port: Query timeout");
+                log::error!("Tor control port: Query timeout");
                 return false;
             }
         };
@@ -2334,11 +2334,11 @@ impl TorManager {
         let _ = stream.write_all(b"QUIT\r\n").await;
 
         if circuits_ok {
-            log::info!("✓ Tor health check: PASSED (circuits established)");
+            log::info!("Tor health check: PASSED (circuits established)");
             true
         } else {
-            log::error!("✗ Tor health check: FAILED (no circuits)");
-            log::error!("   Response: {}", response_str.trim());
+            log::error!("Tor health check: FAILED (no circuits)");
+            log::error!("Response: {}", response_str.trim());
             false
         }
     }
@@ -2383,7 +2383,7 @@ impl TorManager {
                 let msg_len = u32::from_be_bytes(len_buf) as usize;
                 log::info!("Incoming message length: {} bytes", msg_len);
 
-                if msg_len > 10_000_000 {  // 10MB limit (consistent with voice message support)
+                if msg_len > 10_000_000 { // 10MB limit (consistent with voice message support)
                     return Err("Message too large (>10MB)".into());
                 }
 
@@ -2479,7 +2479,7 @@ impl TorManager {
 
         // Check for success (250 OK) or rate-limiting (551)
         if response.contains("250 OK") {
-            log::info!("✓ NEWNYM signal sent successfully (Tor will rotate guards)");
+            log::info!("NEWNYM signal sent successfully (Tor will rotate guards)");
             true
         } else if response.contains("551") {
             log::warn!("NEWNYM rate-limited by Tor (too soon since last NEWNYM)");

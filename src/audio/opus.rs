@@ -95,7 +95,7 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_opusEncoderCreate(
             Ok(_) => false,
             Err(e) => {
                 log::warn!("Failed to disable DTX: error={} (non-fatal)", e);
-                true  // Assume DTX stayed enabled on error
+                true // Assume DTX stayed enabled on error
             }
         };
 
@@ -146,8 +146,8 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_opusEncoderCreate(
         if let Err(e) = crate::audio::opus_ctl::validate_encoder_config(
             encoder_ptr,
             SAMPLE_RATE,
-            8000,   // min bitrate
-            128000  // max bitrate
+            8000, // min bitrate
+            128000 // max bitrate
         ) {
             log::error!("Encoder validation failed: {}", e);
             opus_encoder_destroy(encoder_ptr);

@@ -465,7 +465,7 @@ use std::collections::HashMap;
 #[derive(Debug, Clone)]
 pub struct DeferredEncryptionResult {
     pub ciphertext: Vec<u8>,
-    pub next_chain_key: [u8; 32],  // Next key, but not committed yet
+    pub next_chain_key: [u8; 32], // Next key, but not committed yet
     pub next_sequence: u64,
 }
 
@@ -484,7 +484,7 @@ pub struct DeferredEncryptionResult {
 /// DeferredEncryptionResult with ciphertext and next state (uncommitted)
 pub fn encrypt_message_deferred(
     plaintext: &[u8],
-    chain_key: &[u8; 32],  // Immutable borrow - does NOT modify
+    chain_key: &[u8; 32], // Immutable borrow - does NOT modify
     sequence: u64,
 ) -> Result<DeferredEncryptionResult> {
     // Derive message key from current chain key
@@ -528,10 +528,10 @@ pub fn encrypt_message_deferred(
 /// Pending ratchet advancement waiting for PING_ACK
 #[derive(Clone)]
 struct PendingRatchetAdvancement {
-    contact_id: String,           // Contact identifier (pubkey or onion)
-    message_id: String,            // Message ID (for tracking)
-    next_chain_key: [u8; 32],      // Next chain key (uncommitted)
-    next_sequence: u64,            // Next sequence number (uncommitted)
+    contact_id: String, // Contact identifier (pubkey or onion)
+    message_id: String, // Message ID (for tracking)
+    next_chain_key: [u8; 32], // Next chain key (uncommitted)
+    next_sequence: u64, // Next sequence number (uncommitted)
     created_at: std::time::SystemTime,
 }
 
@@ -565,7 +565,7 @@ pub fn store_pending_ratchet_advancement(
 
     pending.insert(contact_id.to_string(), advancement);
 
-    log::info!("✓ Stored pending ratchet advancement for contact {}, message {}",
+    log::info!("Stored pending ratchet advancement for contact {}, message {}",
         contact_id, message_id);
 
     Ok(())
@@ -588,12 +588,12 @@ pub fn commit_ratchet_advancement(
         .map_err(|_| EncryptionError::EncryptionFailed)?;
 
     if let Some(advancement) = pending.remove(contact_id) {
-        log::info!("✓ Committed ratchet advancement for contact {}, message {}",
+        log::info!("Committed ratchet advancement for contact {}, message {}",
             contact_id, advancement.message_id);
 
         Ok(Some((advancement.next_chain_key, advancement.next_sequence)))
     } else {
-        log::warn!("⚠️  No pending ratchet advancement found for contact {}", contact_id);
+        log::warn!("No pending ratchet advancement found for contact {}", contact_id);
         Ok(None)
     }
 }
@@ -609,7 +609,7 @@ pub fn rollback_ratchet_advancement(contact_id: &str) -> Result<()> {
         .map_err(|_| EncryptionError::EncryptionFailed)?;
 
     if let Some(advancement) = pending.remove(contact_id) {
-        log::info!("✓ Rolled back ratchet advancement for contact {}, message {}",
+        log::info!("Rolled back ratchet advancement for contact {}, message {}",
             contact_id, advancement.message_id);
     }
 
@@ -627,7 +627,7 @@ pub fn cleanup_expired_pending_ratchets() -> Result<()> {
     pending.retain(|contact_id, advancement| {
         if let Ok(age) = now.duration_since(advancement.created_at) {
             if age > MAX_AGE {
-                log::warn!("⚠️  Expired pending ratchet for contact {} (age: {:?})",
+                log::warn!("Expired pending ratchet for contact {} (age: {:?})",
                     contact_id, age);
                 return false;
             }

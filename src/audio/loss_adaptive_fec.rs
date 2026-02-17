@@ -7,10 +7,10 @@
 /// ```rust
 /// let mut fec = LossAdaptiveFec::new();
 /// // Every frame or window:
-/// fec.update(measured_loss_rate);  // 0.0..1.0
+/// fec.update(measured_loss_rate); // 0.0..1.0
 /// if fec.should_apply() {
-///     let target = fec.desired_packet_loss_perc();
-///     opus_set_packet_loss_perc(encoder, target)?;
+/// let target = fec.desired_packet_loss_perc();
+/// opus_set_packet_loss_perc(encoder, target)?;
 /// }
 /// ```
 use std::os::raw::c_void;
@@ -41,9 +41,9 @@ impl LossAdaptiveFec {
     pub fn new() -> Self {
         Self {
             ema_loss: 0.0,
-            last_set: 25,  // Start with 25% (our static default)
+            last_set: 25, // Start with 25% (our static default)
             tick: 0,
-            alpha: 0.15,   // 0.15 = balanced responsiveness
+            alpha: 0.15, // 0.15 = balanced responsiveness
         }
     }
 
@@ -63,7 +63,7 @@ impl LossAdaptiveFec {
     /// Update with new loss measurement
     ///
     /// @param window_loss Measured packet loss rate (0.0 = no loss, 1.0 = 100% loss)
-    ///                    Should be calculated over a recent window (e.g., last 5 seconds)
+    /// Should be calculated over a recent window (e.g., last 5 seconds)
     pub fn update(&mut self, window_loss: f32) {
         // EMA smoothing: stable, avoids flapping
         // New EMA = (1 - α) * old_EMA + α * new_sample
@@ -160,7 +160,7 @@ mod tests {
         let mut fec = LossAdaptiveFec::new();
 
         // Simulate sudden loss spike
-        fec.update(0.30);  // 30% loss
+        fec.update(0.30); // 30% loss
 
         // EMA should smooth it (won't jump to 30% immediately)
         assert!(fec.get_ema_loss() < 0.30);
@@ -214,7 +214,7 @@ mod tests {
         let fec = LossAdaptiveFec::new();
 
         // Should only update every 25 frames
-        assert!(!fec.should_apply());  // tick 0
+        assert!(!fec.should_apply()); // tick 0
 
         let mut fec = LossAdaptiveFec::new();
         for _ in 0..24 {
@@ -222,6 +222,6 @@ mod tests {
             assert!(!fec.should_apply());
         }
         fec.update(0.10);
-        assert!(fec.should_apply());  // tick 25
+        assert!(fec.should_apply()); // tick 25
     }
 }

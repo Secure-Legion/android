@@ -551,9 +551,9 @@ async fn handle_audio_connection(
         // Negotiate version: use minimum of (client_version, VOICE_PROTOCOL_VERSION_CURRENT)
         let negotiated_version = std::cmp::min(client_version, VOICE_PROTOCOL_VERSION_CURRENT);
 
-        log::info!("✓ Received VOICE_HELLO (client_version: {}, flags: {}) for call: {}",
+        log::info!("Received VOICE_HELLO (client_version: {}, flags: {}) for call: {}",
                    client_version, flags[0], call_id);
-        log::info!("✓ Negotiated protocol version: {} (v1=1, v2=2)", negotiated_version);
+        log::info!("Negotiated protocol version: {} (v1=1, v2=2)", negotiated_version);
 
         // Send VOICE_OK response with negotiated version
         socket.write_all(VOICE_OK).await
@@ -565,21 +565,21 @@ async fn handle_audio_connection(
         socket.flush().await
             .map_err(|e| format!("Failed to flush: {}", e))?;
 
-        log::info!("✓ Sent VOICE_OK with negotiated version {} for call: {}", negotiated_version, call_id);
+        log::info!("Sent VOICE_OK with negotiated version {} for call: {}", negotiated_version, call_id);
         Ok::<(u8), String>(negotiated_version)
     }).await;
 
     let negotiated_version = match handshake_result {
         Ok(Ok(version)) => {
-            log::info!("✓ Voice handshake complete for call: {} (version: {})", call_id, version);
+            log::info!("Voice handshake complete for call: {} (version: {})", call_id, version);
             version
         }
         Ok(Err(e)) => {
-            log::error!("✗ Voice handshake failed for call {}: {}", call_id, e);
+            log::error!("Voice handshake failed for call {}: {}", call_id, e);
             return Err(e.into());
         }
         Err(_) => {
-            log::error!("✗ Voice handshake timeout for call: {}", call_id);
+            log::error!("Voice handshake timeout for call: {}", call_id);
             return Err(format!("Handshake timeout after {} seconds", HANDSHAKE_TIMEOUT_SECS).into());
         }
     };
@@ -623,7 +623,7 @@ async fn handle_audio_connection(
             }
         } else {
             // V2 packet format (Phase 3): seq(4) + timestamp(8) + circuit_index(1) + ptype(1) +
-            //                             data_len(2) + payload + redundant_seq(4) + redundant_len(2) + redundant_payload
+            // data_len(2) + payload + redundant_seq(4) + redundant_len(2) + redundant_payload
             let mut header = [0u8; 14];
             match socket.read_exact(&mut header).await {
                 Ok(_) => {},
@@ -715,7 +715,7 @@ async fn handle_voice_sender(
     socket.write_all(&[0x00]).await?; // flags
     socket.flush().await?;
 
-    log::info!("✓ Sent VOICE_HELLO (offered version: {}) for call: {} circuit: {}", VOICE_PROTOCOL_VERSION_CURRENT, call_id, circuit_index);
+    log::info!("Sent VOICE_HELLO (offered version: {}) for call: {} circuit: {}", VOICE_PROTOCOL_VERSION_CURRENT, call_id, circuit_index);
 
     // Wait for VOICE_OK response (with timeout)
     log::debug!("Waiting for VOICE_OK from peer...");
@@ -741,7 +741,7 @@ async fn handle_voice_sender(
         socket.read_exact(&mut flags).await
             .map_err(|e| format!("Failed to read flags: {}", e))?;
 
-        log::info!("✓ Received VOICE_OK (negotiated_version: {}, flags: {}) for call: {} circuit: {}",
+        log::info!("Received VOICE_OK (negotiated_version: {}, flags: {}) for call: {} circuit: {}",
                    negotiated_version, flags[0], call_id, circuit_index);
 
         Ok::<(u8), String>(negotiated_version)
@@ -749,15 +749,15 @@ async fn handle_voice_sender(
 
     let negotiated_version = match handshake_result {
         Ok(Ok(version)) => {
-            log::info!("✓ Voice handshake complete for call: {} circuit: {} (version: {})", call_id, circuit_index, version);
+            log::info!("Voice handshake complete for call: {} circuit: {} (version: {})", call_id, circuit_index, version);
             version
         }
         Ok(Err(e)) => {
-            log::error!("✗ Voice handshake failed for call {} circuit {}: {}", call_id, circuit_index, e);
+            log::error!("Voice handshake failed for call {} circuit {}: {}", call_id, circuit_index, e);
             return Err(e.into());
         }
         Err(_) => {
-            log::error!("✗ Voice handshake timeout for call: {} circuit: {}", call_id, circuit_index);
+            log::error!("Voice handshake timeout for call: {} circuit: {}", call_id, circuit_index);
             return Err(format!("Handshake timeout after {} seconds", HANDSHAKE_TIMEOUT_SECS).into());
         }
     };
@@ -772,7 +772,7 @@ async fn handle_voice_sender(
             socket.write_all(&packet.audio_data).await?;
         } else {
             // V2 packet format (Phase 3): seq(4) + timestamp(8) + circuit_index(1) + ptype(1) +
-            //                             data_len(2) + payload + redundant_seq(4) + redundant_len(2) + redundant_payload
+            // data_len(2) + payload + redundant_seq(4) + redundant_len(2) + redundant_payload
             socket.write_all(&packet.sequence.to_be_bytes()).await?;
             socket.write_all(&packet.timestamp.to_be_bytes()).await?;
             socket.write_all(&[packet.circuit_index]).await?;
@@ -868,12 +868,12 @@ pub async fn connect_via_socks5(
                 return Err("SOCKS5 username/password auth failed".into());
             }
 
-            log::info!("✓ SOCKS5 isolation ON: {}", username);
+            log::info!("SOCKS5 isolation ON: {}", username);
         }
         AUTH_NO_AUTH => {
             // NO_AUTH selected - ISOLATION DISABLED
             // This means all circuits may share the same Tor path!
-            log::warn!("⚠ SOCKS5 isolation OFF (NO_AUTH). Multi-circuit may share paths. Circuit rebuild may be ineffective.");
+            log::warn!("SOCKS5 isolation OFF (NO_AUTH). Multi-circuit may share paths. Circuit rebuild may be ineffective.");
         }
         0xFF => {
             return Err("SOCKS5: no acceptable auth methods".into());
@@ -969,8 +969,8 @@ mod tests {
             timestamp: 12345,
             circuit_index: 0,
             ptype: PTYPE_AUDIO,
-            redundant_audio_data: vec![5, 6, 7, 8],  // Phase 3: Previous frame
-            redundant_sequence: 0,                    // Phase 3: Previous sequence
+            redundant_audio_data: vec![5, 6, 7, 8], // Phase 3: Previous frame
+            redundant_sequence: 0, // Phase 3: Previous sequence
         };
         assert_eq!(packet.sequence, 1);
         assert_eq!(packet.audio_data.len(), 4);

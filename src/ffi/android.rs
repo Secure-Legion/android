@@ -21,8 +21,8 @@ use tokio::io::AsyncReadExt;
 
 // ==================== PORT CONSTANTS (Single Source of Truth) ====================
 // These must match Kotlin side constants!
-const MAIN_LISTENER_PORT: u16 = 8080;          // Main multiplexed listener (all message types: ping, pong, message, ack)
-const PING_PONG_HANDSHAKE_PORT: u16 = 9150;   // Ping/Pong handshake port (used in sendPongToNewConnection)
+const MAIN_LISTENER_PORT: u16 = 8080; // Main multiplexed listener (all message types: ping, pong, message, ack)
+const PING_PONG_HANDSHAKE_PORT: u16 = 9150; // Ping/Pong handshake port (used in sendPongToNewConnection)
 // NOTE: Voice streaming uses separate ports defined in VoiceStreamingListener
 
 // ==================== STRESS TEST & DEBUG METRICS ====================
@@ -37,16 +37,16 @@ pub static BLOB_FAIL_WRITE_ERR: AtomicU64 = AtomicU64::new(0);
 pub static BLOB_FAIL_UNKNOWN: AtomicU64 = AtomicU64::new(0);
 
 /// Receiver-side metrics
-pub static RX_MESSAGE_ACCEPT_COUNT: AtomicU64 = AtomicU64::new(0);     // Messages successfully accepted by receiver
-pub static RX_MESSAGE_TX_DROP_COUNT: AtomicU64 = AtomicU64::new(0);    // Messages dropped due to channel not initialized
+pub static RX_MESSAGE_ACCEPT_COUNT: AtomicU64 = AtomicU64::new(0); // Messages successfully accepted by receiver
+pub static RX_MESSAGE_TX_DROP_COUNT: AtomicU64 = AtomicU64::new(0); // Messages dropped due to channel not initialized
 
 /// Listener lifecycle metrics
-pub static LISTENER_BIND_COUNT: AtomicU64 = AtomicU64::new(0);         // Total listener bind attempts
-pub static LISTENER_REPLACED_COUNT: AtomicU64 = AtomicU64::new(0);     // Listener replaced mid-run (thrashing indicator)
-pub static LAST_LISTENER_PORT: AtomicI32 = AtomicI32::new(0);          // Last bound port (for detecting port changes)
+pub static LISTENER_BIND_COUNT: AtomicU64 = AtomicU64::new(0); // Total listener bind attempts
+pub static LISTENER_REPLACED_COUNT: AtomicU64 = AtomicU64::new(0); // Listener replaced mid-run (thrashing indicator)
+pub static LAST_LISTENER_PORT: AtomicI32 = AtomicI32::new(0); // Last bound port (for detecting port changes)
 
 /// Pong session tracking (session leak detector)
-pub static PONG_SESSION_COUNT: AtomicU64 = AtomicU64::new(0);          // Current active Pong sessions
+pub static PONG_SESSION_COUNT: AtomicU64 = AtomicU64::new(0); // Current active Pong sessions
 
 // ==================== LIBRARY INITIALIZATION ====================
 
@@ -154,11 +154,11 @@ fn normalize_wire_bytes(expected_type: u8, wire_bytes: &[u8]) -> Vec<u8> {
                 expected_type, first_byte, wire_bytes.len()
             );
         }
-        wire_bytes.to_vec()  // Already typed, return as-is
+        wire_bytes.to_vec() // Already typed, return as-is
     } else {
         // Legacy format without type byte - prepend expected type
         log::info!(
-            "✓ LEGACY_WIRE_MIGRATED: prepending type=0x{:02x} to {}-byte legacy wire blob",
+            " LEGACY_WIRE_MIGRATED: prepending type=0x{:02x} to {}-byte legacy wire blob",
             expected_type, wire_bytes.len()
         );
         let mut result = Vec::with_capacity(1 + wire_bytes.len());
@@ -1131,14 +1131,14 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_pollIncomingPing(
                 Ok((connection_id, ping_bytes)) => {
                     // CONSUMER INVARIANT: Verify type byte matches expected poller
                     if ping_bytes.is_empty() {
-                        log::error!("✗ FRAMING_VIOLATION: pollIncomingPing got empty buffer, conn_id={}", connection_id);
+                        log::error!("FRAMING_VIOLATION: pollIncomingPing got empty buffer, conn_id={}", connection_id);
                         return std::ptr::null_mut();
                     }
 
                     const MSG_TYPE_PING: u8 = 0x01;
                     if ping_bytes[0] != MSG_TYPE_PING {
                         let head_hex: String = ping_bytes.iter().take(8).map(|b| format!("{:02x}", b)).collect::<Vec<_>>().join("");
-                        log::error!("✗ FRAMING_VIOLATION: pollIncomingPing got type=0x{:02x} expected=0x{:02x} conn_id={} len={} head={}",
+                        log::error!("FRAMING_VIOLATION: pollIncomingPing got type=0x{:02x} expected=0x{:02x} conn_id={} len={} head={}",
                             ping_bytes[0], MSG_TYPE_PING, connection_id, ping_bytes.len(), head_hex);
                         return std::ptr::null_mut();
                     }
@@ -1260,10 +1260,10 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_isConnectionAlive(
 
         if exists {
             log::debug!("Connection {} is alive (found in PENDING_CONNECTIONS)", connection_id);
-            1  // true
+            1 // true
         } else {
             log::debug!("Connection {} is dead (not found in PENDING_CONNECTIONS)", connection_id);
-            0  // false
+            0 // false
         }
     }, 0)
 }
@@ -1461,8 +1461,8 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendPing(
     recipient_onion: JString,
     encrypted_message: JByteArray,
     message_type_byte: jbyte,
-    ping_id: JString,  // Ping ID (hex-encoded nonce) - generated in Kotlin, never changes
-    ping_timestamp: jlong,  // Timestamp when ping was created - also from Kotlin
+    ping_id: JString, // Ping ID (hex-encoded nonce) - generated in Kotlin, never changes
+    ping_timestamp: jlong, // Timestamp when ping was created - also from Kotlin
 ) -> jstring {
     catch_panic!(env, {
         // Convert inputs
@@ -1634,7 +1634,7 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendPing(
             }
         };
 
-        let ping_id = ping_id_str;  // Use the provided ping_id (not regenerated)
+        let ping_id = ping_id_str; // Use the provided ping_id (not regenerated)
 
         // Serialize PingToken
         let ping_bytes = match ping_token.to_bytes() {
@@ -1723,7 +1723,7 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendPing(
 
                     if type_byte[0] != crate::network::tor::MSG_TYPE_PONG {
                         if type_byte[0] == crate::network::tor::MSG_TYPE_DELIVERY_CONFIRMATION {
-                            log::warn!("⚠️  Received PING_ACK (0x06) on PING connection - ignoring (should go to port 9153)");
+                            log::warn!("Received PING_ACK (0x06) on PING connection - ignoring (should go to port 9153)");
                             log::warn!("→ This is a bug - PING_ACK was sent to wrong port. Treating as 'no instant pong'.");
                             return Err("PING_ACK received on wrong connection".into());
                         }
@@ -1736,7 +1736,7 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendPing(
                     let mut pong_data = vec![0u8; data_len];
                     conn.stream.read_exact(&mut pong_data).await?;
 
-                    log::info!("✓ Received instant Pong response ({} bytes)", data_len);
+                    log::info!("Received instant Pong response ({} bytes)", data_len);
 
                     Ok::<Vec<u8>, Box<dyn std::error::Error>>(pong_data)
                 }
@@ -1744,7 +1744,7 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendPing(
 
             match pong_result {
                 Ok(Ok(_pong_data)) => {
-                    log::info!("✓ INSTANT MODE: Pong received, sending message payload...");
+                    log::info!("INSTANT MODE: Pong received, sending message payload...");
                     log::info!("Message size: {} bytes encrypted", message_bytes.len());
 
                     // Build message wire format: [Type Byte][Encrypted Message]
@@ -1759,7 +1759,7 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendPing(
 
                     let mut message_wire = Vec::new();
                     message_wire.push(msg_type);
-                    message_wire.extend_from_slice(&message_bytes);          // Encrypted message (already has X25519 key)
+                    message_wire.extend_from_slice(&message_bytes); // Encrypted message (already has X25519 key)
 
                     log::info!("Sending message wire: {} bytes total (1 type + {} encrypted)",
                         message_wire.len(), message_bytes.len());
@@ -1770,7 +1770,7 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendPing(
                         manager.send(&mut conn, &message_wire).await?;
                     } // Lock released
 
-                    log::info!("✓ Message sent successfully ({} bytes) in INSTANT MODE", message_bytes.len());
+                    log::info!("Message sent successfully ({} bytes) in INSTANT MODE", message_bytes.len());
                     Ok(())
                 }
                 Ok(Err(e)) => {
@@ -1780,7 +1780,7 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendPing(
                 }
                 Err(_) => {
                     log::info!("→ DELAYED MODE: Instant Pong timeout ({}s) - recipient may be offline or busy", INSTANT_PONG_TIMEOUT_SECS);
-                    log::info!("   Pong will arrive later via port 8080 main listener when recipient comes online");
+                    log::info!("Pong will arrive later via port 8080 main listener when recipient comes online");
                     Ok(())
                 }
             }
@@ -1788,7 +1788,7 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendPing(
 
         match result {
             Ok(_) => {
-                log::info!("✓ Ping sent to {}: {}", recipient_onion_str, ping_id);
+                log::info!("Ping sent to {}: {}", recipient_onion_str, ping_id);
 
                 // Encode wire_message as Base64 for storage and retry
                 let wire_bytes_base64 = base64::encode(&wire_message);
@@ -1854,7 +1854,7 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_resendPingWithWireByte
         let original_len = wire_message.len();
         wire_message = normalize_wire_bytes(crate::network::tor::MSG_TYPE_PING, &wire_message);
         if wire_message.len() != original_len {
-            log::info!("✓ LEGACY_WIRE_MIGRATED: prepended PING type byte ({} → {} bytes)", original_len, wire_message.len());
+            log::info!("LEGACY_WIRE_MIGRATED: prepended PING type byte ({} → {} bytes)", original_len, wire_message.len());
         }
 
         log::info!("Resending Ping with stored wire bytes ({} bytes) to {}", wire_message.len(), recipient_onion_str);
@@ -1902,7 +1902,7 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_resendPingWithWireByte
 
                     if type_byte[0] != crate::network::tor::MSG_TYPE_PONG {
                         if type_byte[0] == crate::network::tor::MSG_TYPE_DELIVERY_CONFIRMATION {
-                            log::warn!("⚠️  Received PING_ACK (0x06) on PING connection during retry - ignoring (should go to port 9153)");
+                            log::warn!("Received PING_ACK (0x06) on PING connection during retry - ignoring (should go to port 9153)");
                             log::warn!("→ This is a bug - PING_ACK was sent to wrong port. Treating as 'no instant pong'.");
                             return Err("PING_ACK received on wrong connection".into());
                         }
@@ -1915,7 +1915,7 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_resendPingWithWireByte
                     let mut pong_data = vec![0u8; data_len];
                     conn.stream.read_exact(&mut pong_data).await?;
 
-                    log::info!("✓ Received instant Pong response ({} bytes) for retry", data_len);
+                    log::info!("Received instant Pong response ({} bytes) for retry", data_len);
 
                     Ok::<Vec<u8>, Box<dyn std::error::Error>>(pong_data)
                 }
@@ -1923,7 +1923,7 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_resendPingWithWireByte
 
             match pong_result {
                 Ok(Ok(_pong_data)) => {
-                    log::info!("✓ INSTANT MODE: Pong received for resent Ping");
+                    log::info!("INSTANT MODE: Pong received for resent Ping");
                     Ok(())
                 }
                 Ok(Err(e)) => {
@@ -1933,7 +1933,7 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_resendPingWithWireByte
                 }
                 Err(_) => {
                     log::info!("→ DELAYED MODE: Instant Pong timeout ({}s) for retry - recipient may be offline or busy", INSTANT_PONG_TIMEOUT_SECS);
-                    log::info!("   Pong will arrive later via port 8080 main listener when recipient comes online");
+                    log::info!("Pong will arrive later via port 8080 main listener when recipient comes online");
                     Ok(())
                 }
             }
@@ -1941,7 +1941,7 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_resendPingWithWireByte
 
         match result {
             Ok(_) => {
-                log::info!("✓ Ping resent successfully to {}", recipient_onion_str);
+                log::info!("Ping resent successfully to {}", recipient_onion_str);
                 1 // success
             }
             Err(e) => {
@@ -2199,8 +2199,8 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendFriendRequest(
 
 /// Send friend request accepted message to a recipient
 /// Args:
-///   recipient_onion - Recipient's .onion address
-///   encrypted_acceptance - Encrypted friend request acceptance message
+/// recipient_onion - Recipient's .onion address
+/// encrypted_acceptance - Encrypted friend request acceptance message
 /// Returns: true if sent successfully, false otherwise
 #[no_mangle]
 pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendFriendRequestAccepted(
@@ -2332,10 +2332,10 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_resetTorManager(
 
 /// Send ACK on an existing connection (fire-and-forget)
 /// Args:
-///   connection_id - Connection ID from pollIncomingPing
-///   item_id - Item ID (ping_id or message_id)
-///   ack_type - "PING_ACK" or "MESSAGE_ACK"
-///   encrypted_ack - Encrypted ACK bytes
+/// connection_id - Connection ID from pollIncomingPing
+/// item_id - Item ID (ping_id or message_id)
+/// ack_type - "PING_ACK" or "MESSAGE_ACK"
+/// encrypted_ack - Encrypted ACK bytes
 /// Returns: true if sent successfully, false otherwise
 #[no_mangle]
 pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendAckOnConnection(
@@ -2665,7 +2665,7 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_startPongListener(
 
         match result {
             Ok((_ping_receiver, _pong_receiver)) => {
-                log::info!("✓ Pong listener started on port {} (returns both receivers but not stored here)", port);
+                log::info!("Pong listener started on port {} (returns both receivers but not stored here)", port);
                 1 // success
             }
             Err(e) => {
@@ -2693,19 +2693,19 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_pollIncomingPong(
                 Ok((conn_id, pong_bytes)) => {
                     // CONSUMER INVARIANT: Verify type byte matches expected poller
                     if pong_bytes.is_empty() {
-                        log::error!("✗ FRAMING_VIOLATION: pollIncomingPong got empty buffer, conn_id={}", conn_id);
+                        log::error!("FRAMING_VIOLATION: pollIncomingPong got empty buffer, conn_id={}", conn_id);
                         return std::ptr::null_mut();
                     }
 
                     const MSG_TYPE_PONG: u8 = 0x02;
                     if pong_bytes[0] != MSG_TYPE_PONG {
                         let head_hex: String = pong_bytes.iter().take(8).map(|b| format!("{:02x}", b)).collect::<Vec<_>>().join("");
-                        log::error!("✗ FRAMING_VIOLATION: pollIncomingPong got type=0x{:02x} expected=0x{:02x} conn_id={} len={} head={}",
+                        log::error!("FRAMING_VIOLATION: pollIncomingPong got type=0x{:02x} expected=0x{:02x} conn_id={} len={} head={}",
                             pong_bytes[0], MSG_TYPE_PONG, conn_id, pong_bytes.len(), head_hex);
                         return std::ptr::null_mut();
                     }
 
-                    log::info!("✓ POLL: got pong len={} conn={} head={:02x}{:02x}{:02x}{:02x}",
+                    log::info!("POLL: got pong len={} conn={} head={:02x}{:02x}{:02x}{:02x}",
                         pong_bytes.len(), conn_id,
                         pong_bytes.get(0).unwrap_or(&0),
                         pong_bytes.get(1).unwrap_or(&0),
@@ -2901,10 +2901,10 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_pollForPong(
 
         // Check if Pong exists (non-blocking check)
         if crate::network::pingpong::get_pong_session(&ping_id_str).is_some() {
-            log::info!("✓ Found Pong for ping_id: {}", ping_id_str);
+            log::info!("Found Pong for ping_id: {}", ping_id_str);
             1 // true - Pong is waiting
         } else {
-            log::debug!("✗ No Pong found for ping_id: {}", ping_id_str);
+            log::debug!("No Pong found for ping_id: {}", ping_id_str);
             0 // false - no Pong yet
         }
     }, 0)
@@ -2998,7 +2998,7 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendMessageBlob(
 
             let port = match msg_type {
                 0x07 | 0x08 => FRIEND_REQUEST_PORT, // FRIEND_REQUEST or FRIEND_RESPONSE
-                _ => MESSAGE_PORT                    // Regular messages
+                _ => MESSAGE_PORT // Regular messages
             };
 
             // Add 15-second timeout for Tor connection and send
@@ -3132,10 +3132,10 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendHttpToVoiceOnion(
             let response_str = String::from_utf8_lossy(&response_buf[..n]);
 
             if response_str.contains("200 OK") {
-                log::info!("✓ HTTP 200 OK received from voice listener");
+                log::info!("HTTP 200 OK received from voice listener");
                 Ok(())
             } else {
-                log::error!("✗ Unexpected HTTP response: {}", response_str.lines().next().unwrap_or(""));
+                log::error!("Unexpected HTTP response: {}", response_str.lines().next().unwrap_or(""));
                 Err("HTTP request failed".into())
             }
         });
@@ -3172,7 +3172,7 @@ fn detect_wire_format(wire_bytes: &[u8]) -> (usize, bool) {
     );
 
     if is_known_type {
-        (1, true)  // Skip type byte, this is new format
+        (1, true) // Skip type byte, this is new format
     } else {
         (0, false) // No type byte, this is legacy format
     }
@@ -3200,30 +3200,30 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_decryptIncomingPing(
         };
 
         // DIAGNOSTIC: Log raw wire bytes BEFORE decryption
-        log::info!("╔═══ BEFORE decryptIncomingPing ═══");
-        log::info!("║ len: {} bytes", wire_bytes.len());
+        log::info!("BEFORE decryptIncomingPing ");
+        log::info!("len: {} bytes", wire_bytes.len());
         if !wire_bytes.is_empty() {
-            log::info!("║ type_byte: 0x{:02x}", wire_bytes[0]);
-            log::info!("║ first 8 bytes: {}",
+            log::info!("type_byte: 0x{:02x}", wire_bytes[0]);
+            log::info!("first 8 bytes: {}",
                 wire_bytes.iter().take(8).map(|b| format!("{:02x}", b)).collect::<Vec<_>>().join(" "));
             if wire_bytes.len() > 1 {
-                log::info!("║ second byte: 0x{:02x}", wire_bytes[1]);
+                log::info!("second byte: 0x{:02x}", wire_bytes[1]);
             }
             if wire_bytes[0] == 0x01 && wire_bytes.len() >= 5 {
-                log::info!("║ PING pubkey_first4: {}",
+                log::info!("PING pubkey_first4: {}",
                     wire_bytes[1..5].iter().map(|b| format!("{:02x}", b)).collect::<Vec<_>>().join(" "));
             }
         }
-        log::info!("╚════════════════════════════════════");
+        log::info!("");
 
         // Network-received packets always have type byte at offset 0
         // Wire format: [type_byte][sender_x25519_pubkey (32 bytes)][encrypted_payload]
-        const OFFSET: usize = 1;  // Skip type byte
+        const OFFSET: usize = 1; // Skip type byte
         const MIN_LEN: usize = 33; // 1 (type) + 32 (pubkey)
 
         if wire_bytes.len() < MIN_LEN {
-            log::error!("✗ FRAMING_PROTOCOL_VIOLATION: Ping wire too short");
-            log::error!("  actual_len={}, min_required={}", wire_bytes.len(), MIN_LEN);
+            log::error!("FRAMING_PROTOCOL_VIOLATION: Ping wire too short");
+            log::error!("actual_len={}, min_required={}", wire_bytes.len(), MIN_LEN);
             let _ = env.throw_new("java/lang/IllegalArgumentException", "FRAMING_PROTOCOL_VIOLATION: Wire message too short");
             return std::ptr::null_mut();
         }
@@ -3297,9 +3297,9 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_decryptIncomingPing(
         let ping_token = match crate::network::PingToken::from_bytes(&decrypted_ping) {
             Ok(token) => token,
             Err(e) => {
-                log::error!("✗ PAYLOAD_PARSE_FAILURE: Decrypted OK but PingToken parse failed");
-                log::error!("  Reason: {}", e);
-                log::error!("  Decrypted {} bytes - wrong payload type for PING", decrypted_ping.len());
+                log::error!("PAYLOAD_PARSE_FAILURE: Decrypted OK but PingToken parse failed");
+                log::error!("Reason: {}", e);
+                log::error!("Decrypted {} bytes - wrong payload type for PING", decrypted_ping.len());
                 let _ = env.throw_new("java/lang/RuntimeException", format!("PAYLOAD_PARSE_FAILURE: Failed to parse PingToken: {}", e));
                 return std::ptr::null_mut();
             }
@@ -3561,7 +3561,7 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_decryptIncomingPong(
 
         // Network-received packets always have type byte at offset 0
         // Wire format: [type_byte][sender_x25519_pubkey (32 bytes)][encrypted_payload]
-        const OFFSET: usize = 1;  // Skip type byte
+        const OFFSET: usize = 1; // Skip type byte
         const MIN_LEN: usize = 33; // 1 (type) + 32 (pubkey)
 
         if wire_bytes.len() < MIN_LEN {
@@ -3644,7 +3644,7 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_decryptIncomingPong(
         // Extract Ping ID from Pong (the ping_nonce field)
         let ping_id = hex::encode(&pong_token.ping_nonce);
 
-        log::info!("✓ Decrypted incoming Pong for Ping ID: {} (authenticated={})", ping_id, pong_token.authenticated);
+        log::info!("Decrypted incoming Pong for Ping ID: {} (authenticated={})", ping_id, pong_token.authenticated);
 
         // Store Pong in global session storage for pollForPong()
         crate::network::pingpong::store_pong_session(&ping_id, pong_token);
@@ -3900,7 +3900,7 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendDirectMessage(
             let type_byte = pong_response[0];
             if type_byte != crate::network::tor::MSG_TYPE_PONG {
                 if type_byte == crate::network::tor::MSG_TYPE_DELIVERY_CONFIRMATION {
-                    log::warn!("⚠️  Received PING_ACK (0x06) when expecting PONG - ignoring (should go to port 9153)");
+                    log::warn!("Received PING_ACK (0x06) when expecting PONG - ignoring (should go to port 9153)");
                     log::warn!("→ This is a bug - PING_ACK was sent to wrong port. Continuing without instant pong.");
                     return Err("PING_ACK received instead of PONG".into());
                 }
@@ -3932,8 +3932,8 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendDirectMessage(
             // (Length prefix is added automatically by manager.send())
             let mut message_wire = Vec::new();
             message_wire.push(msg_type); // Type byte from parameter
-            message_wire.extend_from_slice(&our_x25519_public);    // Sender X25519 pubkey
-            message_wire.extend_from_slice(&message_bytes);         // Encrypted message
+            message_wire.extend_from_slice(&our_x25519_public); // Sender X25519 pubkey
+            message_wire.extend_from_slice(&message_bytes); // Encrypted message
 
             {
                 let manager = tor_manager.lock().unwrap();
@@ -5091,8 +5091,8 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_deriveX25519PublicKey(
 
 /// Derive shared secret using X25519 ECDH
 /// Args:
-///   ourPrivateKey - Our 32-byte X25519 private key
-///   theirPublicKey - Their 32-byte X25519 public key
+/// ourPrivateKey - Our 32-byte X25519 private key
+/// theirPublicKey - Their 32-byte X25519 public key
 /// Returns: 32-byte shared secret
 #[no_mangle]
 pub extern "C" fn Java_com_securelegion_crypto_RustBridge_deriveSharedSecret(
@@ -5997,9 +5997,9 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_checkPingReplay(
         let ping_hash_array: [u8; 32] = *ping_hash.as_bytes();
 
         if check_ping_replay(pubkey, ping_hash_array) {
-            1  // Not a replay - process it
+            1 // Not a replay - process it
         } else {
-            0  // Replay detected - drop it
+            0 // Replay detected - drop it
         }
     }, 0)
 }
@@ -6027,9 +6027,9 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_validateAckOrdering(
         };
 
         if validate_and_record_ack(&contact_id_str, ack_type_u8) {
-            1  // Valid
+            1 // Valid
         } else {
-            0  // Invalid
+            0 // Invalid
         }
     }, 0)
 }
@@ -6110,12 +6110,12 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendDeliveryAck(
             }
         };
 
-        log::info!("╔════════════════════════════════════════");
-        log::info!("║ 📤 SENDING DELIVERY ACK");
-        log::info!("║ Item ID: {}", item_id_str);
-        log::info!("║ ACK Type: {}", ack_type_str);
-        log::info!("║ Recipient: {}", recipient_onion_str);
-        log::info!("╚════════════════════════════════════════");
+        log::info!("");
+        log::info!("SENDING DELIVERY ACK");
+        log::info!("Item ID: {}", item_id_str);
+        log::info!("ACK Type: {}", ack_type_str);
+        log::info!("Recipient: {}", recipient_onion_str);
+        log::info!("");
 
         // Get KeyManager for our keys
         let context = match env.call_static_method(
@@ -6240,7 +6240,7 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendDeliveryAck(
 
         match result {
             Ok(_) => {
-                log::info!("✓ ACK sent successfully: {} for {}", ack_type_str, item_id_str);
+                log::info!("ACK sent successfully: {} for {}", ack_type_str, item_id_str);
                 1 // success
             }
             Err(e) => {
@@ -6357,7 +6357,7 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_decryptAndStoreAckFrom
 
         // Network-received packets always have type byte at offset 0
         // Wire format: [type_byte][sender_x25519_pubkey (32 bytes)][encrypted_payload]
-        const OFFSET: usize = 1;  // Skip type byte
+        const OFFSET: usize = 1; // Skip type byte
         const MIN_LEN: usize = 33; // 1 (type) + 32 (pubkey)
 
         if wire_bytes.len() < MIN_LEN {
@@ -6432,11 +6432,11 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_decryptAndStoreAckFrom
             }
         };
 
-        log::info!("╔════════════════════════════════════════");
-        log::info!("║ 📥 RECEIVED DELIVERY ACK");
-        log::info!("║ Item ID: {}", ack_token.item_id);
-        log::info!("║ ACK Type: {}", ack_token.ack_type);
-        log::info!("╚════════════════════════════════════════");
+        log::info!("");
+        log::info!("RECEIVED DELIVERY ACK");
+        log::info!("Item ID: {}", ack_token.item_id);
+        log::info!("ACK Type: {}", ack_token.ack_type);
+        log::info!("");
 
         let item_id = ack_token.item_id.clone();
         let ack_type = ack_token.ack_type.clone();
@@ -7534,8 +7534,8 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendAudioPacket(
             audio_data: audio_bytes,
             circuit_index: circuit_index as u8,
             ptype: ptype as u8,
-            redundant_audio_data: Vec::new(),  // Phase 3: Will be populated by sender task
-            redundant_sequence: 0,              // Phase 3: Will be populated by sender task
+            redundant_audio_data: Vec::new(), // Phase 3: Will be populated by sender task
+            redundant_sequence: 0, // Phase 3: Will be populated by sender task
         };
 
         let voice_listener = get_voice_listener();
@@ -7621,11 +7621,11 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_rebuildVoiceCircuit(
 
         match result {
             Ok(_) => {
-                log::info!("✓ Circuit {} rebuild SUCCESS for call {}", circuit_index, call_id_str);
+                log::info!("Circuit {} rebuild SUCCESS for call {}", circuit_index, call_id_str);
                 1 // success
             }
             Err(e) => {
-                log::error!("✗ Circuit {} rebuild FAILED for call {}: {}", circuit_index, call_id_str, e);
+                log::error!("Circuit {} rebuild FAILED for call {}: {}", circuit_index, call_id_str, e);
                 0 // failure
             }
         }

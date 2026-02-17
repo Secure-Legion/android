@@ -27,7 +27,7 @@ pub fn check_ping_replay(sender_pubkey: [u8; 32], ping_hash: [u8; 32]) -> bool {
 
     if cache.contains(&key) {
         // Replay detected!
-        log::warn!("⚠️  REPLAY ATTACK: Duplicate PING detected from sender {}",
+        log::warn!("REPLAY ATTACK: Duplicate PING detected from sender {}",
             hex::encode(&sender_pubkey[..8]));
         return false;
     }
@@ -40,7 +40,7 @@ pub fn check_ping_replay(sender_pubkey: [u8; 32], ping_hash: [u8; 32]) -> bool {
 
     cache.put(key, now);
 
-    log::debug!("✓ PING replay check passed (cache size: {})", cache.len());
+    log::debug!("PING replay check passed (cache size: {})", cache.len());
     true
 }
 

@@ -6,36 +6,36 @@ use std::os::raw::{c_int, c_void};
 // Source: https://opus-codec.org/docs/opus_api-1.3.1/group__opus__encoder.html
 
 // GET requests (for validation)
-const OPUS_GET_APPLICATION_REQUEST: c_int = 4001;        // OPUS_GET_APPLICATION(x)
-const OPUS_GET_BITRATE_REQUEST: c_int = 4003;            // OPUS_GET_BITRATE(x)
-const OPUS_GET_SAMPLE_RATE_REQUEST: c_int = 4029;        // OPUS_GET_SAMPLE_RATE(x)
-const OPUS_GET_INBAND_FEC_REQUEST: c_int = 4013;         // OPUS_GET_INBAND_FEC(x)
-const OPUS_GET_PACKET_LOSS_PERC_REQUEST: c_int = 4015;   // OPUS_GET_PACKET_LOSS_PERC(x)
-const OPUS_GET_DTX_REQUEST: c_int = 4017;                // OPUS_GET_DTX(x)
-const OPUS_GET_VBR_REQUEST: c_int = 4007;                // OPUS_GET_VBR(x)
-const OPUS_GET_BANDWIDTH_REQUEST: c_int = 4009;          // OPUS_GET_BANDWIDTH(x)
+const OPUS_GET_APPLICATION_REQUEST: c_int = 4001; // OPUS_GET_APPLICATION(x)
+const OPUS_GET_BITRATE_REQUEST: c_int = 4003; // OPUS_GET_BITRATE(x)
+const OPUS_GET_SAMPLE_RATE_REQUEST: c_int = 4029; // OPUS_GET_SAMPLE_RATE(x)
+const OPUS_GET_INBAND_FEC_REQUEST: c_int = 4013; // OPUS_GET_INBAND_FEC(x)
+const OPUS_GET_PACKET_LOSS_PERC_REQUEST: c_int = 4015; // OPUS_GET_PACKET_LOSS_PERC(x)
+const OPUS_GET_DTX_REQUEST: c_int = 4017; // OPUS_GET_DTX(x)
+const OPUS_GET_VBR_REQUEST: c_int = 4007; // OPUS_GET_VBR(x)
+const OPUS_GET_BANDWIDTH_REQUEST: c_int = 4009; // OPUS_GET_BANDWIDTH(x)
 
 // SET requests
-const OPUS_SET_BITRATE_REQUEST: c_int = 4002;            // OPUS_SET_BITRATE(x)
-const OPUS_SET_COMPLEXITY_REQUEST: c_int = 4010;         // OPUS_SET_COMPLEXITY(x)
-const OPUS_SET_INBAND_FEC_REQUEST: c_int = 4012;         // OPUS_SET_INBAND_FEC(x)
-const OPUS_SET_PACKET_LOSS_PERC_REQUEST: c_int = 4014;   // OPUS_SET_PACKET_LOSS_PERC(x)
-const OPUS_SET_DTX_REQUEST: c_int = 4016;                // OPUS_SET_DTX(x)
-const OPUS_SET_SIGNAL_REQUEST: c_int = 4024;             // OPUS_SET_SIGNAL(x)
-const OPUS_SET_VBR_REQUEST: c_int = 4006;                // OPUS_SET_VBR(x)
-const OPUS_SET_VBR_CONSTRAINT_REQUEST: c_int = 4020;     // OPUS_SET_VBR_CONSTRAINT(x)
-const OPUS_SET_MAX_BANDWIDTH_REQUEST: c_int = 4004;      // OPUS_SET_MAX_BANDWIDTH(x)
+const OPUS_SET_BITRATE_REQUEST: c_int = 4002; // OPUS_SET_BITRATE(x)
+const OPUS_SET_COMPLEXITY_REQUEST: c_int = 4010; // OPUS_SET_COMPLEXITY(x)
+const OPUS_SET_INBAND_FEC_REQUEST: c_int = 4012; // OPUS_SET_INBAND_FEC(x)
+const OPUS_SET_PACKET_LOSS_PERC_REQUEST: c_int = 4014; // OPUS_SET_PACKET_LOSS_PERC(x)
+const OPUS_SET_DTX_REQUEST: c_int = 4016; // OPUS_SET_DTX(x)
+const OPUS_SET_SIGNAL_REQUEST: c_int = 4024; // OPUS_SET_SIGNAL(x)
+const OPUS_SET_VBR_REQUEST: c_int = 4006; // OPUS_SET_VBR(x)
+const OPUS_SET_VBR_CONSTRAINT_REQUEST: c_int = 4020; // OPUS_SET_VBR_CONSTRAINT(x)
+const OPUS_SET_MAX_BANDWIDTH_REQUEST: c_int = 4004; // OPUS_SET_MAX_BANDWIDTH(x)
 
 // Signal type constants
-const OPUS_SIGNAL_VOICE: c_int = 3001;                    // Optimize for voice
-const OPUS_SIGNAL_MUSIC: c_int = 3002;                    // Optimize for music
+const OPUS_SIGNAL_VOICE: c_int = 3001; // Optimize for voice
+const OPUS_SIGNAL_MUSIC: c_int = 3002; // Optimize for music
 
 // Bandwidth constants
-const OPUS_BANDWIDTH_NARROWBAND: c_int = 1101;           // 4 kHz
-const OPUS_BANDWIDTH_MEDIUMBAND: c_int = 1102;           // 6 kHz
-const OPUS_BANDWIDTH_WIDEBAND: c_int = 1103;             // 8 kHz
-const OPUS_BANDWIDTH_SUPERWIDEBAND: c_int = 1104;        // 12 kHz
-const OPUS_BANDWIDTH_FULLBAND: c_int = 1105;             // 20 kHz
+const OPUS_BANDWIDTH_NARROWBAND: c_int = 1101; // 4 kHz
+const OPUS_BANDWIDTH_MEDIUMBAND: c_int = 1102; // 6 kHz
+const OPUS_BANDWIDTH_WIDEBAND: c_int = 1103; // 8 kHz
+const OPUS_BANDWIDTH_SUPERWIDEBAND: c_int = 1104; // 12 kHz
+const OPUS_BANDWIDTH_FULLBAND: c_int = 1105; // 20 kHz
 
 extern "C" {
     /// Raw libopus encoder control function
@@ -316,19 +316,19 @@ pub unsafe fn log_encoder_config(encoder_ptr: *mut c_void) {
     log::info!("=== Opus Encoder Configuration ===");
 
     if let Ok(rate) = opus_get_sample_rate(encoder_ptr) {
-        log::info!("  Sample Rate:     {} Hz", rate);
+        log::info!("Sample Rate: {} Hz", rate);
     }
     if let Ok(bitrate) = opus_get_bitrate(encoder_ptr) {
-        log::info!("  Bitrate:         {} kbps", bitrate / 1000);
+        log::info!("Bitrate: {} kbps", bitrate / 1000);
     }
     if let Ok(fec) = opus_get_inband_fec(encoder_ptr) {
-        log::info!("  FEC Enabled:     {}", fec);
+        log::info!("FEC Enabled: {}", fec);
     }
     if let Ok(loss) = opus_get_packet_loss_perc(encoder_ptr) {
-        log::info!("  Packet Loss %:   {}", loss);
+        log::info!("Packet Loss %: {}", loss);
     }
     if let Ok(dtx) = opus_get_dtx(encoder_ptr) {
-        log::info!("  DTX Enabled:     {}", dtx);
+        log::info!("DTX Enabled: {}", dtx);
     }
 
     log::info!("===================================");

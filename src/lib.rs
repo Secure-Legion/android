@@ -4,6 +4,7 @@ pub mod network;
 pub mod nlx402;
 pub mod audio;
 pub mod ffi;
+pub mod crdt;
 
 // Re-export main types
 pub use crypto::{

@@ -100,7 +100,7 @@ struct PongWaiter {
     sender: tokio::sync::oneshot::Sender<PongToken>,
 }
 
-// ====================  GLOBAL PING SESSION STORAGE ====================
+// ==================== GLOBAL PING SESSION STORAGE ====================
 
 /// Global storage for received Ping tokens
 /// Used by FFI methods to store and retrieve Pings when creating Pongs
@@ -168,7 +168,7 @@ pub fn cleanup_expired_pings() {
     });
 }
 
-// ====================  GLOBAL PONG SESSION STORAGE ====================
+// ==================== GLOBAL PONG SESSION STORAGE ====================
 
 /// Global storage for received Pong tokens
 /// Used by FFI methods to store and retrieve Pongs when waiting for responses
@@ -190,11 +190,11 @@ fn get_pong_sessions() -> Arc<Mutex<HashMap<String, StoredPongSession>>> {
 
 /// Store a received Pong token by ping_id (hex-encoded nonce from original Ping)
 pub fn store_pong_session(ping_id: &str, pong_token: PongToken) {
-    log::info!("╔════════════════════════════════════════");
-    log::info!("║ 💾 STORING PONG SESSION");
-    log::info!("║ Ping ID: {}", ping_id);
-    log::info!("║ Authenticated: {}", pong_token.authenticated);
-    log::info!("╚════════════════════════════════════════");
+    log::info!("");
+    log::info!("STORING PONG SESSION");
+    log::info!("Ping ID: {}", ping_id);
+    log::info!("Authenticated: {}", pong_token.authenticated);
+    log::info!("");
 
     let sessions = get_pong_sessions();
     let mut sessions_lock = sessions.lock().unwrap();
@@ -208,7 +208,7 @@ pub fn store_pong_session(ping_id: &str, pong_token: PongToken) {
     };
 
     sessions_lock.insert(ping_id.to_string(), session);
-    log::info!("✓ Pong stored successfully. Total Pongs in storage: {}", sessions_lock.len());
+    log::info!("Pong stored successfully. Total Pongs in storage: {}", sessions_lock.len());
 }
 
 /// Retrieve a stored Pong token by ping_id
@@ -218,9 +218,9 @@ pub fn get_pong_session(ping_id: &str) -> Option<StoredPongSession> {
     let result = sessions_lock.get(ping_id).cloned();
 
     if result.is_some() {
-        log::info!("✓ Found Pong for Ping ID: {}", ping_id);
+        log::info!("Found Pong for Ping ID: {}", ping_id);
     } else {
-        log::debug!("✗ No Pong found for Ping ID: {} (have {} Pongs in storage)", ping_id, sessions_lock.len());
+        log::debug!("No Pong found for Ping ID: {} (have {} Pongs in storage)", ping_id, sessions_lock.len());
     }
 
     result
@@ -251,7 +251,7 @@ pub fn cleanup_expired_pongs() {
     });
 }
 
-// ====================  GLOBAL ACK SESSION STORAGE ====================
+// ==================== GLOBAL ACK SESSION STORAGE ====================
 
 /// Global storage for received ACK tokens
 /// Used by FFI methods to store and retrieve ACKs when confirming delivery
@@ -273,11 +273,11 @@ fn get_ack_sessions() -> Arc<Mutex<HashMap<String, StoredAckSession>>> {
 
 /// Store a received ACK token by item_id (ping_id or message_id)
 pub fn store_ack_session(item_id: &str, ack_token: DeliveryAck) {
-    log::info!("╔════════════════════════════════════════");
-    log::info!("║ 💾 STORING ACK SESSION");
-    log::info!("║ Item ID: {}", item_id);
-    log::info!("║ ACK Type: {}", ack_token.ack_type);
-    log::info!("╚════════════════════════════════════════");
+    log::info!("");
+    log::info!("STORING ACK SESSION");
+    log::info!("Item ID: {}", item_id);
+    log::info!("ACK Type: {}", ack_token.ack_type);
+    log::info!("");
 
     let sessions = get_ack_sessions();
     let mut sessions_lock = sessions.lock().unwrap();
@@ -291,7 +291,7 @@ pub fn store_ack_session(item_id: &str, ack_token: DeliveryAck) {
     };
 
     sessions_lock.insert(item_id.to_string(), session);
-    log::info!("✓ ACK stored successfully. Total ACKs in storage: {}", sessions_lock.len());
+    log::info!("ACK stored successfully. Total ACKs in storage: {}", sessions_lock.len());
 }
 
 /// Retrieve a stored ACK token by item_id
@@ -301,9 +301,9 @@ pub fn get_ack_session(item_id: &str) -> Option<StoredAckSession> {
     let result = sessions_lock.get(item_id).cloned();
 
     if result.is_some() {
-        log::info!("✓ Found ACK for Item ID: {}", item_id);
+        log::info!("Found ACK for Item ID: {}", item_id);
     } else {
-        log::debug!("✗ No ACK found for Item ID: {} (have {} ACKs in storage)", item_id, sessions_lock.len());
+        log::debug!("No ACK found for Item ID: {} (have {} ACKs in storage)", item_id, sessions_lock.len());
     }
 
     result
@@ -379,7 +379,7 @@ impl PingToken {
         sender_x25519_pubkey: &[u8; 32],
         recipient_x25519_pubkey: &[u8; 32],
         nonce: [u8; 24],
-        timestamp: i64,  // Use provided timestamp instead of generating
+        timestamp: i64, // Use provided timestamp instead of generating
     ) -> Result<Self, Box<dyn std::error::Error>> {
 
         // Create the Ping token (without signature first)
@@ -763,14 +763,22 @@ impl PingPongManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ed25519_dalek::SigningKey;
+    use rand::rngs::OsRng;
+
+    fn test_keys() -> (SigningKey, SigningKey, [u8; 32], [u8; 32]) {
+        let sender = SigningKey::generate(&mut OsRng);
+        let recipient = SigningKey::generate(&mut OsRng);
+        let sender_x25519 = [1u8; 32];
+        let recipient_x25519 = [2u8; 32];
+        (sender, recipient, sender_x25519, recipient_x25519)
+    }
 
     #[test]
     fn test_ping_token_creation() {
-        let mut csprng = OsRng{};
-        let sender_keypair = Keypair::generate(&mut csprng);
-        let recipient_keypair = Keypair::generate(&mut csprng);
+        let (sender, recipient, sx, rx) = test_keys();
 
-        let ping = PingToken::new(&sender_keypair, &recipient_keypair.public).unwrap();
+        let ping = PingToken::new(&sender, &recipient.verifying_key(), &sx, &rx).unwrap();
 
         // Verify signature
         assert!(ping.verify().unwrap());
@@ -778,26 +786,22 @@ mod tests {
 
     #[test]
     fn test_pong_token_creation() {
-        let mut csprng = OsRng{};
-        let sender_keypair = Keypair::generate(&mut csprng);
-        let recipient_keypair = Keypair::generate(&mut csprng);
+        let (sender, recipient, sx, rx) = test_keys();
 
-        let ping = PingToken::new(&sender_keypair, &recipient_keypair.public).unwrap();
-        let pong = PongToken::new(&ping, &recipient_keypair, true).unwrap();
+        let ping = PingToken::new(&sender, &recipient.verifying_key(), &sx, &rx).unwrap();
+        let pong = PongToken::new(&ping, &recipient, true).unwrap();
 
         // Verify signature
-        assert!(pong.verify(&recipient_keypair.public).unwrap());
+        assert!(pong.verify(&recipient.verifying_key()).unwrap());
         assert_eq!(pong.ping_nonce, ping.nonce);
         assert!(pong.authenticated);
     }
 
     #[test]
     fn test_ping_pong_serialization() {
-        let mut csprng = OsRng{};
-        let sender_keypair = Keypair::generate(&mut csprng);
-        let recipient_keypair = Keypair::generate(&mut csprng);
+        let (sender, recipient, sx, rx) = test_keys();
 
-        let ping = PingToken::new(&sender_keypair, &recipient_keypair.public).unwrap();
+        let ping = PingToken::new(&sender, &recipient.verifying_key(), &sx, &rx).unwrap();
         let ping_bytes = ping.to_bytes().unwrap();
         let ping_deserialized = PingToken::from_bytes(&ping_bytes).unwrap();
 
