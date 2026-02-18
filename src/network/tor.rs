@@ -2205,52 +2205,90 @@ impl TorManager {
     ///
     /// CRITICAL: This does NOT try to CONNECT (which requires circuits).
     /// It only tests if the SOCKS proxy is listening and accepting connections.
+    ///
+    /// Retries once on transient errors (EAGAIN/WouldBlock/TimedOut) since Tor
+    /// can temporarily return these under CPU load without actually being dead.
     pub fn is_socks_proxy_running(&self) -> bool {
         use std::net::TcpStream;
-        use std::io::{Write, Read};
+        use std::io::{Write, Read, ErrorKind};
         use std::time::Duration;
 
-        match TcpStream::connect_timeout(
-            &std::net::SocketAddr::from(([127, 0, 0, 1], self.socks_port)),
-            Duration::from_millis(2000)
-        ) {
-            Ok(mut stream) => {
-                // Set read timeout so we don't block forever
-                if let Err(e) = stream.set_read_timeout(Some(Duration::from_millis(2000))) {
-                    log::warn!("SOCKS health: Failed to set read timeout: {}", e);
+        for attempt in 0..2u8 {
+            let stream_res = TcpStream::connect_timeout(
+                &std::net::SocketAddr::from(([127, 0, 0, 1], self.socks_port)),
+                Duration::from_millis(3000),
+            );
+
+            let mut stream = match stream_res {
+                Ok(s) => s,
+                Err(e) => {
+                    let is_transient =
+                        e.kind() == ErrorKind::WouldBlock ||
+                        e.kind() == ErrorKind::TimedOut ||
+                        e.raw_os_error() == Some(11); // EAGAIN
+
+                    // Transient connect error: retry once after backoff
+                    if is_transient && attempt == 0 {
+                        log::info!(
+                            "SOCKS health: Transient connect error ({}), retrying in 500ms...",
+                            e
+                        );
+                        std::thread::sleep(Duration::from_millis(500));
+                        continue;
+                    }
+
+                    // Connection refused / hard failure -> dead
+                    log::warn!(
+                        "SOCKS health: Cannot connect to 127.0.0.1:{} - {}",
+                        self.socks_port,
+                        e
+                    );
                     return false;
                 }
+            };
 
-                // Send SOCKS5 version + auth request: [version=5, n_methods=1, method=0 (no auth)]
-                let handshake = [0x05, 0x01, 0x00];
-                if let Err(e) = stream.write_all(&handshake) {
-                    log::warn!("SOCKS health: Failed to send handshake: {}", e);
-                    return false;
-                }
-
-                // Read response: [version=5, chosen_method]
-                let mut response = [0u8; 2];
-                match stream.read_exact(&mut response) {
-                    Ok(_) => {
-                        if response[0] == 0x05 && response[1] == 0x00 {
-                            log::debug!("SOCKS health: Proxy reachable and accepting connections (127.0.0.1:{})", self.socks_port);
-                            true
-                        } else {
-                            log::warn!("SOCKS health: Unexpected handshake response: {:?}", response);
-                            false
-                        }
-                    }
-                    Err(e) => {
-                        log::warn!("SOCKS health: Failed to read handshake response: {}", e);
-                        false
-                    }
-                }
+            let _ = stream.set_write_timeout(Some(Duration::from_millis(3000)));
+            if let Err(e) = stream.set_read_timeout(Some(Duration::from_millis(3000))) {
+                log::warn!("SOCKS health: Failed to set read timeout: {}", e);
+                return false;
             }
-            Err(e) => {
-                log::warn!("SOCKS health: Cannot connect to 127.0.0.1:{} - {}", self.socks_port, e);
-                false
+
+            // Send SOCKS5 handshake: [version=5, n_methods=1, method=0 (no auth)]
+            if let Err(e) = stream.write_all(&[0x05, 0x01, 0x00]) {
+                log::warn!("SOCKS health: Failed to send handshake: {}", e);
+                return false;
+            }
+
+            // Read response: [version=5, chosen_method]
+            let mut response = [0u8; 2];
+            match stream.read_exact(&mut response) {
+                Ok(_) => {
+                    if response == [0x05, 0x00] {
+                        log::debug!("SOCKS health: Proxy reachable (127.0.0.1:{})", self.socks_port);
+                        return true;
+                    }
+                    log::warn!("SOCKS health: Unexpected handshake response: {:?}", response);
+                    return false;
+                }
+                Err(e) => {
+                    let is_transient =
+                        e.kind() == ErrorKind::WouldBlock ||
+                        e.kind() == ErrorKind::TimedOut ||
+                        e.raw_os_error() == Some(11); // EAGAIN
+
+                    if is_transient && attempt == 0 {
+                        log::info!("SOCKS health: Transient read error ({}), retrying in 500ms...", e);
+                        std::thread::sleep(Duration::from_millis(500));
+                        continue;
+                    }
+
+                    log::warn!("SOCKS health: Failed to read handshake response: {}", e);
+                    return false;
+                }
             }
         }
+
+        false
     }
 
     /// Test Tor health using control port (privacy-preserving approach)
