@@ -228,12 +228,12 @@
                     android:orientation="horizontal"
                     android:gravity="center_vertical">
 
-                    <!-- Chain Privacy Icon (Radr for SOL, Shield for ZEC) -->
+                    <!-- Chain icon -->
                     <ImageView
                         android:id="@+id/paymentTypeIcon"
                         android:layout_width="28dp"
                         android:layout_height="28dp"
-                        android:src="@drawable/ic_radr_logo"
+                        android:src="@drawable/ic_solana"
                         android:scaleType="fitCenter"
                         android:layout_marginEnd="12dp"
                         android:contentDescription="Privacy type" />

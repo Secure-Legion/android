@@ -424,6 +424,9 @@ class SolanaService(private val context: Context) {
                             "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v" -> "USDC"
                             "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB" -> "USDT"
                             "So11111111111111111111111111111111111111112" -> "SOL"
+                            "A7bdiYdS5GjqGFtxf17ppRHtDKPkkRqbKtR27dxvQXaS" -> "ZEC"
+                            "USD1ttGY1N17NEEHLmELoaybftRBUSErhqYiQzvEmuB" -> "USD1"
+                            "GFJbQ7WDQry73iTaGkJcXKjvi1ViFTFmHSENgz92jFPP" -> "SECURE"
                             else -> "Unknown"
                         }
 

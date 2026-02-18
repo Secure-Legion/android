@@ -698,6 +698,133 @@ class MessageService(private val context: Context) {
     }
 
     /**
+     * Send a profile photo update to a single contact via Tor
+     * Sends directly via RustBridge without saving to messages table (zero trace).
+     * @param contactId Database ID of the recipient contact
+     * @param photoBase64 Base64-encoded profile photo (empty string = removal)
+     * @return Result with Unit if successful
+     */
+    suspend fun sendProfileUpdate(
+        contactId: Long,
+        photoBase64: String
+    ): Result<Unit> = withContext(Dispatchers.IO) {
+        try {
+            Log.d(TAG, "Sending profile update to contact ID: $contactId (${photoBase64.length} Base64 chars)")
+
+            val dbPassphrase = keyManager.getDatabasePassphrase()
+            val database = SecureLegionDatabase.getInstance(context, dbPassphrase)
+
+            val contact = database.contactDao().getContactById(contactId)
+                ?: return@withContext Result.failure(Exception("Contact not found"))
+
+            Log.d(TAG, "Sending profile update to: ${contact.displayName}")
+
+            val keyChain = KeyChainManager.getKeyChain(context, contactId)
+                ?: throw Exception("Key chain not found for contact ${contact.displayName}")
+
+            // PROFILE_UPDATE format: [0x0F][photoBytes...] (empty body = removal)
+            val photoBytes = if (photoBase64.isNotBlank()) {
+                Base64.decode(photoBase64, Base64.NO_WRAP)
+            } else {
+                ByteArray(0) // Empty = photo removal
+            }
+            val plaintextWithType = byteArrayOf(0x0F) + photoBytes
+            val plaintextForEncryption = String(plaintextWithType, Charsets.ISO_8859_1)
+
+            // Encrypt with key chain evolution (CRITICAL: must evolve key for future messages)
+            val encryptResult = RustBridge.encryptMessageWithEvolution(
+                plaintextForEncryption,
+                keyChain.sendChainKeyBytes,
+                keyChain.sendCounter
+            )
+            val encryptedBytes = encryptResult.ciphertext
+
+            // Persist evolved send chain key
+            database.contactKeyChainDao().updateSendChainKey(
+                contactId = contactId,
+                newSendChainKeyBase64 = android.util.Base64.encodeToString(encryptResult.evolvedChainKey, android.util.Base64.NO_WRAP),
+                newSendCounter = keyChain.sendCounter + 1,
+                timestamp = System.currentTimeMillis()
+            )
+            Log.d(TAG, "Send chain key evolved: counter ${keyChain.sendCounter} → ${keyChain.sendCounter + 1}")
+
+            // Get recipient keys for Ping
+            val recipientEd25519PubKey = Base64.decode(contact.publicKeyBase64, Base64.NO_WRAP)
+            val recipientX25519PubKey = Base64.decode(contact.x25519PublicKeyBase64, Base64.NO_WRAP)
+            val onionAddress = contact.messagingOnion ?: contact.torOnionAddress ?: ""
+
+            // Generate ping ID for this send
+            val pingId = generatePingId()
+            val pingTimestamp = System.currentTimeMillis()
+
+            // Send directly via Rust bridge — NO message saved to DB (zero trace)
+            val pingResponse = RustBridge.sendPing(
+                recipientEd25519PubKey,
+                recipientX25519PubKey,
+                onionAddress,
+                encryptedBytes,
+                0x0F.toByte(), // PROFILE_UPDATE wire byte
+                pingId,
+                pingTimestamp
+            )
+
+            if (pingResponse != null) {
+                Log.i(TAG, "Profile update sent to ${contact.displayName} (ping: ${pingId.take(8)}...)")
+            } else {
+                Log.w(TAG, "Profile update ping returned null for ${contact.displayName}")
+            }
+
+            Result.success(Unit)
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e // Don't swallow cancellation — rethrow for structured concurrency
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to send profile update to contact $contactId", e)
+            Result.failure(e)
+        }
+    }
+
+    /**
+     * Broadcast a profile photo update to ALL contacts
+     * Sends the photo through the encrypted Tor pipeline to each contact.
+     * @param photoBase64 Base64-encoded profile photo (empty string = removal)
+     */
+    suspend fun broadcastProfileUpdate(photoBase64: String) = withContext(Dispatchers.IO) {
+        val dbPassphrase = keyManager.getDatabasePassphrase()
+        val database = SecureLegionDatabase.getInstance(context, dbPassphrase)
+        val contacts = database.contactDao().getAllContacts()
+
+        Log.i(TAG, "Broadcasting profile update to ${contacts.size} contacts")
+
+        var successCount = 0
+        var failCount = 0
+
+        // Send sequentially but with a per-contact timeout so one slow SOCKS
+        // connection doesn't block the entire broadcast for 36+ seconds
+        contacts.forEach { contact ->
+            try {
+                val result = kotlinx.coroutines.withTimeoutOrNull(20_000L) {
+                    sendProfileUpdate(contact.id, photoBase64)
+                }
+                if (result != null && result.isSuccess) {
+                    successCount++
+                } else {
+                    failCount++
+                    if (result == null) {
+                        Log.w(TAG, "Profile update timed out for ${contact.displayName}")
+                    } else {
+                        Log.w(TAG, "Profile update failed for ${contact.displayName}: ${result.exceptionOrNull()?.message}")
+                    }
+                }
+            } catch (e: Exception) {
+                failCount++
+                Log.e(TAG, "Profile update error for ${contact.displayName}", e)
+            }
+        }
+
+        Log.i(TAG, "Profile update broadcast complete: $successCount succeeded, $failCount failed")
+    }
+
+    /**
      * Send an encrypted message to a contact via Tor
      * @param contactId Database ID of the recipient contact
      * @param plaintext The message content
@@ -1841,6 +1968,25 @@ class MessageService(private val context: Context) {
                         pingId = pingId
                     )
                 }
+                Message.MESSAGE_TYPE_PROFILE_UPDATE -> {
+                    // Profile photo update: decryptedData is [0x0F][photoBytes...]
+                    // Strip the type prefix byte and extract photo
+                    val rawBytes = decryptedData.toByteArray(Charsets.ISO_8859_1)
+                    val photoBytes = if (rawBytes.size > 1) rawBytes.copyOfRange(1, rawBytes.size) else ByteArray(0)
+
+                    if (photoBytes.isEmpty()) {
+                        // Empty body = photo removal
+                        database.contactDao().updateContactPhoto(contact.id, null)
+                        Log.i(TAG, "Profile photo removed for ${contact.displayName}")
+                    } else {
+                        val photoBase64 = Base64.encodeToString(photoBytes, Base64.NO_WRAP)
+                        database.contactDao().updateContactPhoto(contact.id, photoBase64)
+                        Log.i(TAG, "Profile photo updated for ${contact.displayName} (${photoBytes.size} bytes)")
+                    }
+
+                    // Return early - profile updates are never saved to messages table
+                    return@withContext Result.failure(Exception("Profile update processed"))
+                }
                 else -> {
                     // Text message (default)
                     val plaintext = decryptedData
@@ -2333,6 +2479,7 @@ class MessageService(private val context: Context) {
                 Message.MESSAGE_TYPE_PAYMENT_REQUEST -> 0x0A.toByte() // PAYMENT_REQUEST
                 Message.MESSAGE_TYPE_PAYMENT_SENT -> 0x0B.toByte() // PAYMENT_SENT
                 Message.MESSAGE_TYPE_PAYMENT_ACCEPTED -> 0x0C.toByte() // PAYMENT_ACCEPTED
+                Message.MESSAGE_TYPE_PROFILE_UPDATE -> 0x0F.toByte() // PROFILE_UPDATE
                 else -> 0x03.toByte() // TEXT (default)
             }
             Log.d(TAG, "Message type: ${message.messageType} → wire byte: 0x${messageTypeByte.toString(16).padStart(2, '0')}")
@@ -2624,6 +2771,7 @@ class MessageService(private val context: Context) {
                         com.securelegion.database.entities.Message.MESSAGE_TYPE_PAYMENT_REQUEST -> 0x0A.toByte()
                         com.securelegion.database.entities.Message.MESSAGE_TYPE_PAYMENT_SENT -> 0x0B.toByte()
                         com.securelegion.database.entities.Message.MESSAGE_TYPE_PAYMENT_ACCEPTED -> 0x0C.toByte()
+                        com.securelegion.database.entities.Message.MESSAGE_TYPE_PROFILE_UPDATE -> 0x0F.toByte()
                         else -> 0x03.toByte() // TEXT (default)
                     }
 
@@ -2804,6 +2952,7 @@ class MessageService(private val context: Context) {
                 com.securelegion.database.entities.Message.MESSAGE_TYPE_PAYMENT_REQUEST -> 0x0A.toByte() // PAYMENT_REQUEST
                 com.securelegion.database.entities.Message.MESSAGE_TYPE_PAYMENT_SENT -> 0x0B.toByte() // PAYMENT_SENT
                 com.securelegion.database.entities.Message.MESSAGE_TYPE_PAYMENT_ACCEPTED -> 0x0C.toByte() // PAYMENT_ACCEPTED
+                com.securelegion.database.entities.Message.MESSAGE_TYPE_PROFILE_UPDATE -> 0x0F.toByte() // PROFILE_UPDATE
                 else -> 0x03.toByte() // TEXT (default)
             }
 

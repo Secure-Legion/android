@@ -17,7 +17,6 @@ import com.securelegion.crypto.NLx402Manager
 import com.securelegion.database.SecureLegionDatabase
 import com.securelegion.database.entities.Wallet
 import com.securelegion.services.MessageService
-import com.securelegion.services.ShadowWireService
 import com.securelegion.services.SolanaService
 import com.securelegion.services.ZcashService
 import com.securelegion.utils.ThemedToast
@@ -53,8 +52,8 @@ class RequestMoneyActivity : AppCompatActivity() {
 
     private var selectedToken = "SOL" // SOL or ZEC
     private var showingUsd = false // false = native token, true = USD
-    // SOL: "private" or "anonymous" | ZEC: "transparent" or "shielded"
-    private var selectedPaymentType = "private"
+    // SOL: "normal" | ZEC: "transparent" or "shielded"
+    private var selectedPaymentType = "normal"
     private var currentSolPrice: Double = 0.0
     private var currentZecPrice: Double = 0.0
 
@@ -219,23 +218,17 @@ class RequestMoneyActivity : AppCompatActivity() {
         if (selectedToken == "ZEC") {
             paymentTypeIcon.setImageResource(R.drawable.ic_shield)
             paymentTypeIcon.clearColorFilter()
-            // Map SOL types to ZEC equivalents
-            if (selectedPaymentType == "normal" || selectedPaymentType == "private" || selectedPaymentType == "anonymous") {
+            if (selectedPaymentType == "normal") {
                 selectedPaymentType = "transparent"
             }
             paymentTypeText.text = if (selectedPaymentType == "shielded") "Shielded" else "Transparent"
         } else {
-            paymentTypeIcon.setImageResource(R.drawable.ic_radr_logo)
+            paymentTypeIcon.setImageResource(R.drawable.ic_solana)
             paymentTypeIcon.clearColorFilter()
-            // Map ZEC types to SOL equivalents
             if (selectedPaymentType == "transparent" || selectedPaymentType == "shielded") {
-                selectedPaymentType = "private"
+                selectedPaymentType = "normal"
             }
-            paymentTypeText.text = when (selectedPaymentType) {
-                "normal" -> "Normal"
-                "anonymous" -> "Anonymous"
-                else -> "Private"
-            }
+            paymentTypeText.text = "Normal"
         }
     }
 
@@ -281,20 +274,16 @@ class RequestMoneyActivity : AppCompatActivity() {
             option2Check.visibility = if (selectedPaymentType == "shielded") View.VISIBLE else View.GONE
             option3View.visibility = View.GONE
         } else {
-            // Solana: Normal / Private / Anonymous (3 options)
+            // Solana: Normal only
             option1Icon.setImageResource(R.drawable.ic_solana)
-            option2Icon.setImageResource(R.drawable.ic_radr_logo)
-            option3Icon.setImageResource(R.drawable.ic_radr_logo)
+            option2Icon.setImageResource(R.drawable.ic_solana)
             option1Title.text = "Normal"
-            option2Title.text = "Private"
-            option3Title.text = "Anonymous"
+            option2Title.text = "Normal"
             option1Desc.text = "Standard Solana transaction"
-            option2Desc.text = "Powered by Radr · 0.5% fee"
-            option3Desc.text = "Powered by Radr · 0.5% fee"
+            option2Desc.text = "Standard Solana transaction"
             option1Check.visibility = if (selectedPaymentType == "normal") View.VISIBLE else View.GONE
-            option2Check.visibility = if (selectedPaymentType == "private") View.VISIBLE else View.GONE
-            option3Check.visibility = if (selectedPaymentType == "anonymous") View.VISIBLE else View.GONE
-            option3View.visibility = View.VISIBLE
+            option2Check.visibility = View.GONE
+            option3View.visibility = View.GONE
         }
 
         view.findViewById<View>(R.id.paymentTypeOption1).setOnClickListener {
@@ -304,13 +293,7 @@ class RequestMoneyActivity : AppCompatActivity() {
         }
 
         view.findViewById<View>(R.id.paymentTypeOption2).setOnClickListener {
-            selectedPaymentType = if (selectedToken == "ZEC") "shielded" else "private"
-            updatePaymentTypeUI()
-            bottomSheet.dismiss()
-        }
-
-        view.findViewById<View>(R.id.paymentTypeOption3).setOnClickListener {
-            selectedPaymentType = "anonymous"
+            selectedPaymentType = if (selectedToken == "ZEC") "shielded" else "normal"
             updatePaymentTypeUI()
             bottomSheet.dismiss()
         }
@@ -704,20 +687,14 @@ class RequestMoneyActivity : AppCompatActivity() {
         // Payment type
         confirmSendPaymentType.text = when (selectedPaymentType) {
             "normal" -> "Normal"
-            "private" -> "Private"
-            "anonymous" -> "Anonymous"
             "transparent" -> "Transparent"
             "shielded" -> "Shielded"
             else -> selectedPaymentType.replaceFirstChar { it.uppercase() }
         }
 
-        // Network fee — add 0.5% Radr fee for private/anonymous on SOL
-        val isPrivacyFee = selectedPaymentType == "private" || selectedPaymentType == "anonymous"
+        // Network fee
         if (selectedToken == "ZEC") {
             confirmSendNetworkFee.text = "~0.0001 ZEC"
-        } else if (isPrivacyFee) {
-            val radrFee = amount * 0.005
-            confirmSendNetworkFee.text = String.format("~%.6f SOL + %.4f SOL (0.5%%)", 0.000005, radrFee)
         } else {
             confirmSendNetworkFee.text = "~0.000005 SOL"
         }
@@ -775,34 +752,6 @@ class RequestMoneyActivity : AppCompatActivity() {
                             return@launch
                         }
                         txSignature = result.getOrNull() ?: "unknown"
-                    }
-                    selectedPaymentType == "private" -> {
-                        // ShadowWire internal transfer (hidden amount + hidden sender)
-                        val shadowWire = ShadowWireService(this@RequestMoneyActivity, currentWalletId.ifEmpty { "main" })
-                        val amountLamports = (amount * 1_000_000_000L).toLong()
-                        val result = shadowWire.internalTransfer(recipientAddress, amountLamports)
-                        if (result.isFailure) {
-                            withContext(Dispatchers.Main) {
-                                sendNowButton.isEnabled = true
-                                ThemedToast.show(this@RequestMoneyActivity, "Private send failed: ${result.exceptionOrNull()?.message}")
-                            }
-                            return@launch
-                        }
-                        txSignature = result.getOrNull()?.txSignature ?: "unknown"
-                    }
-                    selectedPaymentType == "anonymous" -> {
-                        // ShadowWire external transfer (hidden sender, visible amount)
-                        val shadowWire = ShadowWireService(this@RequestMoneyActivity, currentWalletId.ifEmpty { "main" })
-                        val amountLamports = (amount * 1_000_000_000L).toLong()
-                        val result = shadowWire.externalTransfer(recipientAddress, amountLamports)
-                        if (result.isFailure) {
-                            withContext(Dispatchers.Main) {
-                                sendNowButton.isEnabled = true
-                                ThemedToast.show(this@RequestMoneyActivity, "Anonymous send failed: ${result.exceptionOrNull()?.message}")
-                            }
-                            return@launch
-                        }
-                        txSignature = result.getOrNull()?.txSignature ?: "unknown"
                     }
                     else -> {
                         // Normal Solana transfer
@@ -879,8 +828,6 @@ class RequestMoneyActivity : AppCompatActivity() {
         confirmRequestCurrency.text = selectedToken
         confirmRequestExpiry.text = when (selectedPaymentType) {
             "normal" -> "Normal"
-            "private" -> "Private"
-            "anonymous" -> "Anonymous"
             "transparent" -> "Transparent"
             "shielded" -> "Shielded"
             else -> selectedPaymentType.replaceFirstChar { it.uppercase() }
@@ -1048,20 +995,14 @@ class RequestMoneyActivity : AppCompatActivity() {
         // Payment type
         detailsPaymentType.text = when (selectedPaymentType) {
             "normal" -> "Normal"
-            "private" -> "Private"
-            "anonymous" -> "Anonymous"
             "transparent" -> "Transparent"
             "shielded" -> "Shielded"
             else -> selectedPaymentType.replaceFirstChar { it.uppercase() }
         }
 
         // Network fee
-        val isPrivacyFee = selectedPaymentType == "private" || selectedPaymentType == "anonymous"
         if (selectedToken == "ZEC") {
             detailsNetworkFee.text = "~0.0001 ZEC"
-        } else if (isPrivacyFee) {
-            val radrFee = amount * 0.005
-            detailsNetworkFee.text = String.format("~%.6f SOL + %.4f SOL (0.5%%)", 0.000005, radrFee)
         } else {
             detailsNetworkFee.text = "~0.000005 SOL"
         }

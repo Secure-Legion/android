@@ -1264,7 +1264,7 @@ object RustBridge {
     )
 
     /**
-     * Generate a Bulletproof range proof for ShadowWire transfers.
+     * Generate a Bulletproof range proof for private transfers.
      * Proves amount is in range [0, 2^bitLength) without revealing it.
      *
      * @param amount Amount in lamports (must be >= 0)
@@ -1283,7 +1283,7 @@ object RustBridge {
     external fun verifyRangeProof(proofBytes: ByteArray, commitment: ByteArray, bitLength: Int): Boolean
 
     /**
-     * Generate and parse a Bulletproof range proof for ShadowWire transfers.
+     * Generate and parse a Bulletproof range proof for private transfers.
      * Kotlin wrapper that unpacks the raw JNI result into a structured object.
      *
      * @param amount Amount in lamports

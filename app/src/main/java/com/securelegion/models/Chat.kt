@@ -16,5 +16,6 @@ data class Chat(
     val lastMessageIsSent: Boolean = false,
     val lastMessagePingDelivered: Boolean = false,
     val lastMessageMessageDelivered: Boolean = false,
-    val isPinned: Boolean = false
+    val isPinned: Boolean = false,
+    val profilePictureBase64: String? = null
 )

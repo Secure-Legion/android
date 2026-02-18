@@ -615,7 +615,8 @@ class MainActivity : BaseActivity() {
                                 lastMessageIsSent = isSent,
                                 lastMessagePingDelivered = pingDelivered,
                                 lastMessageMessageDelivered = messageDelivered,
-                                isPinned = contact.isPinned
+                                isPinned = contact.isPinned,
+                                profilePictureBase64 = contact.profilePictureBase64
                             )
                             val timestamp = if (lastMessage != null) lastMessage.timestamp else System.currentTimeMillis()
                             chatsList.add(Pair(chat, timestamp))

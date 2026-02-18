@@ -193,7 +193,7 @@
                             android:layout_height="22dp"
                             android:layout_gravity="center"
                             android:src="@drawable/ic_delete"
-                            app:tint="#FF3B30"
+                            app:tint="?attr/colorOnSurfaceVariant"
                             android:contentDescription="Delete" />
 
                     </FrameLayout>
@@ -203,7 +203,7 @@
                         android:layout_height="wrap_content"
                         android:text="Delete"
                         android:textSize="11sp"
-                        android:textColor="#FF3B30"
+                        android:textColor="#8C8C8C"
                         android:fontFamily="@font/poppins_medium"
                         android:layout_marginTop="6dp" />
 

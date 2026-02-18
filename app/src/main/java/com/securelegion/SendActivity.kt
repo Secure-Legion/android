@@ -209,16 +209,7 @@ class SendActivity : BaseActivity() {
     }
 
     private fun setupCurrencySelector() {
-        val currencyDropdown = findViewById<View>(R.id.currencyDropdown)
-
-        currencyDropdown.setOnClickListener {
-            // Toggle between SOL and ZEC
-            if (selectedCurrency == "SOL") {
-                selectCurrency("ZEC")
-            } else {
-                selectCurrency("SOL")
-            }
-        }
+        // Currency selector removed from layout — no-op
     }
 
     private fun setupQRScanner() {

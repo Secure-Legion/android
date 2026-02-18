@@ -24,7 +24,6 @@
             android:id="@+id/backButton"
             android:layout_width="42dp"
             android:layout_height="42dp"
-            android:layout_marginStart="8dp"
             android:background="@drawable/top_icon_bg"
             android:clickable="true"
             android:focusable="true">
@@ -43,32 +42,16 @@
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
-            android:text="Swap"
-            android:textSize="28sp"
-            android:textColor="?attr/colorOnSurfaceVariant"
+            android:text="Swap Crypto"
+            android:textSize="22sp"
+            android:textColor="?attr/colorOnSurface"
             android:fontFamily="@font/space_grotesk_bold"
-            android:textStyle="bold"
             android:gravity="center" />
 
-        <!-- Settings Button -->
-        <FrameLayout
-            android:id="@+id/menuButton"
+        <!-- Spacer to balance the back button -->
+        <View
             android:layout_width="42dp"
-            android:layout_height="42dp"
-            android:layout_marginEnd="8dp"
-            android:background="@drawable/top_icon_bg"
-            android:clickable="true"
-            android:focusable="true">
-
-            <ImageView
-                android:layout_width="20dp"
-                android:layout_height="20dp"
-                android:layout_gravity="center"
-                android:src="@drawable/ic_settings_cog"
-                app:tint="?attr/colorOnSurfaceVariant"
-                android:contentDescription="Settings" />
-
-        </FrameLayout>
+            android:layout_height="42dp" />
 
     </LinearLayout>
 
@@ -76,245 +59,236 @@
         android:layout_width="match_parent"
         android:layout_height="0dp"
         android:layout_weight="1"
-        android:fillViewport="true">
+        android:fillViewport="true"
+        android:clipChildren="false"
+        android:clipToPadding="false">
 
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="vertical"
             android:paddingHorizontal="20dp"
-            android:paddingBottom="20dp">
+            android:paddingBottom="32dp"
+            android:clipChildren="false"
+            android:clipToPadding="false">
 
-            <!-- From Card -->
-            <androidx.cardview.widget.CardView
+            <!-- ============ FROM CARD ============ -->
+            <LinearLayout
                 android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="16dp"
-                android:layout_marginBottom="8dp"
-                app:cardBackgroundColor="#0A0A0A"
-                app:cardCornerRadius="16dp"
-                app:cardElevation="0dp">
+                android:layout_height="150dp"
+                android:orientation="vertical"
+                android:background="@drawable/swap_card_top_bg"
+                android:paddingStart="20dp"
+                android:paddingEnd="20dp"
+                android:paddingTop="16dp"
+                android:paddingBottom="16dp"
+                android:layout_marginTop="16dp">
 
+                <!-- Top row: label + token pill -->
                 <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:orientation="vertical"
-                    android:padding="20dp">
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical">
 
-                    <LinearLayout
-                        android:layout_width="match_parent"
+                    <TextView
+                        android:layout_width="0dp"
                         android:layout_height="wrap_content"
-                        android:gravity="center_vertical"
-                        android:orientation="horizontal">
+                        android:layout_weight="1"
+                        android:text="Your Assets"
+                        android:textSize="14sp"
+                        android:textColor="#888888"
+                        android:fontFamily="@font/poppins_regular" />
 
-                        <LinearLayout
-                            android:layout_width="0dp"
-                            android:layout_height="wrap_content"
-                            android:layout_weight="1"
-                            android:orientation="vertical">
-
-                            <TextView
-                                android:id="@+id/fromTokenText"
-                                android:layout_width="wrap_content"
-                                android:layout_height="wrap_content"
-                                android:drawableEnd="@drawable/ic_arrow_forward"
-                                android:drawablePadding="8dp"
-                                android:fontFamily="@font/poppins_semibold"
-                                android:text="SOL"
-                                android:textColor="?attr/colorOnSurface"
-                                android:textSize="24sp"
-                                android:clickable="true"
-                                android:focusable="true"
-                                android:background="?attr/selectableItemBackgroundBorderless"
-                                app:drawableTint="@color/text_gray" />
-
-                            <TextView
-                                android:id="@+id/fromWalletNameText"
-                                android:layout_width="wrap_content"
-                                android:layout_height="wrap_content"
-                                android:layout_marginTop="4dp"
-                                android:fontFamily="@font/poppins_medium"
-                                android:text="Wallet"
-                                android:textColor="#AAAAAA"
-                                android:textSize="13sp" />
-
-                            <TextView
-                                android:id="@+id/fromWalletAddressText"
-                                android:layout_width="wrap_content"
-                                android:layout_height="wrap_content"
-                                android:layout_marginTop="2dp"
-                                android:fontFamily="monospace"
-                                android:text="----"
-                                android:textColor="#666666"
-                                android:textSize="11sp" />
-
-                            <TextView
-                                android:id="@+id/fromBalanceText"
-                                android:layout_width="wrap_content"
-                                android:layout_height="wrap_content"
-                                android:layout_marginTop="4dp"
-                                android:fontFamily="@font/poppins_regular"
-                                android:text="Balance: Loading..."
-                                android:textColor="#666666"
-                                android:textSize="14sp" />
-                        </LinearLayout>
-
-                        <LinearLayout
-                            android:id="@+id/currencyDropdown"
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:gravity="center_vertical"
-                            android:orientation="horizontal"
-                            android:clickable="true"
-                            android:focusable="true"
-                            android:background="?attr/selectableItemBackgroundBorderless">
-
-                            <EditText
-                                android:id="@+id/fromAmountInput"
-                                android:layout_width="wrap_content"
-                                android:layout_height="wrap_content"
-                                android:layout_marginEnd="4dp"
-                                android:background="@android:color/transparent"
-                                android:fontFamily="@font/space_grotesk_medium"
-                                android:hint="$0"
-                                android:inputType="numberDecimal"
-                                android:maxLength="12"
-                                android:minWidth="80dp"
-                                android:textAlignment="textEnd"
-                                android:textColor="?attr/colorOnSurface"
-                                android:textColorHint="#444444"
-                                android:textColorHighlight="#444444"
-                                android:textColorLink="@color/text_white"
-                                android:textCursorDrawable="@null"
-                                android:textSize="40sp" />
-
-                            <TextView
-                                android:id="@+id/currencyLabel"
-                                android:layout_width="wrap_content"
-                                android:layout_height="wrap_content"
-                                android:text="USD"
-                                android:textSize="14sp"
-                                android:textColor="?attr/colorOnSurfaceVariant"
-                                android:fontFamily="@font/poppins_medium"
-                                android:layout_marginEnd="4dp" />
-
-                            <ImageView
-                                android:layout_width="20dp"
-                                android:layout_height="20dp"
-                                android:src="@drawable/ic_arrow_forward"
-                                android:rotation="90"
-                                app:tint="?attr/colorOnSurfaceVariant"
-                                android:contentDescription="Dropdown" />
-                        </LinearLayout>
-                    </LinearLayout>
-                </LinearLayout>
-            </androidx.cardview.widget.CardView>
-
-            <!-- Swap Direction Button -->
-            <FrameLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginVertical="8dp">
-
-                <ImageButton
-                    android:id="@+id/swapDirectionButton"
-                    android:layout_width="56dp"
-                    android:layout_height="56dp"
-                    android:layout_gravity="center"
-                    android:background="@drawable/settings_icon_bg"
-                    android:contentDescription="Swap direction"
-                    android:padding="12dp"
-                    android:src="@drawable/ic_swap_arrows" />
-            </FrameLayout>
-
-            <!-- To Card -->
-            <androidx.cardview.widget.CardView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="8dp"
-                app:cardBackgroundColor="#0A0A0A"
-                app:cardCornerRadius="16dp"
-                app:cardElevation="0dp">
-
-                <LinearLayout
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:orientation="vertical"
-                    android:padding="20dp">
-
+                    <!-- Token selector pill -->
                     <LinearLayout
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
+                        android:id="@+id/fromTokenSelector"
+                        android:layout_width="wrap_content"
+                        android:layout_height="34dp"
+                        android:orientation="horizontal"
                         android:gravity="center_vertical"
-                        android:orientation="horizontal">
+                        android:background="@drawable/swap_token_pill_bg"
+                        android:paddingStart="6dp"
+                        android:paddingEnd="10dp"
+                        android:clickable="true"
+                        android:focusable="true">
 
-                        <LinearLayout
-                            android:layout_width="0dp"
-                            android:layout_height="wrap_content"
-                            android:layout_weight="1"
-                            android:orientation="vertical">
-
-                            <TextView
-                                android:id="@+id/toTokenText"
-                                android:layout_width="wrap_content"
-                                android:layout_height="wrap_content"
-                                android:drawableEnd="@drawable/ic_arrow_forward"
-                                android:drawablePadding="8dp"
-                                android:fontFamily="@font/poppins_semibold"
-                                android:text="ZEC"
-                                android:textColor="?attr/colorOnSurface"
-                                android:textSize="24sp"
-                                android:clickable="true"
-                                android:focusable="true"
-                                android:background="?attr/selectableItemBackgroundBorderless"
-                                app:drawableTint="@color/text_gray" />
-
-                            <TextView
-                                android:id="@+id/toWalletNameText"
-                                android:layout_width="wrap_content"
-                                android:layout_height="wrap_content"
-                                android:layout_marginTop="4dp"
-                                android:fontFamily="@font/poppins_medium"
-                                android:text="Wallet"
-                                android:textColor="#AAAAAA"
-                                android:textSize="13sp" />
-
-                            <TextView
-                                android:id="@+id/toWalletAddressText"
-                                android:layout_width="wrap_content"
-                                android:layout_height="wrap_content"
-                                android:layout_marginTop="2dp"
-                                android:fontFamily="monospace"
-                                android:text="----"
-                                android:textColor="#666666"
-                                android:textSize="11sp" />
-
-                            <TextView
-                                android:id="@+id/toBalanceText"
-                                android:layout_width="wrap_content"
-                                android:layout_height="wrap_content"
-                                android:layout_marginTop="4dp"
-                                android:fontFamily="@font/poppins_regular"
-                                android:text="Balance: Loading..."
-                                android:textColor="#666666"
-                                android:textSize="14sp" />
-                        </LinearLayout>
+                        <ImageView
+                            android:id="@+id/fromTokenIcon"
+                            android:layout_width="22dp"
+                            android:layout_height="22dp"
+                            android:src="@drawable/ic_solana"
+                            android:contentDescription="From token" />
 
                         <TextView
-                            android:id="@+id/toAmountText"
+                            android:id="@+id/fromTokenText"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
-                            android:fontFamily="@font/space_grotesk_medium"
-                            android:minWidth="80dp"
-                            android:text="$0.00"
-                            android:textAlignment="textEnd"
+                            android:text="SOL"
+                            android:textSize="13sp"
                             android:textColor="?attr/colorOnSurface"
-                            android:textSize="40sp" />
-                    </LinearLayout>
-                </LinearLayout>
-            </androidx.cardview.widget.CardView>
+                            android:fontFamily="@font/poppins_medium"
+                            android:layout_marginStart="6dp" />
 
-            <!-- Swap Button -->
+                        <ImageView
+                            android:layout_width="14dp"
+                            android:layout_height="14dp"
+                            android:layout_marginStart="4dp"
+                            android:src="@drawable/ic_arrow_down"
+                            app:tint="#888888"
+                            android:contentDescription="Select token" />
+
+                    </LinearLayout>
+
+                </LinearLayout>
+
+                <!-- Amount (large) -->
+                <EditText
+                    android:id="@+id/fromAmountInput"
+                    android:layout_width="match_parent"
+                    android:layout_height="0dp"
+                    android:layout_weight="1"
+                    android:background="@android:color/transparent"
+                    android:fontFamily="@font/space_grotesk_bold"
+                    android:gravity="bottom"
+                    android:hint="0"
+                    android:inputType="numberDecimal"
+                    android:maxLength="12"
+                    android:textColor="?attr/colorOnSurface"
+                    android:textColorHint="#333333"
+                    android:textCursorDrawable="@null"
+                    android:textSize="40sp" />
+
+                <!-- Balance row -->
+                <TextView
+                    android:id="@+id/fromBalanceText"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Balance: 0.0000"
+                    android:textSize="12sp"
+                    android:textColor="#666666"
+                    android:fontFamily="@font/poppins_regular"
+                    android:layout_marginTop="2dp" />
+
+            </LinearLayout>
+
+            <!-- ============ SWAP CIRCLE (slightly overlaps both cards) ============ -->
+            <FrameLayout
+                android:id="@+id/swapDirectionButton"
+                android:layout_width="48dp"
+                android:layout_height="48dp"
+                android:layout_gravity="center_horizontal"
+                android:layout_marginTop="-18dp"
+                android:layout_marginBottom="-18dp"
+                android:elevation="4dp"
+                android:background="@drawable/swap_circle_bg"
+                android:clickable="true"
+                android:focusable="true">
+
+                <ImageView
+                    android:layout_width="20dp"
+                    android:layout_height="20dp"
+                    android:layout_gravity="center"
+                    android:src="@drawable/ic_swap_horizontal"
+                    android:contentDescription="Swap direction" />
+
+            </FrameLayout>
+
+            <!-- ============ TO CARD ============ -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="150dp"
+                android:orientation="vertical"
+                android:background="@drawable/swap_card_bottom_bg"
+                android:paddingStart="20dp"
+                android:paddingEnd="20dp"
+                android:paddingTop="16dp"
+                android:paddingBottom="16dp">
+
+                <!-- Top row: label + token pill -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical">
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="Assets Swap"
+                        android:textSize="14sp"
+                        android:textColor="#888888"
+                        android:fontFamily="@font/poppins_regular" />
+
+                    <!-- Token selector pill -->
+                    <LinearLayout
+                        android:id="@+id/toTokenSelector"
+                        android:layout_width="wrap_content"
+                        android:layout_height="34dp"
+                        android:orientation="horizontal"
+                        android:gravity="center_vertical"
+                        android:background="@drawable/swap_token_pill_bg"
+                        android:paddingStart="6dp"
+                        android:paddingEnd="10dp"
+                        android:clickable="true"
+                        android:focusable="true">
+
+                        <ImageView
+                            android:id="@+id/toTokenIcon"
+                            android:layout_width="22dp"
+                            android:layout_height="22dp"
+                            android:src="@drawable/ic_usdc"
+                            android:contentDescription="To token" />
+
+                        <TextView
+                            android:id="@+id/toTokenText"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="USDC"
+                            android:textSize="13sp"
+                            android:textColor="?attr/colorOnSurface"
+                            android:fontFamily="@font/poppins_medium"
+                            android:layout_marginStart="6dp" />
+
+                        <ImageView
+                            android:layout_width="14dp"
+                            android:layout_height="14dp"
+                            android:layout_marginStart="4dp"
+                            android:src="@drawable/ic_arrow_down"
+                            app:tint="#888888"
+                            android:contentDescription="Select token" />
+
+                    </LinearLayout>
+
+                </LinearLayout>
+
+                <!-- Amount (large, read-only) -->
+                <TextView
+                    android:id="@+id/toAmountText"
+                    android:layout_width="match_parent"
+                    android:layout_height="0dp"
+                    android:layout_weight="1"
+                    android:fontFamily="@font/space_grotesk_bold"
+                    android:gravity="bottom"
+                    android:text="0"
+                    android:textColor="?attr/colorOnSurface"
+                    android:textSize="40sp" />
+
+                <!-- Balance row -->
+                <TextView
+                    android:id="@+id/toBalanceText"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Balance: 0.0000"
+                    android:textSize="12sp"
+                    android:textColor="#666666"
+                    android:fontFamily="@font/poppins_regular"
+                    android:layout_marginTop="2dp" />
+
+            </LinearLayout>
+
+            <!-- ============ SWAP BUTTON ============ -->
             <androidx.appcompat.widget.AppCompatButton
                 android:id="@+id/swapButton"
                 android:layout_width="match_parent"
@@ -327,6 +301,7 @@
                 android:textAllCaps="false"
                 android:textColor="?attr/colorOnSurface"
                 android:textSize="16sp" />
+
         </LinearLayout>
     </ScrollView>
 </LinearLayout>

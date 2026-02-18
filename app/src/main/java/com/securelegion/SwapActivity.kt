@@ -1,8 +1,8 @@
 package com.securelegion
 
-import android.graphics.LinearGradient
-import android.graphics.Shader
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.text.Editable
 import android.text.TextWatcher
 import android.util.Log
@@ -10,16 +10,16 @@ import android.view.View
 import android.widget.Button
 import android.widget.EditText
 import android.widget.ImageView
+import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
-import com.google.android.material.bottomsheet.BottomSheetDialog
 import com.securelegion.utils.GlassBottomSheetDialog
 import com.securelegion.crypto.KeyManager
 import com.securelegion.database.SecureLegionDatabase
 import com.securelegion.database.entities.Wallet
+import com.securelegion.services.JupiterService
 import com.securelegion.services.SolanaService
-import com.securelegion.services.ZcashService
 import com.securelegion.utils.ThemedToast
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -28,43 +28,44 @@ import kotlinx.coroutines.withContext
 class SwapActivity : AppCompatActivity() {
 
     private lateinit var backButton: View
-    private lateinit var menuButton: View
-
-    // Currency dropdown
-    private lateinit var currencyDropdown: View
-    private lateinit var currencyLabel: TextView
 
     // From (top) card
+    private lateinit var fromTokenSelector: View
+    private lateinit var fromTokenIcon: ImageView
     private lateinit var fromTokenText: TextView
-    private lateinit var fromWalletNameText: TextView
-    private lateinit var fromWalletAddressText: TextView
     private lateinit var fromBalanceText: TextView
     private lateinit var fromAmountInput: EditText
 
     // To (bottom) card
+    private lateinit var toTokenSelector: View
+    private lateinit var toTokenIcon: ImageView
     private lateinit var toTokenText: TextView
-    private lateinit var toWalletNameText: TextView
-    private lateinit var toWalletAddressText: TextView
     private lateinit var toBalanceText: TextView
     private lateinit var toAmountText: TextView
 
     // Swap button
-    private lateinit var swapDirectionButton: ImageView
+    private lateinit var swapDirectionButton: View
     private lateinit var swapButton: Button
 
     private var fromToken = "SOL"
-    private var toToken = "ZEC"
+    private var toToken = "USDC"
     private var fromBalance = 0.0
     private var toBalance = 0.0
-    private var showUSD = true // Toggle between USD and token display
 
     // Selected wallets
     private var fromWallet: Wallet? = null
     private var toWallet: Wallet? = null
     private var availableWallets: List<Wallet> = emptyList()
 
-    // Exchange rate (example, would come from API)
-    private val exchangeRate = 0.9347 // 1 SOL = 0.9347 ZEC
+    // Jupiter integration
+    private val jupiterService = JupiterService()
+    private var currentOrder: JupiterService.JupiterOrder? = null
+    private val quoteHandler = Handler(Looper.getMainLooper())
+    private var quoteRunnable: Runnable? = null
+    private var isFetchingQuote = false
+
+    // Supported tokens for Solana swap
+    private val supportedTokens = listOf("SOL", "USDC", "USDT", "ZEC", "USD1", "SECURE")
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -74,25 +75,25 @@ class SwapActivity : AppCompatActivity() {
         setupClickListeners()
         setupTextWatcher()
         loadWalletBalances()
-        applySilverGradient()
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        quoteRunnable?.let { quoteHandler.removeCallbacks(it) }
     }
 
     private fun initializeViews() {
         backButton = findViewById(R.id.backButton)
-        menuButton = findViewById(R.id.menuButton)
 
-        currencyDropdown = findViewById(R.id.currencyDropdown)
-        currencyLabel = findViewById(R.id.currencyLabel)
-
+        fromTokenSelector = findViewById(R.id.fromTokenSelector)
+        fromTokenIcon = findViewById(R.id.fromTokenIcon)
         fromTokenText = findViewById(R.id.fromTokenText)
-        fromWalletNameText = findViewById(R.id.fromWalletNameText)
-        fromWalletAddressText = findViewById(R.id.fromWalletAddressText)
         fromBalanceText = findViewById(R.id.fromBalanceText)
         fromAmountInput = findViewById(R.id.fromAmountInput)
 
+        toTokenSelector = findViewById(R.id.toTokenSelector)
+        toTokenIcon = findViewById(R.id.toTokenIcon)
         toTokenText = findViewById(R.id.toTokenText)
-        toWalletNameText = findViewById(R.id.toWalletNameText)
-        toWalletAddressText = findViewById(R.id.toWalletAddressText)
         toBalanceText = findViewById(R.id.toBalanceText)
         toAmountText = findViewById(R.id.toAmountText)
 
@@ -103,34 +104,15 @@ class SwapActivity : AppCompatActivity() {
     }
 
     private fun setupClickListeners() {
-        backButton.setOnClickListener {
-            finish()
-        }
+        backButton.setOnClickListener { finish() }
 
-        menuButton.setOnClickListener {
-            // Show options menu (history, settings, etc.)
-            ThemedToast.show(this, "Menu coming soon")
-        }
+        swapDirectionButton.setOnClickListener { swapDirection() }
 
-        swapDirectionButton.setOnClickListener {
-            swapDirection()
-        }
+        swapButton.setOnClickListener { showSwapConfirmation() }
 
-        swapButton.setOnClickListener {
-            showSwapConfirmation()
-        }
+        fromTokenSelector.setOnClickListener { showTokenPicker(isFromToken = true) }
 
-        currencyDropdown.setOnClickListener {
-            toggleCurrencyDisplay()
-        }
-
-        fromTokenText.setOnClickListener {
-            showWalletSelector(isFromWallet = true)
-        }
-
-        toTokenText.setOnClickListener {
-            showWalletSelector(isFromWallet = false)
-        }
+        toTokenSelector.setOnClickListener { showTokenPicker(isFromToken = false) }
     }
 
     private fun setupTextWatcher() {
@@ -139,7 +121,24 @@ class SwapActivity : AppCompatActivity() {
             override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
 
             override fun afterTextChanged(s: Editable?) {
-                updateToAmount()
+                // Cancel any pending quote fetch
+                quoteRunnable?.let { quoteHandler.removeCallbacks(it) }
+                currentOrder = null
+
+                val inputText = s.toString()
+                val inputAmount = inputText.toDoubleOrNull() ?: 0.0
+
+                if (inputAmount <= 0) {
+                    toAmountText.text = "0"
+                    return
+                }
+
+                // Show loading state
+                toAmountText.text = "..."
+
+                // Debounce: fetch quote after 500ms of no typing
+                quoteRunnable = Runnable { fetchQuote() }
+                quoteHandler.postDelayed(quoteRunnable!!, 500)
             }
         })
     }
@@ -152,33 +151,24 @@ class SwapActivity : AppCompatActivity() {
                 val database = SecureLegionDatabase.getInstance(this@SwapActivity, dbPassphrase)
                 val allWallets = database.walletDao().getAllWallets()
 
-                // Filter out main wallet
-                availableWallets = allWallets.filter { it.walletId != "main" }
-
-                // Auto-select wallets if only one of each type
-                val solWallets = availableWallets.filter { it.solanaAddress.isNotEmpty() }
-                val zecWallets = availableWallets.filter { it.zcashAddress != null }
+                // Filter to wallets with Solana addresses
+                availableWallets = allWallets.filter {
+                    it.walletId != "main" && it.solanaAddress.isNotEmpty()
+                }
 
                 withContext(Dispatchers.Main) {
-                    if (solWallets.size == 1 && zecWallets.size == 1) {
-                        // Auto-select if only one of each
-                        fromWallet = solWallets.first()
-                        toWallet = zecWallets.first()
-                        fromToken = "SOL"
-                        toToken = "ZEC"
-                    } else if (availableWallets.isNotEmpty()) {
-                        // Select the most recently used wallet
+                    if (availableWallets.isNotEmpty()) {
                         val defaultWallet = availableWallets.maxByOrNull { it.lastUsedAt }
                         if (defaultWallet != null) {
                             fromWallet = defaultWallet
-                            fromToken = if (defaultWallet.zcashAddress != null) "ZEC" else "SOL"
+                            toWallet = defaultWallet
+                            loadBalanceForWallet(defaultWallet)
                         }
                     }
-
                     updateDisplay()
                 }
             } catch (e: Exception) {
-                Log.e("SwapActivity", "Failed to load wallet balances", e)
+                Log.e(TAG, "Failed to load wallet balances", e)
                 withContext(Dispatchers.Main) {
                     updateDisplay()
                 }
@@ -186,77 +176,55 @@ class SwapActivity : AppCompatActivity() {
         }
     }
 
-    private fun loadBalanceForWallet(wallet: Wallet, isFromWallet: Boolean) {
+    private fun loadBalanceForWallet(wallet: Wallet) {
         lifecycleScope.launch(Dispatchers.IO) {
             try {
-                val keyManager = KeyManager.getInstance(this@SwapActivity)
+                val solanaService = SolanaService(this@SwapActivity)
 
-                val balance = if (wallet.zcashAddress != null) {
-                    // Zcash wallet
-                    val zcashService = ZcashService.getInstance(this@SwapActivity)
-                    val zcashBalanceResult = zcashService.getBalance()
-                    zcashBalanceResult.getOrDefault(0.0)
-                } else {
-                    // Solana wallet
-                    val solanaService = SolanaService(this@SwapActivity)
-                    val solBalanceResult = solanaService.getBalance(wallet.solanaAddress)
-                    solBalanceResult.getOrDefault(0.0)
-                }
+                // Load SOL balance
+                val solBalanceResult = solanaService.getBalance(wallet.solanaAddress)
+                val solBalance = solBalanceResult.getOrDefault(0.0)
+
+                // Load SPL token balances
+                val tokenResult = solanaService.getTokenAccounts(wallet.solanaAddress)
+                val tokens = tokenResult.getOrDefault(emptyList())
+
+                val usdcBalance = tokens.find { it.mint == JupiterService.USDC_MINT }?.balance ?: 0.0
+                val usdtBalance = tokens.find { it.mint == JupiterService.USDT_MINT }?.balance ?: 0.0
+                val zecBalance = tokens.find { it.mint == JupiterService.ZEC_MINT }?.balance ?: 0.0
+                val usd1Balance = tokens.find { it.mint == JupiterService.USD1_MINT }?.balance ?: 0.0
+                val secureBalance = tokens.find { it.mint == JupiterService.SECURE_MINT }?.balance ?: 0.0
 
                 withContext(Dispatchers.Main) {
-                    if (isFromWallet) {
-                        fromBalance = balance
-                    } else {
-                        toBalance = balance
-                    }
+                    fromBalance = getTokenBalance(fromToken, solBalance, usdcBalance, usdtBalance, zecBalance, usd1Balance, secureBalance)
+                    toBalance = getTokenBalance(toToken, solBalance, usdcBalance, usdtBalance, zecBalance, usd1Balance, secureBalance)
                     updateDisplay()
                 }
             } catch (e: Exception) {
-                Log.e("SwapActivity", "Failed to load balance for wallet ${wallet.name}", e)
+                Log.e(TAG, "Failed to load balance for wallet ${wallet.name}", e)
             }
         }
     }
 
-    private fun applySilverGradient() {
-        // Apply silver gradient to amount text views
-        fromAmountInput.post {
-            val width = fromAmountInput.width.toFloat()
-            if (width > 0) {
-                val shader = LinearGradient(
-                    0f, 0f, width, 0f,
-                    intArrayOf(0xFFE8E8E8.toInt(), 0xFFC0C0C0.toInt(), 0xFFA8A8A8.toInt()),
-                    floatArrayOf(0f, 0.5f, 1f),
-                    Shader.TileMode.CLAMP
-                )
-                fromAmountInput.paint.shader = shader
-                fromAmountInput.invalidate()
-            }
-        }
-
-        toAmountText.post {
-            val width = toAmountText.width.toFloat()
-            if (width > 0) {
-                val shader = LinearGradient(
-                    0f, 0f, width, 0f,
-                    intArrayOf(0xFFE8E8E8.toInt(), 0xFFC0C0C0.toInt(), 0xFFA8A8A8.toInt()),
-                    floatArrayOf(0f, 0.5f, 1f),
-                    Shader.TileMode.CLAMP
-                )
-                toAmountText.paint.shader = shader
-                toAmountText.invalidate()
-            }
-        }
-    }
-
-    private fun toggleCurrencyDisplay() {
-        showUSD = !showUSD
-        currencyLabel.text = if (showUSD) "USD" else fromToken
-        updateDisplay()
-        updateToAmount()
+    private fun getTokenBalance(
+        token: String,
+        sol: Double,
+        usdc: Double,
+        usdt: Double,
+        zec: Double = 0.0,
+        usd1: Double = 0.0,
+        secure: Double = 0.0
+    ): Double = when (token) {
+        "SOL" -> sol
+        "USDC" -> usdc
+        "USDT" -> usdt
+        "ZEC" -> zec
+        "USD1" -> usd1
+        "SECURE" -> secure
+        else -> 0.0
     }
 
     private fun swapDirection() {
-        // Swap from/to tokens
         val tempToken = fromToken
         fromToken = toToken
         toToken = tempToken
@@ -265,105 +233,110 @@ class SwapActivity : AppCompatActivity() {
         fromBalance = toBalance
         toBalance = tempBalance
 
-        // Clear input when swapping
+        // Clear input and quote
         fromAmountInput.setText("")
-
-        // Update currency label if not showing USD
-        if (!showUSD) {
-            currencyLabel.text = fromToken
-        }
+        currentOrder = null
 
         updateDisplay()
     }
 
     private fun updateDisplay() {
-        // Update token names
+        // Token names
         fromTokenText.text = fromToken
         toTokenText.text = toToken
 
-        // Update wallet names and addresses
-        if (fromWallet != null) {
-            fromWalletNameText.text = fromWallet!!.name
-            val address = if (fromToken == "SOL") fromWallet!!.solanaAddress else fromWallet!!.zcashAddress
-            fromWalletAddressText.text = if (address != null && address.length > 10) {
-                "${address.take(5)}...${address.takeLast(5)}"
-            } else {
-                "----"
-            }
-        } else {
-            fromWalletNameText.text = "No Wallet"
-            fromWalletAddressText.text = "----"
-        }
+        // Token icons
+        fromTokenIcon.setImageResource(getTokenIcon(fromToken))
+        toTokenIcon.setImageResource(getTokenIcon(toToken))
 
-        if (toWallet != null) {
-            toWalletNameText.text = toWallet!!.name
-            val address = if (toToken == "SOL") toWallet!!.solanaAddress else toWallet!!.zcashAddress
-            toWalletAddressText.text = if (address != null && address.length > 10) {
-                "${address.take(5)}...${address.takeLast(5)}"
-            } else {
-                "----"
-            }
-        } else {
-            toWalletNameText.text = "No Wallet"
-            toWalletAddressText.text = "----"
-        }
-
-        // Update balances
-        if (showUSD) {
-            fromBalanceText.text = "Balance $${String.format("%,.2f", fromBalance)}"
-            toBalanceText.text = "Balance $${String.format("%,.2f", toBalance)}"
-        } else {
-            // Show token amounts instead of USD
-            val fromTokenBalance = fromBalance / 100.0 // Placeholder conversion
-            val toTokenBalance = toBalance / 100.0 // Placeholder conversion
-            fromBalanceText.text = "Balance ${String.format("%.4f", fromTokenBalance)} $fromToken"
-            toBalanceText.text = "Balance ${String.format("%.4f", toTokenBalance)} $toToken"
-        }
+        // Balances
+        fromBalanceText.text = "Balance: ${String.format("%.4f", fromBalance)} $fromToken"
+        toBalanceText.text = "Balance: ${String.format("%.4f", toBalance)} $toToken"
     }
 
-    private fun updateToAmount() {
+    private fun fetchQuote() {
         val inputText = fromAmountInput.text.toString()
+        val inputAmount = inputText.toDoubleOrNull() ?: return
 
-        if (inputText.isEmpty() || inputText == "$") {
-            toAmountText.text = if (showUSD) "$0.00" else "0.0000"
+        if (inputAmount <= 0) return
+
+        val wallet = fromWallet
+        if (wallet == null) {
+            ThemedToast.show(this, "No wallet selected")
             return
         }
 
-        // Remove $ if present
-        val cleanInput = inputText.replace("$", "")
-
-        val inputAmount = cleanInput.toDoubleOrNull() ?: 0.0
-
-        // Calculate exchange amount
-        val outputAmount = inputAmount * exchangeRate
-
-        if (showUSD) {
-            toAmountText.text = "$${String.format("%.2f", outputAmount)}"
-        } else {
-            toAmountText.text = String.format("%.4f", outputAmount)
+        if (fromToken == toToken) {
+            ThemedToast.show(this, "Select different tokens")
+            return
         }
 
-        // Reapply gradient after text change
-        applySilverGradient()
+        isFetchingQuote = true
+        toAmountText.text = "..."
+
+        val inputMint = jupiterService.getMint(fromToken)
+        val outputMint = jupiterService.getMint(toToken)
+        val amountSmallest = jupiterService.toSmallestUnits(inputAmount, inputMint)
+
+        lifecycleScope.launch {
+            try {
+                // Try with referral first, fallback without if it fails
+                var result = withContext(Dispatchers.IO) {
+                    jupiterService.getOrder(
+                        inputMint = inputMint,
+                        outputMint = outputMint,
+                        amount = amountSmallest,
+                        taker = wallet.solanaAddress
+                    )
+                }
+
+                // If referral caused an error, retry without it
+                if (result.isFailure) {
+                    Log.w(TAG, "Quote with referral failed, retrying without: ${result.exceptionOrNull()?.message}")
+                    result = withContext(Dispatchers.IO) {
+                        jupiterService.getOrder(
+                            inputMint = inputMint,
+                            outputMint = outputMint,
+                            amount = amountSmallest,
+                            taker = wallet.solanaAddress,
+                            referralAccount = null,
+                            referralFee = null
+                        )
+                    }
+                }
+
+                result.onSuccess { order ->
+                    currentOrder = order
+                    val outputAmount = jupiterService.fromSmallestUnits(order.outAmount, outputMint)
+                    toAmountText.text = String.format("%.4f", outputAmount)
+                }.onFailure { e ->
+                    Log.e(TAG, "Quote fetch failed", e)
+                    toAmountText.text = "Error"
+                    currentOrder = null
+                    ThemedToast.show(this@SwapActivity, "Quote failed: ${e.message?.take(80)}")
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Quote fetch exception", e)
+                toAmountText.text = "Error"
+                currentOrder = null
+                ThemedToast.show(this@SwapActivity, "Quote failed: ${e.message?.take(80)}")
+            } finally {
+                isFetchingQuote = false
+            }
+        }
     }
 
     private fun showSwapConfirmation() {
-        val inputText = fromAmountInput.text.toString().replace("$", "")
-
-        if (inputText.isEmpty()) {
-            ThemedToast.show(this, "Please enter an amount")
+        val order = currentOrder
+        if (order == null) {
+            ThemedToast.show(this, "Enter an amount and wait for a quote")
             return
         }
 
+        val inputText = fromAmountInput.text.toString()
         val inputAmount = inputText.toDoubleOrNull()
-
-        if (inputAmount == null) {
-            ThemedToast.show(this, "Invalid amount")
-            return
-        }
-
-        if (inputAmount <= 0) {
-            ThemedToast.show(this, "Amount must be greater than zero")
+        if (inputAmount == null || inputAmount <= 0) {
+            ThemedToast.show(this, "Enter a valid amount")
             return
         }
 
@@ -372,36 +345,31 @@ class SwapActivity : AppCompatActivity() {
             return
         }
 
-        val outputAmount = inputAmount * exchangeRate
-        val exchangeFee = inputAmount * 0.005 // 0.5% fee
-        val networkFee = 0.0
+        val inputMint = jupiterService.getMint(fromToken)
+        val outputMint = jupiterService.getMint(toToken)
+        val outputAmount = jupiterService.fromSmallestUnits(order.outAmount, outputMint)
+        val platformFee = jupiterService.fromSmallestUnits(order.platformFeeAmount, inputMint)
+        val networkFeeSol = order.signatureFeeLamports.toDouble() / 1_000_000_000.0
 
-        // Create and show bottom sheet
         val bottomSheetDialog = GlassBottomSheetDialog(this)
         val view = layoutInflater.inflate(R.layout.bottom_sheet_swap_confirm, null)
         bottomSheetDialog.setContentView(view)
 
-        // Populate amounts
-        val fromAmountView = view.findViewById<TextView>(R.id.fromAmount)
-        val toAmountView = view.findViewById<TextView>(R.id.toAmount)
+        view.findViewById<TextView>(R.id.fromAmount).text =
+            "${String.format("%.4f", inputAmount)} $fromToken"
+        view.findViewById<TextView>(R.id.toAmount).text =
+            "${String.format("%.4f", outputAmount)} $toToken"
 
-        if (showUSD) {
-            fromAmountView.text = "$${String.format("%.2f", inputAmount)}"
-            toAmountView.text = "$${String.format("%.2f", outputAmount)}"
-        } else {
-            fromAmountView.text = String.format("%.4f", inputAmount)
-            toAmountView.text = String.format("%.4f", outputAmount)
-        }
+        view.findViewById<TextView>(R.id.fromWallet).text =
+            "$fromToken - ${fromWallet?.name ?: "Wallet"}"
+        view.findViewById<TextView>(R.id.toWallet).text =
+            "$toToken - ${fromWallet?.name ?: "Wallet"}"
 
-        // Populate wallet details
-        view.findViewById<TextView>(R.id.fromWallet).text = "$fromToken - Wallet 1"
-        view.findViewById<TextView>(R.id.toWallet).text = "$toToken - Wallet 2"
+        view.findViewById<TextView>(R.id.exchangeFee).text =
+            if (platformFee > 0) String.format("%.6f %s", platformFee, fromToken) else "Free"
+        view.findViewById<TextView>(R.id.networkFee).text =
+            String.format("%.6f SOL", networkFeeSol)
 
-        // Populate fees
-        view.findViewById<TextView>(R.id.exchangeFee).text = String.format("%.2f", exchangeFee)
-        view.findViewById<TextView>(R.id.networkFee).text = String.format("%.2f", networkFee)
-
-        // Set up confirm button
         view.findViewById<Button>(R.id.confirmButton).setOnClickListener {
             bottomSheetDialog.dismiss()
             executeSwap()
@@ -411,84 +379,85 @@ class SwapActivity : AppCompatActivity() {
     }
 
     private fun executeSwap() {
-        val inputText = fromAmountInput.text.toString().replace("$", "")
-
-        if (inputText.isEmpty()) {
-            ThemedToast.show(this, "Please enter an amount")
-            return
-        }
-
-        val inputAmount = inputText.toDoubleOrNull()
-
-        if (inputAmount == null) {
-            ThemedToast.show(this, "Invalid amount")
-            return
-        }
-
-        if (inputAmount <= 0) {
-            ThemedToast.show(this, "Amount must be greater than zero")
-            return
-        }
-
-        if (inputAmount > fromBalance) {
-            ThemedToast.show(this, "Insufficient balance")
-            return
-        }
+        val order = currentOrder ?: return
 
         lifecycleScope.launch {
             try {
-                // TODO: Implement actual swap functionality with blockchain APIs
-                // For now, just simulate the swap
-                val outputAmount: Double
-                val exchangeFee: Double
+                swapButton.isEnabled = false
+                swapButton.text = "Swapping..."
 
-                withContext(Dispatchers.IO) {
-                    outputAmount = inputAmount * exchangeRate
-                    exchangeFee = inputAmount * 0.005
+                val keyManager = KeyManager.getInstance(this@SwapActivity)
+                val wallet = fromWallet ?: throw Exception("No wallet selected")
 
-                    // Update local balances (placeholder - not persisted)
-                    fromBalance -= inputAmount
-                    toBalance += outputAmount
-
-                    // Simulate network delay
-                    kotlinx.coroutines.delay(500)
+                val privateKey = if (!wallet.isMainWallet) {
+                    keyManager.getWalletPrivateKey(wallet.walletId)
+                        ?: throw Exception("Wallet key not found")
+                } else {
+                    keyManager.getSigningKeyBytes()
                 }
 
-                withContext(Dispatchers.Main) {
-                    fromAmountInput.setText("")
-                    updateDisplay()
-                    showSwapSuccess(inputAmount, outputAmount, exchangeFee)
+                val signedTx = withContext(Dispatchers.IO) {
+                    jupiterService.signTransaction(order.transaction, privateKey)
                 }
-            } catch (e: Exception) {
-                android.util.Log.e("SwapActivity", "Failed to execute swap", e)
-                withContext(Dispatchers.Main) {
+
+                val result = withContext(Dispatchers.IO) {
+                    jupiterService.execute(signedTx, order.requestId)
+                }
+
+                result.onSuccess { execResult ->
+                    if (execResult.status == "Success") {
+                        showSwapSuccess(order, execResult.signature)
+                        fromWallet?.let { loadBalanceForWallet(it) }
+                    } else {
+                        ThemedToast.show(this@SwapActivity, "Swap failed: ${execResult.status}")
+                    }
+                }.onFailure { e ->
                     ThemedToast.show(this@SwapActivity, "Swap failed: ${e.message}")
                 }
+            } catch (e: Exception) {
+                Log.e(TAG, "Swap execution failed", e)
+                ThemedToast.show(this@SwapActivity, "Swap failed: ${e.message}")
+            } finally {
+                swapButton.isEnabled = true
+                swapButton.text = "Swap"
+                currentOrder = null
+                fromAmountInput.setText("")
             }
         }
     }
 
-    private fun showSwapSuccess(inputAmount: Double, outputAmount: Double, exchangeFee: Double) {
+    private fun showSwapSuccess(order: JupiterService.JupiterOrder, txSignature: String) {
         val bottomSheetDialog = GlassBottomSheetDialog(this)
         val view = layoutInflater.inflate(R.layout.bottom_sheet_swap_success, null)
         bottomSheetDialog.setContentView(view)
 
-        // Populate swap details
-        if (showUSD) {
-            view.findViewById<TextView>(R.id.fromDetails).text = "$${String.format("%.2f", inputAmount)} $fromToken"
-            view.findViewById<TextView>(R.id.toDetails).text = "$${String.format("%.2f", outputAmount)} $toToken"
-            view.findViewById<TextView>(R.id.exchangeFeeDetails).text = "$${String.format("%.2f", exchangeFee)}"
+        val inputMint = jupiterService.getMint(fromToken)
+        val outputMint = jupiterService.getMint(toToken)
+        val inAmount = jupiterService.fromSmallestUnits(order.inAmount, inputMint)
+        val outAmount = jupiterService.fromSmallestUnits(order.outAmount, outputMint)
+        val platformFee = jupiterService.fromSmallestUnits(order.platformFeeAmount, inputMint)
+        val networkFeeSol = order.signatureFeeLamports.toDouble() / 1_000_000_000.0
+
+        val rate = if (inAmount > 0) outAmount / inAmount else 0.0
+
+        view.findViewById<TextView>(R.id.fromDetails).text =
+            "${String.format("%.4f", inAmount)} $fromToken"
+        view.findViewById<TextView>(R.id.toDetails).text =
+            "${String.format("%.4f", outAmount)} $toToken"
+        view.findViewById<TextView>(R.id.exchangeRate).text =
+            "1 $fromToken = ${String.format("%.4f", rate)} $toToken"
+        view.findViewById<TextView>(R.id.exchangeFeeDetails).text =
+            if (platformFee > 0) String.format("%.6f %s", platformFee, fromToken) else "Free"
+        view.findViewById<TextView>(R.id.networkFeeDetails).text =
+            String.format("%.6f SOL", networkFeeSol)
+
+        val shortSig = if (txSignature.length > 16) {
+            "${txSignature.take(8)}...${txSignature.takeLast(8)}"
         } else {
-            view.findViewById<TextView>(R.id.fromDetails).text = "${String.format("%.4f", inputAmount)} $fromToken"
-            view.findViewById<TextView>(R.id.toDetails).text = "${String.format("%.4f", outputAmount)} $toToken"
-            view.findViewById<TextView>(R.id.exchangeFeeDetails).text = "${String.format("%.4f", exchangeFee)}"
+            txSignature
         }
+        view.findViewById<TextView>(R.id.transactionId).text = shortSig
 
-        view.findViewById<TextView>(R.id.exchangeRate).text = "1 $fromToken = $exchangeRate $toToken"
-        view.findViewById<TextView>(R.id.networkFeeDetails).text = "$0.00"
-        view.findViewById<TextView>(R.id.transactionId).text = "0x${System.currentTimeMillis().toString(16).takeLast(8)}"
-
-        // Set up back to home button
         view.findViewById<Button>(R.id.backToHomeButton).setOnClickListener {
             bottomSheetDialog.dismiss()
             finish()
@@ -497,63 +466,104 @@ class SwapActivity : AppCompatActivity() {
         bottomSheetDialog.show()
     }
 
-    private fun showWalletSelector(isFromWallet: Boolean) {
-        val walletType = if (isFromWallet) fromToken else toToken
+    private fun showTokenPicker(isFromToken: Boolean) {
+        val currentOther = if (isFromToken) toToken else fromToken
 
-        val filteredWallets = if (walletType == "SOL") {
-            availableWallets.filter { it.solanaAddress.isNotEmpty() }
-        } else {
-            availableWallets.filter { it.zcashAddress != null }
-        }
-
-        if (filteredWallets.isEmpty()) {
-            ThemedToast.show(this, "No $walletType wallets found")
-            return
-        }
-
-        // Create bottom sheet dialog
         val bottomSheet = GlassBottomSheetDialog(this)
         val view = layoutInflater.inflate(R.layout.bottom_sheet_wallet_selector, null)
         bottomSheet.setContentView(view)
 
-        // Add wallets to the selector
-        val walletContainer = view.findViewById<android.widget.LinearLayout>(R.id.walletListContainer)
-        if (walletContainer == null) {
-            bottomSheet.dismiss()
-            return
+        val container = view.findViewById<LinearLayout>(R.id.walletListContainer)
+            ?: run { bottomSheet.dismiss(); return }
+
+        container.removeAllViews()
+
+        // Hide the chain selector buttons (we're using this as a token picker)
+        view.findViewById<View>(R.id.solanaChainButton)?.visibility = View.GONE
+        view.findViewById<View>(R.id.zcashChainButton)?.visibility = View.GONE
+
+        for (token in supportedTokens) {
+            if (token == currentOther) continue
+
+            val item = layoutInflater.inflate(R.layout.item_wallet_selector, container, false)
+            item.findViewById<TextView>(R.id.walletName)?.text = token
+            item.findViewById<TextView>(R.id.walletBalance)?.text = when (token) {
+                "SOL" -> "Solana"
+                "USDC" -> "USD Coin"
+                "USDT" -> "Tether"
+                "ZEC" -> "Zcash"
+                "USD1" -> "World Liberty Financial USD"
+                "SECURE" -> "Secure Legion"
+                else -> ""
+            }
+
+            item.findViewById<ImageView>(R.id.walletIcon)?.setImageResource(getTokenIcon(token))
+            item.findViewById<View>(R.id.walletSettingsBtn)?.visibility = View.GONE
+
+            item.setOnClickListener {
+                if (isFromToken) {
+                    fromToken = token
+                } else {
+                    toToken = token
+                }
+                currentOrder = null
+                fromAmountInput.setText("")
+                updateDisplay()
+                fromWallet?.let { loadBalanceForWallet(it) }
+                bottomSheet.dismiss()
+            }
+
+            container.addView(item)
         }
 
-        walletContainer.removeAllViews()
-
-        for (wallet in filteredWallets) {
-            val walletItem = layoutInflater.inflate(R.layout.item_wallet_selector, walletContainer, false)
-
-            walletItem.findViewById<TextView>(R.id.walletName)?.text = wallet.name
-            val address = if (walletType == "SOL") wallet.solanaAddress else wallet.zcashAddress ?: ""
-            val shortAddress = if (address.length > 15) {
-                "${address.take(5)}.....${address.takeLast(6)}"
-            } else {
-                address
+        // Show wallet selector if multiple wallets
+        if (availableWallets.size > 1) {
+            val divider = TextView(this).apply {
+                text = "Change Wallet"
+                setTextColor(resources.getColor(R.color.text_gray, theme))
+                textSize = 14f
+                setPadding(20, 24, 20, 8)
             }
-            walletItem.findViewById<TextView>(R.id.walletAddress)?.text = shortAddress
+            container.addView(divider)
 
-            walletItem.setOnClickListener {
-                if (isFromWallet) {
-                    fromWallet = wallet
-                    fromToken = walletType
-                    loadBalanceForWallet(wallet, isFromWallet = true)
+            for (wallet in availableWallets) {
+                val item = layoutInflater.inflate(R.layout.item_wallet_selector, container, false)
+                item.findViewById<TextView>(R.id.walletName)?.text = wallet.name
+                val address = wallet.solanaAddress
+                val shortAddr = if (address.length > 15) {
+                    "${address.take(5)}.....${address.takeLast(6)}"
                 } else {
-                    toWallet = wallet
-                    toToken = walletType
-                    loadBalanceForWallet(wallet, isFromWallet = false)
+                    address
                 }
-                bottomSheet.dismiss()
-                updateDisplay()
-            }
+                item.findViewById<TextView>(R.id.walletBalance)?.text = shortAddr
 
-            walletContainer.addView(walletItem)
+                item.setOnClickListener {
+                    fromWallet = wallet
+                    toWallet = wallet
+                    currentOrder = null
+                    fromAmountInput.setText("")
+                    loadBalanceForWallet(wallet)
+                    bottomSheet.dismiss()
+                }
+
+                container.addView(item)
+            }
         }
 
         bottomSheet.show()
+    }
+
+    private fun getTokenIcon(token: String): Int = when (token) {
+        "SOL" -> R.drawable.ic_solana
+        "USDC" -> R.drawable.ic_usdc
+        "USDT" -> R.drawable.ic_usdt
+        "ZEC" -> R.drawable.ic_zcash
+        "USD1" -> R.drawable.ic_usd1
+        "SECURE" -> R.drawable.ic_secure
+        else -> R.drawable.ic_solana
+    }
+
+    companion object {
+        private const val TAG = "SwapActivity"
     }
 }

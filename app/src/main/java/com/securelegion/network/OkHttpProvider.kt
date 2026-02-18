@@ -28,6 +28,9 @@ object OkHttpProvider {
     private var _genericClient: OkHttpClient? = null
 
     @Volatile
+    private var _jupiterClient: OkHttpClient? = null
+
+    @Volatile
     private var lastResetAt = 0L
 
     /**
@@ -69,6 +72,20 @@ object OkHttpProvider {
                 readTimeout = 30,
                 writeTimeout = 30
             ).also { _zcashClient = it }
+        }
+    }
+
+    /**
+     * Get OkHttpClient for Jupiter Ultra API calls
+     * Longer timeouts for swap routing through Tor
+     */
+    fun getJupiterClient(): OkHttpClient {
+        return _jupiterClient ?: synchronized(this) {
+            _jupiterClient ?: buildClient(
+                connectTimeout = 90,
+                readTimeout = 90,
+                writeTimeout = 90
+            ).also { _jupiterClient = it }
         }
     }
 
@@ -124,12 +141,17 @@ object OkHttpProvider {
                 connectionPool.evictAll()
                 dispatcher.cancelAll()
             }
+            _jupiterClient?.run {
+                connectionPool.evictAll()
+                dispatcher.cancelAll()
+            }
 
             // Force rebuild on next access
             _solanaClient = null
             _crustClient = null
             _zcashClient = null
             _genericClient = null
+            _jupiterClient = null
 
             Log.d(TAG, "All OkHttpClient instances reset")
         }

@@ -18,7 +18,6 @@ import com.securelegion.utils.GlassBottomSheetDialog
 import com.securelegion.crypto.KeyManager
 import com.securelegion.database.SecureLegionDatabase
 import com.securelegion.database.entities.Wallet
-import com.securelegion.services.ShadowWireService
 import com.securelegion.services.SolanaService
 import com.securelegion.services.ZcashService
 import com.securelegion.utils.ThemedToast
@@ -162,11 +161,6 @@ class WalletActivity : AppCompatActivity() {
             handleShieldOrPrivateAction()
         }
 
-        // Solana shielded card — opens ShadowWire privacy pool
-        findViewById<View>(R.id.solShieldedItem)?.setOnClickListener {
-            handleShieldOrPrivateAction()
-        }
-
         // Wallet settings button
         findViewById<View>(R.id.walletSettingsButton).setOnClickListener {
             openWalletSettings()
@@ -282,14 +276,8 @@ class WalletActivity : AppCompatActivity() {
                         // Zcash wallet - proceed with shielding
                         shieldTransparentFunds()
                     } else {
-                        // Solana wallet - open ShadowWire privacy pool if enabled
-                        if (BuildConfig.ENABLE_SHADOW_WIRE) {
-                            startActivity(android.content.Intent(this@WalletActivity, ShadowWireActivity::class.java).apply {
-                                putExtra("WALLET_ID", currentWallet?.walletId ?: "main")
-                            })
-                        } else {
-                            ThemedToast.show(this@WalletActivity, "Coming soon")
-                        }
+                        // Solana wallet - open swap screen
+                        startActivity(Intent(this@WalletActivity, SwapActivity::class.java))
                     }
                 }
             } catch (e: Exception) {
@@ -535,47 +523,7 @@ class WalletActivity : AppCompatActivity() {
     }
 
     private fun updateCurrencyLabel() {
-        val currencyLabel = findViewById<TextView>(R.id.currencyLabel)
-
-        if (isShowingUSD) {
-            currencyLabel?.text = "USD"
-        } else {
-            // Determine currency based on current wallet type
-            lifecycleScope.launch(Dispatchers.IO) {
-                try {
-                    val keyManager = KeyManager.getInstance(this@WalletActivity)
-                    val dbPassphrase = keyManager.getDatabasePassphrase()
-                    val database = SecureLegionDatabase.getInstance(this@WalletActivity, dbPassphrase)
-                    val allWallets = database.walletDao().getAllWallets()
-
-                    // Filter out "main" wallet
-                    val wallets = allWallets.filter { it.walletId != "main" }
-
-                    if (wallets.isNotEmpty()) {
-                        // Get the most recently used wallet
-                        val currentWallet = wallets.maxByOrNull { it.lastUsedAt }
-
-                        withContext(Dispatchers.Main) {
-                            // If wallet has a Zcash address (unified or legacy), it's a ZEC wallet
-                            if (!currentWallet?.zcashUnifiedAddress.isNullOrEmpty() || !currentWallet?.zcashAddress.isNullOrEmpty()) {
-                                currencyLabel?.text = "ZEC"
-                            } else {
-                                currencyLabel?.text = "SOL"
-                            }
-                        }
-                    } else {
-                        withContext(Dispatchers.Main) {
-                            currencyLabel?.text = "SOL"
-                        }
-                    }
-                } catch (e: Exception) {
-                    Log.e("WalletActivity", "Failed to determine wallet currency", e)
-                    withContext(Dispatchers.Main) {
-                        currencyLabel?.text = "SOL"
-                    }
-                }
-            }
-        }
+        // Currency label removed from layout — no-op
     }
 
     private fun loadCachedBalances() {
@@ -802,50 +750,9 @@ class WalletActivity : AppCompatActivity() {
             !it.zcashUnifiedAddress.isNullOrEmpty() || !it.zcashAddress.isNullOrEmpty()
         } ?: false
 
-        Log.d("WalletActivity", "loadShieldedBalance: isZcash=$isZcashWallet, shadowWire=${BuildConfig.ENABLE_SHADOW_WIRE}, wallet=${wallet?.walletId}")
+        Log.d("WalletActivity", "loadShieldedBalance: isZcash=$isZcashWallet, wallet=${wallet?.walletId}")
 
-        if (!isZcashWallet && BuildConfig.ENABLE_SHADOW_WIRE) {
-            // Solana wallet — load ShadowWire pool balance
-            try {
-                val walletId = wallet?.walletId ?: "main"
-                Log.d("WalletActivity", "Loading pool balance for walletId: $walletId")
-                val shadowWireService = ShadowWireService(this@WalletActivity, walletId)
-                val result = withContext(Dispatchers.IO) {
-                    shadowWireService.getPoolBalance()
-                }
-                val solPrice = getCachedPrice("SOL")
-                Log.d("WalletActivity", "Pool result: success=${result.isSuccess}, solPrice=$solPrice")
-
-                withContext(Dispatchers.Main) {
-                    val shieldedBalanceText = findViewById<TextView>(R.id.solShieldedBalance)
-                    val shieldedAmountText = findViewById<TextView>(R.id.solShieldedAmount)
-
-                    if (result.isSuccess) {
-                        val poolBalance = result.getOrNull()
-                        val available = poolBalance?.available ?: 0.0
-                        poolBalanceSOL = available
-                        Log.d("WalletActivity", "Pool available: $available SOL")
-
-                        if (isShowingUSD) {
-                            val usdValue = available * solPrice
-                            shieldedBalanceText?.text = String.format("$%,.2f", usdValue)
-                            shieldedAmountText?.text = String.format("%.4f SOL", available)
-                        } else {
-                            shieldedBalanceText?.text = String.format("%.4f", available)
-                            shieldedAmountText?.text = String.format("%.4f SOL", available)
-                        }
-                    } else {
-                        // Pool balance failed - keep existing display, don't flash to zero
-                        Log.e("WalletActivity", "Pool balance failed: ${result.exceptionOrNull()?.message} - keeping cached values")
-                    }
-
-                    // Update main balance to include pool balance
-                    updateMainBalanceDisplay()
-                }
-            } catch (e: Exception) {
-                Log.e("WalletActivity", "Failed to load shielded SOL balance", e)
-            }
-        } else if (isZcashWallet) {
+        if (isZcashWallet) {
             // Zcash wallet — load shielded balance from breakdown
             try {
                 val zcashService = ZcashService.getInstance(this@WalletActivity)
@@ -1184,15 +1091,18 @@ class WalletActivity : AppCompatActivity() {
                         // Update chain icon based on wallet type
                         updateChainIcon(walletChainIcon, currentWallet)
 
-                        // Update shield button label - Solana wallet gets "Private"
-                        shieldButtonLabel?.text = "Private"
+                        // Update shield button label and icon based on wallet type
+                        val isZcash = !currentWallet?.zcashUnifiedAddress.isNullOrEmpty() || !currentWallet?.zcashAddress.isNullOrEmpty()
+                        shieldButtonLabel?.text = if (isZcash) "Shield" else "Swap"
+                        updateShieldButtonIcon(isZcash)
 
                         // Update visible tokens - show Solana tokens first
                         updateVisibleTokens(currentWallet)
                     } else {
                         walletTitle?.text = "Wallet"
                         walletChainIcon?.setImageResource(R.drawable.ic_solana)
-                        shieldButtonLabel?.text = "Private"
+                        shieldButtonLabel?.text = "Swap"
+                        updateShieldButtonIcon(false)
 
                         // Show Solana tokens by default
                         updateVisibleTokens(null)
@@ -1231,26 +1141,34 @@ class WalletActivity : AppCompatActivity() {
         // Find token items in the layout
         val solTokenItem = findViewById<View>(R.id.solBalance)?.parent?.parent as? LinearLayout
         val zecTokenItem = findViewById<View>(R.id.zecBalance)?.parent?.parent as? LinearLayout
-        val solShieldedItem = findViewById<View>(R.id.solShieldedItem)
-        val zecShieldedItem = findViewById<View>(R.id.zecShieldedItem)
+        val shieldedSection = findViewById<View>(R.id.shieldedSection)
 
         Log.d("WalletActivity", "Updating visible tokens - isZcashWallet: $isZcashWallet, wallet: ${wallet?.name}")
 
         // Show/hide tokens based on wallet type
         if (isZcashWallet) {
-            // Zcash wallet - show only ZEC token + ZEC shielded
+            // Zcash wallet - show only ZEC token + shielded section
             solTokenItem?.visibility = View.GONE
             zecTokenItem?.visibility = View.VISIBLE
-            solShieldedItem?.visibility = View.GONE
-            zecShieldedItem?.visibility = View.VISIBLE
+            shieldedSection?.visibility = View.VISIBLE
             Log.d("WalletActivity", "Showing ZEC token, hiding SOL token")
         } else {
-            // Solana wallet - show only SOL token + SOL shielded (if enabled)
+            // Solana wallet - show only SOL token, hide shielded section entirely
             solTokenItem?.visibility = View.VISIBLE
             zecTokenItem?.visibility = View.GONE
-            solShieldedItem?.visibility = if (BuildConfig.ENABLE_SHADOW_WIRE) View.VISIBLE else View.GONE
-            zecShieldedItem?.visibility = View.GONE
+            shieldedSection?.visibility = View.GONE
             Log.d("WalletActivity", "Showing SOL token, hiding ZEC token")
+        }
+    }
+
+    private fun updateShieldButtonIcon(isZcash: Boolean) {
+        val shieldButtonIcon = findViewById<ImageView>(R.id.shieldButtonIcon)
+        if (isZcash) {
+            shieldButtonIcon?.setImageResource(R.drawable.ic_shield)
+            shieldButtonIcon?.contentDescription = "Shield"
+        } else {
+            shieldButtonIcon?.setImageResource(R.drawable.ic_swap)
+            shieldButtonIcon?.contentDescription = "Swap"
         }
     }
 
@@ -1565,10 +1483,11 @@ class WalletActivity : AppCompatActivity() {
                     val walletChainIcon = findViewById<ImageView>(R.id.walletChainIcon)
                     updateChainIcon(walletChainIcon, wallet)
 
-                    // Update shield button label based on wallet type
+                    // Update shield button label and icon based on wallet type
                     val shieldButtonLabel = findViewById<TextView>(R.id.shieldButtonLabel)
                     val isZcashWallet = !wallet.zcashUnifiedAddress.isNullOrEmpty() || !wallet.zcashAddress.isNullOrEmpty()
-                    shieldButtonLabel?.text = if (isZcashWallet) "Shield" else "Private"
+                    shieldButtonLabel?.text = if (isZcashWallet) "Shield" else "Swap"
+                    updateShieldButtonIcon(isZcashWallet)
 
                     // Update visible tokens based on wallet type
                     updateVisibleTokens(wallet)
@@ -1635,9 +1554,10 @@ class WalletActivity : AppCompatActivity() {
                         val walletChainIcon = findViewById<ImageView>(R.id.walletChainIcon)
                         updateChainIcon(walletChainIcon, wallet)
 
-                        // Update shield button label
+                        // Update shield button label and icon
                         val shieldButtonLabel = findViewById<TextView>(R.id.shieldButtonLabel)
                         shieldButtonLabel?.text = "Shield"
+                        updateShieldButtonIcon(true)
 
                         // Update visible tokens based on wallet type
                         updateVisibleTokens(wallet)

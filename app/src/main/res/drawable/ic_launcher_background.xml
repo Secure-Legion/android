@@ -8,5 +8,5 @@
     <!-- Dark gray background (matches splash screen) -->
     <path
         android:pathData="M0,0h108v108h-108z"
-        android:fillColor="#1C1C1C"/>
+        android:fillColor="#000000"/>
 </vector>

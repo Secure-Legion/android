@@ -3634,8 +3634,21 @@ class TorService : Service() {
             }
 
             // Show notification for new pings only
+            // When auto-download is active (Device Protection OFF), defer notification to
+            // DownloadMessageService which shows type-specific notifications (e.g. "New voice clip")
+            // and suppresses notifications for hidden types like profile updates (0x0F).
             if (shouldNotify) {
-                showNewMessageNotification()
+                val securityPrefs = getSharedPreferences("security", MODE_PRIVATE)
+                val deviceProtectionEnabled = securityPrefs.getBoolean(
+                    SecurityModeActivity.PREF_DEVICE_PROTECTION_ENABLED, false
+                )
+                if (deviceProtectionEnabled) {
+                    // Device Protection ON — user must manually download, show generic notification
+                    showNewMessageNotification()
+                } else {
+                    // Auto-download active — DownloadMessageService will show type-specific notification
+                    Log.d(TAG, "Deferring notification to DownloadMessageService (auto-download active)")
+                }
 
                 // Broadcast to update MainActivity and ChatActivity if open
                 val intent = Intent("com.securelegion.NEW_PING")
@@ -3685,7 +3698,8 @@ class TorService : Service() {
                                         this@TorService,
                                         contactId,
                                         senderName,
-                                        pingId
+                                        pingId,
+                                        connectionId
                                     )
                                 } else {
                                     Log.d(TAG, "Ping $pingId already claimed or past PING_SEEN state - skipping auto-download")
@@ -4352,6 +4366,38 @@ class TorService : Service() {
                     messageType = com.securelegion.database.entities.Message.MESSAGE_TYPE_PAYMENT_ACCEPTED
                     messageContent = String(body, Charsets.UTF_8)
                     Log.d(TAG, "Message type: PAYMENT_ACCEPTED (from plaintext)")
+                }
+
+                0x0F -> {
+                    // PROFILE_UPDATE: [type=0x0F][photoBytes...]
+                    Log.i(TAG, "Message type: PROFILE_UPDATE (from plaintext)")
+                    val photoBytes = body
+
+                    kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+                        try {
+                            val dbPassphrase = keyManager.getDatabasePassphrase()
+                            val database = com.securelegion.database.SecureLegionDatabase.getInstance(this@TorService, dbPassphrase)
+
+                            if (photoBytes.isEmpty()) {
+                                // Empty body = photo removal
+                                database.contactDao().updateContactPhoto(contact.id, null)
+                                Log.i(TAG, "Profile photo removed for ${contact.displayName}")
+                            } else {
+                                val photoBase64 = android.util.Base64.encodeToString(photoBytes, android.util.Base64.NO_WRAP)
+                                database.contactDao().updateContactPhoto(contact.id, photoBase64)
+                                Log.i(TAG, "Profile photo updated for ${contact.displayName} (${photoBytes.size} bytes)")
+                            }
+
+                            // Broadcast to refresh any open contact views
+                            val refreshIntent = android.content.Intent("com.securelegion.PROFILE_UPDATED")
+                            refreshIntent.setPackage(packageName)
+                            refreshIntent.putExtra("CONTACT_ID", contact.id)
+                            sendBroadcast(refreshIntent)
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Failed to process profile update", e)
+                        }
+                    }
+                    return // Don't save as regular message
                 }
 
                 0x0E -> {

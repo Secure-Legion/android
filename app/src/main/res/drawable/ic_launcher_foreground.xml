@@ -1,4 +1,27 @@
 <?xml version="1.0" encoding="utf-8"?>
-<bitmap xmlns:android="http://schemas.android.com/apk/res/android"
-    android:src="@mipmap/ic_launcher_foreground"
-    android:gravity="center" />
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- Shield with diagonal cut, centered in adaptive icon safe zone -->
+    <group
+        android:translateX="24"
+        android:translateY="22"
+        android:scaleX="2.5"
+        android:scaleY="2.5">
+
+        <!-- White shield (same path as ic_shield) -->
+        <path
+            android:fillColor="#FFFFFF"
+            android:pathData="M12,1L3,5v6c0,5.55 3.84,10.74 9,12 5.16,-1.26 9,-6.45 9,-12V5l-9,-4z" />
+
+        <!-- Diagonal cut line (black to match background) -->
+        <path
+            android:fillColor="#000000"
+            android:pathData="M4.5,19.5 L19,5 L20,6 L5.5,20.5Z" />
+
+    </group>
+
+</vector>

@@ -11,6 +11,7 @@ import android.widget.TextView
 import androidx.recyclerview.widget.RecyclerView
 import com.securelegion.R
 import com.securelegion.models.Chat
+import com.securelegion.views.AvatarView
 import kotlin.math.abs
 
 class ChatAdapter(
@@ -26,7 +27,7 @@ class ChatAdapter(
     private var openPosition = -1
 
     class ChatViewHolder(view: View) : RecyclerView.ViewHolder(view) {
-        val chatAvatar: TextView = view.findViewById(R.id.chatAvatar)
+        val chatAvatar: AvatarView = view.findViewById(R.id.chatAvatar)
         val chatName: TextView = view.findViewById(R.id.chatName)
         val chatMessage: TextView = view.findViewById(R.id.chatMessage)
         val chatTime: TextView = view.findViewById(R.id.chatTime)
@@ -51,8 +52,13 @@ class ChatAdapter(
     override fun onBindViewHolder(holder: ChatViewHolder, position: Int) {
         val chat = chats[position]
 
-        // Set avatar (first letter of nickname)
-        holder.chatAvatar.text = chat.avatar.uppercase()
+        // Set avatar photo or initials
+        holder.chatAvatar.setName(chat.nickname.removePrefix("@"))
+        if (!chat.profilePictureBase64.isNullOrEmpty()) {
+            holder.chatAvatar.setPhotoBase64(chat.profilePictureBase64)
+        } else {
+            holder.chatAvatar.clearPhoto()
+        }
 
         // Set chat name (remove @ symbol)
         holder.chatName.text = chat.nickname.removePrefix("@")

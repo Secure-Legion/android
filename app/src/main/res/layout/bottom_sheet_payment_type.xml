@@ -42,7 +42,7 @@
             android:id="@+id/option1Icon"
             android:layout_width="24dp"
             android:layout_height="24dp"
-            android:src="@drawable/ic_radr_logo"
+            android:src="@drawable/ic_solana"
             android:scaleType="fitCenter"
             android:layout_marginEnd="14dp"
             android:contentDescription="Option 1" />
@@ -104,7 +104,7 @@
             android:id="@+id/option2Icon"
             android:layout_width="24dp"
             android:layout_height="24dp"
-            android:src="@drawable/ic_radr_logo"
+            android:src="@drawable/ic_solana"
             android:scaleType="fitCenter"
             android:layout_marginEnd="14dp"
             android:contentDescription="Option 2" />
@@ -128,7 +128,7 @@
                 android:id="@+id/option2Desc"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="Powered by Radr · 0.5% fee"
+                android:text="Standard Solana transaction"
                 android:textSize="12sp"
                 android:textColor="?attr/colorOnSurfaceVariant"
                 android:fontFamily="@font/poppins_regular" />
@@ -165,7 +165,7 @@
             android:id="@+id/option3Icon"
             android:layout_width="24dp"
             android:layout_height="24dp"
-            android:src="@drawable/ic_radr_logo"
+            android:src="@drawable/ic_solana"
             android:scaleType="fitCenter"
             android:layout_marginEnd="14dp"
             android:contentDescription="Option 3" />
@@ -189,7 +189,7 @@
                 android:id="@+id/option3Desc"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="Powered by Radr · 0.5% fee"
+                android:text="Standard Solana transaction"
                 android:textSize="12sp"
                 android:textColor="?attr/colorOnSurfaceVariant"
                 android:fontFamily="@font/poppins_regular" />

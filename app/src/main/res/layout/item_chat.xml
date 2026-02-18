@@ -146,16 +146,11 @@
             android:gravity="center_vertical">
 
         <!-- Avatar Circle -->
-        <TextView
+        <com.securelegion.views.AvatarView
             android:id="@+id/chatAvatar"
             android:layout_width="48dp"
             android:layout_height="48dp"
             android:background="@drawable/profile_circle_bg"
-            android:gravity="center"
-            android:text="W"
-            android:textSize="20sp"
-            android:textColor="?attr/colorOnSurface"
-            android:fontFamily="@font/space_grotesk_bold"
             android:layout_marginEnd="16dp" />
 
         <!-- Chat Info -->

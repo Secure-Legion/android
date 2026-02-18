@@ -227,12 +227,13 @@
                     android:focusable="true">
 
                     <ImageView
+                        android:id="@+id/shieldButtonIcon"
                         android:layout_width="28dp"
                         android:layout_height="28dp"
-                        android:src="@drawable/ic_radr_logo"
+                        android:src="@drawable/ic_shield"
                         app:tint="?attr/colorOnSurfaceVariant"
                         android:layout_marginBottom="6dp"
-                        android:contentDescription="Private" />
+                        android:contentDescription="Shield" />
 
                     <TextView
                         android:id="@+id/shieldButtonLabel"
@@ -431,6 +432,7 @@
 
             <!-- Shielded Section -->
             <LinearLayout
+                android:id="@+id/shieldedSection"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:orientation="vertical"

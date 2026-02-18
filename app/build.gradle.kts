@@ -28,6 +28,10 @@ android {
         versionName = "1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        // Jupiter Ultra API key (loaded from gitignored keystore.properties)
+        buildConfigField("String", "JUPITER_API_KEY",
+            "\"${keystoreProperties.getProperty("jupiterApiKey", "")}\"")
     }
 
     productFlavors {
@@ -47,7 +51,7 @@ android {
             buildConfigField("boolean", "HAS_DEMO_LOGIN", "false")
             buildConfigField("int", "MAX_GROUP_SIZE", "100")
             buildConfigField("String", "FLAVOR_NAME", "\"Master\"")
-            buildConfigField("boolean", "ENABLE_SHADOW_WIRE", "true")
+            buildConfigField("boolean", "ENABLE_SHADOW_WIRE", "false")
         }
 
         create("solanadapp") {
@@ -69,25 +73,6 @@ android {
             buildConfigField("boolean", "ENABLE_SHADOW_WIRE", "false")
         }
 
-        create("solanahackathon") {
-            dimension = "version"
-            applicationId = "com.securelegion.solana.hackathon"
-            versionNameSuffix = "-solana-hackathon"
-
-            buildConfigField("boolean", "ENABLE_TOR", "true")
-            buildConfigField("boolean", "ENABLE_VOICE", "true")
-            buildConfigField("boolean", "ENABLE_MESHTASTIC", "false")
-            buildConfigField("boolean", "ENABLE_ZCASH_WALLET", "true")
-            buildConfigField("boolean", "ENABLE_SOLANA_WALLET", "true")
-            buildConfigField("boolean", "ENABLE_DEVELOPER_MENU", "false")
-            buildConfigField("boolean", "ENABLE_STRESS_TESTING", "false")
-            buildConfigField("boolean", "ENABLE_DEBUG_LOGS", "true")
-            buildConfigField("boolean", "HAS_DEMO_LOGIN", "false")
-            buildConfigField("int", "MAX_GROUP_SIZE", "100")
-            buildConfigField("String", "FLAVOR_NAME", "\"Solana Hackathon\"")
-            buildConfigField("String", "HACKATHON_NAME", "\"Solana\"")
-            buildConfigField("boolean", "ENABLE_SHADOW_WIRE", "true")
-        }
 
         create("starnethackathon") {
             dimension = "version"

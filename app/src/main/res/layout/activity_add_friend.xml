@@ -110,7 +110,7 @@
                     android:layout_width="match_parent"
                     android:layout_height="match_parent"
                     android:background="@drawable/lock_password_input_bg"
-                    android:hint="friend.onion"
+                    android:hint="Enter friend\u0027s .onion or scan their QR"
                     android:inputType="text"
                     android:textColorHint="#666666"
                     android:textColor="#8C8C8C"

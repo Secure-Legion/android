@@ -63,19 +63,19 @@ interface MessageDao {
      * Get all messages for a contact (ordered by timestamp)
      * Returns Flow for reactive updates
      */
-    @Query("SELECT * FROM messages WHERE contactId = :contactId ORDER BY timestamp ASC")
+    @Query("SELECT * FROM messages WHERE contactId = :contactId AND messageType != 'PROFILE_UPDATE' ORDER BY timestamp ASC")
     fun getMessagesForContactFlow(contactId: Long): Flow<List<Message>>
 
     /**
      * Get all messages for a contact (one-shot query)
      */
-    @Query("SELECT * FROM messages WHERE contactId = :contactId ORDER BY timestamp ASC")
+    @Query("SELECT * FROM messages WHERE contactId = :contactId AND messageType != 'PROFILE_UPDATE' ORDER BY timestamp ASC")
     suspend fun getMessagesForContact(contactId: Long): List<Message>
 
     /**
      * Get recent messages for a contact (limit N)
      */
-    @Query("SELECT * FROM messages WHERE contactId = :contactId ORDER BY timestamp DESC LIMIT :limit")
+    @Query("SELECT * FROM messages WHERE contactId = :contactId AND messageType != 'PROFILE_UPDATE' ORDER BY timestamp DESC LIMIT :limit")
     suspend fun getRecentMessages(contactId: Long, limit: Int): List<Message>
 
     /**
@@ -153,7 +153,7 @@ interface MessageDao {
     /**
      * Get last message for a contact
      */
-    @Query("SELECT * FROM messages WHERE contactId = :contactId ORDER BY timestamp DESC LIMIT 1")
+    @Query("SELECT * FROM messages WHERE contactId = :contactId AND messageType != 'PROFILE_UPDATE' ORDER BY timestamp DESC LIMIT 1")
     suspend fun getLastMessage(contactId: Long): Message?
 
     /**
@@ -162,7 +162,7 @@ interface MessageDao {
     @Query("""
         SELECT m.* FROM messages m
         INNER JOIN (
-            SELECT contactId, MAX(timestamp) as maxTs FROM messages GROUP BY contactId
+            SELECT contactId, MAX(timestamp) as maxTs FROM messages WHERE messageType != 'PROFILE_UPDATE' GROUP BY contactId
         ) latest ON m.contactId = latest.contactId AND m.timestamp = latest.maxTs
     """)
     suspend fun getLastMessagePerContact(): List<Message>

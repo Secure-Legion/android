@@ -30,14 +30,16 @@ class DownloadMessageService : Service() {
         const val EXTRA_CONTACT_ID = "EXTRA_CONTACT_ID"
         const val EXTRA_CONTACT_NAME = "EXTRA_CONTACT_NAME"
         const val EXTRA_PING_ID = "EXTRA_PING_ID"
+        const val EXTRA_CONNECTION_ID = "EXTRA_CONNECTION_ID"
 
         private const val DOWNLOAD_TIMEOUT_MS = 45_000L
 
-        fun start(context: Context, contactId: Long, contactName: String, pingId: String) {
+        fun start(context: Context, contactId: Long, contactName: String, pingId: String, connectionId: Long = -1L) {
             val intent = Intent(context, DownloadMessageService::class.java).apply {
                 putExtra(EXTRA_CONTACT_ID, contactId)
                 putExtra(EXTRA_CONTACT_NAME, contactName)
                 putExtra(EXTRA_PING_ID, pingId)
+                putExtra(EXTRA_CONNECTION_ID, connectionId)
             }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 context.startForegroundService(intent)
@@ -48,7 +50,8 @@ class DownloadMessageService : Service() {
     }
 
     // Queue for handling multiple downloads sequentially (not in parallel)
-    private val downloadQueue = mutableListOf<Triple<Long, String, String>>()
+    private data class DownloadRequest(val contactId: Long, val contactName: String, val pingId: String, val connectionId: Long)
+    private val downloadQueue = mutableListOf<DownloadRequest>()
     private var isProcessingQueue = false
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -64,6 +67,7 @@ class DownloadMessageService : Service() {
         val contactId = intent?.getLongExtra(EXTRA_CONTACT_ID, -1L) ?: -1L
         val contactName = intent?.getStringExtra(EXTRA_CONTACT_NAME) ?: "Unknown"
         val pingId = intent?.getStringExtra(EXTRA_PING_ID) ?: ""
+        val connectionId = intent?.getLongExtra(EXTRA_CONNECTION_ID, -1L) ?: -1L
 
         if (contactId == -1L || pingId.isEmpty()) {
             Log.e(TAG, "Invalid contact ID or ping ID, stopping service")
@@ -76,8 +80,8 @@ class DownloadMessageService : Service() {
 
         // Queue the download (will process sequentially)
         synchronized(downloadQueue) {
-            downloadQueue.add(Triple(contactId, contactName, pingId))
-            Log.d(TAG, "Queued download: $contactName (pingId=${pingId.take(8)}...) - Queue size: ${downloadQueue.size}")
+            downloadQueue.add(DownloadRequest(contactId, contactName, pingId, connectionId))
+            Log.d(TAG, "Queued download: $contactName (pingId=${pingId.take(8)}...) connId=$connectionId - Queue size: ${downloadQueue.size}")
 
             // If not already processing, start processing the queue
             if (!isProcessingQueue) {
@@ -95,7 +99,7 @@ class DownloadMessageService : Service() {
         isProcessingQueue = true
         serviceScope.launch {
             while (true) {
-                val (contactId, contactName, pingId) = synchronized(downloadQueue) {
+                val request = synchronized(downloadQueue) {
                     if (downloadQueue.isEmpty()) {
                         isProcessingQueue = false
                         Log.d(TAG, "Download queue empty - stopping service")
@@ -108,30 +112,30 @@ class DownloadMessageService : Service() {
                 // Set download-in-progress flag
                 val downloadStatusPrefs = getSharedPreferences("download_status", MODE_PRIVATE)
                 downloadStatusPrefs.edit()
-                    .putBoolean("downloading_$contactId", true)
-                    .putLong("download_start_time_$contactId", System.currentTimeMillis())
+                    .putBoolean("downloading_${request.contactId}", true)
+                    .putLong("download_start_time_${request.contactId}", System.currentTimeMillis())
                     .apply()
-                Log.d(TAG, "Processing download from queue: $contactName (pingId=${pingId.take(8)}...) - Remaining: ${synchronized(downloadQueue) { downloadQueue.size }}")
+                Log.d(TAG, "Processing download from queue: ${request.contactName} (pingId=${request.pingId.take(8)}...) connId=${request.connectionId} - Remaining: ${synchronized(downloadQueue) { downloadQueue.size }}")
 
                 try {
-                    downloadMessage(contactId, contactName, pingId)
+                    downloadMessage(request.contactId, request.contactName, request.pingId, request.connectionId)
                 } catch (e: Exception) {
                     Log.e(TAG, "Download failed", e)
-                    showFailureNotification(contactName, e.message ?: "Unknown error", pingId, contactId)
+                    showFailureNotification(request.contactName, e.message ?: "Unknown error", request.pingId, request.contactId)
 
                     // Broadcast download failure to ChatActivity
                     val failureIntent = Intent("com.securelegion.DOWNLOAD_FAILED")
                     failureIntent.setPackage(packageName)
-                    failureIntent.putExtra("CONTACT_ID", contactId)
+                    failureIntent.putExtra("CONTACT_ID", request.contactId)
                     sendBroadcast(failureIntent)
                     Log.d(TAG, "Sent DOWNLOAD_FAILED broadcast")
                 } finally {
                     // Clear download-in-progress flag
                     downloadStatusPrefs.edit()
-                        .putBoolean("downloading_$contactId", false)
-                        .remove("download_start_time_$contactId")
+                        .putBoolean("downloading_${request.contactId}", false)
+                        .remove("download_start_time_${request.contactId}")
                         .apply()
-                    Log.d(TAG, "Cleared download-in-progress flag for contact $contactId")
+                    Log.d(TAG, "Cleared download-in-progress flag for contact ${request.contactId}")
                 }
             }
         }
@@ -151,6 +155,7 @@ class DownloadMessageService : Service() {
     private var currentContactId: Long = -1L
     private var currentContactName: String = ""
     @Volatile private var downloadCompleted = false
+    @Volatile private var lastReceivedWireType: Int = -1 // Wire type byte from message blob (0x03=TEXT, 0x04=VOICE, 0x09=IMAGE, 0x0F=PROFILE_UPDATE etc.)
     private var watchdogJob: Job? = null
 
     /**
@@ -173,10 +178,11 @@ class DownloadMessageService : Service() {
     // Main download orchestrator (split into phases for instruction limit)
     // 
 
-    private suspend fun downloadMessage(contactId: Long, contactName: String, pingId: String) {
+    private suspend fun downloadMessage(contactId: Long, contactName: String, pingId: String, connectionId: Long = -1L) {
         currentContactId = contactId
         currentContactName = contactName
         downloadCompleted = false
+        lastReceivedWireType = -1
         val startTime = System.currentTimeMillis()
 
         Log.i(TAG, "========== DOWNLOAD INITIATED ==========")
@@ -188,7 +194,7 @@ class DownloadMessageService : Service() {
         val database = SecureLegionDatabase.getInstance(this@DownloadMessageService, dbPassphrase)
 
         // Phase 1: Load and validate ping data (before watchdog starts)
-        val ctx = loadAndValidatePing(contactId, contactName, pingId, database, startTime) ?: return
+        val ctx = loadAndValidatePing(contactId, contactName, pingId, database, startTime, connectionId) ?: return
 
         // Start watchdog (single timeout owner — sets flag to stop poll loop)
         watchdogJob = serviceScope.launch {
@@ -232,6 +238,7 @@ class DownloadMessageService : Service() {
         pingId: String,
         database: SecureLegionDatabase,
         startTime: Long,
+        liveConnectionId: Long = -1L,
     ): DownloadCtx? {
         // Load wire bytes from DB (single source of truth)
         val pingWireBytesFromDb = withContext(Dispatchers.IO) {
@@ -255,7 +262,7 @@ class DownloadMessageService : Service() {
         }
 
         val senderOnion: String = contact.messagingOnion ?: contact.torOnionAddress ?: ""
-        val connectionId: Long = -1L
+        Log.i(TAG, "Connection ID from caller: $liveConnectionId (${if (liveConnectionId != -1L) "live TCP connection" else "no live connection"})")
 
         if (pingWireBytesFromDb == null) {
             Log.e(TAG, "Ping $pingId not found in ping_inbox for contact $contactId")
@@ -296,7 +303,7 @@ class DownloadMessageService : Service() {
             senderOnion = senderOnion,
             pingWireBytesNormalized = pingWireBytesNormalized,
             pingTimestamp = System.currentTimeMillis(),
-            connectionId = connectionId,
+            connectionId = liveConnectionId,
             startTime = startTime,
         )
     }
@@ -492,25 +499,21 @@ class DownloadMessageService : Service() {
             // Only attempt to send PONG if not already sent
 
             // PATH 1: Try sending Pong on original connection (instant messaging)
-            // But only if connection is fresh (< 30 seconds old) AND still alive
+            // Check if connection is still alive (TCP-level check, clock-independent)
+            // NOTE: Don't use pingTimestamp for freshness — clock skew between devices
+            // causes false staleness. isConnectionAlive is the reliable check.
             if (ctx.connectionId != -1L) {
-                val connectionAge = System.currentTimeMillis() - ctx.pingTimestamp
-
-                val isFresh = connectionAge < 30000
-                var isAlive = false
-                if (isFresh) {
-                    isAlive = withContext(Dispatchers.IO) {
-                        try {
-                            com.securelegion.crypto.RustBridge.isConnectionAlive(ctx.connectionId)
-                        } catch (e: Exception) {
-                            Log.w(TAG, "Failed to check connection status (assuming dead): ${e.message}")
-                            false
-                        }
+                val isAlive = withContext(Dispatchers.IO) {
+                    try {
+                        com.securelegion.crypto.RustBridge.isConnectionAlive(ctx.connectionId)
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Failed to check connection status (assuming dead): ${e.message}")
+                        false
                     }
                 }
 
-                if (isFresh && isAlive) {
-                    Log.d(TAG, "Connection is valid (age=${connectionAge}ms, alive=true), attempting instant Pong on connection ${ctx.connectionId}...")
+                if (isAlive) {
+                    Log.d(TAG, "Connection is alive, attempting instant Pong on connection ${ctx.connectionId}...")
                     updateNotification(ctx.contactName, "[3/4] Downloading... (fast path)")
                     pongSent = withContext(Dispatchers.IO) {
                         try {
@@ -530,11 +533,7 @@ class DownloadMessageService : Service() {
                         }
                     }
                 } else {
-                    if (!isFresh) {
-                        Log.d(TAG, "Connection is stale (${connectionAge}ms old), skipping instant path - will use listener")
-                    } else if (!isAlive) {
-                        Log.d(TAG, "Connection is dead (not responding), skipping instant path - will use listener")
-                    }
+                    Log.d(TAG, "Connection is dead (not responding), skipping instant path - will use listener")
                     updateNotification(ctx.contactName, "[3/4] Downloading... (slower path)")
                 }
             }
@@ -667,6 +666,22 @@ class DownloadMessageService : Service() {
         sendBroadcast(intent)
         Log.i(TAG, "Broadcast sent to refresh UI")
 
+        // For the polling path, determine wire type from the last received message
+        if (lastReceivedWireType == -1) {
+            val lastMsg = withContext(Dispatchers.IO) {
+                ctx.database.messageDao().getLastMessage(ctx.contactId)
+            }
+            if (lastMsg != null) {
+                lastReceivedWireType = when (lastMsg.messageType) {
+                    com.securelegion.database.entities.Message.MESSAGE_TYPE_TEXT -> 0x03
+                    com.securelegion.database.entities.Message.MESSAGE_TYPE_VOICE -> 0x04
+                    com.securelegion.database.entities.Message.MESSAGE_TYPE_IMAGE -> 0x09
+                    else -> 0x03 // Default to text
+                }
+            }
+        }
+
+        // showSuccessNotification is type-aware — returns early for 0x0F (profile update)
         showSuccessNotification(ctx.contactName)
         Log.d(TAG, "Download completed in ${System.currentTimeMillis() - ctx.startTime}ms")
     }
@@ -778,9 +793,19 @@ class DownloadMessageService : Service() {
     }
 
     private fun showSuccessNotification(contactName: String) {
+        // Type-specific notification text based on wire format
+        val (title, text) = when (lastReceivedWireType) {
+            0x03 -> "New message" to "New message from $contactName"
+            0x04 -> "New voice clip" to "New voice clip from $contactName"
+            0x09 -> "New image" to "New image from $contactName"
+            0x0A -> "Payment request" to "New payment request from $contactName"
+            0x0B -> "Payment received" to "Payment sent by $contactName"
+            0x0C -> "Payment accepted" to "Payment accepted by $contactName"
+            0x0F -> return // Profile update — no notification
+            else -> "New message" to "New message from $contactName"
+        }
+
         // Launch via LockActivity to prevent showing chat before authentication
-        // Open ChatActivity with the contactId
-        // Use SINGLE_TOP to prevent restarting LockActivity if it's already running
         val intent = Intent(this, LockActivity::class.java).apply {
             if (currentContactId != -1L) {
                 putExtra("TARGET_ACTIVITY", "ChatActivity")
@@ -789,7 +814,6 @@ class DownloadMessageService : Service() {
             } else {
                 putExtra("TARGET_ACTIVITY", "MainActivity")
             }
-            // Use SINGLE_TOP instead of CLEAR_TOP to avoid restarting the activity
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
         }
         val pendingIntent = PendingIntent.getActivity(
@@ -798,8 +822,8 @@ class DownloadMessageService : Service() {
         )
 
         val notification = NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("Message received")
-            .setContentText("New message from $contactName")
+            .setContentTitle(title)
+            .setContentText(text)
             .setSmallIcon(R.drawable.ic_lock)
             .setAutoCancel(true)
             .setContentIntent(pendingIntent)
@@ -878,6 +902,7 @@ class DownloadMessageService : Service() {
 
             // Extract type byte (first byte)
             val typeByte = messageBytes[0]
+            lastReceivedWireType = typeByte.toInt() and 0xFF
             Log.d(TAG, "Message type byte: 0x${String.format("%02X", typeByte)}")
 
             // Extract fields based on message type
@@ -943,6 +968,18 @@ class DownloadMessageService : Service() {
                     encryptedPayload = messageBytes.copyOfRange(33, messageBytes.size)
                     voiceDuration = null
                     Log.d(TAG, "Payment message type: 0x${String.format("%02X", typeByte)}")
+                }
+                0x0F -> {
+                    // PROFILE_UPDATE: [0x0F][X25519 32 bytes][Encrypted Photo]
+                    // Same wire format as IMAGE/TEXT
+                    if (messageBytes.size < 82) {
+                        Log.e(TAG, "PROFILE_UPDATE message blob too small: ${messageBytes.size} bytes (need at least 82)")
+                        return
+                    }
+                    senderX25519PublicKey = messageBytes.copyOfRange(1, 33)
+                    encryptedPayload = messageBytes.copyOfRange(33, messageBytes.size)
+                    voiceDuration = null
+                    Log.d(TAG, "Profile update message received")
                 }
                 else -> {
                     Log.e(TAG, "Unknown message type: 0x${String.format("%02X", typeByte)}")
@@ -1402,6 +1439,66 @@ class DownloadMessageService : Service() {
                             Log.e(TAG, "Failed to save PAYMENT_ACCEPTED message: $errorMessage")
                         }
                     }
+                }
+
+                0x0F -> {
+                    // PROFILE_UPDATE - process via receiveMessage which handles decryption + contact update
+                    Log.d(TAG, "Processing PROFILE_UPDATE message...")
+                    val messageService = MessageService(this@DownloadMessageService)
+                    val encryptedBase64 = android.util.Base64.encodeToString(encryptedPayload, android.util.Base64.NO_WRAP)
+
+                    val result = kotlin.runCatching {
+                        database.withTransaction {
+                            messageService.receiveMessage(
+                                encryptedData = encryptedBase64,
+                                senderPublicKey = senderPublicKey,
+                                senderOnionAddress = contact.messagingOnion ?: contact.torOnionAddress ?: "",
+                                messageType = com.securelegion.database.entities.Message.MESSAGE_TYPE_PROFILE_UPDATE,
+                                pingId = pingId
+                            )
+                        }
+                    }
+
+                    // Profile update is handled inside receiveMessage (returns failure with "Profile update processed")
+                    // Always send ACK and transition state
+                    val now = System.currentTimeMillis()
+                    database.pingInboxDao().transitionToMsgStored(pingId, now)
+                    database.pingInboxDao().clearPingWireBytes(pingId, now)
+
+                    serviceScope.launch(Dispatchers.IO) {
+                        try {
+                            sendMessageAck(contactId, contactName, connectionId, pingId)
+                            Log.i(TAG, "PROFILE_UPDATE MESSAGE_ACK sent")
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Failed to send MESSAGE_ACK for profile update", e)
+                        }
+                    }
+
+                    // Suppress "new message" notification — profile updates are invisible background syncs
+                    val notifManager = getSystemService(android.app.NotificationManager::class.java)
+                    val remainingPending = withContext(Dispatchers.IO) {
+                        database.pingInboxDao().countGlobalPending()
+                    }
+                    if (remainingPending == 0) {
+                        notifManager?.cancel(999) // Cancel global pending message notification
+                        Log.d(TAG, "Cancelled notification 999 (no more pending pings after profile update)")
+                    } else {
+                        Log.d(TAG, "Keeping notification 999 ($remainingPending other pending pings remain)")
+                    }
+
+                    // Broadcast to refresh UI (profile photo + clear pending ping indicator)
+                    val refreshIntent = Intent("com.securelegion.PROFILE_UPDATED")
+                    refreshIntent.setPackage(packageName)
+                    refreshIntent.putExtra("CONTACT_ID", contactId)
+                    sendBroadcast(refreshIntent)
+
+                    // Also send MESSAGE_RECEIVED to refresh chat list and clear pending ping from UI
+                    val msgReceivedIntent = Intent("com.securelegion.MESSAGE_RECEIVED")
+                    msgReceivedIntent.setPackage(packageName)
+                    msgReceivedIntent.putExtra("CONTACT_ID", contactId)
+                    sendBroadcast(msgReceivedIntent)
+
+                    Log.i(TAG, "Profile update processed for ${contactName} (silent, no notification)")
                 }
 
                 else -> {

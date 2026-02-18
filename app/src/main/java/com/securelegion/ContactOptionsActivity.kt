@@ -6,12 +6,12 @@ import android.util.Log
 import android.view.View
 import android.widget.ImageView
 import android.widget.TextView
-import androidx.appcompat.app.AlertDialog
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import com.securelegion.crypto.KeyManager
 import com.securelegion.database.SecureLegionDatabase
+import com.securelegion.utils.GlassBottomSheetDialog
 import com.securelegion.utils.ThemedToast
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -81,6 +81,20 @@ class ContactOptionsActivity : BaseActivity() {
                     isBlocked = contact.isBlocked
                     updateTrustedContactUI()
                     updateBlockUI()
+
+                    // Load contact's profile photo
+                    if (!contact.profilePictureBase64.isNullOrEmpty()) {
+                        try {
+                            val photoBytes = android.util.Base64.decode(contact.profilePictureBase64, android.util.Base64.NO_WRAP)
+                            val bitmap = android.graphics.BitmapFactory.decodeByteArray(photoBytes, 0, photoBytes.size)
+                            if (bitmap != null) {
+                                profilePicture.setImageBitmap(bitmap)
+                                Log.d(TAG, "Loaded contact profile photo (${photoBytes.size} bytes)")
+                            }
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Failed to decode contact profile photo", e)
+                        }
+                    }
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to load contact status", e)
@@ -207,14 +221,33 @@ class ContactOptionsActivity : BaseActivity() {
     }
 
     private fun showDeleteConfirmationDialog(name: String) {
-        AlertDialog.Builder(this, R.style.CustomAlertDialog)
-            .setTitle("Delete Contact")
-            .setMessage("Are you sure you want to delete $name from your contacts? This action cannot be undone.")
-            .setPositiveButton("Delete") { _, _ ->
-                deleteContact()
-            }
-            .setNegativeButton("Cancel", null)
-            .show()
+        val bottomSheet = GlassBottomSheetDialog(this)
+        val view = layoutInflater.inflate(R.layout.bottom_sheet_delete_contact, null)
+        bottomSheet.setContentView(view)
+
+        bottomSheet.behavior.isDraggable = true
+        bottomSheet.behavior.skipCollapsed = true
+
+        bottomSheet.window?.setBackgroundDrawableResource(android.R.color.transparent)
+        bottomSheet.window?.findViewById<View>(com.google.android.material.R.id.design_bottom_sheet)
+            ?.setBackgroundResource(android.R.color.transparent)
+        view.post {
+            (view.parent as? View)?.setBackgroundResource(android.R.color.transparent)
+        }
+
+        view.findViewById<TextView>(R.id.deleteMessage).text =
+            "Are you sure you want to delete $name from your contacts? This action cannot be undone."
+
+        view.findViewById<View>(R.id.confirmDeleteButton).setOnClickListener {
+            bottomSheet.dismiss()
+            deleteContact()
+        }
+
+        view.findViewById<View>(R.id.cancelDeleteButton).setOnClickListener {
+            bottomSheet.dismiss()
+        }
+
+        bottomSheet.show()
     }
 
     private fun deleteContact() {

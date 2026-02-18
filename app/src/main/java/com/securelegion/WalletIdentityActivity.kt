@@ -14,7 +14,6 @@ import android.widget.EditText
 import android.widget.ImageView
 import android.widget.TextView
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.FileProvider
 import androidx.lifecycle.lifecycleScope
@@ -454,21 +453,53 @@ class WalletIdentityActivity : AppCompatActivity() {
     }
 
     private fun showImagePickerDialog() {
-        AlertDialog.Builder(this)
-            .setTitle("Change Profile Photo")
-            .setItems(arrayOf("Take Photo", "Choose from Gallery", "Remove Photo")) { _, which ->
-                when (which) {
-                    0 -> ImagePicker.pickFromCamera(cameraLauncher)
-                    1 -> ImagePicker.pickFromGallery(galleryLauncher)
-                    2 -> removeProfilePhoto()
-                }
-            }
-            .show()
+        val bottomSheet = GlassBottomSheetDialog(this)
+        val view = layoutInflater.inflate(R.layout.bottom_sheet_photo_picker, null)
+        bottomSheet.setContentView(view)
+
+        bottomSheet.behavior.isDraggable = true
+        bottomSheet.behavior.skipCollapsed = true
+
+        bottomSheet.window?.setBackgroundDrawableResource(android.R.color.transparent)
+        bottomSheet.window?.findViewById<View>(com.google.android.material.R.id.design_bottom_sheet)
+            ?.setBackgroundResource(android.R.color.transparent)
+        view.post {
+            (view.parent as? View)?.setBackgroundResource(android.R.color.transparent)
+        }
+
+        view.findViewById<View>(R.id.optionTakePhoto).setOnClickListener {
+            bottomSheet.dismiss()
+            ImagePicker.pickFromCamera(cameraLauncher)
+        }
+
+        view.findViewById<View>(R.id.optionGallery).setOnClickListener {
+            bottomSheet.dismiss()
+            ImagePicker.pickFromGallery(galleryLauncher)
+        }
+
+        view.findViewById<View>(R.id.optionRemovePhoto).setOnClickListener {
+            bottomSheet.dismiss()
+            removeProfilePhoto()
+        }
+
+        bottomSheet.show()
     }
 
     private fun saveProfilePhoto(base64: String) {
         val prefs = getSharedPreferences("secure_legion_settings", MODE_PRIVATE)
         prefs.edit().putString("profile_photo_base64", base64).apply()
+
+        // Broadcast profile photo update to all contacts via encrypted Tor pipeline
+        // Use application-scoped coroutine so it survives activity navigation
+        kotlinx.coroutines.CoroutineScope(Dispatchers.IO + kotlinx.coroutines.SupervisorJob()).launch {
+            try {
+                val messageService = com.securelegion.services.MessageService(this@WalletIdentityActivity)
+                messageService.broadcastProfileUpdate(base64)
+                Log.i("WalletIdentity", "Profile photo broadcasted to contacts")
+            } catch (e: Exception) {
+                Log.e("WalletIdentity", "Failed to broadcast profile update", e)
+            }
+        }
     }
 
     private fun removeProfilePhoto() {
@@ -476,5 +507,17 @@ class WalletIdentityActivity : AppCompatActivity() {
         prefs.edit().remove("profile_photo_base64").apply()
         profilePhotoAvatar.clearPhoto()
         ThemedToast.show(this, "Profile photo removed")
+
+        // Broadcast photo removal to all contacts via encrypted Tor pipeline
+        // Use application-scoped coroutine so it survives activity navigation
+        kotlinx.coroutines.CoroutineScope(Dispatchers.IO + kotlinx.coroutines.SupervisorJob()).launch {
+            try {
+                val messageService = com.securelegion.services.MessageService(this@WalletIdentityActivity)
+                messageService.broadcastProfileUpdate("") // Empty = removal
+                Log.i("WalletIdentity", "Profile photo removal broadcasted to contacts")
+            } catch (e: Exception) {
+                Log.e("WalletIdentity", "Failed to broadcast profile removal", e)
+            }
+        }
     }
 }
