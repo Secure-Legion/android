@@ -193,7 +193,7 @@ class TapSyncWorker(
         contact: com.securelegion.database.entities.Contact,
         maxAttempts: Int = 3
     ): Boolean {
-        val recipientOnion = contact.messagingOnion ?: contact.torOnionAddress ?: ""
+        val recipientOnion = contact.messagingOnion ?: ""
         if (recipientOnion.isEmpty()) {
             Log.e(TAG, "No onion address for ${contact.displayName}, cannot send TAP")
             return false

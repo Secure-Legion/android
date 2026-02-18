@@ -437,7 +437,17 @@ class SplashActivity : AppCompatActivity() {
             val usingBridges = bridgeType != "none"
             val sdkInt = android.os.Build.VERSION.SDK_INT
 
-            val maxAttempts = if (usingBridges) 1200 else 480 // 5 min with bridges, 120s without (at 250ms/poll)
+            // Check if this is first-time setup (no account/keys exist yet)
+            val keyManager = KeyManager.getInstance(this@SplashActivity)
+            val isFirstTimeSetup = !keyManager.isInitialized()
+
+            // First-time users need longer timeout — Tor must download full consensus (~2-3MB)
+            // and build circuits from scratch, which can take 2-4 min on slow connections
+            val maxAttempts = when {
+                usingBridges -> 1200        // 5 min with bridges (at 250ms/poll)
+                isFirstTimeSetup -> 960     // 240s for first-time users
+                else -> 480                 // 120s for returning users
+            }
             var attempts = 0
             var bootstrapComplete = false
 
@@ -451,10 +461,6 @@ class SplashActivity : AppCompatActivity() {
             } else {
                 60 // 15s for newer Android without bridges
             }
-
-            // Check if this is first-time setup (no account/keys exist yet)
-            val keyManager = KeyManager.getInstance(this@SplashActivity)
-            val isFirstTimeSetup = !keyManager.isInitialized()
 
             if (isFirstTimeSetup) {
                 Log.i("SplashActivity", "First-time setup detected - will skip listener check")

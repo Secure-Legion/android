@@ -189,7 +189,7 @@ class MessageRetryWorker(
                         if (message.pingWireBytes != null) {
                             com.securelegion.crypto.RustBridge.resendPingWithWireBytes(
                                 message.pingWireBytes!!,
-                                contact.messagingOnion ?: contact.torOnionAddress ?: ""
+                                contact.messagingOnion ?: ""
                             )
                         } else {
                             messageService.sendPingForMessage(message).isSuccess
@@ -281,7 +281,7 @@ class MessageRetryWorker(
                             if (message.pingWireBytes != null) {
                                 com.securelegion.crypto.RustBridge.resendPingWithWireBytes(
                                     message.pingWireBytes!!,
-                                    contact.messagingOnion ?: contact.torOnionAddress ?: ""
+                                    contact.messagingOnion ?: ""
                                 )
                             } else {
                                 messageService.sendPingForMessage(message).isSuccess

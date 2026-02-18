@@ -206,7 +206,7 @@ class AckWorker(
                     ackType = ackType,
                     recipientEd25519Pubkey = Base64.decode(contact.publicKeyBase64, Base64.NO_WRAP),
                     recipientX25519Pubkey = Base64.decode(contact.x25519PublicKeyBase64, Base64.NO_WRAP),
-                    recipientOnion = contact.messagingOnion ?: contact.torOnionAddress ?: ""
+                    recipientOnion = contact.messagingOnion ?: ""
                 )
 
                 if (success) return true

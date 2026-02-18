@@ -261,7 +261,7 @@ class DownloadMessageService : Service() {
             return null
         }
 
-        val senderOnion: String = contact.messagingOnion ?: contact.torOnionAddress ?: ""
+        val senderOnion: String = contact.messagingOnion ?: ""
         Log.i(TAG, "Connection ID from caller: $liveConnectionId (${if (liveConnectionId != -1L) "live TCP connection" else "no live connection"})")
 
         if (pingWireBytesFromDb == null) {
@@ -1094,7 +1094,7 @@ class DownloadMessageService : Service() {
                                 val insertResult = messageService.receiveMessage(
                                     encryptedData = encryptedBase64,
                                     senderPublicKey = senderPublicKey,
-                                    senderOnionAddress = contact.messagingOnion ?: contact.torOnionAddress ?: "",
+                                    senderOnionAddress = contact.messagingOnion ?: "",
                                     pingId = pingId
                                 )
 
@@ -1187,7 +1187,7 @@ class DownloadMessageService : Service() {
                                 val insertResult = messageService.receiveMessage(
                                     encryptedData = encryptedBase64,
                                     senderPublicKey = senderPublicKey,
-                                    senderOnionAddress = contact.messagingOnion ?: contact.torOnionAddress ?: "",
+                                    senderOnionAddress = contact.messagingOnion ?: "",
                                     messageType = com.securelegion.database.entities.Message.MESSAGE_TYPE_VOICE,
                                     voiceDuration = voiceDuration ?: 0, // Safe default instead of crash
                                     pingId = pingId
@@ -1267,7 +1267,7 @@ class DownloadMessageService : Service() {
                                 val insertResult = messageService.receiveMessage(
                                     encryptedData = encryptedBase64,
                                     senderPublicKey = senderPublicKey,
-                                    senderOnionAddress = contact.messagingOnion ?: contact.torOnionAddress ?: "",
+                                    senderOnionAddress = contact.messagingOnion ?: "",
                                     messageType = com.securelegion.database.entities.Message.MESSAGE_TYPE_IMAGE,
                                     pingId = pingId
                                 )
@@ -1326,7 +1326,7 @@ class DownloadMessageService : Service() {
                     val result = messageService.receiveMessage(
                         encryptedData = encryptedBase64,
                         senderPublicKey = senderPublicKey,
-                        senderOnionAddress = contact.messagingOnion ?: contact.torOnionAddress ?: "",
+                        senderOnionAddress = contact.messagingOnion ?: "",
                         messageType = com.securelegion.database.entities.Message.MESSAGE_TYPE_PAYMENT_REQUEST,
                         pingId = pingId
                     )
@@ -1368,7 +1368,7 @@ class DownloadMessageService : Service() {
                     val result = messageService.receiveMessage(
                         encryptedData = encryptedBase64,
                         senderPublicKey = senderPublicKey,
-                        senderOnionAddress = contact.messagingOnion ?: contact.torOnionAddress ?: "",
+                        senderOnionAddress = contact.messagingOnion ?: "",
                         messageType = com.securelegion.database.entities.Message.MESSAGE_TYPE_PAYMENT_SENT,
                         pingId = pingId
                     )
@@ -1410,7 +1410,7 @@ class DownloadMessageService : Service() {
                     val result = messageService.receiveMessage(
                         encryptedData = encryptedBase64,
                         senderPublicKey = senderPublicKey,
-                        senderOnionAddress = contact.messagingOnion ?: contact.torOnionAddress ?: "",
+                        senderOnionAddress = contact.messagingOnion ?: "",
                         messageType = com.securelegion.database.entities.Message.MESSAGE_TYPE_PAYMENT_ACCEPTED,
                         pingId = pingId
                     )
@@ -1452,7 +1452,7 @@ class DownloadMessageService : Service() {
                             messageService.receiveMessage(
                                 encryptedData = encryptedBase64,
                                 senderPublicKey = senderPublicKey,
-                                senderOnionAddress = contact.messagingOnion ?: contact.torOnionAddress ?: "",
+                                senderOnionAddress = contact.messagingOnion ?: "",
                                 messageType = com.securelegion.database.entities.Message.MESSAGE_TYPE_PROFILE_UPDATE,
                                 pingId = pingId
                             )
@@ -1533,7 +1533,7 @@ class DownloadMessageService : Service() {
             Log.d(TAG, "Sending MESSAGE_ACK with retry for pingId=$pingId to $contactName")
 
             // Validate onion address is not empty
-            val onionAddress = contact.messagingOnion ?: contact.torOnionAddress
+            val onionAddress = contact.messagingOnion
             if (onionAddress.isNullOrBlank()) {
                 Log.e(TAG, "No onion address for contactId=$contactId; cannot send MESSAGE_ACK")
                 return
@@ -1587,7 +1587,7 @@ class DownloadMessageService : Service() {
                             "MESSAGE_ACK",
                             senderEd25519Pubkey,
                             senderX25519Pubkey,
-                            contact.messagingOnion ?: contact.torOnionAddress ?: ""
+                            contact.messagingOnion ?: ""
                         )
                     }
 

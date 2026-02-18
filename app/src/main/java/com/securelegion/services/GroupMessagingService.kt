@@ -74,7 +74,7 @@ class GroupMessagingService private constructor(private val context: Context) {
             val encryptedInviteBase64 = Base64.encodeToString(encryptedInvite, Base64.NO_WRAP)
 
             // Send via Tor using Ping-Pong protocol
-            val onionAddress = contact.messagingOnion ?: contact.torOnionAddress ?: ""
+            val onionAddress = contact.messagingOnion ?: ""
             val recipientEd25519PubKey = Base64.decode(contact.publicKeyBase64, Base64.NO_WRAP)
 
             // Generate Ping ID and timestamp
@@ -156,7 +156,7 @@ class GroupMessagingService private constructor(private val context: Context) {
                     val encryptedPayload = RustBridge.encryptMessage(payload, recipientX25519PubKey)
 
                     // Send via Tor
-                    val onionAddress = member.messagingOnion ?: member.torOnionAddress ?: ""
+                    val onionAddress = member.messagingOnion ?: ""
                     val recipientEd25519PubKey = Base64.decode(member.publicKeyBase64, Base64.NO_WRAP)
 
                     val pingId = generatePingId()

@@ -24,7 +24,6 @@ import com.securelegion.utils.ThemedToast
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-
 class LockActivity : AppCompatActivity() {
 
     private lateinit var passwordSection: LinearLayout

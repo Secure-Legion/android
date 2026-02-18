@@ -47,7 +47,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.newSingleThreadContext
+
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.sync.Mutex
@@ -117,7 +117,7 @@ class TorService : Service() {
 
     // Single-threaded dispatcher for protocol state mutations (ACKs, DB updates, ratchet)
     // Ensures all protocol operations are serialized to prevent race conditions
-    private val protocolDispatcher = kotlinx.coroutines.newSingleThreadContext("Protocol-Executor")
+    private val protocolDispatcher = Dispatchers.Default.limitedParallelism(1)
 
     // Service-scoped coroutine scope for all protocol operations
     // Ensures proper cleanup when service is destroyed
@@ -275,10 +275,17 @@ class TorService : Service() {
             val torSettings = getSharedPreferences("tor_settings", MODE_PRIVATE)
             val bridgeType = torSettings.getString("bridge_type", "none") ?: "none"
             val usingBridges = bridgeType != "none"
-            val stallTimeoutMs = if (usingBridges) 180_000L else 60_000L // 3 min with bridges, 1 min without
+            // First-time users need more time — full consensus download from scratch
+            val keyManager = com.securelegion.crypto.KeyManager.getInstance(this@TorService)
+            val isFirstTime = !keyManager.isInitialized()
+            val stallTimeoutMs = when {
+                usingBridges -> 180_000L  // 3 min with bridges
+                isFirstTime -> 120_000L   // 2 min for first-time users (no consensus cache)
+                else -> 60_000L           // 1 min for returning users
+            }
 
-            if (usingBridges) {
-                Log.i(TAG, "Bootstrap watchdog: using extended timeout (${stallTimeoutMs / 1000}s) for bridge type '$bridgeType'")
+            if (usingBridges || isFirstTime) {
+                Log.i(TAG, "Bootstrap watchdog: using extended timeout (${stallTimeoutMs / 1000}s) for bridge type '$bridgeType', firstTime=$isFirstTime")
             }
 
             while (torState == TorState.STARTING || torState == TorState.BOOTSTRAPPING) {
@@ -808,7 +815,7 @@ class TorService : Service() {
                                         if (message.pingWireBytes != null) {
                                             val sent = com.securelegion.crypto.RustBridge.resendPingWithWireBytes(
                                                 message.pingWireBytes!!,
-                                                contact.messagingOnion ?: contact.torOnionAddress ?: ""
+                                                contact.messagingOnion ?: ""
                                             )
                                             if (sent) retried++
                                         } else {
@@ -865,11 +872,19 @@ class TorService : Service() {
         socksHealthJob = serviceScope.launch(Dispatchers.IO) {
             Log.i(TAG, "Starting SOCKS proxy health monitor (5s interval)")
 
-            // Monitor SOCKS in all active states (STARTING, BOOTSTRAPPING, RUNNING)
-            // But gate actual health actions behind bootstrap >= 100 — before that,
-            // SOCKS probe failures are expected (Tor busy bootstrapping, CPU contention)
-            while (isActive && torState != TorState.OFF && torState != TorState.STOPPING && torState != TorState.ERROR) {
+            // NEVER-DIE MONITOR: Only exit on OFF/STOPPING (user-initiated shutdown).
+            // ERROR state is transient — wait and recover, don't die permanently.
+            // If the monitor dies, nothing reopens the TransportGate, and all
+            // messaging stops forever until app restart.
+            while (isActive && torState != TorState.OFF && torState != TorState.STOPPING) {
                 try {
+                    // If torState is ERROR, wait for recovery instead of exiting
+                    if (torState == TorState.ERROR) {
+                        Log.w(TAG, "SOCKS health monitor: torState=ERROR, waiting for recovery (not exiting)...")
+                        kotlinx.coroutines.delay(10_000) // Back off 10s during error state
+                        continue
+                    }
+
                     val bootstrap = RustBridge.getBootstrapStatus()
 
                     if (bootstrap < 100) {
@@ -2555,7 +2570,7 @@ class TorService : Service() {
                         request.contactCardJson != null) {
 
                         val phase1Json = org.json.JSONObject(request.contactCardJson)
-                        val x25519Base64 = phase1Json.optString("x25519_public_key", null)
+                        val x25519Base64 = phase1Json.opt("x25519_public_key") as? String
 
                         if (x25519Base64 != null) {
                             senderX25519PublicKey = android.util.Base64.decode(x25519Base64, android.util.Base64.NO_WRAP)
@@ -2804,7 +2819,7 @@ class TorService : Service() {
                         request.contactCardJson != null) {
 
                         val partialJson = org.json.JSONObject(request.contactCardJson)
-                        val x25519Base64 = partialJson.optString("x25519_public_key", null)
+                        val x25519Base64 = partialJson.opt("x25519_public_key") as? String
 
                         if (x25519Base64 != null) {
                             senderX25519PublicKey = android.util.Base64.decode(x25519Base64, android.util.Base64.NO_WRAP)
@@ -3467,7 +3482,7 @@ class TorService : Service() {
                 return
             }
 
-            val senderOnion = contact.messagingOnion ?: contact.torOnionAddress ?: ""
+            val senderOnion = contact.messagingOnion ?: ""
             if (senderOnion.isEmpty()) {
                 Log.w(TAG, "Cannot process VOICE call signaling - no onion address for contact ${contact.id}")
                 return
@@ -3830,7 +3845,7 @@ class TorService : Service() {
                 Log.d(TAG, "Sending $ackType via new connection to port 9153 (connection reuse disabled)")
 
                 // PATH 2: Open new connection (always available)
-                val onionAddress = contact.messagingOnion ?: contact.torOnionAddress ?: ""
+                val onionAddress = contact.messagingOnion ?: ""
                 ackSuccess = RustBridge.sendDeliveryAck(
                     itemId,
                     ackType,
@@ -4615,7 +4630,7 @@ class TorService : Service() {
                                     // Format: {"type":"PAYMENT_SENT","quote_id":"...","tx_signature":"...","amount":...,"token":"..."}
                                     paymentAmount = json.optLong("amount", 0)
                                     paymentToken = json.optString("token", "SOL")
-                                    txSignature = json.optString("tx_signature", null)
+                                    txSignature = json.opt("tx_signature") as? String
                                     paymentStatus = com.securelegion.database.entities.Message.PAYMENT_STATUS_PAID
                                     val formattedAmount = formatPaymentAmount(paymentAmount!!, paymentToken!!)
                                     displayContent = "Payment Received: $formattedAmount"
@@ -4625,7 +4640,7 @@ class TorService : Service() {
                                     // Format: {"type":"PAYMENT_ACCEPTED","quote_id":"...","receive_address":"...","amount":...,"token":"..."}
                                     paymentAmount = json.optLong("amount", 0)
                                     paymentToken = json.optString("token", "SOL")
-                                    receiveAddress = json.optString("receive_address", null)
+                                    receiveAddress = json.opt("receive_address") as? String
                                     paymentStatus = com.securelegion.database.entities.Message.PAYMENT_STATUS_PENDING
                                     val quoteId = json.optString("quote_id", "")
                                     val formattedAmount = formatPaymentAmount(paymentAmount!!, paymentToken!!)
@@ -4959,7 +4974,7 @@ class TorService : Service() {
                             contactCard.kyberPublicKey,
                             android.util.Base64.NO_WRAP
                         ),
-                        torOnionAddress = contactCard.messagingOnion, // DEPRECATED - for backward compatibility
+
                         friendRequestOnion = contactCard.friendRequestOnion, // NEW - public .onion for friend requests (port 9151)
                         messagingOnion = contactCard.messagingOnion, // NEW - private .onion for messaging (port 8080)
                         voiceOnion = contactCard.voiceOnion, // NEW - voice calling .onion (port 9152)
@@ -5185,7 +5200,6 @@ class TorService : Service() {
                         contactCard.kyberPublicKey,
                         android.util.Base64.NO_WRAP
                     ),
-                    torOnionAddress = contactCard.messagingOnion, // DEPRECATED - for backward compatibility
                     friendRequestOnion = contactCard.friendRequestOnion,
                     messagingOnion = contactCard.messagingOnion,
                     voiceOnion = contactCard.voiceOnion,
@@ -5530,7 +5544,7 @@ class TorService : Service() {
                         val success = RustBridge.sendTap(
                             recipientEd25519PubKey,
                             recipientX25519PubKey,
-                            contact.messagingOnion ?: contact.torOnionAddress ?: ""
+                            contact.messagingOnion ?: ""
                         )
 
                         if (success) {
@@ -6186,7 +6200,7 @@ class TorService : Service() {
                                 return@launch
                             }
 
-                            val senderOnion = contact.voiceOnion ?: contact.messagingOnion ?: contact.torOnionAddress ?: ""
+                            val senderOnion = contact.voiceOnion ?: contact.messagingOnion ?: ""
                             if (senderOnion.isEmpty()) {
                                 Log.w(TAG, "Cannot process signaling - no onion address for contact ${contact.id}")
                                 return@launch
@@ -7019,7 +7033,6 @@ class TorService : Service() {
 
         // Cancel all protocol operations and clean up coroutine scope
         serviceScope.cancel()
-        protocolDispatcher.close()
 
         // Clear instance
         instance = null

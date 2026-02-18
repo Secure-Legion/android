@@ -858,7 +858,6 @@ class AddFriendActivity : BaseActivity() {
                             contactCard.kyberPublicKey,
                             Base64.NO_WRAP
                         ),
-                        torOnionAddress = contactCard.torOnionAddress,
                         voiceOnion = contactCard.voiceOnion,
                         addedTimestamp = System.currentTimeMillis(),
                         lastContactTimestamp = System.currentTimeMillis(),
@@ -1411,8 +1410,18 @@ class AddFriendActivity : BaseActivity() {
             val prefs = getSharedPreferences("friend_requests", Context.MODE_PRIVATE)
             val pendingRequestsSet = prefs.getStringSet("pending_requests_v2", mutableSetOf()) ?: mutableSetOf()
 
-            // Add new request
-            val newSet = pendingRequestsSet.toMutableSet()
+            // Remove any existing request to the same recipient+direction (prevents duplicates on resend)
+            val newSet = mutableSetOf<String>()
+            for (existingJson in pendingRequestsSet) {
+                try {
+                    val existing = com.securelegion.models.PendingFriendRequest.fromJson(existingJson)
+                    if (existing.ipfsCid != request.ipfsCid || existing.direction != request.direction) {
+                        newSet.add(existingJson)
+                    }
+                } catch (e: Exception) {
+                    newSet.add(existingJson)
+                }
+            }
             newSet.add(request.toJson())
 
             prefs.edit()

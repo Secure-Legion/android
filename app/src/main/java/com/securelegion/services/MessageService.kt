@@ -314,7 +314,7 @@ class MessageService(private val context: Context) {
             val contact = database.contactDao().getContactById(contactId)
                 ?: return@withContext Result.failure(Exception("Contact not found"))
 
-            Log.d(TAG, "Sending voice to: ${contact.displayName} (${contact.torOnionAddress})")
+            Log.d(TAG, "Sending voice to: ${contact.displayName} (${contact.messagingOnion})")
 
             // Get our keypair for signing (needed for messageId determinism)
             val ourPublicKey = keyManager.getSigningPublicKey()
@@ -529,7 +529,7 @@ class MessageService(private val context: Context) {
             val contact = database.contactDao().getContactById(contactId)
                 ?: return@withContext Result.failure(Exception("Contact not found"))
 
-            Log.d(TAG, "Sending image to: ${contact.displayName} (${contact.torOnionAddress})")
+            Log.d(TAG, "Sending image to: ${contact.displayName} (${contact.messagingOnion})")
 
             // Get our keypair for signing (needed for messageId determinism)
             val ourPublicKey = keyManager.getSigningPublicKey()
@@ -751,7 +751,7 @@ class MessageService(private val context: Context) {
             // Get recipient keys for Ping
             val recipientEd25519PubKey = Base64.decode(contact.publicKeyBase64, Base64.NO_WRAP)
             val recipientX25519PubKey = Base64.decode(contact.x25519PublicKeyBase64, Base64.NO_WRAP)
-            val onionAddress = contact.messagingOnion ?: contact.torOnionAddress ?: ""
+            val onionAddress = contact.messagingOnion ?: ""
 
             // Generate ping ID for this send
             val pingId = generatePingId()
@@ -852,7 +852,7 @@ class MessageService(private val context: Context) {
             val contact = database.contactDao().getContactById(contactId)
                 ?: return@withContext Result.failure(Exception("Contact not found"))
 
-            Log.d(TAG, "Sending to: ${contact.displayName} (${contact.torOnionAddress})")
+            Log.d(TAG, "Sending to: ${contact.displayName} (${contact.messagingOnion})")
 
             // Get our keypair for signing (needed for messageId determinism)
             val ourPublicKey = keyManager.getSigningPublicKey()
@@ -1068,7 +1068,7 @@ class MessageService(private val context: Context) {
             val contact = database.contactDao().getContactById(contactId)
                 ?: return@withContext Result.failure(Exception("Contact not found"))
 
-            Log.d(TAG, "Sending payment request to: ${contact.displayName} (${contact.torOnionAddress})")
+            Log.d(TAG, "Sending payment request to: ${contact.displayName} (${contact.messagingOnion})")
 
             // Generate unique message ID using quote ID
             val messageId = "pay_req_${quote.quoteId}"
@@ -2485,7 +2485,7 @@ class MessageService(private val context: Context) {
             Log.d(TAG, "Message type: ${message.messageType} → wire byte: 0x${messageTypeByte.toString(16).padStart(2, '0')}")
 
             // Send Ping via Rust bridge (with message for instant mode)
-            val onionAddress = contact.messagingOnion ?: contact.torOnionAddress ?: ""
+            val onionAddress = contact.messagingOnion ?: ""
             Log.d(TAG, "Resolved messaging .onion for ${contact.displayName}")
 
             // Validate message has pingId and timestamp (should be generated when message created)
@@ -2729,7 +2729,7 @@ class MessageService(private val context: Context) {
                     // Resend PING using stored wire bytes (fast path)
                     val success = com.securelegion.crypto.RustBridge.resendPingWithWireBytes(
                         message.pingWireBytes!!,
-                        contact.messagingOnion ?: contact.torOnionAddress ?: ""
+                        contact.messagingOnion ?: ""
                     )
                     if (success) {
                         Log.i(TAG, "Ping resent successfully for ${message.messageId}")
@@ -2752,7 +2752,7 @@ class MessageService(private val context: Context) {
                     // Get contact keys
                     val recipientEd25519PubKey = Base64.decode(contact.publicKeyBase64, Base64.NO_WRAP)
                     val recipientX25519PubKey = Base64.decode(contact.x25519PublicKeyBase64, Base64.NO_WRAP)
-                    val onionAddress = contact.messagingOnion ?: contact.torOnionAddress ?: ""
+                    val onionAddress = contact.messagingOnion ?: ""
 
                     // Use existing pingId and timestamp from the message
                     val pingId = message.pingId ?: run {
@@ -2890,7 +2890,7 @@ class MessageService(private val context: Context) {
                     ackType = "PONG_ACK",
                     recipientEd25519Pubkey = android.util.Base64.decode(contact.publicKeyBase64, android.util.Base64.NO_WRAP),
                     recipientX25519Pubkey = android.util.Base64.decode(contact.x25519PublicKeyBase64, android.util.Base64.NO_WRAP),
-                    recipientOnion = contact.messagingOnion ?: contact.torOnionAddress ?: ""
+                    recipientOnion = contact.messagingOnion ?: ""
                 )
 
                 if (success) {
@@ -2959,7 +2959,7 @@ class MessageService(private val context: Context) {
             // Send message blob
             val success = try {
                 com.securelegion.crypto.RustBridge.sendMessageBlob(
-                    contact.messagingOnion ?: contact.torOnionAddress ?: "",
+                    contact.messagingOnion ?: "",
                     encryptedBytes,
                     messageTypeByte
                 )
