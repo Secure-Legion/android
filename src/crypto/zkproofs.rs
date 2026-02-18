@@ -7,7 +7,7 @@ use rand::thread_rng;
 /// Generate a Bulletproof range proof for a given amount.
 ///
 /// Proves that `amount` is in range [0, 2^bit_length) without revealing the amount.
-/// Used by ShadowWire for internal transfers where amounts must be hidden.
+/// Used for private transfers where amounts must be hidden.
 ///
 /// Returns (proof_bytes, commitment_bytes, blinding_factor_bytes) on success.
 /// - proof_bytes: ~672 bytes (variable), the serialized range proof

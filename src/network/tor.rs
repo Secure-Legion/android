@@ -735,6 +735,7 @@ pub const MSG_TYPE_PAYMENT_REQUEST: u8 = 0x0A;
 pub const MSG_TYPE_PAYMENT_SENT: u8 = 0x0B;
 pub const MSG_TYPE_PAYMENT_ACCEPTED: u8 = 0x0C;
 pub const MSG_TYPE_CALL_SIGNALING: u8 = 0x0D; // Voice call signaling (OFFER/ANSWER/REJECT/END/BUSY)
+pub const MSG_TYPE_PROFILE_UPDATE: u8 = 0x0F; // Profile photo update (hidden, not shown in chat)
 
 /// Canonical port constants (from PORT_MAP.md)
 pub const PORT_HS_PING_PONG: u16 = 9150; // Message HS: PING/PONG/ACK
@@ -1894,7 +1895,8 @@ impl TorManager {
             MSG_TYPE_PAYMENT_REQUEST |
             MSG_TYPE_PAYMENT_SENT |
             MSG_TYPE_PAYMENT_ACCEPTED |
-            MSG_TYPE_CALL_SIGNALING => {
+            MSG_TYPE_CALL_SIGNALING |
+            MSG_TYPE_PROFILE_UPDATE => {
                 // Valid type, continue to length check
             }
             _ => {
@@ -1957,7 +1959,7 @@ impl TorManager {
                     log::info!("ROUTER: PONG dispatch ok, conn={} len={}", conn_id, buf.len());
                 }
             }
-            MSG_TYPE_TEXT | MSG_TYPE_VOICE | MSG_TYPE_IMAGE | MSG_TYPE_PAYMENT_REQUEST | MSG_TYPE_PAYMENT_SENT | MSG_TYPE_PAYMENT_ACCEPTED => {
+            MSG_TYPE_TEXT | MSG_TYPE_VOICE | MSG_TYPE_IMAGE | MSG_TYPE_PAYMENT_REQUEST | MSG_TYPE_PAYMENT_SENT | MSG_TYPE_PAYMENT_ACCEPTED | MSG_TYPE_PROFILE_UPDATE => {
                 log::info!("→ Routing to MESSAGE handler (separate channel, type={})",
                     match msg_type {
                         MSG_TYPE_TEXT => "TEXT",
@@ -1966,6 +1968,7 @@ impl TorManager {
                         MSG_TYPE_PAYMENT_REQUEST => "PAYMENT_REQUEST",
                         MSG_TYPE_PAYMENT_SENT => "PAYMENT_SENT",
                         MSG_TYPE_PAYMENT_ACCEPTED => "PAYMENT_ACCEPTED",
+                        MSG_TYPE_PROFILE_UPDATE => "PROFILE_UPDATE",
                         _ => "UNKNOWN"
                     });
 

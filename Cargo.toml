@@ -25,7 +25,7 @@ hmac = "0.12"
 sha2 = "0.10"
 blake3 = "1.5"  # For PING hashing and replay detection
 subtle = "2.5"  # For constant-time comparison
-bulletproofs = "5.0.0"  # Bulletproof range proofs for ShadowWire ZK transfers
+bulletproofs = "5.0.0"  # Bulletproof range proofs for ZK transfers
 curve25519-dalek = { version = "4", features = ["rand_core"] }  # Required by bulletproofs for Scalar/Ristretto types
 merlin = "3"  # Transcript protocol for bulletproofs
 

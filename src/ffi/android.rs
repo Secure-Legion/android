@@ -122,7 +122,8 @@ fn is_valid_message_type(msg_type: u8) -> bool {
         crate::network::tor::MSG_TYPE_PAYMENT_REQUEST |
         crate::network::tor::MSG_TYPE_PAYMENT_SENT |
         crate::network::tor::MSG_TYPE_PAYMENT_ACCEPTED |
-        crate::network::tor::MSG_TYPE_CALL_SIGNALING
+        crate::network::tor::MSG_TYPE_CALL_SIGNALING |
+        crate::network::tor::MSG_TYPE_PROFILE_UPDATE
     )
 }
 
@@ -1747,8 +1748,8 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendPing(
                     log::info!("INSTANT MODE: Pong received, sending message payload...");
                     log::info!("Message size: {} bytes encrypted", message_bytes.len());
 
-                    // Build message wire format: [Type Byte][Encrypted Message]
-                    // NOTE: message_bytes from encryptMessage() already contains [X25519 32 bytes][Encrypted data]
+                    // Build message wire format: [Type Byte][Sender X25519 Public Key - 32 bytes][Encrypted Message]
+                    // Receiver's handleInstantMessageBlob expects [type][x25519_32][payload]
 
                     // Validate message type before sending
                     let msg_type = message_type_byte as u8;
@@ -1757,11 +1758,12 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendPing(
                         return Err(format!("Invalid message type: {}", msg_type).into());
                     }
 
-                    let mut message_wire = Vec::new();
+                    let mut message_wire = Vec::with_capacity(1 + 32 + message_bytes.len());
                     message_wire.push(msg_type);
-                    message_wire.extend_from_slice(&message_bytes); // Encrypted message (already has X25519 key)
+                    message_wire.extend_from_slice(&sender_x25519_pubkey); // Our X25519 public key
+                    message_wire.extend_from_slice(&message_bytes); // Encrypted message payload
 
-                    log::info!("Sending message wire: {} bytes total (1 type + {} encrypted)",
+                    log::info!("Sending message wire: {} bytes total (1 type + 32 x25519 + {} encrypted)",
                         message_wire.len(), message_bytes.len());
 
                     // Send message on same connection (lock only during send)
@@ -7724,14 +7726,14 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_getMessageTxDropCount(
 
 // ==================== END v2.0: Voice Streaming ====================
 
-// ==================== ShadowWire ZK Range Proofs ====================
+// ==================== ZK Range Proofs ====================
 
 /// Helper to cast &[u8] to &[i8] for JNI byte arrays
 fn bytemuck_cast_slice(bytes: &[u8]) -> &[i8] {
     unsafe { std::slice::from_raw_parts(bytes.as_ptr() as *const i8, bytes.len()) }
 }
 
-/// Generate a Bulletproof range proof for ShadowWire transfers
+/// Generate a Bulletproof range proof for private transfers
 /// Returns: [4-byte proof_len (big-endian)][proof_bytes][32-byte commitment][32-byte blinding_factor]
 #[no_mangle]
 pub extern "C" fn Java_com_securelegion_crypto_RustBridge_generateRangeProof(
@@ -7809,4 +7811,4 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_verifyRangeProof(
     }, JNI_FALSE)
 }
 
-// ==================== END ShadowWire ZK Range Proofs ====================
+// ==================== END ZK Range Proofs ====================
