@@ -104,11 +104,12 @@ impl OpType {
 // ---------------------------------------------------------------------------
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[repr(u8)]
 pub enum Role {
-    Owner,
-    Admin,
-    Member,
-    ReadOnly,
+    Owner = 0,
+    Admin = 1,
+    Member = 2,
+    ReadOnly = 3,
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -118,10 +119,11 @@ pub enum RemoveReason {
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[repr(u8)]
 pub enum MetadataKey {
-    Name,
-    Avatar,
-    Topic,
+    Name = 0,
+    Avatar = 1,
+    Topic = 2,
 }
 
 // ---------------------------------------------------------------------------

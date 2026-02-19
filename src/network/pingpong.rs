@@ -10,6 +10,9 @@ use super::tor::TorManager;
 /// Ping Token - sent from sender to recipient to initiate handshake
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct PingToken {
+    /// Protocol version for peer compatibility detection
+    pub protocol_version: u8,
+
     /// Sender's Ed25519 signing public key (32 bytes)
     pub sender_pubkey: [u8; 32],
 
@@ -28,7 +31,7 @@ pub struct PingToken {
     /// Unix timestamp when Ping was created
     pub timestamp: i64,
 
-    /// Ed25519 signature of (sender_pubkey || recipient_pubkey || sender_x25519_pubkey || recipient_x25519_pubkey || nonce || timestamp)
+    /// Ed25519 signature of (protocol_version || sender_pubkey || recipient_pubkey || sender_x25519_pubkey || recipient_x25519_pubkey || nonce || timestamp)
     #[serde(with = "BigArray")]
     pub signature: [u8; 64],
 }
@@ -36,6 +39,9 @@ pub struct PingToken {
 /// Pong Token - response from recipient confirming readiness
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct PongToken {
+    /// Protocol version echoed from PingToken
+    pub protocol_version: u8,
+
     /// Original Ping nonce (links Pong to Ping)
     pub ping_nonce: [u8; 24],
 
@@ -65,6 +71,11 @@ pub struct DeliveryAck {
 
     /// Unix timestamp when ACK was created
     pub timestamp: i64,
+
+    /// Sender's Ed25519 signing public key (identity key)
+    /// Enables cross-restart ACK verification without relying on
+    /// in-memory OUTGOING_PING_SIGNERS
+    pub sender_ed25519_signing_pubkey: [u8; 32],
 
     /// Sender's Ed25519 signature (proves this ACK is from the expected party)
     #[serde(with = "BigArray")]
@@ -354,6 +365,7 @@ impl PingToken {
 
         // Create the Ping token (without signature first)
         let mut ping = PingToken {
+            protocol_version: crate::network::tor::P2P_PROTOCOL_VERSION,
             sender_pubkey: sender_keypair.verifying_key().to_bytes(),
             recipient_pubkey: recipient_pubkey.to_bytes(),
             sender_x25519_pubkey: *sender_x25519_pubkey,
@@ -384,6 +396,7 @@ impl PingToken {
 
         // Create the Ping token (without signature first)
         let mut ping = PingToken {
+            protocol_version: crate::network::tor::P2P_PROTOCOL_VERSION,
             sender_pubkey: sender_keypair.verifying_key().to_bytes(),
             recipient_pubkey: recipient_pubkey.to_bytes(),
             sender_x25519_pubkey: *sender_x25519_pubkey,
@@ -418,6 +431,7 @@ impl PingToken {
     /// Serialize Ping for signing (everything except the signature field)
     fn serialize_for_signing(&self) -> Vec<u8> {
         let mut bytes = Vec::new();
+        bytes.push(self.protocol_version);
         bytes.extend_from_slice(&self.sender_pubkey);
         bytes.extend_from_slice(&self.recipient_pubkey);
         bytes.extend_from_slice(&self.sender_x25519_pubkey);
@@ -455,8 +469,9 @@ impl PongToken {
             .duration_since(UNIX_EPOCH)?
             .as_secs() as i64;
 
-        // Create Pong token (without signature)
+        // Create Pong token (without signature), echo back Ping's protocol version
         let mut pong = PongToken {
+            protocol_version: ping.protocol_version,
             ping_nonce: ping.nonce,
             pong_nonce,
             timestamp,
@@ -488,6 +503,7 @@ impl PongToken {
     /// Serialize Pong for signing
     fn serialize_for_signing(&self) -> Vec<u8> {
         let mut bytes = Vec::new();
+        bytes.push(self.protocol_version);
         bytes.extend_from_slice(&self.ping_nonce);
         bytes.extend_from_slice(&self.pong_nonce);
         bytes.extend_from_slice(&self.timestamp.to_le_bytes());
@@ -533,6 +549,7 @@ impl DeliveryAck {
             item_id: item_id.to_string(),
             ack_type: ack_type.to_string(),
             timestamp,
+            sender_ed25519_signing_pubkey: keypair.verifying_key().to_bytes(),
             signature: [0u8; 64],
         };
 
@@ -558,11 +575,14 @@ impl DeliveryAck {
     }
 
     /// Serialize ACK for signing
+    /// IMPORTANT: sender_ed25519_signing_pubkey MUST be included here so the
+    /// signature covers the identity field (prevents swap attacks)
     fn serialize_for_signing(&self) -> Vec<u8> {
         let mut bytes = Vec::new();
         bytes.extend_from_slice(self.item_id.as_bytes());
         bytes.extend_from_slice(self.ack_type.as_bytes());
         bytes.extend_from_slice(&self.timestamp.to_le_bytes());
+        bytes.extend_from_slice(&self.sender_ed25519_signing_pubkey);
         bytes
     }
 
@@ -780,6 +800,9 @@ mod tests {
 
         let ping = PingToken::new(&sender, &recipient.verifying_key(), &sx, &rx).unwrap();
 
+        // Verify protocol version
+        assert_eq!(ping.protocol_version, crate::network::tor::P2P_PROTOCOL_VERSION);
+
         // Verify signature
         assert!(ping.verify().unwrap());
     }
@@ -790,6 +813,10 @@ mod tests {
 
         let ping = PingToken::new(&sender, &recipient.verifying_key(), &sx, &rx).unwrap();
         let pong = PongToken::new(&ping, &recipient, true).unwrap();
+
+        // Verify protocol version echoed from Ping
+        assert_eq!(pong.protocol_version, ping.protocol_version);
+        assert_eq!(pong.protocol_version, crate::network::tor::P2P_PROTOCOL_VERSION);
 
         // Verify signature
         assert!(pong.verify(&recipient.verifying_key()).unwrap());
@@ -807,5 +834,6 @@ mod tests {
 
         assert_eq!(ping.nonce, ping_deserialized.nonce);
         assert_eq!(ping.timestamp, ping_deserialized.timestamp);
+        assert_eq!(ping.protocol_version, ping_deserialized.protocol_version);
     }
 }

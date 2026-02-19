@@ -185,6 +185,21 @@ impl OpID {
             self.nonce,
         )
     }
+
+    /// Decode from hex string produced by `to_hex()`.
+    pub fn from_hex(s: &str) -> Result<Self, String> {
+        let parts: Vec<&str> = s.split(':').collect();
+        if parts.len() != 3 {
+            return Err("OpID hex must have 3 colon-separated parts".into());
+        }
+        let author = DeviceID::from_hex(parts[0])
+            .map_err(|e| format!("Bad author hex: {}", e))?;
+        let lamport = u64::from_str_radix(parts[1], 16)
+            .map_err(|e| format!("Bad lamport hex: {}", e))?;
+        let nonce = u64::from_str_radix(parts[2], 16)
+            .map_err(|e| format!("Bad nonce hex: {}", e))?;
+        Ok(OpID { author, lamport, nonce })
+    }
 }
 
 impl Ord for OpID {

@@ -123,7 +123,10 @@ fn is_valid_message_type(msg_type: u8) -> bool {
         crate::network::tor::MSG_TYPE_PAYMENT_SENT |
         crate::network::tor::MSG_TYPE_PAYMENT_ACCEPTED |
         crate::network::tor::MSG_TYPE_CALL_SIGNALING |
-        crate::network::tor::MSG_TYPE_PROFILE_UPDATE
+        crate::network::tor::MSG_TYPE_PROFILE_UPDATE |
+        crate::network::tor::MSG_TYPE_CRDT_OPS |
+        crate::network::tor::MSG_TYPE_SYNC_REQUEST |
+        crate::network::tor::MSG_TYPE_SYNC_CHUNK
     )
 }
 
@@ -237,6 +240,48 @@ fn get_voice_listener() -> Arc<tokio::sync::Mutex<VoiceStreamingListener>> {
         .clone()
 }
 
+// ==================== BLOCKING POLL HELPERS ====================
+
+/// Blocking recv on a (u64, Vec<u8>) channel with timeout.
+/// Parks the calling thread until data arrives or timeout elapses.
+/// Returns None on timeout, channel closure, or if receiver not initialized.
+/// SAFETY: Must be called from a non-tokio thread (JVM Dispatchers.IO is safe).
+fn blocking_recv_pair(
+    receiver: &OnceCell<Arc<Mutex<mpsc::UnboundedReceiver<(u64, Vec<u8>)>>>>,
+    timeout_secs: u64,
+) -> Option<(u64, Vec<u8>)> {
+    let rx_arc = receiver.get()?;
+    let mut rx = rx_arc.lock().unwrap();
+
+    GLOBAL_RUNTIME.block_on(async {
+        match tokio::time::timeout(
+            std::time::Duration::from_secs(timeout_secs),
+            rx.recv()
+        ).await {
+            Ok(data) => data,
+            Err(_) => None, // Timeout
+        }
+    })
+}
+
+/// Blocking recv on a Vec<u8> channel with timeout.
+fn blocking_recv_vec(
+    receiver: &OnceCell<Arc<Mutex<mpsc::UnboundedReceiver<Vec<u8>>>>>,
+    timeout_secs: u64,
+) -> Option<Vec<u8>> {
+    let rx_arc = receiver.get()?;
+    let mut rx = rx_arc.lock().unwrap();
+
+    GLOBAL_RUNTIME.block_on(async {
+        match tokio::time::timeout(
+            std::time::Duration::from_secs(timeout_secs),
+            rx.recv()
+        ).await {
+            Ok(data) => data,
+            Err(_) => None,
+        }
+    })
+}
 
 // ==================== CRYPTOGRAPHY ====================
 
@@ -782,6 +827,92 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_createHiddenService(
             Err(e) => {
                 let error_msg = format!("Hidden service creation failed: {}", e);
                 let _ = env.throw_new("java/lang/RuntimeException", error_msg);
+                std::ptr::null_mut()
+            }
+        }
+    }, std::ptr::null_mut())
+}
+
+/// Pre-compute a v3 .onion address from a BIP39 seed + domain separator, without Tor.
+///
+/// Uses the exact same derivation path as `create_hidden_service`:
+///   1. SHA-256(seed || domain_sep) → 32-byte Ed25519 seed
+///   2. Ed25519 seed → public key
+///   3. Public key → .onion address (per rend-spec-v3 section 6)
+///
+/// # Arguments
+/// * `seed` - 64-byte BIP39 seed
+/// * `domain_sep` - Domain separation string: "tor_hs", "friend_req", or "tor_voice"
+///
+/// # Returns
+/// The v3 .onion address (56 chars + ".onion")
+#[no_mangle]
+pub extern "C" fn Java_com_securelegion_crypto_RustBridge_computeOnionAddressFromSeed(
+    mut env: JNIEnv,
+    _class: JClass,
+    seed: JByteArray,
+    domain_sep: JString,
+) -> jstring {
+    use sha2::{Digest as Sha2Digest, Sha256};
+    use crate::network::compute_onion_address_from_ed25519_seed;
+
+    catch_panic!(env, {
+        // Get seed bytes
+        let mut seed_bytes = match env.convert_byte_array(&seed) {
+            Ok(b) => b,
+            Err(e) => {
+                let _ = env.throw_new("java/lang/RuntimeException", format!("Failed to read seed: {}", e));
+                return std::ptr::null_mut();
+            }
+        };
+
+        if seed_bytes.len() != 64 {
+            let _ = env.throw_new("java/lang/IllegalArgumentException",
+                format!("Seed must be 64 bytes, got {}", seed_bytes.len()));
+            seed_bytes.zeroize();
+            return std::ptr::null_mut();
+        }
+
+        // Get domain separator string
+        let domain_str: String = match env.get_string(&domain_sep) {
+            Ok(s) => s.into(),
+            Err(e) => {
+                seed_bytes.zeroize();
+                let _ = env.throw_new("java/lang/RuntimeException", format!("Failed to read domain separator: {}", e));
+                return std::ptr::null_mut();
+            }
+        };
+
+        // Validate domain separator — only the three known values are accepted
+        match domain_str.as_str() {
+            "tor_hs" | "friend_req" | "tor_voice" => {}
+            _ => {
+                seed_bytes.zeroize();
+                let _ = env.throw_new("java/lang/IllegalArgumentException",
+                    format!("Invalid domain separator '{}'. Must be 'tor_hs', 'friend_req', or 'tor_voice'", domain_str));
+                return std::ptr::null_mut();
+            }
+        }
+
+        // Step 1: Domain separation — SHA-256(seed || domain_string) → 32-byte Ed25519 seed
+        // This matches KeyManager.deriveHiddenServiceKeyPair() / deriveFriendRequestKeyPair() / deriveVoiceServiceKeyPair()
+        let mut sha256 = Sha256::new();
+        sha256.update(&seed_bytes);
+        sha256.update(domain_str.as_bytes());
+        let mut ed25519_seed: [u8; 32] = sha256.finalize().into();
+
+        // Step 2+3: Derive pubkey and compute .onion address using the shared helper
+        // This is the exact same function used by create_hidden_service, guaranteeing identical results
+        let full_address = compute_onion_address_from_ed25519_seed(&ed25519_seed);
+
+        // Zeroize sensitive material
+        ed25519_seed.zeroize();
+        seed_bytes.zeroize();
+
+        match string_to_jstring(&mut env, &full_address) {
+            Ok(s) => s.into_raw(),
+            Err(_) => {
+                let _ = env.throw_new("java/lang/RuntimeException", "Failed to create onion address string");
                 std::ptr::null_mut()
             }
         }
@@ -1637,6 +1768,15 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendPing(
 
         let ping_id = ping_id_str; // Use the provided ping_id (not regenerated)
 
+        // Store recipient's Ed25519 pubkey for PONG/ACK signature verification
+        {
+            let mut signers = OUTGOING_PING_SIGNERS.lock().unwrap();
+            signers.insert(ping_id.clone(), ping_token.recipient_pubkey);
+        }
+
+        // Persist to Room DB so PONG verification survives process restart
+        store_pending_ping_db(&mut env, &ping_id, &ping_token.recipient_pubkey);
+
         // Serialize PingToken
         let ping_bytes = match ping_token.to_bytes() {
             Ok(bytes) => bytes,
@@ -1744,8 +1884,59 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendPing(
             ).await;
 
             match pong_result {
-                Ok(Ok(_pong_data)) => {
-                    log::info!("INSTANT MODE: Pong received, sending message payload...");
+                Ok(Ok(pong_data)) => {
+                    // Verify instant Pong signature before sending message payload
+                    // Wire layout (after length+type stripping): [responder_x25519:32][encrypted_pong]
+                    // recipient_ed25519_verifying = the contact we dialed (i.e. the PONG signer)
+                    if pong_data.len() >= 32 {
+                        let pong_encrypted = &pong_data[32..];
+                        match crate::crypto::encryption::decrypt_message(pong_encrypted, &shared_secret) {
+                            Ok(pong_plaintext) => {
+                                match bincode::deserialize::<crate::protocol::message::PongToken>(&pong_plaintext) {
+                                    Ok(pong_token) => {
+                                        let pingpong_pong = crate::network::pingpong::PongToken {
+                                            protocol_version: pong_token.protocol_version,
+                                            ping_nonce: pong_token.ping_nonce,
+                                            pong_nonce: pong_token.pong_nonce,
+                                            timestamp: pong_token.timestamp,
+                                            authenticated: pong_token.authenticated,
+                                            signature: pong_token.signature,
+                                        };
+                                        match pingpong_pong.verify(&recipient_ed25519_verifying) {
+                                            Ok(true) => {
+                                                log::info!("PONG_SIG_OK: Instant Pong signature verified for ping_id={}", ping_id);
+                                                // Store verified pong and clean up signer entry
+                                                crate::network::pingpong::store_pong_session(&ping_id, pingpong_pong);
+                                                OUTGOING_PING_SIGNERS.lock().unwrap().remove(&ping_id);
+                                                delete_pending_ping_db(&mut env, &ping_id);
+                                            },
+                                            Ok(false) => {
+                                                log::error!("PONG_SIG_INVALID: Instant Pong signature verification FAILED for ping_id={}", ping_id);
+                                                return Err("Invalid instant Pong signature — rejecting".into());
+                                            },
+                                            Err(e) => {
+                                                log::error!("PONG_SIG_ERROR: Instant Pong sig check error: {}", e);
+                                                return Err(format!("Pong signature error: {}", e).into());
+                                            }
+                                        }
+                                    },
+                                    Err(e) => {
+                                        log::error!("PONG_DESER_FAIL: Failed to deserialize instant Pong: {} — rejecting", e);
+                                        return Err(format!("Invalid instant Pong format: {}", e).into());
+                                    },
+                                }
+                            },
+                            Err(e) => {
+                                log::error!("PONG_DECRYPT_FAIL: Failed to decrypt instant Pong: {} — rejecting", e);
+                                return Err(format!("Cannot decrypt instant Pong: {}", e).into());
+                            },
+                        }
+                    } else {
+                        log::error!("PONG_TOO_SHORT: Instant Pong data too short ({} bytes, need >=32) — rejecting", pong_data.len());
+                        return Err("Instant Pong data too short".into());
+                    }
+
+                    log::info!("INSTANT MODE: Pong verified, sending message payload...");
                     log::info!("Message size: {} bytes encrypted", message_bytes.len());
 
                     // Build message wire format: [Type Byte][Sender X25519 Public Key - 32 bytes][Encrypted Message]
@@ -1756,6 +1947,12 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendPing(
                     if !is_valid_message_type(msg_type) {
                         log::error!("Invalid message type: {}", msg_type);
                         return Err(format!("Invalid message type: {}", msg_type).into());
+                    }
+
+                    // Strict boundary validation: encrypted payload minimum wire format
+                    if message_bytes.len() < 49 {
+                        log::error!("Encrypted payload too short: {} bytes (minimum 49)", message_bytes.len());
+                        return Err(format!("Encrypted payload too short: {}", message_bytes.len()).into());
                     }
 
                     let mut message_wire = Vec::with_capacity(1 + 32 + message_bytes.len());
@@ -2823,12 +3020,20 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_decryptAndStorePongFro
             }
         };
 
+        // Validate protocol version before further processing
+        if pong_token.protocol_version != crate::network::tor::P2P_PROTOCOL_VERSION {
+            log::error!("PROTOCOL_MISMATCH: Listener Pong protocol_version={} ours={} — dropping",
+                pong_token.protocol_version, crate::network::tor::P2P_PROTOCOL_VERSION);
+            return 0;
+        }
+
         // Use ping_nonce as ping_id (hex-encoded)
         let ping_id = hex::encode(&pong_token.ping_nonce);
         log::info!("Received Pong for ping_id: {}", ping_id);
 
         // Convert message::PongToken to pingpong::PongToken
         let pingpong_token = crate::network::pingpong::PongToken {
+            protocol_version: pong_token.protocol_version,
             ping_nonce: pong_token.ping_nonce,
             pong_nonce: pong_token.pong_nonce,
             timestamp: pong_token.timestamp,
@@ -2836,10 +3041,58 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_decryptAndStorePongFro
             signature: pong_token.signature,
         };
 
-        // Store in GLOBAL_PONG_SESSIONS
+        // Verify PONG signature using stored outgoing ping signer
+        let expected_signer = {
+            let signers = OUTGOING_PING_SIGNERS.lock().unwrap();
+            signers.get(&ping_id).cloned()
+        };
+        // DB fallback: if in-memory miss (e.g. process restarted), try Room persistence
+        let expected_signer = expected_signer.or_else(|| {
+            log::info!("In-memory signer miss for ping_id={}, trying DB fallback...", ping_id);
+            let db_result = lookup_signer_db(&mut env, &ping_id);
+            if db_result.is_some() {
+                log::info!("DB_SIGNER_HIT: Found signer in Room DB for ping_id={}", ping_id);
+            } else {
+                log::warn!("DB_SIGNER_MISS: No signer in Room DB either for ping_id={}", ping_id);
+            }
+            db_result
+        });
+        match expected_signer {
+            Some(signer_bytes) => {
+                match ed25519_dalek::VerifyingKey::from_bytes(&signer_bytes) {
+                    Ok(verifying_key) => {
+                        match pingpong_token.verify(&verifying_key) {
+                            Ok(true) => {
+                                log::info!("PONG_SIG_OK: Listener Pong signature verified for ping_id={}", ping_id);
+                                OUTGOING_PING_SIGNERS.lock().unwrap().remove(&ping_id);
+                                delete_pending_ping_db(&mut env, &ping_id);
+                            },
+                            Ok(false) => {
+                                log::error!("PONG_SIG_INVALID: Listener Pong signature verification FAILED for ping_id={} — dropping", ping_id);
+                                return 0;
+                            },
+                            Err(e) => {
+                                log::error!("PONG_SIG_ERROR: Listener Pong sig check error for ping_id={}: {} — dropping", ping_id, e);
+                                return 0;
+                            }
+                        }
+                    },
+                    Err(e) => {
+                        log::error!("PONG_SIG_ERROR: Invalid stored signer pubkey for ping_id={}: {} — dropping", ping_id, e);
+                        return 0;
+                    }
+                }
+            },
+            None => {
+                log::error!("PONG_SIG_REJECT: No stored signer for ping_id={} (memory + DB miss) — cannot verify, dropping", ping_id);
+                return 0;
+            }
+        }
+
+        // Store verified PONG in GLOBAL_PONG_SESSIONS
         crate::network::pingpong::store_pong_session(&ping_id, pingpong_token);
         PONG_SESSION_COUNT.fetch_add(1, Ordering::Relaxed);
-        log::info!("Stored Pong in GLOBAL_PONG_SESSIONS (count={})", PONG_SESSION_COUNT.load(Ordering::Relaxed));
+        log::info!("Stored verified Pong in GLOBAL_PONG_SESSIONS (count={})", PONG_SESSION_COUNT.load(Ordering::Relaxed));
 
         1 // success
     }, 0)
@@ -2973,10 +3226,27 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendMessageBlob(
             }
         };
 
+        // Strict boundary validation: X25519 pubkey must be exactly 32 bytes
+        if our_x25519_public.len() != 32 {
+            log::error!("Invalid X25519 public key length: expected 32 bytes, got {}", our_x25519_public.len());
+            return 0;
+        }
+
         // Validate message type before sending
         let msg_type = message_type_byte as u8;
         if !is_valid_message_type(msg_type) {
-            log::error!("Invalid message type: {}", msg_type);
+            log::error!("Invalid message type: 0x{:02x}", msg_type);
+            return 0;
+        }
+
+        // Payload size validation (CRDT types are NOT evolution-encrypted, skip 49-byte minimum)
+        let is_crdt_type = matches!(msg_type,
+            crate::network::tor::MSG_TYPE_CRDT_OPS |
+            crate::network::tor::MSG_TYPE_SYNC_REQUEST |
+            crate::network::tor::MSG_TYPE_SYNC_CHUNK
+        );
+        if !is_crdt_type && message_bytes.len() < 49 {
+            log::error!("Encrypted payload too short: {} bytes (minimum 49)", message_bytes.len());
             return 0;
         }
 
@@ -3156,6 +3426,134 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendHttpToVoiceOnion(
 static STORED_PINGS: Lazy<Arc<Mutex<HashMap<String, crate::network::PingToken>>>> =
     Lazy::new(|| Arc::new(Mutex::new(HashMap::new())));
 
+/// Global storage for outgoing Ping signer verification: ping_id -> recipient Ed25519 pubkey
+/// Used to verify PONG and ACK signatures from the listener path
+static OUTGOING_PING_SIGNERS: Lazy<Arc<Mutex<HashMap<String, [u8; 32]>>>> =
+    Lazy::new(|| Arc::new(Mutex::new(HashMap::new())));
+
+/// Store a pending ping signer in the Kotlin Room database (JNI callback).
+/// Called after inserting into OUTGOING_PING_SIGNERS in-memory map.
+/// Persists across process restart so PONG verification doesn't fail.
+fn store_pending_ping_db(env: &mut JNIEnv, ping_id: &str, signer_pubkey: &[u8; 32]) {
+    let class = match env.find_class("com/securelegion/database/PendingPingStore") {
+        Ok(c) => c,
+        Err(_) => {
+            log::warn!("store_pending_ping_db: PendingPingStore class not found (DAO not initialized?)");
+            return;
+        }
+    };
+    let j_ping_id = match env.new_string(ping_id) {
+        Ok(s) => s,
+        Err(e) => { log::warn!("store_pending_ping_db: new_string failed: {}", e); return; }
+    };
+    let j_signer = match env.byte_array_from_slice(signer_pubkey) {
+        Ok(a) => a,
+        Err(e) => { log::warn!("store_pending_ping_db: byte_array failed: {}", e); return; }
+    };
+    // PendingPingStore.store(pingId: String, signerPubKey: ByteArray, nowElapsed: Long, ttlMs: Long)
+    // We pass 0 for nowElapsed — Kotlin side uses SystemClock.elapsedRealtime() via the store() method
+    // Actually, PendingPingStore.store() expects caller to pass nowElapsed, so we call Android API from Rust
+    // Simpler: call with current time from Java side — let's use System.currentTimeMillis as rough proxy
+    // TTL is 72 hours — Tor peers routinely offline for hours/days, 4h was too aggressive
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as i64;
+    let ttl_ms: i64 = 72 * 60 * 60 * 1000; // 72 hours
+
+    if let Err(e) = env.call_static_method(
+        &class,
+        "store",
+        "(Ljava/lang/String;[BJJ)V",
+        &[
+            (&j_ping_id).into(),
+            (&j_signer).into(),
+            jni::objects::JValue::Long(now_ms),
+            jni::objects::JValue::Long(ttl_ms),
+        ],
+    ) {
+        log::warn!("store_pending_ping_db: JNI call failed: {}", e);
+        let _ = env.exception_clear();
+    }
+}
+
+/// Lookup a pending ping signer from the Kotlin Room database (JNI callback).
+/// Called when OUTGOING_PING_SIGNERS in-memory miss — DB fallback for process restart survival.
+/// Returns Some([u8; 32]) if found, None if not found or error.
+fn lookup_signer_db(env: &mut JNIEnv, ping_id: &str) -> Option<[u8; 32]> {
+    let class = match env.find_class("com/securelegion/database/PendingPingStore") {
+        Ok(c) => c,
+        Err(_) => {
+            log::debug!("lookup_signer_db: PendingPingStore class not found");
+            return None;
+        }
+    };
+    let j_ping_id = match env.new_string(ping_id) {
+        Ok(s) => s,
+        Err(e) => { log::warn!("lookup_signer_db: new_string failed: {}", e); return None; }
+    };
+    // PendingPingStore.lookupSigner(pingId: String): ByteArray?
+    let result = match env.call_static_method(
+        &class,
+        "lookupSigner",
+        "(Ljava/lang/String;)[B",
+        &[(&j_ping_id).into()],
+    ) {
+        Ok(v) => v,
+        Err(e) => {
+            log::warn!("lookup_signer_db: JNI call failed: {}", e);
+            let _ = env.exception_clear();
+            return None;
+        }
+    };
+    // Result is JObject (byte array or null)
+    let obj = match result.l() {
+        Ok(o) => o,
+        Err(_) => return None,
+    };
+    if obj.is_null() {
+        return None;
+    }
+    // Convert JByteArray to [u8; 32]
+    let j_bytes: jni::objects::JByteArray = obj.into();
+    match jbytearray_to_vec(env, j_bytes) {
+        Ok(bytes) if bytes.len() == 32 => {
+            let mut arr = [0u8; 32];
+            arr.copy_from_slice(&bytes);
+            Some(arr)
+        }
+        Ok(bytes) => {
+            log::warn!("lookup_signer_db: unexpected signer length {} (expected 32)", bytes.len());
+            None
+        }
+        Err(e) => {
+            log::warn!("lookup_signer_db: byte conversion failed: {}", e);
+            None
+        }
+    }
+}
+
+/// Delete a pending ping from the Kotlin Room database after successful verification.
+fn delete_pending_ping_db(env: &mut JNIEnv, ping_id: &str) {
+    let class = match env.find_class("com/securelegion/database/PendingPingStore") {
+        Ok(c) => c,
+        Err(_) => return,
+    };
+    let j_ping_id = match env.new_string(ping_id) {
+        Ok(s) => s,
+        Err(_) => return,
+    };
+    if let Err(e) = env.call_static_method(
+        &class,
+        "delete",
+        "(Ljava/lang/String;)V",
+        &[(&j_ping_id).into()],
+    ) {
+        log::warn!("delete_pending_ping_db: JNI call failed: {}", e);
+        let _ = env.exception_clear();
+    }
+}
+
 /// Detect if wire message has type-byte prefix (backward compatible)
 ///
 /// Known types: 0x01 (Ping), 0x02 (Pong), 0x03 (Text), 0x04 (Voice), 0x05 (Tap), etc.
@@ -3318,6 +3716,15 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_decryptIncomingPing(
                 let _ = env.throw_new("java/lang/RuntimeException", format!("Signature verification failed: {}", e));
                 return std::ptr::null_mut();
             }
+        }
+
+        // Validate protocol version
+        if ping_token.protocol_version != crate::network::tor::P2P_PROTOCOL_VERSION {
+            log::error!("PROTOCOL_MISMATCH: Ping protocol_version={} ours={} — rejecting",
+                ping_token.protocol_version, crate::network::tor::P2P_PROTOCOL_VERSION);
+            let _ = env.throw_new("java/lang/SecurityException",
+                format!("Protocol version mismatch: peer={} ours={}", ping_token.protocol_version, crate::network::tor::P2P_PROTOCOL_VERSION));
+            return std::ptr::null_mut();
         }
 
         // Generate unique ping_id from nonce
@@ -3642,6 +4049,15 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_decryptIncomingPong(
                 return std::ptr::null_mut();
             }
         };
+
+        // Validate protocol version
+        if pong_token.protocol_version != crate::network::tor::P2P_PROTOCOL_VERSION {
+            log::error!("PROTOCOL_MISMATCH: Pong protocol_version={} ours={} — rejecting",
+                pong_token.protocol_version, crate::network::tor::P2P_PROTOCOL_VERSION);
+            let _ = env.throw_new("java/lang/SecurityException",
+                format!("Protocol version mismatch: peer={} ours={}", pong_token.protocol_version, crate::network::tor::P2P_PROTOCOL_VERSION));
+            return std::ptr::null_mut();
+        }
 
         // Extract Ping ID from Pong (the ping_nonce field)
         let ping_id = hex::encode(&pong_token.ping_nonce);
@@ -4040,15 +4456,34 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_receiveIncomingMessage
 
 /// Start the Tor bootstrap event listener
 /// This should be called early, before Tor initialization, so it can capture progress from the start
+/// socketPath: path to ControlSocket file (GP tor-android 0.4.9.5 Unix domain socket)
 #[no_mangle]
 pub extern "C" fn Java_com_securelegion_crypto_RustBridge_startBootstrapListener(
     mut env: JNIEnv,
     _class: JClass,
+    socket_path: JObject,
 ) {
     catch_panic!(env, {
-        log::info!("Starting bootstrap event listener from explicit call...");
-        crate::network::tor::start_bootstrap_event_listener();
+        let path: Option<String> = if socket_path.is_null() {
+            None
+        } else {
+            let js = JString::from(socket_path);
+            env.get_string(&js).ok().map(|s| s.into())
+        };
+        log::info!("Starting bootstrap event listener (ControlSocket: {})...",
+            if path.is_some() { "set" } else { "not set" });
+        crate::network::tor::start_bootstrap_event_listener_with_socket(path);
     }, ())
+}
+
+/// Check if the bootstrap event listener thread is currently running
+/// Returns JNI_TRUE (1) if running, JNI_FALSE (0) if dead/stopped
+#[no_mangle]
+pub extern "C" fn Java_com_securelegion_crypto_RustBridge_isEventListenerRunning(
+    _env: JNIEnv,
+    _class: JClass,
+) -> jboolean {
+    crate::network::tor::is_event_listener_running() as jboolean
 }
 
 /// Stop the bootstrap event listener (signal it to exit)
@@ -4093,6 +4528,20 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_getCircuitEstablished(
         log::debug!("Circuit established status: {}", status);
         status as jint
     }, 0 as jint)
+}
+
+/// Get event listener heartbeat (epoch millis of last successful operation).
+/// Returns 0 if the listener has never run or the control port connection is dead.
+/// Kotlin uses this to detect a frozen/stale listener — if heartbeat is >30s old
+/// and tor state is RUNNING, the listener is dead and health should be treated as unhealthy.
+#[no_mangle]
+pub extern "C" fn Java_com_securelegion_crypto_RustBridge_getLastListenerHeartbeat(
+    mut env: JNIEnv,
+    _class: JClass,
+) -> jlong {
+    catch_panic!(env, {
+        crate::network::tor::get_last_listener_heartbeat() as jlong
+    }, 0 as jlong)
 }
 
 /// Get HS descriptor upload count - how many HSDirs have confirmed our descriptor
@@ -4519,6 +4968,15 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_nativeDecryptPingToken
             }
         }
 
+        // 7b. Validate protocol version
+        if ping_token.protocol_version != crate::network::tor::P2P_PROTOCOL_VERSION {
+            log::error!("PROTOCOL_MISMATCH: Ping protocol_version={} ours={} — rejecting",
+                ping_token.protocol_version, crate::network::tor::P2P_PROTOCOL_VERSION);
+            let _ = env.throw_new("java/lang/SecurityException",
+                format!("Protocol version mismatch: peer={} ours={}", ping_token.protocol_version, crate::network::tor::P2P_PROTOCOL_VERSION));
+            return std::ptr::null_mut();
+        }
+
         // 8. Store in global session storage
         let ping_id = hex::encode(&ping_token.nonce);
         crate::network::store_ping_session(&ping_id, ping_token.clone());
@@ -4824,6 +5282,15 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_nativeDecryptPongToken
             }
         }
 
+        // 7b. Validate protocol version
+        if pong_token.protocol_version != crate::network::tor::P2P_PROTOCOL_VERSION {
+            log::error!("PROTOCOL_MISMATCH: Pong protocol_version={} ours={} — rejecting",
+                pong_token.protocol_version, crate::network::tor::P2P_PROTOCOL_VERSION);
+            let _ = env.throw_new("java/lang/SecurityException",
+                format!("Protocol version mismatch: peer={} ours={}", pong_token.protocol_version, crate::network::tor::P2P_PROTOCOL_VERSION));
+            return std::ptr::null_mut();
+        }
+
         // 8. Extract fields for return
         let ping_id = hex::encode(&pong_token.ping_nonce);
         let timestamp_str = pong_token.timestamp.to_string();
@@ -4872,138 +5339,6 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_nativeDecryptPongToken
         PONG_SESSION_COUNT.fetch_add(1, Ordering::Relaxed);
 
         array.into_raw()
-    }, std::ptr::null_mut())
-}
-
-// ==================== RELAY NETWORK (Stubs) ====================
-
-#[no_mangle]
-pub extern "C" fn Java_com_securelegion_crypto_RustBridge_uploadToRelay(
-    mut env: JNIEnv,
-    _class: JClass,
-    _encrypted_message: JByteArray,
-    _recipient_public_key: JByteArray,
-) -> jstring {
-    catch_panic!(env, {
-        // TODO: Implement relay upload
-        match string_to_jstring(&mut env, "message_id_123") {
-            Ok(s) => s.into_raw(),
-            Err(_) => std::ptr::null_mut(),
-        }
-    }, std::ptr::null_mut())
-}
-
-#[no_mangle]
-pub extern "C" fn Java_com_securelegion_crypto_RustBridge_checkRelay(
-    mut env: JNIEnv,
-    _class: JClass,
-) -> jobjectArray {
-    catch_panic!(env, {
-        // TODO: Implement relay checking
-        // Return empty array for now
-        match env.new_object_array(0, "java/lang/String", JString::default()) {
-            Ok(arr) => arr.into_raw(),
-            Err(_) => std::ptr::null_mut(),
-        }
-    }, std::ptr::null_mut())
-}
-
-#[no_mangle]
-pub extern "C" fn Java_com_securelegion_crypto_RustBridge_downloadFromRelay(
-    mut env: JNIEnv,
-    _class: JClass,
-    _message_id: JString,
-) -> jbyteArray {
-    catch_panic!(env, {
-        // TODO: Implement relay download
-        match vec_to_jbytearray(&mut env, &[]) {
-            Ok(arr) => arr.into_raw(),
-            Err(_) => std::ptr::null_mut(),
-        }
-    }, std::ptr::null_mut())
-}
-
-#[no_mangle]
-pub extern "C" fn Java_com_securelegion_crypto_RustBridge_deleteFromRelay(
-    _env: JNIEnv,
-    _class: JClass,
-    _message_id: JString,
-) -> jboolean {
-    // TODO: Implement relay deletion
-    1
-}
-
-// ==================== BLOCKCHAIN (Stubs) ====================
-
-#[no_mangle]
-pub extern "C" fn Java_com_securelegion_crypto_RustBridge_initializeSolanaWallet(
-    mut env: JNIEnv,
-    _class: JClass,
-    _private_key: JByteArray,
-) -> jstring {
-    catch_panic!(env, {
-        // TODO: Implement Solana wallet
-        match string_to_jstring(&mut env, "SoL1234567890abcdefghijklmnopqrstuv") {
-            Ok(s) => s.into_raw(),
-            Err(_) => std::ptr::null_mut(),
-        }
-    }, std::ptr::null_mut())
-}
-
-#[no_mangle]
-pub extern "C" fn Java_com_securelegion_crypto_RustBridge_getSolanaBalance(
-    _env: JNIEnv,
-    _class: JClass,
-) -> jlong {
-    // TODO: Implement balance checking
-    0
-}
-
-#[no_mangle]
-pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendSolanaTransaction(
-    mut env: JNIEnv,
-    _class: JClass,
-    _to_address: JString,
-    _amount_lamports: jlong,
-) -> jstring {
-    catch_panic!(env, {
-        // TODO: Implement SOL transaction
-        match string_to_jstring(&mut env, "tx_signature_123") {
-            Ok(s) => s.into_raw(),
-            Err(_) => std::ptr::null_mut(),
-        }
-    }, std::ptr::null_mut())
-}
-
-// ==================== IPFS (Stubs) ====================
-
-#[no_mangle]
-pub extern "C" fn Java_com_securelegion_crypto_RustBridge_uploadToIPFS(
-    mut env: JNIEnv,
-    _class: JClass,
-    _data: JByteArray,
-) -> jstring {
-    catch_panic!(env, {
-        // TODO: Implement IPFS upload
-        match string_to_jstring(&mut env, "QmIPFS123abc") {
-            Ok(s) => s.into_raw(),
-            Err(_) => std::ptr::null_mut(),
-        }
-    }, std::ptr::null_mut())
-}
-
-#[no_mangle]
-pub extern "C" fn Java_com_securelegion_crypto_RustBridge_downloadFromIPFS(
-    mut env: JNIEnv,
-    _class: JClass,
-    _cid: JString,
-) -> jbyteArray {
-    catch_panic!(env, {
-        // TODO: Implement IPFS download
-        match vec_to_jbytearray(&mut env, &[]) {
-            Ok(arr) => arr.into_raw(),
-            Err(_) => std::ptr::null_mut(),
-        }
     }, std::ptr::null_mut())
 }
 
@@ -6434,21 +6769,76 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_decryptAndStoreAckFrom
             }
         };
 
-        log::info!("");
-        log::info!("RECEIVED DELIVERY ACK");
-        log::info!("Item ID: {}", ack_token.item_id);
-        log::info!("ACK Type: {}", ack_token.ack_type);
-        log::info!("");
-
         let item_id = ack_token.item_id.clone();
         let ack_type = ack_token.ack_type.clone();
 
-        // Store in GLOBAL_ACK_SESSIONS
-        crate::network::pingpong::store_ack_session(&item_id, ack_token);
-        log::info!("Stored ACK in GLOBAL_ACK_SESSIONS");
+        log::info!("RECEIVED DELIVERY ACK: item_id={}, ack_type={}", item_id, ack_type);
 
-        // Return JSON with item_id and ack_type
-        let ack_json = format!(r#"{{"item_id":"{}","ack_type":"{}"}}"#, item_id, ack_type);
+        // === Two-tier ACK signature verification ===
+        // Tier 1 (fast path): OUTGOING_PING_SIGNERS lookup (same session, pre-PONG-removal)
+        // Tier 2 (fallback): Use sender_ed25519_signing_pubkey embedded in the ACK itself
+        //   (cross-restart or post-PONG-removal — Kotlin MUST cross-check against contact DB)
+        let stored_signer = {
+            let signers = OUTGOING_PING_SIGNERS.lock().unwrap();
+            signers.get(&item_id).cloned()
+        };
+
+        let (signer_bytes, used_fallback) = match stored_signer {
+            Some(stored) => {
+                log::info!("ACK_VERIFY: Using stored signer (fast path) for {} item_id={}", ack_type, item_id);
+                (stored, false)
+            },
+            None => {
+                log::info!("ACK_VERIFY: No stored signer for {} item_id={}, using embedded sender_ed25519_signing_pubkey (fallback path)", ack_type, item_id);
+                (ack_token.sender_ed25519_signing_pubkey, true)
+            }
+        };
+
+        // Verify Ed25519 signature with whichever key we resolved
+        match ed25519_dalek::VerifyingKey::from_bytes(&signer_bytes) {
+            Ok(verifying_key) => {
+                match ack_token.verify(&verifying_key) {
+                    Ok(true) => {
+                        log::info!("ACK_SIG_OK: {} signature verified for item_id={} (fallback={})", ack_type, item_id, used_fallback);
+                    },
+                    Ok(false) => {
+                        log::error!("ACK_SIG_INVALID: {} signature verification FAILED for item_id={} — dropping", ack_type, item_id);
+                        return std::ptr::null_mut();
+                    },
+                    Err(e) => {
+                        log::error!("ACK_SIG_ERROR: {} sig check error for item_id={}: {} — dropping", ack_type, item_id, e);
+                        return std::ptr::null_mut();
+                    }
+                }
+            },
+            Err(e) => {
+                log::error!("ACK_SIG_ERROR: Invalid signer pubkey for item_id={}: {} — dropping", item_id, e);
+                return std::ptr::null_mut();
+            }
+        }
+
+        // Only commit to GLOBAL_ACK_SESSIONS on the trusted fast path.
+        // Fallback-verified ACKs must NOT be committed until Kotlin cross-checks
+        // the sender's identity against the contact DB.
+        let sender_ed25519_hex = hex::encode(&ack_token.sender_ed25519_signing_pubkey);
+        if !used_fallback {
+            crate::network::pingpong::store_ack_session(&item_id, ack_token);
+            log::info!("Stored trusted ACK in GLOBAL_ACK_SESSIONS");
+        } else {
+            log::info!("Fallback ACK NOT stored — awaiting Kotlin identity cross-check");
+        }
+
+        // Return JSON with item_id, ack_type, and fallback verification metadata
+        // If fallback was used, Kotlin MUST cross-check sender identity against contact DB
+        // before processing the ACK (calling handleIncomingAck)
+        let ack_json = if used_fallback {
+            format!(
+                r#"{{"item_id":"{}","ack_type":"{}","fallback":true,"sender_ed25519":"{}"}}"#,
+                item_id, ack_type, sender_ed25519_hex
+            )
+        } else {
+            format!(r#"{{"item_id":"{}","ack_type":"{}","fallback":false}}"#, item_id, ack_type)
+        };
         match string_to_jstring(&mut env, &ack_json) {
             Ok(s) => s.into_raw(),
             Err(_) => std::ptr::null_mut(),
@@ -7247,6 +7637,161 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_httpPostViaTor(
     }, std::ptr::null_mut())
 }
 
+// ==================== Push Recovery (v5 Contact List Mesh) ====================
+
+/// Enable recovery mode on the contact exchange endpoint.
+/// Called by Kotlin after seed restore when contacts weren't found locally.
+/// Rust will accept POST /recovery/push/{cid} and write the blob to disk.
+#[no_mangle]
+pub extern "C" fn Java_com_securelegion_crypto_RustBridge_setRecoveryMode(
+    mut env: JNIEnv,
+    _class: JClass,
+    enabled: jboolean,
+    expected_cid: JString,
+    data_dir: JString,
+) {
+    catch_panic!(env, {
+        let enabled = enabled != 0;
+
+        let cid_str = if enabled {
+            match jstring_to_string(&mut env, expected_cid) {
+                Ok(s) if !s.is_empty() => Some(s),
+                _ => None,
+            }
+        } else {
+            None
+        };
+
+        let dir_str = if enabled {
+            match jstring_to_string(&mut env, data_dir) {
+                Ok(s) if !s.is_empty() => Some(s),
+                _ => None,
+            }
+        } else {
+            None
+        };
+
+        log::info!("setRecoveryMode: enabled={}, has_cid={}, has_dir={}",
+            enabled, cid_str.is_some(), dir_str.is_some());
+
+        std::thread::spawn(move || {
+            let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
+            rt.block_on(async {
+                let endpoint = crate::network::friend_request_server::get_endpoint().await;
+                endpoint.set_recovery_mode(enabled, cid_str, dir_str).await;
+            });
+        });
+
+    }, ())
+}
+
+/// Clear recovery mode after contacts have been successfully imported.
+#[no_mangle]
+pub extern "C" fn Java_com_securelegion_crypto_RustBridge_clearRecoveryMode(
+    mut env: JNIEnv,
+    _class: JClass,
+) {
+    catch_panic!(env, {
+        log::info!("clearRecoveryMode called");
+
+        std::thread::spawn(move || {
+            let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
+            rt.block_on(async {
+                let endpoint = crate::network::friend_request_server::get_endpoint().await;
+                endpoint.clear_recovery_mode().await;
+            });
+        });
+
+    }, ())
+}
+
+/// Poll whether a recovery blob has been written to disk by a friend's push.
+/// Returns true if Kotlin should call recoverFromIPFS() to try importing contacts.
+#[no_mangle]
+pub extern "C" fn Java_com_securelegion_crypto_RustBridge_pollRecoveryReady(
+    mut env: JNIEnv,
+    _class: JClass,
+) -> jboolean {
+    catch_panic!(env, {
+        // Use a short-lived runtime to check the async state
+        let rt = match tokio::runtime::Runtime::new() {
+            Ok(rt) => rt,
+            Err(_) => return 0,
+        };
+
+        let ready = rt.block_on(async {
+            let endpoint = crate::network::friend_request_server::get_endpoint().await;
+            endpoint.is_recovery_ready().await
+        });
+
+        if ready { 1 } else { 0 }
+    }, 0)
+}
+
+/// POST raw binary data to a URL via Tor SOCKS5 proxy.
+/// Used by the friend side to push the encrypted contact list blob.
+/// Returns response body as String, or null on error.
+#[no_mangle]
+pub extern "C" fn Java_com_securelegion_crypto_RustBridge_httpPostBinaryViaTor(
+    mut env: JNIEnv,
+    _class: JClass,
+    url: JString,
+    data: JByteArray,
+) -> jstring {
+    catch_panic!(env, {
+        let url_str = match jstring_to_string(&mut env, url) {
+            Ok(s) => s,
+            Err(e) => {
+                let _ = env.throw_new("java/lang/IllegalArgumentException", e);
+                return std::ptr::null_mut();
+            }
+        };
+
+        let data_bytes = match jbytearray_to_vec(&mut env, data) {
+            Ok(b) => b,
+            Err(e) => {
+                let _ = env.throw_new("java/lang/RuntimeException", e);
+                return std::ptr::null_mut();
+            }
+        };
+
+        log::info!("HTTP POST binary via Tor: {} ({} bytes)", url_str, data_bytes.len());
+
+        let client = crate::network::Socks5Client::tor_default();
+
+        match client.http_post_binary(&url_str, &data_bytes, "application/octet-stream") {
+            Ok(response) => {
+                if let Some(body) = crate::network::socks5_client::extract_http_body(&response) {
+                    match string_to_jstring(&mut env, &body) {
+                        Ok(s) => {
+                            log::info!("HTTP POST binary successful ({} bytes response)", body.len());
+                            s.into_raw()
+                        }
+                        Err(e) => {
+                            let _ = env.throw_new("java/lang/RuntimeException", e);
+                            std::ptr::null_mut()
+                        }
+                    }
+                } else {
+                    match string_to_jstring(&mut env, &response) {
+                        Ok(s) => s.into_raw(),
+                        Err(e) => {
+                            let _ = env.throw_new("java/lang/RuntimeException", e);
+                            std::ptr::null_mut()
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                log::error!("HTTP POST binary via Tor failed: {}", e);
+                std::ptr::null_mut()
+            }
+        }
+    }, std::ptr::null_mut())
+}
+
+// ==================== END Push Recovery ====================
+
 // ==================== END v2.0: Friend Request System ====================
 
 // ==================== v2.0: Voice Streaming ====================
@@ -7812,3 +8357,313 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_verifyRangeProof(
 }
 
 // ==================== END ZK Range Proofs ====================
+
+// ==================== XChaCha20-Poly1305 Symmetric Encryption ====================
+// Used by CRDT group messages: encrypt/decrypt with shared group secret.
+
+#[no_mangle]
+pub extern "C" fn Java_com_securelegion_crypto_RustBridge_xchacha20Encrypt(
+    mut env: JNIEnv,
+    _class: JClass,
+    plaintext: JByteArray,
+    key: JByteArray,
+    nonce: JByteArray,
+) -> jbyteArray {
+    catch_panic!(env, {
+        use chacha20poly1305::{aead::{Aead, KeyInit}, XChaCha20Poly1305, XNonce};
+
+        let plaintext_vec = match jbytearray_to_vec(&mut env, plaintext) {
+            Ok(v) => v,
+            Err(e) => {
+                let _ = env.throw_new("java/lang/IllegalArgumentException", e);
+                return std::ptr::null_mut();
+            }
+        };
+        let key_vec = match jbytearray_to_vec(&mut env, key) {
+            Ok(v) => v,
+            Err(e) => {
+                let _ = env.throw_new("java/lang/IllegalArgumentException", e);
+                return std::ptr::null_mut();
+            }
+        };
+        let nonce_vec = match jbytearray_to_vec(&mut env, nonce) {
+            Ok(v) => v,
+            Err(e) => {
+                let _ = env.throw_new("java/lang/IllegalArgumentException", e);
+                return std::ptr::null_mut();
+            }
+        };
+
+        if key_vec.len() != 32 {
+            let _ = env.throw_new("java/lang/IllegalArgumentException",
+                format!("Key must be 32 bytes, got {}", key_vec.len()));
+            return std::ptr::null_mut();
+        }
+        if nonce_vec.len() != 24 {
+            let _ = env.throw_new("java/lang/IllegalArgumentException",
+                format!("Nonce must be 24 bytes, got {}", nonce_vec.len()));
+            return std::ptr::null_mut();
+        }
+
+        let cipher = XChaCha20Poly1305::new_from_slice(&key_vec)
+            .expect("Invalid key length");
+        let nonce_obj = XNonce::from_slice(&nonce_vec);
+
+        match cipher.encrypt(nonce_obj, plaintext_vec.as_ref()) {
+            Ok(ciphertext) => {
+                match vec_to_jbytearray(&mut env, &ciphertext) {
+                    Ok(arr) => arr.into_raw(),
+                    Err(e) => {
+                        let _ = env.throw_new("java/lang/RuntimeException", e);
+                        std::ptr::null_mut()
+                    }
+                }
+            }
+            Err(e) => {
+                let _ = env.throw_new("java/lang/RuntimeException",
+                    format!("XChaCha20 encryption failed: {}", e));
+                std::ptr::null_mut()
+            }
+        }
+    }, std::ptr::null_mut())
+}
+
+#[no_mangle]
+pub extern "C" fn Java_com_securelegion_crypto_RustBridge_xchacha20Decrypt(
+    mut env: JNIEnv,
+    _class: JClass,
+    ciphertext: JByteArray,
+    key: JByteArray,
+    nonce: JByteArray,
+) -> jbyteArray {
+    catch_panic!(env, {
+        use chacha20poly1305::{aead::{Aead, KeyInit}, XChaCha20Poly1305, XNonce};
+
+        let ciphertext_vec = match jbytearray_to_vec(&mut env, ciphertext) {
+            Ok(v) => v,
+            Err(e) => {
+                let _ = env.throw_new("java/lang/IllegalArgumentException", e);
+                return std::ptr::null_mut();
+            }
+        };
+        let key_vec = match jbytearray_to_vec(&mut env, key) {
+            Ok(v) => v,
+            Err(e) => {
+                let _ = env.throw_new("java/lang/IllegalArgumentException", e);
+                return std::ptr::null_mut();
+            }
+        };
+        let nonce_vec = match jbytearray_to_vec(&mut env, nonce) {
+            Ok(v) => v,
+            Err(e) => {
+                let _ = env.throw_new("java/lang/IllegalArgumentException", e);
+                return std::ptr::null_mut();
+            }
+        };
+
+        if key_vec.len() != 32 {
+            let _ = env.throw_new("java/lang/IllegalArgumentException",
+                format!("Key must be 32 bytes, got {}", key_vec.len()));
+            return std::ptr::null_mut();
+        }
+        if nonce_vec.len() != 24 {
+            let _ = env.throw_new("java/lang/IllegalArgumentException",
+                format!("Nonce must be 24 bytes, got {}", nonce_vec.len()));
+            return std::ptr::null_mut();
+        }
+
+        let cipher = XChaCha20Poly1305::new_from_slice(&key_vec)
+            .expect("Invalid key length");
+        let nonce_obj = XNonce::from_slice(&nonce_vec);
+
+        match cipher.decrypt(nonce_obj, ciphertext_vec.as_ref()) {
+            Ok(plaintext) => {
+                match vec_to_jbytearray(&mut env, &plaintext) {
+                    Ok(arr) => arr.into_raw(),
+                    Err(e) => {
+                        let _ = env.throw_new("java/lang/RuntimeException", e);
+                        std::ptr::null_mut()
+                    }
+                }
+            }
+            Err(_) => {
+                // Authentication failure — return null (not an exception)
+                std::ptr::null_mut()
+            }
+        }
+    }, std::ptr::null_mut())
+}
+
+// ==================== END XChaCha20-Poly1305 ====================
+
+// ==================== BLOCKING POLL JNI FUNCTIONS ====================
+// These block the JNI thread for up to 5 seconds waiting for data.
+// Used by Kotlin poller coroutines on Dispatchers.IO for zero-latency message receipt.
+
+/// Blocking poll for incoming Ping (blocks up to 5s)
+#[no_mangle]
+pub extern "C" fn Java_com_securelegion_crypto_RustBridge_pollIncomingPingBlocking(
+    mut env: JNIEnv,
+    _class: JClass,
+) -> jbyteArray {
+    catch_panic!(env, {
+        match blocking_recv_pair(&GLOBAL_PING_RECEIVER, 5) {
+            Some((connection_id, ping_bytes)) => {
+                if ping_bytes.is_empty() {
+                    log::error!("FRAMING_VIOLATION: pollIncomingPingBlocking got empty buffer, conn_id={}", connection_id);
+                    return std::ptr::null_mut();
+                }
+                const MSG_TYPE_PING: u8 = 0x01;
+                if ping_bytes[0] != MSG_TYPE_PING {
+                    let head_hex: String = ping_bytes.iter().take(8).map(|b| format!("{:02x}", b)).collect::<Vec<_>>().join("");
+                    log::error!("FRAMING_VIOLATION: pollIncomingPingBlocking got type=0x{:02x} expected=0x{:02x} conn_id={} len={} head={}",
+                        ping_bytes[0], MSG_TYPE_PING, connection_id, ping_bytes.len(), head_hex);
+                    return std::ptr::null_mut();
+                }
+                let mut encoded = Vec::new();
+                encoded.extend_from_slice(&connection_id.to_le_bytes());
+                encoded.extend_from_slice(&ping_bytes);
+                match vec_to_jbytearray(&mut env, &encoded) {
+                    Ok(array) => array.into_raw(),
+                    Err(_) => std::ptr::null_mut(),
+                }
+            }
+            None => std::ptr::null_mut(),
+        }
+    }, std::ptr::null_mut())
+}
+
+/// Blocking poll for incoming MESSAGE (blocks up to 5s)
+#[no_mangle]
+pub extern "C" fn Java_com_securelegion_crypto_RustBridge_pollIncomingMessageBlocking(
+    mut env: JNIEnv,
+    _class: JClass,
+) -> jbyteArray {
+    catch_panic!(env, {
+        match blocking_recv_pair(&GLOBAL_MESSAGE_RECEIVER, 5) {
+            Some((connection_id, message_bytes)) => {
+                let mut encoded = Vec::new();
+                encoded.extend_from_slice(&connection_id.to_le_bytes());
+                encoded.extend_from_slice(&message_bytes);
+                match vec_to_jbytearray(&mut env, &encoded) {
+                    Ok(array) => array.into_raw(),
+                    Err(_) => std::ptr::null_mut(),
+                }
+            }
+            None => std::ptr::null_mut(),
+        }
+    }, std::ptr::null_mut())
+}
+
+/// Blocking poll for incoming VOICE signaling (blocks up to 5s)
+#[no_mangle]
+pub extern "C" fn Java_com_securelegion_crypto_RustBridge_pollVoiceMessageBlocking(
+    mut env: JNIEnv,
+    _class: JClass,
+) -> jbyteArray {
+    catch_panic!(env, {
+        match blocking_recv_pair(&GLOBAL_VOICE_RECEIVER, 5) {
+            Some((connection_id, message_bytes)) => {
+                let mut encoded = Vec::new();
+                encoded.extend_from_slice(&connection_id.to_le_bytes());
+                encoded.extend_from_slice(&message_bytes);
+                match vec_to_jbytearray(&mut env, &encoded) {
+                    Ok(array) => array.into_raw(),
+                    Err(_) => std::ptr::null_mut(),
+                }
+            }
+            None => std::ptr::null_mut(),
+        }
+    }, std::ptr::null_mut())
+}
+
+/// Blocking poll for incoming Tap (blocks up to 5s)
+#[no_mangle]
+pub extern "C" fn Java_com_securelegion_crypto_RustBridge_pollIncomingTapBlocking(
+    mut env: JNIEnv,
+    _class: JClass,
+) -> jbyteArray {
+    catch_panic!(env, {
+        match blocking_recv_vec(&GLOBAL_TAP_RECEIVER, 5) {
+            Some(tap_bytes) => {
+                log::info!("Polled tap (blocking): {} bytes", tap_bytes.len());
+                match vec_to_jbytearray(&mut env, &tap_bytes) {
+                    Ok(array) => array.into_raw(),
+                    Err(_) => std::ptr::null_mut(),
+                }
+            }
+            None => std::ptr::null_mut(),
+        }
+    }, std::ptr::null_mut())
+}
+
+/// Blocking poll for incoming Pong (blocks up to 5s)
+#[no_mangle]
+pub extern "C" fn Java_com_securelegion_crypto_RustBridge_pollIncomingPongBlocking(
+    mut env: JNIEnv,
+    _class: JClass,
+) -> jbyteArray {
+    catch_panic!(env, {
+        match blocking_recv_pair(&GLOBAL_PONG_RECEIVER, 5) {
+            Some((conn_id, pong_bytes)) => {
+                if pong_bytes.is_empty() {
+                    log::error!("FRAMING_VIOLATION: pollIncomingPongBlocking got empty buffer, conn_id={}", conn_id);
+                    return std::ptr::null_mut();
+                }
+                const MSG_TYPE_PONG: u8 = 0x02;
+                if pong_bytes[0] != MSG_TYPE_PONG {
+                    let head_hex: String = pong_bytes.iter().take(8).map(|b| format!("{:02x}", b)).collect::<Vec<_>>().join("");
+                    log::error!("FRAMING_VIOLATION: pollIncomingPongBlocking got type=0x{:02x} expected=0x{:02x} conn_id={} len={} head={}",
+                        pong_bytes[0], MSG_TYPE_PONG, conn_id, pong_bytes.len(), head_hex);
+                    return std::ptr::null_mut();
+                }
+                log::info!("POLL_BLOCKING: got pong len={} conn={}", pong_bytes.len(), conn_id);
+                match vec_to_jbytearray(&mut env, &pong_bytes) {
+                    Ok(array) => array.into_raw(),
+                    Err(_) => std::ptr::null_mut(),
+                }
+            }
+            None => std::ptr::null_mut(),
+        }
+    }, std::ptr::null_mut())
+}
+
+/// Blocking poll for incoming ACK (blocks up to 5s)
+#[no_mangle]
+pub extern "C" fn Java_com_securelegion_crypto_RustBridge_pollIncomingAckBlocking(
+    mut env: JNIEnv,
+    _class: JClass,
+) -> jbyteArray {
+    catch_panic!(env, {
+        match blocking_recv_pair(&GLOBAL_ACK_RECEIVER, 5) {
+            Some((_conn_id, ack_bytes)) => {
+                log::info!("Polled ACK (blocking): {} bytes", ack_bytes.len());
+                match vec_to_jbytearray(&mut env, &ack_bytes) {
+                    Ok(array) => array.into_raw(),
+                    Err(_) => std::ptr::null_mut(),
+                }
+            }
+            None => std::ptr::null_mut(),
+        }
+    }, std::ptr::null_mut())
+}
+
+/// Blocking poll for incoming friend requests (blocks up to 5s)
+#[no_mangle]
+pub extern "C" fn Java_com_securelegion_crypto_RustBridge_pollFriendRequestBlocking(
+    mut env: JNIEnv,
+    _class: JClass,
+) -> jbyteArray {
+    catch_panic!(env, {
+        match blocking_recv_vec(&GLOBAL_FRIEND_REQUEST_RECEIVER, 5) {
+            Some(friend_request_bytes) => {
+                log::info!("Polled friend request (blocking): {} bytes", friend_request_bytes.len());
+                match vec_to_jbytearray(&mut env, &friend_request_bytes) {
+                    Ok(array) => array.into_raw(),
+                    Err(_) => std::ptr::null_mut(),
+                }
+            }
+            None => std::ptr::null_mut(),
+        }
+    }, std::ptr::null_mut())
+}

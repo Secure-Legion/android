@@ -95,6 +95,34 @@ impl Socks5Client {
         Ok(response)
     }
 
+    /// Perform HTTP POST request with binary body through SOCKS5
+    pub fn http_post_binary(&self, url: &str, body: &[u8], content_type: &str) -> Result<String> {
+        let (host, port, path) = parse_url(url)?;
+        let mut stream = self.connect_socks5(&host, port)?;
+
+        // Send HTTP POST headers
+        let headers = format!(
+            "POST {} HTTP/1.1\r\n\
+             Host: {}\r\n\
+             User-Agent: SecureLegion/2.0\r\n\
+             Accept: */*\r\n\
+             Content-Type: {}\r\n\
+             Content-Length: {}\r\n\
+             Connection: close\r\n\
+             \r\n",
+            path, host, content_type, body.len()
+        );
+
+        stream.write_all(headers.as_bytes())?;
+        // Write binary body separately (not formatted into string)
+        stream.write_all(body)?;
+        stream.flush()?;
+
+        // Read response
+        let response = read_http_response(&mut stream)?;
+        Ok(response)
+    }
+
     /// Connect to target host via SOCKS5 proxy
     fn connect_socks5(&self, target_host: &str, target_port: u16) -> Result<TcpStream> {
         // Connect to SOCKS5 proxy

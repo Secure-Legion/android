@@ -1,17 +1,36 @@
-/// Contact Exchange Endpoint (v2.0 + v5 Contact List Backup)
+/// Contact Exchange Endpoint (v2.0 + v5 Contact List Backup + Push Recovery)
 ///
 /// P2P endpoint that listens on localhost and serves contact data:
-/// - GET /contact-card - Returns encrypted contact card
-/// - GET /contact-list/{cid} - Returns encrypted contact list (v5 architecture)
+/// - GET /contact-card — Returns encrypted contact card
+/// - GET /contact-list/{cid} — Returns encrypted contact list (v5 architecture)
+/// - GET /recovery/beacon — Returns whether this device is in recovery mode
+/// - POST /recovery/push/{cid} — Accept raw encrypted contact list bytes from a friend
 ///
 /// This endpoint is accessible via the friend request .onion address.
-/// Friend requests are handled by the v1.0 wire protocol (0x07/0x08) on messaging .onion.
+/// The friend request .onion serves HTTP (contact cards, contact lists, recovery).
+/// Actual friend request wire protocol messages (0x07/0x08) go over the messaging .onion.
 
 use std::sync::Arc;
 use std::collections::HashMap;
 use tokio::sync::Mutex;
 use tokio::net::TcpListener;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+/// Recovery state for push-based contact list recovery on new devices.
+/// When a user restores from seed on a new phone, their .onion comes back online.
+/// Friends check GET /recovery/beacon, see recovering=true, and POST the encrypted
+/// contact list blob. Rust writes it to ipfs_pins/{cid} on disk. Kotlin's existing
+/// getContactList() finds it → AES-GCM decrypt → import contacts.
+struct RecoveryState {
+    /// Whether this device is in recovery mode
+    mode: bool,
+    /// The expected CID (derived from seed) — only accept blobs for this CID
+    expected_cid: Option<String>,
+    /// Path to app data directory (e.g. /data/data/com.securelegion/files)
+    data_dir: Option<String>,
+    /// Set to true after a blob has been written to disk
+    file_written: bool,
+}
 
 /// Global state for the contact exchange endpoint
 pub struct ContactExchangeEndpoint {
@@ -23,6 +42,8 @@ pub struct ContactExchangeEndpoint {
     contact_lists: Arc<Mutex<HashMap<String, Vec<u8>>>>,
     /// Endpoint shutdown signal
     shutdown: Arc<Mutex<bool>>,
+    /// Recovery state for new-device push recovery
+    recovery: Arc<Mutex<RecoveryState>>,
 }
 
 impl ContactExchangeEndpoint {
@@ -32,6 +53,12 @@ impl ContactExchangeEndpoint {
             cid: Arc::new(Mutex::new(None)),
             contact_lists: Arc::new(Mutex::new(HashMap::new())),
             shutdown: Arc::new(Mutex::new(false)),
+            recovery: Arc::new(Mutex::new(RecoveryState {
+                mode: false,
+                expected_cid: None,
+                data_dir: None,
+                file_written: false,
+            })),
         }
     }
 
@@ -58,6 +85,33 @@ impl ContactExchangeEndpoint {
         log::info!("Contact list stored for CID: {} ({} bytes)", cid, list_len);
     }
 
+    /// Enable recovery mode. Kotlin passes the expected CID and app data dir.
+    pub async fn set_recovery_mode(&self, enabled: bool, expected_cid: Option<String>, data_dir: Option<String>) {
+        let mut state = self.recovery.lock().await;
+        state.mode = enabled;
+        state.expected_cid = expected_cid;
+        state.data_dir = data_dir;
+        state.file_written = false;
+        log::info!("Recovery mode: {} (has cid: {}, has dir: {})",
+            enabled, state.expected_cid.is_some(), state.data_dir.is_some());
+    }
+
+    /// Check if a recovery blob has been written to disk (Kotlin polls this)
+    pub async fn is_recovery_ready(&self) -> bool {
+        let state = self.recovery.lock().await;
+        state.mode && state.file_written
+    }
+
+    /// Clear recovery mode (called after Kotlin successfully imports contacts)
+    pub async fn clear_recovery_mode(&self) {
+        let mut state = self.recovery.lock().await;
+        state.mode = false;
+        state.expected_cid = None;
+        state.data_dir = None;
+        state.file_written = false;
+        log::info!("Recovery mode cleared");
+    }
+
     /// Start the contact exchange listener on the specified port
     pub async fn start(&self, port: u16) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let addr = format!("127.0.0.1:{}", port);
@@ -70,6 +124,7 @@ impl ContactExchangeEndpoint {
         let cid = self.cid.clone();
         let contact_lists = self.contact_lists.clone();
         let shutdown = self.shutdown.clone();
+        let recovery = self.recovery.clone();
 
         tokio::spawn(async move {
             loop {
@@ -97,10 +152,13 @@ impl ContactExchangeEndpoint {
                 let contact_card = contact_card.clone();
                 let cid = cid.clone();
                 let contact_lists = contact_lists.clone();
+                let recovery = recovery.clone();
 
                 // Spawn a task to handle this connection
                 tokio::spawn(async move {
-                    if let Err(e) = handle_connection(&mut socket, contact_card, cid, contact_lists).await {
+                    if let Err(e) = handle_connection(
+                        &mut socket, contact_card, cid, contact_lists, recovery
+                    ).await {
                         log::error!("Error handling connection: {}", e);
                     }
                 });
@@ -118,16 +176,12 @@ impl ContactExchangeEndpoint {
     }
 
     /// Poll for incoming friend request (stub - friend requests handled by wire protocol)
-    /// Friend requests are processed via v1.0 wire protocol (0x07/0x08) on messaging .onion
     pub async fn poll_request(&self) -> Option<FriendRequest> {
-        // Friend requests are handled by TorService wire protocol, not contact exchange endpoint
         None
     }
 
     /// Poll for friend request response (stub - friend requests handled by wire protocol)
-    /// Friend request responses are processed via v1.0 wire protocol (0x07/0x08) on messaging .onion
     pub async fn poll_response(&self) -> Option<FriendResponse> {
-        // Friend request responses are handled by TorService wire protocol, not contact exchange endpoint
         None
     }
 }
@@ -149,14 +203,28 @@ pub struct FriendResponse {
     pub approved: bool,
 }
 
-/// Handle incoming contact fetch request from peer
+/// Parse Content-Length from HTTP headers
+fn parse_content_length(headers: &str) -> usize {
+    for line in headers.lines() {
+        let lower = line.to_ascii_lowercase();
+        if lower.starts_with("content-length:") {
+            if let Ok(len) = line[15..].trim().parse::<usize>() {
+                return len;
+            }
+        }
+    }
+    0
+}
+
+/// Handle incoming HTTP request from peer
 async fn handle_connection(
     socket: &mut tokio::net::TcpStream,
     contact_card: Arc<Mutex<Option<Vec<u8>>>>,
     cid: Arc<Mutex<Option<String>>>,
     contact_lists: Arc<Mutex<HashMap<String, Vec<u8>>>>,
+    recovery: Arc<Mutex<RecoveryState>>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    // Read HTTP request
+    // Read HTTP request headers (+ possibly start of body)
     let mut buffer = vec![0u8; 8192];
     let n = socket.read(&mut buffer).await?;
 
@@ -164,28 +232,71 @@ async fn handle_connection(
         return Ok(());
     }
 
-    let request = String::from_utf8_lossy(&buffer[..n]);
-    let lines: Vec<&str> = request.lines().collect();
+    // Find header/body boundary in raw bytes
+    let header_end_pos = buffer[..n]
+        .windows(4)
+        .position(|w| w == b"\r\n\r\n");
 
+    let (headers_str, body_start) = match header_end_pos {
+        Some(pos) => {
+            let h = String::from_utf8_lossy(&buffer[..pos]).to_string();
+            (h, pos + 4)
+        }
+        None => {
+            let h = String::from_utf8_lossy(&buffer[..n]).to_string();
+            (h, n)
+        }
+    };
+
+    let lines: Vec<&str> = headers_str.lines().collect();
     if lines.is_empty() {
         return Err("Empty request".into());
     }
 
-    let request_line = lines[0];
-    let parts: Vec<&str> = request_line.split_whitespace().collect();
-
+    let parts: Vec<&str> = lines[0].split_whitespace().collect();
     if parts.len() < 2 {
         return Err("Invalid request line".into());
     }
 
     let method = parts[0];
-    let path = parts[1];
+    let path = parts[1].to_string();
 
     log::debug!("HTTP Request: {} {}", method, path);
 
-    match (method, path) {
+    // For POST requests, read the full body as raw bytes
+    let post_body: Option<Vec<u8>> = if method == "POST" {
+        let content_length = parse_content_length(&headers_str);
+
+        // Security: cap body at 256KB
+        if content_length > 256 * 1024 {
+            let resp = "HTTP/1.1 413 Payload Too Large\r\n\r\n";
+            socket.write_all(resp.as_bytes()).await?;
+            return Ok(());
+        }
+
+        // Collect body bytes already in buffer
+        let mut body_bytes: Vec<u8> = if body_start < n {
+            buffer[body_start..n].to_vec()
+        } else {
+            Vec::new()
+        };
+
+        // Read remaining body if needed
+        while body_bytes.len() < content_length {
+            let remaining = content_length - body_bytes.len();
+            let mut tmp = vec![0u8; remaining.min(8192)];
+            let read = socket.read(&mut tmp).await?;
+            if read == 0 { break; }
+            body_bytes.extend_from_slice(&tmp[..read]);
+        }
+
+        Some(body_bytes)
+    } else {
+        None
+    };
+
+    match (method, path.as_str()) {
         ("GET", "/contact-card") => {
-            // Serve the contact card
             let card_lock = contact_card.lock().await;
             let cid_lock = cid.lock().await;
 
@@ -211,9 +322,8 @@ async fn handle_connection(
             }
         }
 
-        ("GET", path) if path.starts_with("/contact-list/") => {
-            // Serve a contact list (v5 architecture)
-            let requested_cid = &path[14..]; // Skip "/contact-list/"
+        ("GET", p) if p.starts_with("/contact-list/") => {
+            let requested_cid = &p[14..]; // Skip "/contact-list/"
             let lists_lock = contact_lists.lock().await;
 
             if let Some(list_data) = lists_lock.get(requested_cid) {
@@ -236,6 +346,120 @@ async fn handle_connection(
                 socket.write_all(response.as_bytes()).await?;
                 log::warn!("Contact list requested but not found: {}", requested_cid);
             }
+        }
+
+        ("GET", "/recovery/beacon") => {
+            // Don't leak CID — friends already know it from their contact DB
+            let state = recovery.lock().await;
+            let body = if state.mode {
+                "{\"recovering\":true}"
+            } else {
+                "{\"recovering\":false}"
+            };
+
+            let response = format!(
+                "HTTP/1.1 200 OK\r\n\
+                 Content-Type: application/json\r\n\
+                 Content-Length: {}\r\n\
+                 \r\n{}",
+                body.len(),
+                body
+            );
+            socket.write_all(response.as_bytes()).await?;
+            log::debug!("Served recovery beacon (recovering: {})", state.mode);
+        }
+
+        ("POST", p) if p.starts_with("/recovery/push/") => {
+            let pushed_cid = &p[16..]; // Skip "/recovery/push/"
+
+            // Gate 1: Must be in recovery mode
+            let mut state = recovery.lock().await;
+            if !state.mode {
+                let response = "HTTP/1.1 403 Forbidden\r\n\r\n";
+                socket.write_all(response.as_bytes()).await?;
+                log::warn!("Recovery push rejected: not in recovery mode");
+                return Ok(());
+            }
+
+            // Gate 2: Expected CID must exist
+            let expected_cid = match &state.expected_cid {
+                Some(c) => c.clone(),
+                None => {
+                    let response = "HTTP/1.1 403 Forbidden\r\n\r\n";
+                    socket.write_all(response.as_bytes()).await?;
+                    log::warn!("Recovery push rejected: no expected CID configured");
+                    return Ok(());
+                }
+            };
+
+            // Gate 3: Pushed CID must match expected CID
+            if pushed_cid != expected_cid {
+                let response = "HTTP/1.1 403 Forbidden\r\n\r\n";
+                socket.write_all(response.as_bytes()).await?;
+                log::warn!("Recovery push rejected: CID mismatch (got: {}, expected: {})",
+                    pushed_cid, expected_cid);
+                return Ok(());
+            }
+
+            // Gate 4: Data dir must be configured
+            let data_dir = match &state.data_dir {
+                Some(d) => d.clone(),
+                None => {
+                    let response = "HTTP/1.1 500 Internal Server Error\r\n\r\n";
+                    socket.write_all(response.as_bytes()).await?;
+                    log::error!("Recovery push failed: no data_dir configured");
+                    return Ok(());
+                }
+            };
+
+            // Gate 5: Body must exist and not be empty
+            let body_bytes = match &post_body {
+                Some(b) if !b.is_empty() => b.clone(),
+                _ => {
+                    let response = "HTTP/1.1 400 Bad Request\r\n\r\n";
+                    socket.write_all(response.as_bytes()).await?;
+                    log::warn!("Recovery push rejected: empty body");
+                    return Ok(());
+                }
+            };
+
+            // Already have a file? Don't overwrite — Kotlin will validate and clear.
+            if state.file_written {
+                let response = "HTTP/1.1 409 Conflict\r\n\r\n";
+                socket.write_all(response.as_bytes()).await?;
+                log::info!("Recovery push rejected: file already written, pending validation");
+                return Ok(());
+            }
+
+            // Write directly to disk at ipfs_pins/{expectedCid}
+            let pins_dir = format!("{}/ipfs_pins", data_dir);
+            let file_path = format!("{}/{}", pins_dir, expected_cid);
+
+            // Release lock before disk I/O
+            drop(state);
+
+            if let Err(e) = std::fs::create_dir_all(&pins_dir) {
+                log::error!("Recovery push: failed to create ipfs_pins dir: {}", e);
+                let response = "HTTP/1.1 500 Internal Server Error\r\n\r\n";
+                socket.write_all(response.as_bytes()).await?;
+                return Ok(());
+            }
+
+            if let Err(e) = std::fs::write(&file_path, &body_bytes) {
+                log::error!("Recovery push: failed to write file: {}", e);
+                let response = "HTTP/1.1 500 Internal Server Error\r\n\r\n";
+                socket.write_all(response.as_bytes()).await?;
+                return Ok(());
+            }
+
+            // Mark file as written so Kotlin knows to check
+            let mut state = recovery.lock().await;
+            state.file_written = true;
+
+            log::info!("Recovery push: wrote {} bytes to {}", body_bytes.len(), file_path);
+
+            let response = "HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n";
+            socket.write_all(response.as_bytes()).await?;
         }
 
         _ => {

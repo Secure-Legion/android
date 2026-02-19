@@ -16,6 +16,6 @@ pub use pingpong::{
     remove_ack_session,
     cleanup_expired_acks,
 };
-pub use tor::{TorManager, PENDING_CONNECTIONS, PendingConnection};
+pub use tor::{TorManager, PENDING_CONNECTIONS, PendingConnection, compute_onion_address_from_ed25519_seed};
 pub use friend_request_server::{ContactExchangeEndpoint, get_endpoint};
 pub use socks5_client::Socks5Client;
