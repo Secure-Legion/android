@@ -128,17 +128,17 @@ class MainActivity : BaseActivity() {
                 "com.securelegion.GROUP_INVITE_RECEIVED" -> {
                     Log.d("MainActivity", "Received GROUP_INVITE_RECEIVED broadcast")
                     runOnUiThread {
+                        // Always update badge regardless of current tab
+                        updateGroupsBadge()
                         if (currentTab == "groups") {
                             setupGroupsList()
                         }
-                        // Show toast notification
-                        val groupName = intent.getStringExtra("GROUP_NAME") ?: "Unknown"
-                        ThemedToast.show(this@MainActivity, "New group invite: $groupName")
                     }
                 }
                 "com.securelegion.NEW_GROUP_MESSAGE" -> {
                     Log.d("MainActivity", "Received NEW_GROUP_MESSAGE broadcast")
                     runOnUiThread {
+                        updateGroupsBadge()
                         if (currentTab == "groups") {
                             setupGroupsList()
                         }
@@ -253,6 +253,11 @@ class MainActivity : BaseActivity() {
         //     val walletIntent = Intent(this, WalletActivity::class.java)
         //     startActivity(walletIntent)
         // }
+
+        // Check if we should show groups tab (from group invite notification)
+        if (intent.getBooleanExtra("SHOW_GROUPS", false)) {
+            showGroupsTab()
+        }
 
         // Check if we should show phone/call tab
         if (intent.getBooleanExtra("SHOW_PHONE", false)) {
@@ -539,6 +544,12 @@ class MainActivity : BaseActivity() {
         //     val walletIntent = Intent(this, WalletActivity::class.java)
         //     startActivity(walletIntent)
         // }
+
+        // Check if we should show groups tab (from group invite notification)
+        if (intent.getBooleanExtra("SHOW_GROUPS", false)) {
+            Log.d("MainActivity", "onNewIntent - showing groups tab from notification")
+            showGroupsTab()
+        }
 
         // Check if we should show phone/call tab
         if (intent.getBooleanExtra("SHOW_PHONE", false)) {
@@ -1124,6 +1135,32 @@ class MainActivity : BaseActivity() {
 
             } catch (e: Exception) {
                 Log.e("MainActivity", "Failed to load groups", e)
+            }
+        }
+    }
+
+    /**
+     * Lightweight badge-only update — queries pending invite count without refreshing the full groups list.
+     * Safe to call from any tab.
+     */
+    private fun updateGroupsBadge() {
+        lifecycleScope.launch {
+            try {
+                val keyManager = KeyManager.getInstance(this@MainActivity)
+                val dbPassphrase = keyManager.getDatabasePassphrase()
+                val database = SecureLegionDatabase.getInstance(this@MainActivity, dbPassphrase)
+                val pendingCount = withContext(Dispatchers.IO) {
+                    database.groupDao().countPendingInvites()
+                }
+                val groupsBadge = findViewById<TextView>(R.id.groupsBadge)
+                if (pendingCount > 0) {
+                    groupsBadge.text = pendingCount.toString()
+                    groupsBadge.visibility = View.VISIBLE
+                } else {
+                    groupsBadge.visibility = View.GONE
+                }
+            } catch (e: Exception) {
+                Log.e("MainActivity", "Failed to update groups badge", e)
             }
         }
     }

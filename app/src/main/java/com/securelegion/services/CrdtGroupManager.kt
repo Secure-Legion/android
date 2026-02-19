@@ -299,6 +299,9 @@ class CrdtGroupManager private constructor(private val context: Context) {
             }
         }
 
+        // Show system notification for the invite
+        showGroupInviteNotification(groupId, groupName)
+
         // Broadcast so the groups list refreshes
         context.sendBroadcast(android.content.Intent("com.securelegion.GROUP_INVITE_RECEIVED").apply {
             setPackage(context.packageName)
@@ -307,6 +310,56 @@ class CrdtGroupManager private constructor(private val context: Context) {
         })
 
         return true
+    }
+
+    /**
+     * Show a system notification for a group invite.
+     * Uses the same high-priority auth channel as friend requests.
+     */
+    private fun showGroupInviteNotification(groupId: String, groupName: String) {
+        try {
+            val notificationId = 6000 + Math.abs(groupId.hashCode() % 10000)
+
+            val isUnlocked = com.securelegion.utils.SessionManager.isUnlocked(context)
+
+            val intent = if (isUnlocked) {
+                android.content.Intent(context, com.securelegion.MainActivity::class.java).apply {
+                    putExtra("SHOW_GROUPS", true)
+                    flags = android.content.Intent.FLAG_ACTIVITY_NEW_TASK or android.content.Intent.FLAG_ACTIVITY_SINGLE_TOP
+                }
+            } else {
+                android.content.Intent(context, com.securelegion.LockActivity::class.java).apply {
+                    putExtra("TARGET_ACTIVITY", "MainActivity")
+                    putExtra("SHOW_GROUPS", true)
+                    flags = android.content.Intent.FLAG_ACTIVITY_NEW_TASK or android.content.Intent.FLAG_ACTIVITY_CLEAR_TOP
+                }
+            }
+
+            val pendingIntent = android.app.PendingIntent.getActivity(
+                context,
+                notificationId,
+                intent,
+                android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
+            )
+
+            val notification = androidx.core.app.NotificationCompat.Builder(context, "message_auth_channel_v2")
+                .setSmallIcon(com.securelegion.R.drawable.ic_shield)
+                .setContentTitle("Group Invite")
+                .setContentText("You've been invited to join $groupName")
+                .setPriority(androidx.core.app.NotificationCompat.PRIORITY_HIGH)
+                .setCategory(androidx.core.app.NotificationCompat.CATEGORY_SOCIAL)
+                .setAutoCancel(true)
+                .setContentIntent(pendingIntent)
+                .setGroup("GROUP_INVITES")
+                .build()
+
+            val notificationManager = context.getSystemService(android.app.NotificationManager::class.java)
+            notificationManager.notify(notificationId, notification)
+
+            Log.i(TAG, "Group invite notification shown for $groupName (ID: $notificationId)")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to show group invite notification", e)
+        }
     }
 
     // ==================== Pull-Based Sync ====================

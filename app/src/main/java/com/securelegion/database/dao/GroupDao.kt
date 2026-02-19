@@ -122,6 +122,12 @@ interface GroupDao {
     suspend fun groupExists(groupId: String): Boolean
 
     /**
+     * Count groups with pending invites (for badge)
+     */
+    @Query("SELECT COUNT(*) FROM groups WHERE isPendingInvite = 1")
+    suspend fun countPendingInvites(): Int
+
+    /**
      * Delete all groups (for testing or account wipe)
      */
     @Query("DELETE FROM groups")
