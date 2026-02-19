@@ -431,6 +431,16 @@ class ChatActivity : BaseActivity() {
         val chatNameView = findViewById<TextView>(R.id.chatName)
         chatNameView.text = contactName
 
+        // Tap contact name to open contact profile
+        chatNameView.setOnClickListener {
+            val intent = Intent(this, ContactOptionsActivity::class.java).apply {
+                putExtra("CONTACT_ID", contactId)
+                putExtra("CONTACT_NAME", contactName)
+                putExtra("CONTACT_ADDRESS", contactAddress)
+            }
+            startActivity(intent)
+        }
+
         // DEBUG: Long-press contact name to reset key chain counters
         chatNameView.setOnLongClickListener {
             Log.d(TAG, "DEBUG: Long-press detected on contact name!")
@@ -524,6 +534,9 @@ class ChatActivity : BaseActivity() {
         super.onResume()
         Log.d(TAG, "onResume called")
 
+        // Cancel system bar notifications for this contact
+        cancelNotificationsForContact()
+
         // Download state is derived from database on loadMessages() - no need to check SharedPreferences
 
         // Refresh messages when returning to the screen (ensures fresh data even if broadcast was missed)
@@ -533,6 +546,42 @@ class ChatActivity : BaseActivity() {
 
         // Notify TorService that app is in foreground (fast bandwidth updates)
         com.securelegion.services.TorService.setForegroundState(true)
+    }
+
+    /**
+     * Cancel all system bar notifications related to this contact:
+     * - Message notifications (grouped under MESSAGES_{contactId})
+     * - Friend-request-accepted notification (ID 6000 + hash)
+     * - Global pending summary (999) if no message notifications remain
+     */
+    private fun cancelNotificationsForContact() {
+        try {
+            val notificationManager = getSystemService(android.app.NotificationManager::class.java)
+            val messageGroup = "MESSAGES_${contactId}"
+
+            // Cancel all message notifications for this contact
+            for (sbn in notificationManager.activeNotifications) {
+                if (sbn.notification.group == messageGroup) {
+                    notificationManager.cancel(sbn.id)
+                }
+            }
+
+            // Cancel friend-request-accepted notification for this contact
+            if (contactName.isNotEmpty()) {
+                val acceptedNotificationId = 6000 + Math.abs(contactName.hashCode() % 10000)
+                notificationManager.cancel(acceptedNotificationId)
+            }
+
+            // If no message notifications remain, cancel the global summary too
+            val hasRemainingMessages = notificationManager.activeNotifications.any {
+                it.notification.group?.startsWith("MESSAGES_") == true
+            }
+            if (!hasRemainingMessages) {
+                notificationManager.cancel(999)
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to cancel notifications for contact", e)
+        }
     }
 
     override fun onPause() {
@@ -573,7 +622,13 @@ class ChatActivity : BaseActivity() {
         val itemCount = messageAdapter.itemCount
         if (itemCount > 0) {
             messagesRecyclerView.post {
-                if (smooth) {
+                val layoutManager = messagesRecyclerView.layoutManager as? LinearLayoutManager
+                val lastVisible = layoutManager?.findLastVisibleItemPosition() ?: 0
+                val distance = itemCount - 1 - lastVisible
+
+                // Only smooth-scroll if within 15 items of the bottom.
+                // Smooth-scrolling 1000+ items locks the UI for ages.
+                if (smooth && distance in 1..15) {
                     messagesRecyclerView.smoothScrollToPosition(itemCount - 1)
                 } else {
                     messagesRecyclerView.scrollToPosition(itemCount - 1)
@@ -764,16 +819,8 @@ class ChatActivity : BaseActivity() {
             parentView?.setBackgroundResource(android.R.color.transparent)
         }
 
-        // SecurePay option (combined Send & Request)
-        view.findViewById<View>(R.id.securePayOption).setOnClickListener {
-            bottomSheet.dismiss()
-            val intent = Intent(this, RequestMoneyActivity::class.java).apply {
-                putExtra(RequestMoneyActivity.EXTRA_RECIPIENT_NAME, contactName)
-                putExtra(RequestMoneyActivity.EXTRA_RECIPIENT_ADDRESS, contactAddress)
-                putExtra(RequestMoneyActivity.EXTRA_CONTACT_ID, contactId)
-            }
-            startActivity(intent)
-        }
+        // SecurePay — hidden until wallet feature is ready for release
+        view.findViewById<View>(R.id.securePayOption).visibility = View.GONE
 
         // Send Image option
         view.findViewById<View>(R.id.sendImageOption).setOnClickListener {
@@ -1558,10 +1605,20 @@ class ChatActivity : BaseActivity() {
                     messageInput.text.clear()
                 }
 
+                // Check if Tor is available before sending
+                val gate = TorService.getTransportGate()
+                val gateOpen = gate?.isOpenNow() == true
+                if (!gateOpen) {
+                    // Show queued toast — message will be saved to DB and retried later
+                    withContext(Dispatchers.Main) {
+                        com.securelegion.utils.ThemedToast.show(this@ChatActivity, "Message queued \u2014 will send when connected")
+                    }
+                }
+
                 // Wait for transport gate to open (verifies Tor is healthy)
                 // Best-effort: message is already saved to DB, retry worker handles failures
                 Log.d(TAG, "Waiting for transport gate to open before sending message...")
-                TorService.getTransportGate()?.awaitOpen(com.securelegion.network.TransportGate.TIMEOUT_SEND_MS)
+                gate?.awaitOpen(com.securelegion.network.TransportGate.TIMEOUT_SEND_MS)
                 Log.d(TAG, "Transport gate opened (or timed out), proceeding with message send")
 
                 // Send message with security options

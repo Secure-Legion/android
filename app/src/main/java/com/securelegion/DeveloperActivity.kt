@@ -50,6 +50,12 @@ class DeveloperActivity : AppCompatActivity() {
             startActivity(intent)
         }
 
+        // Set up System Log button
+        findViewById<View>(R.id.systemLogItem).setOnClickListener {
+            val intent = Intent(this, SystemLogActivity::class.java)
+            startActivity(intent)
+        }
+
         // Set up Stress Test button (master flavor only)
         val stressTestItem = findViewById<View>(R.id.stressTestItem)
         if (BuildConfig.ENABLE_STRESS_TESTING) {

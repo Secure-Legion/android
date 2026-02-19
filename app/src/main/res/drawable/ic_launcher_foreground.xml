@@ -7,10 +7,10 @@
 
     <!-- Shield with diagonal cut, centered in adaptive icon safe zone -->
     <group
-        android:translateX="24"
-        android:translateY="22"
-        android:scaleX="2.5"
-        android:scaleY="2.5">
+        android:translateX="30"
+        android:translateY="33"
+        android:scaleX="1.9"
+        android:scaleY="1.9">
 
         <!-- White shield (same path as ic_shield) -->
         <path

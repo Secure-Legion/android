@@ -3,9 +3,11 @@ package com.securelegion
 import android.content.Context
 import android.content.Intent
 import android.os.Bundle
+import android.text.Editable
 import android.text.InputType
 import android.text.SpannableString
 import android.text.Spanned
+import android.text.TextWatcher
 import android.text.method.LinkMovementMethod
 import android.text.style.ClickableSpan
 import android.text.style.ForegroundColorSpan
@@ -17,11 +19,20 @@ import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.darkColorScheme
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.ComposeView
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowCompat
 import com.securelegion.crypto.KeyManager
-import com.securelegion.crypto.TorManager
 import com.securelegion.database.SecureLegionDatabase
 import com.securelegion.database.entities.Wallet
 import com.securelegion.models.ContactCard
@@ -30,8 +41,10 @@ import com.securelegion.utils.PasswordValidator
 import com.securelegion.utils.ThemedToast
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import androidx.lifecycle.lifecycleScope
 import org.web3j.crypto.MnemonicUtils
 import java.security.SecureRandom
 
@@ -43,12 +56,12 @@ class CreateAccountActivity : AppCompatActivity() {
     private lateinit var togglePassword: ImageView
     private lateinit var toggleConfirmPassword: ImageView
     private lateinit var createAccountButton: TextView
-    private lateinit var loadingOverlay: FrameLayout
-    private lateinit var loadingText: TextView
-    private lateinit var loadingSubtext: TextView
+    private lateinit var loadingIndicatorView: ComposeView
+    private lateinit var passwordMatchText: TextView
 
     private var isPasswordVisible = false
     private var isConfirmPasswordVisible = false
+    private var isRestore = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -60,16 +73,15 @@ class CreateAccountActivity : AppCompatActivity() {
         // WindowManager.LayoutParams.FLAG_SECURE
         // )
 
-        // Make status bar white with dark icons
-        @Suppress("DEPRECATION")
-        window.statusBarColor = android.graphics.Color.WHITE
-        @Suppress("DEPRECATION")
-        window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR
+        // Make status bar transparent with light icons (matches dark theme)
+        window.statusBarColor = android.graphics.Color.TRANSPARENT
 
         setContentView(R.layout.activity_create_account)
 
         // Enable edge-to-edge display
         WindowCompat.setDecorFitsSystemWindows(window, false)
+
+        isRestore = intent.getBooleanExtra("is_restore", false)
 
         initializeViews()
         setupClickListeners()
@@ -110,9 +122,15 @@ class CreateAccountActivity : AppCompatActivity() {
         togglePassword = findViewById(R.id.togglePassword)
         toggleConfirmPassword = findViewById(R.id.toggleConfirmPassword)
         createAccountButton = findViewById(R.id.createAccountButton)
-        loadingOverlay = findViewById(R.id.loadingOverlay)
-        loadingText = findViewById(R.id.loadingText)
-        loadingSubtext = findViewById(R.id.loadingSubtext)
+        loadingIndicatorView = findViewById(R.id.loadingIndicatorView)
+        passwordMatchText = findViewById(R.id.passwordMatchText)
+
+        // Set up the Compose content for the M3 LoadingIndicator
+        loadingIndicatorView.setContent {
+            MaterialTheme(colorScheme = darkColorScheme()) {
+                LoadingIndicatorContent()
+            }
+        }
 
         // Setup "Already have an account? Import" text
         val alreadyHaveAccountText = findViewById<TextView>(R.id.alreadyHaveAccountText)
@@ -139,16 +157,58 @@ class CreateAccountActivity : AppCompatActivity() {
 
         alreadyHaveAccountText.text = spannable
         alreadyHaveAccountText.movementMethod = LinkMovementMethod.getInstance()
+
+        // Live password match feedback
+        val matchWatcher = object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+            override fun afterTextChanged(s: Editable?) {
+                updatePasswordMatchIndicator()
+            }
+        }
+        passwordInput.addTextChangedListener(matchWatcher)
+        confirmPasswordInput.addTextChangedListener(matchWatcher)
     }
 
-    private fun showLoading(text: String, subtext: String = "Please wait") {
-        loadingText.text = text
-        loadingSubtext.text = subtext
-        loadingOverlay.visibility = View.VISIBLE
+    private fun updatePasswordMatchIndicator() {
+        val password = passwordInput.text.toString()
+        val confirm = confirmPasswordInput.text.toString()
+
+        if (confirm.isEmpty()) {
+            passwordMatchText.visibility = View.GONE
+            return
+        }
+
+        passwordMatchText.visibility = View.VISIBLE
+        if (password == confirm) {
+            passwordMatchText.text = "Passwords match"
+            passwordMatchText.setTextColor(0xFF00CC66.toInt())
+        } else {
+            passwordMatchText.text = "Passwords do not match"
+            passwordMatchText.setTextColor(0xFFFF6666.toInt())
+        }
+    }
+
+    private fun showLoading() {
+        createAccountButton.visibility = View.INVISIBLE
+        loadingIndicatorView.visibility = View.VISIBLE
     }
 
     private fun hideLoading() {
-        loadingOverlay.visibility = View.GONE
+        loadingIndicatorView.visibility = View.GONE
+        createAccountButton.visibility = View.VISIBLE
+    }
+
+    @Composable
+    private fun LoadingIndicatorContent() {
+        Box(
+            modifier = Modifier.fillMaxSize(),
+            contentAlignment = Alignment.Center
+        ) {
+            CircularProgressIndicator(
+                color = Color(0xFF999999)
+            )
+        }
     }
 
     private fun setupClickListeners() {
@@ -215,8 +275,8 @@ class CreateAccountActivity : AppCompatActivity() {
             val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager
             imm.hideSoftInputFromWindow(currentFocus?.windowToken, 0)
 
-            // Show loading immediately to prevent double-tap
-            showLoading("Creating Account...", "Please wait")
+            // Show loading indicator on button to prevent double-tap
+            showLoading()
             createAccountButton.isEnabled = false
 
             createAccount()
@@ -224,318 +284,230 @@ class CreateAccountActivity : AppCompatActivity() {
     }
 
     private fun createAccount() {
-        CoroutineScope(Dispatchers.Main).launch {
+        // Capture UI values on Main before switching to IO
+        val password = passwordInput.text.toString()
+        val username = usernameInput.text.toString()
+
+        lifecycleScope.launch {
             try {
-                Log.d("CreateAccount", "Starting account creation...")
+                withContext(Dispatchers.IO) {
+                    Log.d("CreateAccount", "Starting account creation (restore=$isRestore)...")
 
-                // Show loading overlay (stays until completion)
-                // No need to update - keep simple "Creating Account..." message
-
-                // Generate 128-bit entropy for 12-word BIP39 mnemonic
-                val entropy = ByteArray(16) // 128 bits = 12 words
-                SecureRandom().nextBytes(entropy)
-
-                // Generate BIP39 mnemonic from entropy
-                val mnemonic = MnemonicUtils.generateMnemonic(entropy)
-                Log.d("CreateAccount", "Generated 12-word mnemonic seed phrase")
-
-                // Initialize KeyManager with the mnemonic
-                val keyManager = KeyManager.getInstance(this@CreateAccountActivity)
-                keyManager.initializeFromSeed(mnemonic)
-                Log.i("CreateAccount", "KeyManager initialized from seed")
-
-                // Set device password
-                val password = passwordInput.text.toString()
-                keyManager.setDevicePassword(password)
-                Log.i("CreateAccount", "Device password set")
-
-                // Store username
-                val username = usernameInput.text.toString()
-                keyManager.storeUsername(username)
-                Log.i("CreateAccount", "Username stored: $username")
-
-                // Store the seed phrase for display on next screen
-                keyManager.storeSeedPhrase(mnemonic)
-                Log.i("CreateAccount", "Seed phrase stored for display")
-
-                // Store permanently for main wallet (needed for Zcash)
-                keyManager.storeMainWalletSeed(mnemonic)
-                Log.i("CreateAccount", "Seed phrase stored permanently for main wallet")
-
-                // Get the Solana wallet address
-                val walletAddress = keyManager.getSolanaAddress()
-                Log.i("CreateAccount", "Solana address: $walletAddress")
-
-                // Initialize Zcash wallet (async - runs in background)
-                Log.i("CreateAccount", "Starting Zcash wallet initialization in background...")
-                val zcashPrefs = getSharedPreferences("zcash_init", MODE_PRIVATE)
-                zcashPrefs.edit().putBoolean("initializing", true).apply()
-
-                CoroutineScope(Dispatchers.IO).launch {
-                    try {
-                        val zcashService = com.securelegion.services.ZcashService.getInstance(this@CreateAccountActivity)
-                        val result = zcashService.initialize(mnemonic, useTestnet = false)
-                        if (result.isSuccess) {
-                            val zcashAddress = result.getOrNull()
-                            Log.i("CreateAccount", "Zcash wallet initialized: $zcashAddress")
-
-                            // Create wallet entry in database now that initialization is complete
-                            if (zcashAddress != null) {
-                                val keyManager = KeyManager.getInstance(this@CreateAccountActivity)
-                                val dbPassphrase = keyManager.getDatabasePassphrase()
-                                val database = SecureLegionDatabase.getInstance(this@CreateAccountActivity, dbPassphrase)
-
-                                // Get birthday height from ZcashService
-                                val birthdayHeight = zcashService.getBirthdayHeight()
-                                Log.i("CreateAccount", "Zcash birthday height: $birthdayHeight")
-
-                                val zcashWalletId = "wallet_zcash_${System.currentTimeMillis()}"
-                                val defaultZcashWallet = Wallet(
-                                    walletId = zcashWalletId,
-                                    name = "Wallet 2",
-                                    solanaAddress = "",
-                                    zcashUnifiedAddress = zcashAddress,
-                                    zcashAccountIndex = 0,
-                                    zcashBirthdayHeight = birthdayHeight,
-                                    isActiveZcash = true,
-                                    isMainWallet = false,
-                                    createdAt = System.currentTimeMillis(),
-                                    lastUsedAt = System.currentTimeMillis() - 1
-                                )
-                                database.walletDao().insertWallet(defaultZcashWallet)
-
-                                // Store seed phrase for Zcash wallet
-                                keyManager.storeWalletSeed(zcashWalletId, mnemonic)
-                                Log.i("CreateAccount", "Zcash wallet entry created in database with birthday height: $birthdayHeight")
-                            }
-                        } else {
-                            Log.e("CreateAccount", "Failed to initialize Zcash wallet: ${result.exceptionOrNull()?.message}")
-                        }
-                    } catch (e: Exception) {
-                        Log.e("CreateAccount", "Error initializing Zcash wallet", e)
-                    } finally {
-                        // Mark initialization as complete
-                        zcashPrefs.edit().putBoolean("initializing", false).apply()
-                        Log.i("CreateAccount", "Zcash initialization complete")
-                    }
-                }
-
-                // Creating hidden service (no loading update - keep "Creating Account..." message)
-
-                // Create hidden service and wait for it to complete
-                Log.i("CreateAccount", "Creating hidden service for account")
-                val torManager = TorManager.getInstance(this@CreateAccountActivity)
-                val onionAddress = withContext(Dispatchers.IO) {
-                    // Create hidden service synchronously
-                    val existingAddress = torManager.getOnionAddress()
-                    if (existingAddress != null) {
-                        Log.d("CreateAccount", "Hidden service already exists: $existingAddress")
-                        existingAddress
+                    // Get or generate seed phrase
+                    val mnemonic: String
+                    if (isRestore) {
+                        val prefs = getSharedPreferences("restore_temp", MODE_PRIVATE)
+                        mnemonic = prefs.getString("seed_phrase", "")!!
+                        // Clear temporary storage immediately
+                        prefs.edit().remove("seed_phrase").apply()
+                        Log.d("CreateAccount", "Using imported seed phrase")
                     } else {
-                        // Wait for Tor to be ready and create hidden service
-                        var attempts = 0
-                        val maxAttempts = 30
-                        while (attempts < maxAttempts) {
-                            val status = com.securelegion.crypto.RustBridge.getBootstrapStatus()
-                            if (status >= 100) break
-                            Log.d("CreateAccount", "Waiting for Tor bootstrap: $status%")
-                            Thread.sleep(1000)
-                            attempts++
-                        }
+                        // Generate 128-bit entropy for 12-word BIP39 mnemonic
+                        val entropy = ByteArray(16) // 128 bits = 12 words
+                        SecureRandom().nextBytes(entropy)
+                        mnemonic = MnemonicUtils.generateMnemonic(entropy)
+                        Log.d("CreateAccount", "Generated 12-word mnemonic seed phrase")
+                    }
 
-                        if (attempts >= maxAttempts) {
-                            throw Exception("Tor bootstrap timeout")
-                        }
+                    // Initialize KeyManager with the mnemonic
+                    val keyManager = KeyManager.getInstance(this@CreateAccountActivity)
+                    keyManager.initializeFromSeed(mnemonic)
+                    Log.i("CreateAccount", "KeyManager initialized from seed")
 
-                        // First, clear any orphaned ephemeral services from previous failed attempts
-                        // This prevents "service already registered" errors in Tor
+                    // Set device password
+                    keyManager.setDevicePassword(password)
+                    Log.i("CreateAccount", "Device password set")
+
+                    // Store username
+                    keyManager.storeUsername(username)
+                    Log.i("CreateAccount", "Username stored: $username")
+
+                    // Store the seed phrase for display on next screen
+                    keyManager.storeSeedPhrase(mnemonic)
+                    Log.i("CreateAccount", "Seed phrase stored for display")
+
+                    // Store permanently for main wallet (needed for Zcash)
+                    keyManager.storeMainWalletSeed(mnemonic)
+                    Log.i("CreateAccount", "Seed phrase stored permanently for main wallet")
+
+                    // Get the Solana wallet address
+                    val walletAddress = keyManager.getSolanaAddress()
+                    Log.i("CreateAccount", "Solana address: $walletAddress")
+
+                    // Initialize Zcash wallet (async - runs in background)
+                    Log.i("CreateAccount", "Starting Zcash wallet initialization in background...")
+                    val zcashPrefs = getSharedPreferences("zcash_init", MODE_PRIVATE)
+                    zcashPrefs.edit().putBoolean("initializing", true).apply()
+
+                    CoroutineScope(Dispatchers.IO).launch {
                         try {
-                            Log.d("CreateAccount", "Clearing orphaned ephemeral hidden services...")
-                            val clearedCount = com.securelegion.crypto.RustBridge.clearAllEphemeralServices()
-                            Log.i("CreateAccount", "Cleared $clearedCount orphaned service(s)")
-                        } catch (e: Exception) {
-                            Log.w("CreateAccount", "Failed to clear ephemeral services (continuing anyway): ${e.message}")
-                        }
+                            val zcashService = com.securelegion.services.ZcashService.getInstance(this@CreateAccountActivity)
+                            val result = zcashService.initialize(mnemonic, useTestnet = false)
+                            if (result.isSuccess) {
+                                val zcashAddress = result.getOrNull()
+                                Log.i("CreateAccount", "Zcash wallet initialized: $zcashAddress")
 
-                        // Retry hidden service creation with fixed interval
-                        // 24 attempts x 5s = 2 minutes to accommodate slow bridges (Snowflake)
-                        var createAttempt = 0
-                        val maxCreateAttempts = 24
-                        var address: String? = null
-                        var lastError: Exception? = null
+                                // Create wallet entry in database now that initialization is complete
+                                if (zcashAddress != null) {
+                                    val km = KeyManager.getInstance(this@CreateAccountActivity)
+                                    val dbPassphrase = km.getDatabasePassphrase()
+                                    val database = SecureLegionDatabase.getInstance(this@CreateAccountActivity, dbPassphrase)
 
-                        while (createAttempt < maxCreateAttempts && address == null) {
-                            try {
-                                createAttempt++
-                                Log.d("CreateAccount", "Creating hidden service (attempt $createAttempt/$maxCreateAttempts)...")
-                                address = com.securelegion.crypto.RustBridge.createHiddenService(9150, 8080)
-                                torManager.saveOnionAddress(address)
-                                Log.i("CreateAccount", "Hidden service created successfully")
-                            } catch (e: Exception) {
-                                lastError = e
-                                Log.e("CreateAccount", "Failed to create hidden service (attempt $createAttempt): ${e.message}", e)
-                                if (createAttempt < maxCreateAttempts) {
-                                    Thread.sleep(5_000)
+                                    // Get birthday height from ZcashService
+                                    val birthdayHeight = zcashService.getBirthdayHeight()
+                                    Log.i("CreateAccount", "Zcash birthday height: $birthdayHeight")
+
+                                    val zcashWalletId = "wallet_zcash_${System.currentTimeMillis()}"
+                                    val defaultZcashWallet = Wallet(
+                                        walletId = zcashWalletId,
+                                        name = "Wallet 2",
+                                        solanaAddress = "",
+                                        zcashUnifiedAddress = zcashAddress,
+                                        zcashAccountIndex = 0,
+                                        zcashBirthdayHeight = birthdayHeight,
+                                        isActiveZcash = true,
+                                        isMainWallet = false,
+                                        createdAt = System.currentTimeMillis(),
+                                        lastUsedAt = System.currentTimeMillis() - 1
+                                    )
+                                    database.walletDao().insertWallet(defaultZcashWallet)
+
+                                    // Store seed phrase for Zcash wallet
+                                    km.storeWalletSeed(zcashWalletId, mnemonic)
+                                    Log.i("CreateAccount", "Zcash wallet entry created in database with birthday height: $birthdayHeight")
                                 }
+                            } else {
+                                Log.e("CreateAccount", "Failed to initialize Zcash wallet: ${result.exceptionOrNull()?.message}")
+                            }
+                        } catch (e: Exception) {
+                            Log.e("CreateAccount", "Error initializing Zcash wallet", e)
+                        } finally {
+                            // Mark initialization as complete
+                            zcashPrefs.edit().putBoolean("initializing", false).apply()
+                            Log.i("CreateAccount", "Zcash initialization complete")
+                        }
+                    }
+
+                    // Pre-compute all 3 onion addresses from seed (no Tor needed)
+                    // These are deterministic from the BIP39 seed, so they're known immediately
+                    Log.i("CreateAccount", "Pre-computing onion addresses from seed...")
+                    keyManager.precomputeAllOnionAddresses()
+                    val onionAddress = keyManager.getMessagingOnion()!!
+                    val friendRequestOnion = keyManager.getFriendRequestOnion()!!
+                    val voiceOnionAddress = keyManager.getVoiceOnion() ?: ""
+                    Log.i("CreateAccount", "All 3 onion addresses pre-computed offline")
+
+                    // Generate random PIN first
+                    val cardManager = ContactCardManager(this@CreateAccountActivity)
+                    val contactCardPin = cardManager.generateRandomPin()
+
+                    // Derive IPFS CID from seed (v2.0) - retry until success
+                    var ipfsCid = ""
+                    var ipfsCidAttempt = 0
+                    while (ipfsCid.isEmpty()) {
+                        try {
+                            ipfsCidAttempt++
+                            Log.d("CreateAccount", "Deriving IPFS CID from seed (attempt $ipfsCidAttempt)...")
+                            ipfsCid = keyManager.deriveIPFSCID(mnemonic)
+                            keyManager.storeIPFSCID(ipfsCid)
+                            Log.i("CreateAccount", "IPFS CID: $ipfsCid")
+                        } catch (e: Exception) {
+                            Log.e("CreateAccount", "Failed to derive IPFS CID (attempt $ipfsCidAttempt): ${e.message}", e)
+                            if (ipfsCidAttempt < 5) {
+                                delay(2000) // Non-blocking coroutine delay
+                            } else {
+                                throw Exception("Failed to derive IPFS CID after $ipfsCidAttempt attempts: ${e.message}")
                             }
                         }
+                    }
 
-                        if (address == null) {
-                            throw Exception("Failed to create hidden service after $maxCreateAttempts attempts: ${lastError?.message}")
-                        }
+                    // Create and upload contact card
+                    Log.d("CreateAccount", "Creating contact card...")
+                    val contactCard = ContactCard(
+                        displayName = username,
+                        solanaPublicKey = keyManager.getSolanaPublicKey(),
+                        x25519PublicKey = keyManager.getEncryptionPublicKey(),
+                        kyberPublicKey = keyManager.getKyberPublicKey(),
+                        solanaAddress = keyManager.getSolanaAddress(),
+                        friendRequestOnion = friendRequestOnion,
+                        messagingOnion = onionAddress,
+                        voiceOnion = voiceOnionAddress,
+                        contactPin = contactCardPin,
+                        ipfsCid = ipfsCid,
+                        timestamp = System.currentTimeMillis()
+                    )
+                    // Store contact card info in encrypted storage
+                    keyManager.storeContactPin(contactCardPin)
+                    keyManager.storeIPFSCID(ipfsCid)
+                    // Note: friendRequestOnion already stored by createFriendRequestOnion()
+                    keyManager.storeMessagingOnion(onionAddress)
 
-                        address
+                    // Initialize internal wallet in database
+                    val dbPassphrase = keyManager.getDatabasePassphrase()
+                    val database = SecureLegionDatabase.getInstance(this@CreateAccountActivity, dbPassphrase)
+                    val timestamp = System.currentTimeMillis()
+                    val mainWallet = Wallet(
+                        walletId = "main",
+                        name = "Wallet 1",
+                        solanaAddress = keyManager.getSolanaAddress(),
+                        isMainWallet = true,
+                        createdAt = timestamp,
+                        lastUsedAt = timestamp
+                    )
+                    database.walletDao().insertWallet(mainWallet)
+                    Log.i("CreateAccount", "Internal wallet initialized in database")
+
+                    // Create default Solana wallet for user (separate from account wallet)
+                    Log.d("CreateAccount", "Creating default Solana wallet...")
+                    val (defaultSolWalletId, defaultSolAddress) = keyManager.generateNewWallet()
+                    val defaultSolanaWallet = Wallet(
+                        walletId = defaultSolWalletId,
+                        name = "Wallet 1",
+                        solanaAddress = defaultSolAddress,
+                        isMainWallet = false,
+                        createdAt = timestamp,
+                        lastUsedAt = timestamp
+                    )
+                    database.walletDao().insertWallet(defaultSolanaWallet)
+                    Log.i("CreateAccount", "Default Solana wallet created: $defaultSolAddress")
+
+                    // Note: Zcash wallet will be created in background when initialization completes
+                    Log.i("CreateAccount", "Zcash wallet will be created automatically when initialization finishes")
+
+                    Log.i("CreateAccount", "Contact card created (local only, not uploaded)")
+
+                    val setupPrefs = getSharedPreferences("account_setup", MODE_PRIVATE)
+                    if (isRestore) {
+                        // Restored from seed — user already has it
+                        setupPrefs.edit().putBoolean("seed_phrase_confirmed", true).apply()
+
+                        // Enable push recovery mode — TorService will activate beacon
+                        // so friends can push our contact list when Tor comes online
+                        val contactListCID = keyManager.deriveContactListCIDFromSeed(mnemonic)
+                        val recoveryPrefs = getSharedPreferences("recovery_state", MODE_PRIVATE)
+                        recoveryPrefs.edit()
+                            .putBoolean("recovery_needed", true)
+                            .putString("expected_cid", contactListCID)
+                            .apply()
+                        Log.i("CreateAccount", "Recovery mode enabled (CID: ${contactListCID.take(20)}...)")
+                    } else {
+                        // New account — user must confirm backup
+                        setupPrefs.edit().putBoolean("seed_phrase_confirmed", false).apply()
                     }
                 }
 
-                // Wait for HS descriptor propagation before proceeding
-                // This ensures our .onion is reachable before friend requests can be sent to us
-                run {
-                    val minUploads = 1 // At least 1 HSDir confirmed (partially reachable)
-                    val maxWaitSecs = 60 // Max wait time
-                    var waited = 0
-                    Log.i("CreateAccount", "Waiting for HS descriptor propagation (need >= $minUploads uploads)...")
-                    while (waited < maxWaitSecs) {
-                        val uploads = com.securelegion.crypto.RustBridge.getHsDescUploadCount()
-                        if (uploads >= minUploads) {
-                            Log.i("CreateAccount", "HS descriptors propagated ($uploads HSDirs confirmed)")
-                            break
-                        }
-                        if (waited % 10 == 0) {
-                            Log.d("CreateAccount", "HS descriptor propagation: $uploads/$minUploads HSDirs (waited ${waited}s)")
-                        }
-                        Thread.sleep(1000)
-                        waited++
-                    }
-                    val finalCount = com.securelegion.crypto.RustBridge.getHsDescUploadCount()
-                    if (finalCount < minUploads) {
-                        Log.w("CreateAccount", "HS descriptor propagation timeout after ${maxWaitSecs}s ($finalCount uploads) - continuing anyway")
-                    }
-                }
-
-                // Voice onion address will be created automatically by TorService on first startup
-                // (Single Onion Services must be configured in torrc, not via ADD_ONION)
-                Log.i("CreateAccount", "Voice onion will be created by TorService from torrc hostname file")
-                val voiceOnionAddress = "" // Will be populated by TorService on first launch
-
-                // Generate random PIN first
-                val cardManager = ContactCardManager(this@CreateAccountActivity)
-                val contactCardPin = cardManager.generateRandomPin()
-
-                // Create friend request .onion address (v2.0) - retry until success
-                var friendRequestOnion = ""
-                var friendRequestAttempt = 0
-                while (friendRequestOnion.isEmpty()) {
-                    try {
-                        friendRequestAttempt++
-                        Log.d("CreateAccount", "Creating friend request .onion address (attempt $friendRequestAttempt)...")
-                        friendRequestOnion = keyManager.createFriendRequestOnion()
-                        Log.i("CreateAccount", "Friend request .onion created successfully")
-                    } catch (e: Exception) {
-                        Log.e("CreateAccount", "Failed to create friend request .onion (attempt $friendRequestAttempt): ${e.message}", e)
-                        if (friendRequestAttempt < 5) {
-                            Thread.sleep(2000) // Wait 2 seconds before retry
-                        } else {
-                            throw Exception("Failed to create friend request .onion after $friendRequestAttempt attempts: ${e.message}")
-                        }
-                    }
-                }
-
-                // Derive IPFS CID from seed (v2.0) - retry until success
-                var ipfsCid = ""
-                var ipfsCidAttempt = 0
-                while (ipfsCid.isEmpty()) {
-                    try {
-                        ipfsCidAttempt++
-                        Log.d("CreateAccount", "Deriving IPFS CID from seed (attempt $ipfsCidAttempt)...")
-                        ipfsCid = keyManager.deriveIPFSCID(mnemonic)
-                        keyManager.storeIPFSCID(ipfsCid)
-                        Log.i("CreateAccount", "IPFS CID: $ipfsCid")
-                    } catch (e: Exception) {
-                        Log.e("CreateAccount", "Failed to derive IPFS CID (attempt $ipfsCidAttempt): ${e.message}", e)
-                        if (ipfsCidAttempt < 5) {
-                            Thread.sleep(2000) // Wait 2 seconds before retry
-                        } else {
-                            throw Exception("Failed to derive IPFS CID after $ipfsCidAttempt attempts: ${e.message}")
-                        }
-                    }
-                }
-
-                // Create and upload contact card
-                Log.d("CreateAccount", "Creating contact card...")
-                val contactCard = ContactCard(
-                    displayName = username,
-                    solanaPublicKey = keyManager.getSolanaPublicKey(),
-                    x25519PublicKey = keyManager.getEncryptionPublicKey(),
-                    kyberPublicKey = keyManager.getKyberPublicKey(),
-                    solanaAddress = keyManager.getSolanaAddress(),
-                    friendRequestOnion = friendRequestOnion,
-                    messagingOnion = onionAddress,
-                    voiceOnion = voiceOnionAddress,
-                    contactPin = contactCardPin,
-                    ipfsCid = ipfsCid,
-                    timestamp = System.currentTimeMillis()
-                )
-                // Store contact card info in encrypted storage
-                keyManager.storeContactPin(contactCardPin)
-                keyManager.storeIPFSCID(ipfsCid)
-                // Note: friendRequestOnion already stored by createFriendRequestOnion()
-                keyManager.storeMessagingOnion(onionAddress)
-
-                // Initialize internal wallet in database
-                val dbPassphrase = keyManager.getDatabasePassphrase()
-                val database = SecureLegionDatabase.getInstance(this@CreateAccountActivity, dbPassphrase)
-                val timestamp = System.currentTimeMillis()
-                val mainWallet = Wallet(
-                    walletId = "main",
-                    name = "Wallet 1",
-                    solanaAddress = keyManager.getSolanaAddress(),
-                    isMainWallet = true,
-                    createdAt = timestamp,
-                    lastUsedAt = timestamp
-                )
-                database.walletDao().insertWallet(mainWallet)
-                Log.i("CreateAccount", "Internal wallet initialized in database")
-
-                // Create default Solana wallet for user (separate from account wallet)
-                Log.d("CreateAccount", "Creating default Solana wallet...")
-                val (defaultSolWalletId, defaultSolAddress) = keyManager.generateNewWallet()
-                val defaultSolanaWallet = Wallet(
-                    walletId = defaultSolWalletId,
-                    name = "Wallet 1",
-                    solanaAddress = defaultSolAddress,
-                    isMainWallet = false,
-                    createdAt = timestamp,
-                    lastUsedAt = timestamp
-                )
-                database.walletDao().insertWallet(defaultSolanaWallet)
-                Log.i("CreateAccount", "Default Solana wallet created: $defaultSolAddress")
-
-                // Note: Zcash wallet will be created in background when initialization completes
-                Log.i("CreateAccount", "Zcash wallet will be created automatically when initialization finishes")
-
-                Log.i("CreateAccount", "Contact card created (local only, not uploaded)")
-
-                // Mark that seed phrase has NOT been confirmed yet
-                val setupPrefs = getSharedPreferences("account_setup", MODE_PRIVATE)
-                setupPrefs.edit().putBoolean("seed_phrase_confirmed", false).apply()
-                Log.i("CreateAccount", "Set seed_phrase_confirmed = false (user must confirm backup)")
-
-                // Navigate to Account Created screen to show CID, PIN, and seed phrase
+                // Back on Main — clean fade transition to recovery seed screen
                 val intent = Intent(this@CreateAccountActivity, AccountCreatedActivity::class.java)
                 intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
                 startActivity(intent)
+                @Suppress("DEPRECATION")
+                overridePendingTransition(android.R.anim.fade_in, android.R.anim.fade_out)
                 finish()
 
             } catch (e: Exception) {
                 Log.e("CreateAccount", "Failed to create account", e)
-
-                // Hide loading overlay
                 hideLoading()
-
                 ThemedToast.showLong(this@CreateAccountActivity, "Failed to create account: ${e.message}")
-
-                // Re-enable button so user can retry
                 createAccountButton.isEnabled = true
             }
         }

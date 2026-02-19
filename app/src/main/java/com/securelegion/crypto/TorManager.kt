@@ -1,9 +1,11 @@
 package com.securelegion.crypto
 
-import android.app.ActivityManager
 import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
+import android.net.LocalSocket
+import android.net.LocalSocketAddress
+import android.os.Build
 import android.util.Log
 import okhttp3.OkHttpClient
 import org.torproject.jni.TorService
@@ -119,17 +121,124 @@ class TorManager(private val context: Context) {
      */
     private fun isTorProcessAlive(): Boolean {
         return try {
-            val am = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
-            val torProcessName = "${context.packageName}:tor"
-            val alive = am.runningAppProcesses?.any { it.processName == torProcessName } == true
+            // GP TorService runs in-process. Check file existence first (cheap),
+            // then verify with a real control handshake (prevents stale socket traps).
+            val controlSocket = java.io.File(context.dataDir, "app_TorService/data/ControlSocket")
+            if (!controlSocket.exists()) return false
+            val alive = probeTorControl()
             if (alive) {
-                Log.w(TAG, ":tor process is still alive - will skip GP TorService start")
+                Log.d(TAG, "Tor is running (probe confirmed)")
+            } else {
+                Log.w(TAG, "ControlSocket exists but probe failed — stale")
+                controlSocket.delete()
             }
             alive
         } catch (e: Exception) {
-            Log.w(TAG, "Failed to check :tor process status: ${e.message}")
+            Log.w(TAG, "Failed to check Tor status: ${e.message}")
             false
         }
+    }
+
+    /**
+     * Probe the Tor ControlSocket to verify Tor is actually responsive.
+     * A stale ControlSocket file can survive a crash — this verifies with a real
+     * AUTHENTICATE + GETINFO handshake over the Unix domain socket.
+     * @return true if Tor responds with 250 OK, false if dead/unreachable
+     */
+    private fun probeTorControl(): Boolean {
+        return try {
+            val socketPath = File(context.dataDir, "app_TorService/data/ControlSocket").absolutePath
+            val sock = LocalSocket()
+            sock.connect(LocalSocketAddress(socketPath, LocalSocketAddress.Namespace.FILESYSTEM))
+            sock.soTimeout = 3000 // 3s timeout
+
+            val output = sock.outputStream
+            val input = sock.inputStream
+
+            // Empty auth (GP tor-android 0.4.9.5 uses --CookieAuthentication 0)
+            output.write("AUTHENTICATE\r\n".toByteArray())
+            output.flush()
+
+            // Read auth response
+            val authBuf = ByteArray(256)
+            val authLen = input.read(authBuf)
+            val authResp = String(authBuf, 0, authLen)
+            if (!authResp.startsWith("250")) {
+                Log.w(TAG, "probeTorControl: auth failed: $authResp")
+                sock.close()
+                return false
+            }
+
+            // Probe bootstrap state
+            output.write("GETINFO status/bootstrap-phase\r\n".toByteArray())
+            output.flush()
+
+            val infoBuf = ByteArray(512)
+            val infoLen = input.read(infoBuf)
+            val infoResp = String(infoBuf, 0, infoLen)
+            sock.close()
+
+            val ok = infoResp.contains("250")
+            if (ok) {
+                Log.d(TAG, "probeTorControl: Tor alive — $infoResp")
+            } else {
+                Log.w(TAG, "probeTorControl: unexpected response — $infoResp")
+            }
+            ok
+        } catch (e: Exception) {
+            Log.w(TAG, "probeTorControl: failed — ${e.message}")
+            false
+        }
+    }
+
+    /**
+     * Start GP TorService via our custom TorService (foreground-safe).
+     * Uses startForegroundService on Android O+ to avoid background execution limits.
+     */
+    private fun startGpTor() {
+        // CRITICAL: Start GP's org.torproject.jni.TorService (imported as TorService),
+        // NOT our com.securelegion.services.TorService.
+        // Use startService() (not startForegroundService) because:
+        // 1. GP's TorService has no foregroundServiceType in manifest
+        // 2. Our custom TorService is already foreground, keeping the process alive
+        val serviceIntent = Intent(context, TorService::class.java)
+        serviceIntent.action = "org.torproject.android.intent.action.START"
+        context.startService(serviceIntent)
+    }
+
+    /**
+     * Search for the real ControlSocket path across all app-private directories.
+     * GP TorService may create it in different locations depending on DataDir config.
+     * @return File if found, null otherwise
+     */
+    private fun findControlSocket(): File? {
+        val candidates = listOf(
+            File(context.dataDir, "app_TorService/data/ControlSocket"),
+            File(context.filesDir, "app_TorService/data/ControlSocket"),
+            File(context.dataDir, "app_TorService/ControlSocket"),
+            File(context.filesDir, "ControlSocket"),
+        )
+        candidates.firstOrNull { it.exists() }?.let {
+            Log.i(TAG, "findControlSocket: found at ${it.absolutePath}")
+            return it
+        }
+
+        // Recursive search under app private dirs (depth-capped)
+        val roots = listOfNotNull(context.dataDir, context.filesDir, context.noBackupFilesDir, context.cacheDir)
+        for (root in roots) {
+            try {
+                val found = root.walkTopDown()
+                    .maxDepth(6)
+                    .firstOrNull { it.isFile && it.name == "ControlSocket" }
+                if (found != null) {
+                    Log.i(TAG, "findControlSocket: found via search at ${found.absolutePath}")
+                    return found
+                }
+            } catch (e: Exception) {
+                // Permission denied on some dirs — skip
+            }
+        }
+        return null
     }
 
     /**
@@ -160,23 +269,23 @@ class TorManager(private val context: Context) {
         // Start bootstrap event listener EARLY, before Tor even starts
         // This ensures it can capture progress from 0% onwards
         try {
-            Log.i(TAG, "Starting bootstrap event listener early...")
-            RustBridge.startBootstrapListener()
+            val socketFile = File(context.dataDir, "app_TorService/data/ControlSocket")
+            Log.i(TAG, "Starting bootstrap event listener early (socket path: ${socketFile.absolutePath})...")
+            RustBridge.startBootstrapListener(socketFile.absolutePath)
         } catch (e: Exception) {
             Log.w(TAG, "Failed to start bootstrap listener (may start later)", e)
         }
 
         Thread {
             try {
-                // Check if Tor control port is already accessible
-                val alreadyRunning = try {
-                    val testSocket = java.net.Socket()
-                    testSocket.connect(java.net.InetSocketAddress("127.0.0.1", 9051), 500)
-                    testSocket.close()
-                    true
-                } catch (e: Exception) {
-                    false
+                // GP TorService runs in-process — any leftover ControlSocket on startup is stale.
+                // Delete unconditionally so we never skip starting Tor due to a ghost file.
+                val controlSocketFile = File(context.dataDir, "app_TorService/data/ControlSocket")
+                if (controlSocketFile.exists()) {
+                    Log.w(TAG, "Deleting stale ControlSocket on startup (in-process Tor guarantees stale)")
+                    controlSocketFile.delete()
                 }
+                val alreadyRunning = false
 
                 // Create Tor data directory
                 torDataDir = File(context.filesDir, "tor")
@@ -197,6 +306,23 @@ class TorManager(private val context: Context) {
                 friendRequestHiddenServiceDir.setReadable(true, true)
                 friendRequestHiddenServiceDir.setWritable(true, true)
                 friendRequestHiddenServiceDir.setExecutable(true, true)
+
+                // Seed hidden service directories with deterministic keys BEFORE Tor starts.
+                // This writes hs_ed25519_secret_key + hs_ed25519_public_key derived from the
+                // BIP39 seed, so Tor loads our keys instead of generating random ones.
+                // Result: the .onion address shown offline matches what Tor publishes.
+                val keyManager = KeyManager.getInstance(context)
+                if (keyManager.isInitialized()) {
+                    try {
+                        keyManager.seedHiddenServiceDir(messagingHiddenServiceDir, "tor_hs")
+                        keyManager.seedHiddenServiceDir(friendRequestHiddenServiceDir, "friend_req")
+                        Log.i(TAG, "Hidden service directories seeded with deterministic keys")
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Failed to seed hidden service directories — Tor may generate random keys", e)
+                    }
+                } else {
+                    Log.d(TAG, "No account yet — skipping hidden service key seeding")
+                }
 
                 // Get the torrc file location that TorService expects
                 val torrc = TorService.getTorrc(context)
@@ -241,20 +367,22 @@ class TorManager(private val context: Context) {
 
                 // Generate torrc content
                 // PERSISTENT HIDDEN SERVICES (not ephemeral):
-                // Keys are generated once and stored in HiddenServiceDir
-                // Tor reuses the same keys on every restart (no collision errors)
+                // Keys are seeded from BIP39 seed ABOVE before Tor starts.
+                // Tor loads these deterministic keys on every startup (no collision errors).
                 //
                 // NOTE: Guardian Project's TorService uses /app_TorService/data as DataDirectory
                 // Do NOT specify DataDirectory here - let TorService manage it
+                // NOTE: ControlPort and CookieAuthentication are NOT set here.
+                // GP tor-android 0.4.9.5 manages these via command-line flags:
+                //   --ControlSocket <DataDir>/ControlSocket
+                //   --CookieAuthentication 0
                 val torrcContent = """
-                    CookieAuthentication 1
-                    ControlPort 127.0.0.1:9051
-                    MetricsPort 127.0.0.1:9035
-                    MetricsPortPolicy accept 127.0.0.1
+                    Log notice stdout
                     SocksPort 127.0.0.1:9050
                     ClientOnly 1
                     AvoidDiskWrites 1
                     DormantCanceledByStartup 1
+                    DormantClientTimeout 525600 minutes
                     LearnCircuitBuildTimeout 1
                     $initialCircuitTimeout
                     $bridgePerformanceConfig
@@ -312,44 +440,24 @@ class TorManager(private val context: Context) {
                     Log.i(TAG, "Custom TorService started as foreground (KEEP_ALIVE)")
 
                     // Step 2: Start Guardian Project's TorService to launch native Tor daemon via JNI
-                    // Uses the imported org.torproject.jni.TorService (NOT our custom services.TorService)
-                    // CRITICAL: Skip if :tor process is still alive to prevent SIGABRT on destroyed mutex
+                    // GP TorService runs in main process (no separate :tor process)
                     if (isTorProcessAlive()) {
-                        Log.w(TAG, ":tor process is still alive - checking if control port responds...")
-                        // Give zombie process 15s to prove it's functional
-                        var zombieCheck = 0
-                        var controlAlive = false
-                        while (zombieCheck < 15 && !controlAlive) {
-                            try {
-                                val testSocket = java.net.Socket()
-                                testSocket.connect(java.net.InetSocketAddress("127.0.0.1", 9051), 1000)
-                                testSocket.close()
-                                controlAlive = true
-                            } catch (e: Exception) {
-                                Thread.sleep(1000)
-                                zombieCheck++
-                            }
-                        }
-                        if (controlAlive) {
-                            Log.i(TAG, ":tor process alive and control port responding - reusing existing instance")
+                        Log.i(TAG, "ControlSocket exists — probing Tor control connection...")
+                        if (probeTorControl()) {
+                            Log.i(TAG, "Tor alive and responsive — reusing existing instance")
                         } else {
-                            Log.w(TAG, ":tor process alive but control port DEAD after 15s - killing zombie and restarting")
+                            Log.w(TAG, "ControlSocket stale (Tor unresponsive) — restarting")
                             try {
-                                val gpStopIntent = Intent(context, org.torproject.jni.TorService::class.java)
-                                context.stopService(gpStopIntent)
+                                context.stopService(Intent(context, org.torproject.jni.TorService::class.java))
                             } catch (e: Exception) {
                                 Log.w(TAG, "Failed to stop GP TorService: ${e.message}")
                             }
-                            Thread.sleep(3000) // Wait for process to die
-                            val serviceIntent = Intent(context, TorService::class.java)
-                            serviceIntent.action = "org.torproject.android.intent.action.START"
-                            context.startService(serviceIntent)
-                            Log.w(TAG, "========== GP TOR DAEMON RESTARTED AFTER ZOMBIE KILL ==========")
+                            Thread.sleep(1500)
+                            startGpTor()
+                            Log.w(TAG, "========== GP TOR DAEMON RESTARTED AFTER STALE SOCKET ==========")
                         }
                     } else {
-                        val serviceIntent = Intent(context, TorService::class.java)
-                        serviceIntent.action = "org.torproject.android.intent.action.START"
-                        context.startService(serviceIntent)
+                        startGpTor()
                         Log.w(TAG, "========== GUARDIAN PROJECT TOR DAEMON START COMMAND SENT ==========")
                     }
                     Log.d(TAG, "Waiting for control port to be ready...")
@@ -357,32 +465,71 @@ class TorManager(private val context: Context) {
                     Log.d(TAG, "Tor already running and torrc unchanged")
                 }
 
-                // Wait for Tor control port to be ready (poll until we can connect)
+                // Wait for Tor ControlSocket file to appear (GP 0.4.9.5 uses Unix domain socket)
                 // 120s to accommodate bridge transports on slow networks (~1.3 MB/s in Iran)
+                var controlSocketPath = File(context.dataDir, "app_TorService/data/ControlSocket")
                 var attempts = 0
                 val maxAttempts = 120 // 120 seconds max (bridges need more time)
                 var controlPortReady = false
 
                 while (attempts < maxAttempts && !controlPortReady) {
-                    try {
-                        // Try to connect to control port
-                        val testSocket = java.net.Socket()
-                        testSocket.connect(java.net.InetSocketAddress("127.0.0.1", 9051), 1000)
-                        testSocket.close()
+                    if (controlSocketPath.exists()) {
                         controlPortReady = true
-                        Log.d(TAG, "Tor control port ready after ${attempts + 1} attempts")
-                    } catch (e: Exception) {
-                        // Control port not ready yet
+                        Log.d(TAG, "Tor ControlSocket ready after ${attempts + 1} attempts at ${controlSocketPath.absolutePath}")
+                    } else if (attempts % 10 == 9) {
+                        // Every 10s, search for the ControlSocket in case GP puts it elsewhere
+                        val found = findControlSocket()
+                        if (found != null) {
+                            controlSocketPath = found
+                            controlPortReady = true
+                            Log.w(TAG, "ControlSocket found at UNEXPECTED path: ${found.absolutePath}")
+                        } else {
+                            Log.d(TAG, "ControlSocket not found after ${attempts + 1}s (checked ${controlSocketPath.absolutePath})")
+                        }
+                    }
+                    if (!controlPortReady) {
                         Thread.sleep(1000)
                         attempts++
                     }
                 }
 
                 if (!controlPortReady) {
-                    throw Exception("Tor control port failed to become ready after ${maxAttempts} seconds")
+                    // Diagnostic dump: what DOES exist under app dirs?
+                    try {
+                        val dataDir = context.dataDir
+                        val appTorDir = File(dataDir, "app_TorService")
+                        Log.e(TAG, "ControlSocket TIMEOUT — diagnostics:")
+                        Log.e(TAG, "  dataDir: ${dataDir.absolutePath} exists=${dataDir.exists()}")
+                        Log.e(TAG, "  filesDir: ${context.filesDir.absolutePath} exists=${context.filesDir.exists()}")
+                        Log.e(TAG, "  app_TorService: ${appTorDir.absolutePath} exists=${appTorDir.exists()}")
+                        if (appTorDir.exists()) {
+                            appTorDir.walkTopDown().maxDepth(3).forEach {
+                                Log.e(TAG, "    ${it.absolutePath} (${if (it.isDirectory) "dir" else "file"}, ${it.length()}b)")
+                            }
+                        }
+                        val filesAppTor = File(context.filesDir, "app_TorService")
+                        if (filesAppTor.exists()) {
+                            Log.e(TAG, "  files/app_TorService EXISTS (unexpected):")
+                            filesAppTor.walkTopDown().maxDepth(3).forEach {
+                                Log.e(TAG, "    ${it.absolutePath}")
+                            }
+                        }
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Diagnostic dump failed: ${e.message}")
+                    }
+                    throw Exception("Tor ControlSocket failed to appear after ${maxAttempts} seconds")
                 }
 
-                Log.d(TAG, "Tor is ready and control port is accessible")
+                Log.d(TAG, "Tor is ready — ControlSocket at ${controlSocketPath.absolutePath}")
+
+                // If ControlSocket was found at a non-default path, restart the Rust listener
+                // with the correct path so it can connect
+                val defaultPath = File(context.dataDir, "app_TorService/data/ControlSocket").absolutePath
+                if (controlSocketPath.absolutePath != defaultPath) {
+                    Log.w(TAG, "ControlSocket at non-default path — restarting Rust listener with correct path")
+                    RustBridge.stopBootstrapListener()
+                    RustBridge.startBootstrapListener(controlSocketPath.absolutePath)
+                }
 
                 // CRITICAL: Also wait for SOCKS port to be ready
                 // 90s to accommodate bridge transports on slow networks (~1.3 MB/s in Iran)
@@ -418,11 +565,10 @@ class TorManager(private val context: Context) {
                 Log.d(TAG, "Rust TorManager initialized: $rustStatus")
 
                 // Read persistent hidden service .onion addresses from filesystem
-                // Tor automatically creates/reuses keys in HiddenServiceDir on startup
-                val keyManager = KeyManager.getInstance(context)
+                // Keys were seeded above — Tor should have loaded our deterministic keys
                 val onionAddress = if (keyManager.isInitialized()) {
-                    // Wait for Tor to generate/load hidden service keys with validation
-                    Log.d(TAG, "Waiting for Tor to generate/load persistent hidden service keys...")
+                    // Wait for Tor to load hidden service keys
+                    Log.d(TAG, "Waiting for Tor to load seeded hidden service keys...")
 
                     val address = try {
                         waitForValidHostname(messagingHiddenServiceDir, timeoutMs = 60_000)
@@ -431,23 +577,52 @@ class TorManager(private val context: Context) {
                         throw e
                     }
 
-                    // Sanity check: if we already had a stored onion, verify it matches
-                    val storedOnion = getOnionAddress()
-                    if (storedOnion != null && storedOnion != address) {
-                        Log.w(TAG, "Stored onion differs from filesystem!")
-                        Log.w(TAG, "Using filesystem onion (Tor's source of truth)")
+                    // Verify determinism: pre-computed onion MUST match Tor's address
+                    // If they don't match, key seeding failed — delete + reseed + restart
+                    val precomputedMessaging = keyManager.getMessagingOnion()
+                    if (precomputedMessaging != null && precomputedMessaging != address) {
+                        Log.e(TAG, "FATAL: Messaging onion mismatch — determinism broken!")
+                        Log.e(TAG, "  precomputed=$precomputedMessaging")
+                        Log.e(TAG, "  tor=$address")
+                        // Reseed the directory so next Tor restart picks up correct keys
+                        messagingHiddenServiceDir.deleteRecursively()
+                        messagingHiddenServiceDir.mkdirs()
+                        messagingHiddenServiceDir.setReadable(true, true)
+                        messagingHiddenServiceDir.setWritable(true, true)
+                        messagingHiddenServiceDir.setExecutable(true, true)
+                        keyManager.seedHiddenServiceDir(messagingHiddenServiceDir, "tor_hs")
+                        Log.e(TAG, "  Reseeded messaging directory — restart required")
+                        throw Exception("Onion address determinism broken for messaging. Reseeded keys, restart Tor.")
                     }
 
                     saveOnionAddress(address)
                     keyManager.storeMessagingOnion(address)
-                    Log.i(TAG, "Messaging hidden service ready (persistent)")
+                    Log.i(TAG, "Messaging hidden service ready (deterministic, persistent)")
 
-                    // Read friend-request .onion address with validation
+                    // Read friend-request .onion address
                     try {
                         val friendRequestOnion = waitForValidHostname(friendRequestHiddenServiceDir, timeoutMs = 60_000)
+
+                        // Verify determinism for friend-request onion too
+                        val precomputedFR = keyManager.getFriendRequestOnion()
+                        if (precomputedFR != null && precomputedFR != friendRequestOnion) {
+                            Log.e(TAG, "FATAL: Friend-request onion mismatch — determinism broken!")
+                            Log.e(TAG, "  precomputed=$precomputedFR")
+                            Log.e(TAG, "  tor=$friendRequestOnion")
+                            friendRequestHiddenServiceDir.deleteRecursively()
+                            friendRequestHiddenServiceDir.mkdirs()
+                            friendRequestHiddenServiceDir.setReadable(true, true)
+                            friendRequestHiddenServiceDir.setWritable(true, true)
+                            friendRequestHiddenServiceDir.setExecutable(true, true)
+                            keyManager.seedHiddenServiceDir(friendRequestHiddenServiceDir, "friend_req")
+                            Log.e(TAG, "  Reseeded friend-request directory — restart required")
+                            throw Exception("Onion address determinism broken for friend-request. Reseeded keys, restart Tor.")
+                        }
+
                         keyManager.storeFriendRequestOnion(friendRequestOnion)
-                        Log.i(TAG, "Friend-request hidden service ready (persistent): $friendRequestOnion")
+                        Log.i(TAG, "Friend-request hidden service ready (deterministic): $friendRequestOnion")
                     } catch (e: Exception) {
+                        if (e.message?.contains("determinism broken") == true) throw e
                         Log.w(TAG, "Friend-request hidden service not ready: ${e.message}")
                     }
 

@@ -2,22 +2,19 @@ package com.securelegion
 
 import android.content.Intent
 import android.os.Bundle
-import android.text.InputFilter
 import android.util.Log
 import android.view.View
-import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.ImageView
-import android.widget.LinearLayout
 import android.widget.TextView
-import androidx.appcompat.app.AlertDialog
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
-import androidx.constraintlayout.widget.ConstraintLayout
 import androidx.lifecycle.lifecycleScope
 import com.securelegion.crypto.KeyManager
 import com.securelegion.database.SecureLegionDatabase
+import com.securelegion.services.CrdtGroupManager
+import com.securelegion.utils.ImagePicker
 import com.securelegion.utils.ThemedToast
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -36,11 +33,10 @@ class GroupProfileActivity : BaseActivity() {
     private lateinit var groupNameTitle: TextView
     private lateinit var groupIconContainer: FrameLayout
     private lateinit var groupIconImage: ImageView
-    private lateinit var changePinButton: ConstraintLayout
-    private lateinit var membersButton: ConstraintLayout
-    private lateinit var advanceButton: ConstraintLayout
-    private lateinit var permissionsButton: ConstraintLayout
-    private lateinit var renameGroupButton: ConstraintLayout
+    private lateinit var changePinButton: View
+    private lateinit var membersButton: View
+    private lateinit var advanceButton: View
+    private lateinit var permissionsButton: View
 
     // Group data
     private var groupId: String? = null
@@ -66,10 +62,10 @@ class GroupProfileActivity : BaseActivity() {
         groupIconContainer = findViewById(R.id.groupIconContainer)
         groupIconImage = findViewById(R.id.groupIconImage)
         changePinButton = findViewById(R.id.changePinButton)
+        changePinButton.visibility = View.GONE // CRDT groups use cryptographic membership, not PINs
         membersButton = findViewById(R.id.membersButton)
         advanceButton = findViewById(R.id.advanceButton)
         permissionsButton = findViewById(R.id.permissionsButton)
-        renameGroupButton = findViewById(R.id.renameGroupButton)
     }
 
     private fun setupClickListeners() {
@@ -83,10 +79,8 @@ class GroupProfileActivity : BaseActivity() {
             ThemedToast.show(this, "Icon picker - Coming soon")
         }
 
-        // Change PIN
-        changePinButton.setOnClickListener {
-            showChangePinDialog()
-        }
+        // Change PIN — hidden for CRDT groups
+        changePinButton.setOnClickListener { }
 
         // Members
         membersButton.setOnClickListener {
@@ -103,115 +97,60 @@ class GroupProfileActivity : BaseActivity() {
             showPermissionsSettings()
         }
 
-        // Rename Group
-        renameGroupButton.setOnClickListener {
-            showRenameDialog()
-        }
     }
 
     private fun loadGroupData() {
-        // Set group name in title
         groupNameTitle.text = groupName
 
-        // TODO: Load group data from database when group messaging is implemented
-        // This would include:
-        // - Group icon/emoji
-        // - Member count
-        // - Group creation date
-        // - Current permissions
-        // - etc.
+        val currentGroupId = groupId ?: return
 
-        Log.d(TAG, "Group profile loaded: $groupName (ID: $groupId)")
+        lifecycleScope.launch {
+            try {
+                val (groupIcon, crdtName) = withContext(Dispatchers.IO) {
+                    // Load group photo from Room entity
+                    val keyManager = KeyManager.getInstance(this@GroupProfileActivity)
+                    val db = SecureLegionDatabase.getInstance(this@GroupProfileActivity, keyManager.getDatabasePassphrase())
+                    val group = db.groupDao().getGroupById(currentGroupId)
+                    val icon = group?.groupIcon
+
+                    // Also check CRDT metadata for name
+                    var name: String? = null
+                    try {
+                        val mgr = CrdtGroupManager.getInstance(this@GroupProfileActivity)
+                        val metadata = mgr.queryMetadata(currentGroupId)
+                        name = metadata.name
+                    } catch (_: Exception) { }
+
+                    Pair(icon, name)
+                }
+
+                withContext(Dispatchers.Main) {
+                    // Display group photo if available
+                    if (!groupIcon.isNullOrEmpty()) {
+                        val bitmap = ImagePicker.decodeBase64ToBitmap(groupIcon)
+                        if (bitmap != null) {
+                            groupIconImage.imageTintList = null
+                            groupIconImage.setImageBitmap(bitmap)
+                            groupIconImage.scaleType = ImageView.ScaleType.CENTER_CROP
+                        }
+                    }
+
+                    // Update name from CRDT state if available
+                    if (!crdtName.isNullOrEmpty()) {
+                        groupNameTitle.text = crdtName
+                    }
+                }
+
+                Log.d(TAG, "Group profile loaded: $groupName (ID: $groupId)")
+
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to load group data", e)
+            }
+        }
     }
 
     private fun showChangePinDialog() {
-        val currentGroupId = groupId
-        if (currentGroupId == null) {
-            ThemedToast.show(this, "Invalid group")
-            return
-        }
-
-        // Create dialog with PIN input boxes
-        val dialogView = layoutInflater.inflate(R.layout.activity_create_group, null)
-        val pinBoxesContainer = dialogView.findViewById<LinearLayout>(R.id.pinBoxesContainer)
-
-        // Get the 6 PIN input boxes
-        val pinBoxes = listOf(
-            dialogView.findViewById<EditText>(R.id.pinBox1),
-            dialogView.findViewById<EditText>(R.id.pinBox2),
-            dialogView.findViewById<EditText>(R.id.pinBox3),
-            dialogView.findViewById<EditText>(R.id.pinBox4),
-            dialogView.findViewById<EditText>(R.id.pinBox5),
-            dialogView.findViewById<EditText>(R.id.pinBox6)
-        )
-
-        // Set up PIN box behavior
-        pinBoxes.forEach { box ->
-            box.filters = arrayOf(
-                InputFilter.LengthFilter(1),
-                InputFilter { source, start, end, dest, dstart, dend ->
-                    if (source.toString().matches(Regex("[0-9]*"))) null else ""
-                }
-            )
-        }
-
-        // Auto-advance to next box
-        pinBoxes.forEachIndexed { index, box ->
-            box.addTextChangedListener(object : android.text.TextWatcher {
-                override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
-                override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
-                override fun afterTextChanged(s: android.text.Editable?) {
-                    if (s?.length == 1 && index < pinBoxes.size - 1) {
-                        pinBoxes[index + 1].requestFocus()
-                    }
-                }
-            })
-        }
-
-        AlertDialog.Builder(this)
-            .setTitle("Change Group PIN")
-            .setMessage("Enter new 6-digit PIN")
-            .setView(dialogView)
-            .setPositiveButton("Save") { dialog, _ ->
-                val newPin = pinBoxes.joinToString("") { it.text.toString() }
-
-                if (newPin.length != 6) {
-                    ThemedToast.show(this, "Please enter a 6-digit PIN")
-                    return@setPositiveButton
-                }
-
-                if (!newPin.all { it.isDigit() }) {
-                    ThemedToast.show(this, "PIN must be 6 digits")
-                    return@setPositiveButton
-                }
-
-                // Update PIN in database
-                lifecycleScope.launch {
-                    try {
-                        withContext(Dispatchers.IO) {
-                            val keyManager = KeyManager.getInstance(this@GroupProfileActivity)
-                            val dbPassphrase = keyManager.getDatabasePassphrase()
-                            val database = SecureLegionDatabase.getInstance(this@GroupProfileActivity, dbPassphrase)
-                            database.groupDao().updateGroupPin(currentGroupId, newPin)
-                            Log.i(TAG, "Group PIN changed")
-                        }
-
-                        withContext(Dispatchers.Main) {
-                            ThemedToast.show(this@GroupProfileActivity, "PIN changed successfully")
-                        }
-
-                    } catch (e: Exception) {
-                        Log.e(TAG, "Failed to change PIN", e)
-                        withContext(Dispatchers.Main) {
-                            ThemedToast.show(this@GroupProfileActivity, "Failed to change PIN: ${e.message}")
-                        }
-                    }
-                }
-
-                dialog.dismiss()
-            }
-            .setNegativeButton("Cancel", null)
-            .show()
+        // CRDT groups use cryptographic membership — no PIN needed
     }
 
     private fun showMembersScreen() {
@@ -248,69 +187,6 @@ class GroupProfileActivity : BaseActivity() {
 
         ThemedToast.show(this, "Permissions - Coming soon")
         Log.i(TAG, "Permissions clicked for group: $groupName")
-    }
-
-    private fun showRenameDialog() {
-        val currentGroupId = groupId
-        if (currentGroupId == null) {
-            ThemedToast.show(this, "Invalid group")
-            return
-        }
-
-        // Create rename dialog
-        val input = EditText(this).apply {
-            setText(groupName)
-            hint = "Enter new group name"
-            setTextColor(resources.getColor(R.color.text_white, null))
-            setHintTextColor(resources.getColor(R.color.text_gray, null))
-            setBackgroundColor(resources.getColor(android.R.color.transparent, null))
-            setPadding(32, 32, 32, 32)
-        }
-
-        AlertDialog.Builder(this)
-            .setTitle("Rename Group")
-            .setView(input)
-            .setPositiveButton("Save") { dialog, _ ->
-                val newName = input.text.toString().trim()
-                if (newName.isEmpty()) {
-                    ThemedToast.show(this, "Group name cannot be empty")
-                    return@setPositiveButton
-                }
-
-                if (newName.length < 3) {
-                    ThemedToast.show(this, "Group name must be at least 3 characters")
-                    return@setPositiveButton
-                }
-
-                // Update group name in database
-                lifecycleScope.launch {
-                    try {
-                        withContext(Dispatchers.IO) {
-                            val keyManager = KeyManager.getInstance(this@GroupProfileActivity)
-                            val dbPassphrase = keyManager.getDatabasePassphrase()
-                            val database = SecureLegionDatabase.getInstance(this@GroupProfileActivity, dbPassphrase)
-                            database.groupDao().updateGroupName(currentGroupId, newName)
-                            Log.i(TAG, "Group renamed to: $newName")
-                        }
-
-                        withContext(Dispatchers.Main) {
-                            groupName = newName
-                            groupNameTitle.text = newName
-                            ThemedToast.show(this@GroupProfileActivity, "Group renamed successfully")
-                        }
-
-                    } catch (e: Exception) {
-                        Log.e(TAG, "Failed to rename group", e)
-                        withContext(Dispatchers.Main) {
-                            ThemedToast.show(this@GroupProfileActivity, "Failed to rename group: ${e.message}")
-                        }
-                    }
-                }
-
-                dialog.dismiss()
-            }
-            .setNegativeButton("Cancel", null)
-            .show()
     }
 
     private fun setupBottomNav() {

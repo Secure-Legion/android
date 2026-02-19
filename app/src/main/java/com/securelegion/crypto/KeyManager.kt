@@ -242,6 +242,24 @@ class KeyManager private constructor(context: Context) {
     }
 
     /**
+     * Safe nullable getter for Kyber-1024 public key.
+     * Returns null instead of throwing if key is not found.
+     * Use in paths that need graceful PQ fallback (e.g. KeyChainManager).
+     */
+    fun tryGetKyberPublicKey(): ByteArray? {
+        return getStoredKey("${KYBER_KEY_ALIAS}_public")
+    }
+
+    /**
+     * Safe nullable getter for Kyber-1024 secret key.
+     * Returns null instead of throwing if key is not found.
+     * Use in paths that need graceful PQ fallback (e.g. KeyChainManager).
+     */
+    fun tryGetKyberSecretKey(): ByteArray? {
+        return getStoredKey("${KYBER_KEY_ALIAS}_private")
+    }
+
+    /**
      * Get hidden service Ed25519 private key (32 bytes)
      * Used for deterministic .onion address generation
      * Called via JNI from Rust code
@@ -838,6 +856,137 @@ class KeyManager private constructor(context: Context) {
      */
     fun getMessagingOnion(): String? {
         return encryptedPrefs.getString(MESSAGING_ONION_ALIAS, null)
+    }
+
+    /**
+     * Store voice .onion address
+     */
+    fun storeVoiceOnion(onion: String) {
+        encryptedPrefs.edit {
+            putString(VOICE_ONION_ALIAS + "_address", onion)
+        }
+        Log.i(TAG, "Stored voice .onion")
+    }
+
+    /**
+     * Get voice .onion address
+     */
+    fun getVoiceOnion(): String? {
+        return encryptedPrefs.getString(VOICE_ONION_ALIAS + "_address", null)
+    }
+
+    /**
+     * Compute a .onion address from the stored BIP39 seed + domain separator.
+     * Pure computation — no Tor process needed.
+     *
+     * @param domainSep One of "tor_hs", "friend_req", "tor_voice"
+     * @return The 62-char .onion address (56 base32 chars + ".onion")
+     */
+    fun computeOnionAddress(domainSep: String): String {
+        val seedPhrase = encryptedPrefs.getString(SEED_PHRASE_ALIAS, null)
+            ?: throw KeyManagerException("Seed phrase not found. Initialize wallet first.")
+
+        val seed = mnemonicToSeed(seedPhrase)
+        try {
+            return RustBridge.computeOnionAddressFromSeed(seed, domainSep)
+        } finally {
+            seed.fill(0)
+        }
+    }
+
+    /**
+     * Pre-compute and store all 3 onion addresses from the seed.
+     * Called during account creation BEFORE Tor bootstrap so addresses
+     * are available immediately for contact cards and UI.
+     */
+    fun precomputeAllOnionAddresses() {
+        val messagingOnion = computeOnionAddress("tor_hs")
+        val friendRequestOnion = computeOnionAddress("friend_req")
+        val voiceOnion = computeOnionAddress("tor_voice")
+
+        storeMessagingOnion(messagingOnion)
+        storeFriendRequestOnion(friendRequestOnion)
+        storeVoiceOnion(voiceOnion)
+
+        Log.i(TAG, "Pre-computed all 3 onion addresses offline")
+    }
+
+    /**
+     * Write deterministic Ed25519 keys into a Tor HiddenServiceDir.
+     * Must be called BEFORE Tor starts so it loads our seed-derived keys
+     * instead of generating random ones.
+     *
+     * File formats (per Tor rend-spec-v3):
+     *   hs_ed25519_secret_key: 32-byte header + 64-byte SHA-512-expanded key = 96 bytes
+     *   hs_ed25519_public_key: 32-byte header + 32-byte public key = 64 bytes
+     *   hostname: the .onion address string
+     *
+     * @param dir The HiddenServiceDir directory (must exist)
+     * @param domainSep Domain separator ("tor_hs", "friend_req", or "tor_voice")
+     * @return true if keys were written, false if no seed available
+     */
+    fun seedHiddenServiceDir(dir: File, domainSep: String): Boolean {
+        val seedPhrase = encryptedPrefs.getString(SEED_PHRASE_ALIAS, null) ?: return false
+        val bip39Seed = mnemonicToSeed(seedPhrase)
+
+        try {
+            // Step 1: Domain separation — SHA-256(bip39_seed || domainSep) → 32-byte Ed25519 seed
+            // Matches deriveHiddenServiceKeyPair() / deriveFriendRequestKeyPair() / deriveVoiceServiceKeyPair()
+            val sha256 = MessageDigest.getInstance("SHA-256")
+            sha256.update(bip39Seed)
+            sha256.update(domainSep.toByteArray())
+            val ed25519Seed = sha256.digest()
+
+            try {
+                // Step 2: Derive public key via libsodium (same as deriveHiddenServiceKeyPair)
+                val publicKey = ByteArray(Sign.ED25519_PUBLICKEYBYTES) // 32 bytes
+                val secretKeyFull = ByteArray(Sign.ED25519_SECRETKEYBYTES) // 64 bytes
+                lazySodium.cryptoSignSeedKeypair(publicKey, secretKeyFull, ed25519Seed)
+                secretKeyFull.fill(0) // We use SHA-512 expansion for Tor, not libsodium's format
+
+                // Step 3: Expand seed for Tor's hs_ed25519_secret_key format
+                // SHA-512(ed25519_seed) → 64 bytes, then clamp per Ed25519 (RFC 8032)
+                val sha512 = MessageDigest.getInstance("SHA-512")
+                val expanded = sha512.digest(ed25519Seed)
+                // Clamp the scalar (first 32 bytes)
+                expanded[0] = (expanded[0].toInt() and 248).toByte()    // Clear bottom 3 bits
+                expanded[31] = (expanded[31].toInt() and 127).toByte()  // Clear top bit
+                expanded[31] = (expanded[31].toInt() or 64).toByte()    // Set bit 254
+
+                // Step 4: Write hs_ed25519_secret_key (96 bytes)
+                // Header: "== ed25519v1-secret: type0 ==\x00\x00\x00" (32 bytes)
+                val secretFileContent = ByteArray(96)
+                val secretHeader = "== ed25519v1-secret: type0 ==".toByteArray(Charsets.US_ASCII)
+                System.arraycopy(secretHeader, 0, secretFileContent, 0, secretHeader.size)
+                // Bytes 29-31 are already zero (3 null padding to fill 32-byte header)
+                System.arraycopy(expanded, 0, secretFileContent, 32, 64)
+                File(dir, "hs_ed25519_secret_key").writeBytes(secretFileContent)
+
+                // Step 5: Write hs_ed25519_public_key (64 bytes)
+                // Header: "== ed25519v1-public: type0 ==\x00\x00\x00" (32 bytes)
+                val publicFileContent = ByteArray(64)
+                val publicHeader = "== ed25519v1-public: type0 ==".toByteArray(Charsets.US_ASCII)
+                System.arraycopy(publicHeader, 0, publicFileContent, 0, publicHeader.size)
+                System.arraycopy(publicKey, 0, publicFileContent, 32, 32)
+                File(dir, "hs_ed25519_public_key").writeBytes(publicFileContent)
+
+                // Step 6: Write hostname file
+                val onionAddress = RustBridge.computeOnionAddressFromSeed(bip39Seed, domainSep)
+                File(dir, "hostname").writeText("$onionAddress\n")
+
+                Log.i(TAG, "Seeded HiddenServiceDir with deterministic keys: ${dir.name} ($domainSep)")
+
+                // Clean up expanded key material
+                expanded.fill(0)
+                secretFileContent.fill(0)
+
+                return true
+            } finally {
+                ed25519Seed.fill(0)
+            }
+        } finally {
+            bip39Seed.fill(0)
+        }
     }
 
     /**

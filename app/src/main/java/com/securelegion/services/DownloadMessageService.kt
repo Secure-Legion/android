@@ -923,27 +923,16 @@ class DownloadMessageService : Service() {
                     voiceDuration = null
                 }
                 0x04 -> {
-                    // VOICE message: [0x04][0x01][Duration 4 bytes][X25519 32 bytes][Encrypted Audio]
-                    // Minimum: 1 (type) + 1 (internal) + 4 (duration) + 32 (X25519) + 1 (version) + 8 (seq) + 24 (nonce) + 16 (tag) = 87 bytes
-                    if (messageBytes.size < 87) {
-                        Log.e(TAG, "VOICE message blob too small: ${messageBytes.size} bytes (need at least 87)")
+                    // VOICE message: [0x04][X25519 32 bytes][Encrypted(0x01+duration+audio)]
+                    // Same wire format as TEXT — duration is INSIDE the encrypted payload
+                    // Minimum: 1 (type) + 32 (X25519) + 1 (version) + 8 (seq) + 24 (nonce) + 16 (tag) = 82 bytes
+                    if (messageBytes.size < 82) {
+                        Log.e(TAG, "VOICE message blob too small: ${messageBytes.size} bytes (need at least 82)")
                         return
                     }
-                    // Skip byte 1 (internal type 0x01), extract duration from bytes 2-5
-                    val durationBytes = messageBytes.copyOfRange(2, 6)
-                    val parsedDuration = (
-                        ((durationBytes[0].toInt() and 0xFF) shl 24) or
-                        ((durationBytes[1].toInt() and 0xFF) shl 16) or
-                        ((durationBytes[2].toInt() and 0xFF) shl 8) or
-                        (durationBytes[3].toInt() and 0xFF)
-                    )
-                    // Sanity clamp: 0-3600 seconds (1 hour max)
-                    voiceDuration = parsedDuration.coerceIn(0, 3600)
-                    // Extract X25519 key from bytes 6-37 (32 bytes)
-                    senderX25519PublicKey = messageBytes.copyOfRange(6, 38)
-                    // Extract encrypted audio from byte 38 onward
-                    encryptedPayload = messageBytes.copyOfRange(38, messageBytes.size)
-                    Log.d(TAG, "Voice duration: ${voiceDuration}s")
+                    senderX25519PublicKey = messageBytes.copyOfRange(1, 33)
+                    encryptedPayload = messageBytes.copyOfRange(33, messageBytes.size)
+                    voiceDuration = null // extracted from decrypted payload by receiveMessage
                 }
                 0x09 -> {
                     // IMAGE message: [0x09][X25519 32 bytes][Encrypted Image]

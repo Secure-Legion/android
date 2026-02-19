@@ -13,6 +13,7 @@ import android.util.Base64
     tableName = "contacts",
     indices = [
         Index(value = ["solanaAddress"], unique = true),
+        Index(value = ["publicKeyBase64"], unique = false), // Ed25519 identity — indexed for fast lookup
         Index(value = ["friendRequestOnion"], unique = false), // NEW - not unique (can be empty for migrated)
         Index(value = ["messagingOnion"], unique = false) // NEW
     ]

@@ -10,6 +10,8 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.os.PowerManager
 import android.provider.Settings
 import android.util.Log
@@ -130,9 +132,8 @@ class MainActivity : BaseActivity() {
                             setupGroupsList()
                         }
                         // Show toast notification
-                        val groupName = intent.getStringExtra("GROUP_NAME")
-                        val senderName = intent.getStringExtra("SENDER_NAME")
-                        ThemedToast.show(this@MainActivity, "New group invite: $groupName from $senderName")
+                        val groupName = intent.getStringExtra("GROUP_NAME") ?: "Unknown"
+                        ThemedToast.show(this@MainActivity, "New group invite: $groupName")
                     }
                 }
                 "com.securelegion.NEW_GROUP_MESSAGE" -> {
@@ -221,6 +222,22 @@ class MainActivity : BaseActivity() {
         // Start Tor foreground service (shows notification and handles Ping-Pong protocol)
         startTorService()
 
+        // Observe Tor state and update status dot next to "Chats"
+        observeTorStatus()
+
+        // Pull-down on chat list shows Tor status banner
+        chatList.addOnScrollListener(object : RecyclerView.OnScrollListener() {
+            override fun onScrolled(recyclerView: RecyclerView, dx: Int, dy: Int) {
+                // Show banner when user scrolls past top (pull-down gesture)
+                if (!recyclerView.canScrollVertically(-1) && dy < -10) {
+                    val banner = findViewById<TextView>(R.id.torStatusBanner)
+                    if (banner?.visibility != View.VISIBLE) {
+                        showTorStatusBanner()
+                    }
+                }
+            }
+        })
+
         // Start contact exchange endpoint (v2.0)
         startFriendRequestServer()
 
@@ -231,11 +248,11 @@ class MainActivity : BaseActivity() {
         // Update app icon badge with unread count
         updateAppBadge()
 
-        // Check if we should show wallet tab - now opens separate WalletActivity
-        if (intent.getBooleanExtra("SHOW_WALLET", false)) {
-            val walletIntent = Intent(this, WalletActivity::class.java)
-            startActivity(walletIntent)
-        }
+        // Wallet disabled — hidden until wallet feature is ready for release
+        // if (intent.getBooleanExtra("SHOW_WALLET", false)) {
+        //     val walletIntent = Intent(this, WalletActivity::class.java)
+        //     startActivity(walletIntent)
+        // }
 
         // Check if we should show phone/call tab
         if (intent.getBooleanExtra("SHOW_PHONE", false)) {
@@ -412,6 +429,69 @@ class MainActivity : BaseActivity() {
     }
 
     /**
+     * Observe Tor state and update the status dot next to "Chats"
+     * Polls every 2 seconds (lightweight, same cadence as TorHealthActivity)
+     */
+    private fun observeTorStatus() {
+        lifecycleScope.launch {
+            while (isActive) {
+                val dot = findViewById<View>(R.id.torStatusDot)
+                val state = TorService.getCurrentTorState()
+                val drawableRes = when (state) {
+                    TorService.TorState.RUNNING -> R.drawable.status_dot_green
+                    TorService.TorState.BOOTSTRAPPING, TorService.TorState.STARTING -> R.drawable.status_dot_yellow
+                    else -> R.drawable.status_dot_red
+                }
+                dot?.setBackgroundResource(drawableRes)
+                delay(2000)
+            }
+        }
+    }
+
+    /**
+     * Show the Tor status banner with a slide-down animation.
+     * Auto-hides after 5 seconds. Tapping opens TorHealthActivity.
+     */
+    private fun showTorStatusBanner() {
+        val banner = findViewById<TextView>(R.id.torStatusBanner) ?: return
+        val state = TorService.getCurrentTorState()
+        val bootstrapPercent = TorService.getBootstrapPercent()
+
+        val torSettings = getSharedPreferences("tor_settings", MODE_PRIVATE)
+        val bridgeType = torSettings.getString("bridge_type", "none") ?: "none"
+        val usingBridges = bridgeType != "none"
+
+        banner.text = when (state) {
+            TorService.TorState.RUNNING -> if (usingBridges) "Tor connected via bridges" else "Tor connected"
+            TorService.TorState.BOOTSTRAPPING -> "Connecting to Tor... ($bootstrapPercent%)"
+            TorService.TorState.STARTING -> "Starting Tor..."
+            TorService.TorState.ERROR -> "Tor reconnecting..."
+            TorService.TorState.STOPPING -> "Tor stopping..."
+            TorService.TorState.OFF -> "No internet connection"
+        }
+
+        banner.visibility = View.VISIBLE
+        banner.alpha = 0f
+        banner.animate().alpha(1f).setDuration(200).start()
+
+        banner.setOnClickListener {
+            try {
+                val intent = Intent(this, TorHealthActivity::class.java)
+                startActivity(intent)
+            } catch (e: Exception) {
+                Log.w(TAG, "TorHealthActivity not available: ${e.message}")
+            }
+        }
+
+        // Auto-hide after 5 seconds
+        Handler(Looper.getMainLooper()).postDelayed({
+            banner.animate().alpha(0f).setDuration(200).withEndAction {
+                banner.visibility = View.GONE
+            }.start()
+        }, 5000)
+    }
+
+    /**
      * Start the friend request HTTP server (v2.0)
      * This listens for incoming friend requests on the friend request .onion address
      */
@@ -453,12 +533,12 @@ class MainActivity : BaseActivity() {
         super.onNewIntent(intent)
         setIntent(intent) // Update the activity's intent
 
-        // Check if we should show wallet tab - now opens separate WalletActivity
-        if (intent.getBooleanExtra("SHOW_WALLET", false)) {
-            Log.d("MainActivity", "onNewIntent - opening wallet activity")
-            val walletIntent = Intent(this, WalletActivity::class.java)
-            startActivity(walletIntent)
-        }
+        // Wallet disabled — hidden until wallet feature is ready for release
+        // if (intent.getBooleanExtra("SHOW_WALLET", false)) {
+        //     Log.d("MainActivity", "onNewIntent - opening wallet activity")
+        //     val walletIntent = Intent(this, WalletActivity::class.java)
+        //     startActivity(walletIntent)
+        // }
 
         // Check if we should show phone/call tab
         if (intent.getBooleanExtra("SHOW_PHONE", false)) {
@@ -499,6 +579,43 @@ class MainActivity : BaseActivity() {
         // Update badge counts
         updateFriendRequestBadge()
         updateUnreadMessagesBadge()
+
+        // Cancel non-Tor system notifications when user is actively in the app
+        cancelStaleNotifications()
+    }
+
+    /**
+     * Cancel non-Tor system bar notifications when user is actively in the app.
+     * Keeps foreground service (1001) and download service (2002) notifications.
+     * Cancels: friend-request-accepted (6000+), pending message summary (999),
+     * and any stale message notifications the user hasn't tapped.
+     */
+    private fun cancelStaleNotifications() {
+        try {
+            val notificationManager = getSystemService(android.app.NotificationManager::class.java)
+            for (sbn in notificationManager.activeNotifications) {
+                val id = sbn.id
+                val group = sbn.notification.group
+                // Skip foreground service notifications (Tor=1001, Download=2002)
+                if (id == 1001 || id == 2002) continue
+                // Cancel friend-request-accepted (6000-15999)
+                if (id in 6000..15999) {
+                    notificationManager.cancel(id)
+                    continue
+                }
+                // Cancel message notifications (grouped MESSAGES_*)
+                if (group?.startsWith("MESSAGES_") == true) {
+                    notificationManager.cancel(id)
+                    continue
+                }
+                // Cancel pending message summary
+                if (id == 999) {
+                    notificationManager.cancel(id)
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("MainActivity", "Failed to cancel stale notifications", e)
+        }
     }
 
     override fun onPause() {
@@ -623,6 +740,27 @@ class MainActivity : BaseActivity() {
                         }
                     }
 
+                    // Also add pinned groups to the messages tab
+                    val pinnedGroups = database.groupDao().getPinnedGroups()
+                    for (group in pinnedGroups) {
+                        val preview = when {
+                            group.isPendingInvite -> "Pending invite - tap to accept"
+                            !group.lastMessagePreview.isNullOrEmpty() -> group.lastMessagePreview
+                            else -> "${group.memberCount} members"
+                        }
+                        val groupChat = Chat(
+                            id = group.groupId,
+                            nickname = group.name,
+                            lastMessage = preview,
+                            time = formatTimestamp(group.lastActivityTimestamp),
+                            isPinned = true,
+                            profilePictureBase64 = group.groupIcon,
+                            isGroup = true,
+                            groupId = group.groupId
+                        )
+                        chatsList.add(Pair(groupChat, group.lastActivityTimestamp))
+                    }
+
                     chatsList
                 }
 
@@ -652,16 +790,25 @@ class MainActivity : BaseActivity() {
                 chatList.adapter = ChatAdapter(
                     chats = chats,
                     onChatClick = { chat ->
-                        lifecycleScope.launch {
-                            val contact = withContext(Dispatchers.IO) {
-                                database.contactDao().getContactById(chat.id.toLong())
-                            }
-                            if (contact != null) {
-                                val intent = android.content.Intent(this@MainActivity, ChatActivity::class.java)
-                                intent.putExtra(ChatActivity.EXTRA_CONTACT_ID, contact.id)
-                                intent.putExtra(ChatActivity.EXTRA_CONTACT_NAME, contact.displayName)
-                                intent.putExtra(ChatActivity.EXTRA_CONTACT_ADDRESS, contact.solanaAddress)
-                                startActivityWithSlideAnimation(intent)
+                        if (chat.isGroup && chat.groupId != null) {
+                            // Pinned group — open GroupChatActivity
+                            val intent = Intent(this@MainActivity, GroupChatActivity::class.java)
+                            intent.putExtra(GroupChatActivity.EXTRA_GROUP_ID, chat.groupId)
+                            intent.putExtra(GroupChatActivity.EXTRA_GROUP_NAME, chat.nickname)
+                            startActivity(intent)
+                            overridePendingTransition(R.anim.slide_in_right, R.anim.slide_out_left)
+                        } else {
+                            lifecycleScope.launch {
+                                val contact = withContext(Dispatchers.IO) {
+                                    database.contactDao().getContactById(chat.id.toLong())
+                                }
+                                if (contact != null) {
+                                    val intent = android.content.Intent(this@MainActivity, ChatActivity::class.java)
+                                    intent.putExtra(ChatActivity.EXTRA_CONTACT_ID, contact.id)
+                                    intent.putExtra(ChatActivity.EXTRA_CONTACT_NAME, contact.displayName)
+                                    intent.putExtra(ChatActivity.EXTRA_CONTACT_ADDRESS, contact.solanaAddress)
+                                    startActivityWithSlideAnimation(intent)
+                                }
                             }
                         }
                     },
@@ -702,12 +849,21 @@ class MainActivity : BaseActivity() {
                     SecureLegionDatabase.getInstance(this@MainActivity, pass)
                 }
 
-                val contactId = chat.id.toLong()
-                val newPinned = !chat.isPinned
-                withContext(Dispatchers.IO) {
-                    database.contactDao().setPinned(contactId, newPinned)
+                if (chat.isGroup && chat.groupId != null) {
+                    // Toggle pin on a group chat
+                    val newPinned = !chat.isPinned
+                    withContext(Dispatchers.IO) {
+                        database.groupDao().setPinned(chat.groupId, newPinned)
+                    }
+                    ThemedToast.show(this@MainActivity, "${chat.nickname} ${if (newPinned) "pinned" else "unpinned"}")
+                } else {
+                    val contactId = chat.id.toLong()
+                    val newPinned = !chat.isPinned
+                    withContext(Dispatchers.IO) {
+                        database.contactDao().setPinned(contactId, newPinned)
+                    }
+                    ThemedToast.show(this@MainActivity, "${chat.nickname} ${if (newPinned) "pinned" else "unpinned"}")
                 }
-                ThemedToast.show(this@MainActivity, "${chat.nickname} ${if (newPinned) "pinned" else "unpinned"}")
                 setupChatList()
             } catch (e: Exception) {
                 Log.e("MainActivity", "Failed to toggle pin", e)
@@ -891,7 +1047,6 @@ class MainActivity : BaseActivity() {
     private fun setupGroupsList() {
         lifecycleScope.launch {
             try {
-                // Load groups from database with member counts
                 val groupsWithCounts = withContext(Dispatchers.IO) {
                     val keyManager = com.securelegion.crypto.KeyManager.getInstance(this@MainActivity)
                     val dbPassphrase = keyManager.getDatabasePassphrase()
@@ -899,73 +1054,164 @@ class MainActivity : BaseActivity() {
 
                     val groups = database.groupDao().getAllGroups()
 
-                    // Get member count for each group
                     groups.map { group ->
-                        val memberCount = database.groupMemberDao().getMemberCount(group.groupId)
+                        val preview = when {
+                            group.isPendingInvite -> "Pending invite - tap to accept"
+                            !group.lastMessagePreview.isNullOrEmpty() -> group.lastMessagePreview
+                            else -> null
+                        }
                         com.securelegion.adapters.GroupAdapter.GroupWithMemberCount(
                             group = group,
-                            memberCount = memberCount
+                            memberCount = group.memberCount,
+                            lastMessagePreview = preview
                         )
                     }
                 }
 
-                // Load pending invites from SharedPreferences
-                val invites = withContext(Dispatchers.IO) {
-                    val prefs = getSharedPreferences("pending_group_invites", MODE_PRIVATE)
-                    val invitesSet = prefs.getStringSet("invites", mutableSetOf()) ?: mutableSetOf()
-                    invitesSet.toList()
-                }
-
                 withContext(Dispatchers.Main) {
-                    // Get views
                     val invitesHeader = findViewById<View>(R.id.invitesHeader)
-                    val inviteCountText = findViewById<android.widget.TextView>(R.id.inviteCount)
                     val invitesRecyclerView = findViewById<androidx.recyclerview.widget.RecyclerView>(R.id.invitesRecyclerView)
                     val groupsRecyclerView = findViewById<androidx.recyclerview.widget.RecyclerView>(R.id.groupsRecyclerView)
                     val emptyState = findViewById<View>(R.id.emptyState)
 
-                    // Show/hide invites section
-                    if (invites.isNotEmpty()) {
-                        invitesHeader.visibility = View.VISIBLE
-                        invitesRecyclerView.visibility = View.VISIBLE
-                        inviteCountText.text = invites.size.toString()
+                    // Hide invites — pending invites will arrive via CRDT sync (TODO)
+                    invitesHeader.visibility = View.GONE
+                    invitesRecyclerView.visibility = View.GONE
 
-                        // TODO: Setup invites adapter
-                        // For now, just log
-                        Log.d("MainActivity", "Found ${invites.size} pending group invites")
-                    } else {
-                        invitesHeader.visibility = View.GONE
-                        invitesRecyclerView.visibility = View.GONE
-                    }
-
-                    // Show/hide groups list
                     if (groupsWithCounts.isNotEmpty()) {
                         groupsRecyclerView.visibility = View.VISIBLE
                         emptyState.visibility = View.GONE
 
-                        // Setup groups adapter
-                        val groupAdapter = com.securelegion.adapters.GroupAdapter(groupsWithCounts) { group ->
-                            // Open group chat when clicked
-                            val intent = Intent(this@MainActivity, GroupChatActivity::class.java)
-                            intent.putExtra(GroupChatActivity.EXTRA_GROUP_ID, group.groupId)
-                            intent.putExtra(GroupChatActivity.EXTRA_GROUP_NAME, group.name)
-                            startActivity(intent)
-                            overridePendingTransition(R.anim.slide_in_right, R.anim.slide_out_left)
-                        }
+                        val groupAdapter = com.securelegion.adapters.GroupAdapter(
+                            groups = groupsWithCounts,
+                            onGroupClick = { group ->
+                                val intent = Intent(this@MainActivity, GroupChatActivity::class.java)
+                                intent.putExtra(GroupChatActivity.EXTRA_GROUP_ID, group.groupId)
+                                intent.putExtra(GroupChatActivity.EXTRA_GROUP_NAME, group.name)
+                                startActivity(intent)
+                                overridePendingTransition(R.anim.slide_in_right, R.anim.slide_out_left)
+                            },
+                            onMuteClick = { group ->
+                                toggleGroupMute(group)
+                            },
+                            onLeaveClick = { group ->
+                                confirmLeaveGroup(group)
+                            },
+                            onPinClick = { group ->
+                                toggleGroupPin(group)
+                            }
+                        )
 
                         groupsRecyclerView.layoutManager = LinearLayoutManager(this@MainActivity)
                         groupsRecyclerView.adapter = groupAdapter
 
                         Log.d("MainActivity", "Loaded ${groupsWithCounts.size} groups")
-                    } else if (invites.isEmpty()) {
-                        // Show empty state only if no invites and no groups
+                    } else {
                         groupsRecyclerView.visibility = View.GONE
                         emptyState.visibility = View.VISIBLE
+                    }
+
+                    // Update groups tab badge with count of pending invite groups
+                    val pendingCount = groupsWithCounts.count { it.group.isPendingInvite }
+                    val groupsBadge = findViewById<TextView>(R.id.groupsBadge)
+                    if (pendingCount > 0) {
+                        groupsBadge.text = pendingCount.toString()
+                        groupsBadge.visibility = View.VISIBLE
+                    } else {
+                        groupsBadge.visibility = View.GONE
                     }
                 }
 
             } catch (e: Exception) {
                 Log.e("MainActivity", "Failed to load groups", e)
+            }
+        }
+    }
+
+    private fun toggleGroupMute(group: com.securelegion.database.entities.Group) {
+        lifecycleScope.launch {
+            try {
+                val keyManager = KeyManager.getInstance(this@MainActivity)
+                val dbPassphrase = keyManager.getDatabasePassphrase()
+                val database = SecureLegionDatabase.getInstance(this@MainActivity, dbPassphrase)
+
+                val newMuted = !group.isMuted
+                withContext(Dispatchers.IO) {
+                    database.groupDao().setMuted(group.groupId, newMuted)
+                }
+                ThemedToast.show(this@MainActivity, "${group.name} ${if (newMuted) "muted" else "unmuted"}")
+                setupGroupsList()
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to toggle group mute", e)
+            }
+        }
+    }
+
+    private fun toggleGroupPin(group: com.securelegion.database.entities.Group) {
+        lifecycleScope.launch {
+            try {
+                val keyManager = KeyManager.getInstance(this@MainActivity)
+                val dbPassphrase = keyManager.getDatabasePassphrase()
+                val database = SecureLegionDatabase.getInstance(this@MainActivity, dbPassphrase)
+
+                val newPinned = !group.isPinned
+                withContext(Dispatchers.IO) {
+                    database.groupDao().setPinned(group.groupId, newPinned)
+                }
+                ThemedToast.show(this@MainActivity, "${group.name} ${if (newPinned) "pinned" else "unpinned"}")
+                setupGroupsList()
+                // Also refresh messages tab since pinned groups show there
+                if (currentTab == "messages") {
+                    setupChatList()
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to toggle group pin", e)
+            }
+        }
+    }
+
+    private fun confirmLeaveGroup(group: com.securelegion.database.entities.Group) {
+        AlertDialog.Builder(this)
+            .setTitle("Leave Group")
+            .setMessage("Are you sure you want to leave \"${group.name}\"? This will remove you from the group and delete it from your device.")
+            .setPositiveButton("Leave") { _, _ ->
+                leaveGroup(group)
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun leaveGroup(group: com.securelegion.database.entities.Group) {
+        lifecycleScope.launch {
+            try {
+                val mgr = com.securelegion.services.CrdtGroupManager.getInstance(this@MainActivity)
+                val keyManager = KeyManager.getInstance(this@MainActivity)
+
+                withContext(Dispatchers.IO) {
+                    // Load the group into CRDT engine
+                    mgr.loadGroup(group.groupId)
+
+                    // Get local pubkey hex for the MemberRemove op
+                    val localPubkeyHex = keyManager.getSigningPublicKey()
+                        .joinToString("") { "%02x".format(it) }
+
+                    // Create MemberRemove("Leave") op and broadcast it
+                    val opBytes = mgr.removeMember(group.groupId, localPubkeyHex, "Leave")
+                    mgr.broadcastOpToGroup(group.groupId, opBytes)
+
+                    // Delete group locally
+                    mgr.deleteGroup(group.groupId)
+                }
+
+                ThemedToast.show(this@MainActivity, "Left group: ${group.name}")
+                setupGroupsList()
+                // Refresh messages tab in case group was pinned
+                if (currentTab == "messages") {
+                    setupChatList()
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to leave group", e)
+                ThemedToast.show(this@MainActivity, "Failed to leave group")
             }
         }
     }

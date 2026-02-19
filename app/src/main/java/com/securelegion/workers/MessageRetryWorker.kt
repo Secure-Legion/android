@@ -37,6 +37,7 @@ class MessageRetryWorker(
         private const val TAG = "MessageRetryWorker"
         private const val WORK_NAME = "message_retry_work"
         private const val REPEAT_INTERVAL_MINUTES = 3L // Retry every 3 minutes (was 15)
+        private const val RECEIVED_IDS_TTL_MS = 30L * 24 * 60 * 60 * 1000 // 30 days
 
         /**
          * Periodic background retry (long-term recovery)
@@ -112,10 +113,35 @@ class MessageRetryWorker(
                 Log.w(TAG, "========== RETRY WORKER COMPLETE: No messages needed retry ==========")
             }
 
+            // Periodic received_ids cleanup (30-day TTL, runs at most once per day)
+            if (!isContactSpecific) {
+                cleanupReceivedIds()
+            }
+
             Result.success()
         } catch (e: Exception) {
             Log.e(TAG, "MessageRetryWorker failed", e)
             Result.retry()
+        }
+    }
+
+    /**
+     * Prune received_ids older than 30 days.
+     * Runs once per worker cycle (every 3 min) but the DELETE is cheap —
+     * SQLite short-circuits when there's nothing to delete.
+     */
+    private suspend fun cleanupReceivedIds() {
+        try {
+            val keyManager = KeyManager.getInstance(applicationContext)
+            val dbPassphrase = keyManager.getDatabasePassphrase()
+            val database = SecureLegionDatabase.getInstance(applicationContext, dbPassphrase)
+            val cutoff = System.currentTimeMillis() - RECEIVED_IDS_TTL_MS
+            val deleted = database.receivedIdDao().deleteOldIds(cutoff)
+            if (deleted > 0) {
+                Log.i(TAG, "Pruned $deleted expired received_ids (older than 30 days)")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "received_ids cleanup failed", e)
         }
     }
 
@@ -164,17 +190,25 @@ class MessageRetryWorker(
 
         // HARD GATE:
         // - Message not fully delivered
-        // - Retry time elapsed
+        // - Retry time elapsed (respect nextRetryAtMs backoff)
         // - Keep retrying indefinitely (no 7-day limit)
+        // - Backpressure: max 10 messages per worker cycle (oldest first)
         val messages = database.messageDao().getMessagesNeedingRetry(
             currentTimeMs = now,
             giveupAfterDays = 365 // Extended from 7 days to 1 year (indefinite for practical purposes)
-        ).filter { !it.messageDelivered }
+        ).filter { !it.messageDelivered && (it.nextRetryAtMs == null || it.nextRetryAtMs <= now) }
+            .take(10) // Backpressure: cap per cycle to prevent retry storm
+
+        // Batch-fetch all contacts for these messages (fixes N+1 getContactById per message)
+        val contactIds = messages.map { it.contactId }.distinct()
+        val contactMap = if (contactIds.isNotEmpty()) {
+            database.contactDao().getContactsByIds(contactIds).associateBy { it.id }
+        } else emptyMap()
 
         var retriedCount = 0
 
         for (message in messages) {
-            val contact = database.contactDao().getContactById(message.contactId) ?: continue
+            val contact = contactMap[message.contactId] ?: continue
 
             // Check current ACK state to determine what phase needs retry
             val ackState = ackTracker.getState(message.messageId)
@@ -184,16 +218,12 @@ class MessageRetryWorker(
             val success = try {
                 when (ackState) {
                     AckState.NONE, AckState.PING_ACKED -> {
-                        // Phase 1: PING not received or not acknowledged - retry PING packet
+                        // Phase 1: PING not received or not acknowledged - retry PING
+                        // ALWAYS use sendPingForMessage (never resendPingWithWireBytes)
+                        // because resendPingWithWireBytes doesn't re-register the signer
+                        // in OUTGOING_PING_SIGNERS, causing PONG_SIG_REJECT on the response
                         Log.d(TAG, "→ Retrying PING for ${message.messageId}")
-                        if (message.pingWireBytes != null) {
-                            com.securelegion.crypto.RustBridge.resendPingWithWireBytes(
-                                message.pingWireBytes!!,
-                                contact.messagingOnion ?: ""
-                            )
-                        } else {
-                            messageService.sendPingForMessage(message).isSuccess
-                        }
+                        messageService.sendPingForMessage(message).isSuccess
                     }
                     AckState.PONG_ACKED -> {
                         // Phase 2: PONG received but message blob not sent - poll for PONG and advance
@@ -261,13 +291,19 @@ class MessageRetryWorker(
                 giveupAfterDays = 365 // Extended from 7 days to 1 year (indefinite for practical purposes)
             ).filter {
                 it.contactId == contactId && !it.messageDelivered
+                    && (it.nextRetryAtMs == null || it.nextRetryAtMs <= now)
+            }.take(10) // Backpressure: cap per contact per cycle
+
+            // Single lookup for the target contact (all messages share the same contactId)
+            val contact = database.contactDao().getContactById(contactId)
+            if (contact == null) {
+                Log.w(TAG, "Contact $contactId not found, skipping retry")
+                return@withContext 0
             }
 
             var retriedCount = 0
 
             for (message in messages) {
-                val contact = database.contactDao().getContactById(message.contactId) ?: continue
-
                 // Check current ACK state to determine what phase needs retry
                 val ackState = ackTracker.getState(message.messageId)
 
@@ -276,16 +312,12 @@ class MessageRetryWorker(
                 val success = try {
                     when (ackState) {
                         AckState.NONE, AckState.PING_ACKED -> {
-                            // Phase 1: PING not received - retry PING packet
+                            // Phase 1: PING not received - retry PING
+                            // ALWAYS use sendPingForMessage (never resendPingWithWireBytes)
+                            // because resendPingWithWireBytes doesn't re-register the signer
+                            // in OUTGOING_PING_SIGNERS, causing PONG_SIG_REJECT on the response
                             Log.d(TAG, "→ Retrying PING for ${message.messageId}")
-                            if (message.pingWireBytes != null) {
-                                com.securelegion.crypto.RustBridge.resendPingWithWireBytes(
-                                    message.pingWireBytes!!,
-                                    contact.messagingOnion ?: ""
-                                )
-                            } else {
-                                messageService.sendPingForMessage(message).isSuccess
-                            }
+                            messageService.sendPingForMessage(message).isSuccess
                         }
                         AckState.PONG_ACKED -> {
                             // Phase 2: PONG received - poll for PONG and send message

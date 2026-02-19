@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="16dp"
+    android:height="16dp"
+    android:viewportWidth="16"
+    android:viewportHeight="16">
+
+    <!-- Clock circle for queued messages (Tor offline) -->
+    <path
+        android:strokeWidth="1.5"
+        android:pathData="M8,8m-6,0a6,6 0,1,1 12,0a6,6 0,1,1 -12,0"
+        android:strokeColor="#999999"
+        android:fillColor="@android:color/transparent"/>
+
+    <!-- Clock hands -->
+    <path
+        android:strokeWidth="1.5"
+        android:pathData="M8,5L8,8L10.5,10"
+        android:strokeColor="#999999"
+        android:fillColor="@android:color/transparent"
+        android:strokeLineCap="round"/>
+</vector>

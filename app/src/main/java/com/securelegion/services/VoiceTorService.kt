@@ -39,14 +39,12 @@ class VoiceTorService : Service() {
 
         // Voice Tor health status (accessible from UI)
         @Volatile var isHealthy: Boolean = false
-        @Volatile var circuitEstablished: Double? = null
-        @Volatile var networkLiveness: Double? = null
     }
 
     private var torProcess: Process? = null
     private var torThread: Thread? = null
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
-    private var metricsHealthJob: Job? = null
+    private var healthMonitorJob: Job? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -116,7 +114,7 @@ class VoiceTorService : Service() {
                 // Start health monitoring after a delay (give Tor time to start)
                 serviceScope.launch {
                     delay(10000) // Wait 10s for Tor to bootstrap
-                    startMetricsHealthMonitor()
+                    startHealthMonitor()
                 }
 
                 // Read Tor output for debugging
@@ -139,79 +137,53 @@ class VoiceTorService : Service() {
     }
 
     /**
-     * Start voice Tor health monitoring via MetricsPort (port 9036)
-     * Polls metrics every 5 seconds to detect voice call issues
+     * Start voice Tor health monitoring
+     * Checks if the voice Tor process is still alive every 5 seconds
      */
-    private fun startMetricsHealthMonitor() {
-        metricsHealthJob?.cancel()
-        metricsHealthJob = serviceScope.launch(Dispatchers.IO) {
-            Log.i(TAG, "Starting voice Tor health monitor (MetricsPort 9036)")
+    private var consecutiveVoiceTorFailures = 0
+    private val MAX_VOICE_TOR_RESTARTS = 3
+
+    private fun startHealthMonitor() {
+        healthMonitorJob?.cancel()
+        healthMonitorJob = serviceScope.launch(Dispatchers.IO) {
+            Log.i(TAG, "Starting voice Tor health monitor")
 
             while (isActive) {
                 try {
-                    val metricsText = fetchVoiceMetrics()
+                    val processAlive = torProcess?.isAlive == true
+                    isHealthy = processAlive
 
-                    if (metricsText != null) {
-                        // Parse health metrics
-                        val established = parsePrometheusGauge(metricsText, "tor_circuit_established")
-                        val liveness = parsePrometheusGauge(metricsText, "tor_network_liveness")
+                    if (!isHealthy) {
+                        consecutiveVoiceTorFailures++
+                        Log.w(TAG, "Voice Tor unhealthy: process dead (failure $consecutiveVoiceTorFailures/$MAX_VOICE_TOR_RESTARTS)")
 
-                        // Update status
-                        circuitEstablished = established
-                        networkLiveness = liveness
-                        isHealthy = established == 1.0 && liveness == 1.0
-
-                        if (!isHealthy) {
-                            Log.w(TAG, "Voice Tor unhealthy: circuits=$established, liveness=$liveness")
+                        if (consecutiveVoiceTorFailures <= MAX_VOICE_TOR_RESTARTS) {
+                            Log.i(TAG, "Auto-restarting voice Tor (attempt $consecutiveVoiceTorFailures)")
+                            delay(5000) // 5s backoff before restart
+                            try {
+                                stopVoiceTor()
+                                delay(1000)
+                                startVoiceTor()
+                            } catch (e: Exception) {
+                                Log.e(TAG, "Failed to restart voice Tor", e)
+                            }
+                        } else {
+                            Log.e(TAG, "Voice Tor exceeded max restarts ($MAX_VOICE_TOR_RESTARTS) — giving up")
+                        }
+                    } else {
+                        if (consecutiveVoiceTorFailures > 0) {
+                            Log.i(TAG, "Voice Tor recovered after $consecutiveVoiceTorFailures failures")
+                            consecutiveVoiceTorFailures = 0
                         }
                     }
                 } catch (e: Exception) {
-                    Log.e(TAG, "Error polling voice Tor metrics", e)
+                    Log.e(TAG, "Error polling voice Tor health", e)
                     isHealthy = false
                 }
 
-                delay(5000) // Poll every 5 seconds (voice is latency-sensitive)
+                delay(5000)
             }
         }
-    }
-
-    /**
-     * Fetch metrics from voice Tor MetricsPort (localhost 9036, no proxy)
-     */
-    private suspend fun fetchVoiceMetrics(): String? = withContext(Dispatchers.IO) {
-        try {
-            val client = okhttp3.OkHttpClient.Builder()
-                .proxy(java.net.Proxy.NO_PROXY)
-                .connectTimeout(2, java.util.concurrent.TimeUnit.SECONDS)
-                .readTimeout(2, java.util.concurrent.TimeUnit.SECONDS)
-                .build()
-
-            val request = okhttp3.Request.Builder()
-                .url("http://127.0.0.1:9036/metrics")
-                .get()
-                .build()
-
-            client.newCall(request).execute().use { response ->
-                if (response.isSuccessful) {
-                    response.body?.string()
-                } else {
-                    null
-                }
-            }
-        } catch (e: Exception) {
-            null
-        }
-    }
-
-    /**
-     * Parse Prometheus gauge metric
-     */
-    private fun parsePrometheusGauge(metrics: String, metricName: String): Double? {
-        val line = metrics.lineSequence()
-            .firstOrNull { it.startsWith(metricName) && !it.startsWith("#") }
-            ?: return null
-
-        return line.substringAfterLast(' ').toDoubleOrNull()
     }
 
     /**
@@ -253,8 +225,8 @@ class VoiceTorService : Service() {
 
         try {
             // Stop health monitoring
-            metricsHealthJob?.cancel()
-            metricsHealthJob = null
+            healthMonitorJob?.cancel()
+            healthMonitorJob = null
 
             // Stop Tor process
             torProcess?.destroy()
@@ -265,8 +237,6 @@ class VoiceTorService : Service() {
 
             // Reset health status
             isHealthy = false
-            circuitEstablished = null
-            networkLiveness = null
 
             Log.i(TAG, "Voice Tor stopped")
         } catch (e: Exception) {

@@ -7,17 +7,26 @@
     android:background="?attr/colorSurface">
 
     <!-- Back Button -->
-    <View
+    <FrameLayout
         android:id="@+id/backButton"
-        android:layout_width="35dp"
-        android:layout_height="35dp"
+        android:layout_width="42dp"
+        android:layout_height="42dp"
         android:layout_marginStart="20dp"
         android:layout_marginTop="50dp"
-        android:background="@drawable/back_button_bg"
+        android:background="@drawable/top_icon_bg"
         android:clickable="true"
         android:focusable="true"
         app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toTopOf="parent" />
+        app:layout_constraintTop_toTopOf="parent">
+
+        <ImageView
+            android:layout_width="20dp"
+            android:layout_height="20dp"
+            android:layout_gravity="center"
+            android:src="@drawable/ic_back_arrow"
+            android:contentDescription="Back" />
+
+    </FrameLayout>
 
     <!-- Group Name Title -->
     <TextView
@@ -26,23 +35,23 @@
         android:layout_height="wrap_content"
         android:layout_marginStart="16dp"
         android:layout_marginEnd="20dp"
-        android:text="Secure Whales"
+        android:text="Group"
         android:fontFamily="@font/space_grotesk_bold"
         android:textSize="20sp"
-        android:textColor="#CCCCCC"
+        android:textColor="?attr/colorOnSurfaceVariant"
         android:gravity="center"
         app:layout_constraintTop_toTopOf="@id/backButton"
         app:layout_constraintBottom_toBottomOf="@id/backButton"
         app:layout_constraintStart_toEndOf="@id/backButton"
         app:layout_constraintEnd_toEndOf="parent" />
 
-    <!-- Group Icon Container -->
+    <!-- Group Icon Container (square, matches profile page) -->
     <FrameLayout
         android:id="@+id/groupIconContainer"
         android:layout_width="120dp"
         android:layout_height="120dp"
         android:layout_marginTop="40dp"
-        android:background="@drawable/profile_circle_bg"
+        android:background="@drawable/settings_icon_bg"
         android:clickable="true"
         android:focusable="true"
         app:layout_constraintTop_toBottomOf="@id/backButton"
@@ -51,12 +60,31 @@
 
         <ImageView
             android:id="@+id/groupIconImage"
-            android:layout_width="50dp"
-            android:layout_height="50dp"
-            android:layout_gravity="center"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:scaleType="centerCrop"
             android:src="@drawable/ic_contacts"
             app:tint="#999999"
             android:contentDescription="Group Icon" />
+
+        <!-- Edit Icon -->
+        <FrameLayout
+            android:id="@+id/editGroupPhotoButton"
+            android:layout_width="36dp"
+            android:layout_height="36dp"
+            android:layout_gravity="bottom|end"
+            android:background="@drawable/settings_icon_bg"
+            android:clickable="true"
+            android:focusable="true">
+
+            <ImageView
+                android:layout_width="18dp"
+                android:layout_height="18dp"
+                android:layout_gravity="center"
+                android:src="@drawable/ic_edit"
+                app:tint="?attr/colorOnSurfaceVariant" />
+
+        </FrameLayout>
 
     </FrameLayout>
 
@@ -69,451 +97,268 @@
         android:text="Settings"
         android:fontFamily="@font/space_grotesk_bold"
         android:textSize="18sp"
-        android:textColor="#CCCCCC"
+        android:textColor="?attr/colorOnSurfaceVariant"
         app:layout_constraintTop_toBottomOf="@id/groupIconContainer"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent" />
 
     <!-- Settings Menu Container -->
-    <LinearLayout
-        android:id="@+id/settingsMenuContainer"
+    <ScrollView
         android:layout_width="0dp"
-        android:layout_height="wrap_content"
-        android:layout_marginStart="20dp"
-        android:layout_marginEnd="20dp"
-        android:layout_marginTop="32dp"
-        android:orientation="vertical"
+        android:layout_height="0dp"
+        android:layout_marginTop="16dp"
+        android:scrollbars="none"
+        android:fillViewport="false"
         app:layout_constraintTop_toBottomOf="@id/settingsLabel"
+        app:layout_constraintBottom_toTopOf="@id/bottomNav"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent">
 
-        <!-- Change PIN -->
-        <androidx.constraintlayout.widget.ConstraintLayout
-            android:id="@+id/changePinButton"
+        <LinearLayout
+            android:id="@+id/settingsMenuContainer"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginBottom="16dp"
-            android:background="@drawable/lock_password_input_bg"
-            android:padding="16dp"
-            android:clickable="true"
-            android:focusable="true">
+            android:orientation="vertical"
+            android:paddingStart="20dp"
+            android:paddingEnd="20dp"
+            android:paddingTop="16dp"
+            android:paddingBottom="24dp">
 
-            <FrameLayout
-                android:id="@+id/changePinIcon"
-                android:layout_width="40dp"
-                android:layout_height="40dp"
-                android:background="@drawable/profile_circle_bg"
-                app:layout_constraintTop_toTopOf="parent"
-                app:layout_constraintBottom_toBottomOf="parent"
-                app:layout_constraintStart_toStartOf="parent">
+            <!-- Change PIN -->
+            <LinearLayout
+                android:id="@+id/changePinButton"
+                android:layout_width="match_parent"
+                android:layout_height="80dp"
+                android:orientation="horizontal"
+                android:background="@drawable/settings_box_bg"
+                android:paddingStart="10dp"
+                android:paddingEnd="10dp"
+                android:layout_marginBottom="12dp"
+                android:gravity="center_vertical"
+                android:clickable="true"
+                android:focusable="true">
 
-                <ImageView
-                    android:layout_width="20dp"
-                    android:layout_height="20dp"
-                    android:layout_gravity="center"
-                    android:src="@drawable/ic_lock"
-                    app:tint="#CCCCCC"
-                    android:contentDescription="Lock" />
+                <FrameLayout
+                    android:layout_width="50dp"
+                    android:layout_height="50dp"
+                    android:background="@drawable/settings_icon_bg"
+                    android:layout_marginStart="8dp"
+                    android:layout_marginEnd="16dp">
 
-            </FrameLayout>
+                    <ImageView
+                        android:layout_width="24dp"
+                        android:layout_height="24dp"
+                        android:layout_gravity="center"
+                        android:src="@drawable/ic_lock"
+                        app:tint="?attr/colorOnSurfaceVariant" />
 
-            <TextView
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_marginStart="16dp"
-                android:layout_marginEnd="16dp"
-                android:text="Change PIN"
-                android:fontFamily="@font/poppins_medium"
-                android:textSize="16sp"
-                android:textColor="?attr/colorOnSurface"
-                app:layout_constraintTop_toTopOf="parent"
-                app:layout_constraintBottom_toBottomOf="parent"
-                app:layout_constraintStart_toEndOf="@id/changePinIcon"
-                app:layout_constraintEnd_toStartOf="@id/changePinArrow" />
+                </FrameLayout>
 
-            <ImageView
-                android:id="@+id/changePinArrow"
-                android:layout_width="20dp"
-                android:layout_height="20dp"
-                android:src="@drawable/ic_arrow_forward"
-                app:tint="#666666"
-                app:layout_constraintTop_toTopOf="parent"
-                app:layout_constraintBottom_toBottomOf="parent"
-                app:layout_constraintEnd_toEndOf="parent"
-                android:contentDescription="Arrow" />
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="Change PIN"
+                    android:textSize="16sp"
+                    android:textColor="#CCCCCC"
+                    android:fontFamily="@font/poppins_medium" />
 
-        </androidx.constraintlayout.widget.ConstraintLayout>
+                <FrameLayout
+                    android:layout_width="36dp"
+                    android:layout_height="36dp"
+                    android:layout_marginEnd="8dp"
+                    android:background="@drawable/arrow_bg">
 
-        <!-- Members -->
-        <androidx.constraintlayout.widget.ConstraintLayout
-            android:id="@+id/membersButton"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginBottom="16dp"
-            android:background="@drawable/lock_password_input_bg"
-            android:padding="16dp"
-            android:clickable="true"
-            android:focusable="true">
+                    <ImageView
+                        android:layout_width="18dp"
+                        android:layout_height="18dp"
+                        android:layout_gravity="center"
+                        android:src="@drawable/ic_arrow_forward" />
 
-            <FrameLayout
-                android:id="@+id/membersIcon"
-                android:layout_width="40dp"
-                android:layout_height="40dp"
-                android:background="@drawable/profile_circle_bg"
-                app:layout_constraintTop_toTopOf="parent"
-                app:layout_constraintBottom_toBottomOf="parent"
-                app:layout_constraintStart_toStartOf="parent">
+                </FrameLayout>
 
-                <ImageView
-                    android:layout_width="20dp"
-                    android:layout_height="20dp"
-                    android:layout_gravity="center"
-                    android:src="@drawable/ic_contacts"
-                    app:tint="#CCCCCC"
-                    android:contentDescription="Members" />
+            </LinearLayout>
 
-            </FrameLayout>
+            <!-- Members -->
+            <LinearLayout
+                android:id="@+id/membersButton"
+                android:layout_width="match_parent"
+                android:layout_height="80dp"
+                android:orientation="horizontal"
+                android:background="@drawable/settings_box_bg"
+                android:paddingStart="10dp"
+                android:paddingEnd="10dp"
+                android:layout_marginBottom="12dp"
+                android:gravity="center_vertical"
+                android:clickable="true"
+                android:focusable="true">
 
-            <TextView
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_marginStart="16dp"
-                android:layout_marginEnd="16dp"
-                android:text="Members"
-                android:fontFamily="@font/poppins_medium"
-                android:textSize="16sp"
-                android:textColor="?attr/colorOnSurface"
-                app:layout_constraintTop_toTopOf="parent"
-                app:layout_constraintBottom_toBottomOf="parent"
-                app:layout_constraintStart_toEndOf="@id/membersIcon"
-                app:layout_constraintEnd_toStartOf="@id/membersArrow" />
+                <FrameLayout
+                    android:layout_width="50dp"
+                    android:layout_height="50dp"
+                    android:background="@drawable/settings_icon_bg"
+                    android:layout_marginStart="8dp"
+                    android:layout_marginEnd="16dp">
 
-            <ImageView
-                android:id="@+id/membersArrow"
-                android:layout_width="20dp"
-                android:layout_height="20dp"
-                android:src="@drawable/ic_arrow_forward"
-                app:tint="#666666"
-                app:layout_constraintTop_toTopOf="parent"
-                app:layout_constraintBottom_toBottomOf="parent"
-                app:layout_constraintEnd_toEndOf="parent"
-                android:contentDescription="Arrow" />
+                    <ImageView
+                        android:layout_width="24dp"
+                        android:layout_height="24dp"
+                        android:layout_gravity="center"
+                        android:src="@drawable/ic_contacts"
+                        app:tint="?attr/colorOnSurfaceVariant" />
 
-        </androidx.constraintlayout.widget.ConstraintLayout>
+                </FrameLayout>
 
-        <!-- Advance -->
-        <androidx.constraintlayout.widget.ConstraintLayout
-            android:id="@+id/advanceButton"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginBottom="16dp"
-            android:background="@drawable/lock_password_input_bg"
-            android:padding="16dp"
-            android:clickable="true"
-            android:focusable="true">
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="Members"
+                    android:textSize="16sp"
+                    android:textColor="#CCCCCC"
+                    android:fontFamily="@font/poppins_medium" />
 
-            <FrameLayout
-                android:id="@+id/advanceIcon"
-                android:layout_width="40dp"
-                android:layout_height="40dp"
-                android:background="@drawable/profile_circle_bg"
-                app:layout_constraintTop_toTopOf="parent"
-                app:layout_constraintBottom_toBottomOf="parent"
-                app:layout_constraintStart_toStartOf="parent">
+                <FrameLayout
+                    android:layout_width="36dp"
+                    android:layout_height="36dp"
+                    android:layout_marginEnd="8dp"
+                    android:background="@drawable/arrow_bg">
 
-                <ImageView
-                    android:layout_width="20dp"
-                    android:layout_height="20dp"
-                    android:layout_gravity="center"
-                    android:src="@android:drawable/ic_menu_info_details"
-                    app:tint="#CCCCCC"
-                    android:contentDescription="Info" />
+                    <ImageView
+                        android:layout_width="18dp"
+                        android:layout_height="18dp"
+                        android:layout_gravity="center"
+                        android:src="@drawable/ic_arrow_forward" />
 
-            </FrameLayout>
+                </FrameLayout>
 
-            <TextView
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_marginStart="16dp"
-                android:layout_marginEnd="16dp"
-                android:text="Advance"
-                android:fontFamily="@font/poppins_medium"
-                android:textSize="16sp"
-                android:textColor="?attr/colorOnSurface"
-                app:layout_constraintTop_toTopOf="parent"
-                app:layout_constraintBottom_toBottomOf="parent"
-                app:layout_constraintStart_toEndOf="@id/advanceIcon"
-                app:layout_constraintEnd_toStartOf="@id/advanceArrow" />
+            </LinearLayout>
 
-            <ImageView
-                android:id="@+id/advanceArrow"
-                android:layout_width="20dp"
-                android:layout_height="20dp"
-                android:src="@drawable/ic_arrow_forward"
-                app:tint="#666666"
-                app:layout_constraintTop_toTopOf="parent"
-                app:layout_constraintBottom_toBottomOf="parent"
-                app:layout_constraintEnd_toEndOf="parent"
-                android:contentDescription="Arrow" />
+            <!-- Advanced -->
+            <LinearLayout
+                android:id="@+id/advanceButton"
+                android:layout_width="match_parent"
+                android:layout_height="80dp"
+                android:orientation="horizontal"
+                android:background="@drawable/settings_box_bg"
+                android:paddingStart="10dp"
+                android:paddingEnd="10dp"
+                android:layout_marginBottom="12dp"
+                android:gravity="center_vertical"
+                android:clickable="true"
+                android:focusable="true">
 
-        </androidx.constraintlayout.widget.ConstraintLayout>
+                <FrameLayout
+                    android:layout_width="50dp"
+                    android:layout_height="50dp"
+                    android:background="@drawable/settings_icon_bg"
+                    android:layout_marginStart="8dp"
+                    android:layout_marginEnd="16dp">
 
-        <!-- Permissions -->
-        <androidx.constraintlayout.widget.ConstraintLayout
-            android:id="@+id/permissionsButton"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginBottom="16dp"
-            android:background="@drawable/lock_password_input_bg"
-            android:padding="16dp"
-            android:clickable="true"
-            android:focusable="true">
+                    <ImageView
+                        android:layout_width="24dp"
+                        android:layout_height="24dp"
+                        android:layout_gravity="center"
+                        android:src="@android:drawable/ic_menu_info_details"
+                        app:tint="?attr/colorOnSurfaceVariant" />
 
-            <FrameLayout
-                android:id="@+id/permissionsIcon"
-                android:layout_width="40dp"
-                android:layout_height="40dp"
-                android:background="@drawable/profile_circle_bg"
-                app:layout_constraintTop_toTopOf="parent"
-                app:layout_constraintBottom_toBottomOf="parent"
-                app:layout_constraintStart_toStartOf="parent">
+                </FrameLayout>
 
-                <ImageView
-                    android:layout_width="20dp"
-                    android:layout_height="20dp"
-                    android:layout_gravity="center"
-                    android:src="@android:drawable/ic_menu_info_details"
-                    app:tint="#CCCCCC"
-                    android:contentDescription="Info" />
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="Advanced"
+                    android:textSize="16sp"
+                    android:textColor="#CCCCCC"
+                    android:fontFamily="@font/poppins_medium" />
 
-            </FrameLayout>
+                <FrameLayout
+                    android:layout_width="36dp"
+                    android:layout_height="36dp"
+                    android:layout_marginEnd="8dp"
+                    android:background="@drawable/arrow_bg">
 
-            <TextView
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_marginStart="16dp"
-                android:layout_marginEnd="16dp"
-                android:text="Permissions"
-                android:fontFamily="@font/poppins_medium"
-                android:textSize="16sp"
-                android:textColor="?attr/colorOnSurface"
-                app:layout_constraintTop_toTopOf="parent"
-                app:layout_constraintBottom_toBottomOf="parent"
-                app:layout_constraintStart_toEndOf="@id/permissionsIcon"
-                app:layout_constraintEnd_toStartOf="@id/permissionsArrow" />
+                    <ImageView
+                        android:layout_width="18dp"
+                        android:layout_height="18dp"
+                        android:layout_gravity="center"
+                        android:src="@drawable/ic_arrow_forward" />
 
-            <ImageView
-                android:id="@+id/permissionsArrow"
-                android:layout_width="20dp"
-                android:layout_height="20dp"
-                android:src="@drawable/ic_arrow_forward"
-                app:tint="#666666"
-                app:layout_constraintTop_toTopOf="parent"
-                app:layout_constraintBottom_toBottomOf="parent"
-                app:layout_constraintEnd_toEndOf="parent"
-                android:contentDescription="Arrow" />
+                </FrameLayout>
 
-        </androidx.constraintlayout.widget.ConstraintLayout>
+            </LinearLayout>
 
-        <!-- Rename Group -->
-        <androidx.constraintlayout.widget.ConstraintLayout
-            android:id="@+id/renameGroupButton"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:background="@drawable/lock_password_input_bg"
-            android:padding="16dp"
-            android:clickable="true"
-            android:focusable="true">
+            <!-- Permissions -->
+            <LinearLayout
+                android:id="@+id/permissionsButton"
+                android:layout_width="match_parent"
+                android:layout_height="80dp"
+                android:orientation="horizontal"
+                android:background="@drawable/settings_box_bg"
+                android:paddingStart="10dp"
+                android:paddingEnd="10dp"
+                android:layout_marginBottom="12dp"
+                android:gravity="center_vertical"
+                android:clickable="true"
+                android:focusable="true">
 
-            <FrameLayout
-                android:id="@+id/renameIcon"
-                android:layout_width="40dp"
-                android:layout_height="40dp"
-                android:background="@drawable/profile_circle_bg"
-                app:layout_constraintTop_toTopOf="parent"
-                app:layout_constraintBottom_toBottomOf="parent"
-                app:layout_constraintStart_toStartOf="parent">
+                <FrameLayout
+                    android:layout_width="50dp"
+                    android:layout_height="50dp"
+                    android:background="@drawable/settings_icon_bg"
+                    android:layout_marginStart="8dp"
+                    android:layout_marginEnd="16dp">
 
-                <ImageView
-                    android:layout_width="20dp"
-                    android:layout_height="20dp"
-                    android:layout_gravity="center"
-                    android:src="@android:drawable/ic_menu_edit"
-                    app:tint="#CCCCCC"
-                    android:contentDescription="Edit" />
+                    <ImageView
+                        android:layout_width="24dp"
+                        android:layout_height="24dp"
+                        android:layout_gravity="center"
+                        android:src="@android:drawable/ic_menu_manage"
+                        app:tint="?attr/colorOnSurfaceVariant" />
 
-            </FrameLayout>
+                </FrameLayout>
 
-            <TextView
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_marginStart="16dp"
-                android:layout_marginEnd="16dp"
-                android:text="Rename Group"
-                android:fontFamily="@font/poppins_medium"
-                android:textSize="16sp"
-                android:textColor="?attr/colorOnSurface"
-                app:layout_constraintTop_toTopOf="parent"
-                app:layout_constraintBottom_toBottomOf="parent"
-                app:layout_constraintStart_toEndOf="@id/renameIcon"
-                app:layout_constraintEnd_toStartOf="@id/renameArrow" />
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="Permissions"
+                    android:textSize="16sp"
+                    android:textColor="#CCCCCC"
+                    android:fontFamily="@font/poppins_medium" />
 
-            <ImageView
-                android:id="@+id/renameArrow"
-                android:layout_width="20dp"
-                android:layout_height="20dp"
-                android:src="@drawable/ic_arrow_forward"
-                app:tint="#666666"
-                app:layout_constraintTop_toTopOf="parent"
-                app:layout_constraintBottom_toBottomOf="parent"
-                app:layout_constraintEnd_toEndOf="parent"
-                android:contentDescription="Arrow" />
+                <FrameLayout
+                    android:layout_width="36dp"
+                    android:layout_height="36dp"
+                    android:layout_marginEnd="8dp"
+                    android:background="@drawable/arrow_bg">
 
-        </androidx.constraintlayout.widget.ConstraintLayout>
+                    <ImageView
+                        android:layout_width="18dp"
+                        android:layout_height="18dp"
+                        android:layout_gravity="center"
+                        android:src="@drawable/ic_arrow_forward" />
 
-    </LinearLayout>
+                </FrameLayout>
+
+            </LinearLayout>
+
+        </LinearLayout>
+
+    </ScrollView>
 
     <!-- Bottom Navigation -->
-        <LinearLayout
+    <include
         android:id="@+id/bottomNav"
+        layout="@layout/bottom_navigation"
         android:layout_width="0dp"
         android:layout_height="72dp"
         android:layout_marginStart="16dp"
         android:layout_marginEnd="16dp"
         android:layout_marginBottom="20dp"
-        android:orientation="horizontal"
-        android:background="@drawable/glass_nav_bg"
-        android:clipToOutline="true"
-        android:gravity="center_vertical"
-                android:paddingBottom="0dp"
-        android:elevation="8dp"
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintEnd_toEndOf="parent">
-
-        <!-- Messages Nav Item -->
-        <LinearLayout
-            android:id="@+id/navMessages"
-            android:layout_gravity="center_vertical"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:orientation="vertical"
-            android:gravity="center"
-            android:background="@drawable/nav_item_ripple"
-            android:clickable="true"
-            android:focusable="true">
-
-            <ImageView
-                android:layout_width="22dp"
-                android:layout_height="22dp"
-                android:src="@android:drawable/sym_action_chat"
-                app:tint="?attr/colorOnSurfaceVariant"
-                android:layout_marginBottom="2dp"
-                android:contentDescription="Messages" />
-
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="Messages"
-                android:textSize="10sp"
-                android:textColor="?attr/colorOnSurfaceVariant"
-                android:fontFamily="@font/poppins_medium" />
-
-        </LinearLayout>
-
-        <!-- Wallet Nav Item -->
-        <LinearLayout
-            android:id="@+id/navWallet"
-            android:layout_gravity="center_vertical"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:orientation="vertical"
-            android:gravity="center"
-            android:background="@drawable/nav_item_ripple"
-            android:clickable="true"
-            android:focusable="true">
-
-            <ImageView
-                android:layout_width="22dp"
-                android:layout_height="22dp"
-                android:src="@drawable/ic_wallet"
-                android:layout_marginBottom="2dp"
-                app:tint="?attr/colorOnSurfaceVariant"
-                android:contentDescription="Wallet" />
-
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="Wallet"
-                android:textSize="10sp"
-                android:textColor="?attr/colorOnSurfaceVariant"
-                android:fontFamily="@font/poppins_medium" />
-
-        </LinearLayout>
-
-        <!-- Add Friend Nav Item -->
-        <LinearLayout
-            android:id="@+id/navAddFriend"
-            android:layout_gravity="center_vertical"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:orientation="vertical"
-            android:gravity="center"
-            android:background="@drawable/nav_item_ripple"
-            android:clickable="true"
-            android:focusable="true">
-
-            <ImageView
-                android:layout_width="22dp"
-                android:layout_height="22dp"
-                android:src="@drawable/ic_add_friend"
-                android:layout_marginBottom="2dp"
-                app:tint="?attr/colorOnSurfaceVariant"
-                android:contentDescription="Add Friend" />
-
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="Add Friend"
-                android:textSize="10sp"
-                android:textColor="?attr/colorOnSurfaceVariant"
-                android:fontFamily="@font/poppins_medium" />
-
-        </LinearLayout>
-
-        <!-- Lock Nav Item -->
-        <LinearLayout
-            android:id="@+id/navLock"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:orientation="vertical"
-            android:gravity="center"
-            android:background="@drawable/nav_item_ripple"
-            android:clickable="true"
-            android:focusable="true">
-
-            <ImageView
-                android:layout_width="22dp"
-                android:layout_height="22dp"
-                android:src="@drawable/ic_lock"
-                android:layout_marginBottom="2dp"
-                app:tint="?attr/colorOnSurfaceVariant"
-                android:contentDescription="Lock" />
-
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="Lock"
-                android:textSize="10sp"
-                android:textColor="?attr/colorOnSurfaceVariant"
-                android:fontFamily="@font/poppins_medium" />
-
-        </LinearLayout>
-
-    </LinearLayout>
+        app:layout_constraintEnd_toEndOf="parent" />
 
 </androidx.constraintlayout.widget.ConstraintLayout>

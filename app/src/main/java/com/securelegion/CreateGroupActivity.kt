@@ -1,10 +1,8 @@
 package com.securelegion
 
 import android.app.Activity
-import android.app.AlertDialog
 import android.graphics.Bitmap
 import android.os.Bundle
-import android.text.InputFilter
 import android.util.Log
 import android.view.View
 import android.widget.EditText
@@ -22,7 +20,8 @@ import android.content.Intent
 import com.securelegion.crypto.KeyManager
 import com.securelegion.database.SecureLegionDatabase
 import com.securelegion.database.entities.Contact
-import com.securelegion.services.GroupManager
+import com.securelegion.database.entities.ed25519PublicKeyBytes
+import com.securelegion.services.CrdtGroupManager
 import com.securelegion.ui.adapters.ContactSelectionAdapter
 import com.securelegion.ui.adapters.SelectedMembersAdapter
 import com.securelegion.utils.ImagePicker
@@ -43,13 +42,9 @@ class CreateGroupActivity : BaseActivity() {
     private lateinit var groupIconContainer: FrameLayout
     private lateinit var groupIconImage: ImageView
     private lateinit var groupNameInput: EditText
-    private lateinit var pinBoxesContainer: LinearLayout
     private lateinit var addMemberButton: LinearLayout
     private lateinit var selectedMembersList: RecyclerView
     private lateinit var createGroupButton: TextView
-
-    // PIN boxes
-    private val pinBoxes = mutableListOf<EditText>()
 
     // Selected members
     private val selectedMembers = mutableListOf<Contact>()
@@ -95,7 +90,6 @@ class CreateGroupActivity : BaseActivity() {
 
         initializeViews()
         setupClickListeners()
-        setupPinBoxes()
         setupSelectedMembersRecyclerView()
     }
 
@@ -118,18 +112,10 @@ class CreateGroupActivity : BaseActivity() {
         groupIconContainer = findViewById(R.id.groupIconContainer)
         groupIconImage = findViewById(R.id.groupIconImage)
         groupNameInput = findViewById(R.id.groupNameInput)
-        pinBoxesContainer = findViewById(R.id.pinBoxesContainer)
         addMemberButton = findViewById(R.id.addMemberButton)
         selectedMembersList = findViewById(R.id.selectedMembersList)
         createGroupButton = findViewById(R.id.createGroupButton)
 
-        // Initialize PIN boxes
-        pinBoxes.add(findViewById(R.id.pinBox1))
-        pinBoxes.add(findViewById(R.id.pinBox2))
-        pinBoxes.add(findViewById(R.id.pinBox3))
-        pinBoxes.add(findViewById(R.id.pinBox4))
-        pinBoxes.add(findViewById(R.id.pinBox5))
-        pinBoxes.add(findViewById(R.id.pinBox6))
     }
 
     private fun setupClickListeners() {
@@ -159,56 +145,6 @@ class CreateGroupActivity : BaseActivity() {
         }
     }
 
-    private fun setupPinBoxes() {
-        // Set input filters to allow only digits and limit to 1 character
-        pinBoxes.forEach { box ->
-            box.filters = arrayOf(
-                InputFilter.LengthFilter(1),
-                InputFilter { source, start, end, dest, dstart, dend ->
-                    // Only allow digits
-                    if (source.toString().matches(Regex("[0-9]*"))) {
-                        null // Accept the input
-                    } else {
-                        "" // Reject the input
-                    }
-                }
-            )
-        }
-
-        // Add key listener to handle backspace (moves to previous box and deletes)
-        pinBoxes.forEachIndexed { index, box ->
-            box.setOnKeyListener { _, keyCode, event ->
-                if (keyCode == android.view.KeyEvent.KEYCODE_DEL && event.action == android.view.KeyEvent.ACTION_DOWN) {
-                    if (box.text.isEmpty() && index > 0) {
-                        // If current box is empty and backspace pressed, move to previous box and clear it
-                        pinBoxes[index - 1].text.clear()
-                        pinBoxes[index - 1].requestFocus()
-                        return@setOnKeyListener true
-                    }
-                }
-                false
-            }
-        }
-
-        // Auto-advance to next box when digit is entered
-        pinBoxes.forEachIndexed { index, box ->
-            box.addTextChangedListener(object : android.text.TextWatcher {
-                override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
-                override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
-                override fun afterTextChanged(s: android.text.Editable?) {
-                    if (s?.length == 1 && index < pinBoxes.size - 1) {
-                        // Auto-advance to next box
-                        pinBoxes[index + 1].requestFocus()
-                    }
-                }
-            })
-        }
-    }
-
-    private fun getPinFromBoxes(): String {
-        return pinBoxes.joinToString("") { it.text.toString() }
-    }
-
     private fun showContactSelectionDialog() {
         lifecycleScope.launch {
             val contacts = withContext(Dispatchers.IO) {
@@ -233,6 +169,13 @@ class CreateGroupActivity : BaseActivity() {
                 val bottomSheetDialog = GlassBottomSheetDialog(this@CreateGroupActivity)
                 val view = layoutInflater.inflate(R.layout.bottom_sheet_select_contacts, null)
                 bottomSheetDialog.setContentView(view)
+
+                bottomSheetDialog.behavior.isDraggable = true
+                bottomSheetDialog.behavior.skipCollapsed = true
+
+                bottomSheetDialog.setOnShowListener {
+                    (view.parent as? View)?.setBackgroundResource(android.R.color.transparent)
+                }
 
                 // Setup RecyclerView in bottom sheet
                 val contactsRecyclerView = view.findViewById<RecyclerView>(R.id.contactsRecyclerView)
@@ -271,9 +214,7 @@ class CreateGroupActivity : BaseActivity() {
 
     private fun validateAndCreateGroup() {
         val groupName = groupNameInput.text.toString().trim()
-        val groupPin = getPinFromBoxes()
 
-        // Validation
         if (groupName.isEmpty()) {
             ThemedToast.show(this, "Please enter a group name")
             groupNameInput.requestFocus()
@@ -286,81 +227,54 @@ class CreateGroupActivity : BaseActivity() {
             return
         }
 
-        if (groupPin.length != 6) {
-            ThemedToast.show(this, "Please enter a 6-digit PIN")
-            pinBoxes[0].requestFocus()
-            return
-        }
-
-        if (!groupPin.all { it.isDigit() }) {
-            ThemedToast.show(this, "PIN must be 6 digits")
-            pinBoxes[0].requestFocus()
-            return
-        }
-
-        if (selectedMembers.isEmpty()) {
-            ThemedToast.show(this, "Please select at least one member")
-            return
-        }
-
-        // Create the group
-        createGroup(groupName, groupPin)
+        createGroup(groupName)
     }
 
-    private fun createGroup(groupName: String, groupPin: String) {
-        // Disable button to prevent double-tap
+    private fun createGroup(groupName: String) {
         createGroupButton.isEnabled = false
         createGroupButton.alpha = 0.5f
+        createGroupButton.text = "Creating..."
 
         lifecycleScope.launch {
             try {
                 val groupId = withContext(Dispatchers.IO) {
-                    Log.d(TAG, "Creating group: $groupName")
-                    Log.i(TAG, "Members: ${selectedMembers.size}")
-                    selectedMembers.forEach { contact ->
-                        Log.i(TAG, "- ${contact.displayName}")
+                    Log.d(TAG, "Creating CRDT group: $groupName with ${selectedMembers.size} members")
+
+                    val mgr = CrdtGroupManager.getInstance(this@CreateGroupActivity)
+                    val gid = mgr.createGroup(groupName, selectedGroupIcon)
+
+                    // Invite selected members (inviteMember handles broadcast + bundle internally)
+                    for (member in selectedMembers) {
+                        val pubkeyHex = member.ed25519PublicKeyBytes
+                            .joinToString("") { "%02x".format(it) }
+                        mgr.inviteMember(gid, pubkeyHex)
+                        Log.i(TAG, "Invited ${member.displayName}")
                     }
 
-                    // Create group using GroupManager
-                    val groupManager = GroupManager.getInstance(this@CreateGroupActivity)
-                    val result = groupManager.createGroup(
-                        groupName = groupName,
-                        groupPin = groupPin,
-                        members = selectedMembers,
-                        groupIcon = selectedGroupIcon
-                    )
-
-                    if (result.isSuccess) {
-                        Log.i(TAG, "Group created successfully: ${result.getOrNull()}")
-                        result.getOrNull() // Return group ID
-                    } else {
-                        Log.e(TAG, "Failed to create group", result.exceptionOrNull())
-                        throw result.exceptionOrNull() ?: Exception("Unknown error")
-                    }
+                    gid
                 }
 
                 withContext(Dispatchers.Main) {
                     ThemedToast.show(this@CreateGroupActivity, "Group '$groupName' created!")
 
-                    // Navigate to the group chat
-                    if (groupId != null) {
-                        val intent = Intent(this@CreateGroupActivity, GroupChatActivity::class.java).apply {
-                            putExtra("GROUP_ID", groupId)
-                            putExtra("GROUP_NAME", groupName)
-                        }
-                        startActivity(intent)
+                    val intent = Intent(this@CreateGroupActivity, GroupChatActivity::class.java).apply {
+                        putExtra(GroupChatActivity.EXTRA_GROUP_ID, groupId)
+                        putExtra(GroupChatActivity.EXTRA_GROUP_NAME, groupName)
                     }
-
-                    // Finish this activity
+                    startActivity(intent)
                     finish()
                 }
 
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to create group", e)
                 withContext(Dispatchers.Main) {
+                    ThemedToast.show(this@CreateGroupActivity, "Failed to create group: ${e.message}")
+                }
+            } finally {
+                withContext(Dispatchers.Main) {
                     createGroupButton.isEnabled = true
                     createGroupButton.alpha = 1.0f
-                    ThemedToast.show(this@CreateGroupActivity, "Failed to create group: ${e.message}")
+                    createGroupButton.text = "Create Group"
                 }
             }
         }
@@ -369,21 +283,39 @@ class CreateGroupActivity : BaseActivity() {
     // ==================== GROUP ICON PICKER ====================
 
     private fun showGroupIconPickerDialog() {
-        AlertDialog.Builder(this)
-            .setTitle("Change Group Icon")
-            .setItems(arrayOf("Take Photo", "Choose from Gallery", "Remove Icon")) { _, which ->
-                when (which) {
-                    0 -> ImagePicker.pickFromCamera(cameraLauncher)
-                    1 -> ImagePicker.pickFromGallery(galleryLauncher)
-                    2 -> removeGroupIcon()
-                }
-            }
-            .show()
+        val bottomSheet = GlassBottomSheetDialog(this)
+        val view = layoutInflater.inflate(R.layout.bottom_sheet_photo_picker, null)
+        bottomSheet.setContentView(view)
+
+        bottomSheet.behavior.isDraggable = true
+        bottomSheet.behavior.skipCollapsed = true
+
+        bottomSheet.setOnShowListener {
+            (view.parent as? View)?.setBackgroundResource(android.R.color.transparent)
+        }
+
+        view.findViewById<View>(R.id.optionTakePhoto).setOnClickListener {
+            bottomSheet.dismiss()
+            ImagePicker.pickFromCamera(cameraLauncher)
+        }
+
+        view.findViewById<View>(R.id.optionGallery).setOnClickListener {
+            bottomSheet.dismiss()
+            ImagePicker.pickFromGallery(galleryLauncher)
+        }
+
+        view.findViewById<View>(R.id.optionRemovePhoto).setOnClickListener {
+            bottomSheet.dismiss()
+            removeGroupIcon()
+        }
+
+        bottomSheet.show()
     }
 
     private fun updateGroupIconPreview(base64: String) {
         val bitmap = ImagePicker.decodeBase64ToBitmap(base64)
         if (bitmap != null) {
+            groupIconImage.imageTintList = null
             groupIconImage.setImageBitmap(bitmap)
             groupIconImage.scaleType = ImageView.ScaleType.CENTER_CROP
         }
@@ -393,6 +325,9 @@ class CreateGroupActivity : BaseActivity() {
         selectedGroupIcon = null
         groupIconImage.setImageResource(R.drawable.ic_contacts)
         groupIconImage.scaleType = ImageView.ScaleType.CENTER_INSIDE
+        groupIconImage.imageTintList = android.content.res.ColorStateList.valueOf(
+            android.graphics.Color.parseColor("#999999")
+        )
         ThemedToast.show(this, "Group icon removed")
     }
 }

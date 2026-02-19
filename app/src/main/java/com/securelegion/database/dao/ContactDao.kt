@@ -62,6 +62,13 @@ interface ContactDao {
     fun getContactByX25519PublicKey(x25519PublicKeyBase64: String): Contact?
 
     /**
+     * Get contacts by a list of IDs (batch lookup).
+     * Used by MessageRetryWorker to avoid N+1 getContactById() per message.
+     */
+    @Query("SELECT * FROM contacts WHERE id IN (:ids)")
+    suspend fun getContactsByIds(ids: List<Long>): List<Contact>
+
+    /**
      * Get all contacts ordered by most recent contact
      * Returns Flow for reactive updates
      */

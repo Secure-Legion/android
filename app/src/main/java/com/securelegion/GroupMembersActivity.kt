@@ -14,10 +14,14 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
-import com.securelegion.adapters.ContactAdapter
+import com.securelegion.adapters.GroupMemberAdapter
+import com.securelegion.adapters.GroupMemberItem
 import com.securelegion.crypto.KeyManager
 import com.securelegion.database.SecureLegionDatabase
-import com.securelegion.models.Contact
+import com.securelegion.database.entities.ed25519PublicKeyBytes
+import com.securelegion.services.CrdtGroupManager
+import com.securelegion.ui.adapters.ContactSelectionAdapter
+import com.securelegion.utils.GlassBottomSheetDialog
 import com.securelegion.utils.ThemedToast
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -42,9 +46,9 @@ class GroupMembersActivity : BaseActivity() {
     // Data
     private var groupId: String? = null
     private var groupName: String = "Group"
-    private lateinit var contactAdapter: ContactAdapter
-    private var allMembers = listOf<Contact>()
-    private var filteredMembers = listOf<Contact>()
+    private lateinit var memberAdapter: GroupMemberAdapter
+    private var allMembers = listOf<GroupMemberItem>()
+    private var filteredMembers = listOf<GroupMemberItem>()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -98,18 +102,26 @@ class GroupMembersActivity : BaseActivity() {
     }
 
     private fun setupRecyclerView() {
-        contactAdapter = ContactAdapter(
-            contacts = mutableListOf(),
-            onContactClick = { contact ->
-                // Open member profile or options
-                ThemedToast.show(this, "Member: ${contact.name}")
-                Log.i(TAG, "Clicked member: ${contact.name}")
+        memberAdapter = GroupMemberAdapter(
+            members = emptyList(),
+            onMemberClick = { member ->
+                ThemedToast.show(this, "${member.displayName} — ${member.role}")
+            },
+            onMuteClick = { member ->
+                ThemedToast.show(this, "Muted ${member.displayName}")
+                Log.i(TAG, "Mute: ${member.displayName}")
+            },
+            onRemoveClick = { member ->
+                confirmRemoveMember(member)
+            },
+            onPromoteClick = { member ->
+                confirmPromoteMember(member)
             }
         )
 
         membersList.apply {
             layoutManager = LinearLayoutManager(this@GroupMembersActivity)
-            adapter = contactAdapter
+            adapter = memberAdapter
         }
     }
 
@@ -131,7 +143,7 @@ class GroupMembersActivity : BaseActivity() {
 
     private fun scrollToLetter(letter: String) {
         val position = filteredMembers.indexOfFirst {
-            it.name.uppercase().startsWith(letter)
+            it.displayName.uppercase().startsWith(letter)
         }
 
         if (position != -1) {
@@ -152,28 +164,53 @@ class GroupMembersActivity : BaseActivity() {
         lifecycleScope.launch {
             try {
                 val members = withContext(Dispatchers.IO) {
-                    // Load actual group members from database
+                    val mgr = CrdtGroupManager.getInstance(this@GroupMembersActivity)
                     val keyManager = KeyManager.getInstance(this@GroupMembersActivity)
                     val dbPassphrase = keyManager.getDatabasePassphrase()
                     val database = SecureLegionDatabase.getInstance(this@GroupMembersActivity, dbPassphrase)
 
-                    // Get contacts who are members of this group
-                    val dbContacts = database.groupMemberDao().getContactsForGroup(currentGroupId)
+                    val crdtMembers = mgr.queryMembers(currentGroupId)
+                        .filter { !it.removed }
 
-                    // Convert database entities to models
-                    dbContacts.map { dbContact ->
-                        Contact(
-                            id = dbContact.id.toString(),
-                            name = dbContact.displayName,
-                            address = dbContact.solanaAddress,
-                            friendshipStatus = dbContact.friendshipStatus
+                    val localPubkeyHex = keyManager.getSigningPublicKey()
+                        .joinToString("") { "%02x".format(it) }
+
+                    crdtMembers.mapNotNull { member ->
+                        val isMe = member.pubkeyHex == localPubkeyHex
+                        val role = if (!member.accepted) "Pending" else member.role
+
+                        if (isMe) {
+                            return@mapNotNull GroupMemberItem(
+                                pubkeyHex = member.pubkeyHex,
+                                displayName = "You",
+                                role = role,
+                                isMe = true
+                            )
+                        }
+
+                        val pubkeyBytes = member.pubkeyHex.chunked(2)
+                            .map { it.toInt(16).toByte() }.toByteArray()
+                        val pubkeyB64 = android.util.Base64.encodeToString(
+                            pubkeyBytes, android.util.Base64.NO_WRAP
+                        )
+                        val dbContact = database.contactDao().getContactByPublicKey(pubkeyB64)
+                        val displayName = dbContact?.displayName
+                            ?: (member.deviceIdHex.take(16) + "...")
+                        val photo = dbContact?.profilePictureBase64
+
+                        GroupMemberItem(
+                            pubkeyHex = member.pubkeyHex,
+                            displayName = displayName,
+                            role = role,
+                            isMe = false,
+                            profilePhotoBase64 = photo
                         )
                     }
                 }
 
-                allMembers = members.sortedBy { it.name.uppercase() }
+                allMembers = members.sortedWith(compareBy({ !it.isMe }, { it.displayName.uppercase() }))
                 filteredMembers = allMembers
-                contactAdapter.updateContacts(filteredMembers)
+                memberAdapter.updateMembers(filteredMembers)
 
                 Log.i(TAG, "Loaded ${allMembers.size} members for group: $groupName")
 
@@ -193,11 +230,11 @@ class GroupMembersActivity : BaseActivity() {
             allMembers
         } else {
             allMembers.filter {
-                it.name.contains(query, ignoreCase = true)
+                it.displayName.contains(query, ignoreCase = true)
             }
         }
 
-        contactAdapter.updateContacts(filteredMembers)
+        memberAdapter.updateMembers(filteredMembers)
         Log.d(TAG, "Filtered to ${filteredMembers.size} members")
     }
 
@@ -210,21 +247,27 @@ class GroupMembersActivity : BaseActivity() {
 
         lifecycleScope.launch {
             try {
-                // Get all contacts who are NOT in this group
                 val availableContacts = withContext(Dispatchers.IO) {
                     val keyManager = KeyManager.getInstance(this@GroupMembersActivity)
                     val dbPassphrase = keyManager.getDatabasePassphrase()
                     val database = SecureLegionDatabase.getInstance(this@GroupMembersActivity, dbPassphrase)
+                    val mgr = CrdtGroupManager.getInstance(this@GroupMembersActivity)
 
                     // Get all contacts
                     val allContacts = database.contactDao().getAllContacts()
 
-                    // Get current group members
-                    val currentMemberIds = database.groupMemberDao().getMembersForGroup(currentGroupId)
-                        .map { it.contactId }
+                    // Get current CRDT member pubkeys (hex)
+                    val memberPubkeys = mgr.queryMembers(currentGroupId)
+                        .filter { !it.removed }
+                        .map { it.pubkeyHex }
+                        .toSet()
 
                     // Filter out contacts already in the group
-                    allContacts.filter { it.id !in currentMemberIds }
+                    allContacts.filter { contact ->
+                        val pubkeyHex = contact.ed25519PublicKeyBytes
+                            .joinToString("") { "%02x".format(it) }
+                        pubkeyHex !in memberPubkeys
+                    }
                 }
 
                 withContext(Dispatchers.Main) {
@@ -233,29 +276,36 @@ class GroupMembersActivity : BaseActivity() {
                         return@withContext
                     }
 
-                    // Show contact selection dialog
-                    val contactNames = availableContacts.map { it.displayName }.toTypedArray()
-                    val selectedContacts = mutableListOf<com.securelegion.database.entities.Contact>()
+                    val bottomSheetDialog = GlassBottomSheetDialog(this@GroupMembersActivity)
+                    val view = layoutInflater.inflate(R.layout.bottom_sheet_select_contacts, null)
+                    bottomSheetDialog.setContentView(view)
 
-                    AlertDialog.Builder(this@GroupMembersActivity)
-                        .setTitle("Add Members to Group")
-                        .setMultiChoiceItems(contactNames, null) { _, which, isChecked ->
-                            if (isChecked) {
-                                selectedContacts.add(availableContacts[which])
-                            } else {
-                                selectedContacts.remove(availableContacts[which])
-                            }
+                    bottomSheetDialog.behavior.isDraggable = true
+                    bottomSheetDialog.behavior.skipCollapsed = true
+
+                    bottomSheetDialog.setOnShowListener {
+                        (view.parent as? View)?.setBackgroundResource(android.R.color.transparent)
+                    }
+
+                    val contactsRecyclerView = view.findViewById<RecyclerView>(R.id.contactsRecyclerView)
+                    val doneButton = view.findViewById<TextView>(R.id.doneButton)
+
+                    val adapter = ContactSelectionAdapter(mutableSetOf())
+                    contactsRecyclerView.layoutManager = LinearLayoutManager(this@GroupMembersActivity)
+                    contactsRecyclerView.adapter = adapter
+                    adapter.submitList(availableContacts)
+
+                    doneButton.setOnClickListener {
+                        val selected = adapter.getSelectedContacts()
+                        if (selected.isEmpty()) {
+                            ThemedToast.show(this@GroupMembersActivity, "No contacts selected")
+                        } else {
+                            addMembersToGroup(currentGroupId, selected)
                         }
-                        .setPositiveButton("Add") { dialog, _ ->
-                            if (selectedContacts.isEmpty()) {
-                                ThemedToast.show(this@GroupMembersActivity, "No contacts selected")
-                            } else {
-                                addMembersToGroup(currentGroupId, selectedContacts)
-                            }
-                            dialog.dismiss()
-                        }
-                        .setNegativeButton("Cancel", null)
-                        .show()
+                        bottomSheetDialog.dismiss()
+                    }
+
+                    bottomSheetDialog.show()
                 }
 
             } catch (e: Exception) {
@@ -272,33 +322,18 @@ class GroupMembersActivity : BaseActivity() {
         lifecycleScope.launch {
             try {
                 withContext(Dispatchers.IO) {
-                    val keyManager = KeyManager.getInstance(this@GroupMembersActivity)
-                    val dbPassphrase = keyManager.getDatabasePassphrase()
-                    val database = SecureLegionDatabase.getInstance(this@GroupMembersActivity, dbPassphrase)
-
-                    // Add members to group
-                    val timestamp = System.currentTimeMillis()
-                    val groupMembers = contacts.map { contact ->
-                        com.securelegion.database.entities.GroupMember(
-                            groupId = groupId,
-                            contactId = contact.id,
-                            isAdmin = false,
-                            addedAt = timestamp
-                        )
+                    val mgr = CrdtGroupManager.getInstance(this@GroupMembersActivity)
+                    for (contact in contacts) {
+                        val pubkeyHex = contact.ed25519PublicKeyBytes
+                            .joinToString("") { "%02x".format(it) }
+                        mgr.inviteMember(groupId, pubkeyHex)
+                        Log.i(TAG, "Invited ${contact.displayName}")
                     }
-
-                    database.groupMemberDao().insertGroupMembers(groupMembers)
-
-                    // TODO: Send encrypted group key to new members via Tor
-                    // For now, just log
-                    Log.i(TAG, "Added ${contacts.size} members to group")
                 }
 
                 withContext(Dispatchers.Main) {
                     val memberNames = contacts.joinToString(", ") { it.displayName }
-                    ThemedToast.show(this@GroupMembersActivity, "Added: $memberNames")
-
-                    // Reload member list
+                    ThemedToast.show(this@GroupMembersActivity, "Invited: $memberNames")
                     loadGroupMembers()
                 }
 
@@ -311,6 +346,47 @@ class GroupMembersActivity : BaseActivity() {
         }
     }
 
+
+    private fun confirmRemoveMember(member: GroupMemberItem) {
+        val currentGroupId = groupId ?: return
+
+        AlertDialog.Builder(this)
+            .setTitle("Remove Member")
+            .setMessage("Remove ${member.displayName} from this group?")
+            .setPositiveButton("Remove") { dialog, _ ->
+                dialog.dismiss()
+                lifecycleScope.launch {
+                    try {
+                        withContext(Dispatchers.IO) {
+                            val mgr = CrdtGroupManager.getInstance(this@GroupMembersActivity)
+                            val opBytes = mgr.removeMember(currentGroupId, member.pubkeyHex)
+                            mgr.broadcastOpToGroup(currentGroupId, opBytes)
+                        }
+                        ThemedToast.show(this@GroupMembersActivity, "${member.displayName} removed")
+                        loadGroupMembers()
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Failed to remove member", e)
+                        ThemedToast.show(this@GroupMembersActivity, "Failed to remove: ${e.message}")
+                    }
+                }
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun confirmPromoteMember(member: GroupMemberItem) {
+        AlertDialog.Builder(this)
+            .setTitle("Promote Member")
+            .setMessage("Promote ${member.displayName} to Admin?")
+            .setPositiveButton("Promote") { dialog, _ ->
+                dialog.dismiss()
+                // TODO: CRDT MetadataSet for role change when role ops are implemented
+                ThemedToast.show(this, "Promote — Coming soon")
+                Log.i(TAG, "Promote: ${member.displayName}")
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
 
     private fun setupBottomNav() {
         WindowCompat.setDecorFitsSystemWindows(window, false)

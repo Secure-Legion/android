@@ -34,99 +34,7 @@
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent" />
 
-    <!-- Start Button (shown initially) -->
-    <TextView
-        android:id="@+id/startButton"
-        android:layout_width="0dp"
-        android:layout_height="60dp"
-        android:text="Start"
-        android:fontFamily="@font/space_grotesk_bold"
-        android:textSize="18sp"
-        android:textColor="?attr/colorOnSurface"
-        android:background="@drawable/lock_button_bg"
-        android:gravity="center"
-        android:layout_marginTop="48dp"
-        android:layout_marginStart="40dp"
-        android:layout_marginEnd="40dp"
-        android:clickable="true"
-        android:focusable="true"
-        app:layout_constraintTop_toBottomOf="@id/appTitle"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintEnd_toEndOf="parent" />
-
-    <!-- Status Text (hidden until Start is pressed) -->
-    <TextView
-        android:id="@+id/torStatusText"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="Connecting to Tor network..."
-        android:fontFamily="@font/poppins_regular"
-        android:textSize="14sp"
-        android:textColor="?attr/colorOnSurfaceVariant"
-        android:visibility="gone"
-        android:layout_marginTop="32dp"
-        app:layout_constraintTop_toBottomOf="@id/appTitle"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintEnd_toEndOf="parent" />
-
-    <!-- Progress Bar (hidden until Start is pressed) -->
-    <ProgressBar
-        android:id="@+id/torProgressBar"
-        style="@style/SecureLegionProgressBar"
-        android:layout_width="0dp"
-        android:layout_height="12dp"
-        android:layout_marginTop="20dp"
-        android:layout_marginStart="60dp"
-        android:layout_marginEnd="60dp"
-        android:max="100"
-        android:progress="0"
-        android:indeterminate="false"
-        android:visibility="gone"
-        app:layout_constraintTop_toBottomOf="@id/torStatusText"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintEnd_toEndOf="parent" />
-
-    <!-- Configure Bridges Button (shown on connection failure) -->
-    <TextView
-        android:id="@+id/configureBridgesButton"
-        android:layout_width="0dp"
-        android:layout_height="60dp"
-        android:text="Configure Bridges"
-        android:fontFamily="@font/space_grotesk_bold"
-        android:textSize="16sp"
-        android:textColor="?attr/colorOnSurface"
-        android:background="@drawable/lock_button_bg"
-        android:gravity="center"
-        android:layout_marginTop="16dp"
-        android:layout_marginEnd="20dp"
-        android:clickable="true"
-        android:focusable="true"
-        android:visibility="gone"
-        app:layout_constraintTop_toBottomOf="@id/torProgressBar"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintEnd_toEndOf="parent" />
-
-    <!-- Retry Connection Button (shown after bridge configuration) -->
-    <TextView
-        android:id="@+id/retryConnectionButton"
-        android:layout_width="0dp"
-        android:layout_height="60dp"
-        android:text="Retry Connection"
-        android:fontFamily="@font/space_grotesk_bold"
-        android:textSize="16sp"
-        android:textColor="?attr/colorOnSurface"
-        android:background="@drawable/lock_button_bg"
-        android:gravity="center"
-        android:layout_marginTop="12dp"
-        android:layout_marginEnd="20dp"
-        android:clickable="true"
-        android:focusable="true"
-        android:visibility="gone"
-        app:layout_constraintTop_toBottomOf="@id/configureBridgesButton"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintEnd_toEndOf="parent" />
-
-    <!-- Footer Text (clickable - opens bridge settings) -->
+    <!-- Footer Tagline (non-clickable) -->
     <TextView
         android:id="@+id/footerText"
         android:layout_width="wrap_content"
@@ -135,8 +43,6 @@
         android:fontFamily="@font/poppins_medium"
         android:textSize="14sp"
         android:textColor="?attr/colorOnSurfaceVariant"
-        android:clickable="true"
-        android:focusable="true"
         android:layout_marginBottom="32dp"
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintStart_toStartOf="parent"

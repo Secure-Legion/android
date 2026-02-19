@@ -79,8 +79,10 @@ object KeyChainManager {
     ) {
         withContext(Dispatchers.IO) {
             try {
-                // Check if Kyber key is present AND non-zero (legacy cards use zero-filled placeholder)
-                val hasValidKyberKey = (theirKyberPublicKey != null && theirKyberPublicKey.any { it != 0.toByte() })
+                // Check if Kyber key is present, correct size, AND non-zero (legacy cards use zero-filled placeholder)
+                val hasValidKyberKey = (theirKyberPublicKey != null
+                    && theirKyberPublicKey.size == 1568  // correct ML-KEM-1024 public key size
+                    && theirKyberPublicKey.any { it != 0.toByte() })  // not all-zero placeholder
                 val isHybridMode = hasValidKyberKey
                 val modeDesc = if (isHybridMode) "hybrid post-quantum" else "legacy X25519-only"
 
@@ -103,21 +105,32 @@ object KeyChainManager {
                     sharedSecret = precomputedSharedSecret
                 } else if (isHybridMode && theirKyberPublicKey != null) {
                     // HYBRID MODE: Use X25519 + Kyber-1024
-                    val ourKyberSecretKey = keyManager.getKyberSecretKey()
+                    val ourKyberSecretKey = keyManager.tryGetKyberSecretKey()
 
-                    if (kyberCiphertext == null) {
-                        // ERROR: This path should NOT be hit anymore!
-                        // Both devices should either use precomputedSharedSecret OR kyberCiphertext
-                        Log.e(TAG, "WARNING: Hybrid mode with null ciphertext and null precomputed secret - this is the OLD BUG!")
-                        Log.e(TAG, "This will generate a DIFFERENT shared secret! Key chain will fail!")
-                        // Fallback to legacy mode to avoid crash
+                    if (ourKyberSecretKey == null) {
+                        // Our Kyber secret key is missing — cannot do hybrid KEM
+                        Log.e(TAG, "PQ_KEY_MISSING: Our Kyber secret key not found. Falling back to X25519-only. " +
+                            "Key chain may be incompatible with peer. Delete and re-add contact to fix.")
+                        sharedSecret = RustBridge.deriveSharedSecret(ourX25519PrivateKey, theirX25519PublicKey)
+                    } else if (kyberCiphertext == null) {
+                        // Hybrid mode but no ciphertext and no precomputed secret — PQ desync
+                        Log.e(TAG, "PQ_DESYNC: Hybrid mode but missing both ciphertext and precomputed secret. " +
+                            "Falling back to X25519-only. Messages from this contact may fail to decrypt. " +
+                            "Delete and re-add contact to fix.")
                         sharedSecret = RustBridge.deriveSharedSecret(ourX25519PrivateKey, theirX25519PublicKey)
                     } else {
                         // We are the RECEIVER - decapsulate to recover shared secret
                         Log.d(TAG, "Performing hybrid decapsulation (we are receiver)")
-                        sharedSecret = RustBridge.hybridDecapsulate(ourX25519PrivateKey, ourKyberSecretKey, kyberCiphertext)
-                            ?: throw IllegalStateException("Hybrid decapsulation failed - invalid ciphertext or keys")
-                        Log.d(TAG, "Hybrid KEM complete - derived 64-byte combined secret")
+                        val hybridResult = RustBridge.hybridDecapsulate(ourX25519PrivateKey, ourKyberSecretKey, kyberCiphertext)
+                        if (hybridResult != null) {
+                            sharedSecret = hybridResult
+                            Log.d(TAG, "Hybrid KEM complete - derived 64-byte combined secret")
+                        } else {
+                            Log.e(TAG, "PQ_DECAPS_FAIL: Hybrid decapsulation failed (invalid ciphertext or keys). " +
+                                "Falling back to X25519-only. Key chain may be incompatible with peer. " +
+                                "Delete and re-add contact to fix.")
+                            sharedSecret = RustBridge.deriveSharedSecret(ourX25519PrivateKey, theirX25519PublicKey)
+                        }
                     }
                 } else {
                     // LEGACY MODE: Use X25519 ECDH only (for backward compatibility)

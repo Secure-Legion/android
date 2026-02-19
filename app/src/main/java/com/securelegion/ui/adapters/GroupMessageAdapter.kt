@@ -3,26 +3,24 @@ package com.securelegion.ui.adapters
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import android.widget.ImageView
 import android.widget.TextView
 import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.ListAdapter
 import androidx.recyclerview.widget.RecyclerView
 import com.securelegion.R
-import com.securelegion.database.entities.GroupMessage
 import java.text.SimpleDateFormat
 import java.util.*
 
 /**
- * RecyclerView adapter for group chat messages
+ * RecyclerView adapter for CRDT group chat messages.
  *
- * IMPORTANT: Click handlers should NEVER update message timestamps
- * Messages are always sorted by their original timestamp (ORDER BY timestamp ASC)
- * Clicking a message should only update status fields like isRead, NOT timestamp
+ * Uses GroupChatMessage — a UI-only data class mapped from CrdtGroupManager.CrdtMessage.
  */
 class GroupMessageAdapter(
-    private val onMessageClick: (GroupMessage) -> Unit = {},
-    private val onMessageLongClick: (GroupMessage) -> Unit = {}
-) : ListAdapter<GroupMessage, RecyclerView.ViewHolder>(GroupMessageDiffCallback()) {
+    private val onMessageClick: (GroupChatMessage) -> Unit = {},
+    private val onMessageLongClick: (GroupChatMessage) -> Unit = {}
+) : ListAdapter<GroupChatMessage, RecyclerView.ViewHolder>(GroupChatMessageDiffCallback()) {
 
     companion object {
         private const val VIEW_TYPE_SENT = 1
@@ -57,34 +55,21 @@ class GroupMessageAdapter(
         }
     }
 
-    /**
-     * ViewHolder for sent messages
-     */
     class SentMessageViewHolder(itemView: View) : RecyclerView.ViewHolder(itemView) {
         private val messageText: TextView = itemView.findViewById(R.id.messageText)
-        private val messageStatus: TextView = itemView.findViewById(R.id.messageStatus)
+        private val messageStatus: ImageView = itemView.findViewById(R.id.messageStatus)
         private val swipeRevealedTime: TextView = itemView.findViewById(R.id.swipeRevealedTime)
 
         fun bind(
-            message: GroupMessage,
-            onClick: (GroupMessage) -> Unit,
-            onLongClick: (GroupMessage) -> Unit
+            message: GroupChatMessage,
+            onClick: (GroupChatMessage) -> Unit,
+            onLongClick: (GroupChatMessage) -> Unit
         ) {
-            messageText.text = message.decryptedContent ?: "[Encrypted]"
+            messageText.text = message.text
             swipeRevealedTime.text = formatTimestamp(message.timestamp)
+            // Hide delivery status for group messages (no per-message ACK in CRDT groups)
+            messageStatus.visibility = View.GONE
 
-            // Show delivery status
-            messageStatus.text = when (message.status) {
-                GroupMessage.STATUS_PENDING -> "-"
-                GroupMessage.STATUS_SENT -> "Sent"
-                GroupMessage.STATUS_DELIVERED -> "Delivered"
-                GroupMessage.STATUS_READ -> "Read"
-                GroupMessage.STATUS_FAILED -> "Failed"
-                else -> "Sent"
-            }
-            messageStatus.visibility = View.VISIBLE
-
-            // Click handlers - DO NOT update timestamp!
             itemView.setOnClickListener { onClick(message) }
             itemView.setOnLongClickListener {
                 onLongClick(message)
@@ -98,28 +83,23 @@ class GroupMessageAdapter(
         }
     }
 
-    /**
-     * ViewHolder for received messages
-     */
     class ReceivedMessageViewHolder(itemView: View) : RecyclerView.ViewHolder(itemView) {
         private val messageText: TextView = itemView.findViewById(R.id.messageText)
         private val swipeRevealedTime: TextView = itemView.findViewById(R.id.swipeRevealedTime)
 
         fun bind(
-            message: GroupMessage,
-            onClick: (GroupMessage) -> Unit,
-            onLongClick: (GroupMessage) -> Unit
+            message: GroupChatMessage,
+            onClick: (GroupChatMessage) -> Unit,
+            onLongClick: (GroupChatMessage) -> Unit
         ) {
-            // Show sender name + message text (TODO: Add sender name to layout later)
             val displayText = if (message.senderName.isNotEmpty()) {
-                "${message.senderName}: ${message.decryptedContent ?: "[Encrypted]"}"
+                "${message.senderName}: ${message.text}"
             } else {
-                message.decryptedContent ?: "[Encrypted]"
+                message.text
             }
             messageText.text = displayText
             swipeRevealedTime.text = formatTimestamp(message.timestamp)
 
-            // Click handlers - DO NOT update timestamp!
             itemView.setOnClickListener { onClick(message) }
             itemView.setOnLongClickListener {
                 onLongClick(message)
@@ -133,20 +113,25 @@ class GroupMessageAdapter(
         }
     }
 
-    /**
-     * DiffUtil callback for efficient list updates
-     * Uses message ID as stable identifier, NOT timestamp
-     */
-    private class GroupMessageDiffCallback : DiffUtil.ItemCallback<GroupMessage>() {
-        override fun areItemsTheSame(oldItem: GroupMessage, newItem: GroupMessage): Boolean {
-            // Use messageId as stable identifier - timestamp should NEVER be used here
+    private class GroupChatMessageDiffCallback : DiffUtil.ItemCallback<GroupChatMessage>() {
+        override fun areItemsTheSame(oldItem: GroupChatMessage, newItem: GroupChatMessage): Boolean {
             return oldItem.messageId == newItem.messageId
         }
 
-        override fun areContentsTheSame(oldItem: GroupMessage, newItem: GroupMessage): Boolean {
-            // Check if message content changed (status updates, decryption, etc.)
-            // This allows status changes without reordering
+        override fun areContentsTheSame(oldItem: GroupChatMessage, newItem: GroupChatMessage): Boolean {
             return oldItem == newItem
         }
     }
 }
+
+/**
+ * UI data class for group chat messages.
+ * Mapped from CrdtGroupManager.CrdtMessage in the activity layer.
+ */
+data class GroupChatMessage(
+    val messageId: String,
+    val text: String,
+    val timestamp: Long,
+    val isSentByMe: Boolean,
+    val senderName: String = ""
+)

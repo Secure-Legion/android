@@ -1,0 +1,87 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:background="@drawable/bottom_sheet_bg"
+    android:orientation="vertical"
+    android:paddingStart="24dp"
+    android:paddingEnd="24dp"
+    android:paddingTop="24dp"
+    android:paddingBottom="32dp"
+    android:gravity="center_horizontal">
+
+    <!-- Icon -->
+    <FrameLayout
+        android:layout_width="60dp"
+        android:layout_height="60dp"
+        android:background="@drawable/settings_icon_bg"
+        android:layout_marginBottom="16dp">
+
+        <ImageView
+            android:layout_width="28dp"
+            android:layout_height="28dp"
+            android:layout_gravity="center"
+            android:src="@android:drawable/ic_menu_edit"
+            app:tint="?attr/colorOnSurfaceVariant" />
+
+    </FrameLayout>
+
+    <!-- Title -->
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Rename Group"
+        android:textSize="22sp"
+        android:textColor="?attr/colorOnSurface"
+        android:fontFamily="@font/space_grotesk_bold"
+        android:gravity="center"
+        android:layout_marginBottom="24dp" />
+
+    <!-- Name Input -->
+    <EditText
+        android:id="@+id/groupNameInput"
+        android:layout_width="match_parent"
+        android:layout_height="56dp"
+        android:background="@drawable/pin_box_bg"
+        android:paddingStart="16dp"
+        android:paddingEnd="16dp"
+        android:hint="Enter new group name"
+        android:textColor="?attr/colorOnSurface"
+        android:textColorHint="#666666"
+        android:textSize="16sp"
+        android:fontFamily="@font/poppins_medium"
+        android:inputType="text"
+        android:maxLength="50"
+        android:layout_marginBottom="24dp" />
+
+    <!-- Save Button -->
+    <TextView
+        android:id="@+id/saveNameButton"
+        android:layout_width="match_parent"
+        android:layout_height="56dp"
+        android:background="@drawable/swap_button_bg"
+        android:gravity="center"
+        android:text="Save"
+        android:textSize="18sp"
+        android:textColor="?attr/colorOnSurface"
+        android:fontFamily="@font/poppins_semibold"
+        android:clickable="true"
+        android:focusable="true"
+        android:layout_marginBottom="12dp" />
+
+    <!-- Cancel Button -->
+    <TextView
+        android:id="@+id/cancelNameButton"
+        android:layout_width="match_parent"
+        android:layout_height="56dp"
+        android:background="@drawable/settings_box_bg"
+        android:gravity="center"
+        android:text="Cancel"
+        android:textSize="18sp"
+        android:textColor="?attr/colorOnSurface"
+        android:fontFamily="@font/poppins_semibold"
+        android:clickable="true"
+        android:focusable="true" />
+
+</LinearLayout>

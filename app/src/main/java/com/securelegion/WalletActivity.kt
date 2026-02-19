@@ -268,8 +268,8 @@ class WalletActivity : AppCompatActivity() {
                 val wallets = allWallets.filter { it.walletId != "main" }
                 val currentWallet = wallets.maxByOrNull { it.lastUsedAt }
 
-                // Check if this is a Zcash wallet
-                val isZcashWallet = !currentWallet?.zcashUnifiedAddress.isNullOrEmpty() || !currentWallet?.zcashAddress.isNullOrEmpty()
+                // Check if this is a Zcash wallet (must have zcash address AND no solana address)
+                val isZcashWallet = (!currentWallet?.zcashUnifiedAddress.isNullOrEmpty() || !currentWallet?.zcashAddress.isNullOrEmpty()) && currentWallet?.solanaAddress.isNullOrEmpty() == true
 
                 withContext(Dispatchers.Main) {
                     if (isZcashWallet) {
@@ -1092,7 +1092,7 @@ class WalletActivity : AppCompatActivity() {
                         updateChainIcon(walletChainIcon, currentWallet)
 
                         // Update shield button label and icon based on wallet type
-                        val isZcash = !currentWallet?.zcashUnifiedAddress.isNullOrEmpty() || !currentWallet?.zcashAddress.isNullOrEmpty()
+                        val isZcash = (!currentWallet?.zcashUnifiedAddress.isNullOrEmpty() || !currentWallet?.zcashAddress.isNullOrEmpty()) && currentWallet?.solanaAddress.isNullOrEmpty() == true
                         shieldButtonLabel?.text = if (isZcash) "Shield" else "Swap"
                         updateShieldButtonIcon(isZcash)
 
@@ -1314,7 +1314,7 @@ class WalletActivity : AppCompatActivity() {
                             showingUsdMap[wallet.walletId] = true
 
                             // Set chain-specific icon
-                            val isZcashWallet = !wallet.zcashUnifiedAddress.isNullOrEmpty() || !wallet.zcashAddress.isNullOrEmpty()
+                            val isZcashWallet = (!wallet.zcashUnifiedAddress.isNullOrEmpty() || !wallet.zcashAddress.isNullOrEmpty()) && wallet.solanaAddress.isEmpty()
                             if (isZcashWallet) {
                                 walletIcon.setImageResource(R.drawable.ic_zcash)
                             } else {
@@ -1366,7 +1366,7 @@ class WalletActivity : AppCompatActivity() {
 
                             // Click on wallet item to switch (and set active if Zcash)
                             walletItemView.setOnClickListener {
-                                val isZcash = !wallet.zcashUnifiedAddress.isNullOrEmpty() || !wallet.zcashAddress.isNullOrEmpty()
+                                val isZcash = (!wallet.zcashUnifiedAddress.isNullOrEmpty() || !wallet.zcashAddress.isNullOrEmpty()) && wallet.solanaAddress.isEmpty()
                                 if (isZcash) {
                                     setActiveZcashWallet(wallet.walletId)
                                 } else {
@@ -1485,7 +1485,7 @@ class WalletActivity : AppCompatActivity() {
 
                     // Update shield button label and icon based on wallet type
                     val shieldButtonLabel = findViewById<TextView>(R.id.shieldButtonLabel)
-                    val isZcashWallet = !wallet.zcashUnifiedAddress.isNullOrEmpty() || !wallet.zcashAddress.isNullOrEmpty()
+                    val isZcashWallet = (!wallet.zcashUnifiedAddress.isNullOrEmpty() || !wallet.zcashAddress.isNullOrEmpty()) && wallet.solanaAddress.isEmpty()
                     shieldButtonLabel?.text = if (isZcashWallet) "Shield" else "Swap"
                     updateShieldButtonIcon(isZcashWallet)
 
@@ -1642,7 +1642,7 @@ class WalletActivity : AppCompatActivity() {
                     }
 
                     // Determine if this is a Zcash or Solana wallet
-                    val isZcashWallet = !currentWallet.zcashUnifiedAddress.isNullOrEmpty() || !currentWallet.zcashAddress.isNullOrEmpty()
+                    val isZcashWallet = (!currentWallet.zcashUnifiedAddress.isNullOrEmpty() || !currentWallet.zcashAddress.isNullOrEmpty()) && currentWallet.solanaAddress.isEmpty()
 
                     // Create bottom sheet dialog
                     val bottomSheet = GlassBottomSheetDialog(this@WalletActivity)

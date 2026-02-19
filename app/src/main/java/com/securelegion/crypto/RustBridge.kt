@@ -478,6 +478,20 @@ object RustBridge {
     external fun createHiddenService(servicePort: Int = 9150, localPort: Int = 9150): String
 
     /**
+     * Pre-compute a v3 .onion address from a BIP39 seed + domain separator, without Tor.
+     *
+     * Uses the exact same derivation as createHiddenService:
+     *   SHA-256(seed || domainSep) -> Ed25519 seed -> pubkey -> .onion address
+     *
+     * @param seed 64-byte BIP39 seed
+     * @param domainSep Domain separation string: "tor_hs", "friend_req", or "tor_voice"
+     * @return The v3 .onion address (e.g., "xxxx...xxxx.onion")
+     * @throws IllegalArgumentException if seed is not 64 bytes or domainSep is invalid
+     */
+    @JvmStatic
+    external fun computeOnionAddressFromSeed(seed: ByteArray, domainSep: String): String
+
+    /**
      * Clear all ephemeral hidden services from Tor control port
      * This removes orphaned services from previous failed account creation attempts
      * @return The number of services deleted, or -1 on error
@@ -561,6 +575,43 @@ object RustBridge {
      */
     external fun httpPostViaTor(url: String, body: String): String?
 
+    // ==================== Push Recovery (v5 Contact List Mesh) ====================
+
+    /**
+     * Enable recovery mode on the contact exchange endpoint.
+     * After seed restore, if contacts weren't found locally, call this so friends
+     * can push the encrypted contact list blob via POST /recovery/push/{cid}.
+     * Rust writes the blob directly to ipfs_pins/{cid} on disk.
+     *
+     * @param enabled True to enable, false to disable
+     * @param expectedCid The deterministic contact list CID (derived from seed)
+     * @param dataDir The app's files directory path (context.filesDir.absolutePath)
+     */
+    external fun setRecoveryMode(enabled: Boolean, expectedCid: String, dataDir: String)
+
+    /**
+     * Clear recovery mode after contacts have been successfully imported.
+     */
+    external fun clearRecoveryMode()
+
+    /**
+     * Poll whether a friend has pushed a recovery blob to disk.
+     * Returns true if recoverFromIPFS() should be called to try importing.
+     */
+    external fun pollRecoveryReady(): Boolean
+
+    /**
+     * POST raw binary data to a URL via Tor SOCKS5 proxy.
+     * Used by the friend side to push encrypted contact list bytes.
+     *
+     * @param url The URL (e.g. http://{onion}/recovery/push/{cid})
+     * @param data Raw binary data to POST
+     * @return Response body as String, or null on error
+     */
+    external fun httpPostBinaryViaTor(url: String, data: ByteArray): String?
+
+    // ==================== END Push Recovery ====================
+
     // ==================== END v2.0: Friend Request System ====================
 
     /**
@@ -633,7 +684,15 @@ object RustBridge {
      * Start the Tor bootstrap event listener
      * This should be called early, before Tor initialization
      */
-    external fun startBootstrapListener()
+    external fun startBootstrapListener(cookiePath: String?)
+
+    /**
+     * Check if the bootstrap event listener thread is currently running.
+     * Returns true if the listener is alive, false if it has died or was stopped.
+     * Use this in health monitoring to detect a dead listener and restart it.
+     */
+    @JvmStatic
+    external fun isEventListenerRunning(): Boolean
 
     /**
      * Stop the bootstrap event listener (call before restart to allow a fresh listener)
@@ -653,6 +712,14 @@ object RustBridge {
      * @return 1 if circuits established, 0 if no circuits
      */
     external fun getCircuitEstablished(): Int
+
+    /**
+     * Get event listener heartbeat (epoch millis of last successful control port operation).
+     * Returns 0 if the listener has never run or the control port connection is dead.
+     * Use to detect stale/frozen listener: if heartbeat > 30s old and tor state is RUNNING,
+     * the listener is dead and health should be treated as unhealthy.
+     */
+    external fun getLastListenerHeartbeat(): Long
 
     /**
      * Get HS descriptor upload count - how many HSDirs confirmed our descriptor
@@ -705,12 +772,20 @@ object RustBridge {
      */
     external fun pollIncomingPing(): ByteArray?
 
+    /** Blocking variant — blocks up to 5s waiting for a Ping. Use from Dispatchers.IO only. */
+    @JvmStatic
+    external fun pollIncomingPingBlocking(): ByteArray?
+
     /**
      * Poll for incoming MESSAGE (TEXT/VOICE/IMAGE/PAYMENT) from listener
      * Returns encoded data: [connection_id (8 bytes)][encrypted message blob]
      * @return Encoded data or null if no message available
      */
     external fun pollIncomingMessage(): ByteArray?
+
+    /** Blocking variant — blocks up to 5s waiting for a Message. Use from Dispatchers.IO only. */
+    @JvmStatic
+    external fun pollIncomingMessageBlocking(): ByteArray?
 
     /**
      * Poll for incoming VOICE call signaling (CALL_SIGNALING) from listener
@@ -719,6 +794,10 @@ object RustBridge {
      * @return Encoded data or null if no message available
      */
     external fun pollVoiceMessage(): ByteArray?
+
+    /** Blocking variant — blocks up to 5s waiting for Voice signaling. Use from Dispatchers.IO only. */
+    @JvmStatic
+    external fun pollVoiceMessageBlocking(): ByteArray?
 
     // ========== Opus Audio Codec (Voice Calling) ==========
 
@@ -1085,6 +1164,10 @@ object RustBridge {
      */
     external fun pollIncomingTap(): ByteArray?
 
+    /** Blocking variant — blocks up to 5s waiting for a Tap. Use from Dispatchers.IO only. */
+    @JvmStatic
+    external fun pollIncomingTapBlocking(): ByteArray?
+
     /**
      * Poll for an incoming friend request (non-blocking)
      * Wire protocol messages (0x07 FRIEND_REQUEST or 0x08 FRIEND_REQUEST_ACCEPTED)
@@ -1092,6 +1175,10 @@ object RustBridge {
      * @return Raw encrypted friend request bytes, or null if no request available
      */
     external fun pollFriendRequest(): ByteArray?
+
+    /** Blocking variant — blocks up to 5s waiting for a FriendRequest. Use from Dispatchers.IO only. */
+    @JvmStatic
+    external fun pollFriendRequestBlocking(): ByteArray?
 
     /**
      * Decrypt an incoming tap and get sender's Ed25519 public key
@@ -1106,6 +1193,10 @@ object RustBridge {
      * @return Pong wire message bytes, or null if no pong available
      */
     external fun pollIncomingPong(): ByteArray?
+
+    /** Blocking variant — blocks up to 5s waiting for a Pong. Use from Dispatchers.IO only. */
+    @JvmStatic
+    external fun pollIncomingPongBlocking(): ByteArray?
 
     /**
      * Decrypt incoming pong from listener and store in GLOBAL_PONG_SESSIONS
@@ -1171,6 +1262,10 @@ object RustBridge {
      * @return ACK wire message bytes, or null if no ACK available
      */
     external fun pollIncomingAck(): ByteArray?
+
+    /** Blocking variant — blocks up to 5s waiting for an ACK. Use from Dispatchers.IO only. */
+    @JvmStatic
+    external fun pollIncomingAckBlocking(): ByteArray?
 
     /**
      * Decrypt incoming ACK from listener and store in GLOBAL_ACK_SESSIONS
@@ -1334,6 +1429,71 @@ object RustBridge {
      * Reset all debug counters (dev-only, for fast iteration)
      */
     external fun resetDebugCounters()
+
+    // ==================== CRDT GROUP OPERATIONS ====================
+
+    /**
+     * Rebuild group state from serialized ops (call on app startup / opening a group).
+     * serializedOpsBytes is length-prefixed: [4-byte BE len][op bytes]...
+     * @return true on success, false on error
+     */
+    external fun crdtLoadGroup(groupIdHex: String, serializedOpsBytes: ByteArray): Boolean
+
+    /**
+     * Free group state from memory (off-screen / low-memory).
+     */
+    external fun crdtUnloadGroup(groupIdHex: String)
+
+    /**
+     * Apply batch of received ops to a group. Ops must already be signed.
+     * @return JSON: {"applied": N, "rejected": N, "limit_status": "Ok|..."}
+     */
+    external fun crdtApplyOps(groupIdHex: String, serializedOpsBytes: ByteArray): String
+
+    /**
+     * Create a signed op, apply it locally, and return JSON with serialized bytes + metadata.
+     * @return JSON: {"op_bytes_b64": "...", "op_id": "...", "op_type": "...", "lamport": N, "msg_id_hex": "..."}
+     */
+    external fun crdtCreateOp(
+        groupIdHex: String,
+        opTypeStr: String,
+        paramsJson: String,
+        authorPubkey: ByteArray,
+        authorPrivkey: ByteArray
+    ): String
+
+    /**
+     * Query derived state for a loaded group.
+     * queryType: "members", "messages", "messages_after", "metadata", "heads", "state_hash", "limit_status"
+     * @return JSON (varies by queryType)
+     */
+    external fun crdtQuery(groupIdHex: String, queryType: String, paramsJson: String): String
+
+    // Sync stubs (Phase 6 — not implemented yet)
+    external fun crdtGenerateSyncHello(peerDeviceIdHex: String): ByteArray
+    external fun crdtProcessSyncHello(peerDeviceIdHex: String, helloBytes: ByteArray): ByteArray
+    external fun crdtPrepareSyncChunks(requestBytes: ByteArray): ByteArray
+    external fun crdtApplySyncChunk(chunkBytes: ByteArray): ByteArray
+
+    // ==================== XCHACHA20 SYMMETRIC ENCRYPTION ====================
+
+    /**
+     * Encrypt plaintext with XChaCha20-Poly1305.
+     * @param plaintext Data to encrypt
+     * @param key 32-byte encryption key
+     * @param nonce 24-byte nonce
+     * @return Ciphertext with Poly1305 authentication tag appended
+     */
+    external fun xchacha20Encrypt(plaintext: ByteArray, key: ByteArray, nonce: ByteArray): ByteArray
+
+    /**
+     * Decrypt ciphertext with XChaCha20-Poly1305.
+     * @param ciphertext Data to decrypt (includes Poly1305 tag)
+     * @param key 32-byte encryption key
+     * @param nonce 24-byte nonce
+     * @return Decrypted plaintext, or null on authentication failure
+     */
+    external fun xchacha20Decrypt(ciphertext: ByteArray, key: ByteArray, nonce: ByteArray): ByteArray?
 
     // ==================== HELPER FUNCTIONS ====================
 

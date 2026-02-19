@@ -6,69 +6,125 @@
     android:layout_height="match_parent"
     android:background="?attr/colorSurface">
 
-    <!-- Top Bar -->
+    <!-- Top Bar (matches message chat header) -->
     <LinearLayout
         android:id="@+id/topBar"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="horizontal"
-        android:background="@drawable/glass_header_bg"
-        android:paddingTop="48dp"
-        android:paddingBottom="12dp"
+        android:background="@android:color/transparent"
         android:paddingStart="20dp"
         android:paddingEnd="20dp"
+        android:paddingTop="16dp"
+        android:paddingBottom="16dp"
+        android:fitsSystemWindows="true"
         android:gravity="center_vertical"
         app:layout_constraintTop_toTopOf="parent">
 
         <!-- Back Button -->
-        <View
+        <FrameLayout
             android:id="@+id/backButton"
-            android:layout_width="35dp"
-            android:layout_height="35dp"
-            android:background="@drawable/back_button_bg"
+            android:layout_width="42dp"
+            android:layout_height="42dp"
+            android:layout_marginStart="8dp"
+            android:background="@drawable/glass_circle_bg"
             android:clickable="true"
-            android:focusable="true" />
+            android:focusable="true">
 
-        <!-- Spacer -->
-        <View
-            android:layout_width="0dp"
-            android:layout_height="1dp"
-            android:layout_weight="1" />
+            <ImageView
+                android:layout_width="20dp"
+                android:layout_height="20dp"
+                android:layout_gravity="center"
+                android:src="@drawable/ic_back_arrow"
+                android:contentDescription="Back" />
+
+        </FrameLayout>
+
+        <!-- Group Avatar -->
+        <com.securelegion.views.AvatarView
+            android:id="@+id/groupAvatar"
+            android:layout_width="42dp"
+            android:layout_height="42dp"
+            android:layout_marginStart="12dp"
+            android:contentDescription="Group Photo" />
 
         <!-- Group Name -->
         <TextView
             android:id="@+id/groupNameTitle"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="Secure Whales"
-            android:fontFamily="@font/space_grotesk_bold"
-            android:textSize="18sp"
-            android:textColor="#CCCCCC"
-            android:layout_gravity="center_vertical" />
-
-        <!-- Spacer -->
-        <View
             android:layout_width="0dp"
-            android:layout_height="1dp"
-            android:layout_weight="1" />
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:layout_marginStart="12dp"
+            android:text="Group"
+            android:textSize="20sp"
+            android:textColor="#CCCCCC"
+            android:fontFamily="@font/space_grotesk_bold"
+            android:textStyle="bold"
+            android:gravity="start" />
 
         <!-- Settings Icon -->
         <FrameLayout
             android:id="@+id/settingsIcon"
             android:layout_width="42dp"
             android:layout_height="42dp"
-            android:background="@drawable/top_icon_bg"
+            android:layout_marginEnd="8dp"
+            android:background="@drawable/glass_circle_bg"
             android:clickable="true"
             android:focusable="true">
 
             <ImageView
-                android:layout_width="24dp"
-                android:layout_height="24dp"
+                android:layout_width="20dp"
+                android:layout_height="20dp"
                 android:layout_gravity="center"
                 android:src="@drawable/ic_settings_cog"
+                app:tint="?attr/colorOnSurfaceVariant"
                 android:contentDescription="Settings" />
 
         </FrameLayout>
+
+    </LinearLayout>
+
+    <!-- Accept Invite Banner (hidden by default) -->
+    <LinearLayout
+        android:id="@+id/inviteBanner"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:background="#1A888888"
+        android:paddingStart="20dp"
+        android:paddingEnd="16dp"
+        android:paddingTop="12dp"
+        android:paddingBottom="12dp"
+        android:gravity="center_vertical"
+        android:visibility="gone"
+        app:layout_constraintTop_toBottomOf="@id/topBar">
+
+        <TextView
+            android:id="@+id/inviteBannerText"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="You have been invited to this group"
+            android:textSize="14sp"
+            android:textColor="#CCCCCC"
+            android:fontFamily="@font/poppins_regular" />
+
+        <TextView
+            android:id="@+id/acceptInviteButton"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="12dp"
+            android:paddingStart="16dp"
+            android:paddingEnd="16dp"
+            android:paddingTop="8dp"
+            android:paddingBottom="8dp"
+            android:text="Accept"
+            android:textSize="14sp"
+            android:textColor="#FFFFFF"
+            android:fontFamily="@font/poppins_medium"
+            android:background="@drawable/profile_circle_bg"
+            android:clickable="true"
+            android:focusable="true" />
 
     </LinearLayout>
 
@@ -82,94 +138,98 @@
         android:paddingTop="8dp"
         android:paddingBottom="88dp"
         android:clipToPadding="false"
-        app:layout_constraintTop_toBottomOf="@id/topBar"
+        app:layout_constraintTop_toBottomOf="@id/inviteBanner"
         app:layout_constraintBottom_toBottomOf="parent" />
 
-    <!-- Message Input Container - Floating Glass Pill -->
-    <androidx.constraintlayout.widget.ConstraintLayout
+    <!-- Message Input Container - matches main chat layout -->
+    <LinearLayout
         android:id="@+id/messageInputContainer"
         android:layout_width="0dp"
         android:layout_height="wrap_content"
-        android:background="@drawable/glass_input_bar_bg"
-        android:clipToOutline="true"
-        android:paddingTop="8dp"
-        android:paddingBottom="8dp"
-        android:paddingStart="8dp"
-        android:paddingEnd="8dp"
+        android:orientation="horizontal"
+        android:gravity="bottom"
         android:layout_marginStart="12dp"
         android:layout_marginEnd="12dp"
         android:layout_marginBottom="12dp"
-        android:elevation="8dp"
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent">
 
-        <!-- Plus Button -->
-        <FrameLayout
-            android:id="@+id/plusButton"
-            android:layout_width="40dp"
-            android:layout_height="40dp"
-            android:background="@drawable/profile_circle_bg"
-            android:clickable="true"
-            android:focusable="true"
-            app:layout_constraintStart_toStartOf="parent"
-            app:layout_constraintTop_toTopOf="parent"
-            app:layout_constraintBottom_toBottomOf="parent">
-
-            <ImageView
-                android:layout_width="20dp"
-                android:layout_height="20dp"
-                android:layout_gravity="center"
-                android:src="@android:drawable/ic_input_add"
-                app:tint="#FFFFFF"
-                android:contentDescription="Add" />
-
-        </FrameLayout>
-
-        <!-- Message Input Field -->
-        <EditText
-            android:id="@+id/messageInput"
+        <!-- Input pill (plus button + text field) -->
+        <LinearLayout
             android:layout_width="0dp"
             android:layout_height="wrap_content"
-            android:layout_marginStart="12dp"
-            android:layout_marginEnd="12dp"
-            android:background="@drawable/lock_password_input_bg"
-            android:padding="12dp"
-            android:hint="Message"
-            android:textColorHint="#666666"
-            android:textColor="?attr/colorOnSurface"
-            android:textSize="16sp"
-            android:fontFamily="@font/poppins_regular"
-            android:inputType="textMultiLine|textCapSentences"
-            android:maxLines="4"
-            app:layout_constraintStart_toEndOf="@id/plusButton"
-            app:layout_constraintEnd_toStartOf="@id/micButton"
-            app:layout_constraintTop_toTopOf="parent"
-            app:layout_constraintBottom_toBottomOf="parent" />
+            android:layout_weight="1"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:background="@drawable/chat_input_pill_bg"
+            android:paddingStart="4dp"
+            android:paddingEnd="12dp"
+            android:paddingTop="4dp"
+            android:paddingBottom="4dp">
 
-        <!-- Mic Button -->
+            <!-- Plus Button inside pill -->
+            <FrameLayout
+                android:id="@+id/plusButton"
+                android:layout_width="40dp"
+                android:layout_height="40dp"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:clickable="true"
+                android:focusable="true">
+
+                <ImageView
+                    android:layout_width="22dp"
+                    android:layout_height="22dp"
+                    android:layout_gravity="center"
+                    android:src="@drawable/ic_add"
+                    app:tint="?attr/colorOnSurfaceVariant"
+                    android:contentDescription="Add attachment" />
+
+            </FrameLayout>
+
+            <!-- Message Input -->
+            <EditText
+                android:id="@+id/messageInput"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:background="@android:color/transparent"
+                android:hint="Type a message..."
+                android:textColorHint="#666666"
+                android:textColor="?attr/colorOnSurface"
+                android:textSize="15sp"
+                android:fontFamily="@font/poppins_regular"
+                android:paddingStart="4dp"
+                android:paddingEnd="4dp"
+                android:paddingTop="10dp"
+                android:paddingBottom="10dp"
+                android:maxLines="4"
+                android:inputType="textCapSentences|textMultiLine" />
+
+        </LinearLayout>
+
+        <!-- Send/Mic Circle Button (outside the pill) -->
         <FrameLayout
-            android:id="@+id/micButton"
-            android:layout_width="40dp"
-            android:layout_height="40dp"
-            android:background="@drawable/profile_circle_bg"
+            android:id="@+id/sendButton"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:layout_marginStart="8dp"
+            android:background="@drawable/chat_send_circle_bg"
             android:clickable="true"
-            android:focusable="true"
-            app:layout_constraintEnd_toEndOf="parent"
-            app:layout_constraintTop_toTopOf="parent"
-            app:layout_constraintBottom_toBottomOf="parent">
+            android:focusable="true">
 
             <ImageView
-                android:layout_width="20dp"
-                android:layout_height="20dp"
+                android:id="@+id/sendButtonIcon"
+                android:layout_width="22dp"
+                android:layout_height="22dp"
                 android:layout_gravity="center"
                 android:src="@drawable/ic_mic"
-                app:tint="#FFFFFF"
-                android:contentDescription="Voice Message" />
+                app:tint="?attr/colorOnSurfaceVariant"
+                android:contentDescription="Voice message or send" />
 
         </FrameLayout>
 
-    </androidx.constraintlayout.widget.ConstraintLayout>
+    </LinearLayout>
 
     <!-- Bottom Sheet Overlay (dimmed background) -->
     <View

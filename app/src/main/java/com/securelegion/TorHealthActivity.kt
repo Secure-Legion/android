@@ -129,25 +129,15 @@ class TorHealthActivity : AppCompatActivity() {
 
             // Voice Tor Health
             val voiceHealthy = com.securelegion.services.VoiceTorService.isHealthy
-            val voiceCircuits = com.securelegion.services.VoiceTorService.circuitEstablished
-            val voiceLiveness = com.securelegion.services.VoiceTorService.networkLiveness
 
-            when {
-                voiceCircuits == null || voiceLiveness == null -> {
-                    voiceTorStatusText.text = "Offline"
-                    voiceTorStatusText.setTextColor(0xFF666666.toInt())
-                    voiceTorStatusIndicator.setBackgroundResource(R.drawable.status_offline_indicator)
-                }
-                voiceHealthy -> {
-                    voiceTorStatusText.text = "Healthy"
-                    voiceTorStatusText.setTextColor(0xFF00CC66.toInt())
-                    voiceTorStatusIndicator.setBackgroundResource(R.drawable.status_healthy_indicator)
-                }
-                else -> {
-                    voiceTorStatusText.text = "No Circuits"
-                    voiceTorStatusText.setTextColor(0xFFFF6666.toInt())
-                    voiceTorStatusIndicator.setBackgroundResource(R.drawable.status_error_indicator)
-                }
+            if (voiceHealthy) {
+                voiceTorStatusText.text = "Healthy"
+                voiceTorStatusText.setTextColor(0xFF00CC66.toInt())
+                voiceTorStatusIndicator.setBackgroundResource(R.drawable.status_healthy_indicator)
+            } else {
+                voiceTorStatusText.text = "Offline"
+                voiceTorStatusText.setTextColor(0xFF666666.toInt())
+                voiceTorStatusIndicator.setBackgroundResource(R.drawable.status_offline_indicator)
             }
 
             // Network Status (check Android connectivity)

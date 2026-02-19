@@ -1526,7 +1526,15 @@ class MessageAdapter(
             message.status == Message.STATUS_FAILED -> R.drawable.status_failed // Red circle with X
             message.messageDelivered -> R.drawable.status_delivered // Solid circle with 2 checkmarks (message downloaded by receiver)
             message.pingDelivered -> R.drawable.status_sent // Circle with 1 checkmark (PING_ACK received, receiver notified)
-            else -> R.drawable.status_pending // Empty circle (no PING_ACK yet, receiver may be offline)
+            else -> {
+                // No ACK yet — check if Tor is available
+                val gate = com.securelegion.services.TorService.getTransportGate()
+                if (gate == null || !gate.isOpenNow()) {
+                    R.drawable.status_queued // Clock icon (queued, Tor offline)
+                } else {
+                    R.drawable.status_pending // Empty circle (sending, Tor online)
+                }
+            }
         }
     }
 

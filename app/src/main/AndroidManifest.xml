@@ -96,6 +96,10 @@
             android:exported="false" />
 
         <activity
+            android:name=".SystemLogActivity"
+            android:exported="false" />
+
+        <activity
             android:name=".TorHealthActivity"
             android:exported="false" />
 
@@ -252,11 +256,8 @@
         <activity
             android:name=".GroupChatActivity"
             android:exported="false"
-            android:windowSoftInputMode="adjustResize" />
+            android:windowSoftInputMode="adjustPan" />
 
-        <activity
-            android:name=".ManageTokensActivity"
-            android:exported="false" />
 
         <activity
             android:name=".TransactionsActivity"
@@ -298,12 +299,11 @@
             android:exported="false" />
 
         <!-- Tor daemon - In-process Tor via JNI (from tor-android library)
-             Runs in a separate process (:tor) so native exit(1) doesn't kill the main app -->
+             Runs in main process (GP tor-android 0.4.9.5 requires Application init context) -->
         <service
             android:name="org.torproject.jni.TorService"
             android:enabled="true"
             android:exported="false"
-            android:process=":tor"
             android:stopWithTask="false" />
 
         <!-- Tor foreground service - Shows notification and handles Ping-Pong protocol -->

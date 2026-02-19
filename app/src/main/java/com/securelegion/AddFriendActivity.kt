@@ -140,25 +140,24 @@ class AddFriendActivity : BaseActivity() {
     }
 
     private fun setupPinBoxes() {
-        val pinBox1 = findViewById<EditText>(R.id.pinBox1)
-        val pinBox2 = findViewById<EditText>(R.id.pinBox2)
-        val pinBox3 = findViewById<EditText>(R.id.pinBox3)
-        val pinBox4 = findViewById<EditText>(R.id.pinBox4)
-        val pinBox5 = findViewById<EditText>(R.id.pinBox5)
-        val pinBox6 = findViewById<EditText>(R.id.pinBox6)
-        val pinBox7 = findViewById<EditText>(R.id.pinBox7)
-        val pinBox8 = findViewById<EditText>(R.id.pinBox8)
-        val pinBox9 = findViewById<EditText>(R.id.pinBox9)
-        val pinBox10 = findViewById<EditText>(R.id.pinBox10)
-
-        // Add key listener to handle backspace (moves to previous box and deletes)
-        val boxes = listOf(pinBox1, pinBox2, pinBox3, pinBox4, pinBox5, pinBox6, pinBox7, pinBox8, pinBox9, pinBox10)
+        val boxes = listOf(
+            findViewById<EditText>(R.id.pinBox1),
+            findViewById<EditText>(R.id.pinBox2),
+            findViewById<EditText>(R.id.pinBox3),
+            findViewById<EditText>(R.id.pinBox4),
+            findViewById<EditText>(R.id.pinBox5),
+            findViewById<EditText>(R.id.pinBox6),
+            findViewById<EditText>(R.id.pinBox7),
+            findViewById<EditText>(R.id.pinBox8),
+            findViewById<EditText>(R.id.pinBox9),
+            findViewById<EditText>(R.id.pinBox10)
+        )
 
         boxes.forEachIndexed { index, box ->
+            // Hardware keyboard backspace (fallback)
             box.setOnKeyListener { _, keyCode, event ->
                 if (keyCode == android.view.KeyEvent.KEYCODE_DEL && event.action == android.view.KeyEvent.ACTION_DOWN) {
                     if (box.text.isEmpty() && index > 0) {
-                        // If current box is empty and backspace pressed, move to previous box and clear it
                         boxes[index - 1].text.clear()
                         boxes[index - 1].requestFocus()
                         return@setOnKeyListener true
@@ -166,88 +165,26 @@ class AddFriendActivity : BaseActivity() {
                 }
                 false
             }
+
+            // TextWatcher handles both forward advance and soft-keyboard backspace
+            var prevLength = 0
+            box.addTextChangedListener(object : android.text.TextWatcher {
+                override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {
+                    prevLength = s?.length ?: 0
+                }
+                override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+                override fun afterTextChanged(s: android.text.Editable?) {
+                    val len = s?.length ?: 0
+                    if (len == 1 && index < boxes.size - 1) {
+                        // Digit entered — advance to next box
+                        boxes[index + 1].requestFocus()
+                    } else if (len == 0 && prevLength == 1 && index > 0) {
+                        // Deleted digit — move back to previous box
+                        boxes[index - 1].requestFocus()
+                    }
+                }
+            })
         }
-
-        // Auto-advance to next box when digit is entered
-        pinBox1.addTextChangedListener(object : android.text.TextWatcher {
-            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
-            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
-            override fun afterTextChanged(s: android.text.Editable?) {
-                if (s?.length == 1) pinBox2.requestFocus()
-            }
-        })
-
-        pinBox2.addTextChangedListener(object : android.text.TextWatcher {
-            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
-            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
-            override fun afterTextChanged(s: android.text.Editable?) {
-                if (s?.length == 1) pinBox3.requestFocus()
-            }
-        })
-
-        pinBox3.addTextChangedListener(object : android.text.TextWatcher {
-            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
-            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
-            override fun afterTextChanged(s: android.text.Editable?) {
-                if (s?.length == 1) pinBox4.requestFocus()
-            }
-        })
-
-        pinBox4.addTextChangedListener(object : android.text.TextWatcher {
-            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
-            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
-            override fun afterTextChanged(s: android.text.Editable?) {
-                if (s?.length == 1) pinBox5.requestFocus()
-            }
-        })
-
-        pinBox5.addTextChangedListener(object : android.text.TextWatcher {
-            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
-            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
-            override fun afterTextChanged(s: android.text.Editable?) {
-                if (s?.length == 1) pinBox6.requestFocus()
-            }
-        })
-
-        pinBox6.addTextChangedListener(object : android.text.TextWatcher {
-            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
-            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
-            override fun afterTextChanged(s: android.text.Editable?) {
-                if (s?.length == 1) pinBox7.requestFocus()
-            }
-        })
-
-        pinBox7.addTextChangedListener(object : android.text.TextWatcher {
-            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
-            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
-            override fun afterTextChanged(s: android.text.Editable?) {
-                if (s?.length == 1) pinBox8.requestFocus()
-            }
-        })
-
-        pinBox8.addTextChangedListener(object : android.text.TextWatcher {
-            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
-            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
-            override fun afterTextChanged(s: android.text.Editable?) {
-                if (s?.length == 1) pinBox9.requestFocus()
-            }
-        })
-
-        pinBox9.addTextChangedListener(object : android.text.TextWatcher {
-            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
-            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
-            override fun afterTextChanged(s: android.text.Editable?) {
-                if (s?.length == 1) pinBox10.requestFocus()
-            }
-        })
-
-        pinBox10.addTextChangedListener(object : android.text.TextWatcher {
-            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
-            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
-            override fun afterTextChanged(s: android.text.Editable?) {
-                // Last box - no auto-advance
-            }
-        })
     }
 
     private fun getPinFromBoxes(): String {
@@ -632,6 +569,20 @@ class AddFriendActivity : BaseActivity() {
         try {
             val prefs = getSharedPreferences("friend_requests", Context.MODE_PRIVATE)
             val pendingRequestsV2 = prefs.getStringSet("pending_requests_v2", mutableSetOf())?.toMutableSet() ?: mutableSetOf()
+
+            // Cancel the system notification for this friend request
+            for (requestJson in pendingRequestsV2) {
+                try {
+                    val request = com.securelegion.models.PendingFriendRequest.fromJson(requestJson)
+                    if (request.ipfsCid == cid) {
+                        val notificationId = 5000 + Math.abs(request.displayName.hashCode() % 10000)
+                        val notificationManager = getSystemService(android.app.NotificationManager::class.java)
+                        notificationManager.cancel(notificationId)
+                        Log.d(TAG, "Cancelled friend request notification for ${request.displayName} (ID: $notificationId)")
+                        break
+                    }
+                } catch (e: Exception) { /* ignore parse errors */ }
+            }
 
             // Remove requests matching this CID
             val updatedRequests = pendingRequestsV2.filter { requestJson ->
@@ -1075,7 +1026,9 @@ class AddFriendActivity : BaseActivity() {
                     solanaAddress = keyManager.getSolanaAddress(),
                     friendRequestOnion = keyManager.getFriendRequestOnion() ?: throw Exception("Friend request .onion not set"),
                     messagingOnion = keyManager.getMessagingOnion() ?: throw Exception("Messaging .onion not set"),
-                    voiceOnion = torManager.getVoiceOnionAddress() ?: throw Exception("Voice .onion not set"),
+                    voiceOnion = torManager.getVoiceOnionAddress().takeUnless { it.isNullOrBlank() }
+                        ?: keyManager.getVoiceOnion().takeUnless { it.isNullOrBlank() }
+                        ?: "",
                     contactPin = keyManager.getContactPin() ?: throw Exception("Contact PIN not set"),
                     ipfsCid = keyManager.deriveContactListCID(), // v5: Send contact LIST CID for backup mesh
                     timestamp = System.currentTimeMillis() / 1000

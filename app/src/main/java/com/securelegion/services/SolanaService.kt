@@ -35,9 +35,8 @@ class SolanaService(private val context: Context) {
     companion object {
         private const val TAG = "SolanaService"
 
-        // Helius fast mainnet RPC with hidden API key
-        // Limited to 5 TPS per IP - ideal for frontend use
-        private const val HELIUS_RPC_URL = "https://berget-7aodbg-fast-mainnet.helius-rpc.com"
+        // Mainnet RPC — configure via environment before release
+        private const val HELIUS_RPC_URL = "https://api.mainnet-beta.solana.com"
 
         // Solana devnet RPC for testnet mode
         private const val DEVNET_RPC_URL = "https://api.devnet.solana.com"

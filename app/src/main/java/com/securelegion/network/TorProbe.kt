@@ -4,18 +4,13 @@ import android.util.Log
 import com.securelegion.crypto.RustBridge
 
 /**
- * Probe to verify Tor is healthy using MetricsPort (no external traffic).
+ * Probe to verify Tor is healthy using ControlPort (no external traffic).
  *
- * Why MetricsPort instead of clearnet probe:
+ * Why ControlPort instead of clearnet probe:
  * 1. No external correlation - doesn't hit clearnet hosts
  * 2. Checks what we actually care about - circuits + bootstrap
  * 3. Works on all networks - doesn't depend on external hosts being reachable
  * 4. Fast - no network round-trip needed
- *
- * Old behavior (hitting check.torproject.org) caused:
- * - False negatives on networks that block external hosts
- * - Restart loops when clearnet probe timed out but Tor was healthy
- * - Unnecessary external traffic creating correlation patterns
  */
 class TorProbe {
     companion object {
@@ -25,7 +20,7 @@ class TorProbe {
     }
 
     /**
-     * Check if Tor is healthy via MetricsPort health check
+     * Check if Tor is healthy via ControlPort
      *
      * Checks:
      * - Bootstrap progress = 100%
@@ -36,7 +31,6 @@ class TorProbe {
      */
     suspend fun checkTorUsable(timeoutMs: Long = 10_000): Boolean {
         return try {
-            // Check MetricsPort for bootstrap status
             val bootstrapPercent = RustBridge.getBootstrapStatus()
             val circuitsEstablished = RustBridge.getCircuitEstablished()
 

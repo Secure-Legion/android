@@ -12,10 +12,10 @@ import com.securelegion.database.dao.CallQualityLogDao
 import com.securelegion.database.dao.ContactDao
 import com.securelegion.database.dao.ContactKeyChainDao
 import com.securelegion.database.dao.GroupDao
-import com.securelegion.database.dao.GroupMemberDao
-import com.securelegion.database.dao.GroupMessageDao
+import com.securelegion.database.dao.CrdtOpLogDao
 import com.securelegion.database.dao.MessageDao
 import com.securelegion.database.dao.PendingFriendRequestDao
+import com.securelegion.database.dao.PendingPingDao
 import com.securelegion.database.dao.PingInboxDao
 import com.securelegion.database.dao.ReceivedIdDao
 import com.securelegion.database.dao.SkippedMessageKeyDao
@@ -26,15 +26,16 @@ import com.securelegion.database.entities.CallQualityLog
 import com.securelegion.database.entities.Contact
 import com.securelegion.database.entities.ContactKeyChain
 import com.securelegion.database.entities.Group
-import com.securelegion.database.entities.GroupMember
-import com.securelegion.database.entities.GroupMessage
+import com.securelegion.database.entities.CrdtOpLog
 import com.securelegion.database.entities.Message
 import com.securelegion.database.entities.PendingFriendRequest
+import com.securelegion.database.entities.PendingPing
 import com.securelegion.database.entities.PingInbox
 import com.securelegion.database.entities.ReceivedId
 import com.securelegion.database.entities.SkippedMessageKey
 import com.securelegion.database.entities.UsedSignature
 import com.securelegion.database.entities.Wallet
+import com.securelegion.database.PendingPingStore
 import net.zetetic.database.sqlcipher.SQLiteDatabase
 import net.zetetic.database.sqlcipher.SupportOpenHelperFactory
 
@@ -51,8 +52,8 @@ import net.zetetic.database.sqlcipher.SupportOpenHelperFactory
  * Database file location: /data/data/com.securelegion/databases/secure_legion.db
  */
 @Database(
-    entities = [Contact::class, Message::class, Wallet::class, ReceivedId::class, UsedSignature::class, Group::class, GroupMember::class, GroupMessage::class, CallHistory::class, CallQualityLog::class, PingInbox::class, ContactKeyChain::class, SkippedMessageKey::class, PendingFriendRequest::class],
-    version = 37,
+    entities = [Contact::class, Message::class, Wallet::class, ReceivedId::class, UsedSignature::class, Group::class, CrdtOpLog::class, CallHistory::class, CallQualityLog::class, PingInbox::class, ContactKeyChain::class, SkippedMessageKey::class, PendingFriendRequest::class, PendingPing::class],
+    version = 42,
     exportSchema = false
 )
 abstract class SecureLegionDatabase : RoomDatabase() {
@@ -63,14 +64,14 @@ abstract class SecureLegionDatabase : RoomDatabase() {
     abstract fun receivedIdDao(): ReceivedIdDao
     abstract fun usedSignatureDao(): UsedSignatureDao
     abstract fun groupDao(): GroupDao
-    abstract fun groupMemberDao(): GroupMemberDao
-    abstract fun groupMessageDao(): GroupMessageDao
+    abstract fun crdtOpLogDao(): CrdtOpLogDao
     abstract fun callHistoryDao(): CallHistoryDao
     abstract fun callQualityLogDao(): CallQualityLogDao
     abstract fun pingInboxDao(): PingInboxDao
     abstract fun contactKeyChainDao(): ContactKeyChainDao
     abstract fun skippedMessageKeyDao(): SkippedMessageKeyDao
     abstract fun pendingFriendRequestDao(): PendingFriendRequestDao
+    abstract fun pendingPingDao(): PendingPingDao
 
     companion object {
         private const val TAG = "SecureLegionDatabase"
@@ -345,6 +346,16 @@ abstract class SecureLegionDatabase : RoomDatabase() {
         }
 
         /**
+         * Migration from version 18 to 19: No-op (version was bumped without schema change)
+         * Fills gap that would otherwise crash upgrades from v18.
+         */
+        private val MIGRATION_18_19 = object : Migration(18, 19) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                Log.i(TAG, "Migrating database from version 18 to 19 (no-op gap fill)")
+            }
+        }
+
+        /**
          * Migration from version 19 to 20: Add voiceOnion field for voice calling
          */
         private val MIGRATION_19_20 = object : Migration(19, 20) {
@@ -352,6 +363,80 @@ abstract class SecureLegionDatabase : RoomDatabase() {
                 Log.i(TAG, "Migrating database from version 19 to 20")
                 database.execSQL("ALTER TABLE contacts ADD COLUMN voiceOnion TEXT")
                 Log.i(TAG, "Migration completed: Added voiceOnion column for voice calling")
+            }
+        }
+
+        /**
+         * Migration from version 20 to 21: Add group messaging tables (legacy — kept for migration chain)
+         */
+        private val MIGRATION_20_21 = object : Migration(20, 21) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                Log.i(TAG, "Migrating database from version 20 to 21")
+
+                // Create groups table
+                database.execSQL("""
+                    CREATE TABLE IF NOT EXISTS groups (
+                        groupId TEXT PRIMARY KEY NOT NULL,
+                        name TEXT NOT NULL,
+                        encryptedGroupKeyBase64 TEXT NOT NULL,
+                        groupPin TEXT NOT NULL,
+                        groupIcon TEXT,
+                        createdAt INTEGER NOT NULL,
+                        lastActivityTimestamp INTEGER NOT NULL,
+                        isAdmin INTEGER NOT NULL DEFAULT 1,
+                        isMuted INTEGER NOT NULL DEFAULT 0,
+                        description TEXT
+                    )
+                """.trimIndent())
+                database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_groups_groupId ON groups(groupId)")
+
+                // Create group_members table
+                database.execSQL("""
+                    CREATE TABLE IF NOT EXISTS group_members (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        groupId TEXT NOT NULL,
+                        contactId INTEGER NOT NULL,
+                        isAdmin INTEGER NOT NULL DEFAULT 0,
+                        addedAt INTEGER NOT NULL,
+                        addedBy INTEGER,
+                        FOREIGN KEY(groupId) REFERENCES groups(groupId) ON DELETE CASCADE,
+                        FOREIGN KEY(contactId) REFERENCES contacts(id) ON DELETE CASCADE
+                    )
+                """.trimIndent())
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_group_members_groupId ON group_members(groupId)")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_group_members_contactId ON group_members(contactId)")
+                database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_group_members_groupId_contactId ON group_members(groupId, contactId)")
+
+                // Create group_messages table
+                database.execSQL("""
+                    CREATE TABLE IF NOT EXISTS group_messages (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        groupId TEXT NOT NULL,
+                        senderContactId INTEGER,
+                        senderName TEXT NOT NULL,
+                        messageId TEXT NOT NULL,
+                        encryptedContent TEXT NOT NULL,
+                        isSentByMe INTEGER NOT NULL,
+                        timestamp INTEGER NOT NULL,
+                        status INTEGER NOT NULL DEFAULT 0,
+                        signatureBase64 TEXT NOT NULL,
+                        nonceBase64 TEXT NOT NULL,
+                        messageType TEXT NOT NULL DEFAULT 'TEXT',
+                        voiceDuration INTEGER,
+                        voiceFilePath TEXT,
+                        attachmentType TEXT,
+                        encryptedAttachment TEXT,
+                        selfDestructSeconds INTEGER,
+                        FOREIGN KEY(groupId) REFERENCES groups(groupId) ON DELETE CASCADE,
+                        FOREIGN KEY(senderContactId) REFERENCES contacts(id) ON DELETE CASCADE
+                    )
+                """.trimIndent())
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_group_messages_groupId ON group_messages(groupId)")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_group_messages_senderContactId ON group_messages(senderContactId)")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_group_messages_timestamp ON group_messages(timestamp)")
+                database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_group_messages_messageId ON group_messages(messageId)")
+
+                Log.i(TAG, "Migration completed: Added groups, group_members, and group_messages tables for group messaging")
             }
         }
 
@@ -708,77 +793,131 @@ abstract class SecureLegionDatabase : RoomDatabase() {
         }
 
         /**
-         * Migration from version 20 to 21: Add group messaging tables
+         * Migration from version 37 to 38: CRDT groups — drop legacy tables, create CRDT schema
          */
-        private val MIGRATION_20_21 = object : Migration(20, 21) {
+        private val MIGRATION_37_38 = object : Migration(37, 38) {
             override fun migrate(database: SupportSQLiteDatabase) {
-                Log.i(TAG, "Migrating database from version 20 to 21")
+                Log.i(TAG, "Migrating database from version 37 to 38 — CRDT groups")
 
-                // Create groups table
+                // Drop legacy group tables (zero users, no data to preserve)
+                database.execSQL("DROP TABLE IF EXISTS group_messages")
+                database.execSQL("DROP TABLE IF EXISTS group_members")
+                database.execSQL("DROP TABLE IF EXISTS groups")
+
+                // Recreate groups table for CRDT
                 database.execSQL("""
                     CREATE TABLE IF NOT EXISTS groups (
-                        groupId TEXT PRIMARY KEY NOT NULL,
+                        groupId TEXT NOT NULL PRIMARY KEY,
                         name TEXT NOT NULL,
-                        encryptedGroupKeyBase64 TEXT NOT NULL,
-                        groupPin TEXT NOT NULL,
+                        groupSecretB64 TEXT NOT NULL,
                         groupIcon TEXT,
                         createdAt INTEGER NOT NULL,
                         lastActivityTimestamp INTEGER NOT NULL,
-                        isAdmin INTEGER NOT NULL DEFAULT 1,
                         isMuted INTEGER NOT NULL DEFAULT 0,
                         description TEXT
                     )
                 """.trimIndent())
                 database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_groups_groupId ON groups(groupId)")
 
-                // Create group_members table
+                // Create CRDT op log table
                 database.execSQL("""
-                    CREATE TABLE IF NOT EXISTS group_members (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                    CREATE TABLE IF NOT EXISTS crdt_op_log (
+                        opId TEXT NOT NULL PRIMARY KEY,
                         groupId TEXT NOT NULL,
-                        contactId INTEGER NOT NULL,
-                        isAdmin INTEGER NOT NULL DEFAULT 0,
-                        addedAt INTEGER NOT NULL,
-                        addedBy INTEGER,
-                        FOREIGN KEY(groupId) REFERENCES groups(groupId) ON DELETE CASCADE,
-                        FOREIGN KEY(contactId) REFERENCES contacts(id) ON DELETE CASCADE
+                        opType TEXT NOT NULL,
+                        opBytes BLOB NOT NULL,
+                        lamport INTEGER NOT NULL,
+                        createdAt INTEGER NOT NULL
                     )
                 """.trimIndent())
-                database.execSQL("CREATE INDEX IF NOT EXISTS index_group_members_groupId ON group_members(groupId)")
-                database.execSQL("CREATE INDEX IF NOT EXISTS index_group_members_contactId ON group_members(contactId)")
-                database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_group_members_groupId_contactId ON group_members(groupId, contactId)")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_crdt_op_log_groupId ON crdt_op_log(groupId)")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_crdt_op_log_groupId_lamport ON crdt_op_log(groupId, lamport)")
 
-                // Create group_messages table
-                database.execSQL("""
-                    CREATE TABLE IF NOT EXISTS group_messages (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
-                        groupId TEXT NOT NULL,
-                        senderContactId INTEGER,
-                        senderName TEXT NOT NULL,
-                        messageId TEXT NOT NULL,
-                        encryptedContent TEXT NOT NULL,
-                        isSentByMe INTEGER NOT NULL,
-                        timestamp INTEGER NOT NULL,
-                        status INTEGER NOT NULL DEFAULT 0,
-                        signatureBase64 TEXT NOT NULL,
-                        nonceBase64 TEXT NOT NULL,
-                        messageType TEXT NOT NULL DEFAULT 'TEXT',
-                        voiceDuration INTEGER,
-                        voiceFilePath TEXT,
-                        attachmentType TEXT,
-                        encryptedAttachment TEXT,
-                        selfDestructSeconds INTEGER,
-                        FOREIGN KEY(groupId) REFERENCES groups(groupId) ON DELETE CASCADE,
-                        FOREIGN KEY(senderContactId) REFERENCES contacts(id) ON DELETE CASCADE
-                    )
-                """.trimIndent())
-                database.execSQL("CREATE INDEX IF NOT EXISTS index_group_messages_groupId ON group_messages(groupId)")
-                database.execSQL("CREATE INDEX IF NOT EXISTS index_group_messages_senderContactId ON group_messages(senderContactId)")
-                database.execSQL("CREATE INDEX IF NOT EXISTS index_group_messages_timestamp ON group_messages(timestamp)")
-                database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_group_messages_messageId ON group_messages(messageId)")
-
-                Log.i(TAG, "Migration completed: Added groups, group_members, and group_messages tables for group messaging")
+                Log.i(TAG, "Migration 37→38 complete: legacy group tables dropped, CRDT tables created")
             }
+        }
+
+        private val MIGRATION_38_39 = object : Migration(38, 39) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                Log.i(TAG, "Migrating database from version 38 to 39 — group cache fields")
+                database.execSQL("ALTER TABLE groups ADD COLUMN memberCount INTEGER NOT NULL DEFAULT 0")
+                database.execSQL("ALTER TABLE groups ADD COLUMN lastMessagePreview TEXT")
+                database.execSQL("ALTER TABLE groups ADD COLUMN isPendingInvite INTEGER NOT NULL DEFAULT 0")
+                Log.i(TAG, "Migration 38→39 complete")
+            }
+        }
+
+        private val MIGRATION_39_40 = object : Migration(39, 40) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                Log.i(TAG, "Migrating database from version 39 to 40 — group isPinned")
+                database.execSQL("ALTER TABLE groups ADD COLUMN isPinned INTEGER NOT NULL DEFAULT 0")
+                Log.i(TAG, "Migration 39→40 complete")
+            }
+        }
+
+        private val MIGRATION_40_41 = object : Migration(40, 41) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                Log.i(TAG, "Migrating database from version 40 to 41 — pending_pings table")
+                database.execSQL("""
+                    CREATE TABLE IF NOT EXISTS pending_pings (
+                        pingId TEXT NOT NULL PRIMARY KEY,
+                        signerPubKey BLOB NOT NULL,
+                        createdAtElapsed INTEGER NOT NULL,
+                        expiresAtElapsed INTEGER NOT NULL
+                    )
+                """.trimIndent())
+                Log.i(TAG, "Migration 40→41 complete")
+            }
+        }
+
+        /**
+         * Migration from version 41 to 42: Add index on contacts.publicKeyBase64
+         * Eliminates full table scans during message verification and contact lookup.
+         */
+        private val MIGRATION_41_42 = object : Migration(41, 42) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                Log.i(TAG, "Migrating database from version 41 to 42")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_contacts_publicKeyBase64 ON contacts(publicKeyBase64)")
+                Log.i(TAG, "Migration 41→42 complete: added index on contacts.publicKeyBase64")
+            }
+        }
+
+        /**
+         * All migrations in a single array for DRY registration + validation.
+         * RULE: When adding a new migration, append it here AND bump the @Database version.
+         */
+        private val ALL_MIGRATIONS = arrayOf(
+            MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5,
+            MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9,
+            MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13,
+            MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17,
+            MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21,
+            MIGRATION_21_22, MIGRATION_22_23, MIGRATION_23_24, MIGRATION_24_25,
+            MIGRATION_25_26, MIGRATION_26_27, MIGRATION_27_28, MIGRATION_28_29,
+            MIGRATION_29_30, MIGRATION_30_31, MIGRATION_31_32, MIGRATION_32_33,
+            MIGRATION_33_34, MIGRATION_34_35, MIGRATION_35_36, MIGRATION_36_37,
+            MIGRATION_37_38, MIGRATION_38_39, MIGRATION_39_40, MIGRATION_40_41,
+            MIGRATION_41_42
+        )
+
+        /**
+         * Validate that ALL_MIGRATIONS covers every version hop from 1→DB_VERSION.
+         * Throws IllegalStateException if any gap exists. Runs once at build time.
+         * This would have caught the 18→19 gap.
+         */
+        private fun validateMigrationChain(migrations: Array<out Migration>, dbVersion: Int) {
+            val starts = migrations.map { it.startVersion }.toSet()
+            for (v in 1 until dbVersion) {
+                check(starts.contains(v)) {
+                    "MIGRATION GAP: No migration from version $v → ${v + 1}! " +
+                    "Add MIGRATION_${v}_${v + 1} and append it to ALL_MIGRATIONS."
+                }
+            }
+            check(migrations.size == dbVersion - 1) {
+                "MIGRATION COUNT: Expected ${dbVersion - 1}, got ${migrations.size}. " +
+                "Check for duplicates or missing entries in ALL_MIGRATIONS."
+            }
+            Log.i(TAG, "Migration chain OK: ${migrations.size} migrations, versions 1→$dbVersion")
         }
 
         /**
@@ -808,6 +947,14 @@ abstract class SecureLegionDatabase : RoomDatabase() {
                     try {
                         val instance = buildDatabase(context, passphrase)
                         INSTANCE = instance
+                        // Initialize PendingPingStore DAO eagerly so it's ready before
+                        // MessageRetryWorker or any sendPingForMessage() call.
+                        // Previously deferred to TorService.onTorReady(), allowing a race
+                        // where store() silently dropped signers (Scenario C).
+                        if (!PendingPingStore.isInitialized) {
+                            PendingPingStore.dao = instance.pendingPingDao()
+                            Log.i(TAG, "PendingPingStore DAO initialized at DB creation")
+                        }
                         instance
                     } finally {
                         // SECURITY: Always zeroize passphrase after use
@@ -847,7 +994,7 @@ abstract class SecureLegionDatabase : RoomDatabase() {
                     DATABASE_NAME
                 )
                     .openHelperFactory(factory)
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23, MIGRATION_23_24, MIGRATION_24_25, MIGRATION_25_26, MIGRATION_26_27, MIGRATION_27_28, MIGRATION_28_29, MIGRATION_29_30, MIGRATION_30_31, MIGRATION_31_32, MIGRATION_32_33, MIGRATION_33_34, MIGRATION_34_35, MIGRATION_35_36, MIGRATION_36_37)
+                    .addMigrations(*ALL_MIGRATIONS.also { validateMigrationChain(it, 42) })
                     .addCallback(object : RoomDatabase.Callback() {
                         override fun onCreate(db: SupportSQLiteDatabase) {
                             super.onCreate(db)
@@ -938,7 +1085,7 @@ abstract class SecureLegionDatabase : RoomDatabase() {
                         DATABASE_NAME
                     )
                         .openHelperFactory(SupportOpenHelperFactory(passphrase))
-                        .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23, MIGRATION_23_24, MIGRATION_24_25, MIGRATION_25_26, MIGRATION_26_27, MIGRATION_27_28, MIGRATION_28_29, MIGRATION_29_30, MIGRATION_30_31, MIGRATION_31_32, MIGRATION_32_33, MIGRATION_33_34, MIGRATION_34_35, MIGRATION_35_36, MIGRATION_36_37)
+                        .addMigrations(*ALL_MIGRATIONS)
                         .addCallback(object : RoomDatabase.Callback() {
                             override fun onCreate(db: SupportSQLiteDatabase) {
                                 super.onCreate(db)

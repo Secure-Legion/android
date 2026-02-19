@@ -4,6 +4,7 @@ import java.io.FileInputStream
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
+    alias(libs.plugins.kotlin.compose)
     id("com.google.devtools.ksp") version "2.3.2"
 }
 
@@ -166,6 +167,7 @@ android {
 
     buildFeatures {
         buildConfig = true
+        compose = true
     }
 
     packaging {
@@ -216,6 +218,14 @@ dependencies {
     implementation(libs.androidx.appcompat)
     implementation(libs.material)
     implementation("androidx.constraintlayout:constraintlayout:2.1.4")
+
+    // Jetpack Compose (used for M3 LoadingIndicator on create account button)
+    implementation(platform("androidx.compose:compose-bom:2025.06.00"))
+    implementation("androidx.compose.material3:material3")
+    implementation("androidx.compose.ui:ui")
+    implementation("androidx.compose.foundation:foundation")
+    implementation("androidx.compose.ui:ui-tooling-preview")
+    debugImplementation("androidx.compose.ui:ui-tooling")
 
     // Splash Screen API (Android 12+)
     implementation("androidx.core:core-splashscreen:1.0.1")
@@ -289,7 +299,7 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-common:2.8.7")
 
     // Tor binaries for Android (provides libtor.so)
-    implementation("info.guardianproject:tor-android:0.4.8.21")
+    implementation("info.guardianproject:tor-android:0.4.9.5")
 
     // Tor control library for managing Tor via control port
     implementation("info.guardianproject:jtorctl:0.4.5.7")

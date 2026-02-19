@@ -89,11 +89,8 @@ class WalletIdentityActivity : AppCompatActivity() {
             showIdentityQrCode()
         }
 
-        // Wallet button
-        findViewById<View>(R.id.walletButton).setOnClickListener {
-            val intent = android.content.Intent(this, WalletActivity::class.java)
-            startActivity(intent)
-        }
+        // Wallet button — hidden until wallet feature is ready for release
+        findViewById<View>(R.id.walletButton).visibility = View.GONE
 
         // Settings button
         findViewById<View>(R.id.settingsButton).setOnClickListener {

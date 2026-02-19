@@ -71,8 +71,8 @@
         <!-- Group Icon Placeholder -->
         <FrameLayout
             android:id="@+id/groupIconContainer"
-            android:layout_width="90dp"
-            android:layout_height="90dp"
+            android:layout_width="120dp"
+            android:layout_height="120dp"
             android:layout_marginTop="40dp"
             android:background="@drawable/profile_circle_bg"
             android:clickable="true"
@@ -83,9 +83,10 @@
 
             <ImageView
                 android:id="@+id/groupIconImage"
-                android:layout_width="40dp"
-                android:layout_height="40dp"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
                 android:layout_gravity="center"
+                android:scaleType="centerInside"
                 android:src="@drawable/ic_contacts"
                 app:tint="#999999"
                 android:contentDescription="Group Icon" />
@@ -158,124 +159,6 @@
 
         </androidx.constraintlayout.widget.ConstraintLayout>
 
-        <!-- Group PIN Label -->
-        <TextView
-            android:id="@+id/groupPinLabel"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginStart="40dp"
-            android:layout_marginTop="24dp"
-            android:text="Group PIN"
-            android:fontFamily="@font/space_grotesk_bold"
-            android:textSize="16sp"
-            android:textColor="?attr/colorOnSurfaceVariant"
-            app:layout_constraintTop_toBottomOf="@id/groupNameContainer"
-            app:layout_constraintStart_toStartOf="parent" />
-
-        <!-- Group PIN Boxes (6 digits) -->
-        <LinearLayout
-            android:id="@+id/pinBoxesContainer"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_marginStart="40dp"
-            android:layout_marginEnd="40dp"
-            android:layout_marginTop="16dp"
-            android:orientation="horizontal"
-            android:gravity="center"
-            app:layout_constraintTop_toBottomOf="@id/groupPinLabel"
-            app:layout_constraintStart_toStartOf="parent"
-            app:layout_constraintEnd_toEndOf="parent">
-
-            <EditText
-                android:id="@+id/pinBox1"
-                android:layout_width="0dp"
-                android:layout_height="50dp"
-                android:layout_weight="1"
-                android:layout_marginEnd="8dp"
-                android:background="@drawable/pin_box_bg"
-                android:gravity="center"
-                android:inputType="number"
-                android:maxLength="1"
-                android:textColor="?attr/colorOnSurface"
-                android:textSize="20sp"
-                android:fontFamily="@font/poppins_medium"
-                android:nextFocusForward="@id/pinBox2" />
-
-            <EditText
-                android:id="@+id/pinBox2"
-                android:layout_width="0dp"
-                android:layout_height="50dp"
-                android:layout_weight="1"
-                android:layout_marginEnd="8dp"
-                android:background="@drawable/pin_box_bg"
-                android:gravity="center"
-                android:inputType="number"
-                android:maxLength="1"
-                android:textColor="?attr/colorOnSurface"
-                android:textSize="20sp"
-                android:fontFamily="@font/poppins_medium"
-                android:nextFocusForward="@id/pinBox3" />
-
-            <EditText
-                android:id="@+id/pinBox3"
-                android:layout_width="0dp"
-                android:layout_height="50dp"
-                android:layout_weight="1"
-                android:layout_marginEnd="8dp"
-                android:background="@drawable/pin_box_bg"
-                android:gravity="center"
-                android:inputType="number"
-                android:maxLength="1"
-                android:textColor="?attr/colorOnSurface"
-                android:textSize="20sp"
-                android:fontFamily="@font/poppins_medium"
-                android:nextFocusForward="@id/pinBox4" />
-
-            <EditText
-                android:id="@+id/pinBox4"
-                android:layout_width="0dp"
-                android:layout_height="50dp"
-                android:layout_weight="1"
-                android:layout_marginEnd="8dp"
-                android:background="@drawable/pin_box_bg"
-                android:gravity="center"
-                android:inputType="number"
-                android:maxLength="1"
-                android:textColor="?attr/colorOnSurface"
-                android:textSize="20sp"
-                android:fontFamily="@font/poppins_medium"
-                android:nextFocusForward="@id/pinBox5" />
-
-            <EditText
-                android:id="@+id/pinBox5"
-                android:layout_width="0dp"
-                android:layout_height="50dp"
-                android:layout_weight="1"
-                android:layout_marginEnd="8dp"
-                android:background="@drawable/pin_box_bg"
-                android:gravity="center"
-                android:inputType="number"
-                android:maxLength="1"
-                android:textColor="?attr/colorOnSurface"
-                android:textSize="20sp"
-                android:fontFamily="@font/poppins_medium"
-                android:nextFocusForward="@id/pinBox6" />
-
-            <EditText
-                android:id="@+id/pinBox6"
-                android:layout_width="0dp"
-                android:layout_height="50dp"
-                android:layout_weight="1"
-                android:background="@drawable/pin_box_bg"
-                android:gravity="center"
-                android:inputType="number"
-                android:maxLength="1"
-                android:textColor="?attr/colorOnSurface"
-                android:textSize="20sp"
-                android:fontFamily="@font/poppins_medium" />
-
-        </LinearLayout>
-
         <!-- Add Friends Label -->
         <TextView
             android:id="@+id/addFriendsLabel"
@@ -287,7 +170,7 @@
             android:fontFamily="@font/space_grotesk_bold"
             android:textSize="16sp"
             android:textColor="?attr/colorOnSurfaceVariant"
-            app:layout_constraintTop_toBottomOf="@id/pinBoxesContainer"
+            app:layout_constraintTop_toBottomOf="@id/groupNameContainer"
             app:layout_constraintStart_toStartOf="parent" />
 
         <!-- Selected Members Container -->

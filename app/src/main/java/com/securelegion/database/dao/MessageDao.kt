@@ -17,16 +17,17 @@ data class UnreadCountResult(
 interface MessageDao {
 
     /**
-     * Insert a new message
-     * @return ID of inserted message
+     * Insert a new message. Returns row ID, or -1 if ignored (duplicate messageId/pingId).
+     * IGNORE prevents REPLACE from silently deleting existing rows and resetting
+     * delivery state (pingDelivered, pongDelivered, messageDelivered) and auto-increment IDs.
      */
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertMessage(message: Message): Long
 
     /**
-     * Insert multiple messages (bulk operation)
+     * Insert multiple messages (bulk operation). Duplicates are silently ignored.
      */
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertMessages(messages: List<Message>)
 
     /**
@@ -142,6 +143,26 @@ interface MessageDao {
      */
     @Query("UPDATE messages SET pongDelivered = :pongDelivered WHERE id = :messageId")
     suspend fun updatePongDelivered(messageId: Long, pongDelivered: Boolean)
+
+    /**
+     * Update pingDelivered and status only (prevents race condition with retry state updates)
+     * CRITICAL: Use instead of updateMessage() in PING_ACK handler
+     */
+    @Query("UPDATE messages SET pingDelivered = :pingDelivered, status = :status WHERE id = :messageId")
+    suspend fun updatePingDeliveredStatus(messageId: Long, pingDelivered: Boolean, status: Int)
+
+    /**
+     * Update messageDelivered and status only (prevents race with retry state)
+     * CRITICAL: Use instead of updateMessage() in MESSAGE_ACK handler
+     */
+    @Query("UPDATE messages SET messageDelivered = :messageDelivered, status = :status WHERE id = :messageId")
+    suspend fun updateMessageDeliveredStatus(messageId: Long, messageDelivered: Boolean, status: Int)
+
+    /**
+     * Update tapDelivered only (prevents race condition with delivery status updates)
+     */
+    @Query("UPDATE messages SET tapDelivered = :tapDelivered WHERE id = :messageId")
+    suspend fun updateTapDelivered(messageId: Long, tapDelivered: Boolean)
 
     /**
      * Update payment status and tx signature only (prevents race condition with delivery status)

@@ -77,7 +77,6 @@
 -keep class com.securelegion.ImportWalletActivity { *; }
 -keep class com.securelegion.LockActivity { *; }
 -keep class com.securelegion.MainActivity { *; }
--keep class com.securelegion.ManageTokensActivity { *; }
 -keep class com.securelegion.NotificationsActivity { *; }
 -keep class com.securelegion.QRScannerActivity { *; }
 -keep class com.securelegion.ReceiveActivity { *; }

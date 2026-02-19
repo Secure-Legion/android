@@ -158,37 +158,66 @@
 
         </androidx.constraintlayout.widget.ConstraintLayout>
 
+        <!-- Password Match Indicator -->
+        <TextView
+            android:id="@+id/passwordMatchText"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:fontFamily="@font/poppins_medium"
+            android:textSize="13sp"
+            android:visibility="gone"
+            app:layout_constraintTop_toBottomOf="@id/confirmPasswordContainer"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintEnd_toEndOf="parent" />
+
         <!-- Password Helper Text -->
         <TextView
             android:id="@+id/passwordHelperText"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
-            android:layout_marginTop="16dp"
-            android:text="Password must be at least 9 characters and contain: Uppercase letter, lowercase letter, number, special character (!@#$%^&amp;*)"
+            android:layout_marginTop="8dp"
+            android:text="Min 9 characters. Must include at least 1 uppercase, 1 lowercase, 1 number, and 1 special character (!@#$%^&amp;*). No sequential numbers (123) or repeated characters (aaaa)."
             android:fontFamily="@font/poppins_regular"
             android:textSize="13sp"
             android:textColor="#5C5C5C"
-            app:layout_constraintTop_toBottomOf="@id/confirmPasswordContainer"
+            app:layout_constraintTop_toBottomOf="@id/passwordMatchText"
             app:layout_constraintStart_toStartOf="parent"
             app:layout_constraintEnd_toEndOf="parent" />
 
-        <!-- Create Button -->
-        <TextView
-            android:id="@+id/createAccountButton"
+        <!-- Create Button with inline M3 loading indicator -->
+        <FrameLayout
+            android:id="@+id/createButtonContainer"
             android:layout_width="0dp"
             android:layout_height="60dp"
             android:layout_marginTop="16dp"
-            android:text="Create"
-            android:textSize="16sp"
-            android:textColor="?attr/colorOnSurface"
-            android:fontFamily="@font/space_grotesk_bold"
             android:background="@drawable/lock_button_bg"
-            android:gravity="center"
-            android:clickable="true"
-            android:focusable="true"
+            android:clipToOutline="true"
             app:layout_constraintTop_toBottomOf="@id/passwordHelperText"
             app:layout_constraintStart_toStartOf="parent"
-            app:layout_constraintEnd_toEndOf="parent" />
+            app:layout_constraintEnd_toEndOf="parent">
+
+            <TextView
+                android:id="@+id/createAccountButton"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:text="Create"
+                android:textSize="16sp"
+                android:textColor="?attr/colorOnSurface"
+                android:fontFamily="@font/space_grotesk_bold"
+                android:gravity="center"
+                android:clickable="true"
+                android:focusable="true"
+                android:background="?attr/selectableItemBackground" />
+
+            <!-- Compose island for M3 LoadingIndicator (shape-morphing animation) -->
+            <androidx.compose.ui.platform.ComposeView
+                android:id="@+id/loadingIndicatorView"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:visibility="gone" />
+
+        </FrameLayout>
 
         </androidx.constraintlayout.widget.ConstraintLayout>
 
@@ -206,51 +235,5 @@
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent" />
 
-    <!-- Loading Overlay -->
-    <FrameLayout
-        android:id="@+id/loadingOverlay"
-        android:layout_width="match_parent"
-        android:layout_height="match_parent"
-        android:background="#CC000000"
-        android:visibility="gone"
-        android:clickable="true"
-        android:focusable="true">
-
-        <LinearLayout
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_gravity="center"
-            android:orientation="vertical"
-            android:gravity="center"
-            android:padding="32dp">
-
-            <ProgressBar
-                android:layout_width="64dp"
-                android:layout_height="64dp"
-                android:indeterminateTint="#FFFFFF"
-                android:layout_marginBottom="24dp" />
-
-            <TextView
-                android:id="@+id/loadingText"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="Creating Account..."
-                android:textSize="16sp"
-                android:textColor="#5C5C5C"
-                android:fontFamily="@font/poppins_medium" />
-
-            <TextView
-                android:id="@+id/loadingSubtext"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="Please wait"
-                android:textSize="14sp"
-                android:textColor="#5C5C5C"
-                android:fontFamily="@font/poppins_regular"
-                android:layout_marginTop="8dp" />
-
-        </LinearLayout>
-
-    </FrameLayout>
 
 </androidx.constraintlayout.widget.ConstraintLayout>

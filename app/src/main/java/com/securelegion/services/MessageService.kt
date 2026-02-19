@@ -25,6 +25,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
+import androidx.room.withTransaction
 import org.json.JSONObject
 import java.security.MessageDigest
 import java.util.UUID
@@ -370,32 +371,13 @@ class MessageService(private val context: Context) {
             val encryptedBytes = result.ciphertext
             Log.d(TAG, "SEND KEY EVOLUTION (VOICE): Encryption complete, encrypted ${encryptedBytes.size} bytes")
 
-            // Save evolved key to database (key evolution happened atomically in Rust)
-            Log.d(TAG, "SEND KEY EVOLUTION (VOICE): Updating database with new sendCounter=${keyChain.sendCounter + 1}")
-            database.contactKeyChainDao().updateSendChainKey(
-                contactId = contactId,
-                newSendChainKeyBase64 = android.util.Base64.encodeToString(result.evolvedChainKey, android.util.Base64.NO_WRAP),
-                newSendCounter = keyChain.sendCounter + 1,
-                timestamp = System.currentTimeMillis()
-            )
-            // VERIFY the update actually persisted
-            val verifyKeyChain = database.contactKeyChainDao().getKeyChainByContactId(contactId)
-            Log.d(TAG, "SEND VERIFICATION (VOICE): After update, database shows sendCounter=${verifyKeyChain?.sendCounter}")
-            if (verifyKeyChain?.sendCounter != keyChain.sendCounter + 1) {
-                Log.e(TAG, "SEND ERROR (VOICE): Counter update did NOT persist! Expected ${keyChain.sendCounter + 1}, got ${verifyKeyChain?.sendCounter}")
-            } else {
-                Log.d(TAG, "SEND (VOICE): Counter update verified successfully")
-            }
+            // DEFERRED: Chain key update written atomically with insertMessage below (prevents CW2)
+            val evolvedKeyBase64 = android.util.Base64.encodeToString(result.evolvedChainKey, android.util.Base64.NO_WRAP)
+            val newSendCounter = keyChain.sendCounter + 1
+            Log.d(TAG, "Voice encrypted with sequence ${keyChain.sendCounter}, key update deferred")
 
-            // Get our X25519 public key for sender identification
-            val ourX25519PublicKey = keyManager.getEncryptionPublicKey()
-
-            // Wire format: [X25519:32][Encrypted payload] - NO type byte prepended after encryption
-            val encryptedWithMetadata = ourX25519PublicKey + encryptedBytes
-            val encryptedBase64 = Base64.encodeToString(encryptedWithMetadata, Base64.NO_WRAP)
-
-            Log.d(TAG, "Metadata: 1 byte type + 4 bytes duration + 32 bytes X25519")
-            Log.d(TAG, "Total payload: ${encryptedWithMetadata.size} bytes (${encryptedBase64.length} Base64 chars)")
+            val encryptedBase64 = Base64.encodeToString(encryptedBytes, Base64.NO_WRAP)
+            Log.d(TAG, "Encrypted payload: ${encryptedBytes.size} bytes (${encryptedBase64.length} Base64 chars)")
 
             // Extract nonce from wire format (bytes 9-32, after version and sequence)
             val nonce = encryptedBytes.sliceArray(9 until 33)
@@ -445,9 +427,17 @@ class MessageService(private val context: Context) {
 
             Log.d(TAG, "Voice message queued for persistent delivery (PING_SENT)")
 
-            // Save to database
-            Log.d(TAG, "Saving voice message to database...")
-            val savedMessageId = database.messageDao().insertMessage(message)
+            // ATOMIC: Chain key update + message insert in one transaction (prevents CW2)
+            Log.d(TAG, "Saving voice message to database (atomic with key update)...")
+            val savedMessageId = database.withTransaction {
+                database.contactKeyChainDao().updateSendChainKey(
+                    contactId = contactId,
+                    newSendChainKeyBase64 = evolvedKeyBase64,
+                    newSendCounter = newSendCounter,
+                    timestamp = System.currentTimeMillis()
+                )
+                database.messageDao().insertMessage(message)
+            }
             val savedMessage = message.copy(id = savedMessageId)
 
             // Notify that message is saved (allows UI to update immediately)
@@ -574,25 +564,13 @@ class MessageService(private val context: Context) {
             val encryptedBytes = result.ciphertext
             Log.d(TAG, "Encrypted: ${encryptedBytes.size} bytes (sequence ${keyChain.sendCounter})")
 
-            // Save evolved key to database (key evolution happened atomically in Rust)
-            database.contactKeyChainDao().updateSendChainKey(
-                contactId = contactId,
-                newSendChainKeyBase64 = android.util.Base64.encodeToString(result.evolvedChainKey, android.util.Base64.NO_WRAP),
-                newSendCounter = keyChain.sendCounter + 1,
-                timestamp = System.currentTimeMillis()
-            )
+            // DEFERRED: Chain key update written atomically with insertMessage below (prevents CW2)
+            val evolvedKeyBase64 = android.util.Base64.encodeToString(result.evolvedChainKey, android.util.Base64.NO_WRAP)
+            val newSendCounter = keyChain.sendCounter + 1
+            Log.d(TAG, "Image encrypted with sequence ${keyChain.sendCounter}, key update deferred")
 
-            // Get our X25519 public key for sender identification
-            val ourX25519PublicKey = keyManager.getEncryptionPublicKey()
-
-            // Wire format: [X25519:32][version:1][sequence:8][nonce:24][ciphertext][tag:16]
-            // NOTE: Wire protocol type byte (0x09) is added by android.rs sendPing()
-            val encryptedWithMetadata = ourX25519PublicKey + encryptedBytes
-            Log.d(TAG, "Total with metadata: ${encryptedWithMetadata.size} bytes (X25519 + encrypted)")
-
-            val encryptedBase64 = Base64.encodeToString(encryptedWithMetadata, Base64.NO_WRAP)
-
-            Log.d(TAG, "Total payload: ${encryptedBytes.size} bytes (${encryptedBase64.length} Base64 chars)")
+            val encryptedBase64 = Base64.encodeToString(encryptedBytes, Base64.NO_WRAP)
+            Log.d(TAG, "Encrypted payload: ${encryptedBytes.size} bytes (${encryptedBase64.length} Base64 chars)")
 
             // Extract nonce from wire format (bytes 9-32, after version and sequence)
             val nonce = encryptedBytes.sliceArray(9 until 33)
@@ -638,9 +616,17 @@ class MessageService(private val context: Context) {
 
             Log.d(TAG, "Image message queued for persistent delivery (PING_SENT)")
 
-            // Save to database
-            Log.d(TAG, "Saving image message to database...")
-            val savedMessageId = database.messageDao().insertMessage(message)
+            // ATOMIC: Chain key update + message insert in one transaction (prevents CW2)
+            Log.d(TAG, "Saving image message to database (atomic with key update)...")
+            val savedMessageId = database.withTransaction {
+                database.contactKeyChainDao().updateSendChainKey(
+                    contactId = contactId,
+                    newSendChainKeyBase64 = evolvedKeyBase64,
+                    newSendCounter = newSendCounter,
+                    timestamp = System.currentTimeMillis()
+                )
+                database.messageDao().insertMessage(message)
+            }
             val savedMessage = message.copy(id = savedMessageId)
 
             // Notify that message is saved (allows UI to update immediately)
@@ -904,27 +890,11 @@ class MessageService(private val context: Context) {
             val encryptedBytes = result.ciphertext
             Log.d(TAG, "SEND KEY EVOLUTION: Encryption complete, encrypted ${encryptedBytes.size} bytes")
 
-            // Save evolved key to database (key evolution happened atomically in Rust)
-            Log.d(TAG, "SEND KEY EVOLUTION: Updating database with new sendCounter=${keyChain.sendCounter + 1}")
-            database.contactKeyChainDao().updateSendChainKey(
-                contactId = contactId,
-                newSendChainKeyBase64 = android.util.Base64.encodeToString(result.evolvedChainKey, android.util.Base64.NO_WRAP),
-                newSendCounter = keyChain.sendCounter + 1,
-                timestamp = System.currentTimeMillis()
-            )
-            // VERIFY the update actually persisted
-            val verifyKeyChain = database.contactKeyChainDao().getKeyChainByContactId(contactId)
-            Log.d(TAG, "SEND VERIFICATION: After update, database shows sendCounter=${verifyKeyChain?.sendCounter}")
-            if (verifyKeyChain?.sendCounter != keyChain.sendCounter + 1) {
-                Log.e(TAG, "SEND ERROR: Counter update did NOT persist! Expected ${keyChain.sendCounter + 1}, got ${verifyKeyChain?.sendCounter}")
-            } else {
-                Log.d(TAG, "SEND: Counter update verified successfully")
-            }
-            Log.d(TAG, "Message encrypted with sequence ${keyChain.sendCounter}")
+            // DEFERRED: Chain key update written atomically with insertMessage below (prevents CW2)
+            val evolvedKeyBase64 = android.util.Base64.encodeToString(result.evolvedChainKey, android.util.Base64.NO_WRAP)
+            val newSendCounter = keyChain.sendCounter + 1
+            Log.d(TAG, "Message encrypted with sequence ${keyChain.sendCounter}, key update deferred")
 
-            // FIX: Do NOT prepend pubkey here - android.rs sendMessageBlob() already does it
-            // Old buggy code: val encryptedWithMetadata = ourX25519PublicKey + encryptedBytes
-            // Correct: Just use encryptedBytes directly (pubkey will be added by Rust layer)
             val encryptedBase64 = Base64.encodeToString(encryptedBytes, Base64.NO_WRAP)
 
             // Extract nonce from wire format (bytes 9-32, after version and sequence)
@@ -978,9 +948,17 @@ class MessageService(private val context: Context) {
             Log.d(TAG, "Read receipt: ${if (enableReadReceipt) "enabled" else "disabled"}")
             Log.d(TAG, "Message queued for persistent delivery (PING_SENT)")
 
-            // Save to database
-            Log.d(TAG, "Saving message to database...")
-            val savedMessageId = database.messageDao().insertMessage(message)
+            // ATOMIC: Chain key update + message insert in one transaction (prevents CW2 crash window)
+            Log.d(TAG, "Saving message to database (atomic with key update)...")
+            val savedMessageId = database.withTransaction {
+                database.contactKeyChainDao().updateSendChainKey(
+                    contactId = contactId,
+                    newSendChainKeyBase64 = evolvedKeyBase64,
+                    newSendCounter = newSendCounter,
+                    timestamp = System.currentTimeMillis()
+                )
+                database.messageDao().insertMessage(message)
+            }
             val savedMessage = message.copy(id = savedMessageId)
 
             // Notify that message is saved (allows UI to update immediately)
@@ -1108,33 +1086,13 @@ class MessageService(private val context: Context) {
             val encryptedBytes = result.ciphertext
             Log.d(TAG, "SEND KEY EVOLUTION: Encryption complete, encrypted ${encryptedBytes.size} bytes")
 
-            // Save evolved key to database (key evolution happened atomically in Rust)
-            Log.d(TAG, "SEND KEY EVOLUTION: Updating database with new sendCounter=${keyChain.sendCounter + 1}")
-            database.contactKeyChainDao().updateSendChainKey(
-                contactId = contactId,
-                newSendChainKeyBase64 = android.util.Base64.encodeToString(result.evolvedChainKey, android.util.Base64.NO_WRAP),
-                newSendCounter = keyChain.sendCounter + 1,
-                timestamp = System.currentTimeMillis()
-            )
-            // VERIFY the update actually persisted
-            val verifyKeyChain = database.contactKeyChainDao().getKeyChainByContactId(contactId)
-            Log.d(TAG, "SEND VERIFICATION: After update, database shows sendCounter=${verifyKeyChain?.sendCounter}")
-            if (verifyKeyChain?.sendCounter != keyChain.sendCounter + 1) {
-                Log.e(TAG, "SEND ERROR: Counter update did NOT persist! Expected ${keyChain.sendCounter + 1}, got ${verifyKeyChain?.sendCounter}")
-            } else {
-                Log.d(TAG, "SEND: Counter update verified successfully")
-            }
-            Log.d(TAG, "Payment request encrypted with sequence ${keyChain.sendCounter}")
+            // DEFERRED: Chain key update written atomically with insertMessage below (prevents CW2)
+            val evolvedKeyBase64 = android.util.Base64.encodeToString(result.evolvedChainKey, android.util.Base64.NO_WRAP)
+            val newSendCounter = keyChain.sendCounter + 1
+            Log.d(TAG, "Payment request encrypted with sequence ${keyChain.sendCounter}, key update deferred")
 
-            // Get our X25519 public key for sender identification
-            val ourX25519PublicKey = keyManager.getEncryptionPublicKey()
-
-            // Wire format: [X25519:32][version:1][sequence:8][nonce:24][ciphertext][tag:16]
-            // NOTE: Wire protocol type byte (0x0A) is added by android.rs sendPing()
-            val encryptedWithMetadata = ourX25519PublicKey + encryptedBytes
-            Log.d(TAG, "Total with metadata: ${encryptedWithMetadata.size} bytes (X25519 + encrypted)")
-
-            val encryptedBase64 = Base64.encodeToString(encryptedWithMetadata, Base64.NO_WRAP)
+            val encryptedBase64 = Base64.encodeToString(encryptedBytes, Base64.NO_WRAP)
+            Log.d(TAG, "Encrypted payload: ${encryptedBytes.size} bytes (${encryptedBase64.length} Base64 chars)")
 
             // Extract nonce from wire format (bytes 9-32, after version and sequence)
             val nonce = encryptedBytes.sliceArray(9 until 33)
@@ -1184,9 +1142,17 @@ class MessageService(private val context: Context) {
 
             Log.d(TAG, "Payment request queued for persistent delivery (PING_SENT)")
 
-            // Save to database
-            Log.d(TAG, "Saving payment request to database...")
-            val savedMessageId = database.messageDao().insertMessage(message)
+            // ATOMIC: Chain key update + message insert in one transaction (prevents CW2)
+            Log.d(TAG, "Saving payment request to database (atomic with key update)...")
+            val savedMessageId = database.withTransaction {
+                database.contactKeyChainDao().updateSendChainKey(
+                    contactId = contactId,
+                    newSendChainKeyBase64 = evolvedKeyBase64,
+                    newSendCounter = newSendCounter,
+                    timestamp = System.currentTimeMillis()
+                )
+                database.messageDao().insertMessage(message)
+            }
             val savedMessage = message.copy(id = savedMessageId)
 
             // Notify that message is saved (allows UI to update immediately)
@@ -1313,22 +1279,13 @@ class MessageService(private val context: Context) {
             val encryptedBytes = result.ciphertext
             Log.d(TAG, "SEND KEY EVOLUTION: Payment confirmation encrypted: ${encryptedBytes.size} bytes")
 
-            // Save evolved key to database
-            database.contactKeyChainDao().updateSendChainKey(
-                contactId = contactId,
-                newSendChainKeyBase64 = android.util.Base64.encodeToString(result.evolvedChainKey, android.util.Base64.NO_WRAP),
-                newSendCounter = keyChain.sendCounter + 1,
-                timestamp = System.currentTimeMillis()
-            )
-            Log.d(TAG, "SEND: Updated sendCounter to ${keyChain.sendCounter + 1}")
+            // DEFERRED: Chain key update written atomically with insertMessage below (prevents CW2)
+            val evolvedKeyBase64 = android.util.Base64.encodeToString(result.evolvedChainKey, android.util.Base64.NO_WRAP)
+            val newSendCounter = keyChain.sendCounter + 1
+            Log.d(TAG, "Payment confirmation encrypted with sequence ${keyChain.sendCounter}, key update deferred")
 
-            // Get our X25519 public key for sender identification
-            val ourX25519PublicKey = keyManager.getEncryptionPublicKey()
-
-            // Wire format: [X25519:32][version:1][sequence:8][nonce:24][ciphertext][tag:16]
-            // NOTE: Wire protocol type byte (0x0B) is added by android.rs sendPing()
-            val encryptedWithMetadata = ourX25519PublicKey + encryptedBytes
-            val encryptedBase64 = Base64.encodeToString(encryptedWithMetadata, Base64.NO_WRAP)
+            val encryptedBase64 = Base64.encodeToString(encryptedBytes, Base64.NO_WRAP)
+            Log.d(TAG, "Encrypted payload: ${encryptedBytes.size} bytes (${encryptedBase64.length} Base64 chars)")
 
             // Extract nonce from wire format (bytes 9-32, after version and sequence)
             val nonce = encryptedBytes.sliceArray(9 until 33)
@@ -1372,8 +1329,16 @@ class MessageService(private val context: Context) {
                 txSignature = txSignature
             )
 
-            // Save to database
-            val savedMessageId = database.messageDao().insertMessage(message)
+            // ATOMIC: Chain key update + message insert in one transaction (prevents CW2)
+            val savedMessageId = database.withTransaction {
+                database.contactKeyChainDao().updateSendChainKey(
+                    contactId = contactId,
+                    newSendChainKeyBase64 = evolvedKeyBase64,
+                    newSendCounter = newSendCounter,
+                    timestamp = System.currentTimeMillis()
+                )
+                database.messageDao().insertMessage(message)
+            }
             val savedMessage = message.copy(id = savedMessageId)
 
             // Notify that message is saved
@@ -1469,22 +1434,13 @@ class MessageService(private val context: Context) {
             val encryptedBytes = result.ciphertext
             Log.d(TAG, "SEND KEY EVOLUTION: Payment acceptance encrypted: ${encryptedBytes.size} bytes")
 
-            // Save evolved key to database
-            database.contactKeyChainDao().updateSendChainKey(
-                contactId = contactId,
-                newSendChainKeyBase64 = android.util.Base64.encodeToString(result.evolvedChainKey, android.util.Base64.NO_WRAP),
-                newSendCounter = keyChain.sendCounter + 1,
-                timestamp = System.currentTimeMillis()
-            )
-            Log.d(TAG, "SEND: Updated sendCounter to ${keyChain.sendCounter + 1}")
+            // DEFERRED: Chain key update written atomically with insertMessage below (prevents CW2)
+            val evolvedKeyBase64 = android.util.Base64.encodeToString(result.evolvedChainKey, android.util.Base64.NO_WRAP)
+            val newSendCounter = keyChain.sendCounter + 1
+            Log.d(TAG, "Payment acceptance encrypted with sequence ${keyChain.sendCounter}, key update deferred")
 
-            // Get our X25519 public key for sender identification
-            val ourX25519PublicKey = keyManager.getEncryptionPublicKey()
-
-            // Wire format: [X25519:32][version:1][sequence:8][nonce:24][ciphertext][tag:16]
-            // NOTE: Wire protocol type byte (0x0C) is added by android.rs sendPing()
-            val encryptedWithMetadata = ourX25519PublicKey + encryptedBytes
-            val encryptedBase64 = Base64.encodeToString(encryptedWithMetadata, Base64.NO_WRAP)
+            val encryptedBase64 = Base64.encodeToString(encryptedBytes, Base64.NO_WRAP)
+            Log.d(TAG, "Encrypted payload: ${encryptedBytes.size} bytes (${encryptedBase64.length} Base64 chars)")
 
             // Extract nonce from wire format (bytes 9-32, after version and sequence)
             val nonce = encryptedBytes.sliceArray(9 until 33)
@@ -1520,7 +1476,16 @@ class MessageService(private val context: Context) {
                 paymentStatus = Message.PAYMENT_STATUS_PENDING
             )
 
-            val savedMessageId = database.messageDao().insertMessage(message)
+            // ATOMIC: Chain key update + message insert in one transaction (prevents CW2)
+            val savedMessageId = database.withTransaction {
+                database.contactKeyChainDao().updateSendChainKey(
+                    contactId = contactId,
+                    newSendChainKeyBase64 = evolvedKeyBase64,
+                    newSendCounter = newSendCounter,
+                    timestamp = System.currentTimeMillis()
+                )
+                database.messageDao().insertMessage(message)
+            }
             val savedMessage = message.copy(id = savedMessageId)
 
             onMessageSaved?.invoke(savedMessage)
@@ -1751,16 +1716,9 @@ class MessageService(private val context: Context) {
                 }
             }
 
-            // Save updated chain key state to database (only if changed)
-            if (newReceiveCounter != receiveCounter) {
-                database.contactKeyChainDao().updateReceiveChainKey(
-                    contactId = contact.id,
-                    newReceiveChainKeyBase64 = android.util.Base64.encodeToString(newReceiveChainKey, android.util.Base64.NO_WRAP),
-                    newReceiveCounter = newReceiveCounter,
-                    timestamp = System.currentTimeMillis()
-                )
-                Log.d(TAG, "Saved updated key chain state: receiveCounter=$newReceiveCounter")
-            }
+            // DEFERRED: Chain key update is written atomically with insertMessage below
+            // to prevent CW4 crash window (key advanced but message not persisted).
+            val needsChainKeyUpdate = newReceiveCounter != receiveCounter
 
             // Extract nonce from wire format (bytes 9-32, after version and sequence)
             val nonce = encryptedBytes.sliceArray(9 until 33)
@@ -1773,12 +1731,30 @@ class MessageService(private val context: Context) {
             // Handle based on message type
             val message = when (messageType) {
                 Message.MESSAGE_TYPE_VOICE -> {
-                    // Voice message: decryptedData is audio bytes
-                    val audioBytes = decryptedData.toByteArray(Charsets.ISO_8859_1)
+                    // Voice message: decryptedData = [0x01][duration:4 BE][audioBytes...]
+                    val rawBytes = decryptedData.toByteArray(Charsets.ISO_8859_1)
+
+                    // Extract duration and strip prefix (0x01 + 4-byte duration)
+                    val actualDuration: Int
+                    val audioBytes: ByteArray
+                    if (rawBytes.size >= 5 && rawBytes[0] == 0x01.toByte()) {
+                        actualDuration = (
+                            ((rawBytes[1].toInt() and 0xFF) shl 24) or
+                            ((rawBytes[2].toInt() and 0xFF) shl 16) or
+                            ((rawBytes[3].toInt() and 0xFF) shl 8) or
+                            (rawBytes[4].toInt() and 0xFF)
+                        ).coerceIn(0, 3600)
+                        audioBytes = rawBytes.copyOfRange(5, rawBytes.size)
+                        Log.d(TAG, "Extracted voice duration=${actualDuration}s from decrypted prefix, audio=${audioBytes.size} bytes")
+                    } else {
+                        // Missing 0x01 prefix = corrupted payload or wrong decrypt key
+                        Log.e(TAG, "Voice payload missing 0x01 prefix: first byte=0x${if (rawBytes.isNotEmpty()) "%02x".format(rawBytes[0]) else "??"}, size=${rawBytes.size}")
+                        return@withContext Result.failure(Exception("Corrupted voice payload: missing 0x01 prefix"))
+                    }
 
                     // Save audio to local storage
                     val voiceRecorder = com.securelegion.utils.VoiceRecorder(context)
-                    val voiceFilePath = voiceRecorder.saveVoiceMessage(audioBytes, voiceDuration ?: 0)
+                    val voiceFilePath = voiceRecorder.saveVoiceMessage(audioBytes, actualDuration)
 
                     // PHASE 1.2: Generate deterministic messageId using SORTED pubkeys
                     // Sender computed: generateDeterministicMessageId(audio, senderKey, recipientKey, nonce)
@@ -1803,7 +1779,7 @@ class MessageService(private val context: Context) {
                         messageId = messageId,
                         encryptedContent = "", // Empty for voice messages
                         messageType = Message.MESSAGE_TYPE_VOICE,
-                        voiceDuration = voiceDuration,
+                        voiceDuration = actualDuration,
                         voiceFilePath = voiceFilePath,
                         isSentByMe = false,
                         timestamp = System.currentTimeMillis(),
@@ -1817,8 +1793,17 @@ class MessageService(private val context: Context) {
                     )
                 }
                 Message.MESSAGE_TYPE_IMAGE -> {
-                    // Image message: decryptedData is image bytes
-                    val imageBytes = decryptedData.toByteArray(Charsets.ISO_8859_1)
+                    // Image message: decrypted payload is [0x02][imageBytes...]
+                    // Strip the 0x02 internal type prefix
+                    val rawBytes = decryptedData.toByteArray(Charsets.ISO_8859_1)
+                    val imageBytes: ByteArray
+                    if (rawBytes.size >= 2 && rawBytes[0] == 0x02.toByte()) {
+                        imageBytes = rawBytes.copyOfRange(1, rawBytes.size)
+                        Log.d(TAG, "Stripped 0x02 IMAGE prefix, image=${imageBytes.size} bytes")
+                    } else {
+                        Log.e(TAG, "Image payload missing 0x02 prefix: first byte=0x${if (rawBytes.isNotEmpty()) "%02x".format(rawBytes[0]) else "??"}, size=${rawBytes.size}")
+                        return@withContext Result.failure(Exception("Corrupted image payload: missing 0x02 prefix"))
+                    }
                     val imageBase64 = Base64.encodeToString(imageBytes, Base64.NO_WRAP)
 
                     // PHASE 1.2: Generate deterministic messageId using SORTED pubkeys
@@ -1984,7 +1969,17 @@ class MessageService(private val context: Context) {
                         Log.i(TAG, "Profile photo updated for ${contact.displayName} (${photoBytes.size} bytes)")
                     }
 
-                    // Return early - profile updates are never saved to messages table
+                    // Profile updates consume a chain key sequence but are never saved to messages table.
+                    // Commit the chain key update before returning.
+                    if (needsChainKeyUpdate) {
+                        database.contactKeyChainDao().updateReceiveChainKey(
+                            contactId = contact.id,
+                            newReceiveChainKeyBase64 = android.util.Base64.encodeToString(newReceiveChainKey, android.util.Base64.NO_WRAP),
+                            newReceiveCounter = newReceiveCounter,
+                            timestamp = System.currentTimeMillis()
+                        )
+                        Log.d(TAG, "Saved chain key state for profile update: receiveCounter=$newReceiveCounter")
+                    }
                     return@withContext Result.failure(Exception("Profile update processed"))
                 }
                 else -> {
@@ -2028,8 +2023,20 @@ class MessageService(private val context: Context) {
                 Log.d(TAG, "Message has self-destruct enabled, expires at: $selfDestructAt")
             }
 
-            // Save to database
-            val savedMessageId = database.messageDao().insertMessage(message)
+            // ATOMIC: Chain key update + message insert in one transaction (prevents CW4 crash window)
+            // If process dies mid-transaction, SQLCipher rolls back BOTH writes on next open.
+            val savedMessageId = database.withTransaction {
+                if (needsChainKeyUpdate) {
+                    database.contactKeyChainDao().updateReceiveChainKey(
+                        contactId = contact.id,
+                        newReceiveChainKeyBase64 = android.util.Base64.encodeToString(newReceiveChainKey, android.util.Base64.NO_WRAP),
+                        newReceiveCounter = newReceiveCounter,
+                        timestamp = System.currentTimeMillis()
+                    )
+                    Log.d(TAG, "Saved updated key chain state: receiveCounter=$newReceiveCounter")
+                }
+                database.messageDao().insertMessage(message)
+            }
 
             // Broadcast to MainActivity to refresh chat list preview (explicit broadcast)
             val intent = android.content.Intent("com.securelegion.NEW_PING")
@@ -2636,7 +2643,7 @@ class MessageService(private val context: Context) {
                     // CRITICAL FIX: Send PONG_ACK BEFORE MESSAGE (ordering milestone)
                     // Protocol: Sender receives PONG → sends PONG_ACK → then sends MESSAGE
                     // Make this async so it doesn't block the polling loop, but enforce ordering with retries
-                    kotlinx.coroutines.CoroutineScope(Dispatchers.IO).launch {
+                    launch {
                         try {
                             val pongAckSent = sendPongAckWithRetry(
                                 itemId = pingId,
@@ -2716,103 +2723,17 @@ class MessageService(private val context: Context) {
                 pollForPongsAndSendMessages()
             } else {
                 // Phase 1: Need to retry PING
-                Log.d(TAG, "No pong yet for ${message.messageId}, retrying PING")
-                val contact = database.contactDao().getContactById(message.contactId)
-
-                if (contact == null) {
-                    Log.e(TAG, "Cannot resend - contact not found")
-                    database.messageDao().updateMessageStatus(messageId, com.securelegion.database.entities.Message.STATUS_FAILED)
-                    return@withContext Result.failure(Exception("Contact not found"))
-                }
-
-                if (message.pingWireBytes != null) {
-                    // Resend PING using stored wire bytes (fast path)
-                    val success = com.securelegion.crypto.RustBridge.resendPingWithWireBytes(
-                        message.pingWireBytes!!,
-                        contact.messagingOnion ?: ""
-                    )
-                    if (success) {
-                        Log.i(TAG, "Ping resent successfully for ${message.messageId}")
-                    } else {
-                        Log.e(TAG, "Failed to resend Ping for ${message.messageId}")
-                        database.messageDao().updateMessageStatus(messageId, com.securelegion.database.entities.Message.STATUS_FAILED)
-                        return@withContext Result.failure(Exception("Failed to resend PING"))
-                    }
+                // ALWAYS use sendPingForMessage (never resendPingWithWireBytes)
+                // because resendPingWithWireBytes doesn't re-register the signer
+                // in OUTGOING_PING_SIGNERS, causing PONG_SIG_REJECT on the response
+                Log.d(TAG, "No pong yet for ${message.messageId}, retrying PING via sendPingForMessage")
+                val retryResult = sendPingForMessage(message)
+                if (retryResult.isSuccess) {
+                    Log.i(TAG, "Ping re-sent successfully for ${message.messageId}")
                 } else {
-                    // Fallback: pingWireBytes missing (old message or race condition)
-                    // Recreate PING using existing encrypted payload
-                    Log.w(TAG, "pingWireBytes missing for ${message.messageId}, recreating PING from existing payload")
-
-                    if (message.encryptedPayload == null) {
-                        Log.e(TAG, "Cannot resend - no encrypted payload stored")
-                        database.messageDao().updateMessageStatus(messageId, com.securelegion.database.entities.Message.STATUS_FAILED)
-                        return@withContext Result.failure(Exception("No encrypted payload"))
-                    }
-
-                    // Get contact keys
-                    val recipientEd25519PubKey = Base64.decode(contact.publicKeyBase64, Base64.NO_WRAP)
-                    val recipientX25519PubKey = Base64.decode(contact.x25519PublicKeyBase64, Base64.NO_WRAP)
-                    val onionAddress = contact.messagingOnion ?: ""
-
-                    // Use existing pingId and timestamp from the message
-                    val pingId = message.pingId ?: run {
-                        Log.e(TAG, "Cannot resend - no pingId stored")
-                        database.messageDao().updateMessageStatus(messageId, com.securelegion.database.entities.Message.STATUS_FAILED)
-                        return@withContext Result.failure(Exception("No pingId"))
-                    }
-
-                    // Decode the Base64 encrypted payload to bytes
-                    val encryptedBytes = Base64.decode(message.encryptedPayload!!, Base64.NO_WRAP)
-
-                    // Convert message type to wire protocol type byte
-                    val messageTypeByte: Byte = when (message.messageType) {
-                        com.securelegion.database.entities.Message.MESSAGE_TYPE_VOICE -> 0x04.toByte()
-                        com.securelegion.database.entities.Message.MESSAGE_TYPE_IMAGE -> 0x09.toByte()
-                        com.securelegion.database.entities.Message.MESSAGE_TYPE_PAYMENT_REQUEST -> 0x0A.toByte()
-                        com.securelegion.database.entities.Message.MESSAGE_TYPE_PAYMENT_SENT -> 0x0B.toByte()
-                        com.securelegion.database.entities.Message.MESSAGE_TYPE_PAYMENT_ACCEPTED -> 0x0C.toByte()
-                        com.securelegion.database.entities.Message.MESSAGE_TYPE_PROFILE_UPDATE -> 0x0F.toByte()
-                        else -> 0x03.toByte() // TEXT (default)
-                    }
-
-                    // Recreate PING using RustBridge.sendPing with existing encrypted payload
-                    val pingResponse = try {
-                        com.securelegion.crypto.RustBridge.sendPing(
-                            recipientEd25519PubKey,
-                            recipientX25519PubKey,
-                            onionAddress,
-                            encryptedBytes,
-                            messageTypeByte,
-                            pingId,
-                            message.timestamp
-                        )
-                    } catch (e: Exception) {
-                        Log.e(TAG, "Failed to recreate PING", e)
-                        database.messageDao().updateMessageStatus(messageId, com.securelegion.database.entities.Message.STATUS_FAILED)
-                        return@withContext Result.failure(e)
-                    }
-
-                    if (pingResponse == null) {
-                        Log.e(TAG, "sendPing returned null")
-                        database.messageDao().updateMessageStatus(messageId, com.securelegion.database.entities.Message.STATUS_FAILED)
-                        return@withContext Result.failure(Exception("sendPing returned null"))
-                    }
-
-                    // Parse JSON response to get wire bytes
-                    val wireBytes = try {
-                        val json = org.json.JSONObject(pingResponse)
-                        json.getString("wireBytes")
-                    } catch (e: Exception) {
-                        Log.e(TAG, "Failed to parse sendPing response", e)
-                        database.messageDao().updateMessageStatus(messageId, com.securelegion.database.entities.Message.STATUS_FAILED)
-                        return@withContext Result.failure(e)
-                    }
-
-                    // Store wire bytes for future retries
-                    // CRITICAL: Use partial update to avoid overwriting delivery status
-                    // (fixes race where MESSAGE_ACK sets delivered=true between read and write)
-                    database.messageDao().updatePingWireBytes(message.id, wireBytes)
-                    Log.i(TAG, "Recreated PING and stored wire bytes for future retries")
+                    Log.e(TAG, "Failed to re-send Ping for ${message.messageId}")
+                    database.messageDao().updateMessageStatus(messageId, com.securelegion.database.entities.Message.STATUS_FAILED)
+                    return@withContext Result.failure(Exception("Failed to resend PING"))
                 }
             }
 

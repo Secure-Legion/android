@@ -12,7 +12,7 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="horizontal"
-        android:background="@drawable/glass_header_bg"
+        android:background="@android:color/transparent"
         android:paddingStart="20dp"
         android:paddingEnd="20dp"
         android:paddingTop="16dp"
@@ -27,7 +27,7 @@
             android:layout_width="42dp"
             android:layout_height="42dp"
             android:layout_marginStart="8dp"
-            android:background="@drawable/top_icon_bg"
+            android:background="@drawable/glass_circle_bg"
             android:clickable="true"
             android:focusable="true">
 
@@ -51,7 +51,7 @@
             android:background="@drawable/nav_item_ripple"
             android:contentDescription="Contact Photo" />
 
-        <!-- Chat Name -->
+        <!-- Chat Name (clickable — opens contact profile) -->
         <TextView
             android:id="@+id/chatName"
             android:layout_width="0dp"
@@ -63,7 +63,10 @@
             android:textColor="#CCCCCC"
             android:fontFamily="@font/space_grotesk_bold"
             android:textStyle="bold"
-            android:gravity="start" />
+            android:gravity="start"
+            android:clickable="true"
+            android:focusable="true"
+            android:background="?attr/selectableItemBackground" />
 
         <!-- Call Button -->
         <FrameLayout
@@ -71,7 +74,7 @@
             android:layout_width="42dp"
             android:layout_height="42dp"
             android:layout_marginEnd="8dp"
-            android:background="@drawable/top_icon_bg"
+            android:background="@drawable/glass_circle_bg"
             android:clickable="true"
             android:focusable="true">
 

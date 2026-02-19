@@ -68,12 +68,6 @@ interface GroupDao {
     suspend fun updateGroupIcon(groupId: String, icon: String)
 
     /**
-     * Update group PIN
-     */
-    @Query("UPDATE groups SET groupPin = :newPin WHERE groupId = :groupId")
-    suspend fun updateGroupPin(groupId: String, newPin: String)
-
-    /**
      * Update last activity timestamp
      */
     @Query("UPDATE groups SET lastActivityTimestamp = :timestamp WHERE groupId = :groupId")
@@ -86,10 +80,34 @@ interface GroupDao {
     suspend fun setMuted(groupId: String, isMuted: Boolean)
 
     /**
-     * Update admin status
+     * Update cached member count
      */
-    @Query("UPDATE groups SET isAdmin = :isAdmin WHERE groupId = :groupId")
-    suspend fun setAdmin(groupId: String, isAdmin: Boolean)
+    @Query("UPDATE groups SET memberCount = :count WHERE groupId = :groupId")
+    suspend fun updateMemberCount(groupId: String, count: Int)
+
+    /**
+     * Update cached last message preview
+     */
+    @Query("UPDATE groups SET lastMessagePreview = :preview WHERE groupId = :groupId")
+    suspend fun updateLastMessagePreview(groupId: String, preview: String?)
+
+    /**
+     * Update pending invite flag
+     */
+    @Query("UPDATE groups SET isPendingInvite = :isPending WHERE groupId = :groupId")
+    suspend fun updatePendingInvite(groupId: String, isPending: Boolean)
+
+    /**
+     * Toggle pinned status
+     */
+    @Query("UPDATE groups SET isPinned = :isPinned WHERE groupId = :groupId")
+    suspend fun setPinned(groupId: String, isPinned: Boolean)
+
+    /**
+     * Get all pinned groups (for main messages tab)
+     */
+    @Query("SELECT * FROM groups WHERE isPinned = 1 ORDER BY lastActivityTimestamp DESC")
+    suspend fun getPinnedGroups(): List<Group>
 
     /**
      * Get group count
