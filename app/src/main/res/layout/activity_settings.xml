@@ -547,7 +547,7 @@
 
             </LinearLayout>
 
-            <!-- Communication Mode -->
+            <!-- Communication Mode (hidden until Meshtastic integration is ready) -->
             <LinearLayout
                 android:id="@+id/communicationModeItem"
                 android:layout_width="match_parent"
@@ -559,7 +559,8 @@
                 android:layout_marginBottom="12dp"
                 android:gravity="center_vertical"
                 android:clickable="true"
-                android:focusable="true">
+                android:focusable="true"
+                android:visibility="gone">
 
                 <FrameLayout
                     android:layout_width="50dp"
