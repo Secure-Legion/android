@@ -187,6 +187,7 @@ class TorService : Service() {
     private var healthMonitorJob: kotlinx.coroutines.Job? = null
     private var socksHealthJob: kotlinx.coroutines.Job? = null
     private var downloadWatchdogJob: kotlinx.coroutines.Job? = null
+    private var pinRotationJob: kotlinx.coroutines.Job? = null
     @Volatile private var lastHealthyMs: Long = 0L // When circuits were last healthy
     @Volatile private var consecutiveHealthyPolls: Int = 0 // Hysteresis: require 2 healthy polls before opening gate
     @Volatile private var consecutiveRestarts: Int = 0 // Track restart attempts for backoff
@@ -304,6 +305,7 @@ class TorService : Service() {
                 val stalledMs = SystemClock.elapsedRealtime() - lastBootstrapProgressMs
                 if (stalledMs > stallTimeoutMs) {
                     Log.w(TAG, "WATCHDOG restarting Tor: no bootstrap progress for ${stalledMs / 1000}s, stuck at $bootstrapPercent%, bridgeType=$bridgeType, timeout=${stallTimeoutMs / 1000}s")
+                    consecutiveBootstrapFailures++
                     restartTor("bootstrap stalled at $bootstrapPercent%")
                     return@launch
                 }
@@ -317,6 +319,9 @@ class TorService : Service() {
      */
     private fun onTorReady() {
         Log.w(TAG, "========== onTorReady() CALLED - BOOTSTRAP 100% ==========")
+
+        // Bootstrap succeeded — reset all failure tracking
+        resetReconnectBackoff()
 
         // CRITICAL: Set legacy torConnected flag for compatibility with SplashActivity
         // SplashActivity checks isMessagingReady() which needs both torConnected AND listenersReady
@@ -336,6 +341,9 @@ class TorService : Service() {
         } catch (e: Exception) {
             Log.e(TAG, "Failed to initialize PendingPingStore DAO", e)
         }
+
+        // Populate own-onion cache for HS_DESC event filtering
+        refreshOwnOnionCache()
 
         // Start services ONCE (latch prevents repeated resets)
         Log.w(TAG, "Calling ensureStartedOnce() to start listeners...")
@@ -557,6 +565,42 @@ class TorService : Service() {
     }
 
     /**
+     * Periodic PIN rotation check — rotates PIN when time or count threshold exceeded,
+     * and expires previous PIN after grace period.
+     */
+    private fun startPinRotationMonitor() {
+        pinRotationJob?.cancel()
+        pinRotationJob = serviceScope.launch(Dispatchers.IO) {
+            Log.i(TAG, "Starting PIN rotation monitor")
+            while (isActive) {
+                try {
+                    val keyManager = com.securelegion.crypto.KeyManager.getInstance(this@TorService)
+                    val cardManager = ContactCardManager(this@TorService)
+                    val securityPrefs = getSharedPreferences("security_prefs", android.content.Context.MODE_PRIVATE)
+                    val intervalMs = securityPrefs.getLong("pin_rotation_interval_ms", 24 * 60 * 60 * 1000L)
+                    val maxDecrypts = securityPrefs.getInt("pin_max_uses", 5)
+
+                    // Initialize rotation timestamp if not set yet
+                    if (keyManager.getPinRotationTimestamp() == 0L && keyManager.getContactPin() != null) {
+                        keyManager.storePinRotationTimestamp(System.currentTimeMillis())
+                    }
+
+                    val rotated = keyManager.rotatePinIfNeeded(cardManager, intervalMs, maxDecrypts)
+                    if (rotated) {
+                        Log.i(TAG, "PIN auto-rotated by periodic monitor")
+                    }
+
+                    // Expire previous PIN after grace period (same as rotation interval)
+                    keyManager.expirePreviousPinIfNeeded(intervalMs)
+                } catch (e: Exception) {
+                    Log.e(TAG, "PIN rotation monitor error", e)
+                }
+                kotlinx.coroutines.delay(5 * 60 * 1000L) // Check every 5 minutes
+            }
+        }
+    }
+
+    /**
      * Evaluate Tor health from ControlPort and manage gate + restart logic
      */
     private fun onHealthSample() {
@@ -691,6 +735,22 @@ class TorService : Service() {
                             restartTor("health unhealthy: bootstrap=$bootstrapPercent%, circuits=${RustBridge.getCircuitEstablished()}, state=$torState")
                         }
                     }
+                }
+            }
+        }
+
+        // HS descriptor stall detection: if HUP was sent but HS is still unhealthy after 90s,
+        // the gentle nudge didn't work — escalate to a full restart.
+        // This catches "silent stall" where Tor stops emitting HS_DESC events entirely.
+        if (!hsDescHealthy && torState == TorState.RUNNING && lastHsHupSentAt > 0) {
+            val sinceHup = SystemClock.elapsedRealtime() - lastHsHupSentAt
+            if (sinceHup > 90_000) {
+                Log.w(TAG, "HS still unhealthy ${sinceHup / 1000}s after SIGNAL HUP — escalating to restart")
+                lastHsHupSentAt = 0L // Reset so we don't re-trigger every health poll
+                hsDescHealthy = true  // Reset to avoid immediate re-escalation after restart
+                hsDescFailureCount = 0
+                serviceScope.launch {
+                    restartTor("HS descriptor stall: HUP failed to recover after 90s")
                 }
             }
         }
@@ -1053,6 +1113,9 @@ class TorService : Service() {
     private var lastCircuitNewnymSentAt = 0L // Timestamp for circuit-failure path (handleCircuitFailed)
     private val HEALTH_NEWNYM_COOLDOWN_MS = 30_000L // 30 seconds between health-triggered NEWNYMs
     private var lastHealthNewnymSentAt = 0L // Timestamp for health-monitor path (onHealthSample)
+    // Global NEWNYM dedup: prevents both paths from firing within same 10s window
+    private var lastAnyNewnymSentAt = 0L
+    private val NEWNYM_GLOBAL_DEDUP_MS = 10_000L
     // Adaptive escalation: after too many NEWNYMs, increase cooldown to prevent death spiral
     private var recentNewnymCount = 0
     private var newnymWindowStart = 0L
@@ -1066,6 +1129,12 @@ class TorService : Service() {
      */
     private fun maybeSendCircuitNewnym() {
         val elapsed = SystemClock.elapsedRealtime()
+
+        // Global dedup: don't fire if any NEWNYM was sent recently (prevents double-fire)
+        if (elapsed - lastAnyNewnymSentAt < NEWNYM_GLOBAL_DEDUP_MS) {
+            Log.d(TAG, "Circuit NEWNYM suppressed (global dedup: ${(NEWNYM_GLOBAL_DEDUP_MS - (elapsed - lastAnyNewnymSentAt)) / 1000}s)")
+            return
+        }
 
         // Track NEWNYM frequency for adaptive escalation
         if (elapsed - newnymWindowStart > NEWNYM_ESCALATION_WINDOW) {
@@ -1084,6 +1153,7 @@ class TorService : Service() {
             return
         }
         lastCircuitNewnymSentAt = elapsed
+        lastAnyNewnymSentAt = elapsed
         recentNewnymCount++
         Log.w(TAG, "Sending circuit-failure-triggered NEWNYM (count=$recentNewnymCount in window)")
         serviceScope.launch(Dispatchers.IO) {
@@ -1102,11 +1172,19 @@ class TorService : Service() {
      */
     private fun maybeSendHealthNewnym() {
         val elapsed = SystemClock.elapsedRealtime()
+
+        // Global dedup: don't fire if any NEWNYM was sent recently (prevents double-fire)
+        if (elapsed - lastAnyNewnymSentAt < NEWNYM_GLOBAL_DEDUP_MS) {
+            Log.d(TAG, "Health NEWNYM suppressed (global dedup: ${(NEWNYM_GLOBAL_DEDUP_MS - (elapsed - lastAnyNewnymSentAt)) / 1000}s)")
+            return
+        }
+
         if (elapsed - lastHealthNewnymSentAt < HEALTH_NEWNYM_COOLDOWN_MS) {
             Log.d(TAG, "Health NEWNYM suppressed (cooldown: ${(HEALTH_NEWNYM_COOLDOWN_MS - (elapsed - lastHealthNewnymSentAt)) / 1000}s remaining)")
             return
         }
         lastHealthNewnymSentAt = elapsed
+        lastAnyNewnymSentAt = elapsed
         Log.w(TAG, "Sending health-triggered NEWNYM (circuits dead, SOCKS alive)")
         serviceScope.launch(Dispatchers.IO) {
             try {
@@ -1118,16 +1196,46 @@ class TorService : Service() {
         }
     }
 
-    // HS descriptor failure tracking (for backoff)
+    // HS descriptor failure tracking (for backoff + HUP recovery)
+    // IMPORTANT: Only tracks failures for OUR OWN onion addresses, NOT peer fetch failures.
+    // Peer descriptor fetch failures (contact offline) must NOT trigger HS health recovery.
     private var hsDescFailureCount = 0
     private var hsDescFailureWindowStart = 0L
     private val HS_DESC_FAILURE_THRESHOLD = 3 // Mark unhealthy if 3 failures in 30 seconds
     private val HS_DESC_FAILURE_WINDOW = 30000L // 30 second window
     private var hsDescHealthy = true
+    @Volatile private var lastHsHupSentAt = 0L
+    private val HS_HUP_COOLDOWN_MS = 60_000L // Don't send HUP more than once per 60s
 
     // HS descriptor upload deduplication (Tor uploads to 3 HSDirs, we only log first one)
     private val lastHsDescUpload = mutableMapOf<String, Long>()
     private val HS_DESC_DEDUPE_WINDOW_MS = 5000L // 5 seconds
+
+    // Cache of our own onion base addresses (populated eagerly in onTorReady, NOT in event handler)
+    @Volatile private var ownOnionBases: Set<String> = emptySet()
+
+    /** Populate ownOnionBases from KeyManager/TorManager. Call on lifecycle events, not in hot path. */
+    private fun refreshOwnOnionCache() {
+        try {
+            val keyManager = com.securelegion.crypto.KeyManager.getInstance(this)
+            val torManager = com.securelegion.crypto.TorManager.getInstance(this)
+            val set = mutableSetOf<String>()
+            keyManager.getMessagingOnion()?.trim()?.lowercase()?.removeSuffix(".onion")?.let { set.add(it) }
+            keyManager.getFriendRequestOnion()?.trim()?.lowercase()?.removeSuffix(".onion")?.let { set.add(it) }
+            torManager.getVoiceOnionAddress()?.trim()?.lowercase()?.removeSuffix(".onion")?.let { set.add(it) }
+            ownOnionBases = set
+            Log.d(TAG, "Own onion cache refreshed: ${set.size} addresses")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to refresh own onion cache", e)
+        }
+    }
+
+    /** Check if an onion address belongs to us. Returns false if cache is empty (not ready yet). */
+    private fun isOwnOnion(address: String): Boolean {
+        if (address.isBlank() || ownOnionBases.isEmpty()) return false
+        val normalized = address.trim().lowercase().removeSuffix(".onion")
+        return ownOnionBases.contains(normalized)
+    }
 
     companion object {
         private const val TAG = "TorService"
@@ -1701,6 +1809,9 @@ class TorService : Service() {
             // Start health monitor (polls ControlPort for circuit health)
             startHealthMonitor()
 
+            // Start PIN rotation monitor (auto-rotates PIN based on time/count)
+            startPinRotationMonitor()
+
             // Start SOCKS health monitor (detects dead proxy, auto-restarts)
             startSocksHealthMonitor()
 
@@ -1737,12 +1848,14 @@ class TorService : Service() {
             } else {
                 Log.e(TAG, "Tor initialization returned null onion address")
                 setState(TorState.ERROR, "init failed")
-                scheduleReconnect()
+                consecutiveBootstrapFailures++
+                scheduleReconnect("init returned null onion")
             }
         } catch (e: Exception) {
             Log.e(TAG, "Error starting Tor", e)
             setState(TorState.ERROR, e.message ?: "unknown")
-            scheduleReconnect()
+            consecutiveBootstrapFailures++
+            scheduleReconnect("startTor exception: ${e.message}")
         }
     }
 
@@ -1755,7 +1868,7 @@ class TorService : Service() {
             return
         }
 
-        setState(TorState.STOPPING, "user requested")
+        setState(TorState.STOPPING, "shutdown")
         startTorRequested.set(false)
         startupCompleted.set(false) // Reset latch so ensureStartedOnce() runs again on restart
         bootstrapWatchdogJob?.cancel()
@@ -1784,9 +1897,19 @@ class TorService : Service() {
                 }
             }
 
-            // Note: We don't stop torManager here because it manages
-            // the hidden service which should stay alive for incoming connections
-            // Only the SOCKS proxy is stopped
+            // KILL the actual tor process (GP TorService)
+            // Without this, a wedged tor daemon stays alive and the next start
+            // finds stale state: lock file, dead control socket, old cookie.
+            stopGpTorProcess()
+
+            // Reset TorManager init state so next startTor() does a fresh init
+            torManager.resetInitializationState()
+
+            // Clean up stale lock/socket files that block the next start
+            cleanupStaleTorFiles()
+
+            // Record shutdown timestamp for cooldown enforcement in startTor()
+            recordShutdownTimestamp()
 
             setState(TorState.OFF, "stopped")
         } catch (e: Exception) {
@@ -1796,33 +1919,250 @@ class TorService : Service() {
     }
 
     /**
-     * Restart Tor (clean stop + start) with debouncing
-     * Prevents restart spam during network transitions
-     * Allows restart from STARTING/BOOTSTRAPPING/RUNNING (watchdog needs this)
+     * Send a command to Tor via ControlSocket (Unix domain socket).
+     * Uses empty auth (GP tor-android 0.4.9.5 uses --CookieAuthentication 0).
+     * Same pattern as TorManager.probeTorControl() and verifyBridgeUsage().
+     * @return true if command was acknowledged with 250 OK
+     */
+    private fun sendTorControlCommand(command: String): Boolean {
+        return try {
+            val controlSocketFile = File(dataDir, "app_TorService/data/ControlSocket")
+            if (!controlSocketFile.exists()) {
+                Log.w(TAG, "ControlSocket not found, cannot send: $command")
+                return false
+            }
+
+            val sock = android.net.LocalSocket()
+            sock.connect(android.net.LocalSocketAddress(
+                controlSocketFile.absolutePath,
+                android.net.LocalSocketAddress.Namespace.FILESYSTEM
+            ))
+            sock.soTimeout = 3000
+
+            val output = sock.outputStream
+            val input = sock.inputStream
+
+            // Empty auth (GP tor-android 0.4.9.5 uses --CookieAuthentication 0)
+            output.write("AUTHENTICATE\r\n".toByteArray())
+            output.flush()
+
+            val authBuf = ByteArray(256)
+            val authLen = input.read(authBuf)
+            if (authLen <= 0) {
+                Log.w(TAG, "Tor control: no auth response")
+                sock.close()
+                return false
+            }
+            val authResp = String(authBuf, 0, authLen)
+            if (!authResp.startsWith("250")) {
+                Log.w(TAG, "Tor control auth failed: $authResp")
+                sock.close()
+                return false
+            }
+
+            // Send the actual command
+            output.write("$command\r\n".toByteArray())
+            output.flush()
+
+            val replyBuf = ByteArray(256)
+            val replyLen = input.read(replyBuf)
+            val reply = if (replyLen > 0) String(replyBuf, 0, replyLen) else ""
+            val ok = reply.contains("250")
+            Log.i(TAG, "Tor control '$command' → ${reply.trim()}")
+
+            sock.close()
+            ok
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to send Tor control '$command': ${e.message}")
+            false
+        }
+    }
+
+    /**
+     * Stop the Guardian Project TorService (the actual tor daemon).
+     *
+     * KEY FIX: GP TorService runs Tor in-process via JNI. stopService() is async —
+     * it asks Android to call onDestroy() at its convenience, but the native Tor
+     * thread can outlive it. This caused "zombie Tor" holding ports while a new
+     * instance tried to start ("two connections" bug).
+     *
+     * Fix: Send SIGNAL SHUTDOWN via ControlSocket first, which tells the native
+     * Tor thread to exit from within. This is what force-stop effectively does
+     * (kills the process, which kills the thread) — but without killing the app.
+     *
+     * HS identity is preserved — it lives in key files, not the running process.
+     */
+    private suspend fun stopGpTorProcess() {
+        val controlSocket = File(dataDir, "app_TorService/data/ControlSocket")
+
+        try {
+            // Step 1: Tell Tor to exit gracefully via control protocol
+            if (controlSocket.exists()) {
+                val shutdownOk = withContext(Dispatchers.IO) {
+                    sendTorControlCommand("SIGNAL SHUTDOWN")
+                }
+
+                if (shutdownOk) {
+                    Log.i(TAG, "SIGNAL SHUTDOWN accepted — waiting for native Tor thread to exit")
+                } else {
+                    // SHUTDOWN failed (maybe control socket wedged) — try HALT (immediate, non-graceful)
+                    Log.w(TAG, "SIGNAL SHUTDOWN failed — trying HALT (immediate)")
+                    withContext(Dispatchers.IO) {
+                        sendTorControlCommand("SIGNAL HALT")
+                    }
+                }
+
+                // Wait for ControlSocket to disappear (confirms native thread exited)
+                val maxWaitMs = 8_000L
+                val pollIntervalMs = 200L
+                var waited = 0L
+                while (controlSocket.exists() && waited < maxWaitMs) {
+                    delay(pollIntervalMs)
+                    waited += pollIntervalMs
+                }
+
+                if (controlSocket.exists()) {
+                    Log.e(TAG, "ControlSocket persists after SHUTDOWN+HALT and ${waited}ms — Tor truly wedged")
+                } else {
+                    Log.i(TAG, "Tor exited cleanly after ${waited}ms (via SIGNAL SHUTDOWN)")
+                }
+            } else {
+                Log.d(TAG, "ControlSocket already gone — Tor not running")
+            }
+
+            // Step 2: Stop the Android service wrapper (cleanup, even if native thread already exited)
+            val gpStopIntent = Intent(this, org.torproject.jni.TorService::class.java)
+            stopService(gpStopIntent)
+            Log.i(TAG, "Sent stopService to GP TorService")
+
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to stop GP TorService: ${e.message}")
+            // Fallback: still try stopService even if control commands failed
+            try {
+                stopService(Intent(this, org.torproject.jni.TorService::class.java))
+            } catch (_: Exception) {}
+        }
+    }
+
+    /**
+     * Delete stale lock file and control socket that prevent clean restarts.
+     * MUST be called AFTER stopGpTorProcess() has verified the process is gone.
+     * Does NOT touch hidden service key directories (identity is preserved).
+     */
+    private fun cleanupStaleTorFiles() {
+        val torDataPath = File(dataDir, "app_TorService/data")
+        val lockFile = File(torDataPath, "lock")
+        val controlSocket = File(torDataPath, "ControlSocket")
+
+        if (lockFile.exists()) {
+            lockFile.delete()
+            Log.i(TAG, "Deleted stale Tor lock file")
+        }
+        if (controlSocket.exists()) {
+            controlSocket.delete()
+            Log.i(TAG, "Deleted stale ControlSocket (leftover after stop)")
+        }
+    }
+
+    /**
+     * Nuclear cleanup: wipe the entire tor data directory EXCEPT hidden service keys.
+     * Only called after consecutive bootstrap failures when something is deeply broken.
+     * Preserves .onion identity (messaging_hidden_service, friend_request_hidden_service).
+     */
+    private fun nuclearCleanupTorData() {
+        val torDataPath = File(dataDir, "app_TorService/data")
+        if (!torDataPath.exists()) return
+
+        val preserveDirs = setOf("messaging_hidden_service", "friend_request_hidden_service")
+        var deletedCount = 0
+
+        torDataPath.listFiles()?.forEach { file ->
+            if (file.name !in preserveDirs) {
+                if (file.isDirectory) {
+                    file.deleteRecursively()
+                } else {
+                    file.delete()
+                }
+                deletedCount++
+            }
+        }
+        Log.w(TAG, "NUCLEAR CLEANUP: deleted $deletedCount items from tor data dir (preserved HS keys)")
+    }
+
+    /**
+     * Record shutdown timestamp so startTor() can enforce a cooldown
+     * to let the :tor process fully exit (prevents SIGABRT from destroyed mutex).
+     */
+    private fun recordShutdownTimestamp() {
+        try {
+            val torDir = File(filesDir, "tor")
+            torDir.mkdirs()
+            File(torDir, "last_shutdown_time").writeText(System.currentTimeMillis().toString())
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to write shutdown timestamp: ${e.message}")
+        }
+    }
+
+    /** Track consecutive bootstrap failures for nuclear option */
+    @Volatile private var consecutiveBootstrapFailures: Int = 0
+
+    /** Single-flight: prevents overlapping stop→start cycles from stacking */
+    private val restartMutex = Mutex()
+
+    /**
+     * Restart Tor (clean stop + start) with debouncing.
+     * Single pipeline — ALL reconnection must go through here.
+     * Allows restart from any state except STOPPING (in-progress shutdown).
+     *
+     * Single-flight: if a restart is already running (stop→start takes ~10s with
+     * SIGNAL SHUTDOWN), additional callers bail immediately. This prevents health
+     * monitor + network callback + worker from stacking 3 restarts on one incident.
      */
     private suspend fun restartTor(reason: String) {
-        // Guard 1: Only restart from active states (OFF means Tor was intentionally stopped)
-        val allowedStates = setOf(TorState.STARTING, TorState.BOOTSTRAPPING, TorState.RUNNING, TorState.ERROR)
-        if (torState !in allowedStates) {
-            Log.d(TAG, "Ignoring restart request (state=$torState not in $allowedStates): $reason")
+        // Guard 0: Single-flight — if already restarting, drop this request
+        if (!restartMutex.tryLock()) {
+            Log.d(TAG, "restartTor skipped (already in progress): $reason")
             return
         }
 
-        // Guard 2: Debounce restarts (min 15 seconds between restarts, prevents restart storms)
-        val now = SystemClock.elapsedRealtime()
-        val timeSinceLastRestart = now - lastRestartMs
-        if (timeSinceLastRestart < 15_000) {
-            Log.d(TAG, "Ignoring restart request (too soon: ${timeSinceLastRestart}ms): $reason")
-            return
+        try {
+            // Guard 1: Don't restart during active shutdown
+            if (torState == TorState.STOPPING) {
+                Log.d(TAG, "Ignoring restart request (currently STOPPING): $reason")
+                return
+            }
+
+            // Guard 2: Debounce restarts (min 15 seconds between restarts, prevents restart storms)
+            val now = SystemClock.elapsedRealtime()
+            val timeSinceLastRestart = now - lastRestartMs
+            if (timeSinceLastRestart < 15_000) {
+                Log.d(TAG, "Ignoring restart request (too soon: ${timeSinceLastRestart}ms): $reason")
+                return
+            }
+
+            Log.w(TAG, "Restarting Tor from state=$torState (failures=$consecutiveBootstrapFailures): $reason")
+            lastRestartMs = now
+            lastTorUnstableAt = System.currentTimeMillis() // Mark Tor as unstable
+
+            // Reset reconnect state
+            isReconnecting = false
+            reconnectHandler.removeCallbacksAndMessages(null)
+
+            stopTor()
+
+            // Nuclear option: after 2 consecutive bootstrap failures, wipe tor data
+            // (preserving HS keys so .onion identity is stable)
+            if (consecutiveBootstrapFailures >= 2) {
+                Log.w(TAG, "NUCLEAR RESTART: $consecutiveBootstrapFailures consecutive failures — wiping tor data (preserving HS keys)")
+                nuclearCleanupTorData()
+                consecutiveBootstrapFailures = 0 // Reset after nuclear
+            }
+
+            kotlinx.coroutines.delay(1_500) // 1.5s for native :tor to release mutex (prevents SIGABRT)
+            startTor()
+        } finally {
+            restartMutex.unlock()
         }
-
-        Log.w(TAG, "Restarting Tor from state=$torState: $reason")
-        lastRestartMs = now
-        lastTorUnstableAt = System.currentTimeMillis() // Mark Tor as unstable
-
-        stopTor()
-        kotlinx.coroutines.delay(1_500) // 1.5s for native :tor to release mutex (prevents SIGABRT)
-        startTor()
     }
 
     // ==================== OLD IMPLEMENTATION (DISABLED) ====================
@@ -1919,7 +2259,8 @@ class TorService : Service() {
                             updateNotification("Connection failed - Retrying...")
 
                             // Schedule retry with exponential backoff
-                            scheduleReconnect()
+                            consecutiveBootstrapFailures++
+                            scheduleReconnect("legacy init failed")
                         }
                     }
                 } else {
@@ -1956,14 +2297,15 @@ class TorService : Service() {
                         // Tor not running - need to reconnect
                         Log.d(TAG, "Tor not running - triggering reconnection")
                         updateNotification("Connecting to Tor...")
-                        attemptReconnect()
+                        scheduleReconnect("KEEP_ALIVE: tor not running")
                     }
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Error during Tor initialization", e)
                 torConnected = false
                 updateNotification("Error - Retrying...")
-                scheduleReconnect()
+                consecutiveBootstrapFailures++
+                scheduleReconnect("legacy init exception: ${e.message}")
             }
         }.start()
     }
@@ -2625,13 +2967,57 @@ class TorService : Service() {
             Log.d(TAG, "Retrieved user's PIN from secure storage")
 
             val cardManager = ContactCardManager(this)
-            val decryptedJson = try {
-                cardManager.decryptWithPin(encryptedPayload, myPin)
+
+            // Dual-PIN decryption: try current PIN first, then previous (grace period)
+            var decryptedJson: String? = null
+            var usedCurrentPin = false
+
+            try {
+                decryptedJson = cardManager.decryptWithPin(encryptedPayload, myPin)
+                usedCurrentPin = true
+                Log.i(TAG, "Phase 1 decrypted with current PIN")
             } catch (e: Exception) {
-                Log.e(TAG, "Failed to decrypt Phase 1 friend request", e)
-                Log.e(TAG, "Sender may have used wrong PIN or data is corrupted")
+                Log.d(TAG, "Current PIN failed, trying previous PIN...")
+                val previousPin = keyManager.getPreviousPin()
+                if (previousPin != null) {
+                    try {
+                        decryptedJson = cardManager.decryptWithPin(encryptedPayload, previousPin)
+                        Log.i(TAG, "Phase 1 decrypted with previous PIN (grace period)")
+                    } catch (e2: Exception) {
+                        Log.e(TAG, "Both current and previous PIN failed")
+                    }
+                }
+            }
+
+            if (decryptedJson == null) {
+                Log.e(TAG, "Failed to decrypt Phase 1 — sender used wrong PIN or data corrupted")
+
+                // Save as failed request so recipient sees "Invalid PIN" in their UI
+                val failedRequest = com.securelegion.models.PendingFriendRequest(
+                    displayName = "Unknown",
+                    ipfsCid = "",
+                    direction = com.securelegion.models.PendingFriendRequest.DIRECTION_INCOMING,
+                    status = com.securelegion.models.PendingFriendRequest.STATUS_INVALID_PIN,
+                    timestamp = System.currentTimeMillis()
+                )
+                savePendingFriendRequest(failedRequest)
+                showFriendRequestNotification("Someone (wrong PIN)")
+                val broadcastIntent = android.content.Intent("com.securelegion.FRIEND_REQUEST_RECEIVED")
+                broadcastIntent.setPackage(packageName)
+                sendBroadcast(broadcastIntent)
                 return
             }
+
+            // Track decrypt count for PIN rotation (only on current PIN)
+            if (usedCurrentPin) {
+                keyManager.incrementPinDecryptCount()
+            }
+
+            // Check if PIN should rotate after this decryption
+            val securityPrefs = getSharedPreferences("security_prefs", android.content.Context.MODE_PRIVATE)
+            val intervalMs = securityPrefs.getLong("pin_rotation_interval_ms", 24 * 60 * 60 * 1000L)
+            val maxDecrypts = securityPrefs.getInt("pin_max_uses", 5)
+            keyManager.rotatePinIfNeeded(cardManager, intervalMs, maxDecrypts)
 
             Log.i(TAG, "Phase 1 decrypted successfully: $decryptedJson")
 
@@ -2666,6 +3052,7 @@ class TorService : Service() {
             sendBroadcast(broadcastIntent)
 
             Log.i(TAG, "Phase 1 friend request saved, notification shown, and broadcast sent")
+
 
         } catch (e: Exception) {
             Log.e(TAG, "Error processing Phase 1 friend request", e)
@@ -2850,6 +3237,20 @@ class TorService : Service() {
                         )
                         Log.i(TAG, "Key chain initialized for ${contactCard.displayName} (legacy)")
                     }
+
+                    // Auto-send our profile picture to the new contact (if we have one set)
+                    val prefs = this@TorService.getSharedPreferences("secure_legion_settings", android.content.Context.MODE_PRIVATE)
+                    val myPhotoBase64 = prefs.getString("profile_photo_base64", null)
+                    if (!myPhotoBase64.isNullOrBlank()) {
+                        kotlinx.coroutines.delay(3_000L)
+                        try {
+                            val messageService = com.securelegion.services.MessageService(this@TorService)
+                            messageService.sendProfileUpdate(contactId, myPhotoBase64)
+                            Log.i(TAG, "Profile picture auto-sent to new contact: ${contactCard.displayName}")
+                        } catch (e: Exception) {
+                            Log.w(TAG, "Failed to auto-send profile picture to ${contactCard.displayName}", e)
+                        }
+                    }
                 } catch (e: Exception) {
                     Log.e(TAG, "Failed to initialize key chain for ${contactCard.displayName}", e)
                 }
@@ -3033,6 +3434,20 @@ class TorService : Service() {
                             theirMessagingOnion = theirMessagingOnion
                         )
                         Log.i(TAG, "Key chain initialized for ${contactCard.displayName} (legacy)")
+                    }
+
+                    // Auto-send our profile picture to the new contact (if we have one set)
+                    val prefs = this@TorService.getSharedPreferences("secure_legion_settings", android.content.Context.MODE_PRIVATE)
+                    val myPhotoBase64 = prefs.getString("profile_photo_base64", null)
+                    if (!myPhotoBase64.isNullOrBlank()) {
+                        kotlinx.coroutines.delay(3_000L)
+                        try {
+                            val messageService = com.securelegion.services.MessageService(this@TorService)
+                            messageService.sendProfileUpdate(contactId, myPhotoBase64)
+                            Log.i(TAG, "Profile picture auto-sent to new contact: ${contactCard.displayName}")
+                        } catch (e: Exception) {
+                            Log.w(TAG, "Failed to auto-send profile picture to ${contactCard.displayName}", e)
+                        }
                     }
                 } catch (e: Exception) {
                     Log.e(TAG, "Failed to add contact or initialize key chain for ${contactCard.displayName}", e)
@@ -3402,7 +3817,7 @@ class TorService : Service() {
                 // Retry finding the message up to 5 times with exponential backoff
                 // This handles the race condition where ACK arrives before DB update completes
                 var retryCount = 0
-                val maxRetries = 5
+                val maxRetries = 6
                 var message: com.securelegion.database.entities.Message? = null
 
                 // Determine lookup method based on ACK type
@@ -3854,25 +4269,33 @@ class TorService : Service() {
             // When auto-download is active (Device Protection OFF), defer notification to
             // DownloadMessageService which shows type-specific notifications (e.g. "New voice clip")
             // and suppresses notifications for hidden types like profile updates (0x0F).
+            // Profile updates (0x0F wire type) are completely silent — no notification, no broadcast.
+            val isProfileUpdate = encryptedPingWire.isNotEmpty() && (encryptedPingWire[0].toInt() and 0xFF) == 0x0F
             if (shouldNotify) {
-                val securityPrefs = getSharedPreferences("security", MODE_PRIVATE)
-                val deviceProtectionEnabled = securityPrefs.getBoolean(
-                    SecurityModeActivity.PREF_DEVICE_PROTECTION_ENABLED, false
-                )
-                if (deviceProtectionEnabled) {
-                    // Device Protection ON — user must manually download, show generic notification
-                    showNewMessageNotification()
-                } else {
-                    // Auto-download active — DownloadMessageService will show type-specific notification
-                    Log.d(TAG, "Deferring notification to DownloadMessageService (auto-download active)")
-                }
+                if (!isProfileUpdate) {
+                    val securityPrefs = getSharedPreferences("security", MODE_PRIVATE)
+                    val deviceProtectionEnabled = securityPrefs.getBoolean(
+                        SecurityModeActivity.PREF_DEVICE_PROTECTION_ENABLED, false
+                    )
+                    if (deviceProtectionEnabled) {
+                        // Device Protection ON — user must manually download, show generic notification
+                        showNewMessageNotification()
 
-                // Broadcast to update MainActivity and ChatActivity if open
-                val intent = Intent("com.securelegion.NEW_PING")
-                intent.setPackage(packageName)
-                intent.putExtra("CONTACT_ID", contactId)
-                sendBroadcast(intent)
-                Log.d(TAG, "Sent NEW_PING broadcast for contactId=$contactId")
+                        // Broadcast to update chat list immediately (user needs to see pending message)
+                        val intent = Intent("com.securelegion.NEW_PING")
+                        intent.setPackage(packageName)
+                        intent.putExtra("CONTACT_ID", contactId)
+                        sendBroadcast(intent)
+                        Log.d(TAG, "Sent NEW_PING broadcast for contactId=$contactId")
+                    } else {
+                        // Auto-download active — defer ALL UI signals (notification + chat list)
+                        // to DownloadMessageService after message is fully downloaded.
+                        // This prevents "false alarm" where user opens chat before content is ready.
+                        Log.d(TAG, "Deferring notification + UI update to DownloadMessageService (auto-download active)")
+                    }
+                } else {
+                    Log.d(TAG, "Profile update ping $pingId — suppressing notification and UI broadcast")
+                }
             }
 
             // Send PING_ACK (always, regardless of state - "I saw your ping")
@@ -4119,7 +4542,7 @@ class TorService : Service() {
             //   0x32 SYNC_REQUEST:  payload = [groupId:32][afterLamport:u64 BE][limit:u32 BE]
             //   0x33 SYNC_CHUNK:    payload = [groupId:32][packedOps]
             val wireType = encryptedMessageWire[0].toInt() and 0xFF
-            if (wireType == 0x30 || wireType == 0x32 || wireType == 0x33) {
+            if (wireType == 0x30 || wireType == 0x32 || wireType == 0x33 || wireType == 0x35 || wireType == 0x36) {
                 val minSize = 1 + 32 + CRDT_GROUP_ID_LEN // type(1) + X25519(32) + groupId(32) = 65
                 if (encryptedMessageWire.size < minSize) {
                     Log.e(TAG, "CRDT wire 0x${"%02x".format(wireType)} too short: ${encryptedMessageWire.size} bytes (need >= $minSize)")
@@ -4156,18 +4579,14 @@ class TorService : Service() {
                         Log.i(TAG, "SYNC_REQUEST: group=${groupIdHex.take(16)}... payload=${rest.size} bytes")
                         serviceScope.launch(kotlinx.coroutines.Dispatchers.IO) {
                             try {
-                                // Look up sender's onion by X25519 pubkey
+                                // Look up sender's onion by X25519 pubkey (Contact → GroupPeer fallback)
                                 val senderX25519B64 = android.util.Base64.encodeToString(senderX25519, android.util.Base64.NO_WRAP)
-                                val keyMgr = com.securelegion.crypto.KeyManager.getInstance(this@TorService)
-                                val dbPass = keyMgr.getDatabasePassphrase()
-                                val db = com.securelegion.database.SecureLegionDatabase.getInstance(this@TorService, dbPass)
-                                val senderContact = db.contactDao().getContactByX25519PublicKey(senderX25519B64)
-                                val senderOnion = senderContact?.messagingOnion
+                                val mgr = CrdtGroupManager.getInstance(this@TorService)
+                                val senderOnion = mgr.resolveOnionByX25519(senderX25519B64, groupIdHex)
                                 if (senderOnion.isNullOrEmpty()) {
                                     Log.w(TAG, "SYNC_REQUEST from unknown peer — no onion to reply")
                                     return@launch
                                 }
-                                val mgr = CrdtGroupManager.getInstance(this@TorService)
                                 mgr.handleSyncRequest(groupIdHex, rest, senderOnion)
                             } catch (e: Exception) {
                                 Log.e(TAG, "Error handling SYNC_REQUEST", e)
@@ -4188,6 +4607,36 @@ class TorService : Service() {
                                 })
                             } catch (e: Exception) {
                                 Log.e(TAG, "Error processing SYNC_CHUNK", e)
+                            }
+                        }
+                    }
+                    0x35 -> {
+                        // ROUTING_UPDATE: store peer routing entries + flush pending deliveries
+                        Log.i(TAG, "ROUTING_UPDATE: group=${groupIdHex.take(16)}... payload=${rest.size} bytes")
+                        serviceScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                            try {
+                                val mgr = CrdtGroupManager.getInstance(this@TorService)
+                                mgr.handleRoutingUpdate(groupIdHex, rest)
+                            } catch (e: Exception) {
+                                Log.e(TAG, "Error processing ROUTING_UPDATE", e)
+                            }
+                        }
+                    }
+                    0x36 -> {
+                        // ROUTING_REQUEST: peer needs routing info — respond with ROUTING_UPDATE
+                        Log.i(TAG, "ROUTING_REQUEST: group=${groupIdHex.take(16)}... payload=${rest.size} bytes")
+                        serviceScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                            try {
+                                val mgr = CrdtGroupManager.getInstance(this@TorService)
+                                val senderX25519B64 = android.util.Base64.encodeToString(senderX25519, android.util.Base64.NO_WRAP)
+                                val senderOnion = mgr.resolveOnionByX25519(senderX25519B64, groupIdHex)
+                                if (senderOnion != null) {
+                                    mgr.handleRoutingRequest(groupIdHex, rest, senderOnion)
+                                } else {
+                                    Log.w(TAG, "ROUTING_REQUEST: can't resolve sender onion — cannot reply")
+                                }
+                            } catch (e: Exception) {
+                                Log.e(TAG, "Error processing ROUTING_REQUEST", e)
                             }
                         }
                     }
@@ -4471,46 +4920,12 @@ class TorService : Service() {
 
                         when (legacyAppType) {
                             0x0E -> {
-                                // PING/PONG connectivity test
-                                Log.i(TAG, "Message type: PING/PONG (legacy X25519, from plaintext)")
-                                val jsonString = String(legacyBody, Charsets.UTF_8)
-                                val pingPongMessage = com.securelegion.voice.ConnectivityTest.parsePingPongMessage(jsonString)
-
-                                when (pingPongMessage) {
-                                    is com.securelegion.voice.ConnectivityTest.PingPongMessage.Ping -> {
-                                        Log.i(TAG, "Received PING - auto-replying with PONG")
-                                        val senderVoiceOnion = contact.voiceOnion ?: ""
-                                        val contactX25519PublicKey = try {
-                                            android.util.Base64.decode(contact.x25519PublicKeyBase64, android.util.Base64.NO_WRAP)
-                                        } catch (e: Exception) {
-                                            Log.e(TAG, "Failed to decode contact X25519 key", e)
-                                            ByteArray(0)
-                                        }
-
-                                        if (senderVoiceOnion.isNotEmpty() && contactX25519PublicKey.isNotEmpty()) {
-                                            kotlinx.coroutines.GlobalScope.launch(kotlinx.coroutines.Dispatchers.IO) {
-                                                com.securelegion.voice.ConnectivityTest.handleIncomingPing(
-                                                    pingPongMessage,
-                                                    contactX25519PublicKey,
-                                                    senderVoiceOnion
-                                                )
-                                            }
-                                        } else {
-                                            Log.e(TAG, "Cannot send PONG - missing voice onion or X25519 key")
-                                        }
-                                    }
-                                    is com.securelegion.voice.ConnectivityTest.PingPongMessage.Pong -> {
-                                        Log.i(TAG, "Received PONG - connectivity confirmed!")
-                                        Log.i(TAG, "Test ID: ${pingPongMessage.testId}")
-                                        Log.i(TAG, "Seq: ${pingPongMessage.seq}")
-                                        com.securelegion.voice.ConnectivityTest.markPongReceived(pingPongMessage.testId)
-                                    }
-                                    null -> {
-                                        Log.w(TAG, "Failed to parse PING/PONG message")
-                                    }
-                                }
-                                // Don't save PING/PONG messages to database
-                                return
+                                // STICKER (legacy X25519 path): [0x0E][assetPathUtf8...]
+                                Log.i(TAG, "Message type: STICKER (legacy X25519, from plaintext)")
+                                // Keep 0x0E prefix in plaintext so the modern appType parser
+                                // correctly routes to the STICKER handler (line ~4641)
+                                plaintext = String(legacyPlaintextBytes, Charsets.ISO_8859_1)
+                                // Fall through to modern appType parser which handles 0x0E → STICKER
                             }
                             0x20 -> {
                                 // Legacy GROUP_INVITE — superseded by CRDT (0x30). Ignore.
@@ -4638,6 +5053,13 @@ class TorService : Service() {
                     Log.d(TAG, "Message type: PAYMENT_ACCEPTED (from plaintext)")
                 }
 
+                0x0E -> {
+                    // STICKER: [type=0x0E][assetPathUtf8...]
+                    messageType = com.securelegion.database.entities.Message.MESSAGE_TYPE_STICKER
+                    messageContent = String(body, Charsets.UTF_8)
+                    Log.d(TAG, "Message type: STICKER (from plaintext), path: $messageContent")
+                }
+
                 0x0F -> {
                     // PROFILE_UPDATE: [type=0x0F][photoBytes...]
                     Log.i(TAG, "Message type: PROFILE_UPDATE (from plaintext)")
@@ -4668,49 +5090,6 @@ class TorService : Service() {
                         }
                     }
                     return // Don't save as regular message
-                }
-
-                0x0E -> {
-                    // PING/PONG connectivity test: [type=0x0E][utf8 json...]
-                    Log.i(TAG, "Message type: PING/PONG (from plaintext)")
-                    val jsonString = String(body, Charsets.UTF_8)
-                    val pingPongMessage = com.securelegion.voice.ConnectivityTest.parsePingPongMessage(jsonString)
-
-                    when (pingPongMessage) {
-                        is com.securelegion.voice.ConnectivityTest.PingPongMessage.Ping -> {
-                            Log.i(TAG, "Received PING - auto-replying with PONG")
-                            val senderVoiceOnion = contact.voiceOnion ?: ""
-                            val contactX25519PublicKey = try {
-                                android.util.Base64.decode(contact.x25519PublicKeyBase64, android.util.Base64.NO_WRAP)
-                            } catch (e: Exception) {
-                                Log.e(TAG, "Failed to decode contact X25519 key", e)
-                                ByteArray(0)
-                            }
-
-                            if (senderVoiceOnion.isNotEmpty() && contactX25519PublicKey.isNotEmpty()) {
-                                kotlinx.coroutines.GlobalScope.launch(kotlinx.coroutines.Dispatchers.IO) {
-                                    com.securelegion.voice.ConnectivityTest.handleIncomingPing(
-                                        pingPongMessage,
-                                        contactX25519PublicKey,
-                                        senderVoiceOnion
-                                    )
-                                }
-                            } else {
-                                Log.e(TAG, "Cannot send PONG - missing voice onion or X25519 key")
-                            }
-                        }
-                        is com.securelegion.voice.ConnectivityTest.PingPongMessage.Pong -> {
-                            Log.i(TAG, "Received PONG - connectivity confirmed!")
-                            Log.i(TAG, "Test ID: ${pingPongMessage.testId}")
-                            Log.i(TAG, "Seq: ${pingPongMessage.seq}")
-                            com.securelegion.voice.ConnectivityTest.markPongReceived(pingPongMessage.testId)
-                        }
-                        null -> {
-                            Log.w(TAG, "Failed to parse PING/PONG message")
-                        }
-                    }
-                    // Don't save PING/PONG messages to database - they're ephemeral
-                    return
                 }
 
                 0x20 -> {
@@ -4956,8 +5335,16 @@ class TorService : Service() {
                             else -> ""
                         },
                         messageType = messageType,
-                        attachmentType = if (messageType == com.securelegion.database.entities.Message.MESSAGE_TYPE_IMAGE) "image" else null,
-                        attachmentData = imageBase64, // Store Base64 image data for IMAGE messages
+                        attachmentType = when (messageType) {
+                            com.securelegion.database.entities.Message.MESSAGE_TYPE_IMAGE -> "image"
+                            com.securelegion.database.entities.Message.MESSAGE_TYPE_STICKER -> "sticker"
+                            else -> null
+                        },
+                        attachmentData = when (messageType) {
+                            com.securelegion.database.entities.Message.MESSAGE_TYPE_IMAGE -> imageBase64
+                            com.securelegion.database.entities.Message.MESSAGE_TYPE_STICKER -> messageContent // asset path
+                            else -> null
+                        },
                         voiceDuration = voiceDuration,
                         voiceFilePath = voiceFilePath,
                         isSentByMe = false,
@@ -6311,11 +6698,15 @@ class TorService : Service() {
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
 
-        // Truncate message preview if too long
-        val messagePreview = if (messageText.length > 100) {
-            messageText.take(100) + "..."
+        // Privacy-first: only show message content if user explicitly enabled it
+        // Default is OFF — notifications show "New message" to protect content on lock screen
+        val notifPrefs = getSharedPreferences("notifications_prefs", android.content.Context.MODE_PRIVATE)
+        val showContent = notifPrefs.getBoolean("message_content_enabled", false)
+
+        val displayText = if (showContent) {
+            if (messageText.length > 100) messageText.take(100) + "..." else messageText
         } else {
-            messageText
+            "New message"
         }
 
         // Use unique notification ID per MESSAGE (not per contact)
@@ -6327,8 +6718,7 @@ class TorService : Service() {
         val notification = NotificationCompat.Builder(this, AUTH_CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_shield)
             .setContentTitle(senderName)
-            .setContentText(messagePreview)
-            .setStyle(NotificationCompat.BigTextStyle().bigText(messageText))
+            .setContentText(displayText)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setCategory(NotificationCompat.CATEGORY_MESSAGE)
             .setAutoCancel(true)
@@ -6904,10 +7294,10 @@ class TorService : Service() {
 
                 // Recovery path depends on Tor state
                 if ((torState == TorState.OFF || torState == TorState.ERROR) && !isReconnecting && event.hasInternet) {
-                    // Tor genuinely crashed/stopped — need full reconnect
-                    Log.w(TAG, "Network restored and Tor state=$torState — attempting full reconnection")
-                    reconnectHandler.post {
-                        attemptReconnect()
+                    // Tor genuinely crashed/stopped — need full reconnect via state machine
+                    Log.w(TAG, "Network restored and Tor state=$torState — scheduling restart")
+                    serviceScope.launch {
+                        restartTor("network available, torState=$torState")
                     }
                 } else if ((torState == TorState.RUNNING || torState == TorState.BOOTSTRAPPING) && event.hasInternet) {
                     // Tor daemon still alive — circuits will rebuild, health monitor will reopen gate
@@ -7085,13 +7475,12 @@ class TorService : Service() {
                         RustBridge.stopSocksProxy()
                     }
                 }
-                attemptReconnect()
+                scheduleReconnect("health check: tor not initialized")
             } else if (isInitialized) {
                 if (!torConnected && !isReconnecting) {
                     Log.i(TAG, "Health check: Tor reconnected successfully")
                     torConnected = true
-                    isReconnecting = false
-                    reconnectAttempts = 0
+                    resetReconnectBackoff()
                     isServiceRunning = true
                     running = true
 
@@ -7288,109 +7677,53 @@ class TorService : Service() {
 
     // ==================== RECONNECTION LOGIC ====================
 
-    private fun scheduleReconnect() {
+    /**
+     * Schedule a clean restart with exponential backoff.
+     * ALL reconnection goes through restartTor(reason) — single pipeline, no legacy bypass.
+     *
+     * @param reason Human-readable reason for the restart (logged)
+     */
+    private fun scheduleReconnect(reason: String = "scheduled reconnect") {
         if (isReconnecting) {
-            Log.d(TAG, "Reconnection already scheduled, skipping")
+            Log.d(TAG, "Reconnection already scheduled, skipping: $reason")
             return
         }
 
         if (!hasNetworkConnection()) {
-            Log.i(TAG, "No network connection - will reconnect when NetworkWatcher fires Available event")
+            Log.i(TAG, "No network — will restart when NetworkWatcher fires Available: $reason")
             updateNotification("Waiting for network...")
-            // DON'T return silently — the Available handler will call attemptReconnect()
-            // when network returns (if torState is OFF/ERROR)
             return
         }
 
-        // Calculate exponential backoff delay
+        // Calculate exponential backoff: 2s, 5s, 10s, 20s, 30s cap
         val delay = calculateBackoffDelay()
+        reconnectAttempts++
 
-        Log.i(TAG, "Scheduling reconnection attempt #${reconnectAttempts + 1} in ${delay/1000}s")
-        updateNotification("Reconnecting in ${delay/1000}s... (attempt ${reconnectAttempts + 1})")
+        Log.i(TAG, "Scheduling restart #$reconnectAttempts in ${delay/1000}s: $reason")
+        updateNotification("Reconnecting in ${delay/1000}s...")
 
         isReconnecting = true
 
         reconnectHandler.postDelayed({
-            attemptReconnect()
+            isReconnecting = false
+            serviceScope.launch {
+                restartTor(reason)
+            }
         }, delay)
     }
 
-    private fun attemptReconnect() {
-        val now = SystemClock.elapsedRealtime()
-
-        // Prevent rapid retry attempts
-        if (now - lastReconnectTime < MIN_RETRY_INTERVAL) {
-            val timeSinceLastAttempt = (now - lastReconnectTime) / 1000
-            Log.d(TAG, "Skipping reconnect attempt - too soon since last attempt (${timeSinceLastAttempt}s ago)")
-            // Schedule retry after the minimum interval instead of giving up
-            if (!isReconnecting) {
-                isReconnecting = true
-                val delayUntilNextAttempt = MIN_RETRY_INTERVAL - (now - lastReconnectTime)
-                Log.d(TAG, "Scheduling reconnect in ${delayUntilNextAttempt / 1000}s")
-                reconnectHandler.postDelayed({
-                    attemptReconnect()
-                }, delayUntilNextAttempt)
-            }
-            return
-        }
-
-        lastReconnectTime = now
-        reconnectAttempts++
-
-        Log.i(TAG, "Attempting Tor reconnection #$reconnectAttempts")
-        updateNotification("Reconnecting to Tor... (attempt $reconnectAttempts)")
-
-        Thread {
-            try {
-                torManager.initializeAsync { success, onionAddress ->
-                    if (success && onionAddress != null) {
-                        Log.i(TAG, "Tor reconnected successfully")
-
-                        // Reset state
-                        isReconnecting = false
-                        reconnectAttempts = 0
-                        torConnected = true
-                        isServiceRunning = true
-                        running = true
-
-                        // Restart all monitors (they may have exited if state was OFF/ERROR)
-                        startHealthMonitor()
-                        startSocksHealthMonitor()
-                        startFastRetryLoop()
-                        startDownloadWatchdog()
-
-                        // Ensure SOCKS proxy is running for outgoing connections
-                        ensureSocksProxyRunning()
-
-                        // Start listening for incoming Pings and Taps
-                        startIncomingListener()
-
-                        // PHASE 6: Send taps to all contacts to notify them we're online
-                        sendTapsToAllContacts()
-
-                        updateNotification("Connected to Tor")
-                    } else {
-                        Log.e(TAG, "Tor reconnection attempt #$reconnectAttempts failed")
-                        isReconnecting = false
-                        torConnected = false
-
-                        // Schedule next retry
-                        scheduleReconnect()
-                    }
-                }
-            } catch (e: Exception) {
-                Log.e(TAG, "Error during reconnection attempt #$reconnectAttempts", e)
-                isReconnecting = false
-                torConnected = false
-                scheduleReconnect()
-            }
-        }.start()
+    /** Reset reconnect backoff after successful bootstrap */
+    private fun resetReconnectBackoff() {
+        reconnectAttempts = 0
+        isReconnecting = false
+        consecutiveBootstrapFailures = 0
+        reconnectHandler.removeCallbacksAndMessages(null)
     }
 
     private fun calculateBackoffDelay(): Long {
-        // Exponential backoff: 10s, 20s, 40s, 60s, 60s (max)
-        val delay = INITIAL_RETRY_DELAY * (1 shl (reconnectAttempts.coerceAtMost(4)))
-        return min(delay, MAX_RETRY_DELAY)
+        // Exponential backoff: 2s, 5s, 10s, 20s, 30s cap
+        val delays = longArrayOf(2_000, 5_000, 10_000, 20_000, 30_000)
+        return delays[reconnectAttempts.coerceAtMost(delays.size - 1)]
     }
 
     // ==================== ALARMMANAGER RESTART ====================
@@ -7824,10 +8157,18 @@ class TorService : Service() {
 
     /**
      * Handle HS_DESC_FAILED event
-     * If we see 3 descriptor upload failures in 30 seconds → mark HS unhealthy
+     * Only counts failures for OUR OWN onion addresses (local HS publish health).
+     * Peer descriptor fetch failures (contact offline) are logged but do NOT affect HS health.
+     * If we see 3 of our own descriptor failures in 30 seconds → mark HS unhealthy.
      */
     private fun handleHsDescFailed(address: String, reason: String, now: Long) {
-        Log.w(TAG, "HS descriptor UPLOAD FAILED (reason: $reason)")
+        // Split local vs remote: only our own descriptor failures affect HS health
+        if (!isOwnOnion(address)) {
+            Log.d(TAG, "Peer HS_DESC_FAILED (remote, not ours): ${address.take(16)}... reason=$reason [NO health action]")
+            return
+        }
+
+        Log.w(TAG, "OWN HS descriptor FAILED (reason: $reason)")
 
         // Reset window if too old
         if (now - hsDescFailureWindowStart > HS_DESC_FAILURE_WINDOW) {
@@ -7837,33 +8178,69 @@ class TorService : Service() {
 
         hsDescFailureCount++
 
-        Log.d(TAG, "HS descriptor failures: $hsDescFailureCount in window")
+        Log.d(TAG, "Own HS descriptor failures: $hsDescFailureCount in window")
 
-        // If threshold exceeded → mark HS unhealthy (stop aggressive retries)
+        // If threshold exceeded → mark HS unhealthy and send SIGNAL HUP to force re-publish
         if (hsDescFailureCount >= HS_DESC_FAILURE_THRESHOLD) {
             hsDescHealthy = false
-            Log.w(TAG, "$hsDescFailureCount HS descriptor failures → marking HS unhealthy (will reduce retry rate)")
+            Log.w(TAG, "$hsDescFailureCount HS descriptor failures → marking HS unhealthy")
+
+            // SIGNAL HUP: tells Tor to reload torrc and re-publish HS descriptors
+            // Much lighter than a full restart — circuits stay alive, bootstrap stays 100%
+            // Only attempt when Tor is fully running (control socket is alive and responsive)
+            if (torState != TorState.RUNNING) {
+                Log.d(TAG, "Skipping SIGNAL HUP — Tor not RUNNING (state=$torState)")
+                return
+            }
+            val elapsed = SystemClock.elapsedRealtime()
+            if (elapsed - lastHsHupSentAt >= HS_HUP_COOLDOWN_MS) {
+                lastHsHupSentAt = elapsed
+                Log.w(TAG, "Sending SIGNAL HUP to force HS descriptor re-publish")
+                serviceScope.launch(Dispatchers.IO) {
+                    val ok = sendTorControlCommand("SIGNAL HUP")
+                    if (ok) {
+                        Log.i(TAG, "SIGNAL HUP accepted — Tor will re-read config and re-publish HS descriptors")
+                    } else {
+                        Log.e(TAG, "SIGNAL HUP failed — HS descriptors may remain stalled")
+                    }
+                }
+            } else {
+                Log.d(TAG, "SIGNAL HUP suppressed (cooldown: ${(HS_HUP_COOLDOWN_MS - (elapsed - lastHsHupSentAt)) / 1000}s remaining)")
+            }
         }
     }
 
     /**
      * Handle HS_DESC_UPLOADED event
-     * Reset HS health counter when descriptor uploads successfully
+     * Reset HS health counter when OUR descriptor uploads successfully.
+     * Blank or non-own addresses are ignored to prevent bogus health flips.
      */
     private fun handleHsDescUploaded(address: String, now: Long) {
+        // Blank address = parsing issue, don't flip health
+        if (address.isBlank()) {
+            Log.d(TAG, "HS_DESC_UPLOADED with blank address [ignoring]")
+            return
+        }
+
+        // Only process our own descriptor uploads
+        if (!isOwnOnion(address)) {
+            Log.d(TAG, "HS_DESC_UPLOADED for non-own address: ${address.take(16)}... [ignoring]")
+            return
+        }
+
         // Deduplicate: Tor uploads each descriptor to 3 HSDirs (normal redundancy)
-        // Only log first upload per address within 5-second window
-        val lastUpload = lastHsDescUpload[address] ?: 0L
+        val normalizedAddr = address.trim().lowercase().removeSuffix(".onion")
+        val lastUpload = lastHsDescUpload[normalizedAddr] ?: 0L
         if (now - lastUpload < HS_DESC_DEDUPE_WINDOW_MS) {
             return // Skip duplicate log
         }
-        lastHsDescUpload[address] = now
+        lastHsDescUpload[normalizedAddr] = now
 
-        Log.i(TAG, "HS descriptor UPLOADED")
+        Log.i(TAG, "Own HS descriptor UPLOADED")
 
         // Reset HS health tracking
         if (!hsDescHealthy || hsDescFailureCount > 0) {
-            Log.i(TAG, "HS descriptor upload successful → marking HS healthy")
+            Log.i(TAG, "Own HS descriptor upload successful → marking HS healthy")
             hsDescHealthy = true
             hsDescFailureCount = 0
             hsDescFailureWindowStart = now

@@ -43,6 +43,17 @@ class AddFriendActivity : BaseActivity() {
     private lateinit var loadingSubtext: TextView
     private var isDeleteMode = false
     private val selectedRequests = mutableSetOf<String>()
+    private var scannedUsername: String? = null // Username from QR code scan
+    @Volatile private var qrAutoSent = false   // Prevents double-fire from barcode scanner
+
+    // Gallery QR picker launcher
+    private val galleryQrLauncher = registerForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.GetContent()
+    ) { uri ->
+        if (uri != null) {
+            decodeQrFromGalleryImage(uri)
+        }
+    }
 
     // Live refresh when background friend request send completes
     private val friendRequestStatusReceiver = object : BroadcastReceiver() {
@@ -69,7 +80,7 @@ class AddFriendActivity : BaseActivity() {
                 bottomNav.paddingLeft,
                 bottomNav.paddingTop,
                 bottomNav.paddingRight,
-                0)
+                insets.bottom)
             windowInsets
         }
 
@@ -96,18 +107,46 @@ class AddFriendActivity : BaseActivity() {
             }
         }
 
-        // Scan QR button
+        // Scan QR button (camera)
         findViewById<View>(R.id.scanQrButton).setOnClickListener {
             val intent = Intent(this, QRScannerActivity::class.java)
             startActivityForResult(intent, QR_SCAN_REQUEST_CODE)
         }
 
+        // Gallery QR button — pick QR image from photos
+        findViewById<View>(R.id.galleryQrButton).setOnClickListener {
+            galleryQrLauncher.launch("image/*")
+        }
+
         // Setup PIN boxes with auto-advance
         setupPinBoxes()
+
+        // Check legacy manual entry setting
+        val securityPrefs = getSharedPreferences("security_prefs", Context.MODE_PRIVATE)
+        val legacyManualEntry = securityPrefs.getBoolean("legacy_manual_entry", false)
+        if (legacyManualEntry) {
+            showManualInputSection()
+        }
 
         // Send Friend Request button
         findViewById<View>(R.id.searchButton).setOnClickListener {
             val friendOnion = findViewById<EditText>(R.id.cidInput).text.toString().trim()
+            val mainButton = findViewById<TextView>(R.id.searchButton)
+            val secPrefs = getSharedPreferences("security_prefs", Context.MODE_PRIVATE)
+            val isLegacy = secPrefs.getBoolean("legacy_manual_entry", false)
+
+            // Phase 2 accept: PIN not needed (X25519 key exchange from Phase 1)
+            // Unless legacy mode is on — then both PINs are required
+            if (mainButton.text.toString() == "Accept Friend Request" && !isLegacy) {
+                if (friendOnion.isEmpty()) {
+                    ThemedToast.show(this, "No friend request to accept")
+                    return@setOnClickListener
+                }
+                acceptPhase2FriendRequest(friendOnion, "")
+                return@setOnClickListener
+            }
+
+            // Phase 1 initiate (or legacy accept): PIN required
             val friendPin = getPinFromBoxes().trim()
 
             if (friendOnion.isEmpty()) {
@@ -125,13 +164,11 @@ class AddFriendActivity : BaseActivity() {
                 return@setOnClickListener
             }
 
-            // Check if we're accepting an incoming Phase 1 friend request
-            val mainButton = findViewById<TextView>(R.id.searchButton)
             if (mainButton.text.toString() == "Accept Friend Request") {
-                // PHASE 2: Accept incoming friend request
+                // Legacy mode accept — PIN required
                 acceptPhase2FriendRequest(friendOnion, friendPin)
             } else {
-                // PHASE 1: Initiate friend request by sending YOUR contact card to the friend
+                // PHASE 1: Initiate friend request
                 initiateFriendRequest(friendOnion, friendPin)
             }
         }
@@ -208,26 +245,148 @@ class AddFriendActivity : BaseActivity() {
         if (requestCode == QR_SCAN_REQUEST_CODE && resultCode == Activity.RESULT_OK) {
             val scannedData = data?.getStringExtra("SCANNED_ADDRESS")
             if (!scannedData.isNullOrEmpty()) {
-                // Populate the friend request .onion address field
-                findViewById<EditText>(R.id.cidInput).setText(scannedData)
-                ThemedToast.show(this, "Scanned friend request address")
-                Log.i(TAG, "QR code scanned: $scannedData")
+                handleScannedQrData(scannedData)
             }
+        }
+    }
+
+    /**
+     * Parse QR data in format: username@xxxxx.onion@1234567890
+     * Backward compatible with: username@onion, plain onion
+     * Parsing from the right: last segment = PIN (if 10 digits), .onion segment = address, rest = username
+     */
+    private fun handleScannedQrData(data: String) {
+        val parts = data.split("@")
+
+        var pin: String? = null
+        var onionAddress: String? = null
+        var username: String? = null
+
+        // Parse from the right
+        val remaining = parts.toMutableList()
+
+        // Check if last segment is a 10-digit PIN
+        if (remaining.size >= 2) {
+            val lastPart = remaining.last()
+            if (lastPart.length == 10 && lastPart.all { it.isDigit() }) {
+                pin = lastPart
+                remaining.removeAt(remaining.size - 1)
+            }
+        }
+
+        // Find the .onion segment
+        val onionIndex = remaining.indexOfFirst { it.endsWith(".onion") }
+        if (onionIndex >= 0) {
+            onionAddress = remaining[onionIndex]
+            remaining.removeAt(onionIndex)
+            // Everything before the .onion is the username
+            if (remaining.isNotEmpty()) {
+                username = remaining.joinToString("@")
+            }
+        } else if (remaining.size == 1) {
+            // No .onion found — treat entire thing as the address (plain onion without .onion suffix?)
+            onionAddress = remaining[0]
+        }
+
+        if (onionAddress == null) {
+            ThemedToast.show(this, "Invalid QR code — no .onion address found")
+            return
+        }
+
+        scannedUsername = username
+        Log.i(TAG, "QR parsed: username=$username, onion=$onionAddress, pin=${if (pin != null) "***" else "none"}")
+
+        if (!qrAutoSent && onionAddress != null && pin != null) {
+            // Complete QR (onion + PIN) — auto-send immediately, no fields shown
+            qrAutoSent = true
+            findViewById<View>(R.id.manualInputSection).visibility = View.GONE
+            findViewById<View>(R.id.searchButton).visibility = View.GONE
+            val displayName = username ?: "friend"
+            ThemedToast.show(this, "Adding $displayName...")
+            initiateFriendRequest(onionAddress, pin)
+        } else if (!qrAutoSent) {
+            // Incomplete QR (missing PIN) — show manual entry for PIN only
+            showManualInputSection()
+            findViewById<EditText>(R.id.cidInput).setText(onionAddress)
+            if (pin != null) {
+                fillPinBoxes(pin)
+            }
+            val toastMsg = if (username != null) "Scanned ${username}'s contact" else "Scanned friend request address"
+            ThemedToast.show(this, toastMsg)
+        }
+    }
+
+    /**
+     * Fill all 10 PIN input boxes from a PIN string
+     */
+    private fun fillPinBoxes(pin: String) {
+        val boxes = listOf(
+            findViewById<EditText>(R.id.pinBox1), findViewById<EditText>(R.id.pinBox2),
+            findViewById<EditText>(R.id.pinBox3), findViewById<EditText>(R.id.pinBox4),
+            findViewById<EditText>(R.id.pinBox5), findViewById<EditText>(R.id.pinBox6),
+            findViewById<EditText>(R.id.pinBox7), findViewById<EditText>(R.id.pinBox8),
+            findViewById<EditText>(R.id.pinBox9), findViewById<EditText>(R.id.pinBox10)
+        )
+        for (i in boxes.indices) {
+            if (i < pin.length) {
+                boxes[i].setText(pin[i].toString())
+            } else {
+                boxes[i].setText("")
+            }
+        }
+    }
+
+    /**
+     * Show the manual input fields + send button (after QR scan or legacy mode)
+     */
+    private fun showManualInputSection() {
+        findViewById<View>(R.id.manualInputSection).visibility = View.VISIBLE
+        findViewById<View>(R.id.searchButton).visibility = View.VISIBLE
+    }
+
+    /**
+     * Decode a QR code from a gallery image using MLKit barcode scanning
+     */
+    private fun decodeQrFromGalleryImage(uri: android.net.Uri) {
+        try {
+            val image = com.google.mlkit.vision.common.InputImage.fromFilePath(this, uri)
+            val scanner = com.google.mlkit.vision.barcode.BarcodeScanning.getClient()
+            scanner.process(image)
+                .addOnSuccessListener { barcodes ->
+                    if (barcodes.isNotEmpty()) {
+                        val qrData = barcodes[0].rawValue
+                        if (!qrData.isNullOrEmpty()) {
+                            handleScannedQrData(qrData)
+                        } else {
+                            ThemedToast.show(this, "QR code is empty")
+                        }
+                    } else {
+                        ThemedToast.show(this, "No QR code found in image")
+                    }
+                }
+                .addOnFailureListener { e ->
+                    Log.e(TAG, "Failed to decode QR from gallery image", e)
+                    ThemedToast.show(this, "Failed to read QR code from image")
+                }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error processing gallery image", e)
+            ThemedToast.show(this, "Failed to process image")
         }
     }
 
     override fun onResume() {
         super.onResume()
+        qrAutoSent = false // Reset latch so a new scan can fire
         // Load and display pending friend requests
         loadPendingFriendRequests()
         updateFriendRequestBadge()
 
-        // Listen for background friend request status changes
-        registerReceiver(
-            friendRequestStatusReceiver,
-            IntentFilter(com.securelegion.services.TorService.ACTION_FRIEND_REQUEST_STATUS_CHANGED),
-            Context.RECEIVER_NOT_EXPORTED
-        )
+        // Listen for background friend request status changes AND finalization
+        val filter = IntentFilter().apply {
+            addAction(com.securelegion.services.TorService.ACTION_FRIEND_REQUEST_STATUS_CHANGED)
+            addAction("com.securelegion.FRIEND_REQUEST_RECEIVED")
+        }
+        registerReceiver(friendRequestStatusReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
     }
 
     override fun onPause() {
@@ -373,6 +532,10 @@ class AddFriendActivity : BaseActivity() {
                     )
                     requestStatus.compoundDrawablePadding = 6
                 }
+                friendRequest.status == com.securelegion.models.PendingFriendRequest.STATUS_INVALID_PIN -> {
+                    requestStatus.text = "Invalid PIN"
+                    requestStatus.setTextColor(getColor(android.R.color.holo_red_light))
+                }
                 friendRequest.direction == com.securelegion.models.PendingFriendRequest.DIRECTION_INCOMING -> {
                     requestStatus.text = "Accept"
                     requestStatus.setTextColor(getColor(R.color.text_gray))
@@ -387,15 +550,27 @@ class AddFriendActivity : BaseActivity() {
                 }
             }
 
-            // Handle status badge click (no action while sending)
+            // Handle status badge click (no action while sending or invalid PIN)
             if (friendRequest.status == com.securelegion.models.PendingFriendRequest.STATUS_SENDING) {
                 requestStatus.setOnClickListener(null)
                 requestStatus.isClickable = false
+            } else if (friendRequest.status == com.securelegion.models.PendingFriendRequest.STATUS_INVALID_PIN) {
+                requestStatus.setOnClickListener {
+                    androidx.appcompat.app.AlertDialog.Builder(this@AddFriendActivity)
+                        .setTitle("Invalid PIN")
+                        .setMessage("Someone sent you a friend request but used the wrong PIN. Ask them to resend with the correct code.")
+                        .setPositiveButton("Dismiss") { _, _ ->
+                            removePendingFriendRequest(friendRequest)
+                            loadPendingFriendRequests()
+                        }
+                        .setNegativeButton("Keep", null)
+                        .show()
+                }
             } else {
             requestStatus.setOnClickListener {
                 if (friendRequest.direction == com.securelegion.models.PendingFriendRequest.DIRECTION_OUTGOING) {
                     // Outgoing request - show confirmation dialog before resending
-                    android.app.AlertDialog.Builder(this@AddFriendActivity)
+                    androidx.appcompat.app.AlertDialog.Builder(this@AddFriendActivity)
                         .setTitle("Resend Friend Request?")
                         .setMessage("Send another friend request to ${friendRequest.displayName}?")
                         .setPositiveButton("Resend") { _, _ ->
@@ -404,40 +579,59 @@ class AddFriendActivity : BaseActivity() {
                         .setNegativeButton("Cancel", null)
                         .show()
                 } else {
-                    // Incoming request - auto-fill CID for acceptance
-                    val cidInput = findViewById<EditText>(R.id.cidInput)
-                    cidInput.setText(friendRequest.ipfsCid)
+                    // Incoming request - accept directly (no PIN needed unless legacy mode)
+                    val secPrefs = getSharedPreferences("security_prefs", Context.MODE_PRIVATE)
+                    val isLegacy = secPrefs.getBoolean("legacy_manual_entry", false)
 
-                    // Disable the Accept button
-                    requestStatus.isEnabled = false
-                    requestStatus.alpha = 0.5f
+                    if (isLegacy) {
+                        // Legacy mode: show full form with PIN boxes
+                        showManualInputSection()
+                        val cidInput = findViewById<EditText>(R.id.cidInput)
+                        cidInput.setText(friendRequest.ipfsCid)
 
-                    // Change main button text to "Accept Friend Request"
-                    val mainButton = findViewById<TextView>(R.id.searchButton)
-                    mainButton.text = "Accept Friend Request"
+                        requestStatus.isEnabled = false
+                        requestStatus.alpha = 0.5f
 
-                    val scrollView = findViewById<android.widget.ScrollView>(R.id.addFriendScrollView)
-                    scrollView?.post {
-                        scrollView.smoothScrollTo(0, 0)
+                        val mainButton = findViewById<TextView>(R.id.searchButton)
+                        mainButton.text = "Accept Friend Request"
+
+                        val scrollView = findViewById<android.widget.ScrollView>(R.id.addFriendScrollView)
+                        scrollView?.post { scrollView.smoothScrollTo(0, 0) }
+
+                        val pinBox1 = findViewById<EditText>(R.id.pinBox1)
+                        pinBox1.requestFocus()
+                        val inputMethodManager = getSystemService(android.view.inputmethod.InputMethodManager::class.java)
+                        inputMethodManager.showSoftInput(pinBox1, android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT)
+
+                        ThemedToast.show(this, "Friend request from ${friendRequest.displayName}. Enter PIN to accept")
+                    } else {
+                        // Normal mode: accept immediately, no PIN needed
+                        requestStatus.isEnabled = false
+                        requestStatus.alpha = 0.5f
+                        acceptPhase2FriendRequest(friendRequest.ipfsCid, "")
                     }
-
-                    val pinBox1 = findViewById<EditText>(R.id.pinBox1)
-                    pinBox1.requestFocus()
-
-                    val inputMethodManager = getSystemService(android.view.inputmethod.InputMethodManager::class.java)
-                    inputMethodManager.showSoftInput(pinBox1, android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT)
-
-                    ThemedToast.show(this, "Friend request from ${friendRequest.displayName}. Enter PIN to accept")
                 }
             }
             } // end else (not sending)
 
-            // Handle card click - auto-fill CID field
+            // Handle card click - show fields and auto-fill CID
             requestView.setOnClickListener {
+                val secPrefs = getSharedPreferences("security_prefs", Context.MODE_PRIVATE)
+                val isLegacy = secPrefs.getBoolean("legacy_manual_entry", false)
+
+                // Incoming request in normal mode: accept immediately on tap
+                if (friendRequest.direction == com.securelegion.models.PendingFriendRequest.DIRECTION_INCOMING && !isLegacy) {
+                    requestStatus.isEnabled = false
+                    requestStatus.alpha = 0.5f
+                    acceptPhase2FriendRequest(friendRequest.ipfsCid, "")
+                    return@setOnClickListener
+                }
+
+                // Legacy mode or outgoing request: show full form
+                showManualInputSection()
                 val cidInput = findViewById<EditText>(R.id.cidInput)
                 cidInput.setText(friendRequest.ipfsCid)
 
-                // If incoming request, disable Accept button and update main button
                 if (friendRequest.direction == com.securelegion.models.PendingFriendRequest.DIRECTION_INCOMING) {
                     requestStatus.isEnabled = false
                     requestStatus.alpha = 0.5f
@@ -458,9 +652,9 @@ class AddFriendActivity : BaseActivity() {
                 inputMethodManager.showSoftInput(pinBox1, android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT)
 
                 val statusText = if (friendRequest.direction == com.securelegion.models.PendingFriendRequest.DIRECTION_INCOMING) {
-                    "CID auto-filled. Enter their PIN to accept friend request"
+                    "Enter their PIN to accept friend request"
                 } else {
-                    "CID auto-filled. Enter PIN to complete request"
+                    "Enter PIN to complete request"
                 }
                 ThemedToast.show(this, statusText)
             }
@@ -1226,7 +1420,7 @@ class AddFriendActivity : BaseActivity() {
                 // Save as "sending" immediately — background worker will update to pending/failed
                 val requestId = java.util.UUID.randomUUID().toString()
                 val pendingRequest = com.securelegion.models.PendingFriendRequest(
-                    displayName = "Pending Friend",
+                    displayName = scannedUsername ?: "Pending Friend",
                     ipfsCid = sanitizedOnion,
                     direction = com.securelegion.models.PendingFriendRequest.DIRECTION_OUTGOING,
                     status = com.securelegion.models.PendingFriendRequest.STATUS_SENDING,
@@ -1251,6 +1445,9 @@ class AddFriendActivity : BaseActivity() {
                 findViewById<EditText>(R.id.pinBox8).setText("")
                 findViewById<EditText>(R.id.pinBox9).setText("")
                 findViewById<EditText>(R.id.pinBox10).setText("")
+
+                // Clear scanned username after use
+                scannedUsername = null
 
                 // Reload UI — shows clock icon for "sending" entry
                 loadPendingFriendRequests()
@@ -1331,7 +1528,8 @@ class AddFriendActivity : BaseActivity() {
                     // Get the PIN - we need to prompt the user since we don't store it
                     ThemedToast.show(this@AddFriendActivity, "Please re-enter their friend request info to retry")
 
-                    // Auto-fill the onion field
+                    // Show manual fields and auto-fill the onion
+                    showManualInputSection()
                     findViewById<EditText>(R.id.cidInput).setText(recipientOnion)
 
                     // Focus on first PIN box

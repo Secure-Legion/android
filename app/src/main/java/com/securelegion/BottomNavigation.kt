@@ -21,11 +21,13 @@ object BottomNavigationHelper {
                     WindowInsetsCompat.Type.systemBars() or
                     WindowInsetsCompat.Type.displayCutout()
                 )
-                bottomNav.setPadding(
-                    bottomNav.paddingLeft,
-                    bottomNav.paddingTop,
-                    bottomNav.paddingRight,
-                    0)
+                // Move bottom nav pill ABOVE system bars (margin, not padding)
+                // Padding squishes icons inside the fixed-height pill;
+                // margin moves the entire pill up while keeping content centered
+                val params = bottomNav.layoutParams as android.view.ViewGroup.MarginLayoutParams
+                val baseMargin = (20 * activity.resources.displayMetrics.density).toInt()
+                params.bottomMargin = baseMargin + insets.bottom
+                bottomNav.layoutParams = params
                 windowInsets
             }
         }

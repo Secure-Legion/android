@@ -591,6 +591,15 @@ class MessageService(private val context: Context) {
             val pingTimestamp = currentTime
             Log.d(TAG, "Generated Ping ID: $pingId")
 
+            // Save image to file encrypted at rest (AES-256-GCM, prevents CursorWindow overflow)
+            val imageDir = java.io.File(context.filesDir, "image_messages")
+            imageDir.mkdirs()
+            val imageFile = java.io.File(imageDir, "$messageId.enc")
+            val encryptedImageBytes = keyManager.encryptImageFile(imageBytes)
+            imageFile.writeBytes(encryptedImageBytes)
+            val imageFilePath = imageFile.absolutePath
+            Log.d(TAG, "Saved encrypted image to file: $imageFilePath (${imageBytes.size} → ${encryptedImageBytes.size} bytes)")
+
             // Create message entity with IMAGE type
             val message = Message(
                 contactId = contactId,
@@ -598,7 +607,7 @@ class MessageService(private val context: Context) {
                 encryptedContent = "", // Empty for image messages
                 messageType = Message.MESSAGE_TYPE_IMAGE,
                 attachmentType = "image",
-                attachmentData = imageBase64, // Store original for display
+                attachmentData = imageFilePath, // File path (not inline base64) for CursorWindow safety
                 isSentByMe = true,
                 timestamp = currentTime,
                 status = Message.STATUS_PING_SENT, // Start as PING_SENT so pollForPongsAndSendMessages() can find it
@@ -679,6 +688,117 @@ class MessageService(private val context: Context) {
 
         } catch (e: Exception) {
             Log.e(TAG, "Failed to send image message", e)
+            Result.failure(e)
+        }
+    }
+
+    /**
+     * Send a sticker message — asset path is sent as the payload so receiver
+     * can look up the same bundled Lottie animation. Wire type 0x0E.
+     */
+    suspend fun sendStickerMessage(
+        contactId: Long,
+        assetPath: String,
+        onMessageSaved: ((Message) -> Unit)? = null
+    ): Result<Message> = withContext(Dispatchers.IO) {
+        try {
+            Log.d(TAG, "Sending sticker message: $assetPath to contact ID: $contactId")
+
+            val dbPassphrase = keyManager.getDatabasePassphrase()
+            val database = SecureLegionDatabase.getInstance(context, dbPassphrase)
+            val contact = database.contactDao().getContactById(contactId)
+                ?: return@withContext Result.failure(Exception("Contact not found"))
+
+            val ourPublicKey = keyManager.getSigningPublicKey()
+            val ourPrivateKey = keyManager.getSigningKeyBytes()
+            val ourPublicKeyBase64 = android.util.Base64.encodeToString(ourPublicKey, android.util.Base64.NO_WRAP)
+            val messageNonce = generateMessageNonce()
+
+            val messageId = generateDeterministicMessageId(
+                plaintext = assetPath,
+                senderEd25519Base64 = ourPublicKeyBase64,
+                recipientEd25519Base64 = contact.publicKeyBase64,
+                messageNonce = messageNonce
+            )
+
+            val stickerBytes = assetPath.toByteArray(Charsets.UTF_8)
+
+            val keyChain = KeyChainManager.getKeyChain(context, contactId)
+                ?: throw Exception("Key chain not found for contact ${contact.displayName}")
+
+            // STICKER format: [0x0E][assetPathUtf8...]
+            val plaintextWithType = byteArrayOf(0x0E) + stickerBytes
+            val plaintextForEncryption = String(plaintextWithType, Charsets.ISO_8859_1)
+
+            val result = RustBridge.encryptMessageWithEvolution(
+                plaintextForEncryption,
+                keyChain.sendChainKeyBytes,
+                keyChain.sendCounter
+            )
+            val encryptedBytes = result.ciphertext
+
+            val evolvedKeyBase64 = android.util.Base64.encodeToString(result.evolvedChainKey, android.util.Base64.NO_WRAP)
+            val newSendCounter = keyChain.sendCounter + 1
+
+            val encryptedBase64 = Base64.encodeToString(encryptedBytes, Base64.NO_WRAP)
+
+            val nonce = encryptedBytes.sliceArray(9 until 33)
+            val nonceBase64 = Base64.encodeToString(nonce, Base64.NO_WRAP)
+
+            val messageData = (messageId + System.currentTimeMillis()).toByteArray()
+            val signature = RustBridge.signData(messageData, ourPrivateKey)
+            val signatureBase64 = Base64.encodeToString(signature, Base64.NO_WRAP)
+
+            val currentTime = System.currentTimeMillis()
+            val pingId = generatePingId()
+
+            val message = Message(
+                contactId = contactId,
+                messageId = messageId,
+                encryptedContent = "",
+                messageType = Message.MESSAGE_TYPE_STICKER,
+                attachmentType = "sticker",
+                attachmentData = assetPath,
+                isSentByMe = true,
+                timestamp = currentTime,
+                status = Message.STATUS_PING_SENT,
+                signatureBase64 = signatureBase64,
+                nonceBase64 = nonceBase64,
+                messageNonce = messageNonce,
+                pingId = pingId,
+                pingTimestamp = currentTime,
+                encryptedPayload = encryptedBase64,
+                retryCount = 0,
+                lastRetryTimestamp = currentTime
+            )
+
+            val savedMessageId = database.withTransaction {
+                database.contactKeyChainDao().updateSendChainKey(
+                    contactId = contactId,
+                    newSendChainKeyBase64 = evolvedKeyBase64,
+                    newSendCounter = newSendCounter,
+                    timestamp = System.currentTimeMillis()
+                )
+                database.messageDao().insertMessage(message)
+            }
+            val savedMessage = message.copy(id = savedMessageId)
+
+            onMessageSaved?.invoke(savedMessage)
+
+            val intent = android.content.Intent("com.securelegion.NEW_PING")
+            intent.setPackage(context.packageName)
+            intent.putExtra("CONTACT_ID", contactId)
+            context.sendBroadcast(intent)
+
+            try {
+                sendPingForMessage(savedMessage)
+            } catch (e: Exception) {
+                Log.w(TAG, "Sticker Ping send failed, retry worker will handle: ${e.message}")
+            }
+
+            Result.success(savedMessage)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to send sticker message", e)
             Result.failure(e)
         }
     }
@@ -786,7 +906,7 @@ class MessageService(private val context: Context) {
 
         // Send sequentially but with a per-contact timeout so one slow SOCKS
         // connection doesn't block the entire broadcast for 36+ seconds
-        contacts.forEach { contact ->
+        contacts.forEachIndexed { index, contact ->
             try {
                 val result = kotlinx.coroutines.withTimeoutOrNull(20_000L) {
                     sendProfileUpdate(contact.id, photoBase64)
@@ -804,6 +924,11 @@ class MessageService(private val context: Context) {
             } catch (e: Exception) {
                 failCount++
                 Log.e(TAG, "Profile update error for ${contact.displayName}", e)
+            }
+
+            // Stagger sends to avoid Tor circuit churn
+            if (index < contacts.size - 1) {
+                kotlinx.coroutines.delay(1_500L)
             }
         }
 
@@ -1521,6 +1646,62 @@ class MessageService(private val context: Context) {
         }
     }
 
+    // ==================== PAYLOAD DECODER ====================
+
+    /**
+     * Decoded inner plaintext after reversing the ISO-8859-1 JNI encoding trick.
+     * The source of truth for message type is the inner prefix byte, not the caller.
+     */
+    private data class DecodedPayload(
+        val appType: Int,          // 0..255 if known prefix, -1 if legacy/unknown
+        val bodyBytes: ByteArray,  // payload without the 1-byte prefix
+        val bodyUtf8: String       // best-effort UTF-8 decode of bodyBytes
+    )
+
+    /** Known inner plaintext prefix bytes — only these are treated as type prefixes. */
+    private val KNOWN_APP_PREFIXES = setOf(
+        0x00, // TEXT
+        0x01, // VOICE
+        0x02, // IMAGE
+        0x0A, // PAYMENT_REQUEST
+        0x0B, // PAYMENT_SENT
+        0x0C, // PAYMENT_ACCEPTED
+        0x0E, // STICKER
+        0x0F  // PROFILE_UPDATE
+    )
+
+    /**
+     * Reverse the ISO-8859-1 "binary-through-string" JNI trick, extract the inner
+     * type prefix, and decode the body as UTF-8. Mirrors the working TorService path.
+     */
+    private fun decodeDecryptedPayload(decryptedData: String): DecodedPayload {
+        val rawBytes = decryptedData.toByteArray(Charsets.ISO_8859_1)
+
+        if (rawBytes.isEmpty()) {
+            return DecodedPayload(appType = -1, bodyBytes = ByteArray(0), bodyUtf8 = "")
+        }
+
+        val prefix = rawBytes[0].toInt() and 0xFF
+        val isKnownPrefix = prefix in KNOWN_APP_PREFIXES
+
+        val body = if (isKnownPrefix && rawBytes.size > 1)
+            rawBytes.copyOfRange(1, rawBytes.size)
+        else if (!isKnownPrefix)
+            rawBytes // Legacy: no prefix, entire payload is content
+        else
+            ByteArray(0)
+
+        val appType = if (isKnownPrefix) prefix else -1
+
+        val bodyUtf8 = try {
+            String(body, Charsets.UTF_8)
+        } catch (_: Throwable) {
+            String(body, Charsets.ISO_8859_1)
+        }
+
+        return DecodedPayload(appType = appType, bodyBytes = body, bodyUtf8 = bodyUtf8)
+    }
+
     /**
      * Receive and decrypt an incoming message
      * @param encryptedData The encrypted message data
@@ -1820,13 +2001,22 @@ class MessageService(private val context: Context) {
                         return@withContext Result.failure(Exception("Duplicate message"))
                     }
 
+                    // Save received image to file encrypted at rest (AES-256-GCM)
+                    val imageDir = java.io.File(context.filesDir, "image_messages")
+                    imageDir.mkdirs()
+                    val imageFile = java.io.File(imageDir, "$messageId.enc")
+                    val encryptedImageBytes = keyManager.encryptImageFile(imageBytes)
+                    imageFile.writeBytes(encryptedImageBytes)
+                    val imageFilePath = imageFile.absolutePath
+                    Log.d(TAG, "Saved encrypted received image to file: $imageFilePath (${imageBytes.size} → ${encryptedImageBytes.size} bytes)")
+
                     Message(
                         contactId = contact.id,
                         messageId = messageId,
                         encryptedContent = "", // Empty for image messages
                         messageType = Message.MESSAGE_TYPE_IMAGE,
                         attachmentType = "image",
-                        attachmentData = imageBase64, // Store Base64 for display
+                        attachmentData = imageFilePath, // File path (not inline base64) for CursorWindow safety
                         isSentByMe = false,
                         timestamp = System.currentTimeMillis(),
                         status = Message.STATUS_DELIVERED,
@@ -1982,14 +2172,93 @@ class MessageService(private val context: Context) {
                     }
                     return@withContext Result.failure(Exception("Profile update processed"))
                 }
+                Message.MESSAGE_TYPE_STICKER -> {
+                    // Sticker message: decryptedData = [0x0E][assetPathUtf8...]
+                    val rawBytes = decryptedData.toByteArray(Charsets.ISO_8859_1)
+                    val assetPath: String
+                    if (rawBytes.size >= 2 && rawBytes[0] == 0x0E.toByte()) {
+                        assetPath = String(rawBytes.copyOfRange(1, rawBytes.size), Charsets.UTF_8)
+                        Log.d(TAG, "Stripped 0x0E STICKER prefix, assetPath=$assetPath")
+                    } else {
+                        // No prefix — treat entire payload as asset path (backward compat)
+                        assetPath = String(rawBytes, Charsets.UTF_8)
+                        Log.w(TAG, "Sticker payload missing 0x0E prefix, using raw: $assetPath")
+                    }
+
+                    // PHASE 1.2: Generate deterministic messageId using SORTED pubkeys
+                    val messageId = generateDeterministicMessageId(
+                        plaintext = assetPath,
+                        senderEd25519Base64 = senderPublicKeyBase64,
+                        recipientEd25519Base64 = ourPublicKeyBase64,
+                        messageNonce = messageNonce
+                    )
+
+                    // Check for duplicate
+                    if (database.messageDao().messageExists(messageId)) {
+                        Log.w(TAG, "Duplicate sticker message ignored: $messageId")
+                        return@withContext Result.failure(Exception("Duplicate message"))
+                    }
+
+                    Message(
+                        contactId = contact.id,
+                        messageId = messageId,
+                        encryptedContent = "",
+                        messageType = Message.MESSAGE_TYPE_STICKER,
+                        attachmentType = "sticker",
+                        attachmentData = assetPath,
+                        isSentByMe = false,
+                        timestamp = System.currentTimeMillis(),
+                        status = Message.STATUS_DELIVERED,
+                        signatureBase64 = "",
+                        nonceBase64 = nonceBase64,
+                        messageNonce = messageNonce,
+                        selfDestructAt = selfDestructAt,
+                        requiresReadReceipt = requiresReadReceipt,
+                        pingId = pingId
+                    )
+                }
                 else -> {
-                    // Text message (default)
-                    val plaintext = decryptedData
+                    // Default branch: decode the inner plaintext prefix (source of truth)
+                    // to handle both correctly-routed TEXT and misrouted types (e.g. sticker as TEXT)
+                    val decoded = decodeDecryptedPayload(decryptedData)
+                    Log.d(TAG, "Decoded payload: appType=0x${String.format("%02X", decoded.appType)}, body=${decoded.bodyBytes.size} bytes")
+
+                    // Determine actual content and type from inner prefix
+                    val actualContent: String
+                    val actualMessageType: String
+                    val actualAttachmentType: String?
+                    val actualAttachmentData: String?
+
+                    when (decoded.appType) {
+                        0x00, -1 -> {
+                            // TEXT (0x00) or legacy without prefix (-1)
+                            actualContent = decoded.bodyUtf8
+                            actualMessageType = Message.MESSAGE_TYPE_TEXT
+                            actualAttachmentType = null
+                            actualAttachmentData = null
+                        }
+                        0x0E -> {
+                            // STICKER misrouted as TEXT — self-heal
+                            Log.w(TAG, "Sticker message misrouted as TEXT, self-healing to STICKER")
+                            actualContent = ""
+                            actualMessageType = Message.MESSAGE_TYPE_STICKER
+                            actualAttachmentType = "sticker"
+                            actualAttachmentData = decoded.bodyUtf8 // asset path
+                        }
+                        else -> {
+                            // Other known type misrouted here — decode body, store as TEXT
+                            Log.w(TAG, "Unexpected appType 0x${String.format("%02X", decoded.appType)} in TEXT branch, storing body as TEXT")
+                            actualContent = decoded.bodyUtf8
+                            actualMessageType = Message.MESSAGE_TYPE_TEXT
+                            actualAttachmentType = null
+                            actualAttachmentData = null
+                        }
+                    }
 
                     // PHASE 1.2: Generate deterministic messageId using SORTED pubkeys
                     // This matches the sender's computation exactly, enabling dedup
                     val messageId = generateDeterministicMessageId(
-                        plaintext = plaintext,
+                        plaintext = actualContent.ifEmpty { decoded.bodyUtf8 },
                         senderEd25519Base64 = senderPublicKeyBase64,
                         recipientEd25519Base64 = ourPublicKeyBase64,
                         messageNonce = messageNonce
@@ -2004,8 +2273,10 @@ class MessageService(private val context: Context) {
                     Message(
                         contactId = contact.id,
                         messageId = messageId,
-                        encryptedContent = plaintext,
-                        messageType = Message.MESSAGE_TYPE_TEXT,
+                        encryptedContent = actualContent,
+                        messageType = actualMessageType,
+                        attachmentType = actualAttachmentType,
+                        attachmentData = actualAttachmentData,
                         isSentByMe = false,
                         timestamp = System.currentTimeMillis(),
                         status = Message.STATUS_DELIVERED,
@@ -2472,12 +2743,15 @@ class MessageService(private val context: Context) {
             val recipientEd25519PubKey = Base64.decode(contact.publicKeyBase64, Base64.NO_WRAP)
             val recipientX25519PubKey = Base64.decode(contact.x25519PublicKeyBase64, Base64.NO_WRAP)
 
-            // Get encrypted message payload
-            if (message.encryptedPayload == null) {
+            // Get encrypted message payload (on-demand loading for CursorWindow safety —
+            // bulk queries exclude encryptedPayload via NULL AS, so load it here if needed)
+            val encryptedPayloadStr = message.encryptedPayload
+                ?: database.messageDao().getEncryptedPayload(message.id)
+            if (encryptedPayloadStr == null) {
                 return@withContext Result.failure(Exception("Message has no encrypted payload"))
             }
-            val encryptedBytes = Base64.decode(message.encryptedPayload, Base64.NO_WRAP)
-            Log.d(TAG, "Encrypted message size: ${encryptedBytes.size} bytes (Base64 encoded size: ${message.encryptedPayload.length})")
+            val encryptedBytes = Base64.decode(encryptedPayloadStr, Base64.NO_WRAP)
+            Log.d(TAG, "Encrypted message size: ${encryptedBytes.size} bytes (Base64 encoded size: ${encryptedPayloadStr.length})")
 
             // Convert message type to wire protocol type byte
             val messageTypeByte: Byte = when (message.messageType) {
@@ -2486,6 +2760,7 @@ class MessageService(private val context: Context) {
                 Message.MESSAGE_TYPE_PAYMENT_REQUEST -> 0x0A.toByte() // PAYMENT_REQUEST
                 Message.MESSAGE_TYPE_PAYMENT_SENT -> 0x0B.toByte() // PAYMENT_SENT
                 Message.MESSAGE_TYPE_PAYMENT_ACCEPTED -> 0x0C.toByte() // PAYMENT_ACCEPTED
+                Message.MESSAGE_TYPE_STICKER -> 0x0E.toByte() // STICKER
                 Message.MESSAGE_TYPE_PROFILE_UPDATE -> 0x0F.toByte() // PROFILE_UPDATE
                 else -> 0x03.toByte() // TEXT (default)
             }
@@ -2532,6 +2807,10 @@ class MessageService(private val context: Context) {
 
                     // Connection refused - HS might be offline/restarting
                     errorMsg.contains("Connection refused", ignoreCase = true) -> true
+
+                    // SOCKS status=6 (TTL expired) - temporary routing/hop-limit issue
+                    errorMsg.contains("status 6", ignoreCase = true) -> true
+                    errorMsg.contains("TTL expired", ignoreCase = true) -> true
 
                     else -> false
                 }
@@ -2856,8 +3135,10 @@ class MessageService(private val context: Context) {
             val dbPassphrase = keyManager.getDatabasePassphrase()
             val database = SecureLegionDatabase.getInstance(context, dbPassphrase)
 
-            // Get stored encrypted payload
+            // Get stored encrypted payload (on-demand loading for CursorWindow safety —
+            // bulk queries exclude encryptedPayload via NULL AS, so load it here if needed)
             val encryptedPayload = message.encryptedPayload
+                ?: database.messageDao().getEncryptedPayload(message.id)
             if (encryptedPayload == null) {
                 Log.e(TAG, "No encrypted payload stored for message ${message.id}")
                 return
@@ -2873,6 +3154,7 @@ class MessageService(private val context: Context) {
                 com.securelegion.database.entities.Message.MESSAGE_TYPE_PAYMENT_REQUEST -> 0x0A.toByte() // PAYMENT_REQUEST
                 com.securelegion.database.entities.Message.MESSAGE_TYPE_PAYMENT_SENT -> 0x0B.toByte() // PAYMENT_SENT
                 com.securelegion.database.entities.Message.MESSAGE_TYPE_PAYMENT_ACCEPTED -> 0x0C.toByte() // PAYMENT_ACCEPTED
+                com.securelegion.database.entities.Message.MESSAGE_TYPE_STICKER -> 0x0E.toByte() // STICKER
                 com.securelegion.database.entities.Message.MESSAGE_TYPE_PROFILE_UPDATE -> 0x0F.toByte() // PROFILE_UPDATE
                 else -> 0x03.toByte() // TEXT (default)
             }

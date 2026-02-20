@@ -36,6 +36,12 @@ interface CallHistoryDao {
     fun getCallHistoryForContact(contactId: Long): LiveData<List<CallHistory>>
 
     /**
+     * Get call history for a specific contact as plain list
+     */
+    @Query("SELECT * FROM call_history WHERE contactId = :contactId ORDER BY timestamp DESC")
+    suspend fun getCallHistoryForContactList(contactId: Long): List<CallHistory>
+
+    /**
      * Get missed calls only
      */
     @Query("SELECT * FROM call_history WHERE type = 'MISSED' ORDER BY timestamp DESC")

@@ -53,6 +53,13 @@ interface CrdtOpLogDao {
     suspend fun deleteOpsForGroup(groupId: String)
 
     /**
+     * Get membership ops for a group (for system messages in chat).
+     * Returns MemberInvite, MemberAccept, MemberRemove, and GroupCreate ops.
+     */
+    @Query("SELECT * FROM crdt_op_log WHERE groupId = :groupId AND opType IN ('GroupCreate', 'MemberInvite', 'MemberAccept', 'MemberRemove', 'RoleSet', 'MemberMute', 'MemberReport') ORDER BY lamport ASC")
+    suspend fun getMembershipOps(groupId: String): List<CrdtOpLog>
+
+    /**
      * Get the max lamport for a group (for sync cursor).
      */
     @Query("SELECT MAX(lamport) FROM crdt_op_log WHERE groupId = :groupId")

@@ -312,7 +312,7 @@ class LockActivity : AppCompatActivity() {
 
                 // SECURITY FIX: Show dialog first, mark as asked when user responds
                 // This prevents repeated prompts even if user cancels biometric scan
-                android.app.AlertDialog.Builder(this)
+                androidx.appcompat.app.AlertDialog.Builder(this)
                     .setTitle("Enable Biometric Unlock?")
                     .setMessage("Use fingerprint or face unlock instead of typing your password every time.")
                     .setPositiveButton("Enable") { _, _ ->

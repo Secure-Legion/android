@@ -314,6 +314,21 @@ dependencies {
     // Coroutines for async voice call handling (if not already included via core-ktx)
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
 
+    // Emoji panel (keyboard-replacement, Google emoji sprites, no network)
+    implementation("com.vanniktech:emoji-google:0.23.0")
+
+    // Lottie for animated sticker rendering (Noto Animated Emoji)
+    implementation("com.airbnb.android:lottie:6.7.1")
+
+    // GIF rendering in chat bubbles and GIF picker
+    implementation("pl.droidsonroids.gif:android-gif-drawable:1.2.29")
+
+    // Photo crop/rotate before sending
+    implementation("com.vanniktech:android-image-cropper:4.7.0")
+
+    // Photo editor (draw, text, emoji overlay before sending)
+    implementation("com.burhanrashid52:photoeditor:3.0.2")
+
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)

@@ -7,6 +7,7 @@ import android.os.Looper
 import android.util.Log
 import android.view.View
 import android.view.WindowManager
+import android.view.inputmethod.InputMethodManager
 import androidx.appcompat.app.AppCompatActivity
 import com.securelegion.utils.BadgeUtils
 
@@ -61,6 +62,13 @@ abstract class BaseActivity : AppCompatActivity() {
     override fun onPause() {
         super.onPause()
         cancelAutoLockTimer()
+
+        // Dismiss keyboard and clear focus from any EditText (stops blinking cursor)
+        currentFocus?.let { view ->
+            val imm = getSystemService(INPUT_METHOD_SERVICE) as? android.view.inputmethod.InputMethodManager
+            imm?.hideSoftInputFromWindow(view.windowToken, 0)
+            view.clearFocus()
+        }
 
         // DISABLED: Don't record pause time - we only lock based on inactivity timer now
         // The app will only lock after X minutes of inactivity, not when switching apps

@@ -52,7 +52,7 @@ class WalletActivity : AppCompatActivity() {
                 bottomNav.paddingLeft,
                 bottomNav.paddingTop,
                 bottomNav.paddingRight,
-                0)
+                insets.bottom)
             windowInsets
         }
 

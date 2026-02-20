@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:background="?attr/colorSurface">
+
+    <!-- Placeholder message until GIFs are bundled -->
+    <TextView
+        android:id="@+id/gifPlaceholder"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:gravity="center"
+        android:text="GIFs will be available in the next update"
+        android:textColor="#666666"
+        android:textSize="14sp"
+        android:fontFamily="@font/poppins_regular"
+        android:visibility="gone" />
+
+    <!-- GIF grid (shown when assets/gifs/ has content) -->
+    <androidx.recyclerview.widget.RecyclerView
+        android:id="@+id/gifGrid"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:clipToPadding="false"
+        android:padding="2dp" />
+
+</LinearLayout>

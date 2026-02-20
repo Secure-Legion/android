@@ -15,13 +15,11 @@
         android:layout_width="48dp"
         android:layout_height="48dp">
 
-        <ImageView
-            android:id="@+id/profileCircle"
+        <com.securelegion.views.AvatarView
+            android:id="@+id/contactAvatar"
             android:layout_width="48dp"
             android:layout_height="48dp"
-            android:src="@drawable/default_avatar"
-            android:background="@drawable/profile_circle_bg"
-            android:contentDescription="Profile" />
+            android:contentDescription="Contact Photo" />
 
         <!-- Online Indicator -->
         <View

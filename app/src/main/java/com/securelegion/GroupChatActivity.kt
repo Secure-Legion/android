@@ -319,7 +319,7 @@ class GroupChatActivity : BaseActivity() {
                     val myEntry = members.find { it.pubkeyHex == myPubkeyHex }
                     myDeviceIdHex = myEntry?.deviceIdHex
 
-                    // Build deviceIdHex → displayName map
+                    // Build deviceIdHex → displayName map (Contact → GroupPeer → hex fallback)
                     val nameMap = mutableMapOf<String, String>()
                     for (member in members) {
                         if (member.pubkeyHex == myPubkeyHex) continue
@@ -330,8 +330,10 @@ class GroupChatActivity : BaseActivity() {
                                 pubkeyBytes, android.util.Base64.NO_WRAP
                             )
                             val contact = db.contactDao().getContactByPublicKey(pubkeyB64)
-                            nameMap[member.deviceIdHex] = contact?.displayName
+                            val displayName = contact?.displayName
+                                ?: db.groupPeerDao().getByGroupAndPubkey(currentGroupId, member.pubkeyHex)?.displayName
                                 ?: member.deviceIdHex.take(8)
+                            nameMap[member.deviceIdHex] = displayName
                         } catch (_: Exception) {
                             nameMap[member.deviceIdHex] = member.deviceIdHex.take(8)
                         }
@@ -370,7 +372,38 @@ class GroupChatActivity : BaseActivity() {
                         )
                     }
 
-                    Pair(mapped, pending)
+                    // Query membership ops for system messages
+                    val membershipOps = db.crdtOpLogDao().getMembershipOps(currentGroupId)
+                    val systemMessages = membershipOps.mapNotNull { op ->
+                        // Extract author device ID from opId format: "authorHex:lamportHex:nonceHex"
+                        val authorDeviceHex = op.opId.substringBefore(":")
+                        val authorName = if (authorDeviceHex == myDeviceIdHex) "You"
+                            else nameMap[authorDeviceHex] ?: authorDeviceHex.take(8)
+
+                        val text = when (op.opType) {
+                            "GroupCreate" -> "$authorName created the group"
+                            "MemberInvite" -> "$authorName added a new member"
+                            "MemberAccept" -> "$authorName joined the group"
+                            "MemberRemove" -> "$authorName removed a member"
+                            "RoleSet" -> "$authorName changed a member's role"
+                            "MemberMute" -> "$authorName muted a member"
+                            "MemberReport" -> "$authorName reported a member"
+                            else -> null
+                        } ?: return@mapNotNull null
+
+                        GroupChatMessage(
+                            messageId = "sys_${op.opId}",
+                            text = text,
+                            timestamp = op.createdAt,
+                            isSentByMe = false,
+                            messageType = "SYSTEM"
+                        )
+                    }
+
+                    // Merge and sort by timestamp
+                    val allMessages = (mapped + systemMessages).sortedBy { it.timestamp }
+
+                    Pair(allMessages, pending)
                 }
 
                 withContext(Dispatchers.Main) {
@@ -471,7 +504,7 @@ class GroupChatActivity : BaseActivity() {
             return
         }
 
-        messageInput.text.clear()
+        messageInput.setText("")
 
         lifecycleScope.launch {
             try {
@@ -538,7 +571,7 @@ class GroupChatActivity : BaseActivity() {
                     val contactNames = contacts.map { it.displayName }.toTypedArray()
                     val selectedContacts = mutableListOf<Contact>()
 
-                    AlertDialog.Builder(this@GroupChatActivity)
+                    AlertDialog.Builder(this@GroupChatActivity, R.style.CustomAlertDialog)
                         .setTitle("Add Members to Group")
                         .setMultiChoiceItems(contactNames, null) { _, which, isChecked ->
                             if (isChecked) {
@@ -577,11 +610,15 @@ class GroupChatActivity : BaseActivity() {
             try {
                 withContext(Dispatchers.IO) {
                     val mgr = CrdtGroupManager.getInstance(this@GroupChatActivity)
-                    for (contact in contacts) {
+                    for ((index, contact) in contacts.withIndex()) {
                         val pubkeyHex = contact.ed25519PublicKeyBytes
                             .joinToString("") { "%02x".format(it) }
                         mgr.inviteMember(currentGroupId, pubkeyHex)
                         Log.i(TAG, "Invited ${contact.displayName}")
+                        // Backpressure: give Tor circuits time to settle between invites
+                        if (index < contacts.size - 1) {
+                            kotlinx.coroutines.delay(800)
+                        }
                     }
                 }
 

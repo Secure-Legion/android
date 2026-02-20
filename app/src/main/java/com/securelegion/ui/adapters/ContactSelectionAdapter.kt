@@ -10,6 +10,7 @@ import androidx.recyclerview.widget.ListAdapter
 import androidx.recyclerview.widget.RecyclerView
 import com.securelegion.R
 import com.securelegion.database.entities.Contact
+import com.securelegion.views.AvatarView
 
 /**
  * Adapter for contact selection in bottom sheet
@@ -33,13 +34,18 @@ class ContactSelectionAdapter(
     }
 
     class ContactViewHolder(itemView: View) : RecyclerView.ViewHolder(itemView) {
-        private val contactInitial: TextView = itemView.findViewById(R.id.contactInitial)
+        private val contactAvatar: AvatarView = itemView.findViewById(R.id.contactAvatar)
         private val contactName: TextView = itemView.findViewById(R.id.contactName)
         private val contactCheckbox: CheckBox = itemView.findViewById(R.id.contactCheckbox)
 
         fun bind(contact: Contact, selectedIds: MutableSet<Long>) {
             contactName.text = contact.displayName
-            contactInitial.text = contact.displayName.firstOrNull()?.uppercase() ?: "?"
+            contactAvatar.setName(contact.displayName)
+            if (!contact.profilePictureBase64.isNullOrEmpty()) {
+                contactAvatar.setPhotoBase64(contact.profilePictureBase64)
+            } else {
+                contactAvatar.clearPhoto()
+            }
             contactCheckbox.isChecked = selectedIds.contains(contact.id)
 
             // Handle checkbox click

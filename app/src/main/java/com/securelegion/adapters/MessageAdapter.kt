@@ -29,6 +29,8 @@ import com.securelegion.R
 import com.securelegion.crypto.NLx402Manager
 import com.securelegion.database.entities.Message
 import com.securelegion.utils.ThemedToast
+import pl.droidsonroids.gif.GifDrawable
+import com.airbnb.lottie.LottieAnimationView
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Calendar
@@ -45,9 +47,7 @@ sealed class ChatListItem {
     }
 
     data class PendingPingItem(
-        val pingInbox: com.securelegion.database.entities.PingInbox,
-        val isDownloading: Boolean = false,
-        val isAutoDownloading: Boolean = false
+        val pingInbox: com.securelegion.database.entities.PingInbox
     ) : ChatListItem() {
         override fun getStableId() = "ping_${pingInbox.pingId}".hashCode().toLong() and 0x7FFFFFFFL
     }
@@ -87,9 +87,7 @@ private object ChatListItemDiffCallback : DiffUtil.ItemCallback<ChatListItem>() 
             oldItem is ChatListItem.PendingPingItem && newItem is ChatListItem.PendingPingItem ->
                 // Compare all fields that affect display
                 oldItem.pingInbox.pingId == newItem.pingInbox.pingId &&
-                oldItem.pingInbox.state == newItem.pingInbox.state &&
-                oldItem.isDownloading == newItem.isDownloading &&
-                oldItem.isAutoDownloading == newItem.isAutoDownloading
+                oldItem.pingInbox.state == newItem.pingInbox.state
             else -> false
         }
     }
@@ -107,9 +105,7 @@ private object ChatListItemDiffCallback : DiffUtil.ItemCallback<ChatListItem>() 
             }
             oldItem is ChatListItem.PendingPingItem && newItem is ChatListItem.PendingPingItem -> {
                 if (oldItem.pingInbox.state != newItem.pingInbox.state) {
-                    "state_changed" // Update pending state
-                } else if (oldItem.isDownloading != newItem.isDownloading) {
-                    "downloading_changed" // Update download status
+                    "state_changed"
                 } else null
             }
             else -> null
@@ -118,8 +114,7 @@ private object ChatListItemDiffCallback : DiffUtil.ItemCallback<ChatListItem>() 
 }
 
 class MessageAdapter(
-    private var downloadingPingIds: Set<String> = emptySet(), // Track which pings are being downloaded
-    private var autoPongPingIds: Set<String> = emptySet(), // Track auto-downloading pings (show typing indicator)
+    private var showTyping: Boolean = false, // True = DOWNLOADING state → typing dots; false = lock icon
     private val onDownloadClick: ((String) -> Unit)? = null, // Now passes ping ID
     private val onVoicePlayClick: ((Message) -> Unit)? = null,
     private var currentlyPlayingMessageId: String? = null,
@@ -129,7 +124,8 @@ class MessageAdapter(
     private val onPaymentDetailsClick: ((Message) -> Unit)? = null, // Click on completed payment (for details)
     private val onPriceRefreshClick: ((Message, TextView, TextView) -> Unit)? = null, // Refresh price callback
     private val onDeleteMessage: ((Message) -> Unit)? = null, // Delete single message callback
-    private val onResendMessage: ((Message) -> Unit)? = null // Resend failed message callback
+    private val onResendMessage: ((Message) -> Unit)? = null, // Resend failed message callback
+    private val decryptImageFile: ((ByteArray) -> ByteArray)? = null // Decrypt AES-GCM encrypted image files
 ) : ListAdapter<ChatListItem, RecyclerView.ViewHolder>(ChatListItemDiffCallback) {
 
     companion object {
@@ -145,6 +141,8 @@ class MessageAdapter(
         private const val VIEW_TYPE_PAYMENT_REQUEST_RECEIVED = 9
         private const val VIEW_TYPE_PAYMENT_SENT = 10
         private const val VIEW_TYPE_PAYMENT_RECEIVED = 11
+        private const val VIEW_TYPE_STICKER_SENT = 12
+        private const val VIEW_TYPE_STICKER_RECEIVED = 13
 
         // Cached prices for display (updated by ChatActivity)
         var cachedSolPrice: Double = 0.0
@@ -367,6 +365,23 @@ class MessageAdapter(
         val messageCheckbox: CheckBox = view.findViewById(R.id.messageCheckbox)
     }
 
+    class StickerSentMessageViewHolder(view: View) : RecyclerView.ViewHolder(view) {
+        val timestampHeader: TextView = view.findViewById(R.id.timestampHeader)
+        val stickerAnimation: LottieAnimationView = view.findViewById(R.id.stickerAnimation)
+        val gifImage: ImageView = view.findViewById(R.id.gifImage)
+        val messageStatus: ImageView = view.findViewById(R.id.messageStatus)
+        val swipeRevealedTime: TextView = view.findViewById(R.id.swipeRevealedTime)
+        val messageCheckbox: CheckBox = view.findViewById(R.id.messageCheckbox)
+    }
+
+    class StickerReceivedMessageViewHolder(view: View) : RecyclerView.ViewHolder(view) {
+        val timestampHeader: TextView = view.findViewById(R.id.timestampHeader)
+        val stickerAnimation: LottieAnimationView = view.findViewById(R.id.stickerAnimation)
+        val gifImage: ImageView = view.findViewById(R.id.gifImage)
+        val swipeRevealedTime: TextView = view.findViewById(R.id.swipeRevealedTime)
+        val messageCheckbox: CheckBox = view.findViewById(R.id.messageCheckbox)
+    }
+
     // Payment request sent by me (I'm requesting money from them)
     class PaymentRequestSentViewHolder(view: View) : RecyclerView.ViewHolder(view) {
         val timestampHeader: TextView = view.findViewById(R.id.timestampHeader)
@@ -435,6 +450,8 @@ class MessageAdapter(
                     message.messageType == Message.MESSAGE_TYPE_VOICE && !message.isSentByMe -> VIEW_TYPE_VOICE_RECEIVED
                     message.messageType == Message.MESSAGE_TYPE_IMAGE && message.isSentByMe -> VIEW_TYPE_IMAGE_SENT
                     message.messageType == Message.MESSAGE_TYPE_IMAGE && !message.isSentByMe -> VIEW_TYPE_IMAGE_RECEIVED
+                    message.messageType == Message.MESSAGE_TYPE_STICKER && message.isSentByMe -> VIEW_TYPE_STICKER_SENT
+                    message.messageType == Message.MESSAGE_TYPE_STICKER && !message.isSentByMe -> VIEW_TYPE_STICKER_RECEIVED
                     message.messageType == Message.MESSAGE_TYPE_PAYMENT_REQUEST && message.isSentByMe -> VIEW_TYPE_PAYMENT_REQUEST_SENT
                     message.messageType == Message.MESSAGE_TYPE_PAYMENT_REQUEST && !message.isSentByMe -> VIEW_TYPE_PAYMENT_REQUEST_RECEIVED
                     message.messageType == Message.MESSAGE_TYPE_PAYMENT_SENT && message.isSentByMe -> VIEW_TYPE_PAYMENT_SENT
@@ -482,6 +499,16 @@ class MessageAdapter(
                 val view = LayoutInflater.from(parent.context)
                     .inflate(R.layout.item_message_image_received, parent, false)
                 ImageReceivedMessageViewHolder(view)
+            }
+            VIEW_TYPE_STICKER_SENT -> {
+                val view = LayoutInflater.from(parent.context)
+                    .inflate(R.layout.item_message_sticker_sent, parent, false)
+                StickerSentMessageViewHolder(view)
+            }
+            VIEW_TYPE_STICKER_RECEIVED -> {
+                val view = LayoutInflater.from(parent.context)
+                    .inflate(R.layout.item_message_sticker_received, parent, false)
+                StickerReceivedMessageViewHolder(view)
             }
             VIEW_TYPE_PAYMENT_REQUEST_SENT -> {
                 val view = LayoutInflater.from(parent.context)
@@ -539,6 +566,14 @@ class MessageAdapter(
             is ImageReceivedMessageViewHolder -> {
                 val message = (item as ChatListItem.MessageItem).message
                 bindImageReceivedMessage(holder, message, position)
+            }
+            is StickerSentMessageViewHolder -> {
+                val message = (item as ChatListItem.MessageItem).message
+                bindStickerSentMessage(holder, message, position)
+            }
+            is StickerReceivedMessageViewHolder -> {
+                val message = (item as ChatListItem.MessageItem).message
+                bindStickerReceivedMessage(holder, message, position)
             }
             is PaymentRequestSentViewHolder -> {
                 val message = (item as ChatListItem.MessageItem).message
@@ -683,49 +718,23 @@ class MessageAdapter(
         val pingInbox = (item as ChatListItem.PendingPingItem).pingInbox
         val timestamp = pingInbox.firstSeenAt
 
-        // In-memory sets override DB state for immediate UI feedback
-        // (DB state lags behind because download service hasn't transitioned yet)
-        val isAutoPong = pingInbox.pingId in autoPongPingIds
-        val isDownloading = pingInbox.pingId in downloadingPingIds
-
-        // Priority: autoPong (typing) > downloading (manual) > DB state
-        when {
-            isAutoPong -> {
-                // Auto-PONG in progress: show typing indicator with animated dots
-                holder.downloadButton.visibility = View.GONE
-                holder.downloadingText.visibility = View.GONE
-                holder.typingIndicator.visibility = View.VISIBLE
-                stopEllipsisAnimation(holder.downloadingText)
-                startTypingAnimation(holder.typingDot1, holder.typingDot2, holder.typingDot3)
-            }
-            isDownloading || pingInbox.state == com.securelegion.database.entities.PingInbox.STATE_DOWNLOAD_QUEUED -> {
-                // Download actively in progress (in-memory flag OR DB state DOWNLOAD_QUEUED)
-                holder.downloadButton.visibility = View.GONE
-                holder.downloadingText.visibility = View.VISIBLE
-                holder.typingIndicator.visibility = View.GONE
-                stopTypingAnimation(holder.typingDot1, holder.typingDot2, holder.typingDot3)
-                startEllipsisAnimation(holder.downloadingText, "Downloading")
-            }
-            pingInbox.state == com.securelegion.database.entities.PingInbox.STATE_PING_SEEN
-                || pingInbox.state == com.securelegion.database.entities.PingInbox.STATE_FAILED_TEMP
-                || pingInbox.state == com.securelegion.database.entities.PingInbox.STATE_MANUAL_REQUIRED
-                || pingInbox.state == com.securelegion.database.entities.PingInbox.STATE_PONG_SENT -> {
-                // Lock icon — user action required
-                // PONG_SENT included: stale state after logout/login (process died mid-download)
-                holder.downloadButton.visibility = View.VISIBLE
-                holder.downloadingText.visibility = View.GONE
-                holder.typingIndicator.visibility = View.GONE
-                stopEllipsisAnimation(holder.downloadingText)
-                stopTypingAnimation(holder.typingDot1, holder.typingDot2, holder.typingDot3)
-            }
-            else -> {
-                // Fallback: show lock icon
-                holder.downloadButton.visibility = View.VISIBLE
-                holder.downloadingText.visibility = View.GONE
-                holder.typingIndicator.visibility = View.GONE
-                stopEllipsisAnimation(holder.downloadingText)
-                stopTypingAnimation(holder.typingDot1, holder.typingDot2, holder.typingDot3)
-            }
+        // State machine: DownloadStateManager drives UI via showTyping flag.
+        // ChatActivity pre-filters: only passes PendingPingItems when DOWNLOADING or PAUSED.
+        // IDLE/BACKOFF → no PendingPingItems at all (invisible).
+        if (showTyping) {
+            // DOWNLOADING: active network I/O → typing dots
+            holder.downloadButton.visibility = View.GONE
+            holder.downloadingText.visibility = View.GONE
+            holder.typingIndicator.visibility = View.VISIBLE
+            stopEllipsisAnimation(holder.downloadingText)
+            startTypingAnimation(holder.typingDot1, holder.typingDot2, holder.typingDot3)
+        } else {
+            // PAUSED / manual mode: lock icon (delivery stopped, user action may be required)
+            holder.downloadButton.visibility = View.VISIBLE
+            holder.downloadingText.visibility = View.GONE
+            holder.typingIndicator.visibility = View.GONE
+            stopEllipsisAnimation(holder.downloadingText)
+            stopTypingAnimation(holder.typingDot1, holder.typingDot2, holder.typingDot3)
         }
 
         // Show timestamp header if this is the first message or date changed
@@ -1063,6 +1072,118 @@ class MessageAdapter(
         }
     }
 
+    // ==================== STICKER BINDING FUNCTIONS ====================
+
+    private fun bindStickerSentMessage(holder: StickerSentMessageViewHolder, message: Message, position: Int) {
+        val assetPath = message.attachmentData ?: ""
+        if (assetPath.isNotEmpty()) {
+            val isGif = assetPath.endsWith(".gif", ignoreCase = true)
+            if (isGif) {
+                holder.stickerAnimation.visibility = View.GONE
+                holder.gifImage.visibility = View.VISIBLE
+                try {
+                    val gifDrawable = GifDrawable(holder.gifImage.context.assets, assetPath)
+                    holder.gifImage.setImageDrawable(gifDrawable)
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to load GIF: $assetPath", e)
+                }
+            } else {
+                holder.gifImage.visibility = View.GONE
+                holder.stickerAnimation.visibility = View.VISIBLE
+                try {
+                    holder.stickerAnimation.setAnimation(assetPath)
+                    holder.stickerAnimation.playAnimation()
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to load sticker: $assetPath", e)
+                }
+            }
+        }
+
+        holder.messageStatus.setImageResource(getStatusIcon(message))
+
+        if (shouldShowTimestampHeader(position)) {
+            holder.timestampHeader.visibility = View.VISIBLE
+            holder.timestampHeader.text = formatDateHeaderWithTime(message.timestamp)
+        } else {
+            holder.timestampHeader.visibility = View.GONE
+        }
+
+        holder.swipeRevealedTime.text = formatTime(message.timestamp)
+        holder.swipeRevealedTime.visibility = if (position == currentSwipeRevealedPosition) View.VISIBLE else View.GONE
+
+        if (isSelectionMode) {
+            holder.messageCheckbox.visibility = View.VISIBLE
+            val messageIdStr = message.id.toString()
+            holder.messageCheckbox.isChecked = selectedMessages.contains(messageIdStr)
+            holder.messageCheckbox.setOnCheckedChangeListener { _, isChecked ->
+                if (isChecked) selectedMessages.add(messageIdStr) else selectedMessages.remove(messageIdStr)
+            }
+        } else {
+            holder.messageCheckbox.visibility = View.GONE
+            holder.messageCheckbox.setOnCheckedChangeListener(null)
+            val longClickListener = View.OnLongClickListener {
+                showMessagePopupMenu(it, message)
+                true
+            }
+            holder.stickerAnimation.setOnLongClickListener(longClickListener)
+            holder.gifImage.setOnLongClickListener(longClickListener)
+        }
+    }
+
+    private fun bindStickerReceivedMessage(holder: StickerReceivedMessageViewHolder, message: Message, position: Int) {
+        val assetPath = message.attachmentData ?: ""
+        if (assetPath.isNotEmpty()) {
+            val isGif = assetPath.endsWith(".gif", ignoreCase = true)
+            if (isGif) {
+                holder.stickerAnimation.visibility = View.GONE
+                holder.gifImage.visibility = View.VISIBLE
+                try {
+                    val gifDrawable = GifDrawable(holder.gifImage.context.assets, assetPath)
+                    holder.gifImage.setImageDrawable(gifDrawable)
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to load GIF: $assetPath", e)
+                }
+            } else {
+                holder.gifImage.visibility = View.GONE
+                holder.stickerAnimation.visibility = View.VISIBLE
+                try {
+                    holder.stickerAnimation.setAnimation(assetPath)
+                    holder.stickerAnimation.playAnimation()
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to load sticker: $assetPath", e)
+                }
+            }
+        }
+
+        if (shouldShowTimestampHeader(position)) {
+            holder.timestampHeader.visibility = View.VISIBLE
+            holder.timestampHeader.text = formatDateHeaderWithTime(message.timestamp)
+        } else {
+            holder.timestampHeader.visibility = View.GONE
+        }
+
+        holder.swipeRevealedTime.text = formatTime(message.timestamp)
+        holder.swipeRevealedTime.visibility = if (position == currentSwipeRevealedPosition) View.VISIBLE else View.GONE
+
+        if (isSelectionMode) {
+            holder.messageCheckbox.visibility = View.VISIBLE
+            val messageIdStr = message.id.toString()
+            holder.messageCheckbox.isChecked = selectedMessages.contains(messageIdStr)
+            holder.messageCheckbox.setOnCheckedChangeListener { _, isChecked ->
+                if (isChecked) selectedMessages.add(messageIdStr) else selectedMessages.remove(messageIdStr)
+            }
+        } else {
+            holder.messageCheckbox.visibility = View.GONE
+            holder.messageCheckbox.setOnCheckedChangeListener(null)
+            val longClickListener = View.OnLongClickListener {
+                showMessagePopupMenu(it, message)
+                true
+            }
+            holder.stickerAnimation.setOnLongClickListener(longClickListener)
+            holder.gifImage.setOnLongClickListener(longClickListener)
+        }
+    }
+
     // ==================== PAYMENT CARD BINDING FUNCTIONS ====================
 
     private fun bindPaymentRequestSent(holder: PaymentRequestSentViewHolder, message: Message, position: Int) {
@@ -1326,14 +1447,53 @@ class MessageAdapter(
         return "$formatted $token"
     }
 
-    private fun loadImageIntoView(imageView: ImageView, base64Data: String?) {
-        if (base64Data.isNullOrEmpty()) {
+    private fun loadImageIntoView(imageView: ImageView, imageData: String?) {
+        if (imageData.isNullOrEmpty()) {
             imageView.setImageResource(R.drawable.ic_image_placeholder)
             return
         }
 
         try {
-            val imageBytes = Base64.decode(base64Data, Base64.DEFAULT)
+            // Detect file path (new format) vs inline base64 (legacy)
+            val rawBytes = if (imageData.startsWith("/")) {
+                val file = java.io.File(imageData)
+                if (file.exists()) file.readBytes() else null
+            } else {
+                Base64.decode(imageData, Base64.DEFAULT)
+            }
+
+            if (rawBytes == null) {
+                imageView.setImageResource(R.drawable.ic_image_placeholder)
+                return
+            }
+
+            // Decrypt if encrypted (.enc files use AES-256-GCM at rest)
+            val imageBytes = if (imageData.endsWith(".enc") && decryptImageFile != null) {
+                try {
+                    decryptImageFile.invoke(rawBytes)
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to decrypt image file", e)
+                    null
+                }
+            } else {
+                rawBytes // Legacy .img files or inline base64 — already plaintext
+            }
+
+            if (imageBytes == null) {
+                imageView.setImageResource(R.drawable.ic_image_placeholder)
+                return
+            }
+
+            // Detect GIF by magic bytes (GIF87a or GIF89a)
+            if (imageBytes.size > 6 &&
+                imageBytes[0] == 0x47.toByte() && // G
+                imageBytes[1] == 0x49.toByte() && // I
+                imageBytes[2] == 0x46.toByte()) { // F
+                val gifDrawable = GifDrawable(imageBytes)
+                imageView.setImageDrawable(gifDrawable)
+                return
+            }
+
             val bitmap = BitmapFactory.decodeByteArray(imageBytes, 0, imageBytes.size)
             if (bitmap != null) {
                 imageView.setImageBitmap(bitmap)
@@ -1586,19 +1746,18 @@ class MessageAdapter(
     fun updateMessages(
         newMessages: List<Message>,
         newPendingPings: List<com.securelegion.database.entities.PingInbox> = emptyList(),
-        newDownloadingPingIds: Set<String> = emptySet(),
-        newAutoPongPingIds: Set<String> = emptySet()
+        newShowTyping: Boolean = false,
+        onCommitted: Runnable? = null
     ) {
-        Log.d(TAG, "updateMessages() called: messages=${newMessages.size}, pending=${newPendingPings.size}")
+        Log.d(TAG, "updateMessages() called: messages=${newMessages.size}, pending=${newPendingPings.size}, typing=$newShowTyping")
 
         // Stop all running ellipsis animations
         ellipsisAnimations.keys.toList().forEach { textView ->
             stopEllipsisAnimation(textView)
         }
 
-        // Update state variables
-        downloadingPingIds = newDownloadingPingIds
-        autoPongPingIds = newAutoPongPingIds
+        // Update state variable
+        showTyping = newShowTyping
 
         // Build combined list of ChatListItem objects for DiffUtil to process atomically
         val combinedList = mutableListOf<ChatListItem>()
@@ -1606,19 +1765,16 @@ class MessageAdapter(
         // Add all messages
         combinedList.addAll(newMessages.map { ChatListItem.MessageItem(it) })
 
-        // Add all pending pings with their download states (from ping_inbox DB)
+        // Add pending pings (ChatActivity pre-filters: only DOWNLOADING or PAUSED items)
         combinedList.addAll(newPendingPings.map { pingInbox ->
-            ChatListItem.PendingPingItem(
-                pingInbox = pingInbox,
-                isDownloading = pingInbox.pingId in newDownloadingPingIds,
-                isAutoDownloading = pingInbox.pingId in newAutoPongPingIds
-            )
+            ChatListItem.PendingPingItem(pingInbox = pingInbox)
         })
 
         Log.d(TAG, "Submitting combined list with ${combinedList.size} total items to DiffUtil")
 
         // Let DiffUtil compute the optimal changes atomically
-        submitList(combinedList)
+        // onCommitted callback fires AFTER the list is committed to the adapter
+        submitList(combinedList, onCommitted)
     }
 
     /**

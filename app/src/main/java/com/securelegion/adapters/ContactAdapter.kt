@@ -100,6 +100,8 @@ class ContactAdapter(
                 // Display contact name (without @ prefix, normal case)
                 val displayName = contact.name.removePrefix("@")
                 holder.nameView.text = displayName
+                holder.nameView.paint.shader = null // Reset before re-applying
+                com.securelegion.utils.TextGradient.apply(holder.nameView)
 
                 // Set avatar with photo or initials
                 holder.avatarView.setName(displayName)

@@ -190,12 +190,12 @@ class MainActivity : BaseActivity() {
                 height = insets.top
             }
 
-            // Apply bottom inset to bottom navigation (for gesture bar)
-            bottomNav.setPadding(
-                bottomNav.paddingLeft,
-                bottomNav.paddingTop,
-                bottomNav.paddingRight,
-                0)
+            // Move bottom nav pill ABOVE system bars (margin, not padding)
+            // Padding would squish icons inside the fixed-height pill;
+            // margin moves the entire pill up while keeping content centered
+            val navParams = bottomNav.layoutParams as androidx.constraintlayout.widget.ConstraintLayout.LayoutParams
+            navParams.bottomMargin = (20 * resources.displayMetrics.density).toInt() + insets.bottom
+            bottomNav.layoutParams = navParams
 
             Log.d("MainActivity", "Applied window insets - top: ${insets.top}, bottom: ${insets.bottom}, left: ${insets.left}, right: ${insets.right}")
 
@@ -549,13 +549,18 @@ class MainActivity : BaseActivity() {
         if (intent.getBooleanExtra("SHOW_GROUPS", false)) {
             Log.d("MainActivity", "onNewIntent - showing groups tab from notification")
             showGroupsTab()
-        }
-
-        // Check if we should show phone/call tab
-        if (intent.getBooleanExtra("SHOW_PHONE", false)) {
+        } else if (intent.getBooleanExtra("SHOW_CONTACTS", false)) {
+            Log.d("MainActivity", "onNewIntent - showing contacts tab")
+            isCallMode = false
+            showContactsTab()
+        } else if (intent.getBooleanExtra("SHOW_PHONE", false)) {
             Log.d("MainActivity", "onNewIntent - showing phone/call view")
             isCallMode = true
             showContactsTab()
+        } else {
+            // Default: show chats tab (e.g., navMessages pressed from another activity)
+            Log.d("MainActivity", "onNewIntent - showing chats tab (default)")
+            showAllChatsTab()
         }
     }
 
@@ -712,7 +717,18 @@ class MainActivity : BaseActivity() {
                     val unreadCounts = database.messageDao().getUnreadCountsGrouped()
                     val unreadMap = unreadCounts.associate { it.contactId to it.cnt }
 
-                    val pendingCounts = database.pingInboxDao().countPendingPerContact()
+                    // Only count pending pings in device-protection mode (manual download).
+                    // In auto-download mode, pings are transient — the badge will update
+                    // after DownloadMessageService finishes via MESSAGE_RECEIVED broadcast.
+                    val securityPrefs = getSharedPreferences("security", MODE_PRIVATE)
+                    val deviceProtectionEnabled = securityPrefs.getBoolean(
+                        com.securelegion.SecurityModeActivity.PREF_DEVICE_PROTECTION_ENABLED, false
+                    )
+                    val pendingCounts = if (deviceProtectionEnabled) {
+                        database.pingInboxDao().countPendingPerContact()
+                    } else {
+                        emptyList()
+                    }
                     val pendingMap = pendingCounts.associate { it.contactId to it.cnt }
 
                     val chatsList = mutableListOf<Pair<Chat, Long>>()
@@ -730,10 +746,22 @@ class MainActivity : BaseActivity() {
                             val pingDelivered = lastMessage?.pingDelivered ?: false
                             val messageDelivered = lastMessage?.messageDelivered ?: false
 
+                            // Show type-appropriate preview text
+                            val previewText = when {
+                                lastMessage == null -> "New message"
+                                lastMessage.messageType == com.securelegion.database.entities.Message.MESSAGE_TYPE_IMAGE -> "Image"
+                                lastMessage.messageType == com.securelegion.database.entities.Message.MESSAGE_TYPE_STICKER -> "Sticker"
+                                lastMessage.messageType == com.securelegion.database.entities.Message.MESSAGE_TYPE_VOICE -> "Voice message"
+                                lastMessage.messageType == com.securelegion.database.entities.Message.MESSAGE_TYPE_PAYMENT_REQUEST -> "Payment request"
+                                lastMessage.messageType == com.securelegion.database.entities.Message.MESSAGE_TYPE_PAYMENT_SENT -> "Payment sent"
+                                lastMessage.messageType == com.securelegion.database.entities.Message.MESSAGE_TYPE_PAYMENT_ACCEPTED -> "Payment accepted"
+                                else -> lastMessage.encryptedContent
+                            }
+
                             val chat = Chat(
                                 id = contact.id.toString(),
                                 nickname = contact.displayName,
-                                lastMessage = if (lastMessage != null) lastMessage.encryptedContent else "New message",
+                                lastMessage = previewText,
                                 time = if (lastMessage != null) formatTimestamp(lastMessage.timestamp) else formatTimestamp(System.currentTimeMillis()),
                                 unreadCount = unreadCount + pendingPingCount,
                                 isOnline = false,
@@ -798,7 +826,7 @@ class MainActivity : BaseActivity() {
                 Log.d("MainActivity", "Setting up RecyclerView adapter with ${chats.size} items")
                 // Set adapter
                 chatList.layoutManager = LinearLayoutManager(this@MainActivity)
-                chatList.adapter = ChatAdapter(
+                val chatAdapter = ChatAdapter(
                     chats = chats,
                     onChatClick = { chat ->
                         if (chat.isGroup && chat.groupId != null) {
@@ -836,10 +864,16 @@ class MainActivity : BaseActivity() {
                         togglePin(chat)
                     }
                 )
-                Log.d("MainActivity", "RecyclerView adapter set successfully")
+                chatList.adapter = chatAdapter
 
-                // Don't use ItemTouchHelper - it's designed for swipe-to-dismiss, not swipe-to-reveal
-                // Touch handling is done in ChatAdapter with the adapter tracking open items
+                // Scroll gate: block taps while dragging or settling after fling
+                chatList.addOnScrollListener(object : RecyclerView.OnScrollListener() {
+                    override fun onScrollStateChanged(rv: RecyclerView, newState: Int) {
+                        chatAdapter.listIsScrolling = newState != RecyclerView.SCROLL_STATE_IDLE
+                    }
+                })
+
+                Log.d("MainActivity", "RecyclerView adapter set successfully")
             } catch (e: Exception) {
                 Log.e("MainActivity", "Failed to load message threads", e)
                 withContext(Dispatchers.Main) {
@@ -892,9 +926,10 @@ class MainActivity : BaseActivity() {
                 val database = SecureLegionDatabase.getInstance(this@MainActivity, dbPassphrase)
 
                 withContext(Dispatchers.IO) {
-                    // Get all messages for this contact to check for voice files and ACK state
-                    val messages = database.messageDao().getMessagesForContact(chat.id.toLong())
-                    val messageIds = messages.map { it.messageId }
+                    // Lightweight projection: only fetch 4 small columns needed for cleanup
+                    // Uses getDeleteInfoForContact instead of SELECT * to avoid CursorWindow overflow
+                    val deleteInfos = database.messageDao().getDeleteInfoForContact(chat.id.toLong())
+                    val messageIds = deleteInfos.map { it.messageId }
 
                     // ==================== PHASE 1: Clear All ACK State & Gap Buffers ====================
                     // CRITICAL: Prevent message resurrection via ACK state machine
@@ -912,12 +947,12 @@ class MainActivity : BaseActivity() {
                     }
 
                     // ==================== PHASE 2: Securely Wipe Files ====================
-                    // Securely wipe any voice message audio files
-                    messages.forEach { message ->
-                        if (message.messageType == com.securelegion.database.entities.Message.MESSAGE_TYPE_VOICE &&
-                            message.voiceFilePath != null) {
+                    // Securely wipe any voice/image files
+                    deleteInfos.forEach { info ->
+                        if (info.messageType == com.securelegion.database.entities.Message.MESSAGE_TYPE_VOICE &&
+                            info.voiceFilePath != null) {
                             try {
-                                val voiceFile = java.io.File(message.voiceFilePath)
+                                val voiceFile = java.io.File(info.voiceFilePath)
                                 if (voiceFile.exists()) {
                                     com.securelegion.utils.SecureWipe.secureDeleteFile(voiceFile)
                                     Log.d("MainActivity", "Securely wiped voice file: ${voiceFile.name}")
@@ -926,17 +961,30 @@ class MainActivity : BaseActivity() {
                                 Log.e("MainActivity", "Failed to securely wipe voice file", e)
                             }
                         }
+                        if (info.messageType == com.securelegion.database.entities.Message.MESSAGE_TYPE_IMAGE) {
+                            try {
+                                val encFile = java.io.File(filesDir, "image_messages/${info.messageId}.enc")
+                                val imgFile = java.io.File(filesDir, "image_messages/${info.messageId}.img")
+                                val imageFile = if (encFile.exists()) encFile else imgFile
+                                if (imageFile.exists()) {
+                                    com.securelegion.utils.SecureWipe.secureDeleteFile(imageFile)
+                                    Log.d("MainActivity", "Securely wiped image file: ${imageFile.name}")
+                                }
+                            } catch (e: Exception) {
+                                Log.e("MainActivity", "Failed to securely wipe image file", e)
+                            }
+                        }
                     }
 
                     // ==================== PHASE 3: Clear Received ID Tracking ====================
                     // Clean up deduplication entries for all message types (Ping, Pong, Message)
                     try {
-                        messages.forEach { message ->
-                            if (message.pingId != null) {
+                        deleteInfos.forEach { info ->
+                            if (info.pingId != null) {
                                 // Delete tracking entries for this message's phases
-                                database.receivedIdDao().deleteById(message.pingId) // Ping ID
-                                database.receivedIdDao().deleteById("pong_${message.pingId}") // Pong ID
-                                database.receivedIdDao().deleteById(message.messageId) // Message ID
+                                database.receivedIdDao().deleteById(info.pingId) // Ping ID
+                                database.receivedIdDao().deleteById("pong_${info.pingId}") // Pong ID
+                                database.receivedIdDao().deleteById(info.messageId) // Message ID
                             }
                         }
                         Log.d("MainActivity", "Cleared ReceivedId entries for ${messageIds.size} messages")
@@ -947,7 +995,7 @@ class MainActivity : BaseActivity() {
                     // ==================== PHASE 4: Delete Messages from Database ====================
                     // Delete all messages from database
                     database.messageDao().deleteMessagesForContact(chat.id.toLong())
-                    Log.d("MainActivity", "Deleted ${messages.size} messages from database")
+                    Log.d("MainActivity", "Deleted ${deleteInfos.size} messages from database")
 
                     // ==================== PHASE 5: VACUUM Database ====================
                     // VACUUM database to compact and remove deleted records

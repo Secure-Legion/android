@@ -182,10 +182,10 @@ class CreateAccountActivity : AppCompatActivity() {
         passwordMatchText.visibility = View.VISIBLE
         if (password == confirm) {
             passwordMatchText.text = "Passwords match"
-            passwordMatchText.setTextColor(0xFF00CC66.toInt())
+            passwordMatchText.setTextColor(0xFFFFFFFF.toInt())
         } else {
             passwordMatchText.text = "Passwords do not match"
-            passwordMatchText.setTextColor(0xFFFF6666.toInt())
+            passwordMatchText.setTextColor(0xFF666666.toInt())
         }
     }
 

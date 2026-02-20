@@ -11,9 +11,22 @@ import com.securelegion.crypto.RustBridge
 import com.securelegion.database.SecureLegionDatabase
 import com.securelegion.database.entities.CrdtOpLog
 import com.securelegion.database.entities.Group
+import com.securelegion.database.entities.GroupPeer
+import com.securelegion.database.entities.PendingGroupDelivery
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import java.security.MessageDigest
 import java.security.SecureRandom
 
@@ -46,8 +59,152 @@ class CrdtGroupManager private constructor(private val context: Context) {
     private val keyManager = KeyManager.getInstance(context)
     private val secureRandom = SecureRandom()
 
+    /** Bounded concurrency for outbound Tor sends — matches Rust SEND_SEMAPHORE(6). */
+    private val broadcastSemaphore = Semaphore(6)
+
     /** Track which groups are currently loaded in Rust memory. */
     private val loadedGroups = mutableSetOf<String>()
+
+    /** Long-lived scope for background tasks (pending delivery retry, etc.) */
+    private val managerScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    init {
+        startPendingDeliveryRetryLoop()
+    }
+
+    // ==================== Routing Resolution ====================
+
+    data class PeerRouting(val onion: String, val displayName: String)
+
+    /**
+     * Resolve a group member's onion address. Checks Contact table first (friend = authoritative),
+     * falls back to GroupPeer table (routing-only, non-friend).
+     *
+     * @return PeerRouting with onion + display name, or null if completely unknown
+     */
+    suspend fun resolveRouting(db: SecureLegionDatabase, pubkeyHex: String, groupId: String): PeerRouting? {
+        // 1. Contact table (friend) — authoritative source
+        val pubkeyB64 = Base64.encodeToString(hexToBytes(pubkeyHex), Base64.NO_WRAP)
+        val contact = db.contactDao().getContactByPublicKey(pubkeyB64)
+        if (contact?.messagingOnion != null && contact.messagingOnion.isNotEmpty()) {
+            return PeerRouting(contact.messagingOnion.trim().lowercase(), contact.displayName ?: "unknown")
+        }
+        // 2. GroupPeer table (routing-only, non-friend member)
+        val peer = db.groupPeerDao().getByGroupAndPubkey(groupId, pubkeyHex)
+        if (peer != null && peer.messagingOnion.isNotEmpty()) {
+            return PeerRouting(peer.messagingOnion, peer.displayName)
+        }
+        return null
+    }
+
+    /**
+     * Resolve onion address by X25519 public key. Used for SYNC_REQUEST reply routing.
+     * Tries Contact first, falls back to GroupPeer.
+     */
+    suspend fun resolveOnionByX25519(x25519B64: String, groupIdHex: String): String? {
+        val db = getDatabase()
+        // 1. Contact table
+        val contact = db.contactDao().getContactByX25519PublicKey(x25519B64)
+        if (contact?.messagingOnion != null && contact.messagingOnion.isNotEmpty()) {
+            return contact.messagingOnion.trim().lowercase()
+        }
+        // 2. GroupPeer table (convert B64 to hex for lookup)
+        try {
+            val x25519Bytes = Base64.decode(x25519B64, Base64.NO_WRAP)
+            val x25519Hex = bytesToHex(x25519Bytes)
+            val peer = db.groupPeerDao().getByGroupAndX25519(groupIdHex, x25519Hex)
+            if (peer != null && peer.messagingOnion.isNotEmpty()) {
+                return peer.messagingOnion
+            }
+        } catch (_: Exception) { }
+        return null
+    }
+
+    // ==================== Pending Delivery Queue ====================
+
+    /**
+     * Queue an op that couldn't be delivered because routing is missing.
+     * Persisted to DB so it survives app restart.
+     */
+    private suspend fun queuePendingDelivery(groupId: String, pubkeyHex: String, wireType: Byte, payload: ByteArray) {
+        val db = getDatabase()
+        val delivery = PendingGroupDelivery(
+            groupId = groupId,
+            targetPubkeyHex = pubkeyHex,
+            wireType = wireType.toInt() and 0xFF,
+            payload = payload,
+            nextRetryAt = System.currentTimeMillis() + 30_000L,
+            createdAt = System.currentTimeMillis()
+        )
+        db.pendingGroupDeliveryDao().insert(delivery)
+        Log.w(TAG, "PENDING_DELIVERY: queued op for ${pubkeyHex.take(8)} in group ${groupId.take(16)}")
+    }
+
+    /**
+     * Flush all pending deliveries for a member once their routing is known.
+     * Called when a ROUTING_UPDATE (0x35) provides a previously-missing onion.
+     */
+    suspend fun flushPendingDelivery(groupId: String, pubkeyHex: String, onion: String) {
+        val db = getDatabase()
+        val pending = db.pendingGroupDeliveryDao().getForTarget(groupId, pubkeyHex)
+        if (pending.isEmpty()) return
+        Log.i(TAG, "FLUSH_PENDING: ${pending.size} deliveries to ${pubkeyHex.take(8)} via $onion")
+        for (delivery in pending) {
+            try {
+                val success = RustBridge.sendMessageBlob(onion, delivery.payload, delivery.wireType.toByte())
+                if (success) {
+                    db.pendingGroupDeliveryDao().deleteById(delivery.id)
+                    Log.d(TAG, "FLUSH_PENDING: delivered id=${delivery.id}")
+                } else {
+                    Log.w(TAG, "FLUSH_PENDING: sendMessageBlob returned false for id=${delivery.id}")
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "FLUSH_PENDING: failed for id=${delivery.id}", e)
+            }
+        }
+    }
+
+    /**
+     * Background retry loop for pending deliveries. Runs every 60s.
+     * Retries entries past their nextRetryAt with exponential backoff.
+     */
+    private fun startPendingDeliveryRetryLoop() {
+        managerScope.launch {
+            while (isActive) {
+                delay(60_000L)
+                try {
+                    val db = getDatabase()
+                    // Purge stale entries (>1 hour old or 20+ attempts)
+                    db.pendingGroupDeliveryDao().purgeStale(System.currentTimeMillis() - 3_600_000L)
+
+                    val due = db.pendingGroupDeliveryDao().getDueForRetry(System.currentTimeMillis())
+                    if (due.isEmpty()) continue
+                    Log.i(TAG, "PENDING_RETRY: ${due.size} deliveries due for retry")
+                    for (delivery in due) {
+                        val routing = resolveRouting(db, delivery.targetPubkeyHex, delivery.groupId)
+                        if (routing != null) {
+                            try {
+                                val success = RustBridge.sendMessageBlob(routing.onion, delivery.payload, delivery.wireType.toByte())
+                                if (success) {
+                                    db.pendingGroupDeliveryDao().deleteById(delivery.id)
+                                    Log.d(TAG, "PENDING_RETRY: delivered id=${delivery.id} to ${routing.displayName}")
+                                    continue
+                                }
+                            } catch (e: Exception) {
+                                Log.e(TAG, "PENDING_RETRY: send failed for id=${delivery.id}", e)
+                            }
+                        }
+                        // Exponential backoff: 30s, 60s, 120s, 240s... capped at 15 min
+                        val newCount = delivery.attemptCount + 1
+                        val backoff = (30_000L * (1L shl minOf(newCount, 6))).coerceAtMost(900_000L)
+                        db.pendingGroupDeliveryDao().updateRetry(delivery.id, newCount, System.currentTimeMillis() + backoff)
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "PENDING_RETRY: sweep error", e)
+                }
+            }
+        }
+    }
 
     private fun getDatabase(): SecureLegionDatabase {
         val dbPassphrase = keyManager.getDatabasePassphrase()
@@ -117,37 +274,63 @@ class CrdtGroupManager private constructor(private val context: Context) {
         val packed = packSingleOp(opBytes)
         val payload = groupIdBytes + packed
 
-        var sent = 0
-        var failed = 0
+        // Resolve onion addresses via Contact → GroupPeer fallback (see resolveRouting())
+        data class SendTarget(val onion: String, val displayName: String, val deviceIdHex: String, val pubkeyHex: String)
+        val targets = mutableListOf<SendTarget>()
+        val unreachable = mutableListOf<Pair<String, String>>() // (pubkeyHex, deviceIdHex) — missing routing
         for (member in members) {
-            // Skip self
             if (member.pubkeyHex == localPubkeyHex) continue
+            val routing = resolveRouting(db, member.pubkeyHex, groupId)
+            if (routing == null) {
+                Log.w(TAG, "PENDING_ROUTING: no onion for member ${member.deviceIdHex.take(8)} — queueing (not dropping)")
+                unreachable.add(Pair(member.pubkeyHex, member.deviceIdHex))
+                continue
+            }
+            targets.add(SendTarget(routing.onion, routing.displayName, member.deviceIdHex, member.pubkeyHex))
+        }
 
-            try {
-                // Look up contact by Ed25519 pubkey → get messagingOnion
-                val pubkeyB64 = Base64.encodeToString(hexToBytes(member.pubkeyHex), Base64.NO_WRAP)
-                val contact = db.contactDao().getContactByPublicKey(pubkeyB64)
-                val onion = contact?.messagingOnion
-                if (onion.isNullOrEmpty()) {
-                    Log.w(TAG, "No onion for member ${member.deviceIdHex.take(8)} — skipping")
-                    failed++
-                    continue
-                }
+        // Queue pending deliveries for unreachable members (DB-backed, survives restart)
+        for ((pubkeyHex, _) in unreachable) {
+            queuePendingDelivery(groupId, pubkeyHex, 0x30.toByte(), payload)
+        }
 
-                val success = RustBridge.sendMessageBlob(onion, payload, 0x30.toByte())
-                if (success) {
-                    sent++
-                    Log.d(TAG, "CRDT op sent to ${contact.displayName}")
-                } else {
-                    failed++
-                    Log.w(TAG, "sendMessageBlob returned false for ${contact.displayName}")
+        // Send concurrently, bounded by semaphore (matches Rust SEND_SEMAPHORE cap of 6)
+        val results = coroutineScope {
+            targets.map { target ->
+                async(Dispatchers.IO) {
+                    broadcastSemaphore.withPermit {
+                        try {
+                            val success = RustBridge.sendMessageBlob(target.onion, payload, 0x30.toByte())
+                            if (success) {
+                                Log.d(TAG, "CRDT op sent to ${target.displayName}")
+                            } else {
+                                Log.w(TAG, "sendMessageBlob returned false for ${target.displayName}")
+                            }
+                            success
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Failed to send CRDT op to ${target.deviceIdHex.take(8)}", e)
+                            false
+                        }
+                    }
                 }
-            } catch (e: Exception) {
-                failed++
-                Log.e(TAG, "Failed to send CRDT op to ${member.deviceIdHex.take(8)}", e)
+            }.awaitAll()
+        }
+
+        val sent = results.count { it }
+        val failed = results.count { !it }
+        Log.i(TAG, "Broadcast op to group ${groupId.take(16)}: sent=$sent failed=$failed unreachable=${unreachable.size}")
+
+        // Self-healing: request routing for unreachable members from any successful target
+        if (unreachable.isNotEmpty() && targets.isNotEmpty()) {
+            val reachableOnion = targets.first().onion
+            for ((pubkeyHex, deviceIdHex) in unreachable) {
+                try {
+                    sendRoutingRequest(groupId, pubkeyHex, reachableOnion)
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to request routing for ${deviceIdHex.take(8)}", e)
+                }
             }
         }
-        Log.i(TAG, "Broadcast op to group ${groupId.take(16)}: sent=$sent failed=$failed")
     }
 
     private fun hexToBytes(hex: String): ByteArray {
@@ -163,26 +346,59 @@ class CrdtGroupManager private constructor(private val context: Context) {
         val members = queryMembers(groupId).filter { it.accepted && !it.removed }
         val localPubkeyHex = bytesToHex(keyManager.getSigningPublicKey())
 
-        var sent = 0
-        var failed = 0
+        // Resolve targets via Contact → GroupPeer fallback
+        data class RawTarget(val onion: String, val deviceIdHex: String)
+        val targets = mutableListOf<RawTarget>()
         for (member in members) {
             if (member.pubkeyHex == localPubkeyHex) continue
-            try {
-                val pubkeyB64 = Base64.encodeToString(hexToBytes(member.pubkeyHex), Base64.NO_WRAP)
-                val contact = db.contactDao().getContactByPublicKey(pubkeyB64)
-                val onion = contact?.messagingOnion
-                if (onion.isNullOrEmpty()) {
-                    failed++
-                    continue
+            val routing = resolveRouting(db, member.pubkeyHex, groupId)
+            if (routing == null) {
+                Log.w(TAG, "broadcastRaw: no routing for ${member.deviceIdHex.take(8)} — skipping (sync protocol)")
+                continue
+            }
+            targets.add(RawTarget(routing.onion, member.deviceIdHex))
+        }
+
+        // Send concurrently, bounded by semaphore
+        val results = coroutineScope {
+            targets.map { target ->
+                async(Dispatchers.IO) {
+                    broadcastSemaphore.withPermit {
+                        try {
+                            RustBridge.sendMessageBlob(target.onion, payload, wireType)
+                        } catch (e: Exception) {
+                            Log.e(TAG, "broadcastRaw 0x${"%02x".format(wireType)} failed for ${target.deviceIdHex.take(8)}", e)
+                            false
+                        }
+                    }
                 }
-                val success = RustBridge.sendMessageBlob(onion, payload, wireType)
-                if (success) sent++ else failed++
-            } catch (e: Exception) {
-                failed++
-                Log.e(TAG, "broadcastRaw 0x${"%02x".format(wireType)} failed for ${member.deviceIdHex.take(8)}", e)
+            }.awaitAll()
+        }
+
+        val sent = results.count { it }
+        val failed = results.count { !it }
+
+        // Collect unreachable members for self-healing
+        val unreachableRaw = mutableListOf<String>()
+        for (member in members) {
+            if (member.pubkeyHex == localPubkeyHex) continue
+            val routing = resolveRouting(db, member.pubkeyHex, groupId)
+            if (routing == null) unreachableRaw.add(member.pubkeyHex)
+        }
+
+        Log.i(TAG, "broadcastRaw 0x${"%02x".format(wireType)} group=${groupId.take(16)}: sent=$sent failed=$failed unreachable=${unreachableRaw.size}")
+
+        // Self-healing: request routing for unreachable members
+        if (unreachableRaw.isNotEmpty() && targets.isNotEmpty()) {
+            val reachableOnion = targets.first().onion
+            for (pubkeyHex in unreachableRaw) {
+                try {
+                    sendRoutingRequest(groupId, pubkeyHex, reachableOnion)
+                } catch (e: Exception) {
+                    Log.e(TAG, "broadcastRaw: routing request failed for ${pubkeyHex.take(8)}", e)
+                }
             }
         }
-        Log.i(TAG, "broadcastRaw 0x${"%02x".format(wireType)} group=${groupId.take(16)}: sent=$sent failed=$failed")
     }
 
     // ==================== Invite Bundle ====================
@@ -202,11 +418,9 @@ class CrdtGroupManager private constructor(private val context: Context) {
             return
         }
 
-        // Look up invitee contact by Ed25519 pubkey → get messagingOnion
-        val pubkeyB64 = Base64.encodeToString(hexToBytes(recipientPubkeyHex), Base64.NO_WRAP)
-        val contact = db.contactDao().getContactByPublicKey(pubkeyB64)
-        val onion = contact?.messagingOnion
-        if (onion.isNullOrEmpty()) {
+        // Look up invitee via Contact → GroupPeer fallback
+        val routing = resolveRouting(db, recipientPubkeyHex, groupId)
+        if (routing == null) {
             Log.w(TAG, "sendInviteBundle: no onion for invitee ${recipientPubkeyHex.take(16)} — skipping")
             return
         }
@@ -214,10 +428,387 @@ class CrdtGroupManager private constructor(private val context: Context) {
         // Build payload: [groupId:32][packedOps]
         val payload = hexToBytes(groupId) + packOps(ops)
         try {
-            val success = RustBridge.sendMessageBlob(onion, payload, 0x30.toByte())
-            Log.i(TAG, "sendInviteBundle: sent ${ops.size} ops (${payload.size} bytes) to ${contact.displayName} — success=$success")
+            val success = RustBridge.sendMessageBlob(routing.onion, payload, 0x30.toByte())
+            Log.i(TAG, "sendInviteBundle: sent ${ops.size} ops (${payload.size} bytes) to ${routing.displayName} — success=$success")
         } catch (e: Exception) {
-            Log.e(TAG, "sendInviteBundle: failed to send to ${contact.displayName}", e)
+            Log.e(TAG, "sendInviteBundle: failed to send to ${routing.displayName}", e)
+        }
+    }
+
+    // ==================== Routing Exchange (0x35 / 0x36) ====================
+
+    /**
+     * Binary format for a single routing entry:
+     * [ed25519Pubkey:32][x25519Pubkey:32][onionLen:u16 BE][onion:N][nameLen:u16 BE][name:N UTF-8]
+     */
+    data class RoutingEntry(
+        val pubkeyHex: String,
+        val x25519Hex: String,
+        val onion: String,
+        val displayName: String
+    )
+
+    /**
+     * Pack routing entries into wire format for 0x35 ROUTING_UPDATE.
+     * Payload: [groupId:32][senderPubkey:32][ed25519Sig:64][count:u16 BE][entries...]
+     * The signature covers everything from count onward.
+     */
+    private fun packRoutingUpdate(groupId: String, entries: List<RoutingEntry>): ByteArray {
+        // Build the inner payload (count + entries) — this is what gets signed
+        val innerBuf = ByteArrayOutputStream()
+        // count: u16 BE
+        innerBuf.write(byteArrayOf(
+            (entries.size shr 8 and 0xFF).toByte(),
+            (entries.size and 0xFF).toByte()
+        ))
+        for (entry in entries) {
+            val pubkeyBytes = hexToBytes(entry.pubkeyHex)
+            val x25519Bytes = if (entry.x25519Hex.length == 64) hexToBytes(entry.x25519Hex) else ByteArray(32)
+            val onionBytes = entry.onion.toByteArray(Charsets.UTF_8)
+            val nameBytes = entry.displayName.toByteArray(Charsets.UTF_8)
+
+            innerBuf.write(pubkeyBytes)       // 32 bytes
+            innerBuf.write(x25519Bytes)       // 32 bytes
+            // onion length + bytes
+            innerBuf.write(byteArrayOf((onionBytes.size shr 8 and 0xFF).toByte(), (onionBytes.size and 0xFF).toByte()))
+            innerBuf.write(onionBytes)
+            // name length + bytes
+            innerBuf.write(byteArrayOf((nameBytes.size shr 8 and 0xFF).toByte(), (nameBytes.size and 0xFF).toByte()))
+            innerBuf.write(nameBytes)
+        }
+        val innerPayload = innerBuf.toByteArray()
+
+        // Sign the inner payload with our Ed25519 key
+        val privKey = keyManager.getSigningKeyBytes()
+        val signature = RustBridge.signData(innerPayload, privKey)
+
+        // Build full payload: [groupId:32][senderPubkey:32][sig:64][innerPayload]
+        val senderPubkey = keyManager.getSigningPublicKey()
+        val fullBuf = ByteArrayOutputStream()
+        fullBuf.write(hexToBytes(groupId))    // 32 bytes
+        fullBuf.write(senderPubkey)           // 32 bytes
+        fullBuf.write(signature)              // 64 bytes
+        fullBuf.write(innerPayload)
+        return fullBuf.toByteArray()
+    }
+
+    /**
+     * Parse and verify a 0x35 ROUTING_UPDATE payload (after groupId is stripped).
+     * Input data starts AFTER the 32-byte groupId (stripped by TorService).
+     * Format: [senderPubkey:32][sig:64][count:u16 BE][entries...]
+     *
+     * @return list of RoutingEntry, or null if verification fails
+     */
+    suspend fun parseAndVerifyRoutingUpdate(groupIdHex: String, data: ByteArray): List<RoutingEntry>? {
+        if (data.size < 32 + 64 + 2) {
+            Log.w(TAG, "ROUTING_UPDATE too short: ${data.size} bytes")
+            return null
+        }
+
+        val senderPubkey = data.copyOfRange(0, 32)
+        val signature = data.copyOfRange(32, 96)
+        val innerPayload = data.copyOfRange(96, data.size)
+
+        // Verify Ed25519 signature
+        if (!RustBridge.verifySignature(innerPayload, signature, senderPubkey)) {
+            Log.e(TAG, "ROUTING_UPDATE: INVALID SIGNATURE — dropping")
+            return null
+        }
+
+        // Verify sender is an accepted, non-removed member of the group
+        val senderHex = bytesToHex(senderPubkey)
+        try {
+            ensureLoaded(groupIdHex)
+            val members = queryMembers(groupIdHex)
+            val senderMember = members.find { it.pubkeyHex == senderHex }
+            if (senderMember == null || !senderMember.accepted || senderMember.removed) {
+                Log.e(TAG, "ROUTING_UPDATE: sender ${senderHex.take(8)} is NOT an active group member — dropping")
+                return null
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "ROUTING_UPDATE: could not verify membership for ${senderHex.take(8)} — accepting on trust (group may not be loaded)", e)
+        }
+
+        // Parse entries
+        if (innerPayload.size < 2) return null
+        val count = ((innerPayload[0].toInt() and 0xFF) shl 8) or (innerPayload[1].toInt() and 0xFF)
+        val entries = mutableListOf<RoutingEntry>()
+        var offset = 2
+
+        for (i in 0 until count) {
+            if (offset + 64 > innerPayload.size) break // need 32+32 bytes for pubkeys
+            val pubkey = innerPayload.copyOfRange(offset, offset + 32)
+            offset += 32
+            val x25519 = innerPayload.copyOfRange(offset, offset + 32)
+            offset += 32
+
+            if (offset + 2 > innerPayload.size) break
+            val onionLen = ((innerPayload[offset].toInt() and 0xFF) shl 8) or (innerPayload[offset + 1].toInt() and 0xFF)
+            offset += 2
+            if (offset + onionLen > innerPayload.size) break
+            val onion = String(innerPayload.copyOfRange(offset, offset + onionLen), Charsets.UTF_8)
+            offset += onionLen
+
+            if (offset + 2 > innerPayload.size) break
+            val nameLen = ((innerPayload[offset].toInt() and 0xFF) shl 8) or (innerPayload[offset + 1].toInt() and 0xFF)
+            offset += 2
+            if (offset + nameLen > innerPayload.size) break
+            val name = String(innerPayload.copyOfRange(offset, offset + nameLen), Charsets.UTF_8)
+            offset += nameLen
+
+            entries.add(RoutingEntry(
+                pubkeyHex = bytesToHex(pubkey),
+                x25519Hex = bytesToHex(x25519),
+                onion = onion.trim().lowercase(),
+                displayName = name
+            ))
+        }
+
+        Log.i(TAG, "ROUTING_UPDATE: verified ${entries.size} entries from ${senderHex.take(8)}")
+        return entries
+    }
+
+    /**
+     * Send full routing directory to a specific member (used during invite).
+     * Includes routing for all accepted members (Contact + GroupPeer fallback).
+     */
+    private suspend fun sendRoutingDirectoryToMember(groupId: String, recipientPubkeyHex: String) {
+        val db = getDatabase()
+        val members = queryMembers(groupId).filter { it.accepted && !it.removed }
+        val localPubkeyHex = bytesToHex(keyManager.getSigningPublicKey())
+
+        val entries = mutableListOf<RoutingEntry>()
+        for (member in members) {
+            if (member.pubkeyHex == recipientPubkeyHex) continue // don't send their own routing to them
+
+            val routing = resolveRouting(db, member.pubkeyHex, groupId)
+            val onion = routing?.onion ?: continue
+            val displayName = routing.displayName
+
+            // Get x25519 key: try Contact, then GroupPeer
+            val pubkeyB64 = Base64.encodeToString(hexToBytes(member.pubkeyHex), Base64.NO_WRAP)
+            val contact = db.contactDao().getContactByPublicKey(pubkeyB64)
+            val x25519Hex = if (contact?.x25519PublicKeyBase64 != null) {
+                try {
+                    bytesToHex(Base64.decode(contact.x25519PublicKeyBase64, Base64.NO_WRAP))
+                } catch (_: Exception) { "" }
+            } else {
+                db.groupPeerDao().getByGroupAndPubkey(groupId, member.pubkeyHex)?.x25519PubkeyHex ?: ""
+            }
+
+            entries.add(RoutingEntry(member.pubkeyHex, x25519Hex, onion, displayName))
+        }
+
+        // Also include our own routing info
+        val localOnion = keyManager.getMessagingOnion()
+        if (localOnion != null) {
+            val localX25519Hex = bytesToHex(keyManager.getEncryptionPublicKey())
+            val localName = keyManager.getUsername() ?: "unknown"
+            entries.add(RoutingEntry(localPubkeyHex, localX25519Hex, localOnion.trim().lowercase(), localName))
+        }
+
+        if (entries.isEmpty()) {
+            Log.w(TAG, "sendRoutingDirectory: no routing entries to send")
+            return
+        }
+
+        val payload = packRoutingUpdate(groupId, entries)
+        val recipientRouting = resolveRouting(db, recipientPubkeyHex, groupId)
+        if (recipientRouting == null) {
+            Log.w(TAG, "sendRoutingDirectory: can't reach invitee ${recipientPubkeyHex.take(8)}")
+            return
+        }
+
+        try {
+            val success = RustBridge.sendMessageBlob(recipientRouting.onion, payload, 0x35.toByte())
+            Log.i(TAG, "sendRoutingDirectory: sent ${entries.size} entries to ${recipientRouting.displayName} — success=$success")
+        } catch (e: Exception) {
+            Log.e(TAG, "sendRoutingDirectory: failed", e)
+        }
+    }
+
+    /**
+     * Broadcast a single member's routing info to all existing group members.
+     * Used when inviting: tell everyone how to reach the new member.
+     */
+    private suspend fun broadcastRoutingAnnounce(groupId: String, newMemberPubkeyHex: String) {
+        val db = getDatabase()
+
+        // Get new member's routing info (they're our friend, so Contact table has it)
+        val routing = resolveRouting(db, newMemberPubkeyHex, groupId)
+        if (routing == null) {
+            Log.w(TAG, "broadcastRoutingAnnounce: no routing for new member ${newMemberPubkeyHex.take(8)}")
+            return
+        }
+
+        // Get x25519 key for new member
+        val pubkeyB64 = Base64.encodeToString(hexToBytes(newMemberPubkeyHex), Base64.NO_WRAP)
+        val contact = db.contactDao().getContactByPublicKey(pubkeyB64)
+        val x25519Hex = if (contact?.x25519PublicKeyBase64 != null) {
+            try {
+                bytesToHex(Base64.decode(contact.x25519PublicKeyBase64, Base64.NO_WRAP))
+            } catch (_: Exception) { "" }
+        } else { "" }
+
+        val entry = RoutingEntry(newMemberPubkeyHex, x25519Hex, routing.onion, routing.displayName)
+        val payload = packRoutingUpdate(groupId, listOf(entry))
+
+        // Broadcast to all via broadcastRaw (0x35)
+        broadcastRaw(groupId, 0x35.toByte(), payload)
+        Log.i(TAG, "broadcastRoutingAnnounce: announced ${routing.displayName} to group ${groupId.take(16)}")
+    }
+
+    /**
+     * Handle incoming 0x35 ROUTING_UPDATE — store entries and flush pending deliveries.
+     * Called from TorService when a routing update is received.
+     *
+     * @param groupIdHex group ID (64-char hex)
+     * @param data payload AFTER groupId (starts at senderPubkey)
+     */
+    suspend fun handleRoutingUpdate(groupIdHex: String, data: ByteArray) {
+        val entries = parseAndVerifyRoutingUpdate(groupIdHex, data)
+        if (entries == null || entries.isEmpty()) return
+
+        val db = getDatabase()
+        val localPubkeyHex = bytesToHex(keyManager.getSigningPublicKey())
+
+        for (entry in entries) {
+            if (entry.pubkeyHex == localPubkeyHex) continue // skip self
+            db.groupPeerDao().upsertPeer(GroupPeer(
+                groupId = groupIdHex,
+                pubkeyHex = entry.pubkeyHex,
+                x25519PubkeyHex = entry.x25519Hex,
+                messagingOnion = entry.onion,
+                displayName = entry.displayName
+            ))
+            // Flush any pending deliveries for this member
+            flushPendingDelivery(groupIdHex, entry.pubkeyHex, entry.onion)
+        }
+
+        Log.i(TAG, "handleRoutingUpdate: stored ${entries.size} routing entries for group ${groupIdHex.take(16)}")
+    }
+
+    /**
+     * Handle incoming 0x36 ROUTING_REQUEST — respond with requested routing info.
+     * Called from TorService when a peer requests routing info.
+     *
+     * @param groupIdHex group ID (64-char hex)
+     * @param data payload AFTER groupId: [senderPubkey:32][sig:64][requestedPubkey:32]
+     * @param senderOnion the requesting peer's .onion address to send response to
+     */
+    suspend fun handleRoutingRequest(groupIdHex: String, data: ByteArray, senderOnion: String) {
+        // Minimal verification: check structure
+        if (data.size < 32 + 64 + 32) {
+            Log.w(TAG, "ROUTING_REQUEST too short: ${data.size} bytes")
+            return
+        }
+
+        val senderPubkey = data.copyOfRange(0, 32)
+        val signature = data.copyOfRange(32, 96)
+        val innerPayload = data.copyOfRange(96, data.size)
+
+        // Verify signature
+        if (!RustBridge.verifySignature(innerPayload, signature, senderPubkey)) {
+            Log.e(TAG, "ROUTING_REQUEST: INVALID SIGNATURE — dropping")
+            return
+        }
+
+        // Verify sender is group member
+        val senderHex = bytesToHex(senderPubkey)
+        try {
+            ensureLoaded(groupIdHex)
+            val members = queryMembers(groupIdHex)
+            val senderMember = members.find { it.pubkeyHex == senderHex }
+            if (senderMember == null || !senderMember.accepted || senderMember.removed) {
+                Log.e(TAG, "ROUTING_REQUEST: sender ${senderHex.take(8)} is NOT active member — dropping")
+                return
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "ROUTING_REQUEST: membership check failed — dropping", e)
+            return
+        }
+
+        if (innerPayload.size < 32) return
+        val requestedPubkey = innerPayload.copyOfRange(0, 32)
+        val isAllZeros = requestedPubkey.all { it == 0.toByte() }
+
+        val db = getDatabase()
+        val entries = mutableListOf<RoutingEntry>()
+
+        if (isAllZeros) {
+            // Send all known routing for this group
+            val allMembers = queryMembers(groupIdHex).filter { it.accepted && !it.removed }
+            val localPubkeyHex = bytesToHex(keyManager.getSigningPublicKey())
+            for (member in allMembers) {
+                if (member.pubkeyHex == senderHex) continue // don't send requester their own info
+                val routing = resolveRouting(db, member.pubkeyHex, groupIdHex)
+                if (routing != null) {
+                    val peer = db.groupPeerDao().getByGroupAndPubkey(groupIdHex, member.pubkeyHex)
+                    entries.add(RoutingEntry(
+                        member.pubkeyHex,
+                        peer?.x25519PubkeyHex ?: "",
+                        routing.onion,
+                        routing.displayName
+                    ))
+                }
+            }
+            // Include our own routing info
+            val localOnion = keyManager.getMessagingOnion()
+            if (localOnion != null) {
+                entries.add(RoutingEntry(
+                    localPubkeyHex,
+                    bytesToHex(keyManager.getEncryptionPublicKey()),
+                    localOnion.trim().lowercase(),
+                    keyManager.getUsername() ?: "unknown"
+                ))
+            }
+        } else {
+            // Send routing for specific member
+            val requestedHex = bytesToHex(requestedPubkey)
+            val routing = resolveRouting(db, requestedHex, groupIdHex)
+            if (routing != null) {
+                val peer = db.groupPeerDao().getByGroupAndPubkey(groupIdHex, requestedHex)
+                entries.add(RoutingEntry(requestedHex, peer?.x25519PubkeyHex ?: "", routing.onion, routing.displayName))
+            }
+        }
+
+        if (entries.isEmpty()) {
+            Log.w(TAG, "ROUTING_REQUEST: no entries to respond with")
+            return
+        }
+
+        val responsePayload = packRoutingUpdate(groupIdHex, entries)
+        try {
+            RustBridge.sendMessageBlob(senderOnion, responsePayload, 0x35.toByte())
+            Log.i(TAG, "ROUTING_RESPONSE: sent ${entries.size} entries to ${senderHex.take(8)}")
+        } catch (e: Exception) {
+            Log.e(TAG, "ROUTING_RESPONSE: failed to send", e)
+        }
+    }
+
+    /**
+     * Send ROUTING_REQUEST (0x36) for a specific member to a reachable peer.
+     * Used for self-healing when routing is missing.
+     */
+    suspend fun sendRoutingRequest(groupId: String, requestedPubkeyHex: String, targetOnion: String) {
+        val requestedPubkey = hexToBytes(requestedPubkeyHex)
+
+        // Sign the request
+        val privKey = keyManager.getSigningKeyBytes()
+        val signature = RustBridge.signData(requestedPubkey, privKey)
+
+        val buf = ByteArrayOutputStream()
+        buf.write(hexToBytes(groupId))                    // 32 bytes
+        buf.write(keyManager.getSigningPublicKey())        // 32 bytes
+        buf.write(signature)                               // 64 bytes
+        buf.write(requestedPubkey)                         // 32 bytes
+        val payload = buf.toByteArray()
+
+        try {
+            RustBridge.sendMessageBlob(targetOnion, payload, 0x36.toByte())
+            Log.i(TAG, "ROUTING_REQUEST: asked for ${requestedPubkeyHex.take(8)} via $targetOnion")
+        } catch (e: Exception) {
+            Log.e(TAG, "ROUTING_REQUEST: failed to send", e)
         }
     }
 
@@ -285,6 +876,37 @@ class CrdtGroupManager private constructor(private val context: Context) {
         ))
 
         Log.i(TAG, "checkPendingInvites: created Group entity for pending invite — group=$groupId name=$groupName accepted=${myEntry.accepted}")
+
+        // Seed GroupPeer routing for members we can already resolve (from Contact table).
+        // The full directory arrives via 0x35 ROUTING_UPDATE from the inviter shortly after.
+        var seeded = 0
+        for (member in members) {
+            if (member.pubkeyHex == localPubkeyHex || member.removed) continue
+            try {
+                val routing = resolveRouting(db, member.pubkeyHex, groupId)
+                if (routing != null) {
+                    // Try to get x25519 key from Contact
+                    val pubkeyB64 = Base64.encodeToString(hexToBytes(member.pubkeyHex), Base64.NO_WRAP)
+                    val contact = db.contactDao().getContactByPublicKey(pubkeyB64)
+                    val x25519Hex = if (contact?.x25519PublicKeyBase64 != null) {
+                        try { bytesToHex(Base64.decode(contact.x25519PublicKeyBase64, Base64.NO_WRAP)) }
+                        catch (_: Exception) { "" }
+                    } else ""
+
+                    db.groupPeerDao().upsertPeer(GroupPeer(
+                        groupId = groupId,
+                        pubkeyHex = member.pubkeyHex,
+                        x25519PubkeyHex = x25519Hex,
+                        messagingOnion = routing.onion.trim().lowercase(),
+                        displayName = routing.displayName
+                    ))
+                    seeded++
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "checkPendingInvites: failed to seed routing for ${member.pubkeyHex.take(8)}", e)
+            }
+        }
+        Log.i(TAG, "checkPendingInvites: seeded GroupPeer routing for $seeded/${members.size - 1} members")
 
         // Auto-accept for protocol correctness: accept membership so we can receive/decrypt messages.
         // UI stays in "pending invite" state (isPendingInvite=true) until user explicitly taps Accept.
@@ -635,6 +1257,20 @@ class CrdtGroupManager private constructor(private val context: Context) {
         // Send full op bundle to invitee (they need GroupCreate + all prior ops)
         sendInviteBundleToInvitee(groupId, contactPubkeyHex)
 
+        // NEW: Send routing directory to invitee (so they can reach all existing members)
+        try {
+            sendRoutingDirectoryToMember(groupId, contactPubkeyHex)
+        } catch (e: Exception) {
+            Log.e(TAG, "inviteMember: failed to send routing directory to invitee", e)
+        }
+
+        // NEW: Broadcast invitee's routing info to all existing members (so they can reach the invitee)
+        try {
+            broadcastRoutingAnnounce(groupId, contactPubkeyHex)
+        } catch (e: Exception) {
+            Log.e(TAG, "inviteMember: failed to broadcast routing announce", e)
+        }
+
         return opBytes
     }
 
@@ -699,7 +1335,19 @@ class CrdtGroupManager private constructor(private val context: Context) {
             authorPubkey, authorPrivkey
         )
 
-        return storeOpFromResult(resultJson, groupId, "MemberRemove")
+        val opBytes = storeOpFromResult(resultJson, groupId, "MemberRemove")
+
+        // Clean up routing + pending deliveries for the removed member
+        try {
+            val db = getDatabase()
+            db.groupPeerDao().deletePeer(groupId, targetPubkeyHex)
+            db.pendingGroupDeliveryDao().deleteForTarget(groupId, targetPubkeyHex)
+            Log.i(TAG, "removeMember: cleaned up GroupPeer + pending deliveries for ${targetPubkeyHex.take(8)}")
+        } catch (e: Exception) {
+            Log.w(TAG, "removeMember: cleanup failed for ${targetPubkeyHex.take(8)}", e)
+        }
+
+        return opBytes
     }
 
     /**
@@ -1133,6 +1781,8 @@ class CrdtGroupManager private constructor(private val context: Context) {
         unloadGroup(groupId)
         val db = getDatabase()
         db.crdtOpLogDao().deleteOpsForGroup(groupId)
+        db.groupPeerDao().deletePeersForGroup(groupId)
+        db.pendingGroupDeliveryDao().deleteForGroup(groupId)
         db.groupDao().deleteGroupById(groupId)
         Log.i(TAG, "Deleted group: $groupId")
     }

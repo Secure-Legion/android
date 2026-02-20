@@ -10,24 +10,20 @@
     android:focusable="true"
     android:background="?attr/selectableItemBackground">
 
-    <!-- Profile Icon -->
-    <FrameLayout
+    <!-- Profile Photo -->
+    <com.securelegion.views.AvatarView
+        android:id="@+id/contactAvatar"
         android:layout_width="48dp"
         android:layout_height="48dp"
-        android:background="@drawable/profile_circle_bg"
-        android:layout_marginEnd="16dp">
+        android:layout_marginEnd="16dp"
+        android:contentDescription="Contact Photo" />
 
-        <TextView
-            android:id="@+id/contactInitial"
-            android:layout_width="match_parent"
-            android:layout_height="match_parent"
-            android:gravity="center"
-            android:text="A"
-            android:textColor="?attr/colorOnSurface"
-            android:textSize="20sp"
-            android:fontFamily="@font/poppins_bold" />
-
-    </FrameLayout>
+    <!-- Hidden for backward compatibility -->
+    <TextView
+        android:id="@+id/contactInitial"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:visibility="gone" />
 
     <!-- Contact Name -->
     <TextView

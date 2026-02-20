@@ -73,6 +73,20 @@ object SecureWipe {
                 voiceDir.delete()
             }
 
+            // 3b. Securely wipe all image files (encrypted .enc and legacy .img)
+            val imageDir = File(context.filesDir, "image_messages")
+            if (imageDir.exists() && imageDir.isDirectory) {
+                Log.i(TAG, "Securely wiping image files")
+                val imageFiles = imageDir.listFiles()
+                imageFiles?.forEach { imageFile ->
+                    if (imageFile.isFile) {
+                        Log.d(TAG, "Securely wiping image file: ${imageFile.name}")
+                        secureDeleteFile(imageFile)
+                    }
+                }
+                imageDir.delete()
+            }
+
             // 4. Securely wipe temp voice files (cache)
             val voiceTempDir = File(context.cacheDir, "voice_temp")
             if (voiceTempDir.exists() && voiceTempDir.isDirectory) {

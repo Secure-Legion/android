@@ -109,6 +109,11 @@ interface PingInboxDao {
      * Transition to MSG_STORED state (message saved to DB)
      * MONOTONIC GUARD: Only transitions forward (state < MSG_STORED)
      * Clears downloadQueuedAt to prevent stale timestamps after success
+     *
+     * TODO(ghost-badge): Guard `state < :msgStoredState` rejects states 10/11/12
+     * (PING_SEEN, PONG_SENT, PONG_ACKED) which are numerically >= MSG_STORED(9).
+     * Change to `state != :msgStoredState` so stuck pings in those states can
+     * still transition to MSG_STORED and clear the unread badge.
      */
     @Query("""
         UPDATE ping_inbox

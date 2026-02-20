@@ -26,6 +26,8 @@ class DownloadMessageService : Service() {
         private const val TAG = "DownloadMessageService"
         private const val NOTIFICATION_ID = 2002
         private const val CHANNEL_ID = "download_message_channel"
+        // High-priority channel for message arrival notifications (same channel TorService creates)
+        private const val MESSAGE_CHANNEL_ID = "message_auth_channel_v2"
 
         const val EXTRA_CONTACT_ID = "EXTRA_CONTACT_ID"
         const val EXTRA_CONTACT_NAME = "EXTRA_CONTACT_NAME"
@@ -52,6 +54,7 @@ class DownloadMessageService : Service() {
     // Queue for handling multiple downloads sequentially (not in parallel)
     private data class DownloadRequest(val contactId: Long, val contactName: String, val pingId: String, val connectionId: Long)
     private val downloadQueue = mutableListOf<DownloadRequest>()
+    private val queuedPingIds = mutableSetOf<String>() // Dedup: tracks queued + in-flight pingIds
     private var isProcessingQueue = false
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -78,8 +81,13 @@ class DownloadMessageService : Service() {
         // Start foreground with initial notification
         startForeground(NOTIFICATION_ID, createNotification(contactName, "Preparing download..."))
 
-        // Queue the download (will process sequentially)
+        // Queue the download (will process sequentially, dedup by pingId)
         synchronized(downloadQueue) {
+            if (pingId in queuedPingIds) {
+                Log.d(TAG, "Dedup: pingId=${pingId.take(8)} already queued/in-flight, skipping")
+                return START_NOT_STICKY
+            }
+            queuedPingIds.add(pingId)
             downloadQueue.add(DownloadRequest(contactId, contactName, pingId, connectionId))
             Log.d(TAG, "Queued download: $contactName (pingId=${pingId.take(8)}...) connId=$connectionId - Queue size: ${downloadQueue.size}")
 
@@ -102,6 +110,7 @@ class DownloadMessageService : Service() {
                 val request = synchronized(downloadQueue) {
                     if (downloadQueue.isEmpty()) {
                         isProcessingQueue = false
+                        queuedPingIds.clear()
                         Log.d(TAG, "Download queue empty - stopping service")
                         stopSelf()
                         return@launch
@@ -135,6 +144,10 @@ class DownloadMessageService : Service() {
                         .putBoolean("downloading_${request.contactId}", false)
                         .remove("download_start_time_${request.contactId}")
                         .apply()
+                    // Release dedup lock so this pingId can be re-queued if needed
+                    synchronized(downloadQueue) {
+                        queuedPingIds.remove(request.pingId)
+                    }
                     Log.d(TAG, "Cleared download-in-progress flag for contact ${request.contactId}")
                 }
             }
@@ -204,6 +217,7 @@ class DownloadMessageService : Service() {
             }
         }
 
+        var networkStarted = false
         try {
             // Phase 2: Pre-flight health checks
             if (!runPreFlightChecks(ctx)) return
@@ -211,7 +225,11 @@ class DownloadMessageService : Service() {
             // Phase 3: Restore ping session + expiry check
             if (!restorePingSession(ctx)) return
 
-            // Phase 4: Send PONG (instant or listener path)
+            // Phase 4: Network I/O begins — typing indicator turns ON
+            DownloadStateManager.onDownloadStarted(contactId)
+            networkStarted = true
+
+            // Send PONG (instant or listener path)
             val instantReceived = sendPongAndGetMessage(ctx)
             if (instantReceived == null) return // pong failed, already notified
 
@@ -220,11 +238,18 @@ class DownloadMessageService : Service() {
                 if (!pollForMessage(ctx)) return // timeout already handled
             }
 
-            // Phase 6: Success
+            // Phase 6: Success — typing indicator turns OFF
             onDownloadSuccess(ctx)
+            DownloadStateManager.onDownloadCompleted(contactId)
+            networkStarted = false // success handled, prevent onDownloadFailed in finally
         } finally {
             downloadCompleted = true
             watchdogJob?.cancel()
+            if (networkStarted) {
+                // Network started but didn't complete — failure path
+                // (timeout, PONG failed, poll failed, exception)
+                DownloadStateManager.onDownloadFailed(contactId)
+            }
         }
     }
 
@@ -603,9 +628,9 @@ class DownloadMessageService : Service() {
 
         updateNotification(ctx.contactName, "Waiting for message...")
 
-        // Get current message count BEFORE polling
+        // Get current message count BEFORE polling (uses COUNT query, not SELECT *)
         val initialMessageCount = withContext(Dispatchers.IO) {
-            ctx.database.messageDao().getMessagesForContact(ctx.contactId).size
+            ctx.database.messageDao().getMessageCountForContact(ctx.contactId)
         }
         Log.d(TAG, "Current message count before polling: $initialMessageCount")
 
@@ -620,7 +645,7 @@ class DownloadMessageService : Service() {
             delay(1000) // 1s per poll
 
             val currentMessageCount = withContext(Dispatchers.IO) {
-                ctx.database.messageDao().getMessagesForContact(ctx.contactId).size
+                ctx.database.messageDao().getMessageCountForContact(ctx.contactId)
             }
 
             if (currentMessageCount > initialMessageCount) {
@@ -659,12 +684,20 @@ class DownloadMessageService : Service() {
         notifManager?.cancel(notificationId)
         Log.i(TAG, "Dismissed pending message notification (ID: $notificationId)")
 
-        // Broadcast to ChatActivity to refresh
+        // Broadcast to ChatActivity to refresh message list
         val intent = Intent("com.securelegion.MESSAGE_RECEIVED")
         intent.setPackage(packageName)
         intent.putExtra("CONTACT_ID", ctx.contactId)
         sendBroadcast(intent)
-        Log.i(TAG, "Broadcast sent to refresh UI")
+
+        // Broadcast to MainActivity to refresh chat list (deferred from ping arrival)
+        // In auto-download mode, the NEW_PING broadcast is suppressed at ping arrival
+        // to prevent the chat list from showing a new entry before content is downloaded.
+        val chatListIntent = Intent("com.securelegion.NEW_PING")
+        chatListIntent.setPackage(packageName)
+        chatListIntent.putExtra("CONTACT_ID", ctx.contactId)
+        sendBroadcast(chatListIntent)
+        Log.i(TAG, "Broadcast sent to refresh UI (chat + chat list)")
 
         // For the polling path, determine wire type from the last received message
         if (lastReceivedWireType == -1) {
@@ -676,6 +709,7 @@ class DownloadMessageService : Service() {
                     com.securelegion.database.entities.Message.MESSAGE_TYPE_TEXT -> 0x03
                     com.securelegion.database.entities.Message.MESSAGE_TYPE_VOICE -> 0x04
                     com.securelegion.database.entities.Message.MESSAGE_TYPE_IMAGE -> 0x09
+                    com.securelegion.database.entities.Message.MESSAGE_TYPE_STICKER -> 0x0E
                     else -> 0x03 // Default to text
                 }
             }
@@ -793,11 +827,19 @@ class DownloadMessageService : Service() {
     }
 
     private fun showSuccessNotification(contactName: String) {
+        // Don't show notification if user is already viewing this chat
+        if (currentContactId != -1L &&
+            com.securelegion.ChatActivity.visibleContactId == currentContactId) {
+            Log.d(TAG, "Suppressing notification — user is viewing chat with $contactName")
+            return
+        }
+
         // Type-specific notification text based on wire format
         val (title, text) = when (lastReceivedWireType) {
             0x03 -> "New message" to "New message from $contactName"
             0x04 -> "New voice clip" to "New voice clip from $contactName"
             0x09 -> "New image" to "New image from $contactName"
+            0x0E -> "New sticker" to "New sticker from $contactName"
             0x0A -> "Payment request" to "New payment request from $contactName"
             0x0B -> "Payment received" to "Payment sent by $contactName"
             0x0C -> "Payment accepted" to "Payment accepted by $contactName"
@@ -821,15 +863,20 @@ class DownloadMessageService : Service() {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
-        val notification = NotificationCompat.Builder(this, CHANNEL_ID)
+        // Use high-priority channel (created by TorService) for audible heads-up alert
+        // Unique ID so it survives foreground service teardown (NOTIFICATION_ID = 2002 gets cleared)
+        val successId = 30_000 + (currentContactId.hashCode() and 0x7fffffff) % 10_000
+        val notification = NotificationCompat.Builder(this, MESSAGE_CHANNEL_ID)
             .setContentTitle(title)
             .setContentText(text)
-            .setSmallIcon(R.drawable.ic_lock)
+            .setSmallIcon(R.drawable.ic_shield)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setCategory(NotificationCompat.CATEGORY_MESSAGE)
             .setAutoCancel(true)
             .setContentIntent(pendingIntent)
             .build()
 
-        notificationManager?.notify(NOTIFICATION_ID, notification)
+        notificationManager?.notify(successId, notification)
     }
 
     private fun showFailureNotification(contactName: String, error: String, pingId: String? = null, contactId: Long = -1L) {
@@ -958,6 +1005,18 @@ class DownloadMessageService : Service() {
                     voiceDuration = null
                     Log.d(TAG, "Payment message type: 0x${String.format("%02X", typeByte)}")
                 }
+                0x0E -> {
+                    // STICKER: [0x0E][X25519 32 bytes][Encrypted Sticker]
+                    // Same wire format as TEXT
+                    if (messageBytes.size < 82) {
+                        Log.e(TAG, "STICKER message blob too small: ${messageBytes.size} bytes (need at least 82)")
+                        return
+                    }
+                    senderX25519PublicKey = messageBytes.copyOfRange(1, 33)
+                    encryptedPayload = messageBytes.copyOfRange(33, messageBytes.size)
+                    voiceDuration = null
+                    Log.d(TAG, "Sticker message received")
+                }
                 0x0F -> {
                     // PROFILE_UPDATE: [0x0F][X25519 32 bytes][Encrypted Photo]
                     // Same wire format as IMAGE/TEXT
@@ -1080,10 +1139,12 @@ class DownloadMessageService : Service() {
                                 Result.success(existingMessage)
                             } else {
                                 // New message - insert it
+                                // Pass TEXT explicitly (inner prefix is the source of truth via decodeDecryptedPayload)
                                 val insertResult = messageService.receiveMessage(
                                     encryptedData = encryptedBase64,
                                     senderPublicKey = senderPublicKey,
                                     senderOnionAddress = contact.messagingOnion ?: "",
+                                    messageType = com.securelegion.database.entities.Message.MESSAGE_TYPE_TEXT,
                                     pingId = pingId
                                 )
 
@@ -1426,6 +1487,68 @@ class DownloadMessageService : Service() {
                             notifMgr?.cancel(contactId.toInt() + 20000)
                         } else {
                             Log.e(TAG, "Failed to save PAYMENT_ACCEPTED message: $errorMessage")
+                        }
+                    }
+                }
+
+                0x0E -> {
+                    // STICKER message (MSG_TYPE_STICKER = 0x0E)
+                    Log.d(TAG, "Processing STICKER message...")
+
+                    val messageService = MessageService(this@DownloadMessageService)
+                    val encryptedBase64 = android.util.Base64.encodeToString(encryptedPayload, android.util.Base64.NO_WRAP)
+
+                    val result = kotlin.runCatching {
+                        database.withTransaction {
+                            val existingMessage = database.messageDao().getMessageByPingId(pingId)
+
+                            if (existingMessage != null) {
+                                Log.i(TAG, "STICKER message $pingId already in DB (duplicate)")
+                                val now = System.currentTimeMillis()
+                                database.pingInboxDao().transitionToMsgStored(pingId, now)
+                                database.pingInboxDao().clearPingWireBytes(pingId, now)
+                                Result.success(existingMessage)
+                            } else {
+                                val insertResult = messageService.receiveMessage(
+                                    encryptedData = encryptedBase64,
+                                    senderPublicKey = senderPublicKey,
+                                    senderOnionAddress = contact.messagingOnion ?: "",
+                                    messageType = com.securelegion.database.entities.Message.MESSAGE_TYPE_STICKER,
+                                    pingId = pingId
+                                )
+
+                                if (insertResult.isSuccess) {
+                                    Log.i(TAG, "→ Transitioning pingId=$pingId to MSG_STORED (atomic)")
+                                    val now = System.currentTimeMillis()
+                                    database.pingInboxDao().transitionToMsgStored(pingId, now)
+                                    database.pingInboxDao().clearPingWireBytes(pingId, now)
+                                }
+
+                                insertResult
+                            }
+                        }
+                    }
+
+                    if (result.isSuccess && result.getOrNull()?.isSuccess == true) {
+                        Log.i(TAG, "STICKER message saved to database (atomic transaction)")
+
+                        val intent = Intent("com.securelegion.MESSAGE_RECEIVED")
+                        intent.setPackage(packageName)
+                        intent.putExtra("CONTACT_ID", contactId)
+                        sendBroadcast(intent)
+
+                        sendMessageAck(contactId, contactName, connectionId, pingId)
+                        val notifMgr = getSystemService(android.app.NotificationManager::class.java)
+                        notifMgr?.cancel(contactId.toInt() + 20000)
+                    } else {
+                        val errorMessage = result.exceptionOrNull()?.message
+                        if (errorMessage?.contains("Duplicate message") == true) {
+                            Log.w(TAG, "Sticker already downloaded - treating as success")
+                            sendMessageAck(contactId, contactName, connectionId, pingId)
+                            val notifMgr = getSystemService(android.app.NotificationManager::class.java)
+                            notifMgr?.cancel(contactId.toInt() + 20000)
+                        } else {
+                            Log.e(TAG, "Failed to save STICKER message: $errorMessage")
                         }
                     }
                 }

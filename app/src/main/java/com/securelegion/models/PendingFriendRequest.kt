@@ -25,6 +25,7 @@ data class PendingFriendRequest(
         const val STATUS_ACCEPTED = "accepted"
         const val STATUS_FAILED = "failed"
         const val STATUS_SENDING = "sending"
+        const val STATUS_INVALID_PIN = "invalid_pin"
 
         fun fromJson(json: String): PendingFriendRequest {
             val obj = JSONObject(json)

@@ -36,8 +36,8 @@
         android:layout_marginStart="16dp"
         android:text="@wizard"
         android:textSize="16sp"
-        android:textColor="?attr/colorOnSurface"
-        android:fontFamily="@font/poppins_medium" />
+        android:textColor="@color/lock_title_gray"
+        android:fontFamily="@font/space_grotesk_bold" />
 
     <!-- Star Icon (hidden) -->
     <ImageView

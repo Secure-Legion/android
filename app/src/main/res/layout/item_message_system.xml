@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:paddingTop="4dp"
+    android:paddingBottom="4dp"
+    android:gravity="center_horizontal">
+
+    <TextView
+        android:id="@+id/systemMessageText"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="System message"
+        android:textColor="#888888"
+        android:textSize="13sp"
+        android:fontFamily="sans-serif"
+        android:textStyle="italic"
+        android:gravity="center"
+        android:paddingStart="24dp"
+        android:paddingEnd="24dp"
+        android:paddingTop="4dp"
+        android:paddingBottom="4dp" />
+
+</LinearLayout>

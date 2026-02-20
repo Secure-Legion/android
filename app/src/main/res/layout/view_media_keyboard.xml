@@ -1,0 +1,114 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:background="?attr/colorSurface">
+
+    <!-- Tab bar -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="40dp"
+        android:orientation="horizontal"
+        android:gravity="center">
+
+        <!-- Emoji tab -->
+        <FrameLayout
+            android:id="@+id/tabEmoji"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:clickable="true"
+            android:focusable="true"
+            android:background="?attr/selectableItemBackgroundBorderless">
+
+            <ImageView
+                android:id="@+id/tabEmojiIcon"
+                android:layout_width="22dp"
+                android:layout_height="22dp"
+                android:layout_gravity="center"
+                android:src="@drawable/ic_emoji"
+                app:tint="?attr/colorPrimary"
+                android:contentDescription="Emojis" />
+        </FrameLayout>
+
+        <!-- Sticker tab -->
+        <FrameLayout
+            android:id="@+id/tabSticker"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:clickable="true"
+            android:focusable="true"
+            android:background="?attr/selectableItemBackgroundBorderless">
+
+            <ImageView
+                android:id="@+id/tabStickerIcon"
+                android:layout_width="22dp"
+                android:layout_height="22dp"
+                android:layout_gravity="center"
+                android:src="@drawable/ic_sticker"
+                app:tint="?attr/colorOnSurfaceVariant"
+                android:contentDescription="Stickers" />
+        </FrameLayout>
+
+        <!-- GIF tab -->
+        <FrameLayout
+            android:id="@+id/tabGif"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:clickable="true"
+            android:focusable="true"
+            android:background="?attr/selectableItemBackgroundBorderless">
+
+            <TextView
+                android:id="@+id/tabGifIcon"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_gravity="center"
+                android:text="GIF"
+                android:textSize="14sp"
+                android:textColor="?attr/colorOnSurfaceVariant"
+                android:textStyle="bold" />
+        </FrameLayout>
+
+    </LinearLayout>
+
+    <!-- Tab indicator line -->
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="0.5dp"
+        android:background="#22FFFFFF" />
+
+    <!-- Content area -->
+    <ViewFlipper
+        android:id="@+id/mediaFlipper"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1">
+
+        <!-- Tab 0: Emoji grid -->
+        <androidx.recyclerview.widget.RecyclerView
+            android:id="@+id/emojiGrid"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:clipToPadding="false"
+            android:padding="4dp" />
+
+        <!-- Tab 1: Sticker picker -->
+        <com.securelegion.views.StickerPickerView
+            android:id="@+id/stickerPicker"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent" />
+
+        <!-- Tab 2: GIF picker -->
+        <com.securelegion.views.GifPickerView
+            android:id="@+id/gifPicker"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent" />
+
+    </ViewFlipper>
+
+</LinearLayout>

@@ -1,0 +1,70 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:background="@drawable/bottom_sheet_bg"
+    android:paddingStart="24dp"
+    android:paddingEnd="24dp"
+    android:paddingTop="24dp"
+    android:paddingBottom="32dp"
+    android:gravity="center_horizontal">
+
+    <!-- Call Ended Title -->
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Call Ended"
+        android:textSize="22sp"
+        android:textColor="?attr/colorOnSurface"
+        android:fontFamily="@font/space_grotesk_bold"
+        android:layout_marginBottom="24dp" />
+
+    <!-- Contact Name -->
+    <TextView
+        android:id="@+id/summaryContactName"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Contact"
+        android:textSize="18sp"
+        android:textColor="?attr/colorOnSurface"
+        android:fontFamily="@font/poppins_medium"
+        android:layout_marginBottom="8dp" />
+
+    <!-- Call Type (Outgoing/Incoming) -->
+    <TextView
+        android:id="@+id/summaryCallType"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Outgoing Call"
+        android:textSize="14sp"
+        android:textColor="#8C8C8C"
+        android:fontFamily="@font/poppins_regular"
+        android:layout_marginBottom="16dp" />
+
+    <!-- Duration -->
+    <TextView
+        android:id="@+id/summaryDuration"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="0:00"
+        android:textSize="36sp"
+        android:textColor="?attr/colorOnSurface"
+        android:fontFamily="@font/space_grotesk_bold"
+        android:layout_marginBottom="32dp" />
+
+    <!-- Done Button -->
+    <TextView
+        android:id="@+id/summaryDoneButton"
+        android:layout_width="match_parent"
+        android:layout_height="56dp"
+        android:background="@drawable/lock_button_bg"
+        android:gravity="center"
+        android:text="Done"
+        android:textSize="16sp"
+        android:textColor="?attr/colorOnSurface"
+        android:fontFamily="@font/space_grotesk_bold"
+        android:clickable="true"
+        android:focusable="true" />
+
+</LinearLayout>

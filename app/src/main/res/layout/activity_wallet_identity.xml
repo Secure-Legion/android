@@ -45,8 +45,8 @@
             android:layout_height="wrap_content"
             android:layout_weight="1"
             android:text="Profile"
-            android:textSize="24sp"
-            android:textColor="?attr/colorOnSurface"
+            android:textSize="34sp"
+            android:textColor="@color/lock_title_gray"
             android:fontFamily="@font/space_grotesk_bold"
             android:gravity="center" />
 
@@ -231,6 +231,61 @@
 
             </LinearLayout>
 
+            <!-- Change Friend Request Identity -->
+            <LinearLayout
+                android:id="@+id/changeFriendIdentityButton"
+                android:layout_width="match_parent"
+                android:layout_height="80dp"
+                android:orientation="horizontal"
+                android:background="@drawable/settings_box_bg"
+                android:paddingStart="16dp"
+                android:paddingEnd="16dp"
+                android:gravity="center_vertical"
+                android:clickable="true"
+                android:focusable="true"
+                android:layout_marginTop="12dp">
+
+                <FrameLayout
+                    android:layout_width="50dp"
+                    android:layout_height="50dp"
+                    android:background="@drawable/settings_icon_bg"
+                    android:layout_marginStart="8dp"
+                    android:layout_marginEnd="16dp">
+
+                    <ImageView
+                        android:layout_width="24dp"
+                        android:layout_height="24dp"
+                        android:layout_gravity="center"
+                        android:src="@android:drawable/ic_popup_sync"
+                        app:tint="?attr/colorOnSurfaceVariant" />
+
+                </FrameLayout>
+
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="Identity Rotator"
+                    android:textSize="16sp"
+                    android:textColor="#8C8C8C"
+                    android:fontFamily="@font/poppins_medium" />
+
+                <FrameLayout
+                    android:layout_width="36dp"
+                    android:layout_height="36dp"
+                    android:layout_marginEnd="8dp"
+                    android:background="@drawable/arrow_bg">
+
+                    <ImageView
+                        android:layout_width="18dp"
+                        android:layout_height="18dp"
+                        android:layout_gravity="center"
+                        android:src="@drawable/ic_arrow_forward" />
+
+                </FrameLayout>
+
+            </LinearLayout>
+
             <!-- Settings Button -->
             <LinearLayout
                 android:id="@+id/settingsButton"
@@ -294,9 +349,9 @@
     <include
         layout="@layout/bottom_navigation"
         android:layout_width="0dp"
-        android:layout_height="72dp"
-        android:layout_marginStart="16dp"
-        android:layout_marginEnd="16dp"
+        android:layout_height="80dp"
+        android:layout_marginStart="50dp"
+        android:layout_marginEnd="50dp"
         android:layout_marginBottom="20dp"
         android:elevation="8dp"
         app:layout_constraintBottom_toBottomOf="parent"
