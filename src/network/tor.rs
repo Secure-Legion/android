@@ -915,12 +915,15 @@ pub const MSG_TYPE_PAYMENT_REQUEST: u8 = 0x0A;
 pub const MSG_TYPE_PAYMENT_SENT: u8 = 0x0B;
 pub const MSG_TYPE_PAYMENT_ACCEPTED: u8 = 0x0C;
 pub const MSG_TYPE_CALL_SIGNALING: u8 = 0x0D; // Voice call signaling (OFFER/ANSWER/REJECT/END/BUSY)
+pub const MSG_TYPE_STICKER: u8 = 0x0E; // Sticker/GIF message (asset path as payload)
 pub const MSG_TYPE_PROFILE_UPDATE: u8 = 0x0F; // Profile photo update (hidden, not shown in chat)
 
 // CRDT group wire types (not per-member encrypted — ops are Ed25519-signed, content is XChaCha20 group-secret encrypted)
 pub const MSG_TYPE_CRDT_OPS: u8 = 0x30;       // CRDT op bundle: [groupId:32][packedOps]
 pub const MSG_TYPE_SYNC_REQUEST: u8 = 0x32;    // Sync request: [groupId:32][afterLamport:u64 BE][limit:u32 BE]
 pub const MSG_TYPE_SYNC_CHUNK: u8 = 0x33;      // Sync chunk response: [groupId:32][packedOps]
+pub const MSG_TYPE_ROUTING_UPDATE: u8 = 0x35;   // Routing directory: [groupId:32][senderPk:32][sig:64][count:u16 BE][entries...]
+pub const MSG_TYPE_ROUTING_REQUEST: u8 = 0x36;  // Routing request: [groupId:32][senderPk:32][sig:64][requestedPubkey:32]
 
 /// Canonical port constants (from PORT_MAP.md)
 pub const PORT_HS_PING_PONG: u16 = 9150; // Message HS: PING/PONG/ACK
@@ -933,6 +936,102 @@ pub const PORT_VOICE_LOCAL: u16 = 9152; // Local voice listener port
 pub const PORT_CONTROL_MAIN: u16 = 9051; // Legacy — main Tor now uses Unix ControlSocket
 pub const PORT_CONTROL_VOICE: u16 = 9052; // Voice Tor control port
 pub const PORT_SOCKS: u16 = 9050; // SOCKS5 proxy port
+
+/// Standalone SOCKS5 connect — no TorManager lock needed.
+///
+/// Connects to a .onion address through the local Tor SOCKS5 proxy.
+/// Safe to call concurrently from multiple tasks — only opens new TCP
+/// connections to the SOCKS proxy (no shared mutable state).
+pub async fn connect_to_onion(onion_address: &str, port: u16) -> Result<TorConnection, Box<dyn Error + Send + Sync>> {
+    let socks_addr = format!("127.0.0.1:{}", PORT_SOCKS);
+    let mut stream = TcpStream::connect(&socks_addr).await.map_err(|e| {
+        log::error!("SOCKS proxy unreachable at {}: {}", socks_addr, e);
+        format!("SOCKS proxy unreachable: {}", e)
+    })?;
+
+    socks5_handshake(&mut stream, onion_address, port).await?;
+
+    Ok(TorConnection {
+        stream,
+        onion_address: onion_address.to_string(),
+        port,
+    })
+}
+
+/// Standalone SOCKS5 handshake — pure protocol, no TorManager state.
+async fn socks5_handshake(stream: &mut TcpStream, addr: &str, port: u16) -> Result<(), Box<dyn Error + Send + Sync>> {
+    // SOCKS5 greeting: version 5, 1 method, no auth
+    stream.write_all(&[0x05, 0x01, 0x00]).await?;
+
+    let mut buf = [0u8; 2];
+    stream.read_exact(&mut buf).await?;
+    if buf[0] != 0x05 || buf[1] != 0x00 {
+        return Err(format!("SOCKS5 auth failed: version={}, method={}", buf[0], buf[1]).into());
+    }
+
+    // SOCKS5 CONNECT request: VER CMD RSV ATYP(domain) LEN ADDR PORT
+    let mut request = vec![0x05, 0x01, 0x00, 0x03];
+    request.push(addr.len() as u8);
+    request.extend_from_slice(addr.as_bytes());
+    request.extend_from_slice(&port.to_be_bytes());
+    stream.write_all(&request).await?;
+
+    // Read response header: VER, REP, RSV, ATYP
+    let mut hdr = [0u8; 4];
+    stream.read_exact(&mut hdr).await?;
+
+    if hdr[0] != 0x05 {
+        return Err(format!("SOCKS5 bad version in reply: {}", hdr[0]).into());
+    }
+
+    let rep = hdr[1];
+    let atyp = hdr[3];
+
+    if rep != 0x00 {
+        let error_message = match rep {
+            0x01 => "general SOCKS server failure",
+            0x02 => "connection not allowed by ruleset",
+            0x03 => "network unreachable",
+            0x04 => "host unreachable",
+            0x05 => "connection refused",
+            0x06 => "TTL expired",
+            0x07 => "command not supported",
+            0x08 => "address type not supported",
+            _ => "unknown error",
+        };
+        return Err(format!(
+            "SOCKS5 connect to {}:{} failed: status 0x{:02x} ({})",
+            addr, port, rep, error_message
+        ).into());
+    }
+
+    // Consume BND.ADDR + BND.PORT (must read to clear stream, values unused)
+    match atyp {
+        0x01 => {
+            // IPv4: 4 addr + 2 port
+            let mut skip = [0u8; 4 + 2];
+            stream.read_exact(&mut skip).await?;
+        }
+        0x03 => {
+            // Domain: 1 len + N addr + 2 port
+            let mut len = [0u8; 1];
+            stream.read_exact(&mut len).await?;
+            let n = len[0] as usize;
+            let mut skip = vec![0u8; n + 2];
+            stream.read_exact(&mut skip).await?;
+        }
+        0x04 => {
+            // IPv6: 16 addr + 2 port
+            let mut skip = [0u8; 16 + 2];
+            stream.read_exact(&mut skip).await?;
+        }
+        _ => {
+            return Err(format!("SOCKS5 unknown ATYP in reply: 0x{:02x}", atyp).into());
+        }
+    }
+
+    Ok(())
+}
 
 /// JNI context availability check
 /// CRITICAL: Some Android lifecycle contexts don't have application context
@@ -2086,7 +2185,9 @@ impl TorManager {
             MSG_TYPE_PROFILE_UPDATE |
             MSG_TYPE_CRDT_OPS |
             MSG_TYPE_SYNC_REQUEST |
-            MSG_TYPE_SYNC_CHUNK => {
+            MSG_TYPE_SYNC_CHUNK |
+            MSG_TYPE_ROUTING_UPDATE |
+            MSG_TYPE_ROUTING_REQUEST => {
                 // Valid type, continue to length check
             }
             _ => {
@@ -2102,7 +2203,8 @@ impl TorManager {
         // MINIMUM LENGTH CHECK: protocol messages have format [type][pubkey32][encrypted_payload]
         // CRDT types (0x30,0x32,0x33) are NOT evolution-encrypted: [type][pubkey32][groupId32][data]
         let min_wire_len: usize = match msg_type {
-            MSG_TYPE_CRDT_OPS | MSG_TYPE_SYNC_REQUEST | MSG_TYPE_SYNC_CHUNK => 1 + 32 + 32, // type + X25519 + groupId
+            MSG_TYPE_CRDT_OPS | MSG_TYPE_SYNC_REQUEST | MSG_TYPE_SYNC_CHUNK |
+            MSG_TYPE_ROUTING_UPDATE | MSG_TYPE_ROUTING_REQUEST => 1 + 32 + 32, // type + X25519 + groupId
             _ => 1 + 32 + 16, // type + pubkey + smallest possible ciphertext
         };
         if buf.len() < min_wire_len {
@@ -2153,7 +2255,8 @@ impl TorManager {
                 }
             }
             MSG_TYPE_TEXT | MSG_TYPE_VOICE | MSG_TYPE_IMAGE | MSG_TYPE_PAYMENT_REQUEST | MSG_TYPE_PAYMENT_SENT | MSG_TYPE_PAYMENT_ACCEPTED | MSG_TYPE_PROFILE_UPDATE |
-            MSG_TYPE_CRDT_OPS | MSG_TYPE_SYNC_REQUEST | MSG_TYPE_SYNC_CHUNK => {
+            MSG_TYPE_CRDT_OPS | MSG_TYPE_SYNC_REQUEST | MSG_TYPE_SYNC_CHUNK |
+            MSG_TYPE_ROUTING_UPDATE | MSG_TYPE_ROUTING_REQUEST => {
                 log::info!("→ Routing to MESSAGE handler (separate channel, type={})",
                     match msg_type {
                         MSG_TYPE_TEXT => "TEXT",
@@ -2166,6 +2269,8 @@ impl TorManager {
                         MSG_TYPE_CRDT_OPS => "CRDT_OPS",
                         MSG_TYPE_SYNC_REQUEST => "SYNC_REQUEST",
                         MSG_TYPE_SYNC_CHUNK => "SYNC_CHUNK",
+                        MSG_TYPE_ROUTING_UPDATE => "ROUTING_UPDATE",
+                        MSG_TYPE_ROUTING_REQUEST => "ROUTING_REQUEST",
                         _ => "UNKNOWN"
                     });
 

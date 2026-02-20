@@ -123,10 +123,13 @@ fn is_valid_message_type(msg_type: u8) -> bool {
         crate::network::tor::MSG_TYPE_PAYMENT_SENT |
         crate::network::tor::MSG_TYPE_PAYMENT_ACCEPTED |
         crate::network::tor::MSG_TYPE_CALL_SIGNALING |
+        crate::network::tor::MSG_TYPE_STICKER |
         crate::network::tor::MSG_TYPE_PROFILE_UPDATE |
         crate::network::tor::MSG_TYPE_CRDT_OPS |
         crate::network::tor::MSG_TYPE_SYNC_REQUEST |
-        crate::network::tor::MSG_TYPE_SYNC_CHUNK
+        crate::network::tor::MSG_TYPE_SYNC_CHUNK |
+        crate::network::tor::MSG_TYPE_ROUTING_UPDATE |
+        crate::network::tor::MSG_TYPE_ROUTING_REQUEST
     )
 }
 
@@ -208,6 +211,13 @@ static GLOBAL_TOR_EVENT_JVM: OnceCell<jni::JavaVM> = OnceCell::new();
 /// This runtime persists for the lifetime of the process, allowing spawned tasks to continue running
 static GLOBAL_RUNTIME: Lazy<tokio::runtime::Runtime> = Lazy::new(|| {
     tokio::runtime::Runtime::new().expect("Failed to create global Tokio runtime")
+});
+
+/// Concurrency cap for outbound Tor sends.
+/// Limits parallel SOCKS connections to avoid overwhelming Tor circuits.
+/// 6 concurrent sends is enough for group fanout without melting Tor.
+static SEND_SEMAPHORE: Lazy<tokio::sync::Semaphore> = Lazy::new(|| {
+    tokio::sync::Semaphore::new(6)
 });
 
 /// Global storage for Pong response channels
@@ -1905,10 +1915,13 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendPing(
                                         match pingpong_pong.verify(&recipient_ed25519_verifying) {
                                             Ok(true) => {
                                                 log::info!("PONG_SIG_OK: Instant Pong signature verified for ping_id={}", ping_id);
-                                                // Store verified pong and clean up signer entry
+                                                // Store verified pong session for waitForPong to consume
                                                 crate::network::pingpong::store_pong_session(&ping_id, pingpong_pong);
-                                                OUTGOING_PING_SIGNERS.lock().unwrap().remove(&ping_id);
-                                                delete_pending_ping_db(&mut env, &ping_id);
+                                                // Track verification — prevents PONG_SIG_REJECT on late listener duplicates
+                                                VERIFIED_PONG_IDS.lock().unwrap().insert(ping_id.clone(), std::time::Instant::now());
+                                                // Deferred signer cleanup: keep signer for 5 min (periodic cleanup handles removal)
+                                                // This ensures late pongs can still verify if VERIFIED_PONG_IDS was lost to process restart
+                                                // Old behavior: immediate remove → caused PONG_SIG_REJECT race
                                             },
                                             Ok(false) => {
                                                 log::error!("PONG_SIG_INVALID: Instant Pong signature verification FAILED for ping_id={}", ping_id);
@@ -2937,6 +2950,9 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_decryptAndStorePongFro
     pong_wire: JByteArray,
 ) -> jboolean {
     catch_panic!(env, {
+        // Periodic cleanup of VERIFIED_PONG_IDS + stale OUTGOING_PING_SIGNERS
+        cleanup_verified_pong_ids(&mut env);
+
         let wire_bytes = match jbytearray_to_vec(&mut env, pong_wire) {
             Ok(v) => v,
             Err(e) => {
@@ -3031,6 +3047,18 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_decryptAndStorePongFro
         let ping_id = hex::encode(&pong_token.ping_nonce);
         log::info!("Received Pong for ping_id: {}", ping_id);
 
+        // Duplicate PONG guard: skip if this ping_id was already verified.
+        // Check both GLOBAL_PONG_SESSIONS (pong stored but not yet consumed by waitForPong)
+        // AND VERIFIED_PONG_IDS (pong was verified + consumed — prevents PONG_SIG_REJECT race).
+        if crate::network::pingpong::get_pong_session(&ping_id).is_some() {
+            log::info!("PONG_DUP_SKIP: ping_id={} already verified (pong session exists) — ignoring duplicate", ping_id);
+            return 1; // success (no-op)
+        }
+        if VERIFIED_PONG_IDS.lock().unwrap().contains_key(&ping_id) {
+            log::info!("PONG_DUP_SKIP: ping_id={} already verified (in VERIFIED_PONG_IDS) — ignoring late duplicate", ping_id);
+            return 1; // success (no-op)
+        }
+
         // Convert message::PongToken to pingpong::PongToken
         let pingpong_token = crate::network::pingpong::PongToken {
             protocol_version: pong_token.protocol_version,
@@ -3064,8 +3092,9 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_decryptAndStorePongFro
                         match pingpong_token.verify(&verifying_key) {
                             Ok(true) => {
                                 log::info!("PONG_SIG_OK: Listener Pong signature verified for ping_id={}", ping_id);
-                                OUTGOING_PING_SIGNERS.lock().unwrap().remove(&ping_id);
-                                delete_pending_ping_db(&mut env, &ping_id);
+                                // Track verification — prevents PONG_SIG_REJECT on late duplicates
+                                VERIFIED_PONG_IDS.lock().unwrap().insert(ping_id.clone(), std::time::Instant::now());
+                                // Deferred signer cleanup (periodic cleanup handles removal after 5 min)
                             },
                             Ok(false) => {
                                 log::error!("PONG_SIG_INVALID: Listener Pong signature verification FAILED for ping_id={} — dropping", ping_id);
@@ -3259,38 +3288,44 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendMessageBlob(
         log::info!("Wire message: {} bytes (1-byte type + 32-byte X25519 pubkey + {} bytes encrypted)",
             wire_message.len(), message_bytes.len());
 
-        // Get Tor manager
-        let tor_manager = get_tor_manager();
-
-        // Send message blob via Tor using global runtime
+        // Send message blob via Tor using global runtime.
+        // No TorManager lock — connect_to_onion goes straight to SOCKS.
+        // Semaphore caps concurrent sends to avoid overwhelming Tor circuits.
         let result = GLOBAL_RUNTIME.block_on(async {
-            // Use port 9151 for friend requests (0x07, 0x08), port 9150 for regular messages
             const FRIEND_REQUEST_PORT: u16 = 9151;
             const MESSAGE_PORT: u16 = 9150;
 
             let port = match msg_type {
-                0x07 | 0x08 => FRIEND_REQUEST_PORT, // FRIEND_REQUEST or FRIEND_RESPONSE
-                _ => MESSAGE_PORT // Regular messages
+                0x07 | 0x08 => FRIEND_REQUEST_PORT,
+                _ => MESSAGE_PORT
             };
 
-            // Add 15-second timeout for Tor connection and send
-            // This prevents blocking indefinitely when Tor circuits are slow
-            let timeout_duration = std::time::Duration::from_secs(15);
+            // 1) Acquire semaphore permit (caps at 6 concurrent sends)
+            let _permit = SEND_SEMAPHORE.acquire().await
+                .map_err(|_| Box::new(std::io::Error::new(
+                    std::io::ErrorKind::Other, "Send semaphore closed"
+                )) as Box<dyn std::error::Error>)?;
+
+            // 2) Timeout starts AFTER permit — queue time doesn't burn the budget
+            let timeout_duration = std::time::Duration::from_secs(90);
 
             tokio::time::timeout(timeout_duration, async {
-                // Connect to recipient
-                let tor = tor_manager.lock().unwrap();
-                let mut conn = tor.connect(&onion_address, port).await?;
+                // 3) Connect via SOCKS directly — no TorManager mutex
+                let mut conn = crate::network::tor::connect_to_onion(&onion_address, port).await
+                    .map_err(|e| Box::new(std::io::Error::new(
+                        std::io::ErrorKind::ConnectionRefused, e.to_string()
+                    )) as Box<dyn std::error::Error>)?;
 
-                // Send wire message (with X25519 pubkey prefix)
-                tor.send(&mut conn, &wire_message).await?;
+                // 4) Send wire message (length-prefixed via TorConnection::send)
+                conn.send(&wire_message).await?;
 
                 log::info!("Message blob sent successfully to {}", onion_address);
                 Ok::<(), Box<dyn std::error::Error>>(())
             }).await.map_err(|_| {
-                log::warn!("Send message blob timed out after 15 seconds to {}", onion_address);
+                log::warn!("Send message blob timed out after 90s to {}", onion_address);
                 Box::new(std::io::Error::new(std::io::ErrorKind::TimedOut, "Operation timed out")) as Box<dyn std::error::Error>
             })?
+            // _permit drops here (RAII) — semaphore slot freed
         });
 
         match result {
@@ -3430,6 +3465,50 @@ static STORED_PINGS: Lazy<Arc<Mutex<HashMap<String, crate::network::PingToken>>>
 /// Used to verify PONG and ACK signatures from the listener path
 static OUTGOING_PING_SIGNERS: Lazy<Arc<Mutex<HashMap<String, [u8; 32]>>>> =
     Lazy::new(|| Arc::new(Mutex::new(HashMap::new())));
+
+/// Tracks ping IDs that have been successfully verified (pong signature OK).
+/// Prevents PONG_SIG_REJECT when a late duplicate pong arrives after:
+///   1. Instant mode verified + removed signer
+///   2. waitForPong consumed pong from GLOBAL_PONG_SESSIONS
+///   3. Listener pong arrives → duplicate guard misses (consumed) → signer missing
+/// Entries auto-expire after 5 minutes via inline cleanup.
+static VERIFIED_PONG_IDS: Lazy<Arc<Mutex<HashMap<String, std::time::Instant>>>> =
+    Lazy::new(|| Arc::new(Mutex::new(HashMap::new())));
+
+/// Cleanup stale entries from VERIFIED_PONG_IDS and OUTGOING_PING_SIGNERS.
+/// Called periodically (on each processIncomingPong) to prevent unbounded growth.
+/// VERIFIED_PONG_IDS: entries older than 5 minutes are removed.
+/// OUTGOING_PING_SIGNERS: entries verified (in VERIFIED_PONG_IDS) and older than 5 min are eligible.
+fn cleanup_verified_pong_ids(env: &mut JNIEnv) {
+    const MAX_AGE: std::time::Duration = std::time::Duration::from_secs(300); // 5 minutes
+
+    // Clean up old VERIFIED_PONG_IDS entries
+    {
+        let mut verified = VERIFIED_PONG_IDS.lock().unwrap();
+        let before = verified.len();
+        verified.retain(|_, instant| instant.elapsed() < MAX_AGE);
+        let removed = before - verified.len();
+        if removed > 0 {
+            log::info!("VERIFIED_PONG_IDS cleanup: removed {} expired entries ({} remaining)", removed, verified.len());
+        }
+    }
+
+    // Clean up OUTGOING_PING_SIGNERS for verified ping IDs (deferred from verification time)
+    let verified_ids: Vec<String> = VERIFIED_PONG_IDS.lock().unwrap().keys().cloned().collect();
+    if !verified_ids.is_empty() {
+        let mut signers = OUTGOING_PING_SIGNERS.lock().unwrap();
+        for id in &verified_ids {
+            if signers.remove(id).is_some() {
+                log::debug!("Deferred signer cleanup: removed OUTGOING_PING_SIGNERS entry for ping_id={}", &id[..8.min(id.len())]);
+                // Also clean DB entry (best-effort)
+                delete_pending_ping_db(env, id);
+            }
+        }
+    }
+
+    // Also clean the expired pong sessions
+    crate::network::pingpong::cleanup_expired_pongs();
+}
 
 /// Store a pending ping signer in the Kotlin Room database (JNI callback).
 /// Called after inserting into OUTGOING_PING_SIGNERS in-memory map.
