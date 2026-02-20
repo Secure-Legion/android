@@ -56,6 +56,10 @@ class KeyManager private constructor(context: Context) {
         private const val MESSAGING_ONION_ALIAS = "${KEYSTORE_ALIAS_PREFIX}messaging_onion"
         private const val VOICE_ONION_ALIAS = "${KEYSTORE_ALIAS_PREFIX}voice_onion"
         private const val CONTACT_PIN_ALIAS = "${KEYSTORE_ALIAS_PREFIX}contact_pin"
+        private const val PREVIOUS_PIN_ALIAS = "${KEYSTORE_ALIAS_PREFIX}previous_pin"
+        private const val PIN_ROTATION_TIMESTAMP_ALIAS = "${KEYSTORE_ALIAS_PREFIX}pin_rotation_ts"
+        private const val PIN_DECRYPT_COUNT_ALIAS = "${KEYSTORE_ALIAS_PREFIX}pin_decrypt_count"
+        private const val FRIEND_REQ_ROTATION_COUNT_ALIAS = "${KEYSTORE_ALIAS_PREFIX}friend_req_rotation_count"
         private const val IPFS_CID_ALIAS = "${KEYSTORE_ALIAS_PREFIX}ipfs_cid"
         private const val SEED_PHRASE_ALIAS = "${KEYSTORE_ALIAS_PREFIX}wallet_main_seed"
 
@@ -929,12 +933,20 @@ class KeyManager private constructor(context: Context) {
         val seedPhrase = encryptedPrefs.getString(SEED_PHRASE_ALIAS, null) ?: return false
         val bip39Seed = mnemonicToSeed(seedPhrase)
 
+        // Apply rotation counter for friend request identity changes
+        val effectiveDomainSep = if (domainSep == "friend_req") {
+            val count = getFriendReqRotationCount()
+            if (count > 0) "friend_req_$count" else "friend_req"
+        } else {
+            domainSep
+        }
+
         try {
             // Step 1: Domain separation — SHA-256(bip39_seed || domainSep) → 32-byte Ed25519 seed
             // Matches deriveHiddenServiceKeyPair() / deriveFriendRequestKeyPair() / deriveVoiceServiceKeyPair()
             val sha256 = MessageDigest.getInstance("SHA-256")
             sha256.update(bip39Seed)
-            sha256.update(domainSep.toByteArray())
+            sha256.update(effectiveDomainSep.toByteArray())
             val ed25519Seed = sha256.digest()
 
             try {
@@ -971,10 +983,10 @@ class KeyManager private constructor(context: Context) {
                 File(dir, "hs_ed25519_public_key").writeBytes(publicFileContent)
 
                 // Step 6: Write hostname file
-                val onionAddress = RustBridge.computeOnionAddressFromSeed(bip39Seed, domainSep)
+                val onionAddress = RustBridge.computeOnionAddressFromSeed(bip39Seed, effectiveDomainSep)
                 File(dir, "hostname").writeText("$onionAddress\n")
 
-                Log.i(TAG, "Seeded HiddenServiceDir with deterministic keys: ${dir.name} ($domainSep)")
+                Log.i(TAG, "Seeded HiddenServiceDir with deterministic keys: ${dir.name} ($effectiveDomainSep)")
 
                 // Clean up expanded key material
                 expanded.fill(0)
@@ -1006,6 +1018,100 @@ class KeyManager private constructor(context: Context) {
      */
     fun getContactPin(): String? {
         return encryptedPrefs.getString(CONTACT_PIN_ALIAS, null)
+    }
+
+    // ==================== PIN ROTATION (Forward Secrecy) ====================
+
+    fun storePreviousPin(pin: String) {
+        encryptedPrefs.edit { putString(PREVIOUS_PIN_ALIAS, pin) }
+    }
+
+    fun getPreviousPin(): String? {
+        return encryptedPrefs.getString(PREVIOUS_PIN_ALIAS, null)
+    }
+
+    fun clearPreviousPin() {
+        encryptedPrefs.edit { remove(PREVIOUS_PIN_ALIAS) }
+        Log.i(TAG, "Previous PIN cleared (grace period expired)")
+    }
+
+    fun storePinRotationTimestamp(ts: Long) {
+        encryptedPrefs.edit { putLong(PIN_ROTATION_TIMESTAMP_ALIAS, ts) }
+    }
+
+    fun getPinRotationTimestamp(): Long {
+        return encryptedPrefs.getLong(PIN_ROTATION_TIMESTAMP_ALIAS, 0L)
+    }
+
+    fun incrementPinDecryptCount(): Int {
+        val current = encryptedPrefs.getInt(PIN_DECRYPT_COUNT_ALIAS, 0)
+        val next = current + 1
+        encryptedPrefs.edit { putInt(PIN_DECRYPT_COUNT_ALIAS, next) }
+        return next
+    }
+
+    fun getPinDecryptCount(): Int {
+        return encryptedPrefs.getInt(PIN_DECRYPT_COUNT_ALIAS, 0)
+    }
+
+    fun resetPinDecryptCount() {
+        encryptedPrefs.edit { putInt(PIN_DECRYPT_COUNT_ALIAS, 0) }
+    }
+
+    /**
+     * Rotate PIN if time or count threshold exceeded.
+     * Current PIN → previous PIN, new random PIN → current PIN.
+     * Returns true if rotation occurred.
+     */
+    fun rotatePinIfNeeded(cardManager: com.securelegion.services.ContactCardManager, intervalMs: Long, maxDecrypts: Int): Boolean {
+        if (intervalMs <= 0 && maxDecrypts <= 0) return false // "Never" rotation
+
+        val now = System.currentTimeMillis()
+        val lastRotation = getPinRotationTimestamp()
+        val decryptCount = getPinDecryptCount()
+
+        val timeExpired = intervalMs > 0 && lastRotation > 0 && (now - lastRotation >= intervalMs)
+        val countExceeded = maxDecrypts > 0 && decryptCount >= maxDecrypts
+
+        if (!timeExpired && !countExceeded) return false
+
+        val currentPin = getContactPin() ?: return false
+        val newPin = cardManager.generateRandomPin()
+
+        // Current → previous, new → current
+        storePreviousPin(currentPin)
+        storeContactPin(newPin)
+        storePinRotationTimestamp(now)
+        resetPinDecryptCount()
+
+        Log.i(TAG, "PIN rotated (time=$timeExpired, count=$countExceeded). New PIN active.")
+        return true
+    }
+
+    /**
+     * Expire the previous PIN if the grace period has passed.
+     */
+    fun expirePreviousPinIfNeeded(gracePeriodMs: Long) {
+        val previousPin = getPreviousPin() ?: return
+        val rotationTs = getPinRotationTimestamp()
+        if (rotationTs <= 0) return
+
+        if (System.currentTimeMillis() - rotationTs >= gracePeriodMs) {
+            clearPreviousPin()
+        }
+    }
+
+    // ==================== FRIEND REQUEST IDENTITY ROTATION ====================
+
+    fun getFriendReqRotationCount(): Int {
+        return encryptedPrefs.getInt(FRIEND_REQ_ROTATION_COUNT_ALIAS, 0)
+    }
+
+    fun incrementFriendReqRotationCount(): Int {
+        val next = getFriendReqRotationCount() + 1
+        encryptedPrefs.edit { putInt(FRIEND_REQ_ROTATION_COUNT_ALIAS, next) }
+        Log.i(TAG, "Friend request identity rotation count: $next")
+        return next
     }
 
     /**
@@ -1419,6 +1525,97 @@ class KeyManager private constructor(context: Context) {
             throw SecurityException("Voice file authentication failed", e)
         } finally {
             // SECURITY: Zeroize key from memory
+            key?.let { java.util.Arrays.fill(it, 0.toByte()) }
+        }
+    }
+
+    // ==================== IMAGE FILE ENCRYPTION (AES-256-GCM at rest) ====================
+
+    /**
+     * Derive image file encryption key from BIP39 seed.
+     * Uses separate domain separator from voice keys for key isolation.
+     */
+    fun getImageFileEncryptionKey(): ByteArray {
+        if (!isInitialized()) {
+            throw IllegalStateException("KeyManager not initialized")
+        }
+
+        var seed: ByteArray? = null
+        try {
+            seed = getSeedBytes()
+            val digest = MessageDigest.getInstance("SHA-256")
+            digest.update(seed)
+            digest.update("secure_legion_image_files_v1".toByteArray(Charsets.UTF_8))
+            return digest.digest()
+        } finally {
+            seed?.let { java.util.Arrays.fill(it, 0.toByte()) }
+        }
+    }
+
+    /**
+     * Encrypt image file data using AES-256-GCM.
+     * @param imageBytes Raw image data to encrypt
+     * @return Encrypted data with format: [12-byte nonce][encrypted data][16-byte auth tag]
+     */
+    fun encryptImageFile(imageBytes: ByteArray): ByteArray {
+        var key: ByteArray? = null
+        try {
+            key = getImageFileEncryptionKey()
+
+            val nonce = ByteArray(12)
+            java.security.SecureRandom().nextBytes(nonce)
+
+            val cipher = javax.crypto.Cipher.getInstance("AES/GCM/NoPadding")
+            val secretKey = javax.crypto.spec.SecretKeySpec(key, "AES")
+            val gcmSpec = javax.crypto.spec.GCMParameterSpec(128, nonce)
+            cipher.init(javax.crypto.Cipher.ENCRYPT_MODE, secretKey, gcmSpec)
+
+            val encrypted = cipher.doFinal(imageBytes)
+
+            val result = ByteArray(nonce.size + encrypted.size)
+            System.arraycopy(nonce, 0, result, 0, nonce.size)
+            System.arraycopy(encrypted, 0, result, nonce.size, encrypted.size)
+
+            Log.i(TAG, "Encrypted image file: ${imageBytes.size} bytes → ${result.size} bytes")
+            return result
+        } finally {
+            key?.let { java.util.Arrays.fill(it, 0.toByte()) }
+        }
+    }
+
+    /**
+     * Decrypt image file data using AES-256-GCM.
+     * @param encryptedData Encrypted data with format: [12-byte nonce][encrypted data][16-byte auth tag]
+     * @return Decrypted image data
+     */
+    fun decryptImageFile(encryptedData: ByteArray): ByteArray {
+        var key: ByteArray? = null
+        try {
+            if (encryptedData.size < 12 + 16) {
+                throw IllegalArgumentException("Encrypted image data too short (minimum 28 bytes)")
+            }
+
+            key = getImageFileEncryptionKey()
+
+            val nonce = ByteArray(12)
+            System.arraycopy(encryptedData, 0, nonce, 0, 12)
+
+            val encrypted = ByteArray(encryptedData.size - 12)
+            System.arraycopy(encryptedData, 12, encrypted, 0, encrypted.size)
+
+            val cipher = javax.crypto.Cipher.getInstance("AES/GCM/NoPadding")
+            val secretKey = javax.crypto.spec.SecretKeySpec(key, "AES")
+            val gcmSpec = javax.crypto.spec.GCMParameterSpec(128, nonce)
+            cipher.init(javax.crypto.Cipher.DECRYPT_MODE, secretKey, gcmSpec)
+
+            val decrypted = cipher.doFinal(encrypted)
+
+            Log.i(TAG, "Decrypted image file: ${encryptedData.size} bytes → ${decrypted.size} bytes")
+            return decrypted
+        } catch (e: javax.crypto.AEADBadTagException) {
+            Log.e(TAG, "Image file authentication failed - data corrupted or tampered")
+            throw SecurityException("Image file authentication failed", e)
+        } finally {
             key?.let { java.util.Arrays.fill(it, 0.toByte()) }
         }
     }

@@ -26,6 +26,9 @@ import com.securelegion.ui.adapters.ContactSelectionAdapter
 import com.securelegion.ui.adapters.SelectedMembersAdapter
 import com.securelegion.utils.ImagePicker
 import com.securelegion.utils.ThemedToast
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -91,6 +94,7 @@ class CreateGroupActivity : BaseActivity() {
         initializeViews()
         setupClickListeners()
         setupSelectedMembersRecyclerView()
+        setupBottomNav()
     }
 
     private fun setupSelectedMembersRecyclerView() {
@@ -118,6 +122,18 @@ class CreateGroupActivity : BaseActivity() {
 
     }
 
+    private fun setupBottomNav() {
+        WindowCompat.setDecorFitsSystemWindows(window, false)
+        val bottomNav = findViewById<View>(R.id.bottomNav)
+        ViewCompat.setOnApplyWindowInsetsListener(findViewById(android.R.id.content)) { _, windowInsets ->
+            val insets = windowInsets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())
+            bottomNav?.setPadding(bottomNav.paddingLeft, bottomNav.paddingTop, bottomNav.paddingRight, insets.bottom)
+            windowInsets
+        }
+
+        BottomNavigationHelper.setupBottomNavigation(this)
+    }
+
     private fun setupClickListeners() {
         // Back button
         backButton.setOnClickListener {
@@ -131,6 +147,11 @@ class CreateGroupActivity : BaseActivity() {
 
         // Group icon container - image picker
         groupIconContainer.setOnClickListener {
+            showGroupIconPickerDialog()
+        }
+
+        // Edit icon on group photo
+        findViewById<View>(R.id.editGroupPhotoButton)?.setOnClickListener {
             showGroupIconPickerDialog()
         }
 

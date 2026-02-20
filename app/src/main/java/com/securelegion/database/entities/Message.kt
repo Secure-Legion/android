@@ -334,6 +334,7 @@ data class Message(
         const val MESSAGE_TYPE_TEXT = "TEXT"
         const val MESSAGE_TYPE_VOICE = "VOICE"
         const val MESSAGE_TYPE_IMAGE = "IMAGE"
+        const val MESSAGE_TYPE_STICKER = "STICKER"
         const val MESSAGE_TYPE_PAYMENT_REQUEST = "PAYMENT_REQUEST"
         const val MESSAGE_TYPE_PAYMENT_SENT = "PAYMENT_SENT"
         const val MESSAGE_TYPE_PAYMENT_ACCEPTED = "PAYMENT_ACCEPTED"

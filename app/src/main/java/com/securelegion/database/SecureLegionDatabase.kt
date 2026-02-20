@@ -12,9 +12,11 @@ import com.securelegion.database.dao.CallQualityLogDao
 import com.securelegion.database.dao.ContactDao
 import com.securelegion.database.dao.ContactKeyChainDao
 import com.securelegion.database.dao.GroupDao
+import com.securelegion.database.dao.GroupPeerDao
 import com.securelegion.database.dao.CrdtOpLogDao
 import com.securelegion.database.dao.MessageDao
 import com.securelegion.database.dao.PendingFriendRequestDao
+import com.securelegion.database.dao.PendingGroupDeliveryDao
 import com.securelegion.database.dao.PendingPingDao
 import com.securelegion.database.dao.PingInboxDao
 import com.securelegion.database.dao.ReceivedIdDao
@@ -26,9 +28,11 @@ import com.securelegion.database.entities.CallQualityLog
 import com.securelegion.database.entities.Contact
 import com.securelegion.database.entities.ContactKeyChain
 import com.securelegion.database.entities.Group
+import com.securelegion.database.entities.GroupPeer
 import com.securelegion.database.entities.CrdtOpLog
 import com.securelegion.database.entities.Message
 import com.securelegion.database.entities.PendingFriendRequest
+import com.securelegion.database.entities.PendingGroupDelivery
 import com.securelegion.database.entities.PendingPing
 import com.securelegion.database.entities.PingInbox
 import com.securelegion.database.entities.ReceivedId
@@ -52,8 +56,8 @@ import net.zetetic.database.sqlcipher.SupportOpenHelperFactory
  * Database file location: /data/data/com.securelegion/databases/secure_legion.db
  */
 @Database(
-    entities = [Contact::class, Message::class, Wallet::class, ReceivedId::class, UsedSignature::class, Group::class, CrdtOpLog::class, CallHistory::class, CallQualityLog::class, PingInbox::class, ContactKeyChain::class, SkippedMessageKey::class, PendingFriendRequest::class, PendingPing::class],
-    version = 42,
+    entities = [Contact::class, Message::class, Wallet::class, ReceivedId::class, UsedSignature::class, Group::class, CrdtOpLog::class, CallHistory::class, CallQualityLog::class, PingInbox::class, ContactKeyChain::class, SkippedMessageKey::class, PendingFriendRequest::class, PendingPing::class, GroupPeer::class, PendingGroupDelivery::class],
+    version = 43,
     exportSchema = false
 )
 abstract class SecureLegionDatabase : RoomDatabase() {
@@ -72,6 +76,8 @@ abstract class SecureLegionDatabase : RoomDatabase() {
     abstract fun skippedMessageKeyDao(): SkippedMessageKeyDao
     abstract fun pendingFriendRequestDao(): PendingFriendRequestDao
     abstract fun pendingPingDao(): PendingPingDao
+    abstract fun groupPeerDao(): GroupPeerDao
+    abstract fun pendingGroupDeliveryDao(): PendingGroupDeliveryDao
 
     companion object {
         private const val TAG = "SecureLegionDatabase"
@@ -883,6 +889,48 @@ abstract class SecureLegionDatabase : RoomDatabase() {
         }
 
         /**
+         * Migration from version 42 to 43: Add group_peers + pending_group_delivery tables
+         * Enables group message routing for non-friend members (admin chain support).
+         */
+        private val MIGRATION_42_43 = object : Migration(42, 43) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                Log.i(TAG, "Migrating database from version 42 to 43")
+                // GroupPeer: routing-only storage for group members (separate from Contact/friends)
+                database.execSQL("""
+                    CREATE TABLE IF NOT EXISTS group_peers (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        groupId TEXT NOT NULL,
+                        pubkeyHex TEXT NOT NULL,
+                        x25519PubkeyHex TEXT NOT NULL,
+                        messagingOnion TEXT NOT NULL,
+                        displayName TEXT NOT NULL,
+                        addedAt INTEGER NOT NULL
+                    )
+                """.trimIndent())
+                database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_group_peers_groupId_pubkeyHex ON group_peers(groupId, pubkeyHex)")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_group_peers_groupId ON group_peers(groupId)")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_group_peers_groupId_x25519PubkeyHex ON group_peers(groupId, x25519PubkeyHex)")
+
+                // PendingGroupDelivery: queue for ops that couldn't be delivered (missing routing)
+                database.execSQL("""
+                    CREATE TABLE IF NOT EXISTS pending_group_delivery (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        groupId TEXT NOT NULL,
+                        targetPubkeyHex TEXT NOT NULL,
+                        wireType INTEGER NOT NULL,
+                        payload BLOB NOT NULL,
+                        attemptCount INTEGER NOT NULL DEFAULT 0,
+                        nextRetryAt INTEGER NOT NULL DEFAULT 0,
+                        createdAt INTEGER NOT NULL
+                    )
+                """.trimIndent())
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_pending_group_delivery_groupId_targetPubkeyHex ON pending_group_delivery(groupId, targetPubkeyHex)")
+
+                Log.i(TAG, "Migration 42→43 complete: added group_peers + pending_group_delivery tables")
+            }
+        }
+
+        /**
          * All migrations in a single array for DRY registration + validation.
          * RULE: When adding a new migration, append it here AND bump the @Database version.
          */
@@ -897,7 +945,7 @@ abstract class SecureLegionDatabase : RoomDatabase() {
             MIGRATION_29_30, MIGRATION_30_31, MIGRATION_31_32, MIGRATION_32_33,
             MIGRATION_33_34, MIGRATION_34_35, MIGRATION_35_36, MIGRATION_36_37,
             MIGRATION_37_38, MIGRATION_38_39, MIGRATION_39_40, MIGRATION_40_41,
-            MIGRATION_41_42
+            MIGRATION_41_42, MIGRATION_42_43
         )
 
         /**
@@ -994,7 +1042,7 @@ abstract class SecureLegionDatabase : RoomDatabase() {
                     DATABASE_NAME
                 )
                     .openHelperFactory(factory)
-                    .addMigrations(*ALL_MIGRATIONS.also { validateMigrationChain(it, 42) })
+                    .addMigrations(*ALL_MIGRATIONS.also { validateMigrationChain(it, 43) })
                     .addCallback(object : RoomDatabase.Callback() {
                         override fun onCreate(db: SupportSQLiteDatabase) {
                             super.onCreate(db)
@@ -1031,7 +1079,27 @@ abstract class SecureLegionDatabase : RoomDatabase() {
 
                     override fun onOpen(db: SupportSQLiteDatabase) {
                         super.onOpen(db)
-                        Log.i(TAG, "Database opened")
+
+                        // Emergency CursorWindow protection: nuke oversized inline blobs.
+                        // Break-glass recovery for legacy rows with multi-MB base64 data.
+                        // Primary defense is LITE_COLS in MessageDao (CASE/NULL AS in queries).
+                        // New images are stored as files (not inline base64), so this only
+                        // fires for legacy data from before the file-based storage fix.
+                        // Threshold 1.8MB: matches LITE_COLS CASE threshold.
+                        try {
+                            db.execSQL("""
+                                UPDATE messages SET attachmentData = NULL
+                                WHERE attachmentData IS NOT NULL AND length(attachmentData) > 1800000
+                            """.trimIndent())
+                            db.execSQL("""
+                                UPDATE messages SET encryptedPayload = NULL
+                                WHERE encryptedPayload IS NOT NULL AND length(encryptedPayload) > 1800000
+                            """.trimIndent())
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Failed to clean oversized blobs", e)
+                        }
+
+                        Log.i(TAG, "Database opened (blob cleanup applied)")
                     }
                 })
                 .build()

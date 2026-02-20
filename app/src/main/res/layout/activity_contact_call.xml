@@ -1,0 +1,243 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.constraintlayout.widget.ConstraintLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#000000">
+
+    <!-- Header -->
+    <LinearLayout
+        android:id="@+id/header"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:paddingStart="20dp"
+        android:paddingEnd="20dp"
+        android:paddingTop="16dp"
+        android:paddingBottom="16dp"
+        android:fitsSystemWindows="true"
+        app:layout_constraintTop_toTopOf="parent">
+
+        <!-- Back Button -->
+        <FrameLayout
+            android:id="@+id/backButton"
+            android:layout_width="42dp"
+            android:layout_height="42dp"
+            android:layout_marginStart="8dp"
+            android:background="@drawable/top_icon_bg"
+            android:clickable="true"
+            android:focusable="true">
+
+            <ImageView
+                android:layout_width="20dp"
+                android:layout_height="20dp"
+                android:layout_gravity="center"
+                android:src="@drawable/ic_back_arrow"
+                android:contentDescription="Back" />
+
+        </FrameLayout>
+
+        <!-- Spacer -->
+        <View
+            android:layout_width="0dp"
+            android:layout_height="1dp"
+            android:layout_weight="1" />
+
+        <!-- Call History Button -->
+        <FrameLayout
+            android:id="@+id/callHistoryButton"
+            android:layout_width="42dp"
+            android:layout_height="42dp"
+            android:layout_marginEnd="8dp"
+            android:background="@drawable/top_icon_bg"
+            android:clickable="true"
+            android:focusable="true">
+
+            <ImageView
+                android:layout_width="20dp"
+                android:layout_height="20dp"
+                android:layout_gravity="center"
+                android:src="@drawable/ic_clock"
+                app:tint="?attr/colorOnSurfaceVariant"
+                android:contentDescription="Call History" />
+
+        </FrameLayout>
+
+    </LinearLayout>
+
+    <!-- Content -->
+    <ScrollView
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:fillViewport="true"
+        app:layout_constraintTop_toBottomOf="@id/header"
+        app:layout_constraintBottom_toTopOf="@id/bottomNav">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:gravity="center_horizontal">
+
+            <!-- Profile Photo -->
+            <ImageView
+                android:id="@+id/profilePicture"
+                android:layout_width="140dp"
+                android:layout_height="140dp"
+                android:src="@drawable/default_avatar"
+                android:background="@drawable/profile_circle_bg"
+                android:layout_marginTop="24dp"
+                android:layout_marginBottom="16dp"
+                android:contentDescription="Profile Picture" />
+
+            <!-- Username -->
+            <TextView
+                android:id="@+id/contactName"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Contact"
+                android:textSize="22sp"
+                android:textColor="?attr/colorOnSurface"
+                android:fontFamily="@font/space_grotesk_bold"
+                android:layout_marginBottom="24dp" />
+
+            <!-- Action Buttons: Call + Message -->
+            <LinearLayout
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center"
+                android:layout_marginBottom="32dp">
+
+                <!-- Call Button -->
+                <LinearLayout
+                    android:id="@+id/actionCall"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:gravity="center"
+                    android:layout_marginEnd="32dp"
+                    android:clickable="true"
+                    android:focusable="true">
+
+                    <FrameLayout
+                        android:layout_width="50dp"
+                        android:layout_height="50dp"
+                        android:background="@drawable/settings_icon_bg">
+
+                        <ImageView
+                            android:layout_width="22dp"
+                            android:layout_height="22dp"
+                            android:layout_gravity="center"
+                            android:src="@drawable/ic_call"
+                            app:tint="?attr/colorOnSurfaceVariant"
+                            android:contentDescription="Call" />
+
+                    </FrameLayout>
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Call"
+                        android:textSize="11sp"
+                        android:textColor="#8C8C8C"
+                        android:fontFamily="@font/poppins_medium"
+                        android:layout_marginTop="6dp" />
+
+                </LinearLayout>
+
+                <!-- Message Button -->
+                <LinearLayout
+                    android:id="@+id/actionMessage"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:gravity="center"
+                    android:clickable="true"
+                    android:focusable="true">
+
+                    <FrameLayout
+                        android:layout_width="50dp"
+                        android:layout_height="50dp"
+                        android:background="@drawable/settings_icon_bg">
+
+                        <ImageView
+                            android:layout_width="22dp"
+                            android:layout_height="22dp"
+                            android:layout_gravity="center"
+                            android:src="@drawable/ic_nav_chat"
+                            app:tint="?attr/colorOnSurfaceVariant"
+                            android:contentDescription="Message" />
+
+                    </FrameLayout>
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Message"
+                        android:textSize="11sp"
+                        android:textColor="#8C8C8C"
+                        android:fontFamily="@font/poppins_medium"
+                        android:layout_marginTop="6dp" />
+
+                </LinearLayout>
+
+            </LinearLayout>
+
+            <!-- Call History Header -->
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Recent Calls"
+                android:textSize="16sp"
+                android:textColor="#8C8C8C"
+                android:fontFamily="@font/poppins_medium"
+                android:paddingStart="28dp"
+                android:paddingEnd="28dp"
+                android:layout_marginBottom="12dp" />
+
+            <!-- Call History List -->
+            <androidx.recyclerview.widget.RecyclerView
+                android:id="@+id/historyRecyclerView"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:paddingStart="28dp"
+                android:paddingEnd="28dp"
+                android:paddingBottom="16dp"
+                android:clipToPadding="false"
+                android:nestedScrollingEnabled="false" />
+
+            <!-- Empty State -->
+            <TextView
+                android:id="@+id/emptyStateText"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="No calls yet"
+                android:textSize="14sp"
+                android:textColor="#666666"
+                android:fontFamily="@font/poppins_regular"
+                android:visibility="gone"
+                android:layout_marginTop="24dp"
+                android:layout_marginBottom="24dp" />
+
+        </LinearLayout>
+
+    </ScrollView>
+
+    <!-- Bottom Navigation -->
+    <include
+        android:id="@+id/bottomNav"
+        layout="@layout/bottom_navigation"
+        android:layout_width="0dp"
+        android:layout_height="80dp"
+        android:layout_marginStart="50dp"
+        android:layout_marginEnd="50dp"
+        android:layout_marginBottom="20dp"
+        android:elevation="8dp"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent" />
+
+</androidx.constraintlayout.widget.ConstraintLayout>

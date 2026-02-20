@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>welcome_dots.json Preview</title>
+<style>
+  body { margin: 0; background: #0a0a0a; display: flex; justify-content: center; align-items: center; height: 100vh; }
+  #anim { width: 400px; height: 710px; }
+</style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/lottie-web/5.12.2/lottie.min.js"></script>
+</head>
+<body>
+<div id="anim"></div>
+<script>
+fetch('app/src/main/assets/welcome_dots.json')
+  .then(r => r.json())
+  .then(data => {
+    lottie.loadAnimation({
+      container: document.getElementById('anim'),
+      renderer: 'svg',
+      loop: true,
+      autoplay: true,
+      animationData: data
+    });
+  })
+  .catch(() => {
+    document.getElementById('anim').textContent = 'Failed to load JSON. Drag welcome_dots.json onto https://app.lottiefiles.com/preview instead.';
+    document.getElementById('anim').style.color = '#fff';
+  });
+</script>
+</body>
+</html>

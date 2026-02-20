@@ -60,9 +60,8 @@
             android:layout_marginStart="12dp"
             android:text="@Wizard"
             android:textSize="20sp"
-            android:textColor="#CCCCCC"
+            android:textColor="@color/lock_title_gray"
             android:fontFamily="@font/space_grotesk_bold"
-            android:textStyle="bold"
             android:gravity="start"
             android:clickable="true"
             android:focusable="true"
@@ -104,6 +103,35 @@
         app:layout_constraintTop_toTopOf="parent"
         app:layout_constraintBottom_toBottomOf="parent" />
 
+    <!-- Attachment Panel (Gallery/File/Pay/Location — inline, replaces keyboard) -->
+    <include
+        layout="@layout/bottom_sheet_attachment_picker"
+        android:id="@+id/attachmentPanel"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:visibility="gone"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent" />
+
+    <!-- Media Keyboard Panel (emoji/sticker/GIF — replaces keyboard) -->
+    <com.securelegion.views.MediaKeyboardView
+        android:id="@+id/mediaKeyboardPanel"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:visibility="gone"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent" />
+
+    <!-- Barrier above whichever bottom panel is visible -->
+    <androidx.constraintlayout.widget.Barrier
+        android:id="@+id/bottomPanelBarrier"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        app:barrierDirection="top"
+        app:constraint_referenced_ids="mediaKeyboardPanel,attachmentPanel" />
+
     <!-- Message Input Container -->
     <LinearLayout
         android:id="@+id/messageInputContainer"
@@ -114,7 +142,7 @@
         android:layout_marginStart="12dp"
         android:layout_marginEnd="12dp"
         android:layout_marginBottom="12dp"
-        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintBottom_toTopOf="@id/bottomPanelBarrier"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent">
 
@@ -174,7 +202,28 @@
                     android:paddingTop="10dp"
                     android:paddingBottom="10dp"
                     android:maxLines="4"
+                    android:saveEnabled="false"
                     android:inputType="textCapSentences|textMultiLine" />
+
+                <!-- Emoji Button inside pill (opens emoji/gif/sticker panel) -->
+                <FrameLayout
+                    android:id="@+id/emojiButton"
+                    android:layout_width="40dp"
+                    android:layout_height="40dp"
+                    android:background="?attr/selectableItemBackgroundBorderless"
+                    android:clickable="true"
+                    android:focusable="true">
+
+                    <ImageView
+                        android:id="@+id/emojiButtonIcon"
+                        android:layout_width="22dp"
+                        android:layout_height="22dp"
+                        android:layout_gravity="center"
+                        android:src="@drawable/ic_emoji"
+                        app:tint="?attr/colorOnSurfaceVariant"
+                        android:contentDescription="Emoji picker" />
+
+                </FrameLayout>
 
             </LinearLayout>
 

@@ -31,6 +31,7 @@ class GroupMemberAdapter(
 ) : RecyclerView.Adapter<GroupMemberAdapter.MemberViewHolder>() {
 
     private var openPosition = -1
+    private var currentUserRole: String = "Member"
 
     class MemberViewHolder(view: View) : RecyclerView.ViewHolder(view) {
         val memberAvatar: AvatarView = view.findViewById(R.id.memberAvatar)
@@ -66,8 +67,9 @@ class GroupMemberAdapter(
         // Reset foreground position
         holder.foreground.translationX = if (position == openPosition) ACTION_WIDTH else 0f
 
-        // Disable swipe actions for self
-        if (member.isMe) {
+        // Disable swipe actions for self or non-admin users
+        val canManageMembers = currentUserRole in listOf("Owner", "Admin")
+        if (member.isMe || !canManageMembers) {
             holder.foreground.setOnTouchListener(null)
             holder.foreground.setOnClickListener { onMemberClick(member) }
             return
@@ -167,9 +169,10 @@ class GroupMemberAdapter(
 
     override fun getItemCount() = members.size
 
-    fun updateMembers(newMembers: List<GroupMemberItem>) {
+    fun updateMembers(newMembers: List<GroupMemberItem>, userRole: String = currentUserRole) {
         openPosition = -1
         members = newMembers
+        currentUserRole = userRole
         notifyDataSetChanged()
     }
 

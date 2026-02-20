@@ -28,7 +28,7 @@ class ContactOptionsActivity : BaseActivity() {
     private lateinit var profilePicture: ImageView
     private lateinit var blockContactSwitch: androidx.appcompat.widget.SwitchCompat
     private lateinit var trustedContactSwitch: androidx.appcompat.widget.SwitchCompat
-    private lateinit var trustedContactIcon: ImageView
+    private lateinit var trustedStarIcon: ImageView
     private var fullAddress: String = ""
     private var contactId: Long = -1
     private var isTrustedContact: Boolean = false
@@ -56,11 +56,12 @@ class ContactOptionsActivity : BaseActivity() {
         profilePicture = findViewById(R.id.profilePicture)
         blockContactSwitch = findViewById(R.id.blockContactSwitch)
         trustedContactSwitch = findViewById(R.id.trustedContactSwitch)
-        trustedContactIcon = findViewById(R.id.trustedContactIcon)
+        trustedStarIcon = findViewById(R.id.trustedStarIcon)
     }
 
     private fun setupContactInfo(name: String) {
         contactName.text = name
+        com.securelegion.utils.TextGradient.apply(contactName)
     }
 
     private fun loadContactStatus() {
@@ -104,14 +105,25 @@ class ContactOptionsActivity : BaseActivity() {
 
     private fun updateBlockUI() {
         blockContactSwitch.isChecked = isBlocked
+        val blockLabel = findViewById<TextView>(R.id.blockLabel)
+        val blockIcon = findViewById<ImageView>(R.id.blockIcon)
+        if (isBlocked) {
+            blockLabel?.text = "Unblock"
+            blockIcon?.setColorFilter(android.graphics.Color.parseColor("#FF4444"))
+        } else {
+            blockLabel?.text = "Block"
+            blockIcon?.clearColorFilter()
+        }
     }
 
     private fun updateTrustedContactUI() {
         trustedContactSwitch.isChecked = isTrustedContact
         if (isTrustedContact) {
-            trustedContactIcon.setImageResource(R.drawable.ic_star_filled)
+            trustedStarIcon.setImageResource(R.drawable.ic_star_filled)
+            trustedStarIcon.setColorFilter(android.graphics.Color.parseColor("#FFD700"))
         } else {
-            trustedContactIcon.setImageResource(R.drawable.ic_star_outline)
+            trustedStarIcon.setImageResource(R.drawable.ic_star_outline)
+            trustedStarIcon.clearColorFilter()
         }
     }
 
@@ -181,13 +193,12 @@ class ContactOptionsActivity : BaseActivity() {
             finish()
         }
 
-        // Call action
+        // Call action — opens call profile page with history
         findViewById<View>(R.id.actionCall).setOnClickListener {
-            val intent = Intent(this, VoiceCallActivity::class.java)
-            intent.putExtra("CONTACT_ID", contactId)
-            intent.putExtra("CONTACT_NAME", name)
-            intent.putExtra("CONTACT_ADDRESS", fullAddress)
-            intent.putExtra("IS_OUTGOING", true)
+            val intent = Intent(this, ContactCallActivity::class.java)
+            intent.putExtra(ContactCallActivity.EXTRA_CONTACT_ID, contactId)
+            intent.putExtra(ContactCallActivity.EXTRA_CONTACT_NAME, name)
+            intent.putExtra(ContactCallActivity.EXTRA_CONTACT_ADDRESS, fullAddress)
             startActivity(intent)
         }
 
@@ -205,18 +216,14 @@ class ContactOptionsActivity : BaseActivity() {
             showDeleteConfirmationDialog(name)
         }
 
-        // Block contact switch
-        blockContactSwitch.setOnCheckedChangeListener { _, isChecked ->
-            if (isChecked != isBlocked) {
-                toggleBlockStatus()
-            }
+        // Block action button
+        findViewById<View>(R.id.actionBlock).setOnClickListener {
+            toggleBlockStatus()
         }
 
-        // Trusted contact switch
-        trustedContactSwitch.setOnCheckedChangeListener { _, isChecked ->
-            if (isChecked != isTrustedContact) {
-                toggleTrustedContactStatus()
-            }
+        // Trusted star button (header)
+        findViewById<View>(R.id.trustedStarButton).setOnClickListener {
+            toggleTrustedContactStatus()
         }
     }
 
@@ -265,21 +272,34 @@ class ContactOptionsActivity : BaseActivity() {
 
                 if (contact != null) {
                     withContext(Dispatchers.IO) {
-                        // Get all messages for this contact to check for voice files
-                        val messages = database.messageDao().getMessagesForContact(contact.id)
+                        // Lightweight projection: only fetch small columns needed for cleanup
+                        val deleteInfos = database.messageDao().getDeleteInfoForContact(contact.id)
 
-                        // Securely wipe any voice message audio files using DOD 3-pass
-                        messages.forEach { message ->
-                            if (message.messageType == com.securelegion.database.entities.Message.MESSAGE_TYPE_VOICE &&
-                                message.voiceFilePath != null) {
+                        // Securely wipe any voice/image files using DOD 3-pass
+                        deleteInfos.forEach { info ->
+                            if (info.messageType == com.securelegion.database.entities.Message.MESSAGE_TYPE_VOICE &&
+                                info.voiceFilePath != null) {
                                 try {
-                                    val voiceFile = java.io.File(message.voiceFilePath)
+                                    val voiceFile = java.io.File(info.voiceFilePath)
                                     if (voiceFile.exists()) {
                                         com.securelegion.utils.SecureWipe.secureDeleteFile(voiceFile)
                                         Log.d(TAG, "Securely wiped voice file: ${voiceFile.name}")
                                     }
                                 } catch (e: Exception) {
                                     Log.e(TAG, "Failed to securely wipe voice file", e)
+                                }
+                            }
+                            if (info.messageType == com.securelegion.database.entities.Message.MESSAGE_TYPE_IMAGE) {
+                                try {
+                                    val encFile = java.io.File(filesDir, "image_messages/${info.messageId}.enc")
+                                    val imgFile = java.io.File(filesDir, "image_messages/${info.messageId}.img")
+                                    val imageFile = if (encFile.exists()) encFile else imgFile
+                                    if (imageFile.exists()) {
+                                        com.securelegion.utils.SecureWipe.secureDeleteFile(imageFile)
+                                        Log.d(TAG, "Securely wiped image file: ${imageFile.name}")
+                                    }
+                                } catch (e: Exception) {
+                                    Log.e(TAG, "Failed to securely wipe image file", e)
                                 }
                             }
                         }
@@ -289,14 +309,6 @@ class ContactOptionsActivity : BaseActivity() {
 
                         // Delete the contact
                         database.contactDao().deleteContact(contact)
-
-                        // VACUUM database to compact and remove deleted records
-                        try {
-                            database.openHelper.writableDatabase.execSQL("VACUUM")
-                            Log.d(TAG, "Database vacuumed after contact deletion")
-                        } catch (e: Exception) {
-                            Log.e(TAG, "Failed to vacuum database", e)
-                        }
 
                         // Unpin friend's contact list from IPFS mesh
                         if (contact.ipfsCid != null) {
@@ -354,7 +366,7 @@ class ContactOptionsActivity : BaseActivity() {
         val bottomNav = findViewById<View>(R.id.bottomNav)
         ViewCompat.setOnApplyWindowInsetsListener(findViewById(android.R.id.content)) { _, windowInsets ->
             val insets = windowInsets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())
-            bottomNav.setPadding(bottomNav.paddingLeft, bottomNav.paddingTop, bottomNav.paddingRight, 0)
+            bottomNav.setPadding(bottomNav.paddingLeft, bottomNav.paddingTop, bottomNav.paddingRight, insets.bottom)
             windowInsets
         }
 

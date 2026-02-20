@@ -25,11 +25,16 @@ class GroupMessageAdapter(
     companion object {
         private const val VIEW_TYPE_SENT = 1
         private const val VIEW_TYPE_RECEIVED = 2
+        private const val VIEW_TYPE_SYSTEM = 3
     }
 
     override fun getItemViewType(position: Int): Int {
         val message = getItem(position)
-        return if (message.isSentByMe) VIEW_TYPE_SENT else VIEW_TYPE_RECEIVED
+        return when {
+            message.messageType == "SYSTEM" -> VIEW_TYPE_SYSTEM
+            message.isSentByMe -> VIEW_TYPE_SENT
+            else -> VIEW_TYPE_RECEIVED
+        }
     }
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): RecyclerView.ViewHolder {
@@ -43,6 +48,10 @@ class GroupMessageAdapter(
                 val view = inflater.inflate(R.layout.item_message_received, parent, false)
                 ReceivedMessageViewHolder(view)
             }
+            VIEW_TYPE_SYSTEM -> {
+                val view = inflater.inflate(R.layout.item_message_system, parent, false)
+                SystemMessageViewHolder(view)
+            }
             else -> throw IllegalArgumentException("Invalid view type: $viewType")
         }
     }
@@ -52,6 +61,7 @@ class GroupMessageAdapter(
         when (holder) {
             is SentMessageViewHolder -> holder.bind(message, onMessageClick, onMessageLongClick)
             is ReceivedMessageViewHolder -> holder.bind(message, onMessageClick, onMessageLongClick)
+            is SystemMessageViewHolder -> holder.bind(message)
         }
     }
 
@@ -113,6 +123,14 @@ class GroupMessageAdapter(
         }
     }
 
+    class SystemMessageViewHolder(itemView: View) : RecyclerView.ViewHolder(itemView) {
+        private val systemText: TextView = itemView.findViewById(R.id.systemMessageText)
+
+        fun bind(message: GroupChatMessage) {
+            systemText.text = message.text
+        }
+    }
+
     private class GroupChatMessageDiffCallback : DiffUtil.ItemCallback<GroupChatMessage>() {
         override fun areItemsTheSame(oldItem: GroupChatMessage, newItem: GroupChatMessage): Boolean {
             return oldItem.messageId == newItem.messageId
@@ -133,5 +151,6 @@ data class GroupChatMessage(
     val text: String,
     val timestamp: Long,
     val isSentByMe: Boolean,
-    val senderName: String = ""
+    val senderName: String = "",
+    val messageType: String = "TEXT" // "TEXT" or "SYSTEM"
 )

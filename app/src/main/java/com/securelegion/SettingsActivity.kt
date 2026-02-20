@@ -1,7 +1,6 @@
 package com.securelegion
 
 import android.app.Activity
-import android.app.AlertDialog
 import android.content.Intent
 import android.net.VpnService
 import android.os.Bundle
@@ -301,4 +300,5 @@ class SettingsActivity : BaseActivity() {
             ThemedToast.show(this, "Failed to stop Tor Mode: ${e.message}")
         }
     }
+
 }

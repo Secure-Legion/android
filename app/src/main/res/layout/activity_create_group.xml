@@ -1,252 +1,282 @@
 <?xml version="1.0" encoding="utf-8"?>
-<ScrollView
+<androidx.constraintlayout.widget.ConstraintLayout
     xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="?attr/colorSurface"
-    android:fillViewport="true">
+    android:background="?attr/colorSurface">
 
-    <androidx.constraintlayout.widget.ConstraintLayout
+    <ScrollView
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:paddingBottom="32dp">
+        android:layout_height="0dp"
+        android:fillViewport="true"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintBottom_toTopOf="@id/bottomNav">
 
-        <!-- Header -->
-        <LinearLayout
-            android:id="@+id/header"
+        <androidx.constraintlayout.widget.ConstraintLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:orientation="horizontal"
-            android:gravity="center_vertical"
-            android:paddingStart="20dp"
-            android:paddingEnd="20dp"
-            android:paddingTop="16dp"
-            android:paddingBottom="16dp"
-            android:fitsSystemWindows="true"
-            app:layout_constraintTop_toTopOf="parent">
+            android:paddingBottom="32dp">
 
-            <!-- Back Button -->
-            <View
-                android:id="@+id/backButton"
-                android:layout_width="35dp"
-                android:layout_height="35dp"
-                android:background="@drawable/back_button_bg"
-                android:clickable="true"
-                android:focusable="true" />
-
-            <!-- Title -->
-            <TextView
-                android:id="@+id/titleText"
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:text="New Group"
-                android:fontFamily="@font/space_grotesk_bold"
-                android:textSize="20sp"
-                android:textColor="?attr/colorOnSurfaceVariant"
-                android:gravity="center" />
-
-            <!-- Settings Icon -->
-            <FrameLayout
-                android:id="@+id/settingsIcon"
-                android:layout_width="42dp"
-                android:layout_height="42dp"
-                android:background="@drawable/top_icon_bg"
-                android:clickable="true"
-                android:focusable="true">
-
-            <ImageView
-                android:layout_width="24dp"
-                android:layout_height="24dp"
-                android:layout_gravity="center"
-                android:src="@drawable/ic_settings_cog"
-                app:tint="?attr/colorOnSurfaceVariant"
-                android:contentDescription="Settings" />
-
-        </FrameLayout>
-
-        </LinearLayout>
-
-        <!-- Group Icon Placeholder -->
-        <FrameLayout
-            android:id="@+id/groupIconContainer"
-            android:layout_width="120dp"
-            android:layout_height="120dp"
-            android:layout_marginTop="40dp"
-            android:background="@drawable/profile_circle_bg"
-            android:clickable="true"
-            android:focusable="true"
-            app:layout_constraintTop_toBottomOf="@id/header"
-            app:layout_constraintStart_toStartOf="parent"
-            app:layout_constraintEnd_toEndOf="parent">
-
-            <ImageView
-                android:id="@+id/groupIconImage"
+            <!-- Header -->
+            <LinearLayout
+                android:id="@+id/header"
                 android:layout_width="match_parent"
-                android:layout_height="match_parent"
-                android:layout_gravity="center"
-                android:scaleType="centerInside"
-                android:src="@drawable/ic_contacts"
-                app:tint="#999999"
-                android:contentDescription="Group Icon" />
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:paddingStart="20dp"
+                android:paddingEnd="20dp"
+                android:paddingTop="16dp"
+                android:paddingBottom="16dp"
+                android:fitsSystemWindows="true"
+                app:layout_constraintTop_toTopOf="parent">
 
-            <!-- Edit Icon -->
-            <FrameLayout
-                android:id="@+id/editGroupPhotoButton"
-                android:layout_width="30dp"
-                android:layout_height="30dp"
-                android:layout_gravity="bottom|end"
-                android:background="@drawable/settings_icon_bg"
-                android:clickable="true"
-                android:focusable="true">
+                <!-- Back Button -->
+                <FrameLayout
+                    android:id="@+id/backButton"
+                    android:layout_width="42dp"
+                    android:layout_height="42dp"
+                    android:background="@drawable/top_icon_bg"
+                    android:clickable="true"
+                    android:focusable="true">
+
+                    <ImageView
+                        android:layout_width="20dp"
+                        android:layout_height="20dp"
+                        android:layout_gravity="center"
+                        android:src="@drawable/ic_back_arrow"
+                        android:contentDescription="Back" />
+
+                </FrameLayout>
+
+                <!-- Title -->
+                <TextView
+                    android:id="@+id/titleText"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="New Group"
+                    android:fontFamily="@font/space_grotesk_bold"
+                    android:textSize="20sp"
+                    android:textColor="?attr/colorOnSurfaceVariant"
+                    android:gravity="center" />
+
+                <!-- Settings Icon -->
+                <FrameLayout
+                    android:id="@+id/settingsIcon"
+                    android:layout_width="42dp"
+                    android:layout_height="42dp"
+                    android:background="@drawable/top_icon_bg"
+                    android:clickable="true"
+                    android:focusable="true">
 
                 <ImageView
-                    android:layout_width="16dp"
-                    android:layout_height="16dp"
+                    android:layout_width="24dp"
+                    android:layout_height="24dp"
                     android:layout_gravity="center"
-                    android:src="@drawable/ic_edit"
-                    app:tint="?attr/colorOnSurfaceVariant" />
+                    android:src="@drawable/ic_settings_cog"
+                    app:tint="?attr/colorOnSurfaceVariant"
+                    android:contentDescription="Settings" />
 
             </FrameLayout>
 
-        </FrameLayout>
+            </LinearLayout>
 
-        <!-- Group Name Label -->
-        <TextView
-            android:id="@+id/groupNameLabel"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginStart="40dp"
-            android:layout_marginTop="32dp"
-            android:text="Group Name"
-            android:fontFamily="@font/space_grotesk_bold"
-            android:textSize="16sp"
-            android:textColor="?attr/colorOnSurfaceVariant"
-            app:layout_constraintTop_toBottomOf="@id/groupIconContainer"
-            app:layout_constraintStart_toStartOf="parent" />
+            <!-- Group Icon Placeholder -->
+            <FrameLayout
+                android:id="@+id/groupIconContainer"
+                android:layout_width="120dp"
+                android:layout_height="120dp"
+                android:layout_marginTop="40dp"
+                android:background="@drawable/profile_circle_bg"
+                android:clickable="true"
+                android:focusable="true"
+                app:layout_constraintTop_toBottomOf="@id/header"
+                app:layout_constraintStart_toStartOf="parent"
+                app:layout_constraintEnd_toEndOf="parent">
 
-        <!-- Group Name Input -->
-        <androidx.constraintlayout.widget.ConstraintLayout
-            android:id="@+id/groupNameContainer"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_marginStart="40dp"
-            android:layout_marginEnd="40dp"
-            android:layout_marginTop="12dp"
-            android:background="@drawable/lock_password_input_bg"
-            android:padding="16dp"
-            app:layout_constraintTop_toBottomOf="@id/groupNameLabel"
-            app:layout_constraintStart_toStartOf="parent"
-            app:layout_constraintEnd_toEndOf="parent">
+                <ImageView
+                    android:id="@+id/groupIconImage"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:layout_gravity="center"
+                    android:scaleType="centerInside"
+                    android:src="@drawable/ic_contacts"
+                    app:tint="#999999"
+                    android:contentDescription="Group Icon" />
 
-            <EditText
-                android:id="@+id/groupNameInput"
+                <!-- Edit Icon -->
+                <FrameLayout
+                    android:id="@+id/editGroupPhotoButton"
+                    android:layout_width="30dp"
+                    android:layout_height="30dp"
+                    android:layout_gravity="bottom|end"
+                    android:background="@drawable/settings_icon_bg"
+                    android:clickable="true"
+                    android:focusable="true">
+
+                    <ImageView
+                        android:layout_width="16dp"
+                        android:layout_height="16dp"
+                        android:layout_gravity="center"
+                        android:src="@drawable/ic_edit"
+                        app:tint="?attr/colorOnSurfaceVariant" />
+
+                </FrameLayout>
+
+            </FrameLayout>
+
+            <!-- Group Name Label -->
+            <TextView
+                android:id="@+id/groupNameLabel"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="40dp"
+                android:layout_marginTop="32dp"
+                android:text="Group Name"
+                android:fontFamily="@font/space_grotesk_bold"
+                android:textSize="16sp"
+                android:textColor="?attr/colorOnSurfaceVariant"
+                app:layout_constraintTop_toBottomOf="@id/groupIconContainer"
+                app:layout_constraintStart_toStartOf="parent" />
+
+            <!-- Group Name Input -->
+            <androidx.constraintlayout.widget.ConstraintLayout
+                android:id="@+id/groupNameContainer"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
-                android:hint="Enter group name"
-                android:inputType="text"
-                android:textColorHint="#666666"
-                android:textColor="?attr/colorOnSurface"
-                android:fontFamily="@font/poppins_medium"
+                android:layout_marginStart="40dp"
+                android:layout_marginEnd="40dp"
+                android:layout_marginTop="12dp"
+                android:background="@drawable/lock_password_input_bg"
+                android:padding="16dp"
+                app:layout_constraintTop_toBottomOf="@id/groupNameLabel"
+                app:layout_constraintStart_toStartOf="parent"
+                app:layout_constraintEnd_toEndOf="parent">
+
+                <EditText
+                    android:id="@+id/groupNameInput"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:hint="Enter group name"
+                    android:inputType="text"
+                    android:textColorHint="#666666"
+                    android:textColor="?attr/colorOnSurface"
+                    android:fontFamily="@font/poppins_medium"
+                    android:textSize="16sp"
+                    android:maxLength="30"
+                    android:background="@android:color/transparent"
+                    app:layout_constraintTop_toTopOf="parent"
+                    app:layout_constraintBottom_toBottomOf="parent"
+                    app:layout_constraintStart_toStartOf="parent"
+                    app:layout_constraintEnd_toEndOf="parent" />
+
+            </androidx.constraintlayout.widget.ConstraintLayout>
+
+            <!-- Add Friends Label -->
+            <TextView
+                android:id="@+id/addFriendsLabel"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="40dp"
+                android:layout_marginTop="32dp"
+                android:text="Add Friends"
+                android:fontFamily="@font/space_grotesk_bold"
                 android:textSize="16sp"
-                android:maxLength="30"
-                android:background="@android:color/transparent"
-                app:layout_constraintTop_toTopOf="parent"
-                app:layout_constraintBottom_toBottomOf="parent"
+                android:textColor="?attr/colorOnSurfaceVariant"
+                app:layout_constraintTop_toBottomOf="@id/groupNameContainer"
+                app:layout_constraintStart_toStartOf="parent" />
+
+            <!-- Selected Members Container -->
+            <LinearLayout
+                android:id="@+id/selectedMembersContainer"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="40dp"
+                android:layout_marginEnd="40dp"
+                android:layout_marginTop="16dp"
+                android:orientation="horizontal"
+                android:minHeight="80dp"
+                app:layout_constraintTop_toBottomOf="@id/addFriendsLabel"
+                app:layout_constraintStart_toStartOf="parent"
+                app:layout_constraintEnd_toEndOf="parent">
+
+                <!-- Add Member Button -->
+                <LinearLayout
+                    android:id="@+id/addMemberButton"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:gravity="center"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:background="?attr/selectableItemBackgroundBorderless">
+
+                    <FrameLayout
+                        android:layout_width="60dp"
+                        android:layout_height="60dp"
+                        android:background="@drawable/profile_circle_bg">
+
+                        <ImageView
+                            android:layout_width="30dp"
+                            android:layout_height="30dp"
+                            android:layout_gravity="center"
+                            android:src="@android:drawable/ic_input_add"
+                            app:tint="#FFFFFF"
+                            android:contentDescription="Add Member" />
+
+                    </FrameLayout>
+
+                </LinearLayout>
+
+                <!-- Selected members will be added here dynamically -->
+                <androidx.recyclerview.widget.RecyclerView
+                    android:id="@+id/selectedMembersList"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:layout_marginStart="8dp"
+                    android:orientation="horizontal"
+                    android:visibility="gone" />
+
+            </LinearLayout>
+
+            <!-- Create Group Button -->
+            <TextView
+                android:id="@+id/createGroupButton"
+                android:layout_width="0dp"
+                android:layout_height="60dp"
+                android:layout_marginStart="40dp"
+                android:layout_marginEnd="40dp"
+                android:layout_marginTop="48dp"
+                android:text="Create Group"
+                android:textSize="16sp"
+                android:textColor="?attr/colorOnSurface"
+                android:fontFamily="@font/space_grotesk_bold"
+                android:background="@drawable/lock_button_bg"
+                android:gravity="center"
+                android:clickable="true"
+                android:focusable="true"
+                app:layout_constraintTop_toBottomOf="@id/selectedMembersContainer"
                 app:layout_constraintStart_toStartOf="parent"
                 app:layout_constraintEnd_toEndOf="parent" />
 
         </androidx.constraintlayout.widget.ConstraintLayout>
 
-        <!-- Add Friends Label -->
-        <TextView
-            android:id="@+id/addFriendsLabel"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginStart="40dp"
-            android:layout_marginTop="32dp"
-            android:text="Add Friends"
-            android:fontFamily="@font/space_grotesk_bold"
-            android:textSize="16sp"
-            android:textColor="?attr/colorOnSurfaceVariant"
-            app:layout_constraintTop_toBottomOf="@id/groupNameContainer"
-            app:layout_constraintStart_toStartOf="parent" />
+    </ScrollView>
 
-        <!-- Selected Members Container -->
-        <LinearLayout
-            android:id="@+id/selectedMembersContainer"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_marginStart="40dp"
-            android:layout_marginEnd="40dp"
-            android:layout_marginTop="16dp"
-            android:orientation="horizontal"
-            android:minHeight="80dp"
-            app:layout_constraintTop_toBottomOf="@id/addFriendsLabel"
-            app:layout_constraintStart_toStartOf="parent"
-            app:layout_constraintEnd_toEndOf="parent">
+    <!-- Bottom Navigation -->
+    <include
+        android:id="@+id/bottomNav"
+        layout="@layout/bottom_navigation"
+        android:layout_width="0dp"
+        android:layout_height="80dp"
+        android:layout_marginStart="50dp"
+        android:layout_marginEnd="50dp"
+        android:layout_marginBottom="20dp"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent" />
 
-            <!-- Add Member Button -->
-            <LinearLayout
-                android:id="@+id/addMemberButton"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:orientation="vertical"
-                android:gravity="center"
-                android:clickable="true"
-                android:focusable="true"
-                android:background="?attr/selectableItemBackgroundBorderless">
-
-                <FrameLayout
-                    android:layout_width="60dp"
-                    android:layout_height="60dp"
-                    android:background="@drawable/profile_circle_bg">
-
-                    <ImageView
-                        android:layout_width="30dp"
-                        android:layout_height="30dp"
-                        android:layout_gravity="center"
-                        android:src="@android:drawable/ic_input_add"
-                        app:tint="#FFFFFF"
-                        android:contentDescription="Add Member" />
-
-                </FrameLayout>
-
-            </LinearLayout>
-
-            <!-- Selected members will be added here dynamically -->
-            <androidx.recyclerview.widget.RecyclerView
-                android:id="@+id/selectedMembersList"
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:layout_marginStart="8dp"
-                android:orientation="horizontal"
-                android:visibility="gone" />
-
-        </LinearLayout>
-
-        <!-- Create Group Button -->
-        <TextView
-            android:id="@+id/createGroupButton"
-            android:layout_width="0dp"
-            android:layout_height="60dp"
-            android:layout_marginStart="40dp"
-            android:layout_marginEnd="40dp"
-            android:layout_marginTop="48dp"
-            android:text="Create Group"
-            android:textSize="16sp"
-            android:textColor="?attr/colorOnSurface"
-            android:fontFamily="@font/space_grotesk_bold"
-            android:background="@drawable/lock_button_bg"
-            android:gravity="center"
-            android:clickable="true"
-            android:focusable="true"
-            app:layout_constraintTop_toBottomOf="@id/selectedMembersContainer"
-            app:layout_constraintStart_toStartOf="parent"
-            app:layout_constraintEnd_toEndOf="parent" />
-
-    </androidx.constraintlayout.widget.ConstraintLayout>
-
-</ScrollView>
+</androidx.constraintlayout.widget.ConstraintLayout>

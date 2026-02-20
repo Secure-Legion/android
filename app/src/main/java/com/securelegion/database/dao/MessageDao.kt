@@ -10,11 +10,57 @@ data class UnreadCountResult(
 )
 
 /**
+ * Lightweight projection for thread delete operations.
+ * Only fetches the 4 small columns needed for cleanup (voice wipe, ACK clear, dedup clear).
+ * Never touches attachmentData/encryptedPayload — immune to CursorWindow overflow.
+ */
+data class MessageDeleteInfo(
+    @ColumnInfo(name = "messageId") val messageId: String,
+    @ColumnInfo(name = "messageType") val messageType: String,
+    @ColumnInfo(name = "voiceFilePath") val voiceFilePath: String?,
+    @ColumnInfo(name = "pingId") val pingId: String?
+)
+
+/**
  * Data Access Object for Message operations
  * All queries run on background thread via coroutines
+ *
+ * ==================== CURSORWINDOW SAFETY ====================
+ * All SELECT queries returning Message objects use [LITE_COLS] which:
+ * - Excludes encryptedPayload entirely (NULL AS) — loaded on-demand via [getEncryptedPayload]
+ * - Excludes large attachmentData (>100KB via CASE) — loaded on-demand via [getAttachmentData]
+ * - Keeps small attachmentData (sticker asset paths ~50 bytes, etc.)
+ *
+ * This prevents SQLiteBlobTooBigException on rows with multi-MB base64 image blobs.
+ * CursorWindow has a ~2MB per-row limit; a 6MB GIF blob caused the original crash.
  */
 @Dao
 interface MessageDao {
+
+    companion object {
+        /**
+         * Explicit column list for CursorWindow-safe queries.
+         *
+         * ALWAYS NULL: encryptedPayload (only needed by retry path, loaded on-demand)
+         * CONDITIONALLY NULL: attachmentData > 1.8MB (safety net for legacy inline base64;
+         *   new images are stored as files so attachmentData is just a tiny path string)
+         *
+         * Why 1.8MB? CursorWindow has a ~2MB per-row limit. With ~34 small columns (~20KB)
+         * plus 1.8MB attachmentData, each row is ~1.82MB — under the limit.
+         * New images store file paths (~100 bytes), so this CASE only fires for legacy data.
+         */
+        const val LITE_COLS = """id, contactId, messageId, encryptedContent, isSentByMe, timestamp, status,
+            signatureBase64, nonceBase64, messageNonce, messageType, voiceDuration, voiceFilePath,
+            attachmentType,
+            CASE WHEN attachmentData IS NOT NULL AND length(attachmentData) > 1800000
+                 THEN NULL ELSE attachmentData END AS attachmentData,
+            isRead, selfDestructAt, requiresReadReceipt, pingId, pingTimestamp,
+            NULL AS encryptedPayload,
+            retryCount, lastRetryTimestamp, nextRetryAtMs, lastError,
+            pingDelivered, messageDelivered, tapDelivered, pongDelivered,
+            pingWireBytes, paymentQuoteJson, paymentStatus, txSignature, paymentToken, paymentAmount,
+            correlationId"""
+    }
 
     /**
      * Insert a new message. Returns row ID, or -1 if ignored (duplicate messageId/pingId).
@@ -49,34 +95,34 @@ interface MessageDao {
     suspend fun deleteMessageById(messageId: Long)
 
     /**
-     * Get message by ID
+     * Get message by ID (CursorWindow-safe: large columns excluded)
      */
-    @Query("SELECT * FROM messages WHERE id = :messageId")
+    @Query("SELECT $LITE_COLS FROM messages WHERE id = :messageId")
     suspend fun getMessageById(messageId: Long): Message?
 
     /**
-     * Get message by unique message ID
+     * Get message by unique message ID (CursorWindow-safe: large columns excluded)
      */
-    @Query("SELECT * FROM messages WHERE messageId = :messageId")
+    @Query("SELECT $LITE_COLS FROM messages WHERE messageId = :messageId")
     suspend fun getMessageByMessageId(messageId: String): Message?
 
     /**
      * Get all messages for a contact (ordered by timestamp)
      * Returns Flow for reactive updates
      */
-    @Query("SELECT * FROM messages WHERE contactId = :contactId AND messageType != 'PROFILE_UPDATE' ORDER BY timestamp ASC")
+    @Query("SELECT $LITE_COLS FROM messages WHERE contactId = :contactId AND messageType != 'PROFILE_UPDATE' ORDER BY timestamp ASC")
     fun getMessagesForContactFlow(contactId: Long): Flow<List<Message>>
 
     /**
      * Get all messages for a contact (one-shot query)
      */
-    @Query("SELECT * FROM messages WHERE contactId = :contactId AND messageType != 'PROFILE_UPDATE' ORDER BY timestamp ASC")
+    @Query("SELECT $LITE_COLS FROM messages WHERE contactId = :contactId AND messageType != 'PROFILE_UPDATE' ORDER BY timestamp ASC")
     suspend fun getMessagesForContact(contactId: Long): List<Message>
 
     /**
      * Get recent messages for a contact (limit N)
      */
-    @Query("SELECT * FROM messages WHERE contactId = :contactId AND messageType != 'PROFILE_UPDATE' ORDER BY timestamp DESC LIMIT :limit")
+    @Query("SELECT $LITE_COLS FROM messages WHERE contactId = :contactId AND messageType != 'PROFILE_UPDATE' ORDER BY timestamp DESC LIMIT :limit")
     suspend fun getRecentMessages(contactId: Long, limit: Int): List<Message>
 
     /**
@@ -174,17 +220,21 @@ interface MessageDao {
     /**
      * Get last message for a contact
      */
-    @Query("SELECT * FROM messages WHERE contactId = :contactId AND messageType != 'PROFILE_UPDATE' ORDER BY timestamp DESC LIMIT 1")
+    @Query("SELECT $LITE_COLS FROM messages WHERE contactId = :contactId AND messageType != 'PROFILE_UPDATE' ORDER BY timestamp DESC LIMIT 1")
     suspend fun getLastMessage(contactId: Long): Message?
 
     /**
-     * Get last message for ALL contacts in one query
+     * Get last message for ALL contacts in one query.
+     * Uses subquery to find latest message IDs, then selects LITE_COLS for those IDs.
      */
     @Query("""
-        SELECT m.* FROM messages m
-        INNER JOIN (
-            SELECT contactId, MAX(timestamp) as maxTs FROM messages WHERE messageType != 'PROFILE_UPDATE' GROUP BY contactId
-        ) latest ON m.contactId = latest.contactId AND m.timestamp = latest.maxTs
+        SELECT $LITE_COLS FROM messages
+        WHERE id IN (
+            SELECT m2.id FROM messages m2
+            INNER JOIN (
+                SELECT contactId, MAX(timestamp) as maxTs FROM messages WHERE messageType != 'PROFILE_UPDATE' GROUP BY contactId
+            ) latest ON m2.contactId = latest.contactId AND m2.timestamp = latest.maxTs
+        )
     """)
     suspend fun getLastMessagePerContact(): List<Message>
 
@@ -197,21 +247,21 @@ interface MessageDao {
     /**
      * Get pending messages (for retry)
      */
-    @Query("SELECT * FROM messages WHERE status = ${Message.STATUS_PENDING} OR status = ${Message.STATUS_FAILED} ORDER BY timestamp ASC")
+    @Query("SELECT $LITE_COLS FROM messages WHERE status = ${Message.STATUS_PENDING} OR status = ${Message.STATUS_FAILED} ORDER BY timestamp ASC")
     suspend fun getPendingMessages(): List<Message>
 
     /**
      * Get messages waiting for Pong (STATUS_PING_SENT)
      * Used by Pong polling worker to check for Pong arrivals
      */
-    @Query("SELECT * FROM messages WHERE status = ${Message.STATUS_PING_SENT} ORDER BY timestamp ASC")
+    @Query("SELECT $LITE_COLS FROM messages WHERE status = ${Message.STATUS_PING_SENT} ORDER BY timestamp ASC")
     suspend fun getMessagesAwaitingPong(): List<Message>
 
     /**
      * Get message by Ping ID
      * Used when a Pong arrives to find the corresponding message
      */
-    @Query("SELECT * FROM messages WHERE pingId = :pingId LIMIT 1")
+    @Query("SELECT $LITE_COLS FROM messages WHERE pingId = :pingId LIMIT 1")
     suspend fun getMessageByPingId(pingId: String): Message?
 
     /**
@@ -219,7 +269,7 @@ interface MessageDao {
      * Used to replace SharedPreferences-based PendingPing queue
      * Returns messages that have pingId set and are sent by us (isSentByMe = true)
      */
-    @Query("SELECT * FROM messages WHERE contactId = :contactId AND isSentByMe = 1 AND pingId IS NOT NULL ORDER BY timestamp ASC")
+    @Query("SELECT $LITE_COLS FROM messages WHERE contactId = :contactId AND isSentByMe = 1 AND pingId IS NOT NULL ORDER BY timestamp ASC")
     suspend fun getPendingPingsForContact(contactId: Long): List<Message>
 
     /**
@@ -250,7 +300,7 @@ interface MessageDao {
      * Get all messages that have expired (self-destruct time has passed)
      * Used by background worker to delete expired messages
      */
-    @Query("SELECT * FROM messages WHERE selfDestructAt IS NOT NULL AND selfDestructAt <= :currentTime")
+    @Query("SELECT $LITE_COLS FROM messages WHERE selfDestructAt IS NOT NULL AND selfDestructAt <= :currentTime")
     suspend fun getExpiredMessages(currentTime: Long = System.currentTimeMillis()): List<Message>
 
     /**
@@ -275,7 +325,7 @@ interface MessageDao {
      * @return List of messages needing retry
      */
     @Query("""
-        SELECT * FROM messages
+        SELECT $LITE_COLS FROM messages
         WHERE isSentByMe = 1
         AND status NOT IN (2, 3)
         AND timestamp > :currentTimeMs - (:giveupAfterDays * 24 * 60 * 60 * 1000)
@@ -289,5 +339,41 @@ interface MessageDao {
      */
     @Query("UPDATE messages SET status = 2 WHERE pingId = :pingId")
     suspend fun markPingDelivered(pingId: String)
+
+    // ==================== CURSORWINDOW-SAFE HELPERS ====================
+
+    /**
+     * Lightweight projection for thread deletion.
+     * Returns only the 4 small columns needed for cleanup:
+     * - messageId: for ACK state clearing and dedup cleanup
+     * - messageType: to identify VOICE messages needing file wipe
+     * - voiceFilePath: the file to securely wipe
+     * - pingId: for ReceivedId cleanup
+     *
+     * NEVER touches attachmentData/encryptedPayload — immune to CursorWindow overflow.
+     */
+    @Query("SELECT messageId, messageType, voiceFilePath, pingId FROM messages WHERE contactId = :contactId")
+    suspend fun getDeleteInfoForContact(contactId: Long): List<MessageDeleteInfo>
+
+    /**
+     * Get message count for a contact (CursorWindow-safe alternative to getMessagesForContact().size)
+     */
+    @Query("SELECT COUNT(*) FROM messages WHERE contactId = :contactId AND messageType != 'PROFILE_UPDATE'")
+    suspend fun getMessageCountForContact(contactId: Long): Int
+
+    /**
+     * On-demand loader for attachmentData (single row, single column).
+     * Used when the CASE-limited bulk query excluded the value (>100KB).
+     * For image messages with multi-MB base64 blobs.
+     */
+    @Query("SELECT attachmentData FROM messages WHERE id = :messageId LIMIT 1")
+    suspend fun getAttachmentData(messageId: Long): String?
+
+    /**
+     * On-demand loader for encryptedPayload (single row, single column).
+     * Used by retry path since bulk queries always exclude encryptedPayload.
+     */
+    @Query("SELECT encryptedPayload FROM messages WHERE id = :messageId LIMIT 1")
+    suspend fun getEncryptedPayload(messageId: Long): String?
 
 }

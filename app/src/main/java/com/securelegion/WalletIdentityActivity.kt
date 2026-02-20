@@ -19,8 +19,6 @@ import androidx.core.content.FileProvider
 import androidx.lifecycle.lifecycleScope
 import com.google.android.material.bottomsheet.BottomSheetDialog
 import com.securelegion.utils.GlassBottomSheetDialog
-import com.google.zxing.BarcodeFormat
-import com.google.zxing.qrcode.QRCodeWriter
 import com.securelegion.crypto.KeyManager
 import com.securelegion.models.ContactCard
 import com.securelegion.services.ContactCardManager
@@ -92,6 +90,11 @@ class WalletIdentityActivity : AppCompatActivity() {
         // Wallet button — hidden until wallet feature is ready for release
         findViewById<View>(R.id.walletButton).visibility = View.GONE
 
+        // Change Friend Request Identity button
+        findViewById<View>(R.id.changeFriendIdentityButton).setOnClickListener {
+            showChangeIdentityConfirmation()
+        }
+
         // Settings button
         findViewById<View>(R.id.settingsButton).setOnClickListener {
             val intent = android.content.Intent(this, SettingsActivity::class.java)
@@ -136,9 +139,43 @@ class WalletIdentityActivity : AppCompatActivity() {
             parentView?.setBackgroundResource(android.R.color.transparent)
         }
 
-        // Generate QR code
+        // Generate branded QR code — include username + PIN so one scan = everything
+        val username = keyManager.getUsername() ?: ""
+        val qrContent = buildString {
+            if (username.isNotEmpty()) append("$username@")
+            append(friendRequestOnion)
+            if (pin.isNotEmpty()) append("@$pin")
+        }
+
+        // Compute mint count and expiry for QR badge
+        val securityPrefs = getSharedPreferences("security_prefs", Context.MODE_PRIVATE)
+        val decryptCount = keyManager.getPinDecryptCount()
+        val maxUses = securityPrefs.getInt("pin_max_uses", 5)
+        val mintText = if (maxUses > 0) "$decryptCount/$maxUses" else null
+
+        val rotationIntervalMs = securityPrefs.getLong("pin_rotation_interval_ms", 24 * 60 * 60 * 1000L)
+        val rotationTimestamp = keyManager.getPinRotationTimestamp()
+        val expiryText = if (rotationIntervalMs > 0 && rotationTimestamp > 0) {
+            val remainingMs = (rotationTimestamp + rotationIntervalMs) - System.currentTimeMillis()
+            if (remainingMs > 0) {
+                val hours = remainingMs / (60 * 60 * 1000)
+                val minutes = (remainingMs % (60 * 60 * 1000)) / (60 * 1000)
+                "Expires ${hours}h ${minutes}m"
+            } else "Rotation pending"
+        } else null
+
         val qrCodeImage = view.findViewById<ImageView>(R.id.qrCodeImage)
-        val qrBitmap = generateQrCode(friendRequestOnion, 512)
+        val qrBitmap = com.securelegion.utils.BrandedQrGenerator.generate(
+            this,
+            com.securelegion.utils.BrandedQrGenerator.QrOptions(
+                content = qrContent,
+                size = 512,
+                showLogo = true,
+                mintText = mintText,
+                expiryText = expiryText,
+                showWebsite = true
+            )
+        )
         if (qrBitmap != null) {
             qrCodeImage.setImageBitmap(qrBitmap)
         }
@@ -166,6 +203,37 @@ class WalletIdentityActivity : AppCompatActivity() {
             }
         }
 
+        // Toggle address/PIN visibility based on legacy setting
+        val showManualFields = securityPrefs.getBoolean("legacy_manual_entry", false)
+        val addressPinSection = view.findViewById<View>(R.id.addressPinSection)
+        addressPinSection.visibility = if (showManualFields) View.VISIBLE else View.GONE
+
+        // PIN uses counter
+        val pinUsesText = view.findViewById<TextView>(R.id.pinUsesText)
+        if (maxUses > 0) {
+            pinUsesText.text = "PIN uses: $decryptCount/$maxUses"
+        } else {
+            pinUsesText.text = "PIN uses: $decryptCount (unlimited)"
+        }
+
+        // PIN expiration countdown
+        val pinCountdownText = view.findViewById<TextView>(R.id.pinCountdownText)
+        if (rotationIntervalMs > 0 && rotationTimestamp > 0) {
+            val remainingMs = (rotationTimestamp + rotationIntervalMs) - System.currentTimeMillis()
+            if (remainingMs > 0) {
+                val hours = remainingMs / (60 * 60 * 1000)
+                val minutes = (remainingMs % (60 * 60 * 1000)) / (60 * 1000)
+                pinCountdownText.text = "PIN expires in ${hours}h ${minutes}m"
+                pinCountdownText.visibility = View.VISIBLE
+            } else {
+                pinCountdownText.text = "PIN rotation pending"
+                pinCountdownText.visibility = View.VISIBLE
+            }
+        } else {
+            pinCountdownText.text = "PIN rotation: off"
+            pinCountdownText.visibility = View.VISIBLE
+        }
+
         // Share button
         view.findViewById<View>(R.id.shareQrButton).setOnClickListener {
             shareQrCode(qrBitmap, friendRequestOnion)
@@ -175,23 +243,88 @@ class WalletIdentityActivity : AppCompatActivity() {
         bottomSheet.show()
     }
 
-    private fun generateQrCode(content: String, size: Int): Bitmap? {
-        return try {
-            val writer = QRCodeWriter()
-            val bitMatrix = writer.encode(content, BarcodeFormat.QR_CODE, size, size)
-            val width = bitMatrix.width
-            val height = bitMatrix.height
-            val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.RGB_565)
-
-            for (x in 0 until width) {
-                for (y in 0 until height) {
-                    bitmap.setPixel(x, y, if (bitMatrix[x, y]) 0xFF000000.toInt() else 0xFFFFFFFF.toInt())
-                }
+    private fun showChangeIdentityConfirmation() {
+        val dialog = com.google.android.material.dialog.MaterialAlertDialogBuilder(this)
+            .setBackground(androidx.core.content.ContextCompat.getDrawable(this, R.drawable.glass_dialog_bg))
+            .setTitle("Rotate Identity?")
+            .setMessage("This will generate a new .onion address and PIN for friend requests.\n\nAnyone with your old QR code will NOT be able to reach you.\n\nThis cannot be undone.")
+            .setPositiveButton("Rotate") { _, _ ->
+                performIdentityChange()
             }
-            bitmap
-        } catch (e: Exception) {
-            Log.e("WalletIdentity", "Failed to generate QR code", e)
-            null
+            .setNegativeButton("Cancel", null)
+            .create()
+
+        dialog.setOnShowListener {
+            // Strip all internal panel backgrounds so only our glass_dialog_bg shows
+            (dialog.window?.decorView as? android.view.ViewGroup)?.let { decor ->
+                stripChildBackgrounds(decor)
+            }
+        }
+        dialog.show()
+    }
+
+    private fun stripChildBackgrounds(parent: android.view.ViewGroup) {
+        for (i in 0 until parent.childCount) {
+            val child = parent.getChildAt(i)
+            if (child !is android.widget.Button) {
+                child.background = null
+            }
+            if (child is android.view.ViewGroup) {
+                stripChildBackgrounds(child)
+            }
+        }
+    }
+
+    private fun performIdentityChange() {
+        lifecycleScope.launch {
+            try {
+                val keyManager = KeyManager.getInstance(this@WalletIdentityActivity)
+                val cardManager = ContactCardManager(this@WalletIdentityActivity)
+
+                // Increment rotation counter (changes the domain separator)
+                keyManager.incrementFriendReqRotationCount()
+
+                // Delete and recreate the hidden service directory
+                val torDir = java.io.File(filesDir, "tor")
+                val hsDir = java.io.File(torDir, "friend_request_hidden_service")
+                if (hsDir.exists()) {
+                    hsDir.deleteRecursively()
+                }
+                hsDir.mkdirs()
+
+                // Re-seed with new domain separator (internally uses rotation counter)
+                val seeded = keyManager.seedHiddenServiceDir(hsDir, "friend_req")
+                if (!seeded) {
+                    ThemedToast.show(this@WalletIdentityActivity, "Failed to generate new identity")
+                    return@launch
+                }
+
+                // Read the new .onion address
+                val hostnameFile = java.io.File(hsDir, "hostname")
+                val newOnion = hostnameFile.readText().trim()
+                keyManager.storeFriendRequestOnion(newOnion)
+
+                // Generate a new PIN and reset rotation state
+                val newPin = cardManager.generateRandomPin()
+                keyManager.storeContactPin(newPin)
+                keyManager.storePinRotationTimestamp(System.currentTimeMillis())
+                keyManager.resetPinDecryptCount()
+                keyManager.clearPreviousPin()
+
+                Log.i("WalletIdentity", "Identity changed: new onion=$newOnion")
+
+                // Request Tor restart to publish new .onion
+                com.securelegion.services.TorService.requestRestart("friend request identity changed")
+
+                ThemedToast.showLong(this@WalletIdentityActivity, "New identity active! Tor is publishing your new address.")
+
+                // Re-show the QR bottom sheet with updated data
+                showIdentityQrCode()
+
+            } catch (e: Exception) {
+                Log.e("WalletIdentity", "Identity change failed", e)
+                ThemedToast.show(this@WalletIdentityActivity, "Failed: ${e.message}")
+            }
         }
     }
 

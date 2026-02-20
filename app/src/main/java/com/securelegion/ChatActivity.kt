@@ -30,6 +30,7 @@ import android.widget.EditText
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
+import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
@@ -72,6 +73,9 @@ import java.io.FileOutputStream
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import com.vanniktech.emoji.google.GoogleEmojiProvider
+import com.vanniktech.emoji.EmojiManager
+import com.securelegion.views.MediaKeyboardView
 
 class ChatActivity : BaseActivity() {
 
@@ -82,9 +86,15 @@ class ChatActivity : BaseActivity() {
         const val EXTRA_CONTACT_ADDRESS = "CONTACT_ADDRESS"
         private const val PERMISSION_REQUEST_CODE = 100
         private const val CAMERA_PERMISSION_REQUEST_CODE = 101
+        private const val GALLERY_PERMISSION_REQUEST_CODE = 102
         private const val MAX_IMAGE_WIDTH = 1920 // 1080p width
         private const val MAX_IMAGE_HEIGHT = 1080 // 1080p height
         private const val JPEG_QUALITY = 85 // Good quality, reasonable size
+
+        /** Contact ID currently visible in ChatActivity, or -1 if not open. */
+        @Volatile
+        var visibleContactId: Long = -1L
+            private set
     }
 
     private lateinit var messagesRecyclerView: RecyclerView
@@ -94,6 +104,14 @@ class ChatActivity : BaseActivity() {
     private lateinit var sendButton: View
     private lateinit var sendButtonIcon: ImageView
     private lateinit var plusButton: View
+    private lateinit var emojiButton: View
+    private lateinit var emojiButtonIcon: ImageView
+    private lateinit var mediaKeyboardPanel: MediaKeyboardView
+    private var isMediaKeyboardVisible = false
+    private lateinit var attachmentPanel: View
+    private var isAttachmentPanelVisible = false
+    private var isFirstLoad = true
+    private var keyboardHeight = 0
     private lateinit var textInputLayout: LinearLayout
     private lateinit var voiceRecordingLayout: LinearLayout
     private lateinit var recordingTimer: TextView
@@ -105,17 +123,11 @@ class ChatActivity : BaseActivity() {
     private var contactName: String = "@user"
     private var contactAddress: String = ""
     private var isShowingSendButton = false
-    private var isDownloadInProgress = false
     private var isSelectionMode = false
 
-    // Track which specific pings are currently being downloaded
-    private val downloadingPingIds = mutableSetOf<String>()
-
     // Auto-download: Track if user has manually downloaded at least one message this session
+    // (Device Protection ON only — enables auto-PONG for subsequent pings in same session)
     private var hasDownloadedOnce = false
-
-    // Track pings that are being auto-downloaded (hide from UI for seamless experience)
-    private val autoPongPingIds = mutableSetOf<String>()
 
     // Lazy DB reference — avoids reconstructing KeyManager + passphrase on every call
     private val database by lazy {
@@ -221,95 +233,51 @@ class ChatActivity : BaseActivity() {
                 }
                 "com.securelegion.NEW_PING" -> {
                     val receivedContactId = intent.getLongExtra("CONTACT_ID", -1L)
-                    Log.d(TAG, "NEW_PING broadcast: received contactId=$receivedContactId, current contactId=$contactId")
+                    Log.d(TAG, "NEW_PING broadcast: receivedContactId=$receivedContactId, state=${com.securelegion.services.DownloadStateManager.getState(receivedContactId)}")
 
                     if (receivedContactId == contactId) {
-                        // NEW_PING for current contact — check DB for pending pings
-                        val keyManager = com.securelegion.crypto.KeyManager.getInstance(this@ChatActivity)
-                        val dbPassphrase = keyManager.getDatabasePassphrase()
-                        val database = com.securelegion.database.SecureLegionDatabase.getInstance(this@ChatActivity, dbPassphrase)
-                        val pendingCount = kotlinx.coroutines.runBlocking(kotlinx.coroutines.Dispatchers.IO) {
-                            database.pingInboxDao().countPendingByContact(contactId)
-                        }
-                        val hasPendingPing = pendingCount > 0
-
-                        if (!isDownloadInProgress || !hasPendingPing) {
-                            if (isDownloadInProgress && !hasPendingPing) {
-                                Log.i(TAG, "Download completed (DB confirms no pending) - resetting flag and refreshing UI")
-                                isDownloadInProgress = false
-                            } else {
-                                Log.i(TAG, "New Ping for current contact - reloading to show lock icon")
-                            }
-                            runOnUiThread {
-                                lifecycleScope.launch {
-                                    // AUTO-PONG: Check BEFORE loadMessages to prevent lock icon flash
-                                    // When Device Protection is OFF, TorService auto-downloads — we just
-                                    // need to mark pings for typing indicator so no lock icon flashes.
-                                    // When Device Protection is ON, fall back to old hasDownloadedOnce behavior.
-                                    val securityPrefs = getSharedPreferences("security", MODE_PRIVATE)
-                                    val deviceProtectionEnabled = securityPrefs.getBoolean(
-                                        com.securelegion.SecurityModeActivity.PREF_DEVICE_PROTECTION_ENABLED, false
-                                    )
-
-                                    if (!deviceProtectionEnabled) {
-                                        // Auto-download is ON (default) — TorService handles the download.
-                                        // Mark all non-stored pings for typing indicator (seamless UX).
-                                        val pendingPings = withContext(kotlinx.coroutines.Dispatchers.IO) {
-                                            database.pingInboxDao().getPendingByContact(contactId)
-                                                .filter { it.state != com.securelegion.database.entities.PingInbox.STATE_MSG_STORED }
-                                        }
-
-                                        if (pendingPings.isNotEmpty()) {
-                                            Log.i(TAG, "Auto-download active — showing typing indicator for ${pendingPings.size} ping(s)")
-                                            pendingPings.forEach { ping ->
-                                                autoPongPingIds.add(ping.pingId)
-                                                Log.d(TAG, "Typing indicator for ping: ${ping.pingId.take(8)} (state=${ping.state})")
+                        // NEW_PING for current contact — DownloadStateManager drives the UI,
+                        // just refresh to pick up the latest state.
+                        runOnUiThread {
+                            lifecycleScope.launch {
+                                // Device Protection ON + user active: auto-PONG new pings
+                                val securityPrefs = getSharedPreferences("security", MODE_PRIVATE)
+                                val deviceProtectionEnabled = securityPrefs.getBoolean(
+                                    com.securelegion.SecurityModeActivity.PREF_DEVICE_PROTECTION_ENABLED, false
+                                )
+                                if (deviceProtectionEnabled && hasDownloadedOnce) {
+                                    val pingSeen = withContext(kotlinx.coroutines.Dispatchers.IO) {
+                                        database.pingInboxDao().getPendingByContact(contactId)
+                                            .filter { it.state == com.securelegion.database.entities.PingInbox.STATE_PING_SEEN }
+                                            .filter { ping ->
+                                                val wireBytes = ping.pingWireBytesBase64?.let {
+                                                    try { android.util.Base64.decode(it, android.util.Base64.NO_WRAP) } catch (_: Exception) { null }
+                                                }
+                                                wireBytes == null || wireBytes.isEmpty() || wireBytes[0] != 0x0F.toByte()
                                             }
-                                        }
-                                    } else if (hasDownloadedOnce) {
-                                        // Device Protection ON but user downloaded once this session —
-                                        // auto-PONG subsequent pings from ChatActivity
-                                        val pingSeen = withContext(kotlinx.coroutines.Dispatchers.IO) {
-                                            database.pingInboxDao().getPendingByContact(contactId)
-                                                .filter { it.state == com.securelegion.database.entities.PingInbox.STATE_PING_SEEN }
-                                        }
-
-                                        if (pingSeen.isNotEmpty()) {
-                                            Log.i(TAG, "Device Protection ON but user active — auto-sending PONG for ${pingSeen.size} message(s)")
-                                            pingSeen.forEach { ping ->
-                                                Log.d(TAG, "Auto-PONGing ping: ${ping.pingId.take(8)}")
-                                                autoPongPingIds.add(ping.pingId)
-                                                com.securelegion.services.DownloadMessageService.start(
-                                                    this@ChatActivity,
-                                                    contactId,
-                                                    contactName,
-                                                    ping.pingId
-                                                )
-                                            }
+                                    }
+                                    if (pingSeen.isNotEmpty()) {
+                                        Log.i(TAG, "Device Protection ON but user active — auto-PONGing ${pingSeen.size} ping(s)")
+                                        pingSeen.forEach { ping ->
+                                            Log.d(TAG, "Auto-PONGing ping: ${ping.pingId.take(8)}")
+                                            com.securelegion.services.DownloadMessageService.start(
+                                                this@ChatActivity, contactId, contactName, ping.pingId
+                                            )
                                         }
                                     }
-
-                                    // Load messages (auto-downloading pings are already hidden) - use debounced to coalesce
-                                    loadMessagesDebounced()
                                 }
+                                loadMessagesDebounced()
                             }
-                        } else {
-                            Log.d(TAG, "NEW_PING for current contact during download - ignoring to prevent ghost")
                         }
                     } else if (receivedContactId != -1L) {
-                        // NEW_PING for different contact - reload to update UI (debounced)
-                        Log.i(TAG, "New Ping for different contact - reloading (debounced)")
                         loadMessagesDebounced()
                     }
                 }
                 "com.securelegion.DOWNLOAD_FAILED" -> {
                     val receivedContactId = intent.getLongExtra("CONTACT_ID", -1L)
-                    Log.w(TAG, "DOWNLOAD_FAILED broadcast: received contactId=$receivedContactId, current contactId=$contactId")
-
+                    Log.d(TAG, "DOWNLOAD_FAILED broadcast: receivedContactId=$receivedContactId, state=${com.securelegion.services.DownloadStateManager.getState(receivedContactId)}")
                     if (receivedContactId == contactId) {
-                        // Download failed for current contact - reset flag and refresh UI (debounced)
-                        Log.w(TAG, "Download failed - resetting download flag and refreshing UI (debounced)")
-                        isDownloadInProgress = false
+                        // DownloadStateManager already transitioned to BACKOFF — just refresh UI
                         loadMessagesDebounced()
                     }
                 }
@@ -319,7 +287,25 @@ class ChatActivity : BaseActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        // Install Google emoji provider (must be called before any emoji rendering)
+        EmojiManager.install(GoogleEmojiProvider())
+
         setContentView(R.layout.activity_chat)
+
+        // Back press closes open panels first
+        onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() {
+                if (isMediaKeyboardVisible) {
+                    hideMediaKeyboard()
+                } else if (isAttachmentPanelVisible) {
+                    hideAttachmentPanel()
+                } else {
+                    isEnabled = false
+                    onBackPressedDispatcher.onBackPressed()
+                }
+            }
+        })
 
         // Enable edge-to-edge display (important for display cutouts)
         WindowCompat.setDecorFitsSystemWindows(window, false)
@@ -337,15 +323,18 @@ class ChatActivity : BaseActivity() {
         // Track current keyboard inset so the layout listener can use it
         var currentBottomInset = 0
 
-        // Update RecyclerView padding based on header + input bar heights
+        // Update RecyclerView padding based on header + input bar + any visible bottom panel
         fun updateRecyclerPadding() {
             val inputContentHeight = messageInputContainer.height - messageInputContainer.paddingBottom
             val bottomMargin = (28 * resources.displayMetrics.density).toInt() // 12dp margin + 16dp breathing
+            val panelHeight = if (isAttachmentPanelVisible && ::attachmentPanel.isInitialized) attachmentPanel.height
+                              else if (isMediaKeyboardVisible) findViewById<View>(R.id.mediaKeyboardPanel)?.height ?: 0
+                              else 0
             recyclerView.setPadding(
                 recyclerView.paddingLeft,
                 chatHeader.height,
                 recyclerView.paddingRight,
-                currentBottomInset + inputContentHeight + bottomMargin
+                currentBottomInset + inputContentHeight + bottomMargin + panelHeight
             )
         }
 
@@ -430,6 +419,7 @@ class ChatActivity : BaseActivity() {
         // Setup UI
         val chatNameView = findViewById<TextView>(R.id.chatName)
         chatNameView.text = contactName
+        com.securelegion.utils.TextGradient.apply(chatNameView)
 
         // Tap contact name to open contact profile
         chatNameView.setOnClickListener {
@@ -509,6 +499,8 @@ class ChatActivity : BaseActivity() {
     }
 
     override fun onResume() {
+        visibleContactId = contactId
+
         // Check persistent flag first (survives activity recreation)
         val lifecyclePrefs = getSharedPreferences("app_lifecycle", MODE_PRIVATE)
         val wasWaitingForCameraGallery = lifecyclePrefs.getBoolean("waiting_for_camera_gallery", false)
@@ -546,6 +538,7 @@ class ChatActivity : BaseActivity() {
 
         // Notify TorService that app is in foreground (fast bandwidth updates)
         com.securelegion.services.TorService.setForegroundState(true)
+
     }
 
     /**
@@ -586,10 +579,16 @@ class ChatActivity : BaseActivity() {
 
     override fun onPause() {
         super.onPause()
+        visibleContactId = -1L
         Log.d(TAG, "onPause called")
 
         // Notify TorService that app is in background (slow bandwidth updates to save battery)
         com.securelegion.services.TorService.setForegroundState(false)
+    }
+
+    override fun onStop() {
+        super.onStop()
+        hideMediaKeyboard()
     }
 
     override fun onDestroy() {
@@ -674,6 +673,9 @@ class ChatActivity : BaseActivity() {
             onResendMessage = { message ->
                 // Resend failed message (user-triggered via long-press menu)
                 resendFailedMessage(message)
+            },
+            decryptImageFile = { encryptedBytes ->
+                KeyManager.getInstance(this).decryptImageFile(encryptedBytes)
             }
         )
 
@@ -709,6 +711,8 @@ class ChatActivity : BaseActivity() {
         sendButton = findViewById(R.id.sendButton)
         sendButtonIcon = findViewById(R.id.sendButtonIcon)
         plusButton = findViewById(R.id.plusButton)
+        emojiButton = findViewById(R.id.emojiButton)
+        emojiButtonIcon = findViewById(R.id.emojiButtonIcon)
         textInputLayout = findViewById(R.id.textInputLayout)
         voiceRecordingLayout = findViewById(R.id.voiceRecordingLayout)
         recordingTimer = findViewById(R.id.recordingTimer)
@@ -720,16 +724,79 @@ class ChatActivity : BaseActivity() {
             finish()
         }
 
-        // Call button - start voice call
+        // Call button - opens call profile page with history
         findViewById<View>(R.id.callButton).setOnClickListener {
-            Log.d(TAG, "Call button clicked - starting voice call")
-            ThemedToast.show(this, "Starting call...")
-            startVoiceCall()
+            val intent = Intent(this, ContactCallActivity::class.java)
+            intent.putExtra(ContactCallActivity.EXTRA_CONTACT_ID, contactId)
+            intent.putExtra(ContactCallActivity.EXTRA_CONTACT_NAME, contactName)
+            intent.putExtra(ContactCallActivity.EXTRA_CONTACT_ADDRESS, contactAddress)
+            startActivity(intent)
         }
 
-        // Plus button (shows chat actions bottom sheet)
+        // Attachment panel (inline — replaces keyboard like media panel)
+        attachmentPanel = findViewById(R.id.attachmentPanel)
+        setupAttachmentPanel()
+
+        // Plus button toggles inline attachment panel
         plusButton.setOnClickListener {
-            showChatActionsBottomSheet()
+            if (isAttachmentPanelVisible) {
+                hideAttachmentPanel()
+            } else {
+                val imm = getSystemService(INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager
+                val keyboardVisible = imm.isAcceptingText
+                if (keyboardVisible) {
+                    hideSoftKeyboard()
+                    plusButton.postDelayed({ showAttachmentPanel() }, 200)
+                } else {
+                    showAttachmentPanel()
+                }
+            }
+        }
+
+        // Media keyboard panel (emoji/sticker/GIF)
+        mediaKeyboardPanel = findViewById(R.id.mediaKeyboardPanel)
+        setupMediaKeyboard()
+
+        // Track keyboard height for panel sizing
+        val rootView = findViewById<View>(android.R.id.content)
+        rootView.viewTreeObserver.addOnGlobalLayoutListener {
+            val rect = android.graphics.Rect()
+            rootView.getWindowVisibleDisplayFrame(rect)
+            val screenHeight = rootView.rootView.height
+            val kbHeight = screenHeight - rect.bottom
+            if (kbHeight > 200) {
+                keyboardHeight = kbHeight
+                // If keyboard appeared while any panel is showing, hide it
+                if (isMediaKeyboardVisible) {
+                    hideMediaKeyboard()
+                }
+                if (isAttachmentPanelVisible) {
+                    hideAttachmentPanel()
+                }
+            }
+        }
+
+        // Emoji button toggles media keyboard panel
+        emojiButton.setOnClickListener {
+            if (isMediaKeyboardVisible) {
+                hideMediaKeyboard()
+                showSoftKeyboard()
+            } else {
+                if (isAttachmentPanelVisible) hideAttachmentPanel()
+                hideSoftKeyboard()
+                // Delay slightly so keyboard hides before panel appears
+                emojiButton.postDelayed({ showMediaKeyboard() }, 100)
+            }
+        }
+
+        // Tapping the text input hides any panel and shows keyboard
+        messageInput.setOnClickListener {
+            if (isMediaKeyboardVisible) {
+                hideMediaKeyboard()
+            }
+            if (isAttachmentPanelVisible) {
+                hideAttachmentPanel()
+            }
         }
 
         // Send/Mic button - dynamically switches based on text
@@ -798,37 +865,226 @@ class ChatActivity : BaseActivity() {
         })
     }
 
-    private fun showChatActionsBottomSheet() {
-        val bottomSheet = GlassBottomSheetDialog(this)
-        val view = layoutInflater.inflate(R.layout.bottom_sheet_chat_actions, null)
-
-        bottomSheet.setContentView(view)
-
-        // Configure bottom sheet behavior
-        bottomSheet.behavior.isDraggable = true
-        bottomSheet.behavior.isFitToContents = true
-        bottomSheet.behavior.skipCollapsed = true
-
-        // Make all backgrounds transparent
-        bottomSheet.window?.setBackgroundDrawableResource(android.R.color.transparent)
-        bottomSheet.window?.findViewById<View>(com.google.android.material.R.id.design_bottom_sheet)?.setBackgroundResource(android.R.color.transparent)
-
-        // Remove the white background box
-        view.post {
-            val parentView = view.parent as? View
-            parentView?.setBackgroundResource(android.R.color.transparent)
+    private fun setupAttachmentPanel() {
+        // Close/collapse arrow
+        attachmentPanel.findViewById<View>(R.id.closeAttachmentPanel).setOnClickListener {
+            hideAttachmentPanel()
         }
 
-        // SecurePay — hidden until wallet feature is ready for release
-        view.findViewById<View>(R.id.securePayOption).visibility = View.GONE
+        // Setup photo previews
+        val photoPreviewGrid = attachmentPanel.findViewById<RecyclerView>(R.id.photoPreviewGrid)
+        val allowAccessButton = attachmentPanel.findViewById<View>(R.id.allowAccessButton)
+        setupPhotoPreviewGrid(photoPreviewGrid, allowAccessButton, null)
 
-        // Send Image option
-        view.findViewById<View>(R.id.sendImageOption).setOnClickListener {
-            bottomSheet.dismiss()
-            showImageSourceDialog()
+        // Gallery action
+        attachmentPanel.findViewById<View>(R.id.actionGallery).setOnClickListener {
+            hideAttachmentPanel()
+            openGallery()
         }
 
-        bottomSheet.show()
+        // File action
+        attachmentPanel.findViewById<View>(R.id.actionFile).setOnClickListener {
+            hideAttachmentPanel()
+            ThemedToast.show(this, "File sharing coming soon")
+        }
+
+        // SecurePay action
+        attachmentPanel.findViewById<View>(R.id.actionSecurePay).setOnClickListener {
+            hideAttachmentPanel()
+            ThemedToast.show(this, "SecurePay coming soon")
+        }
+
+        // Location action
+        attachmentPanel.findViewById<View>(R.id.actionLocation).setOnClickListener {
+            hideAttachmentPanel()
+            ThemedToast.show(this, "Location sharing coming soon")
+        }
+    }
+
+    private fun showAttachmentPanel() {
+        if (isMediaKeyboardVisible) hideMediaKeyboard()
+        val minHeight = (380 * resources.displayMetrics.density).toInt()
+        val height = if (keyboardHeight > minHeight) keyboardHeight else minHeight
+        attachmentPanel.layoutParams.height = height
+        attachmentPanel.visibility = View.VISIBLE
+        attachmentPanel.requestLayout()
+        isAttachmentPanelVisible = true
+
+        // Refresh photo previews each time panel opens
+        val photoPreviewGrid = attachmentPanel.findViewById<RecyclerView>(R.id.photoPreviewGrid)
+        val allowAccessButton = attachmentPanel.findViewById<View>(R.id.allowAccessButton)
+        setupPhotoPreviewGrid(photoPreviewGrid, allowAccessButton, null)
+
+        // Scroll messages up so last message is visible above the panel
+        messagesRecyclerView.post { scrollToBottom(smooth = true) }
+    }
+
+    private fun hideAttachmentPanel() {
+        if (!isAttachmentPanelVisible) return
+        attachmentPanel.visibility = View.GONE
+        isAttachmentPanelVisible = false
+    }
+
+    private fun setupPhotoPreviewGrid(
+        recyclerView: RecyclerView,
+        allowAccessButton: View,
+        bottomSheet: GlassBottomSheetDialog?
+    ) {
+        // Check permission (READ_MEDIA_IMAGES for full access, READ_MEDIA_VISUAL_USER_SELECTED
+        // for partial "Select photos" on Android 14+, READ_EXTERNAL_STORAGE for pre-13)
+        val hasPermission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            // Android 14+: either full or partial photo access is enough to show previews
+            ContextCompat.checkSelfPermission(this, Manifest.permission.READ_MEDIA_IMAGES) ==
+                PackageManager.PERMISSION_GRANTED ||
+            ContextCompat.checkSelfPermission(this, Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED) ==
+                PackageManager.PERMISSION_GRANTED
+        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            ContextCompat.checkSelfPermission(this, Manifest.permission.READ_MEDIA_IMAGES) ==
+                PackageManager.PERMISSION_GRANTED
+        } else {
+            ContextCompat.checkSelfPermission(this, Manifest.permission.READ_EXTERNAL_STORAGE) ==
+                PackageManager.PERMISSION_GRANTED
+        }
+
+        if (!hasPermission) {
+            recyclerView.visibility = View.GONE
+            allowAccessButton.visibility = View.VISIBLE
+            allowAccessButton.setOnClickListener {
+                bottomSheet?.dismiss()
+                hideAttachmentPanel()
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                    ActivityCompat.requestPermissions(
+                        this, arrayOf(
+                            Manifest.permission.READ_MEDIA_IMAGES,
+                            Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED
+                        ), GALLERY_PERMISSION_REQUEST_CODE
+                    )
+                } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    ActivityCompat.requestPermissions(
+                        this, arrayOf(Manifest.permission.READ_MEDIA_IMAGES), GALLERY_PERMISSION_REQUEST_CODE
+                    )
+                } else {
+                    ActivityCompat.requestPermissions(
+                        this, arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE), GALLERY_PERMISSION_REQUEST_CODE
+                    )
+                }
+            }
+            return
+        }
+
+        // Load recent photos from MediaStore
+        recyclerView.visibility = View.VISIBLE
+        allowAccessButton.visibility = View.GONE
+
+        recyclerView.layoutManager = LinearLayoutManager(this, LinearLayoutManager.HORIZONTAL, false)
+
+        lifecycleScope.launch {
+            val photos = withContext(Dispatchers.IO) { loadRecentPhotos(20) }
+            recyclerView.adapter = com.securelegion.adapters.PhotoPreviewAdapter(photos) { uri ->
+                bottomSheet?.dismiss()
+                hideAttachmentPanel()
+                handleSelectedImage(uri)
+            }
+        }
+    }
+
+    private fun loadRecentPhotos(limit: Int): List<Uri> {
+        val photos = mutableListOf<Uri>()
+        val collection = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL)
+        } else {
+            MediaStore.Images.Media.EXTERNAL_CONTENT_URI
+        }
+
+        val projection = arrayOf(MediaStore.Images.Media._ID)
+        val sortOrder = "${MediaStore.Images.Media.DATE_ADDED} DESC"
+
+        contentResolver.query(collection, projection, null, null, sortOrder)?.use { cursor ->
+            val idColumn = cursor.getColumnIndexOrThrow(MediaStore.Images.Media._ID)
+            var count = 0
+            while (cursor.moveToNext() && count < limit) {
+                val id = cursor.getLong(idColumn)
+                val contentUri = android.content.ContentUris.withAppendedId(collection, id)
+                photos.add(contentUri)
+                count++
+            }
+        }
+        return photos
+    }
+
+    // ==================== MEDIA KEYBOARD (Emoji / Sticker / GIF) ====================
+
+    private fun setupMediaKeyboard() {
+        mediaKeyboardPanel.setOnEmojiSelectedListener { emoji ->
+            // Insert emoji at cursor position in EditText
+            val start = messageInput.selectionStart.coerceAtLeast(0)
+            val end = messageInput.selectionEnd.coerceAtLeast(0)
+            messageInput.text.replace(start.coerceAtMost(end), start.coerceAtLeast(end), emoji)
+        }
+
+        mediaKeyboardPanel.setOnStickerSelectedListener { assetPath ->
+            hideMediaKeyboard()
+            sendStickerMessage(assetPath)
+        }
+
+        mediaKeyboardPanel.setOnGifSelectedListener { gifAssetPath ->
+            hideMediaKeyboard()
+            // System GIFs are bundled assets — send as text code like stickers
+            sendStickerMessage(gifAssetPath)
+        }
+    }
+
+    private fun showMediaKeyboard() {
+        if (isAttachmentPanelVisible) hideAttachmentPanel()
+        val height = if (keyboardHeight > 200) keyboardHeight
+            else (300 * resources.displayMetrics.density).toInt()
+        mediaKeyboardPanel.layoutParams.height = height
+        mediaKeyboardPanel.visibility = View.VISIBLE
+        mediaKeyboardPanel.requestLayout()
+        isMediaKeyboardVisible = true
+        emojiButtonIcon.setImageResource(R.drawable.ic_keyboard)
+    }
+
+    private fun hideMediaKeyboard() {
+        if (!isMediaKeyboardVisible) return
+        mediaKeyboardPanel.visibility = View.GONE
+        isMediaKeyboardVisible = false
+        emojiButtonIcon.setImageResource(R.drawable.ic_emoji)
+    }
+
+    private fun hideSoftKeyboard() {
+        val imm = getSystemService(INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager
+        imm.hideSoftInputFromWindow(messageInput.windowToken, 0)
+    }
+
+    private fun showSoftKeyboard() {
+        messageInput.requestFocus()
+        val imm = getSystemService(INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager
+        imm.showSoftInput(messageInput, android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT)
+    }
+
+    private fun sendStickerMessage(assetPath: String) {
+        lifecycleScope.launch {
+            try {
+                val result = messageService.sendStickerMessage(
+                    contactId = contactId,
+                    assetPath = assetPath,
+                    onMessageSaved = { savedMessage ->
+                        runOnUiThread {
+                            lifecycleScope.launch { loadMessages() }
+                        }
+                    }
+                )
+                if (result.isSuccess) {
+                    Log.i(TAG, "Sticker sent: $assetPath")
+                } else {
+                    ThemedToast.show(this@ChatActivity, "Failed to send sticker")
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to send sticker", e)
+                ThemedToast.show(this@ChatActivity, "Failed to send sticker")
+            }
+        }
     }
 
     // ==================== IMAGE SENDING ====================
@@ -896,7 +1152,13 @@ class ChatActivity : BaseActivity() {
                 .putBoolean("waiting_for_camera_gallery", true)
                 .apply()
 
-            cameraLauncher.launch(cameraPhotoUri)
+            val uri = cameraPhotoUri
+            if (uri == null) {
+                Log.e(TAG, "cameraPhotoUri is null — cannot launch camera")
+                ThemedToast.show(this, "Camera unavailable. Please try again.")
+                return
+            }
+            cameraLauncher.launch(uri)
         } catch (e: Exception) {
             Log.e(TAG, "Failed to open camera", e)
             ThemedToast.show(this, "Failed to open camera")
@@ -1104,15 +1366,31 @@ class ChatActivity : BaseActivity() {
         }
     }
 
-    private fun showFullImage(imageBase64: String) {
-        if (imageBase64.isEmpty()) {
+    private fun showFullImage(imageData: String) {
+        if (imageData.isEmpty()) {
             ThemedToast.show(this, "Image not available")
             return
         }
 
         try {
-            // Decode image
-            val imageBytes = Base64.decode(imageBase64, Base64.DEFAULT)
+            // Decode image (handle file path or inline base64)
+            val rawBytes = if (imageData.startsWith("/")) {
+                val file = java.io.File(imageData)
+                if (file.exists()) file.readBytes() else null
+            } else {
+                Base64.decode(imageData, Base64.DEFAULT)
+            }
+            if (rawBytes == null) {
+                ThemedToast.show(this, "Image file not found")
+                return
+            }
+
+            // Decrypt if encrypted (.enc = AES-256-GCM at rest)
+            val imageBytes = if (imageData.endsWith(".enc")) {
+                KeyManager.getInstance(this).decryptImageFile(rawBytes)
+            } else {
+                rawBytes // Legacy .img or inline base64
+            }
             val bitmap = android.graphics.BitmapFactory.decodeByteArray(imageBytes, 0, imageBytes.size)
 
             // Create full-screen dialog to show image
@@ -1288,12 +1566,25 @@ class ChatActivity : BaseActivity() {
         grantResults: IntArray
     ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (requestCode == PERMISSION_REQUEST_CODE) {
-            if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-                // Permission granted, start recording
-                startVoiceRecording()
-            } else {
-                ThemedToast.show(this, "Microphone permission required for voice messages")
+        val granted = grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED
+        when (requestCode) {
+            PERMISSION_REQUEST_CODE -> {
+                if (granted) {
+                    startVoiceRecording()
+                } else {
+                    ThemedToast.show(this, "Microphone permission required for voice messages")
+                }
+            }
+            GALLERY_PERMISSION_REQUEST_CODE -> {
+                if (granted) {
+                    // Re-open the attachment panel so user immediately sees their photos
+                    showAttachmentPanel()
+                }
+            }
+            CAMERA_PERMISSION_REQUEST_CODE -> {
+                if (granted) {
+                    // Camera permission was granted, retry camera action
+                }
             }
         }
     }
@@ -1421,6 +1712,8 @@ class ChatActivity : BaseActivity() {
             val database = SecureLegionDatabase.getInstance(this@ChatActivity, dbPassphrase)
 
             // Mark all received messages as read (updates unread count)
+            // TODO(ghost-badge): Replace per-message loop with bulk markAllAsRead(contactId)
+            // to avoid races where new messages arrive between filter and markAsRead calls.
             val markedCount = withContext(Dispatchers.IO) {
                 val unreadMessages = messages.filter { !it.isSentByMe && !it.isRead }
                 unreadMessages.forEach { message ->
@@ -1468,114 +1761,89 @@ class ChatActivity : BaseActivity() {
                 Log.d(TAG, "Ping $index: ${ping.pingId.take(8)} - state=${ping.state}")
             }
 
-            // Pass PingInbox entries directly to adapter (no bridge conversion needed)
-            val pendingPingsToShow = activePingEntries
+            // Suppress profile update pings (0x0F) — silent background sync, no lock icon or typing dots
+            // Wire format: [type_byte][X25519_pubkey_32][encrypted_payload] — first byte is unencrypted content type
+            val pendingPingsToShow = activePingEntries.filter { ping ->
+                val wireBytes = ping.pingWireBytesBase64?.let {
+                    try { android.util.Base64.decode(it, android.util.Base64.NO_WRAP) } catch (_: Exception) { null }
+                }
+                wireBytes == null || wireBytes.isEmpty() || wireBytes[0] != 0x0F.toByte()
+            }
 
-            // AUTO-DOWNLOAD TYPING INDICATOR: When Device Protection is OFF,
-            // mark in-progress pings (DOWNLOAD_QUEUED, PONG_SENT, PING_SEEN) for typing indicator.
-            // This handles the case where user opens chat while TorService auto-download is running.
+            // ── State machine drives UI ──────────────────────────────────────
+            // DownloadStateManager is the single source of truth for typing/lock.
+            // Typing indicator = DOWNLOADING only (active network I/O)
+            // Lock icon        = PAUSED only (device protection ON, no retries)
+            // IDLE/BACKOFF     = invisible (pending pings hidden from UI)
+            val contactState = com.securelegion.services.DownloadStateManager.getState(contactId.toLong())
             val secPrefs = getSharedPreferences("security", MODE_PRIVATE)
             val devProtection = secPrefs.getBoolean(
                 com.securelegion.SecurityModeActivity.PREF_DEVICE_PROTECTION_ENABLED, false
             )
-            if (!devProtection) {
-                activePingEntries.forEach { ping ->
-                    if (ping.state == com.securelegion.database.entities.PingInbox.STATE_PING_SEEN
-                        || ping.state == com.securelegion.database.entities.PingInbox.STATE_DOWNLOAD_QUEUED
-                        || ping.state == com.securelegion.database.entities.PingInbox.STATE_PONG_SENT) {
-                        autoPongPingIds.add(ping.pingId)
+
+            // Decide which pending pings to show and whether to display typing dots
+            val (pingsForAdapter, showTyping) = if (!devProtection) {
+                // Instant mode: typing = DOWNLOADING, lock = never, hidden otherwise
+                when (contactState) {
+                    com.securelegion.services.DownloadStateManager.State.DOWNLOADING -> {
+                        // Show 1 typing indicator (first pending ping is the visual anchor)
+                        if (pendingPingsToShow.isNotEmpty()) {
+                            listOf(pendingPingsToShow.first()) to true
+                        } else {
+                            emptyList<com.securelegion.database.entities.PingInbox>() to false
+                        }
+                    }
+                    com.securelegion.services.DownloadStateManager.State.PAUSED -> {
+                        // Delivery paused — show lock icons for all pending pings
+                        pendingPingsToShow to false
+                    }
+                    else -> {
+                        // IDLE or BACKOFF — everything invisible, retries happen silently
+                        emptyList<com.securelegion.database.entities.PingInbox>() to false
+                    }
+                }
+            } else {
+                // Manual mode (Device Protection ON): show all pending pings as lock icons
+                // User taps lock → DownloadMessageService starts → state flips to DOWNLOADING → typing
+                when (contactState) {
+                    com.securelegion.services.DownloadStateManager.State.DOWNLOADING -> {
+                        // Show 1 typing indicator for the actively-downloading ping
+                        if (pendingPingsToShow.isNotEmpty()) {
+                            pendingPingsToShow to true
+                        } else {
+                            emptyList<com.securelegion.database.entities.PingInbox>() to false
+                        }
+                    }
+                    else -> {
+                        // Show lock icons for all pending pings (manual download required)
+                        pendingPingsToShow to false
                     }
                 }
             }
 
-            // Clean up autoPongPingIds - remove completed auto-downloads
-            val completedAutoPongs = autoPongPingIds.filter { pingId ->
-                pingId in existingMessagePingIds // Message arrived
-            }
-            completedAutoPongs.forEach { autoPongPingIds.remove(it) }
-            if (completedAutoPongs.isNotEmpty()) {
-                Log.d(TAG, "Cleaned up ${completedAutoPongs.size} completed auto-downloads")
-            }
-
-            // GHOST TYPING FIX: Also remove pings from autoPongPingIds if they're not in pending queue
-            // This handles cases where download completed but ping wasn't cleaned up from autoPongPingIds
-            val pendingPingIds = pendingPingsToShow.map { it.pingId }.toSet()
-            val ghostAutoPongs = autoPongPingIds.filter { pingId ->
-                pingId !in pendingPingIds // No longer in pending queue
-            }
-            ghostAutoPongs.forEach { autoPongPingIds.remove(it) }
-            if (ghostAutoPongs.isNotEmpty()) {
-                Log.d(TAG, "Cleaned up ${ghostAutoPongs.size} ghost auto-pong indicators")
-            }
-
-            // Clean up downloadingPingIds - remove any pingIds that are no longer actually pending
-            // OR that already have messages in the database
-            // This handles failed downloads, completed downloads (safety net), and activity recreation scenarios
-            val stillPendingIds = pendingPingsToShow.map { it.pingId }.toSet()
-
-            // Build a set of pingIds whose DB state is a lock-showing state (failed back to lock)
-            // PONG_SENT included: stale state after logout/login shows lock icon
-            val lockStateIds = pendingPingsToShow
-                .filter { it.state == com.securelegion.database.entities.PingInbox.STATE_PING_SEEN
-                        || it.state == com.securelegion.database.entities.PingInbox.STATE_FAILED_TEMP
-                        || it.state == com.securelegion.database.entities.PingInbox.STATE_MANUAL_REQUIRED
-                        || it.state == com.securelegion.database.entities.PingInbox.STATE_PONG_SENT }
-                .map { it.pingId }.toSet()
-
-            // A download is stale if: (1) not in pending queue OR (2) message already exists in DB
-            // OR (3) DB state reverted to a lock-showing state (failure path)
-            val staleDownloadIds = downloadingPingIds.filter {
-                it !in stillPendingIds || it in existingMessagePingIds || it in lockStateIds
-            }
-            staleDownloadIds.forEach {
-                Log.d(TAG, "Removing stale download indicator for ping ${it.take(8)}")
-                downloadingPingIds.remove(it)
-            }
-            if (staleDownloadIds.isNotEmpty()) {
-                Log.i(TAG, "Cleaned up ${staleDownloadIds.size} stale download indicators from UI")
-                Log.d(TAG, "Remaining in downloadingPingIds: ${downloadingPingIds.size}")
-            }
-
-            // GHOST TYPING FIX: Reset isDownloadInProgress if no pending pings in DATABASE and no active downloads
-            // Query ping_inbox directly (SOURCE OF TRUTH) with COUNT optimization
-            // Wrapped in IO dispatcher to avoid main thread violations
-            val pendingCount = withContext(Dispatchers.IO) {
-                database.pingInboxDao().countPendingByContact(contactId.toLong())
-            }
-
-            if (pendingCount == 0 && downloadingPingIds.isEmpty() && isDownloadInProgress) {
-                Log.d(TAG, "All downloads complete (ping_inbox confirms no pending) - resetting isDownloadInProgress")
-                isDownloadInProgress = false
-            }
+            Log.d(TAG, "State machine: contact=$contactId state=$contactState devProtection=$devProtection → showing ${pingsForAdapter.size} pings (typing=$showTyping)")
 
             withContext(Dispatchers.Main) {
-                Log.d(TAG, "Updating adapter with ${messages.size} messages + ${pendingPingsToShow.size} pending (${downloadingPingIds.size} downloading, ${autoPongPingIds.size} auto-downloading)")
-                if (autoPongPingIds.isNotEmpty()) {
-                    Log.i(TAG, "Auto-PONG pings for typing indicator: ${autoPongPingIds.map { it.take(8) }}")
-                }
-                // Check if user is at bottom before updating (to avoid force-scrolling)
-                // Use findLastVisibleItemPosition() for more reliable detection - treats partially visible items as "at bottom"
+                Log.d(TAG, "Updating adapter with ${messages.size} messages + ${pingsForAdapter.size} pending")
                 val layoutManager = messagesRecyclerView.layoutManager as? LinearLayoutManager
                 val lastVisiblePosition = layoutManager?.findLastVisibleItemPosition() ?: -1
                 val oldItemCount = messageAdapter.itemCount
                 val wasAtBottom = lastVisiblePosition >= (oldItemCount - 1)
 
+                val totalItems = messages.size + pingsForAdapter.size
+                // Always scroll on first load (opening chat), otherwise only if at bottom or new items
+                val shouldScroll = isFirstLoad || wasAtBottom || oldItemCount < totalItems
+
                 messageAdapter.updateMessages(
                     messages,
-                    pendingPingsToShow,
-                    downloadingPingIds, // Pass downloading state to adapter
-                    autoPongPingIds // Pass auto-downloading pings to show typing indicator
-                )
-
-                // Auto-scroll if user was at bottom (normal reading) or if this is a new incoming message
-                // Smooth scroll if user is actively interacting, instant scroll for background updates
-                val totalItems = messages.size + pendingPingsToShow.size
-                if (wasAtBottom) {
-                    // User was reading - smooth scroll
-                    scrollToBottom(smooth = true)
-                } else if (oldItemCount < totalItems) {
-                    // New message received - scroll to show it at least once
-                    scrollToBottom(smooth = true)
+                    pingsForAdapter,
+                    showTyping
+                ) {
+                    // Runs AFTER DiffUtil commits — adapter itemCount is now correct
+                    if (shouldScroll) {
+                        scrollToBottom(smooth = !isFirstLoad)
+                    }
+                    isFirstLoad = false
                 }
             }
         } catch (e: Exception) {
@@ -1598,12 +1866,14 @@ class ChatActivity : BaseActivity() {
 
         Log.d(TAG, "Sending message: $messageText (self-destruct=$enableSelfDestruct, read-receipt=$enableReadReceipt)")
 
+        // Clear input synchronously on main thread before any async work
+        messageInput.text.clear()
+
+        // Post to ensure the cleared-text frame renders before the send coroutine
+        // runs on Main.immediate (which would otherwise delay the draw pass)
+        messageInput.post {
         lifecycleScope.launch {
             try {
-                // Clear input immediately
-                withContext(Dispatchers.Main) {
-                    messageInput.text.clear()
-                }
 
                 // Check if Tor is available before sending
                 val gate = TorService.getTransportGate()
@@ -1633,8 +1903,7 @@ class ChatActivity : BaseActivity() {
                         Log.d(TAG, "Message saved to DB, updating UI immediately")
                         lifecycleScope.launch {
                             loadMessages()
-                            // Auto-scroll to newly sent message
-                            scrollToBottom(smooth = true)
+                            // scrollToBottom is now handled inside loadMessages() via commit callback
                         }
                     }
                 )
@@ -1646,20 +1915,20 @@ class ChatActivity : BaseActivity() {
                 // Silent failure - message saved to database, will retry later
                 Log.e(TAG, "Failed to send message (will retry later)", e)
 
-                // Reload messages to show the pending message and auto-scroll
+                // Reload messages to show the pending message (scroll handled by commit callback)
                 loadMessages()
-                scrollToBottom(smooth = true)
             }
         }
+        } // messageInput.post
     }
 
 
     private fun handleDownloadClick(pingId: String) {
         Log.i(TAG, "Download button clicked for contact $contactId, ping $pingId")
 
-        // Check if already downloading this specific ping (in-memory guard)
-        if (downloadingPingIds.contains(pingId)) {
-            Log.d(TAG, "Ping $pingId is already being downloaded, ignoring duplicate click")
+        // Ignore if already downloading for this contact (DownloadStateManager is the guard)
+        if (com.securelegion.services.DownloadStateManager.isDownloading(contactId)) {
+            Log.d(TAG, "Already downloading for contact $contactId, ignoring duplicate click")
             return
         }
 
@@ -1676,18 +1945,13 @@ class ChatActivity : BaseActivity() {
 
             Log.d(TAG, "Ping ${pingId.take(8)} claimed (DB → DOWNLOAD_QUEUED)")
 
-            // Mark that user has downloaded at least once (enables auto-download for future messages)
+            // Mark that user has downloaded at least once (enables auto-PONG for future pings)
             hasDownloadedOnce = true
 
-            // In-memory tracking for immediate UI feedback
-            downloadingPingIds.add(pingId)
-            isDownloadInProgress = true
-            Log.d(TAG, "Added pingId ${pingId.take(8)} to downloadingPingIds — tracking ${downloadingPingIds.size} downloads")
-
-            // Immediately update UI to show "Downloading..." status
+            // Refresh UI (DownloadStateManager will flip to DOWNLOADING when I/O starts)
             loadMessages()
 
-            // Start the download service with specific ping ID
+            // Start the download service — it calls DownloadStateManager.onDownloadStarted()
             com.securelegion.services.DownloadMessageService.start(this@ChatActivity, contactId, contactName, pingId)
         }
     }
@@ -1729,14 +1993,6 @@ class ChatActivity : BaseActivity() {
                     // Delete from database
                     database.messageDao().deleteMessageById(message.id)
                     Log.d(TAG, "Deleted message ${message.id}")
-
-                    // VACUUM database to compact and remove deleted records
-                    try {
-                        database.openHelper.writableDatabase.execSQL("VACUUM")
-                        Log.d(TAG, "Database vacuumed after message deletion")
-                    } catch (e: Exception) {
-                        Log.e(TAG, "Failed to vacuum database", e)
-                    }
                 }
 
                 // Update UI on main thread
@@ -1837,15 +2093,7 @@ class ChatActivity : BaseActivity() {
                         database.messageDao().deleteMessageById(messageId)
                     }
 
-                    // VACUUM database to compact and remove deleted records
-                    if (regularMessageIds.isNotEmpty()) {
-                        try {
-                            database.openHelper.writableDatabase.execSQL("VACUUM")
-                            Log.d(TAG, "Database vacuumed after message deletion")
-                        } catch (e: Exception) {
-                            Log.e(TAG, "Failed to vacuum database", e)
-                        }
-                    }
+                    Log.d(TAG, "Deleted ${regularMessageIds.size} messages")
                 }
 
                 Log.d(TAG, "Securely deleted ${selectedIds.size} messages using DOD 3-pass wiping")
@@ -1878,21 +2126,37 @@ class ChatActivity : BaseActivity() {
                         val database = SecureLegionDatabase.getInstance(this@ChatActivity, dbPassphrase)
 
                         withContext(Dispatchers.IO) {
-                            // Get all messages for this contact to check for voice files
-                            val messages = database.messageDao().getMessagesForContact(contactId.toLong())
+                            // Lightweight projection: only fetch the 4 small columns needed for cleanup
+                            // Uses getDeleteInfoForContact instead of SELECT * to avoid CursorWindow overflow
+                            val deleteInfos = database.messageDao().getDeleteInfoForContact(contactId.toLong())
 
-                            // Securely wipe any voice message audio files
-                            messages.forEach { message ->
-                                if (message.messageType == Message.MESSAGE_TYPE_VOICE &&
-                                    message.voiceFilePath != null) {
+                            // Securely wipe any voice/image files
+                            deleteInfos.forEach { info ->
+                                if (info.messageType == Message.MESSAGE_TYPE_VOICE &&
+                                    info.voiceFilePath != null) {
                                     try {
-                                        val voiceFile = File(message.voiceFilePath)
+                                        val voiceFile = File(info.voiceFilePath)
                                         if (voiceFile.exists()) {
                                             SecureWipe.secureDeleteFile(voiceFile)
                                             Log.d(TAG, "Securely wiped voice file: ${voiceFile.name}")
                                         }
                                     } catch (e: Exception) {
                                         Log.e(TAG, "Failed to securely wipe voice file", e)
+                                    }
+                                }
+                                // Wipe image files (stored as image_messages/$messageId.img)
+                                if (info.messageType == Message.MESSAGE_TYPE_IMAGE) {
+                                    try {
+                                        // Check both .enc (encrypted) and .img (legacy) files
+                                        val encFile = File(filesDir, "image_messages/${info.messageId}.enc")
+                                        val imgFile = File(filesDir, "image_messages/${info.messageId}.img")
+                                        val imageFile = if (encFile.exists()) encFile else imgFile
+                                        if (imageFile.exists()) {
+                                            SecureWipe.secureDeleteFile(imageFile)
+                                            Log.d(TAG, "Securely wiped image file: ${imageFile.name}")
+                                        }
+                                    } catch (e: Exception) {
+                                        Log.e(TAG, "Failed to securely wipe image file", e)
                                     }
                                 }
                             }
@@ -1921,9 +2185,7 @@ class ChatActivity : BaseActivity() {
                                 }
                             }
 
-                            // VACUUM database to compact and remove deleted records
-                            database.openHelper.writableDatabase.execSQL("VACUUM")
-                            Log.d(TAG, "Thread deleted and database vacuumed")
+                            Log.d(TAG, "Thread deleted successfully")
                         }
 
                         withContext(Dispatchers.Main) {

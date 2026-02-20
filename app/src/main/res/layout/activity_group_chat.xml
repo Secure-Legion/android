@@ -204,6 +204,7 @@
                 android:paddingTop="10dp"
                 android:paddingBottom="10dp"
                 android:maxLines="4"
+                android:saveEnabled="false"
                 android:inputType="textCapSentences|textMultiLine" />
 
         </LinearLayout>

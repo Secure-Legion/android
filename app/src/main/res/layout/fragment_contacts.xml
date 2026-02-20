@@ -13,7 +13,7 @@
         android:paddingStart="20dp"
         android:paddingEnd="20dp"
         android:paddingTop="8dp"
-        android:paddingBottom="100dp"
+        android:paddingBottom="130dp"
         android:clipToPadding="false"
         android:background="#000000" />
 

@@ -49,6 +49,7 @@ class GroupMembersActivity : BaseActivity() {
     private lateinit var memberAdapter: GroupMemberAdapter
     private var allMembers = listOf<GroupMemberItem>()
     private var filteredMembers = listOf<GroupMemberItem>()
+    private var currentUserRole: String = "Member"
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -163,7 +164,7 @@ class GroupMembersActivity : BaseActivity() {
 
         lifecycleScope.launch {
             try {
-                val members = withContext(Dispatchers.IO) {
+                val (members, myRole) = withContext(Dispatchers.IO) {
                     val mgr = CrdtGroupManager.getInstance(this@GroupMembersActivity)
                     val keyManager = KeyManager.getInstance(this@GroupMembersActivity)
                     val dbPassphrase = keyManager.getDatabasePassphrase()
@@ -175,15 +176,19 @@ class GroupMembersActivity : BaseActivity() {
                     val localPubkeyHex = keyManager.getSigningPublicKey()
                         .joinToString("") { "%02x".format(it) }
 
-                    crdtMembers.mapNotNull { member ->
+                    // Determine current user's role for permission checks
+                    val myEntry = crdtMembers.find { it.pubkeyHex == localPubkeyHex }
+                    val role = if (myEntry != null && myEntry.accepted) myEntry.role else "Member"
+
+                    val memberList = crdtMembers.mapNotNull { member ->
                         val isMe = member.pubkeyHex == localPubkeyHex
-                        val role = if (!member.accepted) "Pending" else member.role
+                        val memberRole = if (!member.accepted) "Pending" else member.role
 
                         if (isMe) {
                             return@mapNotNull GroupMemberItem(
                                 pubkeyHex = member.pubkeyHex,
                                 displayName = "You",
-                                role = role,
+                                role = memberRole,
                                 isMe = true
                             )
                         }
@@ -195,22 +200,26 @@ class GroupMembersActivity : BaseActivity() {
                         )
                         val dbContact = database.contactDao().getContactByPublicKey(pubkeyB64)
                         val displayName = dbContact?.displayName
+                            ?: database.groupPeerDao().getByGroupAndPubkey(currentGroupId, member.pubkeyHex)?.displayName
                             ?: (member.deviceIdHex.take(16) + "...")
                         val photo = dbContact?.profilePictureBase64
 
                         GroupMemberItem(
                             pubkeyHex = member.pubkeyHex,
                             displayName = displayName,
-                            role = role,
+                            role = memberRole,
                             isMe = false,
                             profilePhotoBase64 = photo
                         )
                     }
+
+                    Pair(memberList, role)
                 }
 
+                currentUserRole = myRole
                 allMembers = members.sortedWith(compareBy({ !it.isMe }, { it.displayName.uppercase() }))
                 filteredMembers = allMembers
-                memberAdapter.updateMembers(filteredMembers)
+                memberAdapter.updateMembers(filteredMembers, currentUserRole)
 
                 Log.i(TAG, "Loaded ${allMembers.size} members for group: $groupName")
 
@@ -323,11 +332,15 @@ class GroupMembersActivity : BaseActivity() {
             try {
                 withContext(Dispatchers.IO) {
                     val mgr = CrdtGroupManager.getInstance(this@GroupMembersActivity)
-                    for (contact in contacts) {
+                    for ((index, contact) in contacts.withIndex()) {
                         val pubkeyHex = contact.ed25519PublicKeyBytes
                             .joinToString("") { "%02x".format(it) }
                         mgr.inviteMember(groupId, pubkeyHex)
                         Log.i(TAG, "Invited ${contact.displayName}")
+                        // Backpressure: give Tor circuits time to settle between invites
+                        if (index < contacts.size - 1) {
+                            kotlinx.coroutines.delay(800)
+                        }
                     }
                 }
 
@@ -350,7 +363,12 @@ class GroupMembersActivity : BaseActivity() {
     private fun confirmRemoveMember(member: GroupMemberItem) {
         val currentGroupId = groupId ?: return
 
-        AlertDialog.Builder(this)
+        if (currentUserRole !in listOf("Owner", "Admin")) {
+            ThemedToast.show(this, "Only owners and admins can remove members")
+            return
+        }
+
+        AlertDialog.Builder(this, R.style.CustomAlertDialog)
             .setTitle("Remove Member")
             .setMessage("Remove ${member.displayName} from this group?")
             .setPositiveButton("Remove") { dialog, _ ->
@@ -375,7 +393,7 @@ class GroupMembersActivity : BaseActivity() {
     }
 
     private fun confirmPromoteMember(member: GroupMemberItem) {
-        AlertDialog.Builder(this)
+        AlertDialog.Builder(this, R.style.CustomAlertDialog)
             .setTitle("Promote Member")
             .setMessage("Promote ${member.displayName} to Admin?")
             .setPositiveButton("Promote") { dialog, _ ->
@@ -393,7 +411,7 @@ class GroupMembersActivity : BaseActivity() {
         val bottomNav = findViewById<View>(R.id.bottomNav)
         ViewCompat.setOnApplyWindowInsetsListener(findViewById(android.R.id.content)) { _, windowInsets ->
             val insets = windowInsets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())
-            bottomNav?.setPadding(bottomNav.paddingLeft, bottomNav.paddingTop, bottomNav.paddingRight, 0)
+            bottomNav?.setPadding(bottomNav.paddingLeft, bottomNav.paddingTop, bottomNav.paddingRight, insets.bottom)
             windowInsets
         }
 

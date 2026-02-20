@@ -45,10 +45,26 @@
             android:layout_height="1dp"
             android:layout_weight="1" />
 
-        <!-- Spacer for symmetry -->
-        <View
+        <!-- Trusted Star Toggle -->
+        <FrameLayout
+            android:id="@+id/trustedStarButton"
             android:layout_width="42dp"
-            android:layout_height="42dp" />
+            android:layout_height="42dp"
+            android:layout_marginEnd="8dp"
+            android:background="@drawable/top_icon_bg"
+            android:clickable="true"
+            android:focusable="true">
+
+            <ImageView
+                android:id="@+id/trustedStarIcon"
+                android:layout_width="22dp"
+                android:layout_height="22dp"
+                android:layout_gravity="center"
+                android:src="@drawable/ic_star_outline"
+                app:tint="?attr/colorOnSurfaceVariant"
+                android:contentDescription="Trusted Contact" />
+
+        </FrameLayout>
 
     </LinearLayout>
 
@@ -73,10 +89,11 @@
             <!-- Profile Picture -->
             <ImageView
                 android:id="@+id/profilePicture"
-                android:layout_width="100dp"
-                android:layout_height="100dp"
+                android:layout_width="140dp"
+                android:layout_height="140dp"
                 android:src="@drawable/default_avatar"
                 android:background="@drawable/profile_circle_bg"
+                android:layout_marginTop="48dp"
                 android:layout_marginBottom="16dp"
                 android:contentDescription="Profile Picture" />
 
@@ -86,8 +103,8 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:text="@WIZARD"
-                android:textSize="20sp"
-                android:textColor="?attr/colorOnSurface"
+                android:textSize="34sp"
+                android:textColor="@color/lock_title_gray"
                 android:fontFamily="@font/space_grotesk_bold"
                 android:layout_marginBottom="24dp" />
 
@@ -180,6 +197,7 @@
                     android:layout_height="wrap_content"
                     android:orientation="vertical"
                     android:gravity="center"
+                    android:layout_marginEnd="24dp"
                     android:clickable="true"
                     android:focusable="true">
 
@@ -209,100 +227,58 @@
 
                 </LinearLayout>
 
-            </LinearLayout>
-
-            <!-- Block Contact Option -->
-            <LinearLayout
-                android:id="@+id/blockContactOption"
-                android:layout_width="match_parent"
-                android:layout_height="80dp"
-                android:orientation="horizontal"
-                android:background="@drawable/settings_box_bg"
-                android:paddingStart="10dp"
-                android:paddingEnd="16dp"
-                android:gravity="center_vertical"
-                android:layout_marginBottom="12dp">
-
-                <FrameLayout
-                    android:layout_width="50dp"
-                    android:layout_height="50dp"
-                    android:background="@drawable/settings_icon_bg"
-                    android:layout_marginStart="8dp"
-                    android:layout_marginEnd="16dp">
-
-                    <ImageView
-                        android:layout_width="24dp"
-                        android:layout_height="24dp"
-                        android:layout_gravity="center"
-                        android:src="@drawable/ic_person"
-                        app:tint="?attr/colorOnSurfaceVariant"
-                        android:contentDescription="Block" />
-
-                </FrameLayout>
-
-                <TextView
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:text="Block Contact"
-                    android:textSize="16sp"
-                    android:textColor="#8C8C8C"
-                    android:fontFamily="@font/poppins_medium" />
-
-                <androidx.appcompat.widget.SwitchCompat
-                    android:id="@+id/blockContactSwitch"
+                <!-- Block Button -->
+                <LinearLayout
+                    android:id="@+id/actionBlock"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:theme="@style/SwitchTheme" />
+                    android:orientation="vertical"
+                    android:gravity="center"
+                    android:clickable="true"
+                    android:focusable="true">
+
+                    <FrameLayout
+                        android:layout_width="50dp"
+                        android:layout_height="50dp"
+                        android:background="@drawable/settings_icon_bg">
+
+                        <ImageView
+                            android:id="@+id/blockIcon"
+                            android:layout_width="22dp"
+                            android:layout_height="22dp"
+                            android:layout_gravity="center"
+                            android:src="@drawable/ic_close_x"
+                            app:tint="?attr/colorOnSurfaceVariant"
+                            android:contentDescription="Block" />
+
+                    </FrameLayout>
+
+                    <TextView
+                        android:id="@+id/blockLabel"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Block"
+                        android:textSize="11sp"
+                        android:textColor="#8C8C8C"
+                        android:fontFamily="@font/poppins_medium"
+                        android:layout_marginTop="6dp" />
+
+                </LinearLayout>
 
             </LinearLayout>
 
-            <!-- Trusted Contact Option -->
-            <LinearLayout
-                android:id="@+id/trustedContactOption"
-                android:layout_width="match_parent"
-                android:layout_height="80dp"
-                android:orientation="horizontal"
-                android:background="@drawable/settings_box_bg"
-                android:paddingStart="10dp"
-                android:paddingEnd="16dp"
-                android:gravity="center_vertical"
-                android:layout_marginBottom="12dp">
+            <!-- Hidden switches for backward compatibility -->
+            <androidx.appcompat.widget.SwitchCompat
+                android:id="@+id/blockContactSwitch"
+                android:layout_width="0dp"
+                android:layout_height="0dp"
+                android:visibility="gone" />
 
-                <FrameLayout
-                    android:layout_width="50dp"
-                    android:layout_height="50dp"
-                    android:background="@drawable/settings_icon_bg"
-                    android:layout_marginStart="8dp"
-                    android:layout_marginEnd="16dp">
-
-                    <ImageView
-                        android:id="@+id/trustedContactIcon"
-                        android:layout_width="24dp"
-                        android:layout_height="24dp"
-                        android:layout_gravity="center"
-                        android:src="@drawable/ic_star_outline"
-                        app:tint="?attr/colorOnSurfaceVariant"
-                        android:contentDescription="Trusted" />
-
-                </FrameLayout>
-
-                <TextView
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:text="Trusted Contact"
-                    android:textSize="16sp"
-                    android:textColor="#8C8C8C"
-                    android:fontFamily="@font/poppins_medium" />
-
-                <androidx.appcompat.widget.SwitchCompat
-                    android:id="@+id/trustedContactSwitch"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:theme="@style/SwitchTheme" />
-
-            </LinearLayout>
+            <androidx.appcompat.widget.SwitchCompat
+                android:id="@+id/trustedContactSwitch"
+                android:layout_width="0dp"
+                android:layout_height="0dp"
+                android:visibility="gone" />
 
             <!-- Hidden fields for backward compatibility -->
             <EditText
@@ -350,8 +326,8 @@
         layout="@layout/bottom_navigation"
         android:layout_width="0dp"
         android:layout_height="80dp"
-        android:layout_marginStart="40dp"
-        android:layout_marginEnd="40dp"
+        android:layout_marginStart="50dp"
+        android:layout_marginEnd="50dp"
         android:layout_marginBottom="20dp"
         android:elevation="8dp"
         app:layout_constraintBottom_toBottomOf="parent"

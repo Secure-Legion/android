@@ -3,10 +3,13 @@ package com.securelegion
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.PowerManager
+import android.provider.Settings
 import android.util.Log
 import android.view.View
 import androidx.appcompat.app.AppCompatActivity
@@ -18,6 +21,7 @@ import com.securelegion.crypto.KeyManager
 class SplashActivity : AppCompatActivity() {
 
     private val NOTIFICATION_PERMISSION_REQUEST_CODE = 1001
+    private val BATTERY_OPTIMIZATION_REQUEST_CODE = 1002
 
     override fun onCreate(savedInstanceState: Bundle?) {
         // Install Android 12+ splash screen before super.onCreate()
@@ -52,7 +56,19 @@ class SplashActivity : AppCompatActivity() {
     }
 
     private fun initializeApp() {
-        // Skip the old splash layout — Android 12+ splash screen is enough
+        // Request battery optimization exemption (keeps Tor alive in background)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            val pm = getSystemService(POWER_SERVICE) as PowerManager
+            if (!pm.isIgnoringBatteryOptimizations(packageName)) {
+                Log.i("SplashActivity", "Requesting battery optimization exemption")
+                val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+                    data = Uri.parse("package:$packageName")
+                }
+                @Suppress("DEPRECATION")
+                startActivityForResult(intent, BATTERY_OPTIMIZATION_REQUEST_CODE)
+                return
+            }
+        }
         navigateToNextScreen()
     }
 
@@ -93,6 +109,22 @@ class SplashActivity : AppCompatActivity() {
                 overridePendingTransition(android.R.anim.fade_in, android.R.anim.fade_out)
             }
             finish()
+        }
+    }
+
+    @Suppress("DEPRECATION")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == BATTERY_OPTIMIZATION_REQUEST_CODE) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                val pm = getSystemService(POWER_SERVICE) as PowerManager
+                if (pm.isIgnoringBatteryOptimizations(packageName)) {
+                    Log.i("SplashActivity", "Battery optimization exemption granted")
+                } else {
+                    Log.w("SplashActivity", "Battery optimization exemption denied")
+                }
+            }
+            navigateToNextScreen()
         }
     }
 

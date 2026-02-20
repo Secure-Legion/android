@@ -51,25 +51,11 @@
             android:textStyle="bold"
             android:gravity="center" />
 
-        <!-- Settings Button -->
-        <FrameLayout
-            android:id="@+id/settingsButton"
+        <!-- Spacer to keep title centered -->
+        <View
             android:layout_width="42dp"
             android:layout_height="42dp"
-            android:layout_marginEnd="8dp"
-            android:background="@drawable/top_icon_bg"
-            android:clickable="true"
-            android:focusable="true">
-
-            <ImageView
-                android:layout_width="20dp"
-                android:layout_height="20dp"
-                android:layout_gravity="center"
-                android:src="@drawable/ic_settings_cog"
-                app:tint="?attr/colorOnSurfaceVariant"
-                android:contentDescription="Settings" />
-
-        </FrameLayout>
+            android:layout_marginEnd="8dp" />
 
     </LinearLayout>
 
@@ -201,147 +187,16 @@
     </LinearLayout>
 
     <!-- Bottom Navigation -->
-        <LinearLayout
-        android:id="@+id/bottomNav"
+    <include
+        layout="@layout/bottom_navigation"
         android:layout_width="0dp"
-        android:layout_height="72dp"
-        android:layout_marginStart="16dp"
-        android:layout_marginEnd="16dp"
+        android:layout_height="80dp"
+        android:layout_marginStart="50dp"
+        android:layout_marginEnd="50dp"
         android:layout_marginBottom="20dp"
-        android:orientation="horizontal"
-        android:background="@drawable/glass_nav_bg"
-        android:clipToOutline="true"
-        android:gravity="center_vertical"
-                android:paddingBottom="0dp"
         android:elevation="8dp"
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintEnd_toEndOf="parent">
-
-        <!-- Messages Nav Item -->
-        <LinearLayout
-            android:id="@+id/navMessages"
-            android:layout_gravity="center_vertical"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:orientation="vertical"
-            android:gravity="center"
-            android:background="@drawable/nav_item_ripple"
-            android:clickable="true"
-            android:focusable="true">
-
-            <ImageView
-                android:layout_width="22dp"
-                android:layout_height="22dp"
-                android:src="@android:drawable/sym_action_chat"
-                app:tint="?attr/colorOnSurfaceVariant"
-                android:layout_marginBottom="2dp"
-                android:contentDescription="Messages" />
-
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="Messages"
-                android:textSize="10sp"
-                android:textColor="?attr/colorOnSurfaceVariant"
-                android:fontFamily="@font/poppins_medium" />
-
-        </LinearLayout>
-
-        <!-- Wallet Nav Item -->
-        <LinearLayout
-            android:id="@+id/navWallet"
-            android:layout_gravity="center_vertical"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:orientation="vertical"
-            android:gravity="center"
-            android:background="@drawable/nav_item_ripple"
-            android:clickable="true"
-            android:focusable="true">
-
-            <ImageView
-                android:layout_width="22dp"
-                android:layout_height="22dp"
-                android:src="@drawable/ic_wallet"
-                android:layout_marginBottom="2dp"
-                app:tint="?attr/colorOnSurfaceVariant"
-                android:contentDescription="Wallet" />
-
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="Wallet"
-                android:textSize="10sp"
-                android:textColor="?attr/colorOnSurfaceVariant"
-                android:fontFamily="@font/poppins_medium" />
-
-        </LinearLayout>
-
-        <!-- Add Friend Nav Item -->
-        <LinearLayout
-            android:id="@+id/navAddFriend"
-            android:layout_gravity="center_vertical"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:orientation="vertical"
-            android:gravity="center"
-            android:background="@drawable/nav_item_ripple"
-            android:clickable="true"
-            android:focusable="true">
-
-            <ImageView
-                android:layout_width="22dp"
-                android:layout_height="22dp"
-                android:src="@drawable/ic_add_friend"
-                app:tint="?attr/colorOnSurfaceVariant"
-                android:layout_marginBottom="2dp"
-                android:contentDescription="Add Friend" />
-
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="Add Friend"
-                android:textSize="10sp"
-                android:textColor="?attr/colorOnSurfaceVariant"
-                android:fontFamily="@font/poppins_medium" />
-
-        </LinearLayout>
-
-        <!-- Phone Nav Item -->
-        <LinearLayout
-            android:id="@+id/navPhone"
-            android:layout_gravity="center_vertical"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:orientation="vertical"
-            android:gravity="center"
-            android:background="@drawable/nav_item_ripple"
-            android:clickable="true"
-            android:focusable="true">
-
-            <ImageView
-                android:layout_width="22dp"
-                android:layout_height="22dp"
-                android:src="@drawable/ic_call"
-                android:layout_marginBottom="2dp"
-                app:tint="?attr/colorOnSurfaceVariant"
-                android:contentDescription="Phone" />
-
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="Phone"
-                android:textSize="10sp"
-                android:textColor="?attr/colorOnSurfaceVariant"
-                android:fontFamily="@font/poppins_medium" />
-
-        </LinearLayout>
-
-    </LinearLayout>
+        app:layout_constraintEnd_toEndOf="parent" />
 
 </androidx.constraintlayout.widget.ConstraintLayout>

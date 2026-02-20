@@ -538,7 +538,8 @@ class VoiceCallActivity : BaseActivity() {
         // Save call to history
         saveCallToHistory()
 
-        finish()
+        // Show call summary
+        showCallSummary()
     }
 
     /**
@@ -583,6 +584,48 @@ class VoiceCallActivity : BaseActivity() {
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to save call to history", e)
             }
+        }
+    }
+
+    private fun showCallSummary() {
+        try {
+            val bottomSheet = com.securelegion.utils.GlassBottomSheetDialog(this)
+            val view = layoutInflater.inflate(R.layout.bottom_sheet_call_summary, null)
+            bottomSheet.setContentView(view)
+
+            bottomSheet.behavior.isDraggable = true
+            bottomSheet.behavior.skipCollapsed = true
+
+            // Contact name
+            view.findViewById<android.widget.TextView>(R.id.summaryContactName).text = contactName
+
+            // Call type
+            val typeText = if (isOutgoing) "Outgoing Call" else "Incoming Call"
+            view.findViewById<android.widget.TextView>(R.id.summaryCallType).text = typeText
+
+            // Duration
+            val durationSeconds = if (callStartTime > 0) {
+                (System.currentTimeMillis() - callStartTime) / 1000
+            } else {
+                0L
+            }
+            val minutes = durationSeconds / 60
+            val seconds = durationSeconds % 60
+            view.findViewById<android.widget.TextView>(R.id.summaryDuration).text = String.format("%d:%02d", minutes, seconds)
+
+            // Done button
+            view.findViewById<android.view.View>(R.id.summaryDoneButton).setOnClickListener {
+                bottomSheet.dismiss()
+            }
+
+            bottomSheet.setOnDismissListener {
+                finish()
+            }
+
+            bottomSheet.show()
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to show call summary", e)
+            finish()
         }
     }
 

@@ -1,0 +1,5950 @@
+{
+  "Smileys and emotions": [
+    {
+      "codepoint": "1f600",
+      "name": "emoji_u1f600",
+      "tags": [
+        ":smile:"
+      ],
+      "popularity": 720
+    },
+    {
+      "codepoint": "1f603",
+      "name": "emoji_u1f603",
+      "tags": [
+        ":smile-with-big-eyes:"
+      ],
+      "popularity": 719
+    },
+    {
+      "codepoint": "1f604",
+      "name": "emoji_u1f604",
+      "tags": [
+        ":grin:"
+      ],
+      "popularity": 718
+    },
+    {
+      "codepoint": "1f601",
+      "name": "emoji_u1f601",
+      "tags": [
+        ":grinning:"
+      ],
+      "popularity": 717
+    },
+    {
+      "codepoint": "1f606",
+      "name": "emoji_u1f606",
+      "tags": [
+        ":laughing:"
+      ],
+      "popularity": 716
+    },
+    {
+      "codepoint": "1f605",
+      "name": "emoji_u1f605",
+      "tags": [
+        ":grin-sweat:"
+      ],
+      "popularity": 715
+    },
+    {
+      "codepoint": "1f602",
+      "name": "emoji_u1f602",
+      "tags": [
+        ":joy:"
+      ],
+      "popularity": 714
+    },
+    {
+      "codepoint": "1f923",
+      "name": "emoji_u1f923",
+      "tags": [
+        ":rofl:"
+      ],
+      "popularity": 713
+    },
+    {
+      "codepoint": "1f62d",
+      "name": "emoji_u1f62d",
+      "tags": [
+        ":loudly-crying:"
+      ],
+      "popularity": 712
+    },
+    {
+      "codepoint": "1f609",
+      "name": "emoji_u1f609",
+      "tags": [
+        ":wink:"
+      ],
+      "popularity": 711
+    },
+    {
+      "codepoint": "1f617",
+      "name": "emoji_u1f617",
+      "tags": [
+        ":kissing:"
+      ],
+      "popularity": 710
+    },
+    {
+      "codepoint": "1f619",
+      "name": "emoji_u1f619",
+      "tags": [
+        ":kissing-smiling-eyes:"
+      ],
+      "popularity": 709
+    },
+    {
+      "codepoint": "1f61a",
+      "name": "emoji_u1f61a",
+      "tags": [
+        ":kissing-closed-eyes:"
+      ],
+      "popularity": 708
+    },
+    {
+      "codepoint": "1f618",
+      "name": "emoji_u1f618",
+      "tags": [
+        ":kissing-heart:"
+      ],
+      "popularity": 707
+    },
+    {
+      "codepoint": "1f970",
+      "name": "emoji_u1f970",
+      "tags": [
+        ":heart-face:",
+        ":3-hearts:"
+      ],
+      "popularity": 706
+    },
+    {
+      "codepoint": "1f60d",
+      "name": "emoji_u1f60d",
+      "tags": [
+        ":heart-eyes:"
+      ],
+      "popularity": 705
+    },
+    {
+      "codepoint": "1f929",
+      "name": "emoji_u1f929",
+      "tags": [
+        ":star-struck:"
+      ],
+      "popularity": 704
+    },
+    {
+      "codepoint": "1f973",
+      "name": "emoji_u1f973",
+      "tags": [
+        ":partying-face:"
+      ],
+      "popularity": 703
+    },
+    {
+      "codepoint": "1fae0",
+      "name": "emoji_u1fae0",
+      "tags": [
+        ":melting:"
+      ],
+      "popularity": 702
+    },
+    {
+      "codepoint": "1f643",
+      "name": "emoji_u1f643",
+      "tags": [
+        ":upside-down-face:"
+      ],
+      "popularity": 701
+    },
+    {
+      "codepoint": "1f642",
+      "name": "emoji_u1f642",
+      "tags": [
+        ":slightly-happy:"
+      ],
+      "popularity": 700
+    },
+    {
+      "codepoint": "1f972",
+      "name": "emoji_u1f972",
+      "tags": [
+        ":happy-cry:"
+      ],
+      "popularity": 699
+    },
+    {
+      "codepoint": "1f979",
+      "name": "emoji_u1f979",
+      "tags": [
+        ":holding-back-tears:"
+      ],
+      "popularity": 698
+    },
+    {
+      "codepoint": "1f60a",
+      "name": "emoji_u1f60a",
+      "tags": [
+        ":blush:"
+      ],
+      "popularity": 697
+    },
+    {
+      "codepoint": "263a_fe0f",
+      "name": "emoji_u263a_fe0f",
+      "tags": [
+        ":warm-smile:"
+      ],
+      "popularity": 696
+    },
+    {
+      "codepoint": "1f60c",
+      "name": "emoji_u1f60c",
+      "tags": [
+        ":relieved:"
+      ],
+      "popularity": 695
+    },
+    {
+      "codepoint": "1f642_200d_2195_fe0f",
+      "name": "emoji_u1f642_200d_2195_fe0f",
+      "tags": [
+        ":head-nod:"
+      ],
+      "popularity": 694
+    },
+    {
+      "codepoint": "1f642_200d_2194_fe0f",
+      "name": "emoji_u1f642_200d_2194_fe0f",
+      "tags": [
+        ":head-shake:"
+      ],
+      "popularity": 693
+    },
+    {
+      "codepoint": "1f60f",
+      "name": "emoji_u1f60f",
+      "tags": [
+        ":smirk:"
+      ],
+      "popularity": 692
+    },
+    {
+      "codepoint": "1f924",
+      "name": "emoji_u1f924",
+      "tags": [
+        ":drool:"
+      ],
+      "popularity": 691
+    },
+    {
+      "codepoint": "1f60b",
+      "name": "emoji_u1f60b",
+      "tags": [
+        ":yum:"
+      ],
+      "popularity": 690
+    },
+    {
+      "codepoint": "1f61b",
+      "name": "emoji_u1f61b",
+      "tags": [
+        ":stuck-out-tongue:"
+      ],
+      "popularity": 689
+    },
+    {
+      "codepoint": "1f61d",
+      "name": "emoji_u1f61d",
+      "tags": [
+        ":squinting-tongue:"
+      ],
+      "popularity": 688
+    },
+    {
+      "codepoint": "1f61c",
+      "name": "emoji_u1f61c",
+      "tags": [
+        ":winky-tongue:"
+      ],
+      "popularity": 687
+    },
+    {
+      "codepoint": "1f92a",
+      "name": "emoji_u1f92a",
+      "tags": [
+        ":zany-face:"
+      ],
+      "popularity": 686
+    },
+    {
+      "codepoint": "1f974",
+      "name": "emoji_u1f974",
+      "tags": [
+        ":woozy:"
+      ],
+      "popularity": 685
+    },
+    {
+      "codepoint": "1f614",
+      "name": "emoji_u1f614",
+      "tags": [
+        ":pensive:"
+      ],
+      "popularity": 684
+    },
+    {
+      "codepoint": "1f97a",
+      "name": "emoji_u1f97a",
+      "tags": [
+        ":pleading:"
+      ],
+      "popularity": 683
+    },
+    {
+      "codepoint": "1f62c",
+      "name": "emoji_u1f62c",
+      "tags": [
+        ":grimacing:"
+      ],
+      "popularity": 682
+    },
+    {
+      "codepoint": "1f611",
+      "name": "emoji_u1f611",
+      "tags": [
+        ":expressionless:"
+      ],
+      "popularity": 681
+    },
+    {
+      "codepoint": "1f610",
+      "name": "emoji_u1f610",
+      "tags": [
+        ":neutral-face:"
+      ],
+      "popularity": 680
+    },
+    {
+      "codepoint": "1f636",
+      "name": "emoji_u1f636",
+      "tags": [
+        ":mouth-none:"
+      ],
+      "popularity": 679
+    },
+    {
+      "codepoint": "1f636_200d_1f32b_fe0f",
+      "name": "emoji_u1f636_200d_1f32b_fe0f",
+      "tags": [
+        ":face-in-clouds:",
+        ":lost:"
+      ],
+      "popularity": 678
+    },
+    {
+      "codepoint": "1fae5",
+      "name": "emoji_u1fae5",
+      "tags": [
+        ":dotted-line-face:",
+        ":invisible:"
+      ],
+      "popularity": 677
+    },
+    {
+      "codepoint": "1f910",
+      "name": "emoji_u1f910",
+      "tags": [
+        ":zipper-face:"
+      ],
+      "popularity": 676
+    },
+    {
+      "codepoint": "1fae1",
+      "name": "emoji_u1fae1",
+      "tags": [
+        ":salute:"
+      ],
+      "popularity": 675
+    },
+    {
+      "codepoint": "1f914",
+      "name": "emoji_u1f914",
+      "tags": [
+        ":thinking-face:"
+      ],
+      "popularity": 674
+    },
+    {
+      "codepoint": "1f92b",
+      "name": "emoji_u1f92b",
+      "tags": [
+        ":shushing-face:"
+      ],
+      "popularity": 673
+    },
+    {
+      "codepoint": "1fae2",
+      "name": "emoji_u1fae2",
+      "tags": [
+        ":hand-over-mouth:"
+      ],
+      "popularity": 672
+    },
+    {
+      "codepoint": "1f92d",
+      "name": "emoji_u1f92d",
+      "tags": [
+        ":smiling-eyes-with-hand-over-mouth:",
+        ":chuckling:"
+      ],
+      "popularity": 671
+    },
+    {
+      "codepoint": "1f971",
+      "name": "emoji_u1f971",
+      "tags": [
+        ":yawn:"
+      ],
+      "popularity": 670
+    },
+    {
+      "codepoint": "1f917",
+      "name": "emoji_u1f917",
+      "tags": [
+        ":hug-face:"
+      ],
+      "popularity": 669
+    },
+    {
+      "codepoint": "1fae3",
+      "name": "emoji_u1fae3",
+      "tags": [
+        ":peeking:"
+      ],
+      "popularity": 668
+    },
+    {
+      "codepoint": "1f631",
+      "name": "emoji_u1f631",
+      "tags": [
+        ":screaming:"
+      ],
+      "popularity": 667
+    },
+    {
+      "codepoint": "1f928",
+      "name": "emoji_u1f928",
+      "tags": [
+        ":raised-eyebrow:"
+      ],
+      "popularity": 666
+    },
+    {
+      "codepoint": "1f9d0",
+      "name": "emoji_u1f9d0",
+      "tags": [
+        ":monocle:"
+      ],
+      "popularity": 665
+    },
+    {
+      "codepoint": "1f612",
+      "name": "emoji_u1f612",
+      "tags": [
+        ":unamused:"
+      ],
+      "popularity": 664
+    },
+    {
+      "codepoint": "1f644",
+      "name": "emoji_u1f644",
+      "tags": [
+        ":rolling-eyes:"
+      ],
+      "popularity": 663
+    },
+    {
+      "codepoint": "1f62e_200d_1f4a8",
+      "name": "emoji_u1f62e_200d_1f4a8",
+      "tags": [
+        ":exhale:"
+      ],
+      "popularity": 662
+    },
+    {
+      "codepoint": "1f624",
+      "name": "emoji_u1f624",
+      "tags": [
+        ":triumph:"
+      ],
+      "popularity": 661
+    },
+    {
+      "codepoint": "1f620",
+      "name": "emoji_u1f620",
+      "tags": [
+        ":angry:"
+      ],
+      "popularity": 660
+    },
+    {
+      "codepoint": "1f621",
+      "name": "emoji_u1f621",
+      "tags": [
+        ":rage:"
+      ],
+      "popularity": 659
+    },
+    {
+      "codepoint": "1f92c",
+      "name": "emoji_u1f92c",
+      "tags": [
+        ":cursing:"
+      ],
+      "popularity": 658
+    },
+    {
+      "codepoint": "1f61e",
+      "name": "emoji_u1f61e",
+      "tags": [
+        ":sad:"
+      ],
+      "popularity": 657
+    },
+    {
+      "codepoint": "1f613",
+      "name": "emoji_u1f613",
+      "tags": [
+        ":sweat:",
+        ":downcast:"
+      ],
+      "popularity": 656
+    },
+    {
+      "codepoint": "1f61f",
+      "name": "emoji_u1f61f",
+      "tags": [
+        ":worried:"
+      ],
+      "popularity": 655
+    },
+    {
+      "codepoint": "1f625",
+      "name": "emoji_u1f625",
+      "tags": [
+        ":concerned:"
+      ],
+      "popularity": 654
+    },
+    {
+      "codepoint": "1f622",
+      "name": "emoji_u1f622",
+      "tags": [
+        ":cry:"
+      ],
+      "popularity": 653
+    },
+    {
+      "codepoint": "2639_fe0f",
+      "name": "emoji_u2639_fe0f",
+      "tags": [
+        ":big-frown:"
+      ],
+      "popularity": 652
+    },
+    {
+      "codepoint": "1f641",
+      "name": "emoji_u1f641",
+      "tags": [
+        ":frown:"
+      ],
+      "popularity": 651
+    },
+    {
+      "codepoint": "1fae4",
+      "name": "emoji_u1fae4",
+      "tags": [
+        ":diagonal-mouth:"
+      ],
+      "popularity": 650
+    },
+    {
+      "codepoint": "1f615",
+      "name": "emoji_u1f615",
+      "tags": [
+        ":slightly-frowning:"
+      ],
+      "popularity": 649
+    },
+    {
+      "codepoint": "1f630",
+      "name": "emoji_u1f630",
+      "tags": [
+        ":anxious-with-sweat:"
+      ],
+      "popularity": 648
+    },
+    {
+      "codepoint": "1f628",
+      "name": "emoji_u1f628",
+      "tags": [
+        ":scared:"
+      ],
+      "popularity": 647
+    },
+    {
+      "codepoint": "1f627",
+      "name": "emoji_u1f627",
+      "tags": [
+        ":anguished:"
+      ],
+      "popularity": 646
+    },
+    {
+      "codepoint": "1f626",
+      "name": "emoji_u1f626",
+      "tags": [
+        ":gasp:"
+      ],
+      "popularity": 645
+    },
+    {
+      "codepoint": "1f62e",
+      "name": "emoji_u1f62e",
+      "tags": [
+        ":mouth-open:"
+      ],
+      "popularity": 644
+    },
+    {
+      "codepoint": "1f62f",
+      "name": "emoji_u1f62f",
+      "tags": [
+        ":surprised:",
+        ":hushed:"
+      ],
+      "popularity": 643
+    },
+    {
+      "codepoint": "1f632",
+      "name": "emoji_u1f632",
+      "tags": [
+        ":astonished:"
+      ],
+      "popularity": 642
+    },
+    {
+      "codepoint": "1f633",
+      "name": "emoji_u1f633",
+      "tags": [
+        ":flushed:"
+      ],
+      "popularity": 641
+    },
+    {
+      "codepoint": "1f92f",
+      "name": "emoji_u1f92f",
+      "tags": [
+        ":mind-blown:",
+        ":exploding-head:"
+      ],
+      "popularity": 640
+    },
+    {
+      "codepoint": "1f616",
+      "name": "emoji_u1f616",
+      "tags": [
+        ":scrunched-mouth:",
+        ":confounded:",
+        ":zigzag-mouth:"
+      ],
+      "popularity": 639
+    },
+    {
+      "codepoint": "1f623",
+      "name": "emoji_u1f623",
+      "tags": [
+        ":scrunched-eyes:",
+        ":persevering:"
+      ],
+      "popularity": 638
+    },
+    {
+      "codepoint": "1f629",
+      "name": "emoji_u1f629",
+      "tags": [
+        ":weary:"
+      ],
+      "popularity": 637
+    },
+    {
+      "codepoint": "1f62b",
+      "name": "emoji_u1f62b",
+      "tags": [
+        ":distraught:"
+      ],
+      "popularity": 636
+    },
+    {
+      "codepoint": "1f635",
+      "name": "emoji_u1f635",
+      "tags": [
+        ":x-eyes:"
+      ],
+      "popularity": 635
+    },
+    {
+      "codepoint": "1f635_200d_1f4ab",
+      "name": "emoji_u1f635_200d_1f4ab",
+      "tags": [
+        ":dizzy-face:"
+      ],
+      "popularity": 634
+    },
+    {
+      "codepoint": "1fae8",
+      "name": "emoji_u1fae8",
+      "tags": [
+        ":shaking-face:"
+      ],
+      "popularity": 633
+    },
+    {
+      "codepoint": "1f976",
+      "name": "emoji_u1f976",
+      "tags": [
+        ":cold-face:"
+      ],
+      "popularity": 632
+    },
+    {
+      "codepoint": "1f975",
+      "name": "emoji_u1f975",
+      "tags": [
+        ":hot-face:",
+        ":sweat-face:"
+      ],
+      "popularity": 631
+    },
+    {
+      "codepoint": "1f922",
+      "name": "emoji_u1f922",
+      "tags": [
+        ":sick:",
+        ":nauseated:"
+      ],
+      "popularity": 630
+    },
+    {
+      "codepoint": "1f92e",
+      "name": "emoji_u1f92e",
+      "tags": [
+        ":vomit:"
+      ],
+      "popularity": 629
+    },
+    {
+      "codepoint": "1fae9",
+      "name": "emoji_u1fae9",
+      "tags": [
+        ":tired:",
+        ":bags-under-eyes:"
+      ],
+      "popularity": 628
+    },
+    {
+      "codepoint": "1f634",
+      "name": "emoji_u1f634",
+      "tags": [
+        ":sleep:"
+      ],
+      "popularity": 627
+    },
+    {
+      "codepoint": "1f62a",
+      "name": "emoji_u1f62a",
+      "tags": [
+        ":sleepy:"
+      ],
+      "popularity": 626
+    },
+    {
+      "codepoint": "1f927",
+      "name": "emoji_u1f927",
+      "tags": [
+        ":sneeze:"
+      ],
+      "popularity": 625
+    },
+    {
+      "codepoint": "1f912",
+      "name": "emoji_u1f912",
+      "tags": [
+        ":thermometer-face:"
+      ],
+      "popularity": 624
+    },
+    {
+      "codepoint": "1f915",
+      "name": "emoji_u1f915",
+      "tags": [
+        ":bandage-face:"
+      ],
+      "popularity": 623
+    },
+    {
+      "codepoint": "1f637",
+      "name": "emoji_u1f637",
+      "tags": [
+        ":mask:"
+      ],
+      "popularity": 622
+    },
+    {
+      "codepoint": "1f925",
+      "name": "emoji_u1f925",
+      "tags": [
+        ":liar:"
+      ],
+      "popularity": 621
+    },
+    {
+      "codepoint": "1f607",
+      "name": "emoji_u1f607",
+      "tags": [
+        ":halo:",
+        ":innocent:"
+      ],
+      "popularity": 620
+    },
+    {
+      "codepoint": "1f920",
+      "name": "emoji_u1f920",
+      "tags": [
+        ":cowboy:"
+      ],
+      "popularity": 619
+    },
+    {
+      "codepoint": "1f911",
+      "name": "emoji_u1f911",
+      "tags": [
+        ":money-face:"
+      ],
+      "popularity": 618
+    },
+    {
+      "codepoint": "1f913",
+      "name": "emoji_u1f913",
+      "tags": [
+        ":nerd-face:"
+      ],
+      "popularity": 617
+    },
+    {
+      "codepoint": "1f60e",
+      "name": "emoji_u1f60e",
+      "tags": [
+        ":sunglasses-face:"
+      ],
+      "popularity": 616
+    },
+    {
+      "codepoint": "1f978",
+      "name": "emoji_u1f978",
+      "tags": [
+        ":disguise:"
+      ],
+      "popularity": 615
+    },
+    {
+      "codepoint": "1f921",
+      "name": "emoji_u1f921",
+      "tags": [
+        ":clown:"
+      ],
+      "popularity": 614
+    },
+    {
+      "codepoint": "1f4a9",
+      "name": "emoji_u1f4a9",
+      "tags": [
+        ":poop:"
+      ],
+      "popularity": 613
+    },
+    {
+      "codepoint": "1f608",
+      "name": "emoji_u1f608",
+      "tags": [
+        ":imp-smile:"
+      ],
+      "popularity": 612
+    },
+    {
+      "codepoint": "1f47f",
+      "name": "emoji_u1f47f",
+      "tags": [
+        ":imp-frown:"
+      ],
+      "popularity": 611
+    },
+    {
+      "codepoint": "1f47b",
+      "name": "emoji_u1f47b",
+      "tags": [
+        ":ghost:"
+      ],
+      "popularity": 610
+    },
+    {
+      "codepoint": "1f480",
+      "name": "emoji_u1f480",
+      "tags": [
+        ":skull:"
+      ],
+      "popularity": 609
+    },
+    {
+      "codepoint": "2603_fe0f",
+      "name": "emoji_u2603_fe0f",
+      "tags": [
+        ":snowman-with-snow:"
+      ],
+      "popularity": 608
+    },
+    {
+      "codepoint": "26c4",
+      "name": "emoji_u26c4",
+      "tags": [
+        ":snowman:"
+      ],
+      "popularity": 607
+    },
+    {
+      "codepoint": "1f383",
+      "name": "emoji_u1f383",
+      "tags": [
+        ":jack-o-lantern:"
+      ],
+      "popularity": 606
+    },
+    {
+      "codepoint": "1f916",
+      "name": "emoji_u1f916",
+      "tags": [
+        ":robot:"
+      ],
+      "popularity": 605
+    },
+    {
+      "codepoint": "1f47d",
+      "name": "emoji_u1f47d",
+      "tags": [
+        ":alien:"
+      ],
+      "popularity": 604
+    },
+    {
+      "codepoint": "1f47e",
+      "name": "emoji_u1f47e",
+      "tags": [
+        ":alien-monster:"
+      ],
+      "popularity": 603
+    },
+    {
+      "codepoint": "1f31e",
+      "name": "emoji_u1f31e",
+      "tags": [
+        ":sun-with-face:"
+      ],
+      "popularity": 602
+    },
+    {
+      "codepoint": "1f31b",
+      "name": "emoji_u1f31b",
+      "tags": [
+        ":moon-face-first-quarter:"
+      ],
+      "popularity": 601
+    },
+    {
+      "codepoint": "1f31c",
+      "name": "emoji_u1f31c",
+      "tags": [
+        ":moon-face-last-quarter:"
+      ],
+      "popularity": 600
+    },
+    {
+      "codepoint": "1f63a",
+      "name": "emoji_u1f63a",
+      "tags": [
+        ":smiley-cat:"
+      ],
+      "popularity": 599
+    },
+    {
+      "codepoint": "1f638",
+      "name": "emoji_u1f638",
+      "tags": [
+        ":smile-cat:"
+      ],
+      "popularity": 598
+    },
+    {
+      "codepoint": "1f639",
+      "name": "emoji_u1f639",
+      "tags": [
+        ":joy-cat:"
+      ],
+      "popularity": 597
+    },
+    {
+      "codepoint": "1f63b",
+      "name": "emoji_u1f63b",
+      "tags": [
+        ":heart-eyes-cat:"
+      ],
+      "popularity": 596
+    },
+    {
+      "codepoint": "1f63c",
+      "name": "emoji_u1f63c",
+      "tags": [
+        ":smirk-cat:"
+      ],
+      "popularity": 595
+    },
+    {
+      "codepoint": "1f63d",
+      "name": "emoji_u1f63d",
+      "tags": [
+        ":kissing-cat:"
+      ],
+      "popularity": 594
+    },
+    {
+      "codepoint": "1f640",
+      "name": "emoji_u1f640",
+      "tags": [
+        ":scream-cat:"
+      ],
+      "popularity": 593
+    },
+    {
+      "codepoint": "1f63f",
+      "name": "emoji_u1f63f",
+      "tags": [
+        ":crying-cat-face:"
+      ],
+      "popularity": 592
+    },
+    {
+      "codepoint": "1f63e",
+      "name": "emoji_u1f63e",
+      "tags": [
+        ":pouting-cat:"
+      ],
+      "popularity": 591
+    },
+    {
+      "codepoint": "1f648",
+      "name": "emoji_u1f648",
+      "tags": [
+        ":see-no-evil-monkey:"
+      ],
+      "popularity": 590
+    },
+    {
+      "codepoint": "1f649",
+      "name": "emoji_u1f649",
+      "tags": [
+        ":hear-no-evil-monkey:"
+      ],
+      "popularity": 589
+    },
+    {
+      "codepoint": "1f64a",
+      "name": "emoji_u1f64a",
+      "tags": [
+        ":speak-no-evil-monkey:"
+      ],
+      "popularity": 588
+    },
+    {
+      "codepoint": "1f31f",
+      "name": "emoji_u1f31f",
+      "tags": [
+        ":glowing-star:"
+      ],
+      "popularity": 587
+    },
+    {
+      "codepoint": "2728",
+      "name": "emoji_u2728",
+      "tags": [
+        ":sparkles:"
+      ],
+      "popularity": 586
+    },
+    {
+      "codepoint": "26a1",
+      "name": "emoji_u26a1",
+      "tags": [
+        ":electricity:",
+        ":zap:",
+        ":lightning:"
+      ],
+      "popularity": 585
+    },
+    {
+      "codepoint": "1f4a5",
+      "name": "emoji_u1f4a5",
+      "tags": [
+        ":collision:"
+      ],
+      "popularity": 584
+    },
+    {
+      "codepoint": "1f525",
+      "name": "emoji_u1f525",
+      "tags": [
+        ":fire:",
+        ":burn:",
+        ":lit:"
+      ],
+      "popularity": 583
+    },
+    {
+      "codepoint": "1f4af",
+      "name": "emoji_u1f4af",
+      "tags": [
+        ":100:",
+        ":one-hundred:",
+        ":hundred:",
+        ":points:"
+      ],
+      "popularity": 582
+    },
+    {
+      "codepoint": "1f389",
+      "name": "emoji_u1f389",
+      "tags": [
+        ":party-popper:"
+      ],
+      "popularity": 581
+    },
+    {
+      "codepoint": "1f38a",
+      "name": "emoji_u1f38a",
+      "tags": [
+        ":confetti-ball:"
+      ],
+      "popularity": 580
+    },
+    {
+      "codepoint": "2764_fe0f",
+      "name": "emoji_u2764_fe0f",
+      "tags": [
+        ":red-heart:"
+      ],
+      "popularity": 579
+    },
+    {
+      "codepoint": "1f9e1",
+      "name": "emoji_u1f9e1",
+      "tags": [
+        ":orange-heart:"
+      ],
+      "popularity": 578
+    },
+    {
+      "codepoint": "1f49b",
+      "name": "emoji_u1f49b",
+      "tags": [
+        ":yellow-heart:"
+      ],
+      "popularity": 577
+    },
+    {
+      "codepoint": "1f49a",
+      "name": "emoji_u1f49a",
+      "tags": [
+        ":green-heart:"
+      ],
+      "popularity": 576
+    },
+    {
+      "codepoint": "1fa75",
+      "name": "emoji_u1fa75",
+      "tags": [
+        ":light-blue-heart:"
+      ],
+      "popularity": 575
+    },
+    {
+      "codepoint": "1f499",
+      "name": "emoji_u1f499",
+      "tags": [
+        ":blue-heart:"
+      ],
+      "popularity": 574
+    },
+    {
+      "codepoint": "1f49c",
+      "name": "emoji_u1f49c",
+      "tags": [
+        ":purple-heart:"
+      ],
+      "popularity": 573
+    },
+    {
+      "codepoint": "1f90e",
+      "name": "emoji_u1f90e",
+      "tags": [
+        ":brown-heart:"
+      ],
+      "popularity": 572
+    },
+    {
+      "codepoint": "1f5a4",
+      "name": "emoji_u1f5a4",
+      "tags": [
+        ":black-heart:"
+      ],
+      "popularity": 571
+    },
+    {
+      "codepoint": "1fa76",
+      "name": "emoji_u1fa76",
+      "tags": [
+        ":grey-heart:"
+      ],
+      "popularity": 570
+    },
+    {
+      "codepoint": "1f90d",
+      "name": "emoji_u1f90d",
+      "tags": [
+        ":white-heart:"
+      ],
+      "popularity": 569
+    },
+    {
+      "codepoint": "1fa77",
+      "name": "emoji_u1fa77",
+      "tags": [
+        ":pink-heart:"
+      ],
+      "popularity": 568
+    },
+    {
+      "codepoint": "1f498",
+      "name": "emoji_u1f498",
+      "tags": [
+        ":cupid:"
+      ],
+      "popularity": 567
+    },
+    {
+      "codepoint": "1f49d",
+      "name": "emoji_u1f49d",
+      "tags": [
+        ":gift-heart:"
+      ],
+      "popularity": 566
+    },
+    {
+      "codepoint": "1f496",
+      "name": "emoji_u1f496",
+      "tags": [
+        ":sparkling-heart:"
+      ],
+      "popularity": 565
+    },
+    {
+      "codepoint": "1f497",
+      "name": "emoji_u1f497",
+      "tags": [
+        ":heart-grow:"
+      ],
+      "popularity": 564
+    },
+    {
+      "codepoint": "1f493",
+      "name": "emoji_u1f493",
+      "tags": [
+        ":beating-heart:"
+      ],
+      "popularity": 563
+    },
+    {
+      "codepoint": "1f49e",
+      "name": "emoji_u1f49e",
+      "tags": [
+        ":revolving-hearts:"
+      ],
+      "popularity": 562
+    },
+    {
+      "codepoint": "1f495",
+      "name": "emoji_u1f495",
+      "tags": [
+        ":two-hearts:"
+      ],
+      "popularity": 561
+    },
+    {
+      "codepoint": "1f48c",
+      "name": "emoji_u1f48c",
+      "tags": [
+        ":love-letter:"
+      ],
+      "popularity": 560
+    },
+    {
+      "codepoint": "1f49f",
+      "name": "emoji_u1f49f",
+      "tags": [
+        ":heart-box:"
+      ],
+      "popularity": 559
+    },
+    {
+      "codepoint": "2763_fe0f",
+      "name": "emoji_u2763_fe0f",
+      "tags": [
+        ":heart-exclamation-point:"
+      ],
+      "popularity": 558
+    },
+    {
+      "codepoint": "2764_fe0f_200d_1fa79",
+      "name": "emoji_u2764_fe0f_200d_1fa79",
+      "tags": [
+        ":bandaged-heart:"
+      ],
+      "popularity": 557
+    },
+    {
+      "codepoint": "1f494",
+      "name": "emoji_u1f494",
+      "tags": [
+        ":broken-heart:"
+      ],
+      "popularity": 556
+    },
+    {
+      "codepoint": "2764_fe0f_200d_1f525",
+      "name": "emoji_u2764_fe0f_200d_1f525",
+      "tags": [
+        ":fire-heart:"
+      ],
+      "popularity": 555
+    },
+    {
+      "codepoint": "1f48b",
+      "name": "emoji_u1f48b",
+      "tags": [
+        ":kiss:"
+      ],
+      "popularity": 554
+    },
+    {
+      "codepoint": "1f463",
+      "name": "emoji_u1f463",
+      "tags": [
+        ":footprints:"
+      ],
+      "popularity": 553
+    },
+    {
+      "codepoint": "1fac6",
+      "name": "emoji_u1fac6",
+      "tags": [
+        ":fingerprint:"
+      ],
+      "popularity": 552
+    },
+    {
+      "codepoint": "1fac0",
+      "name": "emoji_u1fac0",
+      "tags": [
+        ":anatomical-heart:"
+      ],
+      "popularity": 551
+    },
+    {
+      "codepoint": "1fa78",
+      "name": "emoji_u1fa78",
+      "tags": [
+        ":blood:"
+      ],
+      "popularity": 550
+    },
+    {
+      "codepoint": "1f9a0",
+      "name": "emoji_u1f9a0",
+      "tags": [
+        ":microbe:",
+        ":virus:"
+      ],
+      "popularity": 549
+    },
+    {
+      "codepoint": "1f440",
+      "name": "emoji_u1f440",
+      "tags": [
+        ":eyes:"
+      ],
+      "popularity": 548
+    },
+    {
+      "codepoint": "1f441_fe0f",
+      "name": "emoji_u1f441_fe0f",
+      "tags": [
+        ":eye:"
+      ],
+      "popularity": 547
+    },
+    {
+      "codepoint": "1fae6",
+      "name": "emoji_u1fae6",
+      "tags": [
+        ":biting-lip:"
+      ],
+      "popularity": 546
+    },
+    {
+      "codepoint": "1f443",
+      "name": "emoji_u1f443",
+      "tags": [
+        ":nose:"
+      ],
+      "popularity": 545
+    },
+    {
+      "codepoint": "1f443_1f3fb",
+      "name": "emoji_u1f443_1f3fb",
+      "tags": [
+        ":nose:"
+      ],
+      "popularity": 544
+    },
+    {
+      "codepoint": "1f443_1f3fc",
+      "name": "emoji_u1f443_1f3fc",
+      "tags": [
+        ":nose:"
+      ],
+      "popularity": 543
+    },
+    {
+      "codepoint": "1f443_1f3fd",
+      "name": "emoji_u1f443_1f3fd",
+      "tags": [
+        ":nose:"
+      ],
+      "popularity": 542
+    },
+    {
+      "codepoint": "1f443_1f3fe",
+      "name": "emoji_u1f443_1f3fe",
+      "tags": [
+        ":nose:"
+      ],
+      "popularity": 541
+    },
+    {
+      "codepoint": "1f443_1f3ff",
+      "name": "emoji_u1f443_1f3ff",
+      "tags": [
+        ":nose:"
+      ],
+      "popularity": 540
+    },
+    {
+      "codepoint": "1f442",
+      "name": "emoji_u1f442",
+      "tags": [
+        ":ear:"
+      ],
+      "popularity": 539
+    },
+    {
+      "codepoint": "1f442_1f3fb",
+      "name": "emoji_u1f442_1f3fb",
+      "tags": [
+        ":ear:"
+      ],
+      "popularity": 538
+    },
+    {
+      "codepoint": "1f442_1f3fc",
+      "name": "emoji_u1f442_1f3fc",
+      "tags": [
+        ":ear:"
+      ],
+      "popularity": 537
+    },
+    {
+      "codepoint": "1f442_1f3fd",
+      "name": "emoji_u1f442_1f3fd",
+      "tags": [
+        ":ear:"
+      ],
+      "popularity": 536
+    },
+    {
+      "codepoint": "1f442_1f3fe",
+      "name": "emoji_u1f442_1f3fe",
+      "tags": [
+        ":ear:"
+      ],
+      "popularity": 535
+    },
+    {
+      "codepoint": "1f442_1f3ff",
+      "name": "emoji_u1f442_1f3ff",
+      "tags": [
+        ":ear:"
+      ],
+      "popularity": 534
+    },
+    {
+      "codepoint": "1f9bb",
+      "name": "emoji_u1f9bb",
+      "tags": [
+        ":hearing-aid:"
+      ],
+      "popularity": 533
+    },
+    {
+      "codepoint": "1f9bb_1f3fb",
+      "name": "emoji_u1f9bb_1f3fb",
+      "tags": [
+        ":hearing-aid:"
+      ],
+      "popularity": 532
+    },
+    {
+      "codepoint": "1f9bb_1f3fc",
+      "name": "emoji_u1f9bb_1f3fc",
+      "tags": [
+        ":hearing-aid:"
+      ],
+      "popularity": 531
+    },
+    {
+      "codepoint": "1f9bb_1f3fd",
+      "name": "emoji_u1f9bb_1f3fd",
+      "tags": [
+        ":hearing-aid:"
+      ],
+      "popularity": 530
+    },
+    {
+      "codepoint": "1f9bb_1f3fe",
+      "name": "emoji_u1f9bb_1f3fe",
+      "tags": [
+        ":hearing-aid:"
+      ],
+      "popularity": 529
+    },
+    {
+      "codepoint": "1f9bb_1f3ff",
+      "name": "emoji_u1f9bb_1f3ff",
+      "tags": [
+        ":hearing-aid:"
+      ],
+      "popularity": 528
+    },
+    {
+      "codepoint": "1f9b6",
+      "name": "emoji_u1f9b6",
+      "tags": [
+        ":foot:"
+      ],
+      "popularity": 527
+    },
+    {
+      "codepoint": "1f9b6_1f3fb",
+      "name": "emoji_u1f9b6_1f3fb",
+      "tags": [
+        ":foot:"
+      ],
+      "popularity": 526
+    },
+    {
+      "codepoint": "1f9b6_1f3fc",
+      "name": "emoji_u1f9b6_1f3fc",
+      "tags": [
+        ":foot:"
+      ],
+      "popularity": 525
+    },
+    {
+      "codepoint": "1f9b6_1f3fd",
+      "name": "emoji_u1f9b6_1f3fd",
+      "tags": [
+        ":foot:"
+      ],
+      "popularity": 524
+    },
+    {
+      "codepoint": "1f9b6_1f3fe",
+      "name": "emoji_u1f9b6_1f3fe",
+      "tags": [
+        ":foot:"
+      ],
+      "popularity": 523
+    },
+    {
+      "codepoint": "1f9b6_1f3ff",
+      "name": "emoji_u1f9b6_1f3ff",
+      "tags": [
+        ":foot:"
+      ],
+      "popularity": 522
+    },
+    {
+      "codepoint": "1f9b5",
+      "name": "emoji_u1f9b5",
+      "tags": [
+        ":leg:"
+      ],
+      "popularity": 521
+    },
+    {
+      "codepoint": "1f9b5_1f3fb",
+      "name": "emoji_u1f9b5_1f3fb",
+      "tags": [
+        ":leg:"
+      ],
+      "popularity": 520
+    },
+    {
+      "codepoint": "1f9b5_1f3fc",
+      "name": "emoji_u1f9b5_1f3fc",
+      "tags": [
+        ":leg:"
+      ],
+      "popularity": 519
+    },
+    {
+      "codepoint": "1f9b5_1f3fd",
+      "name": "emoji_u1f9b5_1f3fd",
+      "tags": [
+        ":leg:"
+      ],
+      "popularity": 518
+    },
+    {
+      "codepoint": "1f9b5_1f3fe",
+      "name": "emoji_u1f9b5_1f3fe",
+      "tags": [
+        ":leg:"
+      ],
+      "popularity": 517
+    },
+    {
+      "codepoint": "1f9b5_1f3ff",
+      "name": "emoji_u1f9b5_1f3ff",
+      "tags": [
+        ":leg:"
+      ],
+      "popularity": 516
+    },
+    {
+      "codepoint": "1f9bf",
+      "name": "emoji_u1f9bf",
+      "tags": [
+        ":leg-mechanical:"
+      ],
+      "popularity": 515
+    },
+    {
+      "codepoint": "1f9be",
+      "name": "emoji_u1f9be",
+      "tags": [
+        ":arm-mechanical:"
+      ],
+      "popularity": 514
+    },
+    {
+      "codepoint": "1f4aa",
+      "name": "emoji_u1f4aa",
+      "tags": [
+        ":muscle:",
+        ":flex:",
+        ":bicep:",
+        ":strong:"
+      ],
+      "popularity": 513
+    },
+    {
+      "codepoint": "1f4aa_1f3fb",
+      "name": "emoji_u1f4aa_1f3fb",
+      "tags": [
+        ":muscle:",
+        ":flex:",
+        ":bicep:",
+        ":strong:"
+      ],
+      "popularity": 512
+    },
+    {
+      "codepoint": "1f4aa_1f3fc",
+      "name": "emoji_u1f4aa_1f3fc",
+      "tags": [
+        ":muscle:",
+        ":flex:",
+        ":bicep:",
+        ":strong:"
+      ],
+      "popularity": 511
+    },
+    {
+      "codepoint": "1f4aa_1f3fd",
+      "name": "emoji_u1f4aa_1f3fd",
+      "tags": [
+        ":muscle:",
+        ":flex:",
+        ":bicep:",
+        ":strong:"
+      ],
+      "popularity": 510
+    },
+    {
+      "codepoint": "1f4aa_1f3fe",
+      "name": "emoji_u1f4aa_1f3fe",
+      "tags": [
+        ":muscle:",
+        ":flex:",
+        ":bicep:",
+        ":strong:"
+      ],
+      "popularity": 509
+    },
+    {
+      "codepoint": "1f4aa_1f3ff",
+      "name": "emoji_u1f4aa_1f3ff",
+      "tags": [
+        ":muscle:",
+        ":flex:",
+        ":bicep:",
+        ":strong:"
+      ],
+      "popularity": 508
+    },
+    {
+      "codepoint": "1f44f",
+      "name": "emoji_u1f44f",
+      "tags": [
+        ":clap:"
+      ],
+      "popularity": 507
+    },
+    {
+      "codepoint": "1f44f_1f3fb",
+      "name": "emoji_u1f44f_1f3fb",
+      "tags": [
+        ":clap:"
+      ],
+      "popularity": 506
+    },
+    {
+      "codepoint": "1f44f_1f3fc",
+      "name": "emoji_u1f44f_1f3fc",
+      "tags": [
+        ":clap:"
+      ],
+      "popularity": 505
+    },
+    {
+      "codepoint": "1f44f_1f3fd",
+      "name": "emoji_u1f44f_1f3fd",
+      "tags": [
+        ":clap:"
+      ],
+      "popularity": 504
+    },
+    {
+      "codepoint": "1f44f_1f3fe",
+      "name": "emoji_u1f44f_1f3fe",
+      "tags": [
+        ":clap:"
+      ],
+      "popularity": 503
+    },
+    {
+      "codepoint": "1f44f_1f3ff",
+      "name": "emoji_u1f44f_1f3ff",
+      "tags": [
+        ":clap:"
+      ],
+      "popularity": 502
+    },
+    {
+      "codepoint": "1f44d",
+      "name": "emoji_u1f44d",
+      "tags": [
+        ":thumbs-up:",
+        ":+1:"
+      ],
+      "popularity": 501
+    },
+    {
+      "codepoint": "1f44d_1f3fb",
+      "name": "emoji_u1f44d_1f3fb",
+      "tags": [
+        ":thumbs-up:",
+        ":+1:"
+      ],
+      "popularity": 500
+    },
+    {
+      "codepoint": "1f44d_1f3fc",
+      "name": "emoji_u1f44d_1f3fc",
+      "tags": [
+        ":thumbs-up:",
+        ":+1:"
+      ],
+      "popularity": 499
+    },
+    {
+      "codepoint": "1f44d_1f3fd",
+      "name": "emoji_u1f44d_1f3fd",
+      "tags": [
+        ":thumbs-up:",
+        ":+1:"
+      ],
+      "popularity": 498
+    },
+    {
+      "codepoint": "1f44d_1f3fe",
+      "name": "emoji_u1f44d_1f3fe",
+      "tags": [
+        ":thumbs-up:",
+        ":+1:"
+      ],
+      "popularity": 497
+    },
+    {
+      "codepoint": "1f44d_1f3ff",
+      "name": "emoji_u1f44d_1f3ff",
+      "tags": [
+        ":thumbs-up:",
+        ":+1:"
+      ],
+      "popularity": 496
+    },
+    {
+      "codepoint": "1f44e",
+      "name": "emoji_u1f44e",
+      "tags": [
+        ":thumbs-down:"
+      ],
+      "popularity": 495
+    },
+    {
+      "codepoint": "1f44e_1f3fb",
+      "name": "emoji_u1f44e_1f3fb",
+      "tags": [
+        ":thumbs-down:"
+      ],
+      "popularity": 494
+    },
+    {
+      "codepoint": "1f44e_1f3fc",
+      "name": "emoji_u1f44e_1f3fc",
+      "tags": [
+        ":thumbs-down:"
+      ],
+      "popularity": 493
+    },
+    {
+      "codepoint": "1f44e_1f3fd",
+      "name": "emoji_u1f44e_1f3fd",
+      "tags": [
+        ":thumbs-down:"
+      ],
+      "popularity": 492
+    },
+    {
+      "codepoint": "1f44e_1f3fe",
+      "name": "emoji_u1f44e_1f3fe",
+      "tags": [
+        ":thumbs-down:"
+      ],
+      "popularity": 491
+    },
+    {
+      "codepoint": "1f44e_1f3ff",
+      "name": "emoji_u1f44e_1f3ff",
+      "tags": [
+        ":thumbs-down:"
+      ],
+      "popularity": 490
+    },
+    {
+      "codepoint": "1faf6",
+      "name": "emoji_u1faf6",
+      "tags": [
+        ":heart-hands:"
+      ],
+      "popularity": 489
+    },
+    {
+      "codepoint": "1faf6_1f3fb",
+      "name": "emoji_u1faf6_1f3fb",
+      "tags": [
+        ":heart-hands:"
+      ],
+      "popularity": 488
+    },
+    {
+      "codepoint": "1faf6_1f3fc",
+      "name": "emoji_u1faf6_1f3fc",
+      "tags": [
+        ":heart-hands:"
+      ],
+      "popularity": 487
+    },
+    {
+      "codepoint": "1faf6_1f3fd",
+      "name": "emoji_u1faf6_1f3fd",
+      "tags": [
+        ":heart-hands:"
+      ],
+      "popularity": 486
+    },
+    {
+      "codepoint": "1faf6_1f3fe",
+      "name": "emoji_u1faf6_1f3fe",
+      "tags": [
+        ":heart-hands:"
+      ],
+      "popularity": 485
+    },
+    {
+      "codepoint": "1faf6_1f3ff",
+      "name": "emoji_u1faf6_1f3ff",
+      "tags": [
+        ":heart-hands:"
+      ],
+      "popularity": 484
+    },
+    {
+      "codepoint": "1f64c",
+      "name": "emoji_u1f64c",
+      "tags": [
+        ":raising-hands:",
+        ":hooray:"
+      ],
+      "popularity": 483
+    },
+    {
+      "codepoint": "1f64c_1f3fb",
+      "name": "emoji_u1f64c_1f3fb",
+      "tags": [
+        ":raising-hands:",
+        ":hooray:"
+      ],
+      "popularity": 482
+    },
+    {
+      "codepoint": "1f64c_1f3fc",
+      "name": "emoji_u1f64c_1f3fc",
+      "tags": [
+        ":raising-hands:",
+        ":hooray:"
+      ],
+      "popularity": 481
+    },
+    {
+      "codepoint": "1f64c_1f3fd",
+      "name": "emoji_u1f64c_1f3fd",
+      "tags": [
+        ":raising-hands:",
+        ":hooray:"
+      ],
+      "popularity": 480
+    },
+    {
+      "codepoint": "1f64c_1f3fe",
+      "name": "emoji_u1f64c_1f3fe",
+      "tags": [
+        ":raising-hands:",
+        ":hooray:"
+      ],
+      "popularity": 479
+    },
+    {
+      "codepoint": "1f64c_1f3ff",
+      "name": "emoji_u1f64c_1f3ff",
+      "tags": [
+        ":raising-hands:",
+        ":hooray:"
+      ],
+      "popularity": 478
+    },
+    {
+      "codepoint": "1f450",
+      "name": "emoji_u1f450",
+      "tags": [
+        ":open-hands:"
+      ],
+      "popularity": 477
+    },
+    {
+      "codepoint": "1f450_1f3fb",
+      "name": "emoji_u1f450_1f3fb",
+      "tags": [
+        ":open-hands:"
+      ],
+      "popularity": 476
+    },
+    {
+      "codepoint": "1f450_1f3fc",
+      "name": "emoji_u1f450_1f3fc",
+      "tags": [
+        ":open-hands:"
+      ],
+      "popularity": 475
+    },
+    {
+      "codepoint": "1f450_1f3fd",
+      "name": "emoji_u1f450_1f3fd",
+      "tags": [
+        ":open-hands:"
+      ],
+      "popularity": 474
+    },
+    {
+      "codepoint": "1f450_1f3fe",
+      "name": "emoji_u1f450_1f3fe",
+      "tags": [
+        ":open-hands:"
+      ],
+      "popularity": 473
+    },
+    {
+      "codepoint": "1f450_1f3ff",
+      "name": "emoji_u1f450_1f3ff",
+      "tags": [
+        ":open-hands:"
+      ],
+      "popularity": 472
+    },
+    {
+      "codepoint": "1f932",
+      "name": "emoji_u1f932",
+      "tags": [
+        ":palms-up:"
+      ],
+      "popularity": 471
+    },
+    {
+      "codepoint": "1f932_1f3fb",
+      "name": "emoji_u1f932_1f3fb",
+      "tags": [
+        ":palms-up:"
+      ],
+      "popularity": 470
+    },
+    {
+      "codepoint": "1f932_1f3fc",
+      "name": "emoji_u1f932_1f3fc",
+      "tags": [
+        ":palms-up:"
+      ],
+      "popularity": 469
+    },
+    {
+      "codepoint": "1f932_1f3fd",
+      "name": "emoji_u1f932_1f3fd",
+      "tags": [
+        ":palms-up:"
+      ],
+      "popularity": 468
+    },
+    {
+      "codepoint": "1f932_1f3fe",
+      "name": "emoji_u1f932_1f3fe",
+      "tags": [
+        ":palms-up:"
+      ],
+      "popularity": 467
+    },
+    {
+      "codepoint": "1f932_1f3ff",
+      "name": "emoji_u1f932_1f3ff",
+      "tags": [
+        ":palms-up:"
+      ],
+      "popularity": 466
+    },
+    {
+      "codepoint": "1f91c",
+      "name": "emoji_u1f91c",
+      "tags": [
+        ":fist-rightwards:"
+      ],
+      "popularity": 465
+    },
+    {
+      "codepoint": "1f91c_1f3fb",
+      "name": "emoji_u1f91c_1f3fb",
+      "tags": [
+        ":fist-rightwards:"
+      ],
+      "popularity": 464
+    },
+    {
+      "codepoint": "1f91c_1f3fc",
+      "name": "emoji_u1f91c_1f3fc",
+      "tags": [
+        ":fist-rightwards:"
+      ],
+      "popularity": 463
+    },
+    {
+      "codepoint": "1f91c_1f3fd",
+      "name": "emoji_u1f91c_1f3fd",
+      "tags": [
+        ":fist-rightwards:"
+      ],
+      "popularity": 462
+    },
+    {
+      "codepoint": "1f91c_1f3fe",
+      "name": "emoji_u1f91c_1f3fe",
+      "tags": [
+        ":fist-rightwards:"
+      ],
+      "popularity": 461
+    },
+    {
+      "codepoint": "1f91c_1f3ff",
+      "name": "emoji_u1f91c_1f3ff",
+      "tags": [
+        ":fist-rightwards:"
+      ],
+      "popularity": 460
+    },
+    {
+      "codepoint": "1f91b",
+      "name": "emoji_u1f91b",
+      "tags": [
+        ":fist-leftwards:"
+      ],
+      "popularity": 459
+    },
+    {
+      "codepoint": "1f91b_1f3fb",
+      "name": "emoji_u1f91b_1f3fb",
+      "tags": [
+        ":fist-leftwards:"
+      ],
+      "popularity": 458
+    },
+    {
+      "codepoint": "1f91b_1f3fc",
+      "name": "emoji_u1f91b_1f3fc",
+      "tags": [
+        ":fist-leftwards:"
+      ],
+      "popularity": 457
+    },
+    {
+      "codepoint": "1f91b_1f3fd",
+      "name": "emoji_u1f91b_1f3fd",
+      "tags": [
+        ":fist-leftwards:"
+      ],
+      "popularity": 456
+    },
+    {
+      "codepoint": "1f91b_1f3fe",
+      "name": "emoji_u1f91b_1f3fe",
+      "tags": [
+        ":fist-leftwards:"
+      ],
+      "popularity": 455
+    },
+    {
+      "codepoint": "1f91b_1f3ff",
+      "name": "emoji_u1f91b_1f3ff",
+      "tags": [
+        ":fist-leftwards:"
+      ],
+      "popularity": 454
+    },
+    {
+      "codepoint": "270a",
+      "name": "emoji_u270a",
+      "tags": [
+        ":raised-fist:"
+      ],
+      "popularity": 453
+    },
+    {
+      "codepoint": "270a_1f3fb",
+      "name": "emoji_u270a_1f3fb",
+      "tags": [
+        ":raised-fist:"
+      ],
+      "popularity": 452
+    },
+    {
+      "codepoint": "270a_1f3fc",
+      "name": "emoji_u270a_1f3fc",
+      "tags": [
+        ":raised-fist:"
+      ],
+      "popularity": 451
+    },
+    {
+      "codepoint": "270a_1f3fd",
+      "name": "emoji_u270a_1f3fd",
+      "tags": [
+        ":raised-fist:"
+      ],
+      "popularity": 450
+    },
+    {
+      "codepoint": "270a_1f3fe",
+      "name": "emoji_u270a_1f3fe",
+      "tags": [
+        ":raised-fist:"
+      ],
+      "popularity": 449
+    },
+    {
+      "codepoint": "270a_1f3ff",
+      "name": "emoji_u270a_1f3ff",
+      "tags": [
+        ":raised-fist:"
+      ],
+      "popularity": 448
+    },
+    {
+      "codepoint": "1f44a",
+      "name": "emoji_u1f44a",
+      "tags": [
+        ":fist:",
+        ":bump:"
+      ],
+      "popularity": 447
+    },
+    {
+      "codepoint": "1f44a_1f3fb",
+      "name": "emoji_u1f44a_1f3fb",
+      "tags": [
+        ":fist:",
+        ":bump:"
+      ],
+      "popularity": 446
+    },
+    {
+      "codepoint": "1f44a_1f3fc",
+      "name": "emoji_u1f44a_1f3fc",
+      "tags": [
+        ":fist:",
+        ":bump:"
+      ],
+      "popularity": 445
+    },
+    {
+      "codepoint": "1f44a_1f3fd",
+      "name": "emoji_u1f44a_1f3fd",
+      "tags": [
+        ":fist:",
+        ":bump:"
+      ],
+      "popularity": 444
+    },
+    {
+      "codepoint": "1f44a_1f3fe",
+      "name": "emoji_u1f44a_1f3fe",
+      "tags": [
+        ":fist:",
+        ":bump:"
+      ],
+      "popularity": 443
+    },
+    {
+      "codepoint": "1f44a_1f3ff",
+      "name": "emoji_u1f44a_1f3ff",
+      "tags": [
+        ":fist:",
+        ":bump:"
+      ],
+      "popularity": 442
+    },
+    {
+      "codepoint": "1faf3",
+      "name": "emoji_u1faf3",
+      "tags": [
+        ":palm-down:",
+        ":drop:"
+      ],
+      "popularity": 441
+    },
+    {
+      "codepoint": "1faf3_1f3fb",
+      "name": "emoji_u1faf3_1f3fb",
+      "tags": [
+        ":palm-down:",
+        ":drop:"
+      ],
+      "popularity": 440
+    },
+    {
+      "codepoint": "1faf3_1f3fc",
+      "name": "emoji_u1faf3_1f3fc",
+      "tags": [
+        ":palm-down:",
+        ":drop:"
+      ],
+      "popularity": 439
+    },
+    {
+      "codepoint": "1faf3_1f3fd",
+      "name": "emoji_u1faf3_1f3fd",
+      "tags": [
+        ":palm-down:",
+        ":drop:"
+      ],
+      "popularity": 438
+    },
+    {
+      "codepoint": "1faf3_1f3fe",
+      "name": "emoji_u1faf3_1f3fe",
+      "tags": [
+        ":palm-down:",
+        ":drop:"
+      ],
+      "popularity": 437
+    },
+    {
+      "codepoint": "1faf3_1f3ff",
+      "name": "emoji_u1faf3_1f3ff",
+      "tags": [
+        ":palm-down:",
+        ":drop:"
+      ],
+      "popularity": 436
+    },
+    {
+      "codepoint": "1faf4",
+      "name": "emoji_u1faf4",
+      "tags": [
+        ":palm-up:",
+        ":throw:"
+      ],
+      "popularity": 435
+    },
+    {
+      "codepoint": "1faf4_1f3fb",
+      "name": "emoji_u1faf4_1f3fb",
+      "tags": [
+        ":palm-up:",
+        ":throw:"
+      ],
+      "popularity": 434
+    },
+    {
+      "codepoint": "1faf4_1f3fc",
+      "name": "emoji_u1faf4_1f3fc",
+      "tags": [
+        ":palm-up:",
+        ":throw:"
+      ],
+      "popularity": 433
+    },
+    {
+      "codepoint": "1faf4_1f3fd",
+      "name": "emoji_u1faf4_1f3fd",
+      "tags": [
+        ":palm-up:",
+        ":throw:"
+      ],
+      "popularity": 432
+    },
+    {
+      "codepoint": "1faf4_1f3fe",
+      "name": "emoji_u1faf4_1f3fe",
+      "tags": [
+        ":palm-up:",
+        ":throw:"
+      ],
+      "popularity": 431
+    },
+    {
+      "codepoint": "1faf4_1f3ff",
+      "name": "emoji_u1faf4_1f3ff",
+      "tags": [
+        ":palm-up:",
+        ":throw:"
+      ],
+      "popularity": 430
+    },
+    {
+      "codepoint": "1faf1",
+      "name": "emoji_u1faf1",
+      "tags": [
+        ":rightwards-hand:"
+      ],
+      "popularity": 429
+    },
+    {
+      "codepoint": "1faf1_1f3fb",
+      "name": "emoji_u1faf1_1f3fb",
+      "tags": [
+        ":rightwards-hand:"
+      ],
+      "popularity": 428
+    },
+    {
+      "codepoint": "1faf1_1f3fc",
+      "name": "emoji_u1faf1_1f3fc",
+      "tags": [
+        ":rightwards-hand:"
+      ],
+      "popularity": 427
+    },
+    {
+      "codepoint": "1faf1_1f3fd",
+      "name": "emoji_u1faf1_1f3fd",
+      "tags": [
+        ":rightwards-hand:"
+      ],
+      "popularity": 426
+    },
+    {
+      "codepoint": "1faf1_1f3fe",
+      "name": "emoji_u1faf1_1f3fe",
+      "tags": [
+        ":rightwards-hand:"
+      ],
+      "popularity": 425
+    },
+    {
+      "codepoint": "1faf1_1f3ff",
+      "name": "emoji_u1faf1_1f3ff",
+      "tags": [
+        ":rightwards-hand:"
+      ],
+      "popularity": 424
+    },
+    {
+      "codepoint": "1faf2",
+      "name": "emoji_u1faf2",
+      "tags": [
+        ":leftwards-hand:"
+      ],
+      "popularity": 423
+    },
+    {
+      "codepoint": "1faf2_1f3fb",
+      "name": "emoji_u1faf2_1f3fb",
+      "tags": [
+        ":leftwards-hand:"
+      ],
+      "popularity": 422
+    },
+    {
+      "codepoint": "1faf2_1f3fc",
+      "name": "emoji_u1faf2_1f3fc",
+      "tags": [
+        ":leftwards-hand:"
+      ],
+      "popularity": 421
+    },
+    {
+      "codepoint": "1faf2_1f3fd",
+      "name": "emoji_u1faf2_1f3fd",
+      "tags": [
+        ":leftwards-hand:"
+      ],
+      "popularity": 420
+    },
+    {
+      "codepoint": "1faf2_1f3fe",
+      "name": "emoji_u1faf2_1f3fe",
+      "tags": [
+        ":leftwards-hand:"
+      ],
+      "popularity": 419
+    },
+    {
+      "codepoint": "1faf2_1f3ff",
+      "name": "emoji_u1faf2_1f3ff",
+      "tags": [
+        ":leftwards-hand:"
+      ],
+      "popularity": 418
+    },
+    {
+      "codepoint": "1faf8",
+      "name": "emoji_u1faf8",
+      "tags": [
+        ":push-rightwards:"
+      ],
+      "popularity": 417
+    },
+    {
+      "codepoint": "1faf8_1f3fb",
+      "name": "emoji_u1faf8_1f3fb",
+      "tags": [
+        ":push-rightwards:"
+      ],
+      "popularity": 416
+    },
+    {
+      "codepoint": "1faf8_1f3fc",
+      "name": "emoji_u1faf8_1f3fc",
+      "tags": [
+        ":push-rightwards:"
+      ],
+      "popularity": 415
+    },
+    {
+      "codepoint": "1faf8_1f3fd",
+      "name": "emoji_u1faf8_1f3fd",
+      "tags": [
+        ":push-rightwards:"
+      ],
+      "popularity": 414
+    },
+    {
+      "codepoint": "1faf8_1f3fe",
+      "name": "emoji_u1faf8_1f3fe",
+      "tags": [
+        ":push-rightwards:"
+      ],
+      "popularity": 413
+    },
+    {
+      "codepoint": "1faf8_1f3ff",
+      "name": "emoji_u1faf8_1f3ff",
+      "tags": [
+        ":push-rightwards:"
+      ],
+      "popularity": 412
+    },
+    {
+      "codepoint": "1faf7",
+      "name": "emoji_u1faf7",
+      "tags": [
+        ":push-leftwards:"
+      ],
+      "popularity": 411
+    },
+    {
+      "codepoint": "1faf7_1f3fb",
+      "name": "emoji_u1faf7_1f3fb",
+      "tags": [
+        ":push-leftwards:"
+      ],
+      "popularity": 410
+    },
+    {
+      "codepoint": "1faf7_1f3fc",
+      "name": "emoji_u1faf7_1f3fc",
+      "tags": [
+        ":push-leftwards:"
+      ],
+      "popularity": 409
+    },
+    {
+      "codepoint": "1faf7_1f3fd",
+      "name": "emoji_u1faf7_1f3fd",
+      "tags": [
+        ":push-leftwards:"
+      ],
+      "popularity": 408
+    },
+    {
+      "codepoint": "1faf7_1f3fe",
+      "name": "emoji_u1faf7_1f3fe",
+      "tags": [
+        ":push-leftwards:"
+      ],
+      "popularity": 407
+    },
+    {
+      "codepoint": "1faf7_1f3ff",
+      "name": "emoji_u1faf7_1f3ff",
+      "tags": [
+        ":push-leftwards:"
+      ],
+      "popularity": 406
+    },
+    {
+      "codepoint": "1f44b",
+      "name": "emoji_u1f44b",
+      "tags": [
+        ":wave:"
+      ],
+      "popularity": 405
+    },
+    {
+      "codepoint": "1f44b_1f3fb",
+      "name": "emoji_u1f44b_1f3fb",
+      "tags": [
+        ":wave:"
+      ],
+      "popularity": 404
+    },
+    {
+      "codepoint": "1f44b_1f3fc",
+      "name": "emoji_u1f44b_1f3fc",
+      "tags": [
+        ":wave:"
+      ],
+      "popularity": 403
+    },
+    {
+      "codepoint": "1f44b_1f3fd",
+      "name": "emoji_u1f44b_1f3fd",
+      "tags": [
+        ":wave:"
+      ],
+      "popularity": 402
+    },
+    {
+      "codepoint": "1f44b_1f3fe",
+      "name": "emoji_u1f44b_1f3fe",
+      "tags": [
+        ":wave:"
+      ],
+      "popularity": 401
+    },
+    {
+      "codepoint": "1f44b_1f3ff",
+      "name": "emoji_u1f44b_1f3ff",
+      "tags": [
+        ":wave:"
+      ],
+      "popularity": 400
+    },
+    {
+      "codepoint": "1f91a",
+      "name": "emoji_u1f91a",
+      "tags": [
+        ":back-hand:"
+      ],
+      "popularity": 399
+    },
+    {
+      "codepoint": "1f91a_1f3fb",
+      "name": "emoji_u1f91a_1f3fb",
+      "tags": [
+        ":back-hand:"
+      ],
+      "popularity": 398
+    },
+    {
+      "codepoint": "1f91a_1f3fc",
+      "name": "emoji_u1f91a_1f3fc",
+      "tags": [
+        ":back-hand:"
+      ],
+      "popularity": 397
+    },
+    {
+      "codepoint": "1f91a_1f3fd",
+      "name": "emoji_u1f91a_1f3fd",
+      "tags": [
+        ":back-hand:"
+      ],
+      "popularity": 396
+    },
+    {
+      "codepoint": "1f91a_1f3fe",
+      "name": "emoji_u1f91a_1f3fe",
+      "tags": [
+        ":back-hand:"
+      ],
+      "popularity": 395
+    },
+    {
+      "codepoint": "1f91a_1f3ff",
+      "name": "emoji_u1f91a_1f3ff",
+      "tags": [
+        ":back-hand:"
+      ],
+      "popularity": 394
+    },
+    {
+      "codepoint": "1f590_fe0f",
+      "name": "emoji_u1f590_fe0f",
+      "tags": [
+        ":palm:"
+      ],
+      "popularity": 393
+    },
+    {
+      "codepoint": "1f590_1f3fb",
+      "name": "emoji_u1f590_1f3fb",
+      "tags": [
+        ":palm:"
+      ],
+      "popularity": 392
+    },
+    {
+      "codepoint": "1f590_1f3fc",
+      "name": "emoji_u1f590_1f3fc",
+      "tags": [
+        ":palm:"
+      ],
+      "popularity": 391
+    },
+    {
+      "codepoint": "1f590_1f3fd",
+      "name": "emoji_u1f590_1f3fd",
+      "tags": [
+        ":palm:"
+      ],
+      "popularity": 390
+    },
+    {
+      "codepoint": "1f590_1f3fe",
+      "name": "emoji_u1f590_1f3fe",
+      "tags": [
+        ":palm:"
+      ],
+      "popularity": 389
+    },
+    {
+      "codepoint": "1f590_1f3ff",
+      "name": "emoji_u1f590_1f3ff",
+      "tags": [
+        ":palm:"
+      ],
+      "popularity": 388
+    },
+    {
+      "codepoint": "270b",
+      "name": "emoji_u270b",
+      "tags": [
+        ":raised-hand:"
+      ],
+      "popularity": 387
+    },
+    {
+      "codepoint": "270b_1f3fb",
+      "name": "emoji_u270b_1f3fb",
+      "tags": [
+        ":raised-hand:"
+      ],
+      "popularity": 386
+    },
+    {
+      "codepoint": "270b_1f3fc",
+      "name": "emoji_u270b_1f3fc",
+      "tags": [
+        ":raised-hand:"
+      ],
+      "popularity": 385
+    },
+    {
+      "codepoint": "270b_1f3fd",
+      "name": "emoji_u270b_1f3fd",
+      "tags": [
+        ":raised-hand:"
+      ],
+      "popularity": 384
+    },
+    {
+      "codepoint": "270b_1f3fe",
+      "name": "emoji_u270b_1f3fe",
+      "tags": [
+        ":raised-hand:"
+      ],
+      "popularity": 383
+    },
+    {
+      "codepoint": "270b_1f3ff",
+      "name": "emoji_u270b_1f3ff",
+      "tags": [
+        ":raised-hand:"
+      ],
+      "popularity": 382
+    },
+    {
+      "codepoint": "1f596",
+      "name": "emoji_u1f596",
+      "tags": [
+        ":vulcan:",
+        ":prosper:",
+        ":spock:"
+      ],
+      "popularity": 381
+    },
+    {
+      "codepoint": "1f596_1f3fb",
+      "name": "emoji_u1f596_1f3fb",
+      "tags": [
+        ":vulcan:",
+        ":prosper:",
+        ":spock:"
+      ],
+      "popularity": 380
+    },
+    {
+      "codepoint": "1f596_1f3fc",
+      "name": "emoji_u1f596_1f3fc",
+      "tags": [
+        ":vulcan:",
+        ":prosper:",
+        ":spock:"
+      ],
+      "popularity": 379
+    },
+    {
+      "codepoint": "1f596_1f3fd",
+      "name": "emoji_u1f596_1f3fd",
+      "tags": [
+        ":vulcan:",
+        ":prosper:",
+        ":spock:"
+      ],
+      "popularity": 378
+    },
+    {
+      "codepoint": "1f596_1f3fe",
+      "name": "emoji_u1f596_1f3fe",
+      "tags": [
+        ":vulcan:",
+        ":prosper:",
+        ":spock:"
+      ],
+      "popularity": 377
+    },
+    {
+      "codepoint": "1f596_1f3ff",
+      "name": "emoji_u1f596_1f3ff",
+      "tags": [
+        ":vulcan:",
+        ":prosper:",
+        ":spock:"
+      ],
+      "popularity": 376
+    },
+    {
+      "codepoint": "1f91f",
+      "name": "emoji_u1f91f",
+      "tags": [
+        ":love-you-gesture:"
+      ],
+      "popularity": 375
+    },
+    {
+      "codepoint": "1f91f_1f3fb",
+      "name": "emoji_u1f91f_1f3fb",
+      "tags": [
+        ":love-you-gesture:"
+      ],
+      "popularity": 374
+    },
+    {
+      "codepoint": "1f91f_1f3fc",
+      "name": "emoji_u1f91f_1f3fc",
+      "tags": [
+        ":love-you-gesture:"
+      ],
+      "popularity": 373
+    },
+    {
+      "codepoint": "1f91f_1f3fd",
+      "name": "emoji_u1f91f_1f3fd",
+      "tags": [
+        ":love-you-gesture:"
+      ],
+      "popularity": 372
+    },
+    {
+      "codepoint": "1f91f_1f3fe",
+      "name": "emoji_u1f91f_1f3fe",
+      "tags": [
+        ":love-you-gesture:"
+      ],
+      "popularity": 371
+    },
+    {
+      "codepoint": "1f91f_1f3ff",
+      "name": "emoji_u1f91f_1f3ff",
+      "tags": [
+        ":love-you-gesture:"
+      ],
+      "popularity": 370
+    },
+    {
+      "codepoint": "1f918",
+      "name": "emoji_u1f918",
+      "tags": [
+        ":metal:",
+        ":horns:"
+      ],
+      "popularity": 369
+    },
+    {
+      "codepoint": "1f918_1f3fb",
+      "name": "emoji_u1f918_1f3fb",
+      "tags": [
+        ":metal:",
+        ":horns:"
+      ],
+      "popularity": 368
+    },
+    {
+      "codepoint": "1f918_1f3fc",
+      "name": "emoji_u1f918_1f3fc",
+      "tags": [
+        ":metal:",
+        ":horns:"
+      ],
+      "popularity": 367
+    },
+    {
+      "codepoint": "1f918_1f3fd",
+      "name": "emoji_u1f918_1f3fd",
+      "tags": [
+        ":metal:",
+        ":horns:"
+      ],
+      "popularity": 366
+    },
+    {
+      "codepoint": "1f918_1f3fe",
+      "name": "emoji_u1f918_1f3fe",
+      "tags": [
+        ":metal:",
+        ":horns:"
+      ],
+      "popularity": 365
+    },
+    {
+      "codepoint": "1f918_1f3ff",
+      "name": "emoji_u1f918_1f3ff",
+      "tags": [
+        ":metal:",
+        ":horns:"
+      ],
+      "popularity": 364
+    },
+    {
+      "codepoint": "270c_fe0f",
+      "name": "emoji_u270c_fe0f",
+      "tags": [
+        ":victory:",
+        ":v:",
+        ":peace-hand:"
+      ],
+      "popularity": 363
+    },
+    {
+      "codepoint": "270c_1f3fb",
+      "name": "emoji_u270c_1f3fb",
+      "tags": [
+        ":victory:",
+        ":v:",
+        ":peace-hand:"
+      ],
+      "popularity": 362
+    },
+    {
+      "codepoint": "270c_1f3fc",
+      "name": "emoji_u270c_1f3fc",
+      "tags": [
+        ":victory:",
+        ":v:",
+        ":peace-hand:"
+      ],
+      "popularity": 361
+    },
+    {
+      "codepoint": "270c_1f3fd",
+      "name": "emoji_u270c_1f3fd",
+      "tags": [
+        ":victory:",
+        ":v:",
+        ":peace-hand:"
+      ],
+      "popularity": 360
+    },
+    {
+      "codepoint": "270c_1f3fe",
+      "name": "emoji_u270c_1f3fe",
+      "tags": [
+        ":victory:",
+        ":v:",
+        ":peace-hand:"
+      ],
+      "popularity": 359
+    },
+    {
+      "codepoint": "270c_1f3ff",
+      "name": "emoji_u270c_1f3ff",
+      "tags": [
+        ":victory:",
+        ":v:",
+        ":peace-hand:"
+      ],
+      "popularity": 358
+    },
+    {
+      "codepoint": "1f91e",
+      "name": "emoji_u1f91e",
+      "tags": [
+        ":crossed-fingers:"
+      ],
+      "popularity": 357
+    },
+    {
+      "codepoint": "1f91e_1f3fb",
+      "name": "emoji_u1f91e_1f3fb",
+      "tags": [
+        ":crossed-fingers:"
+      ],
+      "popularity": 356
+    },
+    {
+      "codepoint": "1f91e_1f3fc",
+      "name": "emoji_u1f91e_1f3fc",
+      "tags": [
+        ":crossed-fingers:"
+      ],
+      "popularity": 355
+    },
+    {
+      "codepoint": "1f91e_1f3fd",
+      "name": "emoji_u1f91e_1f3fd",
+      "tags": [
+        ":crossed-fingers:"
+      ],
+      "popularity": 354
+    },
+    {
+      "codepoint": "1f91e_1f3fe",
+      "name": "emoji_u1f91e_1f3fe",
+      "tags": [
+        ":crossed-fingers:"
+      ],
+      "popularity": 353
+    },
+    {
+      "codepoint": "1f91e_1f3ff",
+      "name": "emoji_u1f91e_1f3ff",
+      "tags": [
+        ":crossed-fingers:"
+      ],
+      "popularity": 352
+    },
+    {
+      "codepoint": "1faf0",
+      "name": "emoji_u1faf0",
+      "tags": [
+        ":hand-with-index-finger-and-thumb-crossed:",
+        ":snap:",
+        ":finger-heart:"
+      ],
+      "popularity": 351
+    },
+    {
+      "codepoint": "1faf0_1f3fb",
+      "name": "emoji_u1faf0_1f3fb",
+      "tags": [
+        ":hand-with-index-finger-and-thumb-crossed:",
+        ":snap:",
+        ":finger-heart:"
+      ],
+      "popularity": 350
+    },
+    {
+      "codepoint": "1faf0_1f3fc",
+      "name": "emoji_u1faf0_1f3fc",
+      "tags": [
+        ":hand-with-index-finger-and-thumb-crossed:",
+        ":snap:",
+        ":finger-heart:"
+      ],
+      "popularity": 349
+    },
+    {
+      "codepoint": "1faf0_1f3fd",
+      "name": "emoji_u1faf0_1f3fd",
+      "tags": [
+        ":hand-with-index-finger-and-thumb-crossed:",
+        ":snap:",
+        ":finger-heart:"
+      ],
+      "popularity": 348
+    },
+    {
+      "codepoint": "1faf0_1f3fe",
+      "name": "emoji_u1faf0_1f3fe",
+      "tags": [
+        ":hand-with-index-finger-and-thumb-crossed:",
+        ":snap:",
+        ":finger-heart:"
+      ],
+      "popularity": 347
+    },
+    {
+      "codepoint": "1faf0_1f3ff",
+      "name": "emoji_u1faf0_1f3ff",
+      "tags": [
+        ":hand-with-index-finger-and-thumb-crossed:",
+        ":snap:",
+        ":finger-heart:"
+      ],
+      "popularity": 346
+    },
+    {
+      "codepoint": "1f919",
+      "name": "emoji_u1f919",
+      "tags": [
+        ":call-me-hand:"
+      ],
+      "popularity": 345
+    },
+    {
+      "codepoint": "1f919_1f3fb",
+      "name": "emoji_u1f919_1f3fb",
+      "tags": [
+        ":call-me-hand:"
+      ],
+      "popularity": 344
+    },
+    {
+      "codepoint": "1f919_1f3fc",
+      "name": "emoji_u1f919_1f3fc",
+      "tags": [
+        ":call-me-hand:"
+      ],
+      "popularity": 343
+    },
+    {
+      "codepoint": "1f919_1f3fd",
+      "name": "emoji_u1f919_1f3fd",
+      "tags": [
+        ":call-me-hand:"
+      ],
+      "popularity": 342
+    },
+    {
+      "codepoint": "1f919_1f3fe",
+      "name": "emoji_u1f919_1f3fe",
+      "tags": [
+        ":call-me-hand:"
+      ],
+      "popularity": 341
+    },
+    {
+      "codepoint": "1f919_1f3ff",
+      "name": "emoji_u1f919_1f3ff",
+      "tags": [
+        ":call-me-hand:"
+      ],
+      "popularity": 340
+    },
+    {
+      "codepoint": "1f90c",
+      "name": "emoji_u1f90c",
+      "tags": [
+        ":pinched-fingers:"
+      ],
+      "popularity": 339
+    },
+    {
+      "codepoint": "1f90c_1f3fb",
+      "name": "emoji_u1f90c_1f3fb",
+      "tags": [
+        ":pinched-fingers:"
+      ],
+      "popularity": 338
+    },
+    {
+      "codepoint": "1f90c_1f3fc",
+      "name": "emoji_u1f90c_1f3fc",
+      "tags": [
+        ":pinched-fingers:"
+      ],
+      "popularity": 337
+    },
+    {
+      "codepoint": "1f90c_1f3fd",
+      "name": "emoji_u1f90c_1f3fd",
+      "tags": [
+        ":pinched-fingers:"
+      ],
+      "popularity": 336
+    },
+    {
+      "codepoint": "1f90c_1f3fe",
+      "name": "emoji_u1f90c_1f3fe",
+      "tags": [
+        ":pinched-fingers:"
+      ],
+      "popularity": 335
+    },
+    {
+      "codepoint": "1f90c_1f3ff",
+      "name": "emoji_u1f90c_1f3ff",
+      "tags": [
+        ":pinched-fingers:"
+      ],
+      "popularity": 334
+    },
+    {
+      "codepoint": "1f90f",
+      "name": "emoji_u1f90f",
+      "tags": [
+        ":pinch:"
+      ],
+      "popularity": 333
+    },
+    {
+      "codepoint": "1f90f_1f3fb",
+      "name": "emoji_u1f90f_1f3fb",
+      "tags": [
+        ":pinch:"
+      ],
+      "popularity": 332
+    },
+    {
+      "codepoint": "1f90f_1f3fc",
+      "name": "emoji_u1f90f_1f3fc",
+      "tags": [
+        ":pinch:"
+      ],
+      "popularity": 331
+    },
+    {
+      "codepoint": "1f90f_1f3fd",
+      "name": "emoji_u1f90f_1f3fd",
+      "tags": [
+        ":pinch:"
+      ],
+      "popularity": 330
+    },
+    {
+      "codepoint": "1f90f_1f3fe",
+      "name": "emoji_u1f90f_1f3fe",
+      "tags": [
+        ":pinch:"
+      ],
+      "popularity": 329
+    },
+    {
+      "codepoint": "1f90f_1f3ff",
+      "name": "emoji_u1f90f_1f3ff",
+      "tags": [
+        ":pinch:"
+      ],
+      "popularity": 328
+    },
+    {
+      "codepoint": "1f44c",
+      "name": "emoji_u1f44c",
+      "tags": [
+        ":ok:"
+      ],
+      "popularity": 327
+    },
+    {
+      "codepoint": "1f44c_1f3fb",
+      "name": "emoji_u1f44c_1f3fb",
+      "tags": [
+        ":ok:"
+      ],
+      "popularity": 326
+    },
+    {
+      "codepoint": "1f44c_1f3fc",
+      "name": "emoji_u1f44c_1f3fc",
+      "tags": [
+        ":ok:"
+      ],
+      "popularity": 325
+    },
+    {
+      "codepoint": "1f44c_1f3fd",
+      "name": "emoji_u1f44c_1f3fd",
+      "tags": [
+        ":ok:"
+      ],
+      "popularity": 324
+    },
+    {
+      "codepoint": "1f44c_1f3fe",
+      "name": "emoji_u1f44c_1f3fe",
+      "tags": [
+        ":ok:"
+      ],
+      "popularity": 323
+    },
+    {
+      "codepoint": "1f44c_1f3ff",
+      "name": "emoji_u1f44c_1f3ff",
+      "tags": [
+        ":ok:"
+      ],
+      "popularity": 322
+    },
+    {
+      "codepoint": "1faf5",
+      "name": "emoji_u1faf5",
+      "tags": [
+        ":pointing:"
+      ],
+      "popularity": 321
+    },
+    {
+      "codepoint": "1faf5_1f3fb",
+      "name": "emoji_u1faf5_1f3fb",
+      "tags": [
+        ":pointing:"
+      ],
+      "popularity": 320
+    },
+    {
+      "codepoint": "1faf5_1f3fc",
+      "name": "emoji_u1faf5_1f3fc",
+      "tags": [
+        ":pointing:"
+      ],
+      "popularity": 319
+    },
+    {
+      "codepoint": "1faf5_1f3fd",
+      "name": "emoji_u1faf5_1f3fd",
+      "tags": [
+        ":pointing:"
+      ],
+      "popularity": 318
+    },
+    {
+      "codepoint": "1faf5_1f3fe",
+      "name": "emoji_u1faf5_1f3fe",
+      "tags": [
+        ":pointing:"
+      ],
+      "popularity": 317
+    },
+    {
+      "codepoint": "1faf5_1f3ff",
+      "name": "emoji_u1faf5_1f3ff",
+      "tags": [
+        ":pointing:"
+      ],
+      "popularity": 316
+    },
+    {
+      "codepoint": "1f449",
+      "name": "emoji_u1f449",
+      "tags": [
+        ":point-right:"
+      ],
+      "popularity": 315
+    },
+    {
+      "codepoint": "1f449_1f3fb",
+      "name": "emoji_u1f449_1f3fb",
+      "tags": [
+        ":point-right:"
+      ],
+      "popularity": 314
+    },
+    {
+      "codepoint": "1f449_1f3fc",
+      "name": "emoji_u1f449_1f3fc",
+      "tags": [
+        ":point-right:"
+      ],
+      "popularity": 313
+    },
+    {
+      "codepoint": "1f449_1f3fd",
+      "name": "emoji_u1f449_1f3fd",
+      "tags": [
+        ":point-right:"
+      ],
+      "popularity": 312
+    },
+    {
+      "codepoint": "1f449_1f3fe",
+      "name": "emoji_u1f449_1f3fe",
+      "tags": [
+        ":point-right:"
+      ],
+      "popularity": 311
+    },
+    {
+      "codepoint": "1f449_1f3ff",
+      "name": "emoji_u1f449_1f3ff",
+      "tags": [
+        ":point-right:"
+      ],
+      "popularity": 310
+    },
+    {
+      "codepoint": "1f448",
+      "name": "emoji_u1f448",
+      "tags": [
+        ":point-left:"
+      ],
+      "popularity": 309
+    },
+    {
+      "codepoint": "1f448_1f3fb",
+      "name": "emoji_u1f448_1f3fb",
+      "tags": [
+        ":point-left:"
+      ],
+      "popularity": 308
+    },
+    {
+      "codepoint": "1f448_1f3fc",
+      "name": "emoji_u1f448_1f3fc",
+      "tags": [
+        ":point-left:"
+      ],
+      "popularity": 307
+    },
+    {
+      "codepoint": "1f448_1f3fd",
+      "name": "emoji_u1f448_1f3fd",
+      "tags": [
+        ":point-left:"
+      ],
+      "popularity": 306
+    },
+    {
+      "codepoint": "1f448_1f3fe",
+      "name": "emoji_u1f448_1f3fe",
+      "tags": [
+        ":point-left:"
+      ],
+      "popularity": 305
+    },
+    {
+      "codepoint": "1f448_1f3ff",
+      "name": "emoji_u1f448_1f3ff",
+      "tags": [
+        ":point-left:"
+      ],
+      "popularity": 304
+    },
+    {
+      "codepoint": "261d_fe0f",
+      "name": "emoji_u261d_fe0f",
+      "tags": [
+        ":index-finger:"
+      ],
+      "popularity": 303
+    },
+    {
+      "codepoint": "261d_1f3fb",
+      "name": "emoji_u261d_1f3fb",
+      "tags": [
+        ":index-finger:"
+      ],
+      "popularity": 302
+    },
+    {
+      "codepoint": "261d_1f3fc",
+      "name": "emoji_u261d_1f3fc",
+      "tags": [
+        ":index-finger:"
+      ],
+      "popularity": 301
+    },
+    {
+      "codepoint": "261d_1f3fd",
+      "name": "emoji_u261d_1f3fd",
+      "tags": [
+        ":index-finger:"
+      ],
+      "popularity": 300
+    },
+    {
+      "codepoint": "261d_1f3fe",
+      "name": "emoji_u261d_1f3fe",
+      "tags": [
+        ":index-finger:"
+      ],
+      "popularity": 299
+    },
+    {
+      "codepoint": "261d_1f3ff",
+      "name": "emoji_u261d_1f3ff",
+      "tags": [
+        ":index-finger:"
+      ],
+      "popularity": 298
+    },
+    {
+      "codepoint": "1f446",
+      "name": "emoji_u1f446",
+      "tags": [
+        ":point-up:"
+      ],
+      "popularity": 297
+    },
+    {
+      "codepoint": "1f446_1f3fb",
+      "name": "emoji_u1f446_1f3fb",
+      "tags": [
+        ":point-up:"
+      ],
+      "popularity": 296
+    },
+    {
+      "codepoint": "1f446_1f3fc",
+      "name": "emoji_u1f446_1f3fc",
+      "tags": [
+        ":point-up:"
+      ],
+      "popularity": 295
+    },
+    {
+      "codepoint": "1f446_1f3fd",
+      "name": "emoji_u1f446_1f3fd",
+      "tags": [
+        ":point-up:"
+      ],
+      "popularity": 294
+    },
+    {
+      "codepoint": "1f446_1f3fe",
+      "name": "emoji_u1f446_1f3fe",
+      "tags": [
+        ":point-up:"
+      ],
+      "popularity": 293
+    },
+    {
+      "codepoint": "1f446_1f3ff",
+      "name": "emoji_u1f446_1f3ff",
+      "tags": [
+        ":point-up:"
+      ],
+      "popularity": 292
+    },
+    {
+      "codepoint": "1f447",
+      "name": "emoji_u1f447",
+      "tags": [
+        ":point-down:"
+      ],
+      "popularity": 291
+    },
+    {
+      "codepoint": "1f447_1f3fb",
+      "name": "emoji_u1f447_1f3fb",
+      "tags": [
+        ":point-down:"
+      ],
+      "popularity": 290
+    },
+    {
+      "codepoint": "1f447_1f3fc",
+      "name": "emoji_u1f447_1f3fc",
+      "tags": [
+        ":point-down:"
+      ],
+      "popularity": 289
+    },
+    {
+      "codepoint": "1f447_1f3fd",
+      "name": "emoji_u1f447_1f3fd",
+      "tags": [
+        ":point-down:"
+      ],
+      "popularity": 288
+    },
+    {
+      "codepoint": "1f447_1f3fe",
+      "name": "emoji_u1f447_1f3fe",
+      "tags": [
+        ":point-down:"
+      ],
+      "popularity": 287
+    },
+    {
+      "codepoint": "1f447_1f3ff",
+      "name": "emoji_u1f447_1f3ff",
+      "tags": [
+        ":point-down:"
+      ],
+      "popularity": 286
+    },
+    {
+      "codepoint": "1f595",
+      "name": "emoji_u1f595",
+      "tags": [
+        ":middle-finger:"
+      ],
+      "popularity": 285
+    },
+    {
+      "codepoint": "1f595_1f3fb",
+      "name": "emoji_u1f595_1f3fb",
+      "tags": [
+        ":middle-finger:"
+      ],
+      "popularity": 284
+    },
+    {
+      "codepoint": "1f595_1f3fc",
+      "name": "emoji_u1f595_1f3fc",
+      "tags": [
+        ":middle-finger:"
+      ],
+      "popularity": 283
+    },
+    {
+      "codepoint": "1f595_1f3fd",
+      "name": "emoji_u1f595_1f3fd",
+      "tags": [
+        ":middle-finger:"
+      ],
+      "popularity": 282
+    },
+    {
+      "codepoint": "1f595_1f3fe",
+      "name": "emoji_u1f595_1f3fe",
+      "tags": [
+        ":middle-finger:"
+      ],
+      "popularity": 281
+    },
+    {
+      "codepoint": "1f595_1f3ff",
+      "name": "emoji_u1f595_1f3ff",
+      "tags": [
+        ":middle-finger:"
+      ],
+      "popularity": 280
+    },
+    {
+      "codepoint": "270d_fe0f",
+      "name": "emoji_u270d_fe0f",
+      "tags": [
+        ":writing-hand:"
+      ],
+      "popularity": 279
+    },
+    {
+      "codepoint": "270d_1f3fb",
+      "name": "emoji_u270d_1f3fb",
+      "tags": [
+        ":writing-hand:"
+      ],
+      "popularity": 278
+    },
+    {
+      "codepoint": "270d_1f3fc",
+      "name": "emoji_u270d_1f3fc",
+      "tags": [
+        ":writing-hand:"
+      ],
+      "popularity": 277
+    },
+    {
+      "codepoint": "270d_1f3fd",
+      "name": "emoji_u270d_1f3fd",
+      "tags": [
+        ":writing-hand:"
+      ],
+      "popularity": 276
+    },
+    {
+      "codepoint": "270d_1f3fe",
+      "name": "emoji_u270d_1f3fe",
+      "tags": [
+        ":writing-hand:"
+      ],
+      "popularity": 275
+    },
+    {
+      "codepoint": "270d_1f3ff",
+      "name": "emoji_u270d_1f3ff",
+      "tags": [
+        ":writing-hand:"
+      ],
+      "popularity": 274
+    },
+    {
+      "codepoint": "1f933",
+      "name": "emoji_u1f933",
+      "tags": [
+        ":selfie:"
+      ],
+      "popularity": 273
+    },
+    {
+      "codepoint": "1f933_1f3fb",
+      "name": "emoji_u1f933_1f3fb",
+      "tags": [
+        ":selfie:"
+      ],
+      "popularity": 272
+    },
+    {
+      "codepoint": "1f933_1f3fc",
+      "name": "emoji_u1f933_1f3fc",
+      "tags": [
+        ":selfie:"
+      ],
+      "popularity": 271
+    },
+    {
+      "codepoint": "1f933_1f3fd",
+      "name": "emoji_u1f933_1f3fd",
+      "tags": [
+        ":selfie:"
+      ],
+      "popularity": 270
+    },
+    {
+      "codepoint": "1f933_1f3fe",
+      "name": "emoji_u1f933_1f3fe",
+      "tags": [
+        ":selfie:"
+      ],
+      "popularity": 269
+    },
+    {
+      "codepoint": "1f933_1f3ff",
+      "name": "emoji_u1f933_1f3ff",
+      "tags": [
+        ":selfie:"
+      ],
+      "popularity": 268
+    },
+    {
+      "codepoint": "1f64f",
+      "name": "emoji_u1f64f",
+      "tags": [
+        ":folded-hands:",
+        ":please:",
+        ":pray:",
+        ":hope:",
+        ":wish:",
+        ":thank-you:",
+        ":high-five:"
+      ],
+      "popularity": 267
+    },
+    {
+      "codepoint": "1f64f_1f3fb",
+      "name": "emoji_u1f64f_1f3fb",
+      "tags": [
+        ":folded-hands:",
+        ":please:",
+        ":pray:",
+        ":hope:",
+        ":wish:",
+        ":thank-you:",
+        ":high-five:"
+      ],
+      "popularity": 266
+    },
+    {
+      "codepoint": "1f64f_1f3fc",
+      "name": "emoji_u1f64f_1f3fc",
+      "tags": [
+        ":folded-hands:",
+        ":please:",
+        ":pray:",
+        ":hope:",
+        ":wish:",
+        ":thank-you:",
+        ":high-five:"
+      ],
+      "popularity": 265
+    },
+    {
+      "codepoint": "1f64f_1f3fd",
+      "name": "emoji_u1f64f_1f3fd",
+      "tags": [
+        ":folded-hands:",
+        ":please:",
+        ":pray:",
+        ":hope:",
+        ":wish:",
+        ":thank-you:",
+        ":high-five:"
+      ],
+      "popularity": 264
+    },
+    {
+      "codepoint": "1f64f_1f3fe",
+      "name": "emoji_u1f64f_1f3fe",
+      "tags": [
+        ":folded-hands:",
+        ":please:",
+        ":pray:",
+        ":hope:",
+        ":wish:",
+        ":thank-you:",
+        ":high-five:"
+      ],
+      "popularity": 263
+    },
+    {
+      "codepoint": "1f64f_1f3ff",
+      "name": "emoji_u1f64f_1f3ff",
+      "tags": [
+        ":folded-hands:",
+        ":please:",
+        ":pray:",
+        ":hope:",
+        ":wish:",
+        ":thank-you:",
+        ":high-five:"
+      ],
+      "popularity": 262
+    },
+    {
+      "codepoint": "1f485",
+      "name": "emoji_u1f485",
+      "tags": [
+        ":nail-care:"
+      ],
+      "popularity": 261
+    },
+    {
+      "codepoint": "1f485_1f3fb",
+      "name": "emoji_u1f485_1f3fb",
+      "tags": [
+        ":nail-care:"
+      ],
+      "popularity": 260
+    },
+    {
+      "codepoint": "1f485_1f3fc",
+      "name": "emoji_u1f485_1f3fc",
+      "tags": [
+        ":nail-care:"
+      ],
+      "popularity": 259
+    },
+    {
+      "codepoint": "1f485_1f3fd",
+      "name": "emoji_u1f485_1f3fd",
+      "tags": [
+        ":nail-care:"
+      ],
+      "popularity": 258
+    },
+    {
+      "codepoint": "1f485_1f3fe",
+      "name": "emoji_u1f485_1f3fe",
+      "tags": [
+        ":nail-care:"
+      ],
+      "popularity": 257
+    },
+    {
+      "codepoint": "1f485_1f3ff",
+      "name": "emoji_u1f485_1f3ff",
+      "tags": [
+        ":nail-care:"
+      ],
+      "popularity": 256
+    },
+    {
+      "codepoint": "1f91d",
+      "name": "emoji_u1f91d",
+      "tags": [
+        ":handshake:"
+      ],
+      "popularity": 255
+    },
+    {
+      "codepoint": "1f91d_1f3fb",
+      "name": "emoji_u1f91d_1f3fb",
+      "tags": [
+        ":handshake:"
+      ],
+      "popularity": 254
+    },
+    {
+      "codepoint": "1faf1_1f3fb_200d_1faf2_1f3fc",
+      "name": "emoji_u1faf1_1f3fb_200d_1faf2_1f3fc",
+      "tags": [
+        ":handshake:"
+      ],
+      "popularity": 253
+    },
+    {
+      "codepoint": "1faf1_1f3fb_200d_1faf2_1f3fd",
+      "name": "emoji_u1faf1_1f3fb_200d_1faf2_1f3fd",
+      "tags": [
+        ":handshake:"
+      ],
+      "popularity": 252
+    },
+    {
+      "codepoint": "1faf1_1f3fb_200d_1faf2_1f3fe",
+      "name": "emoji_u1faf1_1f3fb_200d_1faf2_1f3fe",
+      "tags": [
+        ":handshake:"
+      ],
+      "popularity": 251
+    },
+    {
+      "codepoint": "1faf1_1f3fb_200d_1faf2_1f3ff",
+      "name": "emoji_u1faf1_1f3fb_200d_1faf2_1f3ff",
+      "tags": [
+        ":handshake:"
+      ],
+      "popularity": 250
+    },
+    {
+      "codepoint": "1faf1_1f3fc_200d_1faf2_1f3fb",
+      "name": "emoji_u1faf1_1f3fc_200d_1faf2_1f3fb",
+      "tags": [
+        ":handshake:"
+      ],
+      "popularity": 249
+    },
+    {
+      "codepoint": "1f91d_1f3fc",
+      "name": "emoji_u1f91d_1f3fc",
+      "tags": [
+        ":handshake:"
+      ],
+      "popularity": 248
+    },
+    {
+      "codepoint": "1faf1_1f3fc_200d_1faf2_1f3fd",
+      "name": "emoji_u1faf1_1f3fc_200d_1faf2_1f3fd",
+      "tags": [
+        ":handshake:"
+      ],
+      "popularity": 247
+    },
+    {
+      "codepoint": "1faf1_1f3fc_200d_1faf2_1f3fe",
+      "name": "emoji_u1faf1_1f3fc_200d_1faf2_1f3fe",
+      "tags": [
+        ":handshake:"
+      ],
+      "popularity": 246
+    },
+    {
+      "codepoint": "1faf1_1f3fc_200d_1faf2_1f3ff",
+      "name": "emoji_u1faf1_1f3fc_200d_1faf2_1f3ff",
+      "tags": [
+        ":handshake:"
+      ],
+      "popularity": 245
+    },
+    {
+      "codepoint": "1faf1_1f3fd_200d_1faf2_1f3fb",
+      "name": "emoji_u1faf1_1f3fd_200d_1faf2_1f3fb",
+      "tags": [
+        ":handshake:"
+      ],
+      "popularity": 244
+    },
+    {
+      "codepoint": "1faf1_1f3fd_200d_1faf2_1f3fc",
+      "name": "emoji_u1faf1_1f3fd_200d_1faf2_1f3fc",
+      "tags": [
+        ":handshake:"
+      ],
+      "popularity": 243
+    },
+    {
+      "codepoint": "1f91d_1f3fd",
+      "name": "emoji_u1f91d_1f3fd",
+      "tags": [
+        ":handshake:"
+      ],
+      "popularity": 242
+    },
+    {
+      "codepoint": "1faf1_1f3fd_200d_1faf2_1f3fe",
+      "name": "emoji_u1faf1_1f3fd_200d_1faf2_1f3fe",
+      "tags": [
+        ":handshake:"
+      ],
+      "popularity": 241
+    },
+    {
+      "codepoint": "1faf1_1f3fd_200d_1faf2_1f3ff",
+      "name": "emoji_u1faf1_1f3fd_200d_1faf2_1f3ff",
+      "tags": [
+        ":handshake:"
+      ],
+      "popularity": 240
+    },
+    {
+      "codepoint": "1faf1_1f3fe_200d_1faf2_1f3fb",
+      "name": "emoji_u1faf1_1f3fe_200d_1faf2_1f3fb",
+      "tags": [
+        ":handshake:"
+      ],
+      "popularity": 239
+    },
+    {
+      "codepoint": "1faf1_1f3fe_200d_1faf2_1f3fc",
+      "name": "emoji_u1faf1_1f3fe_200d_1faf2_1f3fc",
+      "tags": [
+        ":handshake:"
+      ],
+      "popularity": 238
+    },
+    {
+      "codepoint": "1faf1_1f3fe_200d_1faf2_1f3fd",
+      "name": "emoji_u1faf1_1f3fe_200d_1faf2_1f3fd",
+      "tags": [
+        ":handshake:"
+      ],
+      "popularity": 237
+    },
+    {
+      "codepoint": "1f91d_1f3fe",
+      "name": "emoji_u1f91d_1f3fe",
+      "tags": [
+        ":handshake:"
+      ],
+      "popularity": 236
+    },
+    {
+      "codepoint": "1faf1_1f3fe_200d_1faf2_1f3ff",
+      "name": "emoji_u1faf1_1f3fe_200d_1faf2_1f3ff",
+      "tags": [
+        ":handshake:"
+      ],
+      "popularity": 235
+    },
+    {
+      "codepoint": "1faf1_1f3ff_200d_1faf2_1f3fb",
+      "name": "emoji_u1faf1_1f3ff_200d_1faf2_1f3fb",
+      "tags": [
+        ":handshake:"
+      ],
+      "popularity": 234
+    },
+    {
+      "codepoint": "1faf1_1f3ff_200d_1faf2_1f3fc",
+      "name": "emoji_u1faf1_1f3ff_200d_1faf2_1f3fc",
+      "tags": [
+        ":handshake:"
+      ],
+      "popularity": 233
+    },
+    {
+      "codepoint": "1faf1_1f3ff_200d_1faf2_1f3fd",
+      "name": "emoji_u1faf1_1f3ff_200d_1faf2_1f3fd",
+      "tags": [
+        ":handshake:"
+      ],
+      "popularity": 232
+    },
+    {
+      "codepoint": "1faf1_1f3ff_200d_1faf2_1f3fe",
+      "name": "emoji_u1faf1_1f3ff_200d_1faf2_1f3fe",
+      "tags": [
+        ":handshake:"
+      ],
+      "popularity": 231
+    },
+    {
+      "codepoint": "1f91d_1f3ff",
+      "name": "emoji_u1f91d_1f3ff",
+      "tags": [
+        ":handshake:"
+      ],
+      "popularity": 230
+    }
+  ],
+  "People": [
+    {
+      "codepoint": "1f483",
+      "name": "emoji_u1f483",
+      "tags": [
+        ":dancer-woman:"
+      ],
+      "popularity": 229
+    },
+    {
+      "codepoint": "1f483_1f3fb",
+      "name": "emoji_u1f483_1f3fb",
+      "tags": [
+        ":dancer-woman:"
+      ],
+      "popularity": 228
+    },
+    {
+      "codepoint": "1f483_1f3fc",
+      "name": "emoji_u1f483_1f3fc",
+      "tags": [
+        ":dancer-woman:"
+      ],
+      "popularity": 227
+    },
+    {
+      "codepoint": "1f483_1f3fd",
+      "name": "emoji_u1f483_1f3fd",
+      "tags": [
+        ":dancer-woman:"
+      ],
+      "popularity": 226
+    },
+    {
+      "codepoint": "1f483_1f3fe",
+      "name": "emoji_u1f483_1f3fe",
+      "tags": [
+        ":dancer-woman:"
+      ],
+      "popularity": 225
+    },
+    {
+      "codepoint": "1f483_1f3ff",
+      "name": "emoji_u1f483_1f3ff",
+      "tags": [
+        ":dancer-woman:"
+      ],
+      "popularity": 224
+    }
+  ],
+  "Animals and nature": [
+    {
+      "codepoint": "1f490",
+      "name": "emoji_u1f490",
+      "tags": [
+        ":bouquet:",
+        ":flowers:"
+      ],
+      "popularity": 223
+    },
+    {
+      "codepoint": "1f339",
+      "name": "emoji_u1f339",
+      "tags": [
+        ":rose:"
+      ],
+      "popularity": 222
+    },
+    {
+      "codepoint": "1f940",
+      "name": "emoji_u1f940",
+      "tags": [
+        ":wilted-flower:"
+      ],
+      "popularity": 221
+    },
+    {
+      "codepoint": "1f342",
+      "name": "emoji_u1f342",
+      "tags": [
+        ":fallen-leaf:"
+      ],
+      "popularity": 220
+    },
+    {
+      "codepoint": "1f331",
+      "name": "emoji_u1f331",
+      "tags": [
+        ":plant:",
+        ":seed:"
+      ],
+      "popularity": 219
+    },
+    {
+      "codepoint": "1f343",
+      "name": "emoji_u1f343",
+      "tags": [
+        ":leaves:"
+      ],
+      "popularity": 218
+    },
+    {
+      "codepoint": "1f340",
+      "name": "emoji_u1f340",
+      "tags": [
+        ":luck:",
+        ":four-leaf-clover:"
+      ],
+      "popularity": 217
+    },
+    {
+      "codepoint": "1fabe",
+      "name": "emoji_u1fabe",
+      "tags": [
+        ":leafless-tree:"
+      ],
+      "popularity": 216
+    },
+    {
+      "codepoint": "2744_fe0f",
+      "name": "emoji_u2744_fe0f",
+      "tags": [
+        ":snowflake:",
+        ":winter:",
+        ":cold:"
+      ],
+      "popularity": 215
+    },
+    {
+      "codepoint": "1f30b",
+      "name": "emoji_u1f30b",
+      "tags": [
+        ":volcano:"
+      ],
+      "popularity": 214
+    },
+    {
+      "codepoint": "1f305",
+      "name": "emoji_u1f305",
+      "tags": [
+        ":sunrise:"
+      ],
+      "popularity": 213
+    },
+    {
+      "codepoint": "1f304",
+      "name": "emoji_u1f304",
+      "tags": [
+        ":sunrise-over-mountains:"
+      ],
+      "popularity": 212
+    },
+    {
+      "codepoint": "1f308",
+      "name": "emoji_u1f308",
+      "tags": [
+        ":rainbow:"
+      ],
+      "popularity": 211
+    },
+    {
+      "codepoint": "1fae7",
+      "name": "emoji_u1fae7",
+      "tags": [
+        ":bubbles:"
+      ],
+      "popularity": 210
+    },
+    {
+      "codepoint": "1f30a",
+      "name": "emoji_u1f30a",
+      "tags": [
+        ":ocean:"
+      ],
+      "popularity": 209
+    },
+    {
+      "codepoint": "1f32c_fe0f",
+      "name": "emoji_u1f32c_fe0f",
+      "tags": [
+        ":wind-face:"
+      ],
+      "popularity": 208
+    },
+    {
+      "codepoint": "1f32a_fe0f",
+      "name": "emoji_u1f32a_fe0f",
+      "tags": [
+        ":tornado:"
+      ],
+      "popularity": 207
+    },
+    {
+      "codepoint": "1f4a7",
+      "name": "emoji_u1f4a7",
+      "tags": [
+        ":droplet:"
+      ],
+      "popularity": 206
+    },
+    {
+      "codepoint": "1f327_fe0f",
+      "name": "emoji_u1f327_fe0f",
+      "tags": [
+        ":rain-cloud:"
+      ],
+      "popularity": 205
+    },
+    {
+      "codepoint": "1f329_fe0f",
+      "name": "emoji_u1f329_fe0f",
+      "tags": [
+        ":cloud-with-lightning:"
+      ],
+      "popularity": 204
+    },
+    {
+      "codepoint": "1f30d",
+      "name": "emoji_u1f30d",
+      "tags": [
+        ":globe-showing-Europe-Africa:"
+      ],
+      "popularity": 203
+    },
+    {
+      "codepoint": "1f30e",
+      "name": "emoji_u1f30e",
+      "tags": [
+        ":globe-showing-Americas:"
+      ],
+      "popularity": 202
+    },
+    {
+      "codepoint": "1f30f",
+      "name": "emoji_u1f30f",
+      "tags": [
+        ":globe-showing-Asia-Australia:"
+      ],
+      "popularity": 201
+    },
+    {
+      "codepoint": "2604_fe0f",
+      "name": "emoji_u2604_fe0f",
+      "tags": [
+        ":comet:"
+      ],
+      "popularity": 200
+    },
+    {
+      "codepoint": "1f42e",
+      "name": "emoji_u1f42e",
+      "tags": [
+        ":cow-face:"
+      ],
+      "popularity": 199
+    },
+    {
+      "codepoint": "1f984",
+      "name": "emoji_u1f984",
+      "tags": [
+        ":unicorn:"
+      ],
+      "popularity": 198
+    },
+    {
+      "codepoint": "1f98e",
+      "name": "emoji_u1f98e",
+      "tags": [
+        ":lizard:"
+      ],
+      "popularity": 197
+    },
+    {
+      "codepoint": "1f409",
+      "name": "emoji_u1f409",
+      "tags": [
+        ":dragon:"
+      ],
+      "popularity": 196
+    },
+    {
+      "codepoint": "1f996",
+      "name": "emoji_u1f996",
+      "tags": [
+        ":t-rex:"
+      ],
+      "popularity": 195
+    },
+    {
+      "codepoint": "1f995",
+      "name": "emoji_u1f995",
+      "tags": [
+        ":dinosaur:"
+      ],
+      "popularity": 194
+    },
+    {
+      "codepoint": "1f422",
+      "name": "emoji_u1f422",
+      "tags": [
+        ":turtle:"
+      ],
+      "popularity": 193
+    },
+    {
+      "codepoint": "1f40a",
+      "name": "emoji_u1f40a",
+      "tags": [
+        ":crocodile:"
+      ],
+      "popularity": 192
+    },
+    {
+      "codepoint": "1f40d",
+      "name": "emoji_u1f40d",
+      "tags": [
+        ":snake:"
+      ],
+      "popularity": 191
+    },
+    {
+      "codepoint": "1f438",
+      "name": "emoji_u1f438",
+      "tags": [
+        ":frog:"
+      ],
+      "popularity": 190
+    },
+    {
+      "codepoint": "1f407",
+      "name": "emoji_u1f407",
+      "tags": [
+        ":rabbit:"
+      ],
+      "popularity": 189
+    },
+    {
+      "codepoint": "1f400",
+      "name": "emoji_u1f400",
+      "tags": [
+        ":rat:"
+      ],
+      "popularity": 188
+    },
+    {
+      "codepoint": "1f429",
+      "name": "emoji_u1f429",
+      "tags": [
+        ":poodle:"
+      ],
+      "popularity": 187
+    },
+    {
+      "codepoint": "1f415",
+      "name": "emoji_u1f415",
+      "tags": [
+        ":dog:"
+      ],
+      "popularity": 186
+    },
+    {
+      "codepoint": "1f9ae",
+      "name": "emoji_u1f9ae",
+      "tags": [
+        ":guide-dog:"
+      ],
+      "popularity": 185
+    },
+    {
+      "codepoint": "1f415_200d_1f9ba",
+      "name": "emoji_u1f415_200d_1f9ba",
+      "tags": [
+        ":service-dog:"
+      ],
+      "popularity": 184
+    },
+    {
+      "codepoint": "1f416",
+      "name": "emoji_u1f416",
+      "tags": [
+        ":pig:"
+      ],
+      "popularity": 183
+    },
+    {
+      "codepoint": "1f40e",
+      "name": "emoji_u1f40e",
+      "tags": [
+        ":racehorse:"
+      ],
+      "popularity": 182
+    },
+    {
+      "codepoint": "1facf",
+      "name": "emoji_u1facf",
+      "tags": [
+        ":donkey:"
+      ],
+      "popularity": 181
+    },
+    {
+      "codepoint": "1f402",
+      "name": "emoji_u1f402",
+      "tags": [
+        ":ox:"
+      ],
+      "popularity": 180
+    },
+    {
+      "codepoint": "1f410",
+      "name": "emoji_u1f410",
+      "tags": [
+        ":goat:"
+      ],
+      "popularity": 179
+    },
+    {
+      "codepoint": "1f998",
+      "name": "emoji_u1f998",
+      "tags": [
+        ":kangaroo:"
+      ],
+      "popularity": 178
+    },
+    {
+      "codepoint": "1f405",
+      "name": "emoji_u1f405",
+      "tags": [
+        ":tiger:"
+      ],
+      "popularity": 177
+    },
+    {
+      "codepoint": "1f412",
+      "name": "emoji_u1f412",
+      "tags": [
+        ":monkey:"
+      ],
+      "popularity": 176
+    },
+    {
+      "codepoint": "1f98d",
+      "name": "emoji_u1f98d",
+      "tags": [
+        ":gorilla:"
+      ],
+      "popularity": 175
+    },
+    {
+      "codepoint": "1f9a7",
+      "name": "emoji_u1f9a7",
+      "tags": [
+        ":orangutan:"
+      ],
+      "popularity": 174
+    },
+    {
+      "codepoint": "1f43f_fe0f",
+      "name": "emoji_u1f43f_fe0f",
+      "tags": [
+        ":chipmunk:"
+      ],
+      "popularity": 173
+    },
+    {
+      "codepoint": "1f9a6",
+      "name": "emoji_u1f9a6",
+      "tags": [
+        ":otter:"
+      ],
+      "popularity": 172
+    },
+    {
+      "codepoint": "1f987",
+      "name": "emoji_u1f987",
+      "tags": [
+        ":bat:"
+      ],
+      "popularity": 171
+    },
+    {
+      "codepoint": "1f426",
+      "name": "emoji_u1f426",
+      "tags": [
+        ":bird:"
+      ],
+      "popularity": 170
+    },
+    {
+      "codepoint": "1f426_200d_2b1b",
+      "name": "emoji_u1f426_200d_2b1b",
+      "tags": [
+        ":black-bird:"
+      ],
+      "popularity": 169
+    },
+    {
+      "codepoint": "1f413",
+      "name": "emoji_u1f413",
+      "tags": [
+        ":rooster:"
+      ],
+      "popularity": 168
+    },
+    {
+      "codepoint": "1f423",
+      "name": "emoji_u1f423",
+      "tags": [
+        ":hatching-chick:"
+      ],
+      "popularity": 167
+    },
+    {
+      "codepoint": "1f424",
+      "name": "emoji_u1f424",
+      "tags": [
+        ":baby-chick:"
+      ],
+      "popularity": 166
+    },
+    {
+      "codepoint": "1f425",
+      "name": "emoji_u1f425",
+      "tags": [
+        ":hatched-chick:"
+      ],
+      "popularity": 165
+    },
+    {
+      "codepoint": "1f985",
+      "name": "emoji_u1f985",
+      "tags": [
+        ":eagle:"
+      ],
+      "popularity": 164
+    },
+    {
+      "codepoint": "1f989",
+      "name": "emoji_u1f989",
+      "tags": [
+        ":owl:"
+      ],
+      "popularity": 163
+    },
+    {
+      "codepoint": "1f54a_fe0f",
+      "name": "emoji_u1f54a_fe0f",
+      "tags": [
+        ":peace:",
+        ":dove:"
+      ],
+      "popularity": 162
+    },
+    {
+      "codepoint": "1fabf",
+      "name": "emoji_u1fabf",
+      "tags": [
+        ":goose:"
+      ],
+      "popularity": 161
+    },
+    {
+      "codepoint": "1f99a",
+      "name": "emoji_u1f99a",
+      "tags": [
+        ":peacock:"
+      ],
+      "popularity": 160
+    },
+    {
+      "codepoint": "1f426_200d_1f525",
+      "name": "emoji_u1f426_200d_1f525",
+      "tags": [
+        ":phoenix:"
+      ],
+      "popularity": 159
+    },
+    {
+      "codepoint": "1f9ad",
+      "name": "emoji_u1f9ad",
+      "tags": [
+        ":seal:"
+      ],
+      "popularity": 158
+    },
+    {
+      "codepoint": "1f988",
+      "name": "emoji_u1f988",
+      "tags": [
+        ":shark:"
+      ],
+      "popularity": 157
+    },
+    {
+      "codepoint": "1f42c",
+      "name": "emoji_u1f42c",
+      "tags": [
+        ":dolphin:"
+      ],
+      "popularity": 156
+    },
+    {
+      "codepoint": "1f433",
+      "name": "emoji_u1f433",
+      "tags": [
+        ":whale:"
+      ],
+      "popularity": 155
+    },
+    {
+      "codepoint": "1f41f",
+      "name": "emoji_u1f41f",
+      "tags": [
+        ":fish:"
+      ],
+      "popularity": 154
+    },
+    {
+      "codepoint": "1f421",
+      "name": "emoji_u1f421",
+      "tags": [
+        ":blowfish:"
+      ],
+      "popularity": 153
+    },
+    {
+      "codepoint": "1f99e",
+      "name": "emoji_u1f99e",
+      "tags": [
+        ":lobster:"
+      ],
+      "popularity": 152
+    },
+    {
+      "codepoint": "1f980",
+      "name": "emoji_u1f980",
+      "tags": [
+        ":crab:"
+      ],
+      "popularity": 151
+    },
+    {
+      "codepoint": "1f419",
+      "name": "emoji_u1f419",
+      "tags": [
+        ":octopus:"
+      ],
+      "popularity": 150
+    },
+    {
+      "codepoint": "1fabc",
+      "name": "emoji_u1fabc",
+      "tags": [
+        ":jellyfish:"
+      ],
+      "popularity": 149
+    },
+    {
+      "codepoint": "1f982",
+      "name": "emoji_u1f982",
+      "tags": [
+        ":scorpion:"
+      ],
+      "popularity": 148
+    },
+    {
+      "codepoint": "1f577_fe0f",
+      "name": "emoji_u1f577_fe0f",
+      "tags": [
+        ":spider:"
+      ],
+      "popularity": 147
+    },
+    {
+      "codepoint": "1f40c",
+      "name": "emoji_u1f40c",
+      "tags": [
+        ":snail:"
+      ],
+      "popularity": 146
+    },
+    {
+      "codepoint": "1f41c",
+      "name": "emoji_u1f41c",
+      "tags": [
+        ":ant:"
+      ],
+      "popularity": 145
+    },
+    {
+      "codepoint": "1f99f",
+      "name": "emoji_u1f99f",
+      "tags": [
+        ":mosquito:"
+      ],
+      "popularity": 144
+    },
+    {
+      "codepoint": "1fab3",
+      "name": "emoji_u1fab3",
+      "tags": [
+        ":cockroach:"
+      ],
+      "popularity": 143
+    },
+    {
+      "codepoint": "1fab0",
+      "name": "emoji_u1fab0",
+      "tags": [
+        ":fly:"
+      ],
+      "popularity": 142
+    },
+    {
+      "codepoint": "1f41d",
+      "name": "emoji_u1f41d",
+      "tags": [
+        ":bee:"
+      ],
+      "popularity": 141
+    },
+    {
+      "codepoint": "1f41e",
+      "name": "emoji_u1f41e",
+      "tags": [
+        ":lady-bug:"
+      ],
+      "popularity": 140
+    },
+    {
+      "codepoint": "1f98b",
+      "name": "emoji_u1f98b",
+      "tags": [
+        ":butterfly:"
+      ],
+      "popularity": 139
+    },
+    {
+      "codepoint": "1f41b",
+      "name": "emoji_u1f41b",
+      "tags": [
+        ":bug:"
+      ],
+      "popularity": 138
+    },
+    {
+      "codepoint": "1fab1",
+      "name": "emoji_u1fab1",
+      "tags": [
+        ":worm:"
+      ],
+      "popularity": 137
+    },
+    {
+      "codepoint": "1f43e",
+      "name": "emoji_u1f43e",
+      "tags": [
+        ":paw prints:"
+      ],
+      "popularity": 136
+    }
+  ],
+  "Food and drink": [
+    {
+      "codepoint": "1f345",
+      "name": "emoji_u1f345",
+      "tags": [
+        ":tomato:"
+      ],
+      "popularity": 135
+    },
+    {
+      "codepoint": "1fadc",
+      "name": "emoji_u1fadc",
+      "tags": [
+        ":root-vegetable:",
+        ":beet:",
+        ":turnip:"
+      ],
+      "popularity": 134
+    },
+    {
+      "codepoint": "1f373",
+      "name": "emoji_u1f373",
+      "tags": [
+        ":cooking:"
+      ],
+      "popularity": 133
+    },
+    {
+      "codepoint": "1f32f",
+      "name": "emoji_u1f32f",
+      "tags": [
+        ":burrito:"
+      ],
+      "popularity": 132
+    },
+    {
+      "codepoint": "1f35d",
+      "name": "emoji_u1f35d",
+      "tags": [
+        ":spaghetti:"
+      ],
+      "popularity": 131
+    },
+    {
+      "codepoint": "1f35c",
+      "name": "emoji_u1f35c",
+      "tags": [
+        ":steaming-bowl:"
+      ],
+      "popularity": 130
+    },
+    {
+      "codepoint": "1f37f",
+      "name": "emoji_u1f37f",
+      "tags": [
+        ":popcorn:"
+      ],
+      "popularity": 129
+    },
+    {
+      "codepoint": "2615",
+      "name": "emoji_u2615",
+      "tags": [
+        ":hot-beverage:"
+      ],
+      "popularity": 128
+    },
+    {
+      "codepoint": "1f37b",
+      "name": "emoji_u1f37b",
+      "tags": [
+        ":clinking-beer-mugs:"
+      ],
+      "popularity": 127
+    },
+    {
+      "codepoint": "1f942",
+      "name": "emoji_u1f942",
+      "tags": [
+        ":clinking-glasses:"
+      ],
+      "popularity": 126
+    },
+    {
+      "codepoint": "1f37e",
+      "name": "emoji_u1f37e",
+      "tags": [
+        ":bottle-with-popping-cork:"
+      ],
+      "popularity": 125
+    },
+    {
+      "codepoint": "1f377",
+      "name": "emoji_u1f377",
+      "tags": [
+        ":wine-glass:"
+      ],
+      "popularity": 124
+    },
+    {
+      "codepoint": "1fad7",
+      "name": "emoji_u1fad7",
+      "tags": [
+        ":pour:"
+      ],
+      "popularity": 123
+    },
+    {
+      "codepoint": "1f379",
+      "name": "emoji_u1f379",
+      "tags": [
+        ":tropical-drink:"
+      ],
+      "popularity": 122
+    }
+  ],
+  "Travel and places": [
+    {
+      "codepoint": "1f6a7",
+      "name": "emoji_u1f6a7",
+      "tags": [
+        ":construction:"
+      ],
+      "popularity": 121
+    },
+    {
+      "codepoint": "1f6a8",
+      "name": "emoji_u1f6a8",
+      "tags": [
+        ":police-car-light:"
+      ],
+      "popularity": 120
+    },
+    {
+      "codepoint": "1f6b2",
+      "name": "emoji_u1f6b2",
+      "tags": [
+        ":bicycle:"
+      ],
+      "popularity": 119
+    },
+    {
+      "codepoint": "1f697",
+      "name": "emoji_u1f697",
+      "tags": [
+        ":automobile:"
+      ],
+      "popularity": 118
+    },
+    {
+      "codepoint": "1f3ce_fe0f",
+      "name": "emoji_u1f3ce_fe0f",
+      "tags": [
+        ":racing-car:"
+      ],
+      "popularity": 117
+    },
+    {
+      "codepoint": "1f695",
+      "name": "emoji_u1f695",
+      "tags": [
+        ":taxi:"
+      ],
+      "popularity": 116
+    },
+    {
+      "codepoint": "1f68c",
+      "name": "emoji_u1f68c",
+      "tags": [
+        ":bus:"
+      ],
+      "popularity": 115
+    },
+    {
+      "codepoint": "26f5",
+      "name": "emoji_u26f5",
+      "tags": [
+        ":sailboat:"
+      ],
+      "popularity": 114
+    },
+    {
+      "codepoint": "1f6f6",
+      "name": "emoji_u1f6f6",
+      "tags": [
+        ":canoe:"
+      ],
+      "popularity": 113
+    },
+    {
+      "codepoint": "1f6f8",
+      "name": "emoji_u1f6f8",
+      "tags": [
+        ":flying-saucer:"
+      ],
+      "popularity": 112
+    },
+    {
+      "codepoint": "1f680",
+      "name": "emoji_u1f680",
+      "tags": [
+        ":rocket:"
+      ],
+      "popularity": 111
+    },
+    {
+      "codepoint": "1f6eb",
+      "name": "emoji_u1f6eb",
+      "tags": [
+        ":airplane-departure:"
+      ],
+      "popularity": 110
+    },
+    {
+      "codepoint": "1f6ec",
+      "name": "emoji_u1f6ec",
+      "tags": [
+        ":airplane-arrival:"
+      ],
+      "popularity": 109
+    },
+    {
+      "codepoint": "1f3a2",
+      "name": "emoji_u1f3a2",
+      "tags": [
+        ":roller-coaster:"
+      ],
+      "popularity": 108
+    },
+    {
+      "codepoint": "1f3a1",
+      "name": "emoji_u1f3a1",
+      "tags": [
+        ":ferris-wheel:"
+      ],
+      "popularity": 107
+    },
+    {
+      "codepoint": "1f3d5_fe0f",
+      "name": "emoji_u1f3d5_fe0f",
+      "tags": [
+        ":camping:"
+      ],
+      "popularity": 106
+    }
+  ],
+  "Activities and events": [
+    {
+      "codepoint": "1f388",
+      "name": "emoji_u1f388",
+      "tags": [
+        ":balloon:"
+      ],
+      "popularity": 105
+    },
+    {
+      "codepoint": "1f382",
+      "name": "emoji_u1f382",
+      "tags": [
+        ":birthday-cake:"
+      ],
+      "popularity": 104
+    },
+    {
+      "codepoint": "1f381",
+      "name": "emoji_u1f381",
+      "tags": [
+        ":wrapped-gift:"
+      ],
+      "popularity": 103
+    },
+    {
+      "codepoint": "1f386",
+      "name": "emoji_u1f386",
+      "tags": [
+        ":fireworks:"
+      ],
+      "popularity": 102
+    },
+    {
+      "codepoint": "1fa85",
+      "name": "emoji_u1fa85",
+      "tags": [
+        ":pi\u00f1ata:"
+      ],
+      "popularity": 101
+    },
+    {
+      "codepoint": "1faa9",
+      "name": "emoji_u1faa9",
+      "tags": [
+        ":mirror-ball:",
+        ":disco-ball:"
+      ],
+      "popularity": 100
+    },
+    {
+      "codepoint": "1f947",
+      "name": "emoji_u1f947",
+      "tags": [
+        ":gold-medal:",
+        ":1st-place-medal:"
+      ],
+      "popularity": 99
+    },
+    {
+      "codepoint": "1f948",
+      "name": "emoji_u1f948",
+      "tags": [
+        ":silver-medal:",
+        ":2nd-place-medal:"
+      ],
+      "popularity": 98
+    },
+    {
+      "codepoint": "1f949",
+      "name": "emoji_u1f949",
+      "tags": [
+        ":bronze-medal:",
+        ":3rd-place-medal:"
+      ],
+      "popularity": 97
+    },
+    {
+      "codepoint": "1f3c6",
+      "name": "emoji_u1f3c6",
+      "tags": [
+        ":trophy:"
+      ],
+      "popularity": 96
+    },
+    {
+      "codepoint": "26bd",
+      "name": "emoji_u26bd",
+      "tags": [
+        ":soccer-ball:"
+      ],
+      "popularity": 95
+    },
+    {
+      "codepoint": "26be",
+      "name": "emoji_u26be",
+      "tags": [
+        ":baseball:"
+      ],
+      "popularity": 94
+    },
+    {
+      "codepoint": "1f94e",
+      "name": "emoji_u1f94e",
+      "tags": [
+        ":softball:"
+      ],
+      "popularity": 93
+    },
+    {
+      "codepoint": "1f3be",
+      "name": "emoji_u1f3be",
+      "tags": [
+        ":tennis:"
+      ],
+      "popularity": 92
+    },
+    {
+      "codepoint": "1f3f8",
+      "name": "emoji_u1f3f8",
+      "tags": [
+        ":badminton:"
+      ],
+      "popularity": 91
+    },
+    {
+      "codepoint": "1f94d",
+      "name": "emoji_u1f94d",
+      "tags": [
+        ":lacrosse:"
+      ],
+      "popularity": 90
+    },
+    {
+      "codepoint": "1f3cf",
+      "name": "emoji_u1f3cf",
+      "tags": [
+        ":cricket-game:"
+      ],
+      "popularity": 89
+    },
+    {
+      "codepoint": "1f3d1",
+      "name": "emoji_u1f3d1",
+      "tags": [
+        ":field-hockey:"
+      ],
+      "popularity": 88
+    },
+    {
+      "codepoint": "1f3d2",
+      "name": "emoji_u1f3d2",
+      "tags": [
+        ":ice-hockey:"
+      ],
+      "popularity": 87
+    },
+    {
+      "codepoint": "26f8_fe0f",
+      "name": "emoji_u26f8_fe0f",
+      "tags": [
+        ":ice-skate:"
+      ],
+      "popularity": 86
+    },
+    {
+      "codepoint": "1f6fc",
+      "name": "emoji_u1f6fc",
+      "tags": [
+        ":roller-skates:"
+      ],
+      "popularity": 85
+    },
+    {
+      "codepoint": "1fa70",
+      "name": "emoji_u1fa70",
+      "tags": [
+        ":ballet-shoes:"
+      ],
+      "popularity": 84
+    },
+    {
+      "codepoint": "1f6f9",
+      "name": "emoji_u1f6f9",
+      "tags": [
+        ":skateboard:"
+      ],
+      "popularity": 83
+    },
+    {
+      "codepoint": "26f3",
+      "name": "emoji_u26f3",
+      "tags": [
+        ":flag-in-hole:"
+      ],
+      "popularity": 82
+    },
+    {
+      "codepoint": "1f3af",
+      "name": "emoji_u1f3af",
+      "tags": [
+        ":direct-hit:",
+        ":target:"
+      ],
+      "popularity": 81
+    },
+    {
+      "codepoint": "1f94f",
+      "name": "emoji_u1f94f",
+      "tags": [
+        ":flying-disc:"
+      ],
+      "popularity": 80
+    },
+    {
+      "codepoint": "1fa83",
+      "name": "emoji_u1fa83",
+      "tags": [
+        ":boomerang:"
+      ],
+      "popularity": 79
+    },
+    {
+      "codepoint": "1fa81",
+      "name": "emoji_u1fa81",
+      "tags": [
+        ":kite:"
+      ],
+      "popularity": 78
+    },
+    {
+      "codepoint": "1f3a3",
+      "name": "emoji_u1f3a3",
+      "tags": [
+        ":fishing-pole:"
+      ],
+      "popularity": 77
+    },
+    {
+      "codepoint": "1f94b",
+      "name": "emoji_u1f94b",
+      "tags": [
+        ":martial-arts-uniform:"
+      ],
+      "popularity": 76
+    },
+    {
+      "codepoint": "1f3b1",
+      "name": "emoji_u1f3b1",
+      "tags": [
+        ":8-ball:"
+      ],
+      "popularity": 75
+    },
+    {
+      "codepoint": "1f3d3",
+      "name": "emoji_u1f3d3",
+      "tags": [
+        ":ping-pong:"
+      ],
+      "popularity": 74
+    },
+    {
+      "codepoint": "1f3b3",
+      "name": "emoji_u1f3b3",
+      "tags": [
+        ":bowling:"
+      ],
+      "popularity": 73
+    },
+    {
+      "codepoint": "1f3b2",
+      "name": "emoji_u1f3b2",
+      "tags": [
+        ":die:"
+      ],
+      "popularity": 72
+    },
+    {
+      "codepoint": "1f3b0",
+      "name": "emoji_u1f3b0",
+      "tags": [
+        ":slot-machine:"
+      ],
+      "popularity": 71
+    },
+    {
+      "codepoint": "1fa84",
+      "name": "emoji_u1fa84",
+      "tags": [
+        ":wand:"
+      ],
+      "popularity": 70
+    },
+    {
+      "codepoint": "1f4f8",
+      "name": "emoji_u1f4f8",
+      "tags": [
+        ":camera-flash:"
+      ],
+      "popularity": 69
+    },
+    {
+      "codepoint": "1fadf",
+      "name": "emoji_u1fadf",
+      "tags": [
+        ":splatter:"
+      ],
+      "popularity": 68
+    },
+    {
+      "codepoint": "1f3b7",
+      "name": "emoji_u1f3b7",
+      "tags": [
+        ":saxophone:"
+      ],
+      "popularity": 67
+    },
+    {
+      "codepoint": "1f3ba",
+      "name": "emoji_u1f3ba",
+      "tags": [
+        ":trumpet:"
+      ],
+      "popularity": 66
+    },
+    {
+      "codepoint": "1f3bb",
+      "name": "emoji_u1f3bb",
+      "tags": [
+        ":violin:"
+      ],
+      "popularity": 65
+    },
+    {
+      "codepoint": "1fa89",
+      "name": "emoji_u1fa89",
+      "tags": [
+        ":harp:"
+      ],
+      "popularity": 64
+    },
+    {
+      "codepoint": "1f941",
+      "name": "emoji_u1f941",
+      "tags": [
+        ":drum:"
+      ],
+      "popularity": 63
+    },
+    {
+      "codepoint": "1fa87",
+      "name": "emoji_u1fa87",
+      "tags": [
+        ":maracas:"
+      ],
+      "popularity": 62
+    },
+    {
+      "codepoint": "1f3ac",
+      "name": "emoji_u1f3ac",
+      "tags": [
+        ":clapper:"
+      ],
+      "popularity": 61
+    }
+  ],
+  "Objects": [
+    {
+      "codepoint": "1f50b",
+      "name": "emoji_u1f50b",
+      "tags": [
+        ":battery-full:"
+      ],
+      "popularity": 60
+    },
+    {
+      "codepoint": "1faab",
+      "name": "emoji_u1faab",
+      "tags": [
+        ":battery-low:"
+      ],
+      "popularity": 59
+    },
+    {
+      "codepoint": "1fa99",
+      "name": "emoji_u1fa99",
+      "tags": [
+        ":coin:"
+      ],
+      "popularity": 58
+    },
+    {
+      "codepoint": "1f4b8",
+      "name": "emoji_u1f4b8",
+      "tags": [
+        ":money-with-wings:"
+      ],
+      "popularity": 57
+    },
+    {
+      "codepoint": "1f48e",
+      "name": "emoji_u1f48e",
+      "tags": [
+        ":gem-stone:"
+      ],
+      "popularity": 56
+    },
+    {
+      "codepoint": "2696_fe0f",
+      "name": "emoji_u2696_fe0f",
+      "tags": [
+        ":balance-scale:"
+      ],
+      "popularity": 55
+    },
+    {
+      "codepoint": "1f4a1",
+      "name": "emoji_u1f4a1",
+      "tags": [
+        ":light-bulb:"
+      ],
+      "popularity": 54
+    },
+    {
+      "codepoint": "1f393",
+      "name": "emoji_u1f393",
+      "tags": [
+        ":graduation-cap:"
+      ],
+      "popularity": 53
+    },
+    {
+      "codepoint": "1f48d",
+      "name": "emoji_u1f48d",
+      "tags": [
+        ":ring:"
+      ],
+      "popularity": 52
+    },
+    {
+      "codepoint": "1faad",
+      "name": "emoji_u1faad",
+      "tags": [
+        ":fan:"
+      ],
+      "popularity": 51
+    },
+    {
+      "codepoint": "2602_fe0f",
+      "name": "emoji_u2602_fe0f",
+      "tags": [
+        ":umbrella:"
+      ],
+      "popularity": 50
+    },
+    {
+      "codepoint": "1fa8f",
+      "name": "emoji_u1fa8f",
+      "tags": [
+        ":shovel:",
+        ":dig:"
+      ],
+      "popularity": 49
+    },
+    {
+      "codepoint": "2699_fe0f",
+      "name": "emoji_u2699_fe0f",
+      "tags": [
+        ":gear:"
+      ],
+      "popularity": 48
+    },
+    {
+      "codepoint": "26d3_fe0f_200d_1f4a5",
+      "name": "emoji_u26d3_fe0f_200d_1f4a5",
+      "tags": [
+        ":broken-chain:"
+      ],
+      "popularity": 47
+    },
+    {
+      "codepoint": "270f_fe0f",
+      "name": "emoji_u270f_fe0f",
+      "tags": [
+        ":pencil:"
+      ],
+      "popularity": 46
+    },
+    {
+      "codepoint": "23f0",
+      "name": "emoji_u23f0",
+      "tags": [
+        ":alarm-clock:"
+      ],
+      "popularity": 45
+    },
+    {
+      "codepoint": "1f6ce_fe0f",
+      "name": "emoji_u1f6ce_fe0f",
+      "tags": [
+        ":bellhop-bell:"
+      ],
+      "popularity": 44
+    },
+    {
+      "codepoint": "1f514",
+      "name": "emoji_u1f514",
+      "tags": [
+        ":bell:"
+      ],
+      "popularity": 43
+    },
+    {
+      "codepoint": "1f52e",
+      "name": "emoji_u1f52e",
+      "tags": [
+        ":crystal-ball:"
+      ],
+      "popularity": 42
+    },
+    {
+      "codepoint": "1f4a3",
+      "name": "emoji_u1f4a3",
+      "tags": [
+        ":bomb:"
+      ],
+      "popularity": 41
+    },
+    {
+      "codepoint": "1faa4",
+      "name": "emoji_u1faa4",
+      "tags": [
+        ":mouse-trap:"
+      ],
+      "popularity": 40
+    },
+    {
+      "codepoint": "1f512",
+      "name": "emoji_u1f512",
+      "tags": [
+        ":locked:"
+      ],
+      "popularity": 39
+    }
+  ],
+  "Symbols": [
+    {
+      "codepoint": "2648",
+      "name": "emoji_u2648",
+      "tags": [
+        ":Aries:"
+      ],
+      "popularity": 38
+    },
+    {
+      "codepoint": "2649",
+      "name": "emoji_u2649",
+      "tags": [
+        ":Taurus:"
+      ],
+      "popularity": 37
+    },
+    {
+      "codepoint": "264a",
+      "name": "emoji_u264a",
+      "tags": [
+        ":Gemini:"
+      ],
+      "popularity": 36
+    },
+    {
+      "codepoint": "264b",
+      "name": "emoji_u264b",
+      "tags": [
+        ":Cancer:"
+      ],
+      "popularity": 35
+    },
+    {
+      "codepoint": "264c",
+      "name": "emoji_u264c",
+      "tags": [
+        ":Leo:"
+      ],
+      "popularity": 34
+    },
+    {
+      "codepoint": "264d",
+      "name": "emoji_u264d",
+      "tags": [
+        ":Virgo:"
+      ],
+      "popularity": 33
+    },
+    {
+      "codepoint": "264e",
+      "name": "emoji_u264e",
+      "tags": [
+        ":Libra:"
+      ],
+      "popularity": 32
+    },
+    {
+      "codepoint": "264f",
+      "name": "emoji_u264f",
+      "tags": [
+        ":Scorpio:"
+      ],
+      "popularity": 31
+    },
+    {
+      "codepoint": "2650",
+      "name": "emoji_u2650",
+      "tags": [
+        ":Sagittarius:"
+      ],
+      "popularity": 30
+    },
+    {
+      "codepoint": "2651",
+      "name": "emoji_u2651",
+      "tags": [
+        ":Capricorn:"
+      ],
+      "popularity": 29
+    },
+    {
+      "codepoint": "2652",
+      "name": "emoji_u2652",
+      "tags": [
+        ":Aquarius:"
+      ],
+      "popularity": 28
+    },
+    {
+      "codepoint": "2653",
+      "name": "emoji_u2653",
+      "tags": [
+        ":Pisces:"
+      ],
+      "popularity": 27
+    },
+    {
+      "codepoint": "26ce",
+      "name": "emoji_u26ce",
+      "tags": [
+        ":Ophiuchus:"
+      ],
+      "popularity": 26
+    },
+    {
+      "codepoint": "2757",
+      "name": "emoji_u2757",
+      "tags": [
+        ":exclamation:",
+        ":exclamation-mark:"
+      ],
+      "popularity": 25
+    },
+    {
+      "codepoint": "2753",
+      "name": "emoji_u2753",
+      "tags": [
+        ":question:",
+        ":question-mark:",
+        ":?:"
+      ],
+      "popularity": 24
+    },
+    {
+      "codepoint": "2049_fe0f",
+      "name": "emoji_u2049_fe0f",
+      "tags": [
+        ":exclamation-question-mark:",
+        ":!?:"
+      ],
+      "popularity": 23
+    },
+    {
+      "codepoint": "203c_fe0f",
+      "name": "emoji_u203c_fe0f",
+      "tags": [
+        ":exclamation-double:",
+        ":!!:"
+      ],
+      "popularity": 22
+    },
+    {
+      "codepoint": "274c",
+      "name": "emoji_u274c",
+      "tags": [
+        ":cross-mark:",
+        ":x:"
+      ],
+      "popularity": 21
+    },
+    {
+      "codepoint": "1f198",
+      "name": "emoji_u1f198",
+      "tags": [
+        ":sos:"
+      ],
+      "popularity": 20
+    },
+    {
+      "codepoint": "1f4f4",
+      "name": "emoji_u1f4f4",
+      "tags": [
+        ":phone-off:"
+      ],
+      "popularity": 19
+    },
+    {
+      "codepoint": "2622_fe0f",
+      "name": "emoji_u2622_fe0f",
+      "tags": [
+        ":radioactive:"
+      ],
+      "popularity": 18
+    },
+    {
+      "codepoint": "2623_fe0f",
+      "name": "emoji_u2623_fe0f",
+      "tags": [
+        ":biohazard:"
+      ],
+      "popularity": 17
+    },
+    {
+      "codepoint": "26a0_fe0f",
+      "name": "emoji_u26a0_fe0f",
+      "tags": [
+        ":warning:"
+      ],
+      "popularity": 16
+    },
+    {
+      "codepoint": "2705",
+      "name": "emoji_u2705",
+      "tags": [
+        ":check-mark:",
+        ":check-mark-green:"
+      ],
+      "popularity": 15
+    },
+    {
+      "codepoint": "1f195",
+      "name": "emoji_u1f195",
+      "tags": [
+        ":new:"
+      ],
+      "popularity": 14
+    },
+    {
+      "codepoint": "1f193",
+      "name": "emoji_u1f193",
+      "tags": [
+        ":free:"
+      ],
+      "popularity": 13
+    },
+    {
+      "codepoint": "1f199",
+      "name": "emoji_u1f199",
+      "tags": [
+        ":up!:"
+      ],
+      "popularity": 12
+    },
+    {
+      "codepoint": "1f192",
+      "name": "emoji_u1f192",
+      "tags": [
+        ":cool:"
+      ],
+      "popularity": 11
+    },
+    {
+      "codepoint": "1f6ae",
+      "name": "emoji_u1f6ae",
+      "tags": [
+        ":litter:"
+      ],
+      "popularity": 10
+    },
+    {
+      "codepoint": "262e_fe0f",
+      "name": "emoji_u262e_fe0f",
+      "tags": [
+        ":peace-symbol:"
+      ],
+      "popularity": 9
+    },
+    {
+      "codepoint": "262f_fe0f",
+      "name": "emoji_u262f_fe0f",
+      "tags": [
+        ":yin-yang:"
+      ],
+      "popularity": 8
+    },
+    {
+      "codepoint": "267e_fe0f",
+      "name": "emoji_u267e_fe0f",
+      "tags": [
+        ":infinity:"
+      ],
+      "popularity": 7
+    },
+    {
+      "codepoint": "1f3b6",
+      "name": "emoji_u1f3b6",
+      "tags": [
+        ":musical-notes:"
+      ],
+      "popularity": 6
+    },
+    {
+      "codepoint": "2795",
+      "name": "emoji_u2795",
+      "tags": [
+        ":plus-sign:",
+        ":+:"
+      ],
+      "popularity": 5
+    }
+  ],
+  "Flags": [
+    {
+      "codepoint": "1f3c1",
+      "name": "emoji_u1f3c1",
+      "tags": [
+        ":chequered-flag:"
+      ],
+      "popularity": 4
+    },
+    {
+      "codepoint": "1f6a9",
+      "name": "emoji_u1f6a9",
+      "tags": [
+        ":triangular-flag:"
+      ],
+      "popularity": 3
+    },
+    {
+      "codepoint": "1f3f4",
+      "name": "emoji_u1f3f4",
+      "tags": [
+        ":black-flag:"
+      ],
+      "popularity": 2
+    },
+    {
+      "codepoint": "1f3f3_fe0f",
+      "name": "emoji_u1f3f3_fe0f",
+      "tags": [
+        ":white-flag:"
+      ],
+      "popularity": 1
+    }
+  ]
+}

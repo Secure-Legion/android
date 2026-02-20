@@ -26,6 +26,9 @@ class ChatAdapter(
     // Track which item is currently swiped open (-1 = none)
     private var openPosition = -1
 
+    /** Set from RecyclerView.OnScrollListener — blocks taps while list is scrolling/settling. */
+    var listIsScrolling = false
+
     class ChatViewHolder(view: View) : RecyclerView.ViewHolder(view) {
         val chatAvatar: AvatarView = view.findViewById(R.id.chatAvatar)
         val chatName: TextView = view.findViewById(R.id.chatName)
@@ -62,6 +65,8 @@ class ChatAdapter(
 
         // Set chat name (remove @ symbol)
         holder.chatName.text = chat.nickname.removePrefix("@")
+        holder.chatName.paint.shader = null
+        com.securelegion.utils.TextGradient.apply(holder.chatName)
 
         // Set message preview
         holder.chatMessage.text = chat.lastMessage
@@ -129,16 +134,20 @@ class ChatAdapter(
 
         // Swipe gesture handling
         var startX = 0f
+        var startY = 0f
         var startTranslationX = 0f
         var isSwiping = false
-        val touchSlop = 10f
+        var isScrolling = false
+        val touchSlop = android.view.ViewConfiguration.get(holder.itemView.context).scaledTouchSlop.toFloat()
 
         holder.foreground.setOnTouchListener { v, event ->
             when (event.action) {
                 MotionEvent.ACTION_DOWN -> {
                     startX = event.rawX
+                    startY = event.rawY
                     startTranslationX = holder.foreground.translationX
                     isSwiping = false
+                    isScrolling = false
 
                     // If another item is open, close it
                     if (openPosition != -1 && openPosition != holder.adapterPosition) {
@@ -146,17 +155,24 @@ class ChatAdapter(
                         openPosition = -1
                     }
 
-                    // Request parent to not intercept touch (so we handle swipe)
+                    // Allow parent to intercept until we know the gesture direction
                     v.parent?.requestDisallowInterceptTouchEvent(false)
                     true
                 }
                 MotionEvent.ACTION_MOVE -> {
                     val deltaX = event.rawX - startX
+                    val deltaY = event.rawY - startY
 
-                    if (abs(deltaX) > touchSlop && !isSwiping) {
-                        isSwiping = true
-                        // Once swiping starts, prevent parent from stealing the touch
-                        v.parent?.requestDisallowInterceptTouchEvent(true)
+                    if (!isSwiping && !isScrolling) {
+                        if (abs(deltaY) > touchSlop && abs(deltaY) > abs(deltaX)) {
+                            // Vertical scroll — let RecyclerView handle it
+                            isScrolling = true
+                            v.parent?.requestDisallowInterceptTouchEvent(false)
+                        } else if (abs(deltaX) > touchSlop && abs(deltaX) > abs(deltaY)) {
+                            // Horizontal swipe — we handle it
+                            isSwiping = true
+                            v.parent?.requestDisallowInterceptTouchEvent(true)
+                        }
                     }
 
                     if (isSwiping) {
@@ -169,7 +185,7 @@ class ChatAdapter(
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                     v.parent?.requestDisallowInterceptTouchEvent(false)
 
-                    if (!isSwiping) {
+                    if (!isSwiping && !isScrolling && !listIsScrolling) {
                         // Tap: if item is open, close it; otherwise trigger click
                         if (holder.foreground.translationX > 0f) {
                             closeItem(holder)
@@ -177,7 +193,7 @@ class ChatAdapter(
                         } else {
                             onChatClick(chat)
                         }
-                    } else {
+                    } else if (isSwiping) {
                         val currentTranslation = holder.foreground.translationX
                         val threshold = ACTION_WIDTH * 0.35f
 

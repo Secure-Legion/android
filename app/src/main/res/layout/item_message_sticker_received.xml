@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:paddingTop="4dp"
+    android:paddingBottom="4dp">
+
+    <!-- Timestamp Header -->
+    <TextView
+        android:id="@+id/timestampHeader"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center_horizontal"
+        android:textColor="?attr/colorOnSurfaceVariant"
+        android:textSize="12sp"
+        android:paddingBottom="8dp"
+        android:visibility="gone" />
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="start">
+
+        <CheckBox
+            android:id="@+id/messageCheckbox"
+            android:layout_width="18dp"
+            android:layout_height="18dp"
+            android:layout_gravity="center_vertical"
+            android:layout_marginEnd="8dp"
+            android:visibility="gone"
+            android:button="@drawable/circular_checkbox" />
+
+        <TextView
+            android:id="@+id/swipeRevealedTime"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:textColor="?attr/colorOnSurfaceVariant"
+            android:textSize="11sp"
+            android:layout_gravity="center_vertical"
+            android:layout_marginEnd="8dp"
+            android:visibility="gone" />
+
+        <com.airbnb.lottie.LottieAnimationView
+            android:id="@+id/stickerAnimation"
+            android:layout_width="160dp"
+            android:layout_height="160dp"
+            app:lottie_autoPlay="true"
+            app:lottie_loop="true" />
+
+        <ImageView
+            android:id="@+id/gifImage"
+            android:layout_width="160dp"
+            android:layout_height="160dp"
+            android:scaleType="fitCenter"
+            android:visibility="gone" />
+
+    </LinearLayout>
+
+</LinearLayout>
