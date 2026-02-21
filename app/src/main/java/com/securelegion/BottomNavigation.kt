@@ -58,8 +58,10 @@ object BottomNavigationHelper {
         }
 
         activity.findViewById<View>(R.id.navProfile)?.setOnClickListener {
-            val intent = Intent(activity, WalletIdentityActivity::class.java)
-            activity.startActivity(intent)
+            if (activity !is WalletIdentityActivity) {
+                val intent = Intent(activity, WalletIdentityActivity::class.java)
+                activity.startActivity(intent)
+            }
         }
     }
 }

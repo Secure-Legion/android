@@ -84,10 +84,9 @@ class WalletIdentityActivity : AppCompatActivity() {
             startActivity(intent)
         }
 
-        // Edit QR settings button → goes to QrSettingsActivity
-        findViewById<View>(R.id.editQrSettingsButton).setOnClickListener {
-            val intent = Intent(this, QrSettingsActivity::class.java)
-            startActivity(intent)
+        // Tap QR code → goes to QrSettingsActivity
+        findViewById<View>(R.id.qrCodeCard).setOnClickListener {
+            startActivity(Intent(this, QrSettingsActivity::class.java))
         }
 
         // Share button
@@ -108,75 +107,62 @@ class WalletIdentityActivity : AppCompatActivity() {
     }
 
     private fun generateQrCode() {
-        val keyManager = KeyManager.getInstance(this)
-        val friendRequestOnion = keyManager.getFriendRequestOnion() ?: return
-        currentFriendRequestOnion = friendRequestOnion
+        lifecycleScope.launch {
+            val qrBitmap = withContext(Dispatchers.Default) {
+                val keyManager = KeyManager.getInstance(this@WalletIdentityActivity)
+                val friendRequestOnion = keyManager.getFriendRequestOnion() ?: return@withContext null
+                currentFriendRequestOnion = friendRequestOnion
 
-        val pin = keyManager.getContactPin() ?: ""
-        val username = keyManager.getUsername() ?: ""
+                val pin = keyManager.getContactPin() ?: ""
+                val username = keyManager.getUsername() ?: ""
 
-        val qrContent = buildString {
-            if (username.isNotEmpty()) append("$username@")
-            append(friendRequestOnion)
-            if (pin.isNotEmpty()) append("@$pin")
-        }
+                // Compute uses and expiry for QR badge
+                val securityPrefs = getSharedPreferences("security_prefs", Context.MODE_PRIVATE)
+                val decryptCount = keyManager.getPinDecryptCount()
+                val maxUses = securityPrefs.getInt("pin_max_uses", 5)
+                val mintText = if (maxUses > 0) "$decryptCount/$maxUses" else null
 
-        // Compute uses and expiry for QR badge
-        val securityPrefs = getSharedPreferences("security_prefs", Context.MODE_PRIVATE)
-        val decryptCount = keyManager.getPinDecryptCount()
-        val maxUses = securityPrefs.getInt("pin_max_uses", 5)
-        val mintText = if (maxUses > 0) "$decryptCount/$maxUses" else null
+                val rotationIntervalMs = securityPrefs.getLong("pin_rotation_interval_ms", 24 * 60 * 60 * 1000L)
+                val rotationTimestamp = keyManager.getPinRotationTimestamp()
+                val expiryMs = if (rotationIntervalMs > 0 && rotationTimestamp > 0) {
+                    rotationTimestamp + rotationIntervalMs
+                } else 0L
 
-        val rotationIntervalMs = securityPrefs.getLong("pin_rotation_interval_ms", 24 * 60 * 60 * 1000L)
-        val rotationTimestamp = keyManager.getPinRotationTimestamp()
-        val expiryText = if (rotationIntervalMs > 0 && rotationTimestamp > 0) {
-            val remainingMs = (rotationTimestamp + rotationIntervalMs) - System.currentTimeMillis()
-            if (remainingMs > 0) {
-                val hours = remainingMs / (60 * 60 * 1000)
-                val minutes = (remainingMs % (60 * 60 * 1000)) / (60 * 1000)
-                "Expires ${hours}h ${minutes}m"
-            } else "Rotation pending"
-        } else null
+                val expiryText = if (expiryMs > 0) {
+                    val remainingMs = expiryMs - System.currentTimeMillis()
+                    if (remainingMs > 0) {
+                        val hours = remainingMs / (60 * 60 * 1000)
+                        val minutes = (remainingMs % (60 * 60 * 1000)) / (60 * 1000)
+                        "Expires ${hours}h ${minutes}m"
+                    } else "Rotation pending"
+                } else null
 
-        // Generate branded QR code
-        val qrBitmap = com.securelegion.utils.BrandedQrGenerator.generate(
-            this,
-            com.securelegion.utils.BrandedQrGenerator.QrOptions(
-                content = qrContent,
-                size = 512,
-                showLogo = true,
-                mintText = mintText,
-                expiryText = expiryText,
-                showWebsite = true
-            )
-        )
+                // Build QR content with optional expiry timestamp
+                val qrContent = buildString {
+                    if (username.isNotEmpty()) append("$username@")
+                    append(friendRequestOnion)
+                    if (pin.isNotEmpty()) append("@$pin")
+                    if (expiryMs > 0) append("@exp$expiryMs")
+                }
 
-        currentQrBitmap = qrBitmap
-        if (qrBitmap != null) {
-            findViewById<ImageView>(R.id.qrCodeImage).setImageBitmap(qrBitmap)
-        }
-
-        // Update uses text
-        val qrUsesText = findViewById<TextView>(R.id.qrUsesText)
-        if (maxUses > 0) {
-            qrUsesText.text = "QR uses: $decryptCount/$maxUses"
-        } else {
-            qrUsesText.text = "QR uses: $decryptCount (unlimited)"
-        }
-
-        // Update expiry text
-        val qrExpiryText = findViewById<TextView>(R.id.qrExpiryText)
-        if (rotationIntervalMs > 0 && rotationTimestamp > 0) {
-            val remainingMs = (rotationTimestamp + rotationIntervalMs) - System.currentTimeMillis()
-            if (remainingMs > 0) {
-                val hours = remainingMs / (60 * 60 * 1000)
-                val minutes = (remainingMs % (60 * 60 * 1000)) / (60 * 1000)
-                qrExpiryText.text = "Expires in ${hours}h ${minutes}m"
-            } else {
-                qrExpiryText.text = "QR rotation pending"
+                // Generate branded QR code (heavy bitmap work)
+                com.securelegion.utils.BrandedQrGenerator.generate(
+                    this@WalletIdentityActivity,
+                    com.securelegion.utils.BrandedQrGenerator.QrOptions(
+                        content = qrContent,
+                        size = 512,
+                        showLogo = true,
+                        mintText = mintText,
+                        expiryText = expiryText,
+                        showWebsite = true
+                    )
+                )
             }
-        } else {
-            qrExpiryText.text = "Expiry: off"
+
+            currentQrBitmap = qrBitmap
+            if (qrBitmap != null) {
+                findViewById<ImageView>(R.id.qrCodeImage).setImageBitmap(qrBitmap)
+            }
         }
     }
 

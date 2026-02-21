@@ -266,6 +266,24 @@ class AddFriendActivity : BaseActivity() {
         // Parse from the right
         val remaining = parts.toMutableList()
 
+        // Check for expiry timestamp (format: exp1234567890000)
+        val expiryIndex = remaining.indexOfLast { it.startsWith("exp") }
+        if (expiryIndex >= 0) {
+            val expiryPart = remaining[expiryIndex]
+            remaining.removeAt(expiryIndex)
+            val expiryMs = expiryPart.removePrefix("exp").toLongOrNull()
+            if (expiryMs != null && expiryMs < System.currentTimeMillis()) {
+                // QR code has expired
+                val dialog = GlassDialog.builder(this)
+                    .setTitle("QR Code Expired")
+                    .setMessage("This QR code has expired. Ask the contact to share a new one.")
+                    .setPositiveButton("OK", null)
+                    .create()
+                GlassDialog.show(dialog)
+                return
+            }
+        }
+
         // Check if last segment is a 10-digit PIN
         if (remaining.size >= 2) {
             val lastPart = remaining.last()
@@ -350,8 +368,26 @@ class AddFriendActivity : BaseActivity() {
      */
     private fun decodeQrFromGalleryImage(uri: android.net.Uri) {
         try {
-            val image = com.google.mlkit.vision.common.InputImage.fromFilePath(this, uri)
-            val scanner = com.google.mlkit.vision.barcode.BarcodeScanning.getClient()
+            // Load bitmap from content URI (more reliable than fromFilePath for gallery URIs)
+            val inputStream = contentResolver.openInputStream(uri)
+            if (inputStream == null) {
+                ThemedToast.show(this, "Could not open image")
+                return
+            }
+            val bitmap = android.graphics.BitmapFactory.decodeStream(inputStream)
+            inputStream.close()
+
+            if (bitmap == null) {
+                ThemedToast.show(this, "Could not decode image")
+                return
+            }
+
+            val image = com.google.mlkit.vision.common.InputImage.fromBitmap(bitmap, 0)
+            val options = com.google.mlkit.vision.barcode.BarcodeScannerOptions.Builder()
+                .setBarcodeFormats(com.google.mlkit.vision.barcode.common.Barcode.FORMAT_QR_CODE)
+                .build()
+            val scanner = com.google.mlkit.vision.barcode.BarcodeScanning.getClient(options)
+
             scanner.process(image)
                 .addOnSuccessListener { barcodes ->
                     if (barcodes.isNotEmpty()) {

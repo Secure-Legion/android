@@ -135,12 +135,15 @@
                 android:fontFamily="@font/space_grotesk_bold"
                 android:layout_marginBottom="24dp" />
 
-            <!-- QR Code Card -->
+            <!-- QR Code Card (tap to open QR settings) -->
             <androidx.cardview.widget.CardView
+                android:id="@+id/qrCodeCard"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:layout_gravity="center"
-                android:layout_marginBottom="16dp"
+                android:layout_marginBottom="24dp"
+                android:clickable="true"
+                android:focusable="true"
                 app:cardBackgroundColor="#1A1A1A"
                 app:cardCornerRadius="16dp"
                 app:cardElevation="4dp">
@@ -155,66 +158,20 @@
 
             </androidx.cardview.widget.CardView>
 
-            <!-- QR Status: Uses + Expiry with Edit button -->
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="horizontal"
-                android:gravity="center_vertical"
-                android:layout_marginBottom="4dp">
-
-                <TextView
-                    android:id="@+id/qrUsesText"
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:text="QR uses: 0/5"
-                    android:textSize="13sp"
-                    android:textColor="#8C8C8C"
-                    android:fontFamily="@font/poppins_regular"
-                    android:gravity="center" />
-
-                <FrameLayout
-                    android:id="@+id/editQrSettingsButton"
-                    android:layout_width="32dp"
-                    android:layout_height="32dp"
-                    android:background="@drawable/settings_icon_bg"
-                    android:clickable="true"
-                    android:focusable="true">
-
-                    <ImageView
-                        android:layout_width="16dp"
-                        android:layout_height="16dp"
-                        android:layout_gravity="center"
-                        android:src="@drawable/ic_edit"
-                        app:tint="#8C8C8C" />
-
-                </FrameLayout>
-
-            </LinearLayout>
-
-            <TextView
-                android:id="@+id/qrExpiryText"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text=""
-                android:textSize="13sp"
-                android:textColor="#8C8C8C"
-                android:fontFamily="@font/poppins_regular"
-                android:gravity="center"
-                android:layout_marginBottom="24dp" />
-
             <!-- Share Button -->
             <TextView
                 android:id="@+id/shareQrButton"
-                android:layout_width="match_parent"
-                android:layout_height="56dp"
+                android:layout_width="wrap_content"
+                android:layout_height="48dp"
+                android:minWidth="160dp"
                 android:background="@drawable/swap_button_bg"
                 android:gravity="center"
                 android:text="Share"
-                android:textSize="18sp"
+                android:textSize="16sp"
                 android:textColor="?attr/colorOnSurface"
                 android:fontFamily="@font/poppins_semibold"
+                android:paddingStart="32dp"
+                android:paddingEnd="32dp"
                 android:clickable="true"
                 android:focusable="true" />
 

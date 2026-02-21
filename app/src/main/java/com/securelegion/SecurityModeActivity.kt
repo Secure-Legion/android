@@ -3,9 +3,6 @@ package com.securelegion
 import android.content.Intent
 import android.os.Bundle
 import android.view.View
-import android.widget.ArrayAdapter
-import android.widget.Spinner
-import android.widget.AdapterView
 import androidx.appcompat.widget.SwitchCompat
 
 class SecurityModeActivity : BaseActivity() {
@@ -24,7 +21,6 @@ class SecurityModeActivity : BaseActivity() {
         setupAutoLock()
         setupIncomingCallsToggle()
         setupDeviceProtectionToggle()
-        setupFriendRequestSecuritySettings()
     }
 
     private fun setupClickListeners() {
@@ -89,62 +85,6 @@ class SecurityModeActivity : BaseActivity() {
         }
     }
 
-    private fun setupFriendRequestSecuritySettings() {
-        val prefs = getSharedPreferences("security_prefs", MODE_PRIVATE)
-
-        // PIN Rotation Interval spinner
-        val rotationSpinner = findViewById<Spinner>(R.id.pinRotationIntervalSpinner) ?: return
-        val rotationOptions = arrayOf("12 hours", "24 hours", "3 days", "7 days", "Never")
-        val rotationValues = longArrayOf(
-            12 * 60 * 60 * 1000L,
-            24 * 60 * 60 * 1000L,
-            3 * 24 * 60 * 60 * 1000L,
-            7 * 24 * 60 * 60 * 1000L,
-            0L // Never
-        )
-        val rotationAdapter = ArrayAdapter(this, android.R.layout.simple_spinner_item, rotationOptions)
-        rotationAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
-        rotationSpinner.adapter = rotationAdapter
-
-        // Load saved interval (default 24h)
-        val savedInterval = prefs.getLong("pin_rotation_interval_ms", 24 * 60 * 60 * 1000L)
-        val rotationIndex = rotationValues.indexOf(savedInterval).let { if (it < 0) 1 else it }
-        rotationSpinner.setSelection(rotationIndex)
-
-        rotationSpinner.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
-            override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
-                prefs.edit().putLong("pin_rotation_interval_ms", rotationValues[position]).apply()
-            }
-            override fun onNothingSelected(parent: AdapterView<*>?) {}
-        }
-
-        // Max PIN Uses spinner
-        val usesSpinner = findViewById<Spinner>(R.id.pinMaxUsesSpinner) ?: return
-        val usesOptions = arrayOf("3 uses", "5 uses", "10 uses", "Unlimited")
-        val usesValues = intArrayOf(3, 5, 10, 0) // 0 = unlimited
-        val usesAdapter = ArrayAdapter(this, android.R.layout.simple_spinner_item, usesOptions)
-        usesAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
-        usesSpinner.adapter = usesAdapter
-
-        // Load saved max uses (default 5)
-        val savedMaxUses = prefs.getInt("pin_max_uses", 5)
-        val usesIndex = usesValues.indexOf(savedMaxUses).let { if (it < 0) 1 else it }
-        usesSpinner.setSelection(usesIndex)
-
-        usesSpinner.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
-            override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
-                prefs.edit().putInt("pin_max_uses", usesValues[position]).apply()
-            }
-            override fun onNothingSelected(parent: AdapterView<*>?) {}
-        }
-
-        // Legacy Manual Entry toggle
-        val legacySwitch = findViewById<SwitchCompat>(R.id.legacyManualEntrySwitch) ?: return
-        legacySwitch.isChecked = prefs.getBoolean("legacy_manual_entry", false)
-        legacySwitch.setOnCheckedChangeListener { _, isChecked ->
-            prefs.edit().putBoolean("legacy_manual_entry", isChecked).apply()
-        }
-    }
 
     private fun setupBottomNavigation() {
         BottomNavigationHelper.setupBottomNavigation(this)
