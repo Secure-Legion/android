@@ -50,10 +50,24 @@
             android:fontFamily="@font/space_grotesk_bold"
             android:gravity="center" />
 
-        <!-- Spacer for alignment -->
-        <View
+        <!-- Settings Icon (top-right) -->
+        <FrameLayout
+            android:id="@+id/settingsButton"
             android:layout_width="42dp"
-            android:layout_height="42dp" />
+            android:layout_height="42dp"
+            android:background="@drawable/top_icon_bg"
+            android:clickable="true"
+            android:focusable="true">
+
+            <ImageView
+                android:layout_width="20dp"
+                android:layout_height="20dp"
+                android:layout_gravity="center"
+                android:src="@drawable/ic_settings_cog"
+                app:tint="?attr/colorOnSurfaceVariant"
+                android:contentDescription="Settings" />
+
+        </FrameLayout>
 
     </LinearLayout>
 
@@ -80,7 +94,7 @@
                 android:layout_width="120dp"
                 android:layout_height="120dp"
                 android:layout_marginTop="16dp"
-                android:layout_marginBottom="24dp"
+                android:layout_marginBottom="16dp"
                 android:background="@drawable/settings_icon_bg">
 
                 <com.securelegion.views.AvatarView
@@ -119,227 +133,112 @@
                 android:textSize="18sp"
                 android:textColor="?attr/colorOnSurface"
                 android:fontFamily="@font/space_grotesk_bold"
-                android:layout_marginBottom="32dp" />
+                android:layout_marginBottom="24dp" />
 
-            <!-- Contact Card Button -->
+            <!-- QR Code Card -->
+            <androidx.cardview.widget.CardView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_gravity="center"
+                android:layout_marginBottom="16dp"
+                app:cardBackgroundColor="#1A1A1A"
+                app:cardCornerRadius="16dp"
+                app:cardElevation="4dp">
+
+                <ImageView
+                    android:id="@+id/qrCodeImage"
+                    android:layout_width="240dp"
+                    android:layout_height="240dp"
+                    android:padding="8dp"
+                    android:scaleType="fitCenter"
+                    android:contentDescription="Contact Card QR Code" />
+
+            </androidx.cardview.widget.CardView>
+
+            <!-- QR Status: Uses + Expiry with Edit button -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:layout_marginBottom="4dp">
+
+                <TextView
+                    android:id="@+id/qrUsesText"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="QR uses: 0/5"
+                    android:textSize="13sp"
+                    android:textColor="#8C8C8C"
+                    android:fontFamily="@font/poppins_regular"
+                    android:gravity="center" />
+
+                <FrameLayout
+                    android:id="@+id/editQrSettingsButton"
+                    android:layout_width="32dp"
+                    android:layout_height="32dp"
+                    android:background="@drawable/settings_icon_bg"
+                    android:clickable="true"
+                    android:focusable="true">
+
+                    <ImageView
+                        android:layout_width="16dp"
+                        android:layout_height="16dp"
+                        android:layout_gravity="center"
+                        android:src="@drawable/ic_edit"
+                        app:tint="#8C8C8C" />
+
+                </FrameLayout>
+
+            </LinearLayout>
+
+            <TextView
+                android:id="@+id/qrExpiryText"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text=""
+                android:textSize="13sp"
+                android:textColor="#8C8C8C"
+                android:fontFamily="@font/poppins_regular"
+                android:gravity="center"
+                android:layout_marginBottom="24dp" />
+
+            <!-- Share Button -->
+            <TextView
+                android:id="@+id/shareQrButton"
+                android:layout_width="match_parent"
+                android:layout_height="56dp"
+                android:background="@drawable/swap_button_bg"
+                android:gravity="center"
+                android:text="Share"
+                android:textSize="18sp"
+                android:textColor="?attr/colorOnSurface"
+                android:fontFamily="@font/poppins_semibold"
+                android:clickable="true"
+                android:focusable="true" />
+
+            <!-- Hidden elements kept for compatibility -->
             <LinearLayout
                 android:id="@+id/identityQrCodeButton"
                 android:layout_width="match_parent"
-                android:layout_height="80dp"
-                android:orientation="horizontal"
-                android:background="@drawable/settings_box_bg"
-                android:paddingStart="16dp"
-                android:paddingEnd="16dp"
-                android:gravity="center_vertical"
-                android:clickable="true"
-                android:focusable="true"
-                android:layout_marginTop="24dp">
+                android:layout_height="0dp"
+                android:visibility="gone"
+                android:orientation="horizontal" />
 
-                <FrameLayout
-                    android:layout_width="50dp"
-                    android:layout_height="50dp"
-                    android:background="@drawable/settings_icon_bg"
-                    android:layout_marginStart="8dp"
-                    android:layout_marginEnd="16dp">
-
-                    <ImageView
-                        android:layout_width="24dp"
-                        android:layout_height="24dp"
-                        android:layout_gravity="center"
-                        android:src="@drawable/ic_qr_code"
-                        app:tint="?attr/colorOnSurfaceVariant" />
-
-                </FrameLayout>
-
-                <TextView
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:text="Contact Card"
-                    android:textSize="16sp"
-                    android:textColor="#8C8C8C"
-                    android:fontFamily="@font/poppins_medium" />
-
-                <FrameLayout
-                    android:layout_width="36dp"
-                    android:layout_height="36dp"
-                    android:layout_marginEnd="8dp"
-                    android:background="@drawable/arrow_bg">
-
-                    <ImageView
-                        android:layout_width="18dp"
-                        android:layout_height="18dp"
-                        android:layout_gravity="center"
-                        android:src="@drawable/ic_arrow_forward" />
-
-                </FrameLayout>
-
-            </LinearLayout>
-
-            <!-- Wallet Button -->
             <LinearLayout
                 android:id="@+id/walletButton"
                 android:layout_width="match_parent"
-                android:layout_height="80dp"
-                android:orientation="horizontal"
-                android:background="@drawable/settings_box_bg"
-                android:paddingStart="16dp"
-                android:paddingEnd="16dp"
-                android:gravity="center_vertical"
-                android:clickable="true"
-                android:focusable="true"
-                android:layout_marginTop="12dp">
+                android:layout_height="0dp"
+                android:visibility="gone"
+                android:orientation="horizontal" />
 
-                <FrameLayout
-                    android:layout_width="50dp"
-                    android:layout_height="50dp"
-                    android:background="@drawable/settings_icon_bg"
-                    android:layout_marginStart="8dp"
-                    android:layout_marginEnd="16dp">
-
-                    <ImageView
-                        android:layout_width="24dp"
-                        android:layout_height="24dp"
-                        android:layout_gravity="center"
-                        android:src="@drawable/ic_wallet"
-                        app:tint="?attr/colorOnSurfaceVariant" />
-
-                </FrameLayout>
-
-                <TextView
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:text="Wallet"
-                    android:textSize="16sp"
-                    android:textColor="#8C8C8C"
-                    android:fontFamily="@font/poppins_medium" />
-
-                <FrameLayout
-                    android:layout_width="36dp"
-                    android:layout_height="36dp"
-                    android:layout_marginEnd="8dp"
-                    android:background="@drawable/arrow_bg">
-
-                    <ImageView
-                        android:layout_width="18dp"
-                        android:layout_height="18dp"
-                        android:layout_gravity="center"
-                        android:src="@drawable/ic_arrow_forward" />
-
-                </FrameLayout>
-
-            </LinearLayout>
-
-            <!-- Change Friend Request Identity -->
             <LinearLayout
                 android:id="@+id/changeFriendIdentityButton"
                 android:layout_width="match_parent"
-                android:layout_height="80dp"
-                android:orientation="horizontal"
-                android:background="@drawable/settings_box_bg"
-                android:paddingStart="16dp"
-                android:paddingEnd="16dp"
-                android:gravity="center_vertical"
-                android:clickable="true"
-                android:focusable="true"
-                android:layout_marginTop="12dp">
-
-                <FrameLayout
-                    android:layout_width="50dp"
-                    android:layout_height="50dp"
-                    android:background="@drawable/settings_icon_bg"
-                    android:layout_marginStart="8dp"
-                    android:layout_marginEnd="16dp">
-
-                    <ImageView
-                        android:layout_width="24dp"
-                        android:layout_height="24dp"
-                        android:layout_gravity="center"
-                        android:src="@android:drawable/ic_popup_sync"
-                        app:tint="?attr/colorOnSurfaceVariant" />
-
-                </FrameLayout>
-
-                <TextView
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:text="Identity Rotator"
-                    android:textSize="16sp"
-                    android:textColor="#8C8C8C"
-                    android:fontFamily="@font/poppins_medium" />
-
-                <FrameLayout
-                    android:layout_width="36dp"
-                    android:layout_height="36dp"
-                    android:layout_marginEnd="8dp"
-                    android:background="@drawable/arrow_bg">
-
-                    <ImageView
-                        android:layout_width="18dp"
-                        android:layout_height="18dp"
-                        android:layout_gravity="center"
-                        android:src="@drawable/ic_arrow_forward" />
-
-                </FrameLayout>
-
-            </LinearLayout>
-
-            <!-- Settings Button -->
-            <LinearLayout
-                android:id="@+id/settingsButton"
-                android:layout_width="match_parent"
-                android:layout_height="80dp"
-                android:orientation="horizontal"
-                android:background="@drawable/settings_box_bg"
-                android:paddingStart="16dp"
-                android:paddingEnd="16dp"
-                android:gravity="center_vertical"
-                android:clickable="true"
-                android:focusable="true"
-                android:layout_marginTop="12dp">
-
-                <FrameLayout
-                    android:layout_width="50dp"
-                    android:layout_height="50dp"
-                    android:background="@drawable/settings_icon_bg"
-                    android:layout_marginStart="8dp"
-                    android:layout_marginEnd="16dp">
-
-                    <ImageView
-                        android:layout_width="24dp"
-                        android:layout_height="24dp"
-                        android:layout_gravity="center"
-                        android:src="@drawable/ic_settings_cog"
-                        app:tint="?attr/colorOnSurfaceVariant" />
-
-                </FrameLayout>
-
-                <TextView
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:text="Settings"
-                    android:textSize="16sp"
-                    android:textColor="#8C8C8C"
-                    android:fontFamily="@font/poppins_medium" />
-
-                <FrameLayout
-                    android:layout_width="36dp"
-                    android:layout_height="36dp"
-                    android:layout_marginEnd="8dp"
-                    android:background="@drawable/arrow_bg">
-
-                    <ImageView
-                        android:layout_width="18dp"
-                        android:layout_height="18dp"
-                        android:layout_gravity="center"
-                        android:src="@drawable/ic_arrow_forward" />
-
-                </FrameLayout>
-
-            </LinearLayout>
+                android:layout_height="0dp"
+                android:visibility="gone"
+                android:orientation="horizontal" />
 
         </LinearLayout>
 

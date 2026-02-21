@@ -19,6 +19,7 @@ import androidx.appcompat.app.AppCompatActivity
 import com.google.zxing.BarcodeFormat
 import com.google.zxing.qrcode.QRCodeWriter
 import com.securelegion.crypto.KeyManager
+import com.securelegion.utils.GlassDialog
 import com.securelegion.utils.ThemedToast
 
 /**
@@ -52,7 +53,7 @@ class AccountCreatedActivity : AppCompatActivity() {
         } catch (e: Exception) {
             Log.e("AccountCreated", "FATAL: Failed to initialize AccountCreatedActivity", e)
 
-            val dialog = androidx.appcompat.app.AlertDialog.Builder(this)
+            val errorDialog = GlassDialog.builder(this)
                 .setTitle("Error Loading Account Info")
                 .setMessage("Failed to display account information:\n\n${e.message}\n\n${e.stackTraceToString()}")
                 .setPositiveButton("OK") { _, _ ->
@@ -60,7 +61,7 @@ class AccountCreatedActivity : AppCompatActivity() {
                 }
                 .setCancelable(false)
                 .create()
-            dialog.show()
+            GlassDialog.show(errorDialog)
         }
     }
 
@@ -163,10 +164,11 @@ class AccountCreatedActivity : AppCompatActivity() {
                 setBackgroundColor(0xFF1C1C1C.toInt())
             }
 
-            androidx.appcompat.app.AlertDialog.Builder(this)
+            val qrDialog = GlassDialog.builder(this)
                 .setView(imageView)
                 .setPositiveButton("Done", null)
-                .show()
+                .create()
+            GlassDialog.show(qrDialog)
         } catch (e: Exception) {
             Log.e("AccountCreated", "Failed to generate QR code", e)
             ThemedToast.show(this, "Failed to generate QR code")

@@ -46,6 +46,7 @@ import com.securelegion.services.TorService
 import com.securelegion.services.ZcashService
 import com.securelegion.utils.startActivityWithSlideAnimation
 import com.securelegion.utils.BadgeUtils
+import com.securelegion.utils.GlassDialog
 import com.securelegion.utils.ThemedToast
 import com.securelegion.voice.CallSignaling
 import com.securelegion.voice.VoiceCallManager
@@ -259,11 +260,8 @@ class MainActivity : BaseActivity() {
             showGroupsTab()
         }
 
-        // Check if we should show phone/call tab
-        if (intent.getBooleanExtra("SHOW_PHONE", false)) {
-            isCallMode = true
-            showContactsTab()
-        }
+        // Phone/call tab — voice calling disabled in v1
+        // if (intent.getBooleanExtra("SHOW_PHONE", false)) { isCallMode = true; showContactsTab() }
 
         // Register broadcast receiver for incoming Pings and message status updates
         val filter = IntentFilter().apply {
@@ -553,10 +551,10 @@ class MainActivity : BaseActivity() {
             Log.d("MainActivity", "onNewIntent - showing contacts tab")
             isCallMode = false
             showContactsTab()
-        } else if (intent.getBooleanExtra("SHOW_PHONE", false)) {
-            Log.d("MainActivity", "onNewIntent - showing phone/call view")
-            isCallMode = true
-            showContactsTab()
+        // } else if (intent.getBooleanExtra("SHOW_PHONE", false)) {
+        //     Voice calling disabled in v1
+        //     isCallMode = true
+        //     showContactsTab()
         } else {
             // Default: show chats tab (e.g., navMessages pressed from another activity)
             Log.d("MainActivity", "onNewIntent - showing chats tab (default)")
@@ -758,14 +756,15 @@ class MainActivity : BaseActivity() {
                                 else -> lastMessage.encryptedContent
                             }
 
+                            val chatDisplayName = contact.nickname ?: contact.displayName
                             val chat = Chat(
                                 id = contact.id.toString(),
-                                nickname = contact.displayName,
+                                nickname = chatDisplayName,
                                 lastMessage = previewText,
                                 time = if (lastMessage != null) formatTimestamp(lastMessage.timestamp) else formatTimestamp(System.currentTimeMillis()),
                                 unreadCount = unreadCount + pendingPingCount,
                                 isOnline = false,
-                                avatar = contact.displayName.firstOrNull()?.toString()?.uppercase() ?: "?",
+                                avatar = chatDisplayName.firstOrNull()?.toString()?.uppercase() ?: "?",
                                 securityBadge = "",
                                 lastMessageStatus = messageStatus,
                                 lastMessageIsSent = isSent,
@@ -844,7 +843,7 @@ class MainActivity : BaseActivity() {
                                 if (contact != null) {
                                     val intent = android.content.Intent(this@MainActivity, ChatActivity::class.java)
                                     intent.putExtra(ChatActivity.EXTRA_CONTACT_ID, contact.id)
-                                    intent.putExtra(ChatActivity.EXTRA_CONTACT_NAME, contact.displayName)
+                                    intent.putExtra(ChatActivity.EXTRA_CONTACT_NAME, contact.nickname ?: contact.displayName)
                                     intent.putExtra(ChatActivity.EXTRA_CONTACT_ADDRESS, contact.solanaAddress)
                                     startActivityWithSlideAnimation(intent)
                                 }
@@ -1056,11 +1055,11 @@ class MainActivity : BaseActivity() {
 
                 Log.i("MainActivity", "Loaded ${dbContacts.size} contacts from database")
 
-                // Convert database entities to UI models
+                // Convert database entities to UI models (prefer nickname over displayName)
                 val contacts = dbContacts.map { dbContact ->
                     Contact(
                         id = dbContact.id.toString(),
-                        name = dbContact.displayName,
+                        name = dbContact.nickname ?: dbContact.displayName,
                         address = dbContact.solanaAddress,
                         friendshipStatus = dbContact.friendshipStatus,
                         profilePhotoBase64 = dbContact.profilePictureBase64
@@ -1256,14 +1255,15 @@ class MainActivity : BaseActivity() {
     }
 
     private fun confirmLeaveGroup(group: com.securelegion.database.entities.Group) {
-        AlertDialog.Builder(this)
+        val dialog = GlassDialog.builder(this)
             .setTitle("Leave Group")
             .setMessage("Are you sure you want to leave \"${group.name}\"? This will remove you from the group and delete it from your device.")
             .setPositiveButton("Leave") { _, _ ->
                 leaveGroup(group)
             }
             .setNegativeButton("Cancel", null)
-            .show()
+            .create()
+        GlassDialog.show(dialog)
     }
 
     private fun leaveGroup(group: com.securelegion.database.entities.Group) {
@@ -1626,7 +1626,7 @@ class MainActivity : BaseActivity() {
                 // Launch VoiceCallActivity immediately (shows "Calling..." screen)
                 val intent = Intent(this@MainActivity, VoiceCallActivity::class.java)
                 intent.putExtra(VoiceCallActivity.EXTRA_CONTACT_ID, fullContact.id)
-                intent.putExtra(VoiceCallActivity.EXTRA_CONTACT_NAME, fullContact.displayName)
+                intent.putExtra(VoiceCallActivity.EXTRA_CONTACT_NAME, fullContact.nickname ?: fullContact.displayName)
                 intent.putExtra(VoiceCallActivity.EXTRA_CALL_ID, callId)
                 intent.putExtra(VoiceCallActivity.EXTRA_IS_OUTGOING, true)
                 intent.putExtra(VoiceCallActivity.EXTRA_OUR_EPHEMERAL_SECRET_KEY, ephemeralKeypair.secretKey.asBytes)
@@ -1713,7 +1713,7 @@ class MainActivity : BaseActivity() {
                     callId = callId,
                     contactOnion = fullContact.voiceOnion!!,
                     contactEd25519PublicKey = fullContact.ed25519PublicKeyBytes,
-                    contactName = fullContact.displayName,
+                    contactName = fullContact.nickname ?: fullContact.displayName,
                     ourEphemeralPublicKey = ephemeralKeypair.publicKey.asBytes,
                     onAnswered = { theirEphemeralKey ->
                         lifecycleScope.launch(Dispatchers.Main) {

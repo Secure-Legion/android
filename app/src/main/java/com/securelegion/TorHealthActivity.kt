@@ -127,18 +127,10 @@ class TorHealthActivity : AppCompatActivity() {
             mainCircuitsText.text = "Circuits: $circuitsEstablished"
             mainBootstrapText.text = "Bootstrap: $bootstrapPercent%"
 
-            // Voice Tor Health
-            val voiceHealthy = com.securelegion.services.VoiceTorService.isHealthy
-
-            if (voiceHealthy) {
-                voiceTorStatusText.text = "Healthy"
-                voiceTorStatusText.setTextColor(0xFF00CC66.toInt())
-                voiceTorStatusIndicator.setBackgroundResource(R.drawable.status_healthy_indicator)
-            } else {
-                voiceTorStatusText.text = "Offline"
-                voiceTorStatusText.setTextColor(0xFF666666.toInt())
-                voiceTorStatusIndicator.setBackgroundResource(R.drawable.status_offline_indicator)
-            }
+            // Voice Tor Health — disabled in v1
+            voiceTorStatusText.text = "Disabled"
+            voiceTorStatusText.setTextColor(0xFF666666.toInt())
+            voiceTorStatusIndicator.setBackgroundResource(R.drawable.status_offline_indicator)
 
             // Network Status (check Android connectivity)
             val connectivityManager = getSystemService(Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager

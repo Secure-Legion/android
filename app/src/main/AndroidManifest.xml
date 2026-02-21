@@ -159,6 +159,10 @@
             android:exported="false" />
 
         <activity
+            android:name=".QrSettingsActivity"
+            android:exported="false" />
+
+        <activity
             android:name=".DuressPinActivity"
             android:exported="false"
             android:windowSoftInputMode="adjustPan" />

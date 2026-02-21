@@ -1,6 +1,7 @@
 package com.securelegion
 
 import com.securelegion.utils.GlassBottomSheetDialog
+import com.securelegion.utils.GlassDialog
 
 import android.Manifest
 import android.content.BroadcastReceiver
@@ -436,7 +437,7 @@ class ChatActivity : BaseActivity() {
             Log.d(TAG, "DEBUG: Long-press detected on contact name!")
             ThemedToast.show(this, "Long-press detected - showing reset dialog")
 
-            AlertDialog.Builder(this)
+            val resetDialog = GlassDialog.builder(this)
                 .setTitle("Reset Key Chain?")
                 .setMessage("This will reset send/receive counters to 0 for this contact.\n\n WARNING: Both devices must reset at the same time!")
                 .setPositiveButton("Reset") { _, _ ->
@@ -457,7 +458,8 @@ class ChatActivity : BaseActivity() {
                 .setNegativeButton("Cancel") { _, _ ->
                     Log.d(TAG, "DEBUG: User tapped CANCEL button in dialog")
                 }
-                .show()
+                .create()
+            GlassDialog.show(resetDialog)
             Log.d(TAG, "DEBUG: Reset dialog shown to user")
             true
         }
@@ -724,14 +726,8 @@ class ChatActivity : BaseActivity() {
             finish()
         }
 
-        // Call button - opens call profile page with history
-        findViewById<View>(R.id.callButton).setOnClickListener {
-            val intent = Intent(this, ContactCallActivity::class.java)
-            intent.putExtra(ContactCallActivity.EXTRA_CONTACT_ID, contactId)
-            intent.putExtra(ContactCallActivity.EXTRA_CONTACT_NAME, contactName)
-            intent.putExtra(ContactCallActivity.EXTRA_CONTACT_ADDRESS, contactAddress)
-            startActivity(intent)
-        }
+        // Call button — voice calling disabled in v1
+        findViewById<View>(R.id.callButton).visibility = View.GONE
 
         // Attachment panel (inline — replaces keyboard like media panel)
         attachmentPanel = findViewById(R.id.attachmentPanel)
@@ -2115,7 +2111,7 @@ class ChatActivity : BaseActivity() {
      * Delete entire chat thread and return to main activity
      */
     private fun deleteThread() {
-        androidx.appcompat.app.AlertDialog.Builder(this, R.style.CustomAlertDialog)
+        val deleteDialog = GlassDialog.builder(this)
             .setTitle("Delete Chat")
             .setMessage("Delete this entire conversation? This cannot be undone.")
             .setPositiveButton("Delete") { _, _ ->
@@ -2201,7 +2197,8 @@ class ChatActivity : BaseActivity() {
                 }
             }
             .setNegativeButton("Cancel", null)
-            .show()
+            .create()
+        GlassDialog.show(deleteDialog)
     }
 
     // ==================== PAYMENT HANDLERS ====================
@@ -2681,7 +2678,7 @@ class ChatActivity : BaseActivity() {
     }
 
     private fun showContactPhotoPickerDialog() {
-        AlertDialog.Builder(this)
+        val dialog = GlassDialog.builder(this)
             .setTitle("Change Contact Photo")
             .setItems(arrayOf("Take Photo", "Choose from Gallery", "Remove Photo")) { _, which ->
                 when (which) {
@@ -2690,7 +2687,8 @@ class ChatActivity : BaseActivity() {
                     2 -> removeContactPhoto()
                 }
             }
-            .show()
+            .create()
+        GlassDialog.show(dialog)
     }
 
     private fun saveContactPhoto(base64: String) {

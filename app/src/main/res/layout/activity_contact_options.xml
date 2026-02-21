@@ -97,7 +97,17 @@
                 android:layout_marginBottom="16dp"
                 android:contentDescription="Profile Picture" />
 
-            <!-- Username -->
+            <!-- Nickname (shown large when set, tap to edit) -->
+            <TextView
+                android:id="@+id/contactNickname"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:textSize="34sp"
+                android:textColor="@color/lock_title_gray"
+                android:fontFamily="@font/space_grotesk_bold"
+                android:visibility="gone" />
+
+            <!-- Username (always visible, smaller when nickname is set) -->
             <TextView
                 android:id="@+id/contactName"
                 android:layout_width="wrap_content"
@@ -105,8 +115,26 @@
                 android:text="@WIZARD"
                 android:textSize="34sp"
                 android:textColor="@color/lock_title_gray"
-                android:fontFamily="@font/space_grotesk_bold"
-                android:layout_marginBottom="24dp" />
+                android:fontFamily="@font/space_grotesk_bold" />
+
+            <!-- Set/Edit Nickname button -->
+            <TextView
+                android:id="@+id/editNicknameButton"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Set Nickname"
+                android:textSize="13sp"
+                android:textColor="#6C6C6C"
+                android:fontFamily="@font/poppins_medium"
+                android:paddingStart="16dp"
+                android:paddingEnd="16dp"
+                android:paddingTop="6dp"
+                android:paddingBottom="6dp"
+                android:layout_marginTop="4dp"
+                android:layout_marginBottom="24dp"
+                android:background="@drawable/top_icon_bg"
+                android:clickable="true"
+                android:focusable="true" />
 
             <!-- Action Circles: Call, Message, Delete -->
             <LinearLayout

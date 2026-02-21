@@ -28,11 +28,11 @@ interface ReceivedIdDao {
     suspend fun insertReceivedId(receivedId: ReceivedId): Long
 
     /**
-     * Check if an ID has already been received
+     * Check if an ID has already been received for a given type.
      * @return true if ID exists (duplicate), false if new
      */
-    @Query("SELECT EXISTS(SELECT 1 FROM received_ids WHERE receivedId = :id LIMIT 1)")
-    suspend fun exists(id: String): Boolean
+    @Query("SELECT EXISTS(SELECT 1 FROM received_ids WHERE receivedId = :id AND idType = :idType LIMIT 1)")
+    suspend fun exists(id: String, idType: String): Boolean
 
     /**
      * Mark an ID as processed

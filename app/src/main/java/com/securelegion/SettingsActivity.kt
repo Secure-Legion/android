@@ -103,6 +103,11 @@ class SettingsActivity : BaseActivity() {
         findViewById<View>(R.id.securityModeItem).setOnClickListener {
             startActivity(Intent(this, SecurityModeActivity::class.java))
         }
+
+        // QR Code Settings
+        findViewById<View>(R.id.qrSettingsItem).setOnClickListener {
+            startActivity(Intent(this, QrSettingsActivity::class.java))
+        }
     }
 
     private fun setupAutoWipeToggle() {

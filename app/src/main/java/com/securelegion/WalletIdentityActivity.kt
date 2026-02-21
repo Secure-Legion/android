@@ -9,16 +9,14 @@ import android.graphics.Bitmap
 import android.os.Bundle
 import android.util.Log
 import android.view.View
-import android.widget.Button
-import android.widget.EditText
 import android.widget.ImageView
 import android.widget.TextView
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.FileProvider
 import androidx.lifecycle.lifecycleScope
-import com.google.android.material.bottomsheet.BottomSheetDialog
 import com.securelegion.utils.GlassBottomSheetDialog
+import com.securelegion.utils.GlassDialog
 import com.securelegion.crypto.KeyManager
 import com.securelegion.models.ContactCard
 import com.securelegion.services.ContactCardManager
@@ -35,6 +33,8 @@ import java.security.SecureRandom
 class WalletIdentityActivity : AppCompatActivity() {
 
     private lateinit var profilePhotoAvatar: com.securelegion.views.AvatarView
+    private var currentQrBitmap: Bitmap? = null
+    private var currentFriendRequestOnion: String? = null
 
     // Image picker launchers
     private val galleryLauncher = registerForActivityResult(
@@ -78,76 +78,50 @@ class WalletIdentityActivity : AppCompatActivity() {
             finish()
         }
 
+        // Settings icon (top-right header)
+        findViewById<View>(R.id.settingsButton).setOnClickListener {
+            val intent = Intent(this, SettingsActivity::class.java)
+            startActivity(intent)
+        }
+
+        // Edit QR settings button → goes to QrSettingsActivity
+        findViewById<View>(R.id.editQrSettingsButton).setOnClickListener {
+            val intent = Intent(this, QrSettingsActivity::class.java)
+            startActivity(intent)
+        }
+
+        // Share button
+        findViewById<View>(R.id.shareQrButton).setOnClickListener {
+            shareQrCode(currentQrBitmap, currentFriendRequestOnion ?: "")
+        }
+
         loadUsername()
         setupBottomNavigation()
         setupProfilePhoto()
-
-        // Contact Card button
-        findViewById<View>(R.id.identityQrCodeButton).setOnClickListener {
-            showIdentityQrCode()
-        }
-
-        // Wallet button — hidden until wallet feature is ready for release
-        findViewById<View>(R.id.walletButton).visibility = View.GONE
-
-        // Change Friend Request Identity button
-        findViewById<View>(R.id.changeFriendIdentityButton).setOnClickListener {
-            showChangeIdentityConfirmation()
-        }
-
-        // Settings button
-        findViewById<View>(R.id.settingsButton).setOnClickListener {
-            val intent = android.content.Intent(this, SettingsActivity::class.java)
-            startActivity(intent)
-        }
+        generateQrCode()
     }
 
-    private fun showIdentityQrCode() {
-        val keyManager = KeyManager.getInstance(this)
-        val friendRequestOnion = keyManager.getFriendRequestOnion()
+    override fun onResume() {
+        super.onResume()
+        // Refresh QR code and stats when returning from settings
+        generateQrCode()
+    }
 
-        if (friendRequestOnion == null) {
-            ThemedToast.show(this, "No friend request address available")
-            return
-        }
+    private fun generateQrCode() {
+        val keyManager = KeyManager.getInstance(this)
+        val friendRequestOnion = keyManager.getFriendRequestOnion() ?: return
+        currentFriendRequestOnion = friendRequestOnion
 
         val pin = keyManager.getContactPin() ?: ""
-
-        // Create bottom sheet dialog
-        val bottomSheet = GlassBottomSheetDialog(this)
-        val view = layoutInflater.inflate(R.layout.bottom_sheet_identity_qr, null)
-
-        // Set minimum height
-        val displayMetrics = resources.displayMetrics
-        val screenHeight = displayMetrics.heightPixels
-        val desiredHeight = (screenHeight * 0.65).toInt()
-        view.minimumHeight = desiredHeight
-
-        bottomSheet.setContentView(view)
-
-        // Configure bottom sheet behavior
-        bottomSheet.behavior.isDraggable = true
-        bottomSheet.behavior.isFitToContents = true
-        bottomSheet.behavior.skipCollapsed = true
-
-        // Make backgrounds transparent
-        bottomSheet.window?.setBackgroundDrawableResource(android.R.color.transparent)
-        bottomSheet.window?.findViewById<View>(com.google.android.material.R.id.design_bottom_sheet)?.setBackgroundResource(android.R.color.transparent)
-
-        view.post {
-            val parentView = view.parent as? View
-            parentView?.setBackgroundResource(android.R.color.transparent)
-        }
-
-        // Generate branded QR code — include username + PIN so one scan = everything
         val username = keyManager.getUsername() ?: ""
+
         val qrContent = buildString {
             if (username.isNotEmpty()) append("$username@")
             append(friendRequestOnion)
             if (pin.isNotEmpty()) append("@$pin")
         }
 
-        // Compute mint count and expiry for QR badge
+        // Compute uses and expiry for QR badge
         val securityPrefs = getSharedPreferences("security_prefs", Context.MODE_PRIVATE)
         val decryptCount = keyManager.getPinDecryptCount()
         val maxUses = securityPrefs.getInt("pin_max_uses", 5)
@@ -164,7 +138,7 @@ class WalletIdentityActivity : AppCompatActivity() {
             } else "Rotation pending"
         } else null
 
-        val qrCodeImage = view.findViewById<ImageView>(R.id.qrCodeImage)
+        // Generate branded QR code
         val qrBitmap = com.securelegion.utils.BrandedQrGenerator.generate(
             this,
             com.securelegion.utils.BrandedQrGenerator.QrOptions(
@@ -176,76 +150,38 @@ class WalletIdentityActivity : AppCompatActivity() {
                 showWebsite = true
             )
         )
+
+        currentQrBitmap = qrBitmap
         if (qrBitmap != null) {
-            qrCodeImage.setImageBitmap(qrBitmap)
+            findViewById<ImageView>(R.id.qrCodeImage).setImageBitmap(qrBitmap)
         }
 
-        // Set friend request address text
-        view.findViewById<TextView>(R.id.cidText).text = friendRequestOnion
-
-        // Set PIN text formatted as XXX-XXX-XXXX
-        if (pin.length == 10) {
-            val formattedPin = "${pin.substring(0, 3)}-${pin.substring(3, 6)}-${pin.substring(6, 10)}"
-            view.findViewById<TextView>(R.id.pinText).text = formattedPin
-        } else {
-            view.findViewById<TextView>(R.id.pinText).text = pin
-        }
-
-        // Copy friend request address button
-        view.findViewById<View>(R.id.copyCidButton).setOnClickListener {
-            copyToClipboard(friendRequestOnion, "Friend Request Address")
-        }
-
-        // Copy PIN button
-        view.findViewById<View>(R.id.copyPinButton).setOnClickListener {
-            if (pin.isNotEmpty()) {
-                copyToClipboard(pin, "Contact PIN")
-            }
-        }
-
-        // Toggle address/PIN visibility based on legacy setting
-        val showManualFields = securityPrefs.getBoolean("legacy_manual_entry", false)
-        val addressPinSection = view.findViewById<View>(R.id.addressPinSection)
-        addressPinSection.visibility = if (showManualFields) View.VISIBLE else View.GONE
-
-        // PIN uses counter
-        val pinUsesText = view.findViewById<TextView>(R.id.pinUsesText)
+        // Update uses text
+        val qrUsesText = findViewById<TextView>(R.id.qrUsesText)
         if (maxUses > 0) {
-            pinUsesText.text = "PIN uses: $decryptCount/$maxUses"
+            qrUsesText.text = "QR uses: $decryptCount/$maxUses"
         } else {
-            pinUsesText.text = "PIN uses: $decryptCount (unlimited)"
+            qrUsesText.text = "QR uses: $decryptCount (unlimited)"
         }
 
-        // PIN expiration countdown
-        val pinCountdownText = view.findViewById<TextView>(R.id.pinCountdownText)
+        // Update expiry text
+        val qrExpiryText = findViewById<TextView>(R.id.qrExpiryText)
         if (rotationIntervalMs > 0 && rotationTimestamp > 0) {
             val remainingMs = (rotationTimestamp + rotationIntervalMs) - System.currentTimeMillis()
             if (remainingMs > 0) {
                 val hours = remainingMs / (60 * 60 * 1000)
                 val minutes = (remainingMs % (60 * 60 * 1000)) / (60 * 1000)
-                pinCountdownText.text = "PIN expires in ${hours}h ${minutes}m"
-                pinCountdownText.visibility = View.VISIBLE
+                qrExpiryText.text = "Expires in ${hours}h ${minutes}m"
             } else {
-                pinCountdownText.text = "PIN rotation pending"
-                pinCountdownText.visibility = View.VISIBLE
+                qrExpiryText.text = "QR rotation pending"
             }
         } else {
-            pinCountdownText.text = "PIN rotation: off"
-            pinCountdownText.visibility = View.VISIBLE
+            qrExpiryText.text = "Expiry: off"
         }
-
-        // Share button
-        view.findViewById<View>(R.id.shareQrButton).setOnClickListener {
-            shareQrCode(qrBitmap, friendRequestOnion)
-            bottomSheet.dismiss()
-        }
-
-        bottomSheet.show()
     }
 
     private fun showChangeIdentityConfirmation() {
-        val dialog = com.google.android.material.dialog.MaterialAlertDialogBuilder(this)
-            .setBackground(androidx.core.content.ContextCompat.getDrawable(this, R.drawable.glass_dialog_bg))
+        val dialog = GlassDialog.builder(this)
             .setTitle("Rotate Identity?")
             .setMessage("This will generate a new .onion address and PIN for friend requests.\n\nAnyone with your old QR code will NOT be able to reach you.\n\nThis cannot be undone.")
             .setPositiveButton("Rotate") { _, _ ->
@@ -254,25 +190,7 @@ class WalletIdentityActivity : AppCompatActivity() {
             .setNegativeButton("Cancel", null)
             .create()
 
-        dialog.setOnShowListener {
-            // Strip all internal panel backgrounds so only our glass_dialog_bg shows
-            (dialog.window?.decorView as? android.view.ViewGroup)?.let { decor ->
-                stripChildBackgrounds(decor)
-            }
-        }
-        dialog.show()
-    }
-
-    private fun stripChildBackgrounds(parent: android.view.ViewGroup) {
-        for (i in 0 until parent.childCount) {
-            val child = parent.getChildAt(i)
-            if (child !is android.widget.Button) {
-                child.background = null
-            }
-            if (child is android.view.ViewGroup) {
-                stripChildBackgrounds(child)
-            }
-        }
+        GlassDialog.show(dialog)
     }
 
     private fun performIdentityChange() {
@@ -318,8 +236,8 @@ class WalletIdentityActivity : AppCompatActivity() {
 
                 ThemedToast.showLong(this@WalletIdentityActivity, "New identity active! Tor is publishing your new address.")
 
-                // Re-show the QR bottom sheet with updated data
-                showIdentityQrCode()
+                // Refresh the inline QR code with new identity
+                generateQrCode()
 
             } catch (e: Exception) {
                 Log.e("WalletIdentity", "Identity change failed", e)

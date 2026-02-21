@@ -57,7 +57,7 @@ import net.zetetic.database.sqlcipher.SupportOpenHelperFactory
  */
 @Database(
     entities = [Contact::class, Message::class, Wallet::class, ReceivedId::class, UsedSignature::class, Group::class, CrdtOpLog::class, CallHistory::class, CallQualityLog::class, PingInbox::class, ContactKeyChain::class, SkippedMessageKey::class, PendingFriendRequest::class, PendingPing::class, GroupPeer::class, PendingGroupDelivery::class],
-    version = 43,
+    version = 44,
     exportSchema = false
 )
 abstract class SecureLegionDatabase : RoomDatabase() {
@@ -931,6 +931,19 @@ abstract class SecureLegionDatabase : RoomDatabase() {
         }
 
         /**
+         * Migration from version 43 to 44: Add nickname column to contacts
+         * Local-only nickname that the user can set for any contact.
+         * Not synced — only visible to the local user.
+         */
+        private val MIGRATION_43_44 = object : Migration(43, 44) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                Log.i(TAG, "Migrating database from version 43 to 44")
+                database.execSQL("ALTER TABLE contacts ADD COLUMN nickname TEXT")
+                Log.i(TAG, "Migration 43→44 complete: added nickname column to contacts")
+            }
+        }
+
+        /**
          * All migrations in a single array for DRY registration + validation.
          * RULE: When adding a new migration, append it here AND bump the @Database version.
          */
@@ -945,7 +958,7 @@ abstract class SecureLegionDatabase : RoomDatabase() {
             MIGRATION_29_30, MIGRATION_30_31, MIGRATION_31_32, MIGRATION_32_33,
             MIGRATION_33_34, MIGRATION_34_35, MIGRATION_35_36, MIGRATION_36_37,
             MIGRATION_37_38, MIGRATION_38_39, MIGRATION_39_40, MIGRATION_40_41,
-            MIGRATION_41_42, MIGRATION_42_43
+            MIGRATION_41_42, MIGRATION_42_43, MIGRATION_43_44
         )
 
         /**
@@ -1042,7 +1055,7 @@ abstract class SecureLegionDatabase : RoomDatabase() {
                     DATABASE_NAME
                 )
                     .openHelperFactory(factory)
-                    .addMigrations(*ALL_MIGRATIONS.also { validateMigrationChain(it, 43) })
+                    .addMigrations(*ALL_MIGRATIONS.also { validateMigrationChain(it, 44) })
                     .addCallback(object : RoomDatabase.Callback() {
                         override fun onCreate(db: SupportSQLiteDatabase) {
                             super.onCreate(db)

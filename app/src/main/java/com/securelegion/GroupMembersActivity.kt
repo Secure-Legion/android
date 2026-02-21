@@ -22,6 +22,7 @@ import com.securelegion.database.entities.ed25519PublicKeyBytes
 import com.securelegion.services.CrdtGroupManager
 import com.securelegion.ui.adapters.ContactSelectionAdapter
 import com.securelegion.utils.GlassBottomSheetDialog
+import com.securelegion.utils.GlassDialog
 import com.securelegion.utils.ThemedToast
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -368,11 +369,11 @@ class GroupMembersActivity : BaseActivity() {
             return
         }
 
-        AlertDialog.Builder(this, R.style.CustomAlertDialog)
+        val dialog = GlassDialog.builder(this)
             .setTitle("Remove Member")
             .setMessage("Remove ${member.displayName} from this group?")
-            .setPositiveButton("Remove") { dialog, _ ->
-                dialog.dismiss()
+            .setPositiveButton("Remove") { d, _ ->
+                d.dismiss()
                 lifecycleScope.launch {
                     try {
                         withContext(Dispatchers.IO) {
@@ -389,21 +390,23 @@ class GroupMembersActivity : BaseActivity() {
                 }
             }
             .setNegativeButton("Cancel", null)
-            .show()
+            .create()
+        GlassDialog.show(dialog)
     }
 
     private fun confirmPromoteMember(member: GroupMemberItem) {
-        AlertDialog.Builder(this, R.style.CustomAlertDialog)
+        val dialog = GlassDialog.builder(this)
             .setTitle("Promote Member")
             .setMessage("Promote ${member.displayName} to Admin?")
-            .setPositiveButton("Promote") { dialog, _ ->
-                dialog.dismiss()
+            .setPositiveButton("Promote") { d, _ ->
+                d.dismiss()
                 // TODO: CRDT MetadataSet for role change when role ops are implemented
                 ThemedToast.show(this, "Promote — Coming soon")
                 Log.i(TAG, "Promote: ${member.displayName}")
             }
             .setNegativeButton("Cancel", null)
-            .show()
+            .create()
+        GlassDialog.show(dialog)
     }
 
     private fun setupBottomNav() {

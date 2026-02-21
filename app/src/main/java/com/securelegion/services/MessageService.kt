@@ -2,6 +2,7 @@ package com.securelegion.services
 
 import android.content.Context
 import android.content.Intent
+import android.os.SystemClock
 import android.util.Base64
 import android.util.Log
 import com.securelegion.crypto.KeyChainManager
@@ -45,6 +46,10 @@ class MessageService(private val context: Context) {
 
     companion object {
         private const val TAG = "MessageService"
+
+        // Throttle for TTL-expired → TorService SOCKS failure reports (signal, not noise)
+        @Volatile private var lastTtlReportMs: Long = 0L
+        private const val TTL_REPORT_COOLDOWN_MS = 2_000L
 
         /**
          * ACK State Tracker - Enforces strict ACK ordering per message
@@ -2809,10 +2814,23 @@ class MessageService(private val context: Context) {
                     errorMsg.contains("Connection refused", ignoreCase = true) -> true
 
                     // SOCKS status=6 (TTL expired) - temporary routing/hop-limit issue
-                    errorMsg.contains("status 6", ignoreCase = true) -> true
+                    errorMsg.contains("status 6", ignoreCase = true) ||
                     errorMsg.contains("TTL expired", ignoreCase = true) -> true
 
                     else -> false
+                }
+
+                // Report status 6 / TTL expired to TorService (feeds SOCKS failure counter → NEWNYM)
+                // Only status 6, not every retryable error — avoids noise from transient circuit/network issues
+                // Throttled to 1 report per 2s to prevent burst retries from spamming the counter
+                val isTtlExpired = errorMsg.contains("status 6", ignoreCase = true) ||
+                                   errorMsg.contains("TTL expired", ignoreCase = true)
+                if (isTtlExpired) {
+                    val now = SystemClock.elapsedRealtime()
+                    if (now - lastTtlReportMs > TTL_REPORT_COOLDOWN_MS) {
+                        lastTtlReportMs = now
+                        TorService.reportSocksFailure(context)
+                    }
                 }
 
                 if (isRetryable) {

@@ -147,7 +147,14 @@ data class Contact(
     /**
      * Whether this chat is pinned to the top
      */
-    val isPinned: Boolean = false
+    val isPinned: Boolean = false,
+
+    /**
+     * Local-only nickname set by the user
+     * When set, displayed instead of displayName in UI
+     * Not synced to other peers — only visible to the local user
+     */
+    val nickname: String? = null
 ) {
     companion object {
         // Trust levels
