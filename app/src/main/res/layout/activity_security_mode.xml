@@ -43,7 +43,7 @@
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
-            android:text="Advance Security"
+            android:text="Advanced Settings"
             android:textSize="24sp"
             android:textColor="?attr/colorOnSurfaceVariant"
             android:fontFamily="@font/space_grotesk_bold"
@@ -129,7 +129,7 @@
 
             </LinearLayout>
 
-            <!-- Call Privacy Section -->
+            <!-- Call Privacy Section (hidden) -->
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
@@ -138,9 +138,10 @@
                 android:fontFamily="@font/poppins_medium"
                 android:textColor="#666666"
                 android:layout_marginTop="16dp"
-                android:layout_marginBottom="8dp" />
+                android:layout_marginBottom="8dp"
+                android:visibility="gone" />
 
-            <!-- Allow Incoming Calls When App Closed -->
+            <!-- Allow Incoming Calls When App Closed (hidden) -->
             <LinearLayout
                 android:id="@+id/allowIncomingCallsItem"
                 android:layout_width="match_parent"
@@ -149,7 +150,8 @@
                 android:background="@drawable/settings_box_bg"
                 android:padding="16dp"
                 android:layout_marginBottom="16dp"
-                android:gravity="center_vertical">
+                android:gravity="center_vertical"
+                android:visibility="gone">
 
                 <LinearLayout
                     android:layout_width="0dp"
@@ -185,18 +187,18 @@
 
             </LinearLayout>
 
-            <!-- Message Privacy Section -->
+            <!-- Advanced Ping Pong Section -->
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="Message Privacy"
+                android:text="Advanced Ping Pong"
                 android:textSize="13sp"
                 android:fontFamily="@font/poppins_medium"
                 android:textColor="#666666"
                 android:layout_marginTop="16dp"
                 android:layout_marginBottom="8dp" />
 
-            <!-- Device Protection -->
+            <!-- Advanced Ping Pong Toggle -->
             <LinearLayout
                 android:id="@+id/deviceProtectionItem"
                 android:layout_width="match_parent"
@@ -216,7 +218,7 @@
                     <TextView
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="Device Protection"
+                        android:text="Advanced Ping Pong"
                         android:textSize="16sp"
                         android:fontFamily="@font/poppins_medium"
                         android:textColor="#5C5C5C" />
@@ -252,7 +254,7 @@
                 android:layout_marginTop="16dp"
                 android:layout_marginBottom="8dp" />
 
-            <!-- PIN Rotation Interval -->
+            <!-- QR Code Expiry Time -->
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
@@ -266,7 +268,7 @@
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:layout_weight="1"
-                    android:text="PIN Rotation"
+                    android:text="QR Code Expiry Time"
                     android:textSize="16sp"
                     android:fontFamily="@font/poppins_medium"
                     android:textColor="#5C5C5C" />
@@ -280,7 +282,7 @@
 
             </LinearLayout>
 
-            <!-- Max PIN Uses -->
+            <!-- Max QR Uses -->
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
@@ -294,7 +296,7 @@
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:layout_weight="1"
-                    android:text="Max PIN Uses"
+                    android:text="Max QR Uses"
                     android:textSize="16sp"
                     android:fontFamily="@font/poppins_medium"
                     android:textColor="#5C5C5C" />

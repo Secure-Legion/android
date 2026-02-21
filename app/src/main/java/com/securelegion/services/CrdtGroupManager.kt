@@ -295,6 +295,7 @@ class CrdtGroupManager private constructor(private val context: Context) {
         }
 
         // Send concurrently, bounded by semaphore (matches Rust SEND_SEMAPHORE cap of 6)
+        data class SendResult(val success: Boolean, val pubkeyHex: String)
         val results = coroutineScope {
             targets.map { target ->
                 async(Dispatchers.IO) {
@@ -306,19 +307,26 @@ class CrdtGroupManager private constructor(private val context: Context) {
                             } else {
                                 Log.w(TAG, "sendMessageBlob returned false for ${target.displayName}")
                             }
-                            success
+                            SendResult(success, target.pubkeyHex)
                         } catch (e: Exception) {
                             Log.e(TAG, "Failed to send CRDT op to ${target.deviceIdHex.take(8)}", e)
-                            false
+                            SendResult(false, target.pubkeyHex)
                         }
                     }
                 }
             }.awaitAll()
         }
 
-        val sent = results.count { it }
-        val failed = results.count { !it }
+        val sent = results.count { it.success }
+        val failed = results.count { !it.success }
         Log.i(TAG, "Broadcast op to group ${groupId.take(16)}: sent=$sent failed=$failed unreachable=${unreachable.size}")
+
+        // Queue failed sends for retry (Tor flakiness is common)
+        for (result in results) {
+            if (!result.success) {
+                queuePendingDelivery(groupId, result.pubkeyHex, 0x30.toByte(), payload)
+            }
+        }
 
         // Self-healing: request routing for unreachable members from any successful target
         if (unreachable.isNotEmpty() && targets.isNotEmpty()) {
@@ -421,7 +429,9 @@ class CrdtGroupManager private constructor(private val context: Context) {
         // Look up invitee via Contact → GroupPeer fallback
         val routing = resolveRouting(db, recipientPubkeyHex, groupId)
         if (routing == null) {
-            Log.w(TAG, "sendInviteBundle: no onion for invitee ${recipientPubkeyHex.take(16)} — skipping")
+            Log.w(TAG, "sendInviteBundle: no onion for invitee ${recipientPubkeyHex.take(16)} — queueing for retry")
+            val payload = hexToBytes(groupId) + packOps(ops)
+            queuePendingDelivery(groupId, recipientPubkeyHex, 0x30.toByte(), payload)
             return
         }
 
@@ -430,8 +440,13 @@ class CrdtGroupManager private constructor(private val context: Context) {
         try {
             val success = RustBridge.sendMessageBlob(routing.onion, payload, 0x30.toByte())
             Log.i(TAG, "sendInviteBundle: sent ${ops.size} ops (${payload.size} bytes) to ${routing.displayName} — success=$success")
+            if (!success) {
+                Log.w(TAG, "sendInviteBundle: send returned false — queueing for retry")
+                queuePendingDelivery(groupId, recipientPubkeyHex, 0x30.toByte(), payload)
+            }
         } catch (e: Exception) {
-            Log.e(TAG, "sendInviteBundle: failed to send to ${routing.displayName}", e)
+            Log.e(TAG, "sendInviteBundle: failed to send to ${routing.displayName} — queueing for retry", e)
+            queuePendingDelivery(groupId, recipientPubkeyHex, 0x30.toByte(), payload)
         }
     }
 
@@ -615,15 +630,21 @@ class CrdtGroupManager private constructor(private val context: Context) {
         val payload = packRoutingUpdate(groupId, entries)
         val recipientRouting = resolveRouting(db, recipientPubkeyHex, groupId)
         if (recipientRouting == null) {
-            Log.w(TAG, "sendRoutingDirectory: can't reach invitee ${recipientPubkeyHex.take(8)}")
+            Log.w(TAG, "sendRoutingDirectory: can't reach invitee ${recipientPubkeyHex.take(8)} — queueing")
+            queuePendingDelivery(groupId, recipientPubkeyHex, 0x35.toByte(), payload)
             return
         }
 
         try {
             val success = RustBridge.sendMessageBlob(recipientRouting.onion, payload, 0x35.toByte())
             Log.i(TAG, "sendRoutingDirectory: sent ${entries.size} entries to ${recipientRouting.displayName} — success=$success")
+            if (!success) {
+                Log.w(TAG, "sendRoutingDirectory: send returned false — queueing for retry")
+                queuePendingDelivery(groupId, recipientPubkeyHex, 0x35.toByte(), payload)
+            }
         } catch (e: Exception) {
-            Log.e(TAG, "sendRoutingDirectory: failed", e)
+            Log.e(TAG, "sendRoutingDirectory: failed — queueing for retry", e)
+            queuePendingDelivery(groupId, recipientPubkeyHex, 0x35.toByte(), payload)
         }
     }
 

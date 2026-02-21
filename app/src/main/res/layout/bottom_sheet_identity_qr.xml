@@ -10,16 +10,41 @@
     android:paddingTop="24dp"
     android:paddingBottom="16dp">
 
-    <!-- Title -->
-    <TextView
+    <!-- Title row with settings icon -->
+    <FrameLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="Contact Card"
-        android:textSize="24sp"
-        android:textColor="?attr/colorOnSurface"
-        android:fontFamily="@font/space_grotesk_bold"
-        android:gravity="center"
-        android:layout_marginBottom="8dp" />
+        android:layout_marginBottom="8dp">
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Contact Card"
+            android:textSize="24sp"
+            android:textColor="?attr/colorOnSurface"
+            android:fontFamily="@font/space_grotesk_bold"
+            android:gravity="center" />
+
+        <!-- Settings icon (top-right) -->
+        <FrameLayout
+            android:id="@+id/qrSettingsButton"
+            android:layout_width="36dp"
+            android:layout_height="36dp"
+            android:layout_gravity="end|center_vertical"
+            android:background="@drawable/settings_icon_bg"
+            android:clickable="true"
+            android:focusable="true">
+
+            <ImageView
+                android:layout_width="20dp"
+                android:layout_height="20dp"
+                android:layout_gravity="center"
+                android:src="@drawable/ic_settings_cog"
+                app:tint="?attr/colorOnSurfaceVariant" />
+
+        </FrameLayout>
+
+    </FrameLayout>
 
     <!-- Subtitle -->
     <TextView

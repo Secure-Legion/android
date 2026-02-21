@@ -11,6 +11,7 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
 import com.securelegion.crypto.KeyManager
 import com.securelegion.database.SecureLegionDatabase
+import com.securelegion.utils.GlassDialog
 import com.securelegion.utils.SecureWipe
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -49,14 +50,15 @@ class WipeAccountActivity : AppCompatActivity() {
             }
 
             // Final confirmation dialog with dark theme
-            AlertDialog.Builder(this, R.style.CustomAlertDialog)
+            val wipeDialog = GlassDialog.builder(this)
                 .setTitle("FINAL WARNING")
                 .setMessage("This will permanently delete ALL your data including:\n• All messages and chats\n• All contacts\n• Wallet information\n• Recovery phrases\n• All settings\n\nData will be securely overwritten 3 times to prevent forensic recovery.\n\nThis action CANNOT be undone!\n\nAre you absolutely sure?")
                 .setPositiveButton("WIPE ACCOUNT") { _, _ ->
                     performSecureWipe()
                 }
                 .setNegativeButton("Cancel", null)
-                .show()
+                .create()
+            GlassDialog.show(wipeDialog)
         }
     }
 

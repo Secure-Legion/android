@@ -28,6 +28,7 @@ import com.securelegion.services.TorService
 import com.securelegion.network.TransportGate
 import com.securelegion.ui.adapters.GroupMessageAdapter
 import com.securelegion.ui.adapters.GroupChatMessage
+import com.securelegion.utils.GlassDialog
 import com.securelegion.utils.ThemedToast
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
@@ -571,7 +572,7 @@ class GroupChatActivity : BaseActivity() {
                     val contactNames = contacts.map { it.displayName }.toTypedArray()
                     val selectedContacts = mutableListOf<Contact>()
 
-                    AlertDialog.Builder(this@GroupChatActivity, R.style.CustomAlertDialog)
+                    val addMembersDialog = GlassDialog.builder(this@GroupChatActivity)
                         .setTitle("Add Members to Group")
                         .setMultiChoiceItems(contactNames, null) { _, which, isChecked ->
                             if (isChecked) {
@@ -589,7 +590,8 @@ class GroupChatActivity : BaseActivity() {
                             dialog.dismiss()
                         }
                         .setNegativeButton("Cancel", null)
-                        .show()
+                        .create()
+                    GlassDialog.show(addMembersDialog)
                 }
 
             } catch (e: Exception) {

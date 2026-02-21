@@ -23,6 +23,7 @@ import android.os.PowerManager
 import android.os.SystemClock
 import android.util.Log
 import androidx.core.app.NotificationCompat
+import androidx.room.withTransaction
 import com.securelegion.ChatActivity
 import com.securelegion.LockActivity
 import com.securelegion.MainActivity
@@ -44,6 +45,7 @@ import com.securelegion.network.NetworkWatcher
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
@@ -108,6 +110,11 @@ class TorService : Service() {
     private var downloadFailureWindowStart = 0L
     private val SOCKS_FAILURE_THRESHOLD = 3 // Restart Tor after 3 consecutive failures
     private val SOCKS_FAILURE_WINDOW = 60000L // 60 second window
+
+    // Debounced NEWNYM for network changes and stream failure escalation
+    // Uses elapsedRealtime (monotonic) — immune to wall clock jumps
+    @Volatile private var lastDebouncedNewnymMs: Long = 0L
+    @Volatile private var pendingNewnymJob: Job? = null
 
     // Reconnection constants (tuned to prevent restart storms after OOM kills)
     private val INITIAL_RETRY_DELAY = 10_000L // 10 seconds (was 5s)
@@ -358,6 +365,10 @@ class TorService : Service() {
 
         // Update notification
         updateNotification("Connected to Tor")
+
+        // Dismiss boot restart notification (if present from BootReceiver)
+        val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        notificationManager.cancel(9901)
 
         // Verify bridge usage if bridges were requested
         verifyBridgeUsage()
@@ -1192,6 +1203,52 @@ class TorService : Service() {
                 Log.i(TAG, "Health NEWNYM: success=$result")
             } catch (e: Exception) {
                 Log.e(TAG, "Health NEWNYM failed", e)
+            }
+        }
+    }
+
+    /**
+     * Debounced NEWNYM for network changes and stream failure escalation.
+     *
+     * Two callers:
+     * 1. Network change handler — proactively rotate stale circuits after WiFi↔LTE switch
+     * 2. handleSocksFailure() — after 3 stream failures (status 6 / TTL expired)
+     *
+     * Guardrails:
+     * - 1.5s debounce (collapses rapid-fire calls into one)
+     * - 15s cooldown (prevents NEWNYM spam on flappy networks)
+     * - Uses elapsedRealtime (monotonic) — immune to wall clock jumps
+     */
+    private fun requestNewnymDebounced(
+        reason: String,
+        debounceMs: Long = 1500L,
+        cooldownMs: Long = 15_000L
+    ) {
+        val now = SystemClock.elapsedRealtime()
+
+        // If we did NEWNYM very recently, skip
+        if (now - lastDebouncedNewnymMs < cooldownMs) {
+            Log.d(TAG, "Debounced NEWNYM skipped (cooldown ${(cooldownMs - (now - lastDebouncedNewnymMs)) / 1000}s). reason=$reason")
+            return
+        }
+
+        pendingNewnymJob?.cancel()
+        pendingNewnymJob = serviceScope.launch(Dispatchers.IO) {
+            delay(debounceMs)
+
+            val now2 = SystemClock.elapsedRealtime()
+            if (now2 - lastDebouncedNewnymMs < cooldownMs) {
+                Log.d(TAG, "Debounced NEWNYM skipped after debounce (cooldown). reason=$reason")
+                return@launch
+            }
+
+            lastDebouncedNewnymMs = now2
+            Log.i(TAG, "Debounced NEWNYM firing. reason=$reason")
+            try {
+                val result = RustBridge.sendNewnym()
+                Log.i(TAG, "Debounced NEWNYM: success=$result (reason=$reason)")
+            } catch (t: Throwable) {
+                Log.w(TAG, "Debounced NEWNYM failed. reason=$reason", t)
             }
         }
     }
@@ -2332,7 +2389,7 @@ class TorService : Service() {
                 Log.d(TAG, "Listener already running, skipping restart")
                 startPingPoller()
                 startMessagePoller()
-                startVoicePoller()
+                // startVoicePoller() — voice calling disabled in v1
                 startTapPoller()
                 startSessionCleanup()
 
@@ -2371,7 +2428,7 @@ class TorService : Service() {
             // Start polling for incoming Pings, MESSAGEs, and VOICE (only if listener started successfully)
             startPingPoller()
             startMessagePoller()
-            startVoicePoller()
+            // startVoicePoller() — voice calling disabled in v1
 
             // PHASE 3: Start tap listener on port 9151
             Log.d(TAG, "Starting tap listener on port 9151...")
@@ -2537,7 +2594,7 @@ class TorService : Service() {
                         when (name) {
                             "Ping" -> startPingPoller()
                             "Message" -> startMessagePoller()
-                            "Voice" -> startVoicePoller()
+                            "Voice" -> {} // startVoicePoller() — voice calling disabled in v1
                             "Tap" -> startTapPoller()
                             "FriendRequest" -> startFriendRequestPoller()
                             "Pong" -> startPongPoller()
@@ -4399,6 +4456,54 @@ class TorService : Service() {
         }
     }
 
+    /** Sentinel exception for race-condition duplicates inside an atomic transaction */
+    private class DuplicateMessageException(messageId: String) : Exception("Duplicate message: $messageId")
+
+    /**
+     * Retries a database transaction up to maxAttempts times on transient SQLite failures.
+     * Returns the result of the block on success, or rethrows on permanent failure.
+     */
+    private suspend fun <T> retryDbTxn(
+        maxAttempts: Int = 3,
+        delayMs: Long = 500,
+        block: suspend () -> T
+    ): T {
+        var last: Throwable? = null
+        for (attempt in 1..maxAttempts) {
+            try {
+                return block()
+            } catch (t: Throwable) {
+                last = t
+                if (isTransientDbFailure(t) && attempt < maxAttempts) {
+                    Log.w(TAG, "Transient DB failure (attempt $attempt/$maxAttempts), retrying in ${delayMs}ms", t)
+                    delay(delayMs)
+                } else {
+                    throw t
+                }
+            }
+        }
+        throw last ?: IllegalStateException("retryDbTxn failed with no exception")
+    }
+
+    /**
+     * Checks if a throwable (or any of its causes) is a transient SQLite failure safe to retry.
+     * Walks the cause chain because Room often wraps the real exception.
+     * Note: SQLiteFullException is NOT transient — disk full won't self-heal in 500ms.
+     */
+    private fun isTransientDbFailure(t: Throwable): Boolean {
+        var cur: Throwable? = t
+        while (cur != null) {
+            when (cur) {
+                is android.database.sqlite.SQLiteDatabaseLockedException -> return true
+            }
+            val msg = cur.message ?: ""
+            if (msg.contains("database is locked", ignoreCase = true)) return true
+            if (msg.contains("SQLITE_BUSY", ignoreCase = true)) return true
+            cur = cur.cause
+        }
+        return false
+    }
+
     /**
      * Sends ACK with automatic retry logic.
      * Tries existing connection first, falls back to new connection, then retries with backoff.
@@ -5167,24 +5272,14 @@ class TorService : Service() {
                     val dbPassphrase = keyManager.getDatabasePassphrase()
                     val database = com.securelegion.database.SecureLegionDatabase.getInstance(this@TorService, dbPassphrase)
 
-                    // Track this messageId to prevent duplicate processing (PRIMARY deduplication)
-                    val messageTracking = com.securelegion.database.entities.ReceivedId(
-                        receivedId = messageId,
-                        idType = com.securelegion.database.entities.ReceivedId.TYPE_MESSAGE,
-                        receivedTimestamp = System.currentTimeMillis()
-                    )
-                    Log.d(TAG, "MESSAGE SAVE: Attempting to insert messageId into ReceivedId tracking table...")
-                    val rowId = tryInsertReceivedId(database, messageTracking, "MESSAGE")
-                    Log.d(TAG, "MESSAGE SAVE: ReceivedId insert result: rowId=$rowId")
-
-                    if (rowId == -1L) {
+                    // Fast dedup check (SELECT only — real INSERT happens inside atomic txn below)
+                    val isDuplicate = database.receivedIdDao().exists(messageId, com.securelegion.database.entities.ReceivedId.TYPE_MESSAGE)
+                    if (isDuplicate) {
                         Log.w(TAG, "MESSAGE SAVE: DUPLICATE MESSAGE BLOB BLOCKED! MessageId=$messageId already in tracking table")
-                        Log.i(TAG, "MESSAGE SAVE: Skipping duplicate message blob processing")
-
-                        // Send MESSAGE_ACK to stop sender from retrying (with retry logic)
+                        // ACK so sender stops retrying
                         serviceScope.launch {
                             sendAckWithRetry(
-                                connectionId = null, // No existing connection available
+                                connectionId = null,
                                 itemId = messageId,
                                 ackType = "MESSAGE_ACK",
                                 contactId = contact.id
@@ -5192,10 +5287,7 @@ class TorService : Service() {
                         }
                         return@launch
                     }
-                    Log.i(TAG, "→ New Message Blob - tracked in database (rowId=$rowId)")
-
-                    // PRIMARY deduplication via ReceivedId table above is sufficient
-                    // No secondary check needed - this was blocking rapid identical messages
+                    Log.i(TAG, "→ New Message Blob - proceeding to atomic save")
 
                     // If it's a voice message, save the audio file
                     if (messageType == com.securelegion.database.entities.Message.MESSAGE_TYPE_VOICE) {
@@ -5361,36 +5453,63 @@ class TorService : Service() {
                         pingId = downloadPingId // ← Associate with download ping
                     )
 
-                    // Save to database
-                    Log.d(TAG, "MESSAGE SAVE: About to insert message into database")
-                    Log.d(TAG, "messageId=$messageId")
-                    Log.d(TAG, "contactId=${contact.id}")
-                    Log.d(TAG, "messageType=$messageType")
-                    Log.d(TAG, "content length=${message.encryptedContent.length}")
-                    val savedMessageId = database.messageDao().insertMessage(message)
-                    Log.i(TAG, "MESSAGE SAVE: Message saved to database successfully! DB row ID=$savedMessageId")
+                    // ATOMIC SAVE: dedup INSERT + message INSERT + ping transition in one transaction
+                    // If this fails, nothing is committed — no phantom dedup entries, no lost messages
+                    Log.d(TAG, "MESSAGE SAVE: Starting atomic transaction (messageId=$messageId)")
+                    val now = System.currentTimeMillis()
+                    val savedMessageId = try {
+                        retryDbTxn {
+                            database.withTransaction {
+                                // 1. Insert dedup record (IGNORE strategy → returns -1L on UNIQUE conflict)
+                                val dedupEntry = com.securelegion.database.entities.ReceivedId(
+                                    receivedId = messageId,
+                                    idType = com.securelegion.database.entities.ReceivedId.TYPE_MESSAGE,
+                                    receivedTimestamp = now
+                                )
+                                val dedupRowId = database.receivedIdDao().insertReceivedId(dedupEntry)
+                                if (dedupRowId == -1L) {
+                                    // Race: became duplicate between exists() check and INSERT
+                                    throw DuplicateMessageException(messageId)
+                                }
 
-                    // If this was an active download, transition ping to MSG_STORED in DB
-                    if (downloadPingId != null) {
-                        Log.i(TAG, "Transitioning ping ${downloadPingId.take(8)} to MSG_STORED (listener path)")
-                        val transitioned = database.pingInboxDao().transitionToMsgStored(
-                            pingId = downloadPingId,
-                            timestamp = System.currentTimeMillis()
-                        )
-                        if (transitioned > 0) {
-                            Log.d(TAG, "ping_inbox ${downloadPingId.take(8)} → MSG_STORED")
-                        } else {
-                            Log.w(TAG, "ping_inbox ${downloadPingId.take(8)} already MSG_STORED or not found")
+                                // 2. Insert the message
+                                val msgRowId = database.messageDao().insertMessage(message)
+                                Log.i(TAG, "MESSAGE SAVE: Message inserted in transaction (rowId=$msgRowId)")
+
+                                // 3. Transition ping state if applicable
+                                if (downloadPingId != null) {
+                                    val transitioned = database.pingInboxDao().transitionToMsgStored(
+                                        pingId = downloadPingId,
+                                        timestamp = now
+                                    )
+                                    if (transitioned > 0) {
+                                        Log.d(TAG, "ping_inbox ${downloadPingId.take(8)} → MSG_STORED (in txn)")
+                                    } else {
+                                        Log.d(TAG, "ping_inbox ${downloadPingId.take(8)} not found or already MSG_STORED")
+                                    }
+                                }
+
+                                msgRowId
+                            }
                         }
-
-                        // Active download tracking cleared by transitionToMsgStored (downloadQueuedAt = NULL)
-                        Log.d(TAG, "Active download tracking cleared via DB state for contact ${contact.id}")
+                    } catch (e: DuplicateMessageException) {
+                        // Race duplicate — ACK and bail (message was already saved by another path)
+                        Log.w(TAG, "MESSAGE SAVE: Duplicate detected during atomic save, ACKing")
+                        serviceScope.launch {
+                            sendAckWithRetry(connectionId = null, itemId = messageId, ackType = "MESSAGE_ACK", contactId = contact.id)
+                        }
+                        return@launch
+                    } catch (e: Exception) {
+                        // Permanent DB failure — do NOT ACK so sender will retry
+                        Log.e(TAG, "MESSAGE SAVE: Atomic transaction FAILED; not ACKing (messageId=$messageId)", e)
+                        return@launch
                     }
+                    Log.i(TAG, "MESSAGE SAVE: Atomic transaction committed! DB row ID=$savedMessageId")
 
-                    // Send MESSAGE_ACK to sender to confirm receipt (with retry logic)
+                    // Send MESSAGE_ACK ONLY after successful transaction commit
                     serviceScope.launch {
                         sendAckWithRetry(
-                            connectionId = null, // No existing connection available
+                            connectionId = null,
                             itemId = messageId,
                             ackType = "MESSAGE_ACK",
                             contactId = contact.id
@@ -6532,22 +6651,14 @@ class TorService : Service() {
 
                 Log.d(TAG, "Message ID generated from encrypted payload hash: $deterministicMessageId")
 
-                // Track this messageId to prevent duplicate processing (PRIMARY deduplication)
-                val messageTracking = com.securelegion.database.entities.ReceivedId(
-                    receivedId = deterministicMessageId,
-                    idType = com.securelegion.database.entities.ReceivedId.TYPE_MESSAGE,
-                    receivedTimestamp = System.currentTimeMillis()
-                )
-                val rowId = tryInsertReceivedId(database, messageTracking, "MESSAGE")
-
-                if (rowId == -1L) {
+                // Fast dedup check (SELECT only — real INSERT happens inside atomic txn below)
+                val isDuplicate = database.receivedIdDao().exists(deterministicMessageId, com.securelegion.database.entities.ReceivedId.TYPE_MESSAGE)
+                if (isDuplicate) {
                     Log.w(TAG, "DUPLICATE MESSAGE BLOCKED! MessageId=$deterministicMessageId already in tracking table")
-                    Log.i(TAG, "→ Skipping duplicate message processing, but will send MESSAGE_ACK")
-
-                    // Send MESSAGE_ACK to stop sender from retrying (with retry logic)
+                    // ACK so sender stops retrying
                     serviceScope.launch {
                         sendAckWithRetry(
-                            connectionId = null, // No existing connection available
+                            connectionId = null,
                             itemId = deterministicMessageId,
                             ackType = "MESSAGE_ACK",
                             contactId = contact.id
@@ -6566,10 +6677,7 @@ class TorService : Service() {
 
                     return@runBlocking
                 }
-                Log.i(TAG, "→ New Message - tracked in database (rowId=$rowId)")
-
-                // PRIMARY deduplication via ReceivedId table above is sufficient
-                // No secondary check needed - this was blocking rapid identical messages
+                Log.i(TAG, "→ New Message - proceeding to atomic save")
 
                 // PHASE 1.1: Generate messageNonce for received messages
                 val messageNonce = java.security.SecureRandom().nextLong()
@@ -6590,25 +6698,62 @@ class TorService : Service() {
                     messageDelivered = true // Mark as delivered since we received it
                 )
 
-                val insertedMessage = database.messageDao().insertMessage(message)
-                Log.i(TAG, "Message saved to database with ID: $insertedMessage (messageId: $deterministicMessageId)")
+                // ATOMIC SAVE: dedup INSERT + message INSERT + ping transition in one transaction
+                val now = System.currentTimeMillis()
+                val insertedMessage = try {
+                    retryDbTxn {
+                        database.withTransaction {
+                            // 1. Insert dedup record (IGNORE strategy → returns -1L on UNIQUE conflict)
+                            val dedupEntry = com.securelegion.database.entities.ReceivedId(
+                                receivedId = deterministicMessageId,
+                                idType = com.securelegion.database.entities.ReceivedId.TYPE_MESSAGE,
+                                receivedTimestamp = now
+                            )
+                            val dedupRowId = database.receivedIdDao().insertReceivedId(dedupEntry)
+                            if (dedupRowId == -1L) {
+                                throw DuplicateMessageException(deterministicMessageId)
+                            }
 
-                // Send MESSAGE_ACK to sender to confirm receipt (with retry logic)
+                            // 2. Insert message
+                            val msgRowId = database.messageDao().insertMessage(message)
+                            Log.i(TAG, "Message inserted in transaction (rowId=$msgRowId)")
+
+                            // 3. Transition ping state (pingId is always non-null in PATH 2)
+                            val transitioned = database.pingInboxDao().transitionToMsgStored(
+                                pingId = pingId,
+                                timestamp = now
+                            )
+                            if (transitioned > 0) {
+                                Log.d(TAG, "ping_inbox → MSG_STORED (in txn)")
+                            } else {
+                                Log.d(TAG, "ping_inbox not found or already MSG_STORED")
+                            }
+
+                            msgRowId
+                        }
+                    }
+                } catch (e: DuplicateMessageException) {
+                    Log.w(TAG, "Duplicate detected during atomic save, ACKing")
+                    serviceScope.launch {
+                        sendAckWithRetry(connectionId = null, itemId = deterministicMessageId, ackType = "MESSAGE_ACK", contactId = contact.id)
+                    }
+                    return@runBlocking
+                } catch (e: Exception) {
+                    // Permanent DB failure — do NOT ACK so sender will retry
+                    Log.e(TAG, "Atomic transaction FAILED; not ACKing (messageId=$deterministicMessageId)", e)
+                    return@runBlocking
+                }
+                Log.i(TAG, "Atomic transaction committed (messageId: $deterministicMessageId, rowId: $insertedMessage)")
+
+                // Send MESSAGE_ACK ONLY after successful transaction commit
                 serviceScope.launch {
                     sendAckWithRetry(
-                        connectionId = null, // No existing connection available
+                        connectionId = null,
                         itemId = deterministicMessageId,
                         ackType = "MESSAGE_ACK",
                         contactId = contact.id
                     )
                 }
-
-                // Transition ping to MSG_STORED in DB (single source of truth)
-                database.pingInboxDao().transitionToMsgStored(
-                    pingId = pingId,
-                    timestamp = System.currentTimeMillis()
-                )
-                Log.i(TAG, "ping_inbox → MSG_STORED for contact ${contact.id} after message download")
 
                 // Update notification to reflect new pending count (will cancel if 0)
                 showNewMessageNotification()
@@ -6626,7 +6771,7 @@ class TorService : Service() {
 
                 // Show notification on main thread
                 android.os.Handler(android.os.Looper.getMainLooper()).post {
-                    showMessageNotification(contact.displayName, messageText, contact.id)
+                    showMessageNotification(contact.nickname ?: contact.displayName, messageText, contact.id)
                 }
 
                 // Send read receipt if required
@@ -6986,6 +7131,13 @@ class TorService : Service() {
      * - Starts voice streaming server on port 9152
      */
     private fun startVoiceService() {
+        // Voice calling disabled in v1 — skip voice Tor daemon + streaming server bootstrap
+        // Saves CPU/RAM/sockets/threads. To re-enable, call startVoiceServiceImpl() here.
+        Log.i(TAG, "startVoiceService() — DISABLED (voice calling disabled in v1)")
+    }
+
+    @Suppress("UNUSED")
+    private fun startVoiceServiceImpl() {
         Log.i(TAG, "startVoiceService() called")
         try {
             // Get VoiceCallManager singleton instance
@@ -7271,10 +7423,13 @@ class TorService : Service() {
                     lastTorUnstableAt = System.currentTimeMillis() // Mark Tor as unstable
 
                     // FIX 5: DO NOT restart Tor on network path changes
-                    // Tor will handle network transitions via circuit rotation (NEWNYM)
+                    // Proactively rotate circuits so stale ones don't linger for 10-30 minutes
                     // SOCKS is sacred - only restart on process death or explicit user stop
                     // Let fall through to rehydrator logic (gated on TransportGate)
-                    Log.i(TAG, "Network path changed - letting Tor handle circuit rotation (no SOCKS restart)")
+                    Log.i(TAG, "Network path changed - requesting circuit rotation via debounced NEWNYM (no SOCKS restart)")
+                    if (torState == TorState.RUNNING || torState == TorState.BOOTSTRAPPING) {
+                        requestNewnymDebounced("network_change:${lastNetworkIsWifi}→${event.isWifi}")
+                    }
                     // Continue to rehydrator logic below (do NOT return early)
                 } else if (lastNetworkIsWifi == null) {
                     // First network detection - just track it, DON'T trigger rehydration
@@ -7648,10 +7803,10 @@ class TorService : Service() {
 
         Log.w(TAG, "SOCKS failure reported ($socksFailureCount/$SOCKS_FAILURE_THRESHOLD)")
 
-        // After threshold: send NEWNYM to rotate circuits (safe, no restart loop risk)
+        // After threshold: rotate circuits via debounced NEWNYM (safe, no restart loop risk)
         if (socksFailureCount >= SOCKS_FAILURE_THRESHOLD) {
-            Log.w(TAG, "SOCKS failure threshold reached ($socksFailureCount) → requesting circuit rotation via NEWNYM")
-            maybeSendHealthNewnym()
+            Log.w(TAG, "SOCKS failure threshold reached ($socksFailureCount) → requesting circuit rotation via debounced NEWNYM")
+            requestNewnymDebounced("socks_failures_threshold:$socksFailureCount")
             socksFailureCount = 0 // Reset after action to allow future detection
         }
     }

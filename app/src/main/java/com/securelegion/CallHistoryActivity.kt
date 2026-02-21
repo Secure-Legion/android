@@ -12,6 +12,7 @@ import com.securelegion.adapters.CallHistoryAdapter
 import com.securelegion.crypto.KeyManager
 import com.securelegion.database.SecureLegionDatabase
 import com.securelegion.database.entities.CallHistory
+import com.securelegion.utils.GlassDialog
 import com.securelegion.utils.ThemedToast
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -102,14 +103,15 @@ class CallHistoryActivity : BaseActivity() {
     }
 
     private fun showClearAllConfirmation() {
-        AlertDialog.Builder(this)
+        val dialog = GlassDialog.builder(this)
             .setTitle("Clear Call History")
             .setMessage("Clear all call history? This cannot be undone.")
             .setPositiveButton("Clear All") { _, _ ->
                 clearAllHistory()
             }
             .setNegativeButton("Cancel", null)
-            .show()
+            .create()
+        GlassDialog.show(dialog)
     }
 
     private fun clearAllHistory() {

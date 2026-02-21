@@ -18,6 +18,7 @@ import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import com.securelegion.crypto.KeyManager
+import com.securelegion.utils.GlassDialog
 import com.securelegion.utils.ThemedToast
 import com.securelegion.utils.BadgeUtils
 import com.securelegion.database.SecureLegionDatabase
@@ -556,7 +557,7 @@ class AddFriendActivity : BaseActivity() {
                 requestStatus.isClickable = false
             } else if (friendRequest.status == com.securelegion.models.PendingFriendRequest.STATUS_INVALID_PIN) {
                 requestStatus.setOnClickListener {
-                    androidx.appcompat.app.AlertDialog.Builder(this@AddFriendActivity)
+                    val invalidPinDialog = GlassDialog.builder(this@AddFriendActivity)
                         .setTitle("Invalid PIN")
                         .setMessage("Someone sent you a friend request but used the wrong PIN. Ask them to resend with the correct code.")
                         .setPositiveButton("Dismiss") { _, _ ->
@@ -564,20 +565,22 @@ class AddFriendActivity : BaseActivity() {
                             loadPendingFriendRequests()
                         }
                         .setNegativeButton("Keep", null)
-                        .show()
+                        .create()
+                    GlassDialog.show(invalidPinDialog)
                 }
             } else {
             requestStatus.setOnClickListener {
                 if (friendRequest.direction == com.securelegion.models.PendingFriendRequest.DIRECTION_OUTGOING) {
                     // Outgoing request - show confirmation dialog before resending
-                    androidx.appcompat.app.AlertDialog.Builder(this@AddFriendActivity)
+                    val resendDialog = GlassDialog.builder(this@AddFriendActivity)
                         .setTitle("Resend Friend Request?")
                         .setMessage("Send another friend request to ${friendRequest.displayName}?")
                         .setPositiveButton("Resend") { _, _ ->
                             resendFriendRequest(friendRequest)
                         }
                         .setNegativeButton("Cancel", null)
-                        .show()
+                        .create()
+                    GlassDialog.show(resendDialog)
                 } else {
                     // Incoming request - accept directly (no PIN needed unless legacy mode)
                     val secPrefs = getSharedPreferences("security_prefs", Context.MODE_PRIVATE)
@@ -676,7 +679,7 @@ class AddFriendActivity : BaseActivity() {
         pinInput.setHintTextColor(getColor(R.color.text_gray))
         pinInput.setPadding(32, 32, 32, 32)
 
-        androidx.appcompat.app.AlertDialog.Builder(this)
+        val acceptDialog = GlassDialog.builder(this)
             .setTitle("Accept Friend Request")
             .setMessage("${friendRequest.displayName} wants to add you as a friend.\n\nEnter the PIN they gave you:")
             .setView(pinInput)
@@ -694,7 +697,8 @@ class AddFriendActivity : BaseActivity() {
             .setNegativeButton("Decline") { _, _ ->
                 declineFriendRequest(friendRequest)
             }
-            .show()
+            .create()
+        GlassDialog.show(acceptDialog)
     }
 
     /**

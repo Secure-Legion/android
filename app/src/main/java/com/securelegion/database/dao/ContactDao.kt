@@ -82,9 +82,9 @@ interface ContactDao {
     suspend fun getAllContacts(): List<Contact>
 
     /**
-     * Search contacts by display name
+     * Search contacts by display name or nickname
      */
-    @Query("SELECT * FROM contacts WHERE displayName LIKE '%' || :query || '%' ORDER BY displayName ASC")
+    @Query("SELECT * FROM contacts WHERE displayName LIKE '%' || :query || '%' OR nickname LIKE '%' || :query || '%' ORDER BY displayName ASC")
     suspend fun searchContacts(query: String): List<Contact>
 
     /**
@@ -174,4 +174,11 @@ interface ContactDao {
      */
     @Query("UPDATE contacts SET isPinned = :isPinned WHERE id = :contactId")
     suspend fun setPinned(contactId: Long, isPinned: Boolean)
+
+    /**
+     * Update contact nickname (local-only, not synced)
+     * Pass null to clear the nickname
+     */
+    @Query("UPDATE contacts SET nickname = :nickname WHERE id = :contactId")
+    suspend fun updateContactNickname(contactId: Long, nickname: String?)
 }

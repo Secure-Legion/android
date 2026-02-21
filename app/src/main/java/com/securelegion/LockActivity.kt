@@ -19,6 +19,7 @@ import androidx.lifecycle.lifecycleScope
 import com.securelegion.crypto.KeyManager
 import com.securelegion.database.SecureLegionDatabase
 import com.securelegion.utils.BiometricAuthHelper
+import com.securelegion.utils.GlassDialog
 import com.securelegion.utils.SecureWipe
 import com.securelegion.utils.ThemedToast
 import kotlinx.coroutines.Dispatchers
@@ -312,7 +313,7 @@ class LockActivity : AppCompatActivity() {
 
                 // SECURITY FIX: Show dialog first, mark as asked when user responds
                 // This prevents repeated prompts even if user cancels biometric scan
-                androidx.appcompat.app.AlertDialog.Builder(this)
+                val biometricDialog = GlassDialog.builder(this)
                     .setTitle("Enable Biometric Unlock?")
                     .setMessage("Use fingerprint or face unlock instead of typing your password every time.")
                     .setPositiveButton("Enable") { _, _ ->
@@ -365,7 +366,8 @@ class LockActivity : AppCompatActivity() {
                         // Call completion callback
                         onComplete()
                     }
-                    .show()
+                    .create()
+                GlassDialog.show(biometricDialog)
             } else {
                 // Already asked before - proceed immediately
                 onComplete()

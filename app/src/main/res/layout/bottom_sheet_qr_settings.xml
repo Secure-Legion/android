@@ -1,0 +1,310 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:background="@drawable/bottom_sheet_bg"
+    android:orientation="vertical"
+    android:paddingStart="24dp"
+    android:paddingEnd="24dp"
+    android:paddingTop="24dp"
+    android:paddingBottom="32dp">
+
+    <!-- Title -->
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="QR Code Settings"
+        android:textSize="24sp"
+        android:textColor="?attr/colorOnSurface"
+        android:fontFamily="@font/space_grotesk_bold"
+        android:gravity="center"
+        android:layout_marginBottom="24dp" />
+
+    <!-- Identity Rotator — Coming Soon -->
+    <LinearLayout
+        android:id="@+id/identityRotatorItem"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:background="@drawable/settings_box_bg"
+        android:padding="16dp"
+        android:layout_marginBottom="16dp"
+        android:gravity="center_vertical"
+        android:alpha="0.5">
+
+        <FrameLayout
+            android:layout_width="42dp"
+            android:layout_height="42dp"
+            android:background="@drawable/settings_icon_bg"
+            android:layout_marginEnd="14dp">
+
+            <ImageView
+                android:layout_width="20dp"
+                android:layout_height="20dp"
+                android:layout_gravity="center"
+                android:src="@android:drawable/ic_popup_sync"
+                app:tint="?attr/colorOnSurfaceVariant" />
+
+        </FrameLayout>
+
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:orientation="vertical">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Identity Rotator"
+                android:textSize="16sp"
+                android:fontFamily="@font/poppins_medium"
+                android:textColor="#8C8C8C" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Rotate your .onion address if compromised"
+                android:textSize="12sp"
+                android:textColor="#666666"
+                android:fontFamily="@font/poppins_regular" />
+
+        </LinearLayout>
+
+        <!-- Coming Soon badge -->
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Coming Soon"
+            android:textSize="11sp"
+            android:textColor="#999999"
+            android:fontFamily="@font/poppins_medium"
+            android:background="@drawable/settings_icon_bg"
+            android:paddingStart="10dp"
+            android:paddingEnd="10dp"
+            android:paddingTop="4dp"
+            android:paddingBottom="4dp" />
+
+    </LinearLayout>
+
+    <!-- QR Code Expiry Time -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:background="@drawable/settings_box_bg"
+        android:padding="16dp"
+        android:layout_marginBottom="16dp">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:layout_marginBottom="12dp">
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="QR Code Expiry Time"
+                android:textSize="16sp"
+                android:fontFamily="@font/poppins_medium"
+                android:textColor="#8C8C8C" />
+
+            <TextView
+                android:id="@+id/expiryValueText"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="24 hours"
+                android:textSize="14sp"
+                android:fontFamily="@font/poppins_medium"
+                android:textColor="?attr/colorOnSurface" />
+
+        </LinearLayout>
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="How long your QR code stays valid before auto-rotating"
+            android:textSize="12sp"
+            android:textColor="#666666"
+            android:fontFamily="@font/poppins_regular"
+            android:layout_marginBottom="12dp" />
+
+        <com.google.android.material.slider.Slider
+            android:id="@+id/expirySlider"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:valueFrom="0"
+            android:valueTo="7"
+            android:stepSize="1"
+            android:value="3"
+            app:thumbColor="?attr/colorOnSurface"
+            app:trackColorActive="#888888"
+            app:trackColorInactive="#333333"
+            app:tickColor="#555555"
+            app:labelBehavior="gone" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical">
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="15 min"
+                android:textSize="11sp"
+                android:textColor="#555555"
+                android:fontFamily="@font/poppins_regular" />
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="7 days"
+                android:textSize="11sp"
+                android:textColor="#555555"
+                android:fontFamily="@font/poppins_regular"
+                android:gravity="end" />
+
+        </LinearLayout>
+
+    </LinearLayout>
+
+    <!-- Max QR Uses -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:background="@drawable/settings_box_bg"
+        android:padding="16dp"
+        android:layout_marginBottom="16dp">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:layout_marginBottom="12dp">
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="Max QR Uses"
+                android:textSize="16sp"
+                android:fontFamily="@font/poppins_medium"
+                android:textColor="#8C8C8C" />
+
+            <TextView
+                android:id="@+id/maxUsesValueText"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="5 uses"
+                android:textSize="14sp"
+                android:fontFamily="@font/poppins_medium"
+                android:textColor="?attr/colorOnSurface" />
+
+        </LinearLayout>
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="How many times your QR code can be scanned before rotating"
+            android:textSize="12sp"
+            android:textColor="#666666"
+            android:fontFamily="@font/poppins_regular"
+            android:layout_marginBottom="12dp" />
+
+        <com.google.android.material.slider.Slider
+            android:id="@+id/maxUsesSlider"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:valueFrom="0"
+            android:valueTo="6"
+            android:stepSize="1"
+            android:value="2"
+            app:thumbColor="?attr/colorOnSurface"
+            app:trackColorActive="#888888"
+            app:trackColorInactive="#333333"
+            app:tickColor="#555555"
+            app:labelBehavior="gone" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical">
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="1 use"
+                android:textSize="11sp"
+                android:textColor="#555555"
+                android:fontFamily="@font/poppins_regular" />
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="Unlimited"
+                android:textSize="11sp"
+                android:textColor="#555555"
+                android:fontFamily="@font/poppins_regular"
+                android:gravity="end" />
+
+        </LinearLayout>
+
+    </LinearLayout>
+
+    <!-- Manual Entry Toggle -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:background="@drawable/settings_box_bg"
+        android:padding="16dp"
+        android:gravity="center_vertical">
+
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:orientation="vertical">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Show Manual Entry"
+                android:textSize="16sp"
+                android:fontFamily="@font/poppins_medium"
+                android:textColor="#8C8C8C" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Display address and PIN on QR screen"
+                android:textSize="12sp"
+                android:textColor="#666666"
+                android:fontFamily="@font/poppins_regular" />
+
+        </LinearLayout>
+
+        <androidx.appcompat.widget.SwitchCompat
+            android:id="@+id/manualEntrySwitch"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:checked="false"
+            app:thumbTint="#333333"
+            app:trackTint="#888888" />
+
+    </LinearLayout>
+
+</LinearLayout>

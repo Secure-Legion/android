@@ -711,6 +711,11 @@ class TorManager(private val context: Context) {
      * Should be called from TorService.startVoiceService() before creating voice hidden service
      */
     fun startVoiceTor(): Boolean {
+        // Voice calling disabled in v1 — skip entire voice Tor daemon
+        // Return true = "handled, not an error" to prevent retry/fatal paths
+        Log.i(TAG, "startVoiceTor() — DISABLED (voice calling disabled in v1)")
+        return true
+        @Suppress("UNREACHABLE_CODE")
         return try {
             Log.i(TAG, "Starting VOICE Tor instance (Single Onion Service mode)...")
 

@@ -1,0 +1,83 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:background="@drawable/bottom_sheet_bg"
+    android:orientation="vertical"
+    android:paddingStart="24dp"
+    android:paddingEnd="24dp"
+    android:paddingTop="24dp"
+    android:paddingBottom="32dp"
+    android:gravity="center_horizontal">
+
+    <!-- Title -->
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Set Nickname"
+        android:textSize="22sp"
+        android:textColor="?attr/colorOnSurface"
+        android:fontFamily="@font/space_grotesk_bold"
+        android:gravity="center"
+        android:layout_marginBottom="8dp" />
+
+    <!-- Subtitle -->
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Only you will see this nickname"
+        android:textSize="14sp"
+        android:textColor="#8C8C8C"
+        android:fontFamily="@font/poppins_regular"
+        android:gravity="center"
+        android:layout_marginBottom="24dp" />
+
+    <!-- Nickname Input -->
+    <EditText
+        android:id="@+id/nicknameInput"
+        android:layout_width="match_parent"
+        android:layout_height="56dp"
+        android:background="@drawable/settings_box_bg"
+        android:hint="Enter nickname"
+        android:textSize="16sp"
+        android:textColor="?attr/colorOnSurface"
+        android:textColorHint="#6C6C6C"
+        android:fontFamily="@font/poppins_medium"
+        android:paddingStart="16dp"
+        android:paddingEnd="16dp"
+        android:maxLength="30"
+        android:singleLine="true"
+        android:imeOptions="actionDone"
+        android:layout_marginBottom="20dp" />
+
+    <!-- Save Button -->
+    <TextView
+        android:id="@+id/saveNicknameButton"
+        android:layout_width="match_parent"
+        android:layout_height="56dp"
+        android:background="@drawable/swap_button_bg"
+        android:gravity="center"
+        android:text="Save"
+        android:textSize="18sp"
+        android:textColor="?attr/colorOnSurface"
+        android:fontFamily="@font/poppins_semibold"
+        android:clickable="true"
+        android:focusable="true"
+        android:layout_marginBottom="12dp" />
+
+    <!-- Clear Nickname Button -->
+    <TextView
+        android:id="@+id/clearNicknameButton"
+        android:layout_width="match_parent"
+        android:layout_height="56dp"
+        android:background="@drawable/settings_box_bg"
+        android:gravity="center"
+        android:text="Clear Nickname"
+        android:textSize="18sp"
+        android:textColor="#8C8C8C"
+        android:fontFamily="@font/poppins_semibold"
+        android:clickable="true"
+        android:focusable="true" />
+
+</LinearLayout>

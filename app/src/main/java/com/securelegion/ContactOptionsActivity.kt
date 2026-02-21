@@ -25,6 +25,8 @@ class ContactOptionsActivity : BaseActivity() {
     }
 
     private lateinit var contactName: TextView
+    private lateinit var contactNickname: TextView
+    private lateinit var editNicknameButton: TextView
     private lateinit var profilePicture: ImageView
     private lateinit var blockContactSwitch: androidx.appcompat.widget.SwitchCompat
     private lateinit var trustedContactSwitch: androidx.appcompat.widget.SwitchCompat
@@ -33,6 +35,7 @@ class ContactOptionsActivity : BaseActivity() {
     private var contactId: Long = -1
     private var isTrustedContact: Boolean = false
     private var isBlocked: Boolean = false
+    private var currentNickname: String? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -53,6 +56,8 @@ class ContactOptionsActivity : BaseActivity() {
 
     private fun initializeViews() {
         contactName = findViewById(R.id.contactName)
+        contactNickname = findViewById(R.id.contactNickname)
+        editNicknameButton = findViewById(R.id.editNicknameButton)
         profilePicture = findViewById(R.id.profilePicture)
         blockContactSwitch = findViewById(R.id.blockContactSwitch)
         trustedContactSwitch = findViewById(R.id.trustedContactSwitch)
@@ -80,6 +85,8 @@ class ContactOptionsActivity : BaseActivity() {
                 if (contact != null) {
                     isTrustedContact = contact.isDistressContact
                     isBlocked = contact.isBlocked
+                    currentNickname = contact.nickname
+                    updateNicknameUI(contact.displayName)
                     updateTrustedContactUI()
                     updateBlockUI()
 
@@ -187,26 +194,115 @@ class ContactOptionsActivity : BaseActivity() {
         }
     }
 
+    private fun updateNicknameUI(username: String) {
+        if (!currentNickname.isNullOrBlank()) {
+            // Nickname is set — show nickname large, username smaller below
+            contactNickname.text = currentNickname
+            contactNickname.visibility = View.VISIBLE
+            com.securelegion.utils.TextGradient.apply(contactNickname)
+
+            contactName.textSize = 16f
+            contactName.text = username
+            contactName.setTextColor(android.graphics.Color.parseColor("#6C6C6C"))
+
+            editNicknameButton.text = "Edit Nickname"
+        } else {
+            // No nickname — show username large
+            contactNickname.visibility = View.GONE
+            contactName.textSize = 34f
+            contactName.text = username
+            contactName.setTextColor(resources.getColor(R.color.lock_title_gray, theme))
+            com.securelegion.utils.TextGradient.apply(contactName)
+
+            editNicknameButton.text = "Set Nickname"
+        }
+    }
+
+    private fun showNicknameDialog(username: String) {
+        val bottomSheet = GlassBottomSheetDialog(this)
+        val view = layoutInflater.inflate(R.layout.bottom_sheet_edit_nickname, null)
+        bottomSheet.setContentView(view)
+
+        bottomSheet.behavior.isDraggable = true
+        bottomSheet.behavior.skipCollapsed = true
+
+        bottomSheet.window?.setBackgroundDrawableResource(android.R.color.transparent)
+        bottomSheet.window?.findViewById<View>(com.google.android.material.R.id.design_bottom_sheet)
+            ?.setBackgroundResource(android.R.color.transparent)
+        view.post {
+            (view.parent as? View)?.setBackgroundResource(android.R.color.transparent)
+        }
+
+        val nicknameInput = view.findViewById<android.widget.EditText>(R.id.nicknameInput)
+        nicknameInput.setText(currentNickname ?: "")
+        nicknameInput.setSelection(nicknameInput.text.length)
+
+        view.findViewById<View>(R.id.saveNicknameButton).setOnClickListener {
+            val newNickname = nicknameInput.text.toString().trim()
+            saveNickname(if (newNickname.isEmpty()) null else newNickname, username)
+            bottomSheet.dismiss()
+        }
+
+        view.findViewById<View>(R.id.clearNicknameButton).setOnClickListener {
+            saveNickname(null, username)
+            bottomSheet.dismiss()
+        }
+
+        bottomSheet.show()
+
+        // Auto-show keyboard
+        nicknameInput.requestFocus()
+        nicknameInput.postDelayed({
+            val imm = getSystemService(android.content.Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager
+            imm.showSoftInput(nicknameInput, android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT)
+        }, 200)
+    }
+
+    private fun saveNickname(nickname: String?, username: String) {
+        CoroutineScope(Dispatchers.Main).launch {
+            try {
+                if (contactId == -1L) return@launch
+
+                val keyManager = KeyManager.getInstance(this@ContactOptionsActivity)
+                val dbPassphrase = keyManager.getDatabasePassphrase()
+                val database = SecureLegionDatabase.getInstance(this@ContactOptionsActivity, dbPassphrase)
+
+                withContext(Dispatchers.IO) {
+                    database.contactDao().updateContactNickname(contactId, nickname)
+                }
+
+                currentNickname = nickname
+                updateNicknameUI(username)
+
+                val message = if (nickname != null) "Nickname set" else "Nickname cleared"
+                ThemedToast.show(this@ContactOptionsActivity, message)
+                Log.i(TAG, "Nickname updated: $nickname")
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to save nickname", e)
+                ThemedToast.show(this@ContactOptionsActivity, "Failed to save nickname")
+            }
+        }
+    }
+
     private fun setupClickListeners(name: String) {
         // Back button
         findViewById<View>(R.id.backButton).setOnClickListener {
             finish()
         }
 
-        // Call action — opens call profile page with history
-        findViewById<View>(R.id.actionCall).setOnClickListener {
-            val intent = Intent(this, ContactCallActivity::class.java)
-            intent.putExtra(ContactCallActivity.EXTRA_CONTACT_ID, contactId)
-            intent.putExtra(ContactCallActivity.EXTRA_CONTACT_NAME, name)
-            intent.putExtra(ContactCallActivity.EXTRA_CONTACT_ADDRESS, fullAddress)
-            startActivity(intent)
+        // Nickname edit button
+        editNicknameButton.setOnClickListener {
+            showNicknameDialog(name)
         }
+
+        // Call action — voice calling disabled in v1
+        findViewById<View>(R.id.actionCall).visibility = View.GONE
 
         // Message action
         findViewById<View>(R.id.actionMessage).setOnClickListener {
             val intent = Intent(this, ChatActivity::class.java)
             intent.putExtra(ChatActivity.EXTRA_CONTACT_ID, contactId)
-            intent.putExtra(ChatActivity.EXTRA_CONTACT_NAME, name)
+            intent.putExtra(ChatActivity.EXTRA_CONTACT_NAME, currentNickname ?: name)
             intent.putExtra(ChatActivity.EXTRA_CONTACT_ADDRESS, fullAddress)
             startActivity(intent)
         }
