@@ -27,7 +27,7 @@ object BrandedQrGenerator {
     private const val BADGE_TEXT_COLOR = 0xFFCCCCCC.toInt()   // Badge text
     private const val ACCENT_COLOR = 0xFF4A90E2.toInt()       // Blue accent
     private const val SUBTLE_TEXT_COLOR = 0xFF666666.toInt()   // Subtle gray text
-    private const val WEBSITE_URL = "securelegion.com"
+    private const val WEBSITE_URL = "securelegion.org"
 
     data class QrOptions(
         val content: String,

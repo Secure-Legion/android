@@ -160,14 +160,17 @@
                         android:scaleType="fitCenter"
                         android:contentDescription="Contact Card QR Code" />
 
-                    <!-- Live countdown overlay (replaces static expiry baked into bitmap) -->
+                    <!-- Live countdown overlay (covers static expiry in bitmap) -->
                     <TextView
                         android:id="@+id/expiryCountdownText"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:layout_gravity="bottom|start"
-                        android:paddingStart="12dp"
-                        android:paddingBottom="10dp"
+                        android:layout_marginStart="10dp"
+                        android:layout_marginBottom="9dp"
+                        android:paddingStart="4dp"
+                        android:paddingEnd="4dp"
+                        android:background="#1A1A1A"
                         android:textSize="9sp"
                         android:textColor="#666666"
                         android:fontFamily="sans-serif"
