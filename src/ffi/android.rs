@@ -4623,6 +4623,34 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_getLastListenerHeartbe
     }, 0 as jlong)
 }
 
+/// Get HS listener loop heartbeat (epoch millis).
+/// Proves the accept loop task is alive and ticking every ~30s.
+/// Returns 0 if listener never started or was reset.
+/// Kotlin: if stale >90s → listener task is wedged/dead → restart.
+#[no_mangle]
+pub extern "C" fn Java_com_securelegion_crypto_RustBridge_getLastHsLoopHeartbeat(
+    mut env: JNIEnv,
+    _class: JClass,
+) -> jlong {
+    catch_panic!(env, {
+        crate::network::tor::get_last_hs_loop_heartbeat() as jlong
+    }, 0 as jlong)
+}
+
+/// Get HS accept heartbeat (epoch millis).
+/// Updated only after a valid protocol frame is received (not just TCP accept).
+/// Returns 0 if no valid inbound connection has been processed.
+/// Kotlin: use alongside self-circuit-test to distinguish "idle" from "broken".
+#[no_mangle]
+pub extern "C" fn Java_com_securelegion_crypto_RustBridge_getLastHsAcceptHeartbeat(
+    mut env: JNIEnv,
+    _class: JClass,
+) -> jlong {
+    catch_panic!(env, {
+        crate::network::tor::get_last_hs_accept_heartbeat() as jlong
+    }, 0 as jlong)
+}
+
 /// Get HS descriptor upload count - how many HSDirs have confirmed our descriptor
 /// Updated in real-time by event listener when it sees HS_DESC UPLOADED events
 /// v3 onions upload to ~6-8 HSDirs; count >= 1 means partially reachable, >= 3 is good
