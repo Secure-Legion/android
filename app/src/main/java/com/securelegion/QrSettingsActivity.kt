@@ -31,7 +31,6 @@ class QrSettingsActivity : BaseActivity() {
 
         setupExpirySlider()
         setupMaxUsesSlider()
-        setupManualEntryToggle()
     }
 
     private fun setupExpirySlider() {
@@ -72,13 +71,4 @@ class QrSettingsActivity : BaseActivity() {
         }
     }
 
-    private fun setupManualEntryToggle() {
-        val prefs = getSharedPreferences("security_prefs", MODE_PRIVATE)
-        val switch = findViewById<SwitchCompat>(R.id.manualEntrySwitch)
-
-        switch.isChecked = prefs.getBoolean("legacy_manual_entry", false)
-        switch.setOnCheckedChangeListener { _, isChecked ->
-            prefs.edit().putBoolean("legacy_manual_entry", isChecked).apply()
-        }
-    }
 }

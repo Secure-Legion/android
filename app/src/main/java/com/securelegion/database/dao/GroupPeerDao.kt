@@ -35,4 +35,7 @@ interface GroupPeerDao {
 
     @Query("DELETE FROM group_peers WHERE groupId = :groupId")
     suspend fun deletePeersForGroup(groupId: String)
+
+    @Query("SELECT DISTINCT groupId FROM group_peers WHERE messagingOnion = :onionAddress")
+    suspend fun getGroupIdsForPeer(onionAddress: String): List<String>
 }

@@ -16,7 +16,7 @@
         android:paddingStart="20dp"
         android:paddingEnd="20dp"
         android:paddingTop="16dp"
-        android:paddingBottom="16dp"
+        android:paddingBottom="8dp"
         android:fitsSystemWindows="true"
         app:layout_constraintTop_toTopOf="parent">
 
@@ -25,8 +25,7 @@
             android:id="@+id/backButton"
             android:layout_width="42dp"
             android:layout_height="42dp"
-            android:layout_marginStart="8dp"
-            android:background="@drawable/top_icon_bg"
+            android:background="@drawable/top_icon_bg_solid"
             android:clickable="true"
             android:focusable="true">
 
@@ -39,81 +38,50 @@
 
         </FrameLayout>
 
-        <!-- Spacer -->
-        <View
-            android:layout_width="0dp"
-            android:layout_height="1dp"
-            android:layout_weight="1" />
-
-        <!-- Trusted Star Toggle -->
-        <FrameLayout
-            android:id="@+id/trustedStarButton"
-            android:layout_width="42dp"
-            android:layout_height="42dp"
-            android:layout_marginEnd="8dp"
-            android:background="@drawable/top_icon_bg"
-            android:clickable="true"
-            android:focusable="true">
-
-            <ImageView
-                android:id="@+id/trustedStarIcon"
-                android:layout_width="22dp"
-                android:layout_height="22dp"
-                android:layout_gravity="center"
-                android:src="@drawable/ic_star_outline"
-                app:tint="?attr/colorOnSurfaceVariant"
-                android:contentDescription="Trusted Contact" />
-
-        </FrameLayout>
-
     </LinearLayout>
 
-    <!-- Content -->
-    <ScrollView
+    <!-- Scrollable Content -->
+    <androidx.core.widget.NestedScrollView
         android:layout_width="match_parent"
         android:layout_height="0dp"
         android:fillViewport="true"
         app:layout_constraintTop_toBottomOf="@id/header"
-        app:layout_constraintBottom_toTopOf="@id/bottomNav">
+        app:layout_constraintBottom_toBottomOf="parent">
 
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="vertical"
-            android:paddingStart="24dp"
-            android:paddingEnd="24dp"
-            android:paddingTop="24dp"
-            android:paddingBottom="32dp"
             android:gravity="center_horizontal">
 
             <!-- Profile Picture -->
             <ImageView
                 android:id="@+id/profilePicture"
-                android:layout_width="140dp"
-                android:layout_height="140dp"
+                android:layout_width="120dp"
+                android:layout_height="120dp"
                 android:src="@drawable/default_avatar"
                 android:background="@drawable/profile_circle_bg"
-                android:layout_marginTop="48dp"
-                android:layout_marginBottom="16dp"
+                android:layout_marginTop="16dp"
+                android:layout_marginBottom="12dp"
                 android:contentDescription="Profile Picture" />
 
-            <!-- Nickname (shown large when set, tap to edit) -->
+            <!-- Nickname (shown large when set) -->
             <TextView
                 android:id="@+id/contactNickname"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:textSize="34sp"
+                android:textSize="26sp"
                 android:textColor="@color/lock_title_gray"
                 android:fontFamily="@font/space_grotesk_bold"
                 android:visibility="gone" />
 
-            <!-- Username (always visible, smaller when nickname is set) -->
+            <!-- Username -->
             <TextView
                 android:id="@+id/contactName"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:text="@WIZARD"
-                android:textSize="34sp"
+                android:textSize="26sp"
                 android:textColor="@color/lock_title_gray"
                 android:fontFamily="@font/space_grotesk_bold" />
 
@@ -123,179 +91,455 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:text="Set Nickname"
-                android:textSize="13sp"
+                android:textSize="11sp"
                 android:textColor="#6C6C6C"
                 android:fontFamily="@font/poppins_medium"
-                android:paddingStart="16dp"
-                android:paddingEnd="16dp"
-                android:paddingTop="6dp"
-                android:paddingBottom="6dp"
+                android:paddingStart="14dp"
+                android:paddingEnd="14dp"
+                android:paddingTop="5dp"
+                android:paddingBottom="5dp"
                 android:layout_marginTop="4dp"
-                android:layout_marginBottom="24dp"
+                android:layout_marginBottom="20dp"
                 android:background="@drawable/top_icon_bg"
                 android:clickable="true"
                 android:focusable="true" />
 
-            <!-- Action Circles: Call, Message, Delete -->
+            <!-- Action Buttons Row — 5 boxes with icon + text INSIDE -->
             <LinearLayout
-                android:layout_width="wrap_content"
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:orientation="horizontal"
-                android:gravity="center"
-                android:layout_marginBottom="32dp">
+                android:paddingStart="24dp"
+                android:paddingEnd="24dp"
+                android:layout_marginBottom="24dp">
 
-                <!-- Call Button -->
-                <LinearLayout
-                    android:id="@+id/actionCall"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:orientation="vertical"
-                    android:gravity="center"
-                    android:layout_marginEnd="24dp"
-                    android:clickable="true"
-                    android:focusable="true">
-
-                    <FrameLayout
-                        android:layout_width="50dp"
-                        android:layout_height="50dp"
-                        android:background="@drawable/settings_icon_bg">
-
-                        <ImageView
-                            android:layout_width="22dp"
-                            android:layout_height="22dp"
-                            android:layout_gravity="center"
-                            android:src="@drawable/ic_call"
-                            app:tint="?attr/colorOnSurfaceVariant"
-                            android:contentDescription="Call" />
-
-                    </FrameLayout>
-
-                    <TextView
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="Call"
-                        android:textSize="11sp"
-                        android:textColor="#8C8C8C"
-                        android:fontFamily="@font/poppins_medium"
-                        android:layout_marginTop="6dp" />
-
-                </LinearLayout>
-
-                <!-- Message Button -->
+                <!-- Message -->
                 <LinearLayout
                     android:id="@+id/actionMessage"
-                    android:layout_width="wrap_content"
+                    android:layout_width="0dp"
                     android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:layout_marginEnd="6dp"
                     android:orientation="vertical"
                     android:gravity="center"
-                    android:layout_marginEnd="24dp"
+                    android:background="@drawable/settings_icon_bg"
+                    android:paddingTop="12dp"
+                    android:paddingBottom="8dp"
                     android:clickable="true"
                     android:focusable="true">
 
-                    <FrameLayout
-                        android:layout_width="50dp"
-                        android:layout_height="50dp"
-                        android:background="@drawable/settings_icon_bg">
-
-                        <ImageView
-                            android:layout_width="22dp"
-                            android:layout_height="22dp"
-                            android:layout_gravity="center"
-                            android:src="@drawable/ic_nav_chat"
-                            app:tint="?attr/colorOnSurfaceVariant"
-                            android:contentDescription="Message" />
-
-                    </FrameLayout>
+                    <ImageView
+                        android:layout_width="22dp"
+                        android:layout_height="22dp"
+                        android:src="@drawable/ic_nav_chat"
+                        app:tint="?attr/colorOnSurfaceVariant"
+                        android:contentDescription="Message" />
 
                     <TextView
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="Message"
-                        android:textSize="11sp"
+                        android:text="message"
+                        android:textSize="9sp"
                         android:textColor="#8C8C8C"
                         android:fontFamily="@font/poppins_medium"
-                        android:layout_marginTop="6dp" />
+                        android:layout_marginTop="4dp" />
 
                 </LinearLayout>
 
-                <!-- Delete Button -->
+                <!-- Mute -->
+                <LinearLayout
+                    android:id="@+id/actionMute"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:layout_marginEnd="6dp"
+                    android:orientation="vertical"
+                    android:gravity="center"
+                    android:background="@drawable/settings_icon_bg"
+                    android:paddingTop="12dp"
+                    android:paddingBottom="8dp"
+                    android:clickable="true"
+                    android:focusable="true">
+
+                    <ImageView
+                        android:id="@+id/muteIcon"
+                        android:layout_width="22dp"
+                        android:layout_height="22dp"
+                        android:src="@drawable/ic_bell"
+                        app:tint="?attr/colorOnSurfaceVariant"
+                        android:contentDescription="Mute" />
+
+                    <TextView
+                        android:id="@+id/muteLabel"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="mute"
+                        android:textSize="9sp"
+                        android:textColor="#8C8C8C"
+                        android:fontFamily="@font/poppins_medium"
+                        android:layout_marginTop="4dp" />
+
+                </LinearLayout>
+
+                <!-- Fav (Trusted Star) -->
+                <LinearLayout
+                    android:id="@+id/actionFav"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:layout_marginEnd="6dp"
+                    android:orientation="vertical"
+                    android:gravity="center"
+                    android:background="@drawable/settings_icon_bg"
+                    android:paddingTop="12dp"
+                    android:paddingBottom="8dp"
+                    android:clickable="true"
+                    android:focusable="true">
+
+                    <ImageView
+                        android:id="@+id/trustedStarIcon"
+                        android:layout_width="22dp"
+                        android:layout_height="22dp"
+                        android:src="@drawable/ic_star_outline"
+                        app:tint="?attr/colorOnSurfaceVariant"
+                        android:contentDescription="Favorite" />
+
+                    <TextView
+                        android:id="@+id/favLabel"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="circle"
+                        android:textSize="9sp"
+                        android:textColor="#8C8C8C"
+                        android:fontFamily="@font/poppins_medium"
+                        android:layout_marginTop="4dp" />
+
+                </LinearLayout>
+
+                <!-- Delete -->
                 <LinearLayout
                     android:id="@+id/actionDelete"
-                    android:layout_width="wrap_content"
+                    android:layout_width="0dp"
                     android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:layout_marginEnd="6dp"
                     android:orientation="vertical"
                     android:gravity="center"
-                    android:layout_marginEnd="24dp"
+                    android:background="@drawable/settings_icon_bg"
+                    android:paddingTop="12dp"
+                    android:paddingBottom="8dp"
                     android:clickable="true"
                     android:focusable="true">
 
-                    <FrameLayout
-                        android:layout_width="50dp"
-                        android:layout_height="50dp"
-                        android:background="@drawable/settings_icon_bg">
-
-                        <ImageView
-                            android:layout_width="22dp"
-                            android:layout_height="22dp"
-                            android:layout_gravity="center"
-                            android:src="@drawable/ic_delete"
-                            app:tint="?attr/colorOnSurfaceVariant"
-                            android:contentDescription="Delete" />
-
-                    </FrameLayout>
+                    <ImageView
+                        android:layout_width="22dp"
+                        android:layout_height="22dp"
+                        android:src="@drawable/ic_delete"
+                        app:tint="?attr/colorOnSurfaceVariant"
+                        android:contentDescription="Delete" />
 
                     <TextView
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="Delete"
-                        android:textSize="11sp"
+                        android:text="delete"
+                        android:textSize="9sp"
                         android:textColor="#8C8C8C"
                         android:fontFamily="@font/poppins_medium"
-                        android:layout_marginTop="6dp" />
+                        android:layout_marginTop="4dp" />
 
                 </LinearLayout>
 
-                <!-- Block Button -->
+                <!-- Block -->
                 <LinearLayout
                     android:id="@+id/actionBlock"
-                    android:layout_width="wrap_content"
+                    android:layout_width="0dp"
                     android:layout_height="wrap_content"
+                    android:layout_weight="1"
                     android:orientation="vertical"
                     android:gravity="center"
+                    android:background="@drawable/settings_icon_bg"
+                    android:paddingTop="12dp"
+                    android:paddingBottom="8dp"
                     android:clickable="true"
                     android:focusable="true">
 
-                    <FrameLayout
-                        android:layout_width="50dp"
-                        android:layout_height="50dp"
-                        android:background="@drawable/settings_icon_bg">
-
-                        <ImageView
-                            android:id="@+id/blockIcon"
-                            android:layout_width="22dp"
-                            android:layout_height="22dp"
-                            android:layout_gravity="center"
-                            android:src="@drawable/ic_close_x"
-                            app:tint="?attr/colorOnSurfaceVariant"
-                            android:contentDescription="Block" />
-
-                    </FrameLayout>
+                    <ImageView
+                        android:id="@+id/blockIcon"
+                        android:layout_width="22dp"
+                        android:layout_height="22dp"
+                        android:src="@drawable/ic_close_x"
+                        app:tint="?attr/colorOnSurfaceVariant"
+                        android:contentDescription="Block" />
 
                     <TextView
                         android:id="@+id/blockLabel"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="Block"
-                        android:textSize="11sp"
+                        android:text="block"
+                        android:textSize="9sp"
                         android:textColor="#8C8C8C"
                         android:fontFamily="@font/poppins_medium"
-                        android:layout_marginTop="6dp" />
+                        android:layout_marginTop="4dp" />
 
                 </LinearLayout>
 
             </LinearLayout>
 
-            <!-- Hidden switches for backward compatibility -->
+            <!-- Pill Tabs Row -->
+            <LinearLayout
+                android:id="@+id/tabsRow"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:paddingStart="20dp"
+                android:paddingEnd="20dp"
+                android:layout_marginBottom="12dp">
+
+                <TextView
+                    android:id="@+id/tabMedia"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Media"
+                    android:textSize="12sp"
+                    android:fontFamily="@font/poppins_medium"
+                    android:textColor="#FFFFFF"
+                    android:background="@drawable/contact_tab_active"
+                    android:paddingStart="12dp"
+                    android:paddingEnd="12dp"
+                    android:paddingTop="6dp"
+                    android:paddingBottom="6dp"
+                    android:layout_marginEnd="6dp"
+                    android:clickable="true"
+                    android:focusable="true" />
+
+                <TextView
+                    android:id="@+id/tabVoice"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Voice"
+                    android:textSize="12sp"
+                    android:fontFamily="@font/poppins_medium"
+                    android:textColor="#666666"
+                    android:background="@drawable/contact_tab_inactive"
+                    android:paddingStart="12dp"
+                    android:paddingEnd="12dp"
+                    android:paddingTop="6dp"
+                    android:paddingBottom="6dp"
+                    android:layout_marginEnd="6dp"
+                    android:clickable="true"
+                    android:focusable="true" />
+
+                <TextView
+                    android:id="@+id/tabFiles"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Files"
+                    android:textSize="12sp"
+                    android:fontFamily="@font/poppins_medium"
+                    android:textColor="#666666"
+                    android:background="@drawable/contact_tab_inactive"
+                    android:paddingStart="12dp"
+                    android:paddingEnd="12dp"
+                    android:paddingTop="6dp"
+                    android:paddingBottom="6dp"
+                    android:layout_marginEnd="6dp"
+                    android:clickable="true"
+                    android:focusable="true" />
+
+                <TextView
+                    android:id="@+id/tabLinks"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Links"
+                    android:textSize="12sp"
+                    android:fontFamily="@font/poppins_medium"
+                    android:textColor="#666666"
+                    android:background="@drawable/contact_tab_inactive"
+                    android:paddingStart="12dp"
+                    android:paddingEnd="12dp"
+                    android:paddingTop="6dp"
+                    android:paddingBottom="6dp"
+                    android:layout_marginEnd="6dp"
+                    android:clickable="true"
+                    android:focusable="true" />
+
+                <TextView
+                    android:id="@+id/tabGroups"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Groups"
+                    android:textSize="12sp"
+                    android:fontFamily="@font/poppins_medium"
+                    android:textColor="#666666"
+                    android:background="@drawable/contact_tab_inactive"
+                    android:paddingStart="12dp"
+                    android:paddingEnd="12dp"
+                    android:paddingTop="6dp"
+                    android:paddingBottom="6dp"
+                    android:clickable="true"
+                    android:focusable="true" />
+
+            </LinearLayout>
+
+            <!-- Tab Content Container -->
+            <FrameLayout
+                android:id="@+id/tabContent"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:minHeight="200dp">
+
+                <!-- Media Tab -->
+                <LinearLayout
+                    android:id="@+id/mediaTabContent"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical">
+
+                    <androidx.recyclerview.widget.RecyclerView
+                        android:id="@+id/mediaRecyclerView"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:paddingStart="24dp"
+                        android:paddingEnd="24dp"
+                        android:clipToPadding="false"
+                        android:nestedScrollingEnabled="false"
+                        android:visibility="gone" />
+
+                    <TextView
+                        android:id="@+id/mediaEmptyState"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="No shared media"
+                        android:textSize="14sp"
+                        android:textColor="#444444"
+                        android:fontFamily="@font/poppins_regular"
+                        android:gravity="center"
+                        android:paddingTop="48dp"
+                        android:paddingBottom="48dp" />
+
+                </LinearLayout>
+
+                <!-- Voice Tab -->
+                <LinearLayout
+                    android:id="@+id/voiceTabContent"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:visibility="gone">
+
+                    <androidx.recyclerview.widget.RecyclerView
+                        android:id="@+id/voiceRecyclerView"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:paddingStart="24dp"
+                        android:paddingEnd="24dp"
+                        android:clipToPadding="false"
+                        android:nestedScrollingEnabled="false"
+                        android:visibility="gone" />
+
+                    <TextView
+                        android:id="@+id/voiceEmptyState"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="No voice messages"
+                        android:textSize="14sp"
+                        android:textColor="#444444"
+                        android:fontFamily="@font/poppins_regular"
+                        android:gravity="center"
+                        android:paddingTop="48dp"
+                        android:paddingBottom="48dp" />
+
+                </LinearLayout>
+
+                <!-- Files Tab -->
+                <LinearLayout
+                    android:id="@+id/filesTabContent"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:visibility="gone">
+
+                    <TextView
+                        android:id="@+id/filesEmptyState"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="No shared files"
+                        android:textSize="14sp"
+                        android:textColor="#444444"
+                        android:fontFamily="@font/poppins_regular"
+                        android:gravity="center"
+                        android:paddingTop="48dp"
+                        android:paddingBottom="48dp" />
+
+                </LinearLayout>
+
+                <!-- Links Tab -->
+                <LinearLayout
+                    android:id="@+id/linksTabContent"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:visibility="gone">
+
+                    <androidx.recyclerview.widget.RecyclerView
+                        android:id="@+id/linksRecyclerView"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:paddingStart="24dp"
+                        android:paddingEnd="24dp"
+                        android:clipToPadding="false"
+                        android:nestedScrollingEnabled="false"
+                        android:visibility="gone" />
+
+                    <TextView
+                        android:id="@+id/linksEmptyState"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="No shared links"
+                        android:textSize="14sp"
+                        android:textColor="#444444"
+                        android:fontFamily="@font/poppins_regular"
+                        android:gravity="center"
+                        android:paddingTop="48dp"
+                        android:paddingBottom="48dp" />
+
+                </LinearLayout>
+
+                <!-- Groups Tab -->
+                <LinearLayout
+                    android:id="@+id/groupsTabContent"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:visibility="gone">
+
+                    <androidx.recyclerview.widget.RecyclerView
+                        android:id="@+id/groupsRecyclerView"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:paddingStart="24dp"
+                        android:paddingEnd="24dp"
+                        android:clipToPadding="false"
+                        android:nestedScrollingEnabled="false"
+                        android:visibility="gone" />
+
+                    <TextView
+                        android:id="@+id/groupsEmptyState"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="No shared groups"
+                        android:textSize="14sp"
+                        android:textColor="#444444"
+                        android:fontFamily="@font/poppins_regular"
+                        android:gravity="center"
+                        android:paddingTop="48dp"
+                        android:paddingBottom="48dp" />
+
+                </LinearLayout>
+
+            </FrameLayout>
+
+            <!-- Hidden fields for backward compatibility -->
             <androidx.appcompat.widget.SwitchCompat
                 android:id="@+id/blockContactSwitch"
                 android:layout_width="0dp"
@@ -308,7 +552,6 @@
                 android:layout_height="0dp"
                 android:visibility="gone" />
 
-            <!-- Hidden fields for backward compatibility -->
             <EditText
                 android:id="@+id/displayNameInput"
                 android:layout_width="0dp"
@@ -347,19 +590,6 @@
 
         </LinearLayout>
 
-    </ScrollView>
-
-    <!-- Bottom Navigation -->
-    <include
-        layout="@layout/bottom_navigation"
-        android:layout_width="0dp"
-        android:layout_height="80dp"
-        android:layout_marginStart="50dp"
-        android:layout_marginEnd="50dp"
-        android:layout_marginBottom="20dp"
-        android:elevation="8dp"
-        app:layout_constraintBottom_toBottomOf="parent"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintEnd_toEndOf="parent" />
+    </androidx.core.widget.NestedScrollView>
 
 </androidx.constraintlayout.widget.ConstraintLayout>

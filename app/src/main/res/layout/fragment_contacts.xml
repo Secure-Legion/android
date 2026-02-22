@@ -5,7 +5,6 @@
     android:layout_height="match_parent"
     android:background="?attr/colorSurface">
 
-    <!-- Contacts List -->
     <androidx.recyclerview.widget.RecyclerView
         android:id="@+id/contactsList"
         android:layout_width="match_parent"
@@ -17,7 +16,18 @@
         android:clipToPadding="false"
         android:background="#000000" />
 
-    <!-- Empty State -->
+    <androidx.recyclerview.widget.RecyclerView
+        android:id="@+id/requestsList"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:paddingStart="20dp"
+        android:paddingEnd="20dp"
+        android:paddingTop="8dp"
+        android:paddingBottom="130dp"
+        android:clipToPadding="false"
+        android:background="#000000"
+        android:visibility="gone" />
+
     <LinearLayout
         android:id="@+id/emptyContactsState"
         android:layout_width="match_parent"
@@ -48,6 +58,42 @@
             android:layout_height="wrap_content"
             android:layout_marginTop="8dp"
             android:text="Add a contact to get started"
+            android:textColor="#666666"
+            android:textSize="13sp"
+            android:fontFamily="@font/poppins_regular" />
+
+    </LinearLayout>
+
+    <LinearLayout
+        android:id="@+id/emptyRequestsState"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:orientation="vertical"
+        android:gravity="center"
+        android:background="#000000"
+        android:visibility="gone">
+
+        <ImageView
+            android:layout_width="80dp"
+            android:layout_height="80dp"
+            android:src="@drawable/ic_add_friend"
+            app:tint="#333333"
+            android:contentDescription="No Requests" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:text="No Friend Requests"
+            android:textColor="?attr/colorOnSurfaceVariant"
+            android:textSize="16sp"
+            android:fontFamily="@font/poppins_medium" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="Tap + to add a friend"
             android:textColor="#666666"
             android:textSize="13sp"
             android:fontFamily="@font/poppins_regular" />

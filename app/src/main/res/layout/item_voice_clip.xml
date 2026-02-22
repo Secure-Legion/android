@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="horizontal"
+    android:gravity="center_vertical"
+    android:background="@drawable/settings_icon_bg"
+    android:padding="12dp"
+    android:layout_marginBottom="6dp">
+
+    <!-- Play button -->
+    <FrameLayout
+        android:id="@+id/playButton"
+        android:layout_width="36dp"
+        android:layout_height="36dp"
+        android:background="@drawable/profile_circle_bg"
+        android:layout_marginEnd="12dp">
+
+        <ImageView
+            android:id="@+id/playIcon"
+            android:layout_width="16dp"
+            android:layout_height="16dp"
+            android:layout_gravity="center"
+            android:src="@drawable/ic_play"
+            app:tint="?attr/colorOnSurfaceVariant"
+            android:contentDescription="Play" />
+
+    </FrameLayout>
+
+    <!-- Duration + timestamp -->
+    <LinearLayout
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="1"
+        android:orientation="vertical">
+
+        <TextView
+            android:id="@+id/voiceDuration"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="0:12"
+            android:textSize="14sp"
+            android:textColor="#CCCCCC"
+            android:fontFamily="@font/poppins_medium" />
+
+        <TextView
+            android:id="@+id/voiceTimestamp"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Jan 15, 2026"
+            android:textSize="11sp"
+            android:textColor="#555555"
+            android:fontFamily="@font/poppins_regular" />
+
+    </LinearLayout>
+
+    <!-- Sender indicator -->
+    <TextView
+        android:id="@+id/voiceSender"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Sent"
+        android:textSize="11sp"
+        android:textColor="#555555"
+        android:fontFamily="@font/poppins_regular" />
+
+</LinearLayout>

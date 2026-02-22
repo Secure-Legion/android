@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="horizontal"
+    android:gravity="center_vertical"
+    android:paddingTop="10dp"
+    android:paddingBottom="10dp">
+
+    <com.securelegion.views.AvatarView
+        android:id="@+id/requestAvatar"
+        android:layout_width="48dp"
+        android:layout_height="48dp"
+        android:contentDescription="Request Avatar" />
+
+    <LinearLayout
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="1"
+        android:layout_marginStart="14dp"
+        android:orientation="vertical">
+
+        <TextView
+            android:id="@+id/requestDisplayName"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:textSize="16sp"
+            android:textColor="@color/lock_title_gray"
+            android:fontFamily="@font/space_grotesk_bold"
+            android:maxLines="1"
+            android:ellipsize="end" />
+
+        <TextView
+            android:id="@+id/requestUsername"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:textSize="13sp"
+            android:textColor="#666666"
+            android:fontFamily="@font/poppins_regular"
+            android:layout_marginTop="1dp"
+            android:maxLines="1"
+            android:ellipsize="end" />
+
+    </LinearLayout>
+
+    <TextView
+        android:id="@+id/acceptButton"
+        android:layout_width="wrap_content"
+        android:layout_height="32dp"
+        android:text="Accept"
+        android:textSize="13sp"
+        android:textColor="?attr/colorOnSurface"
+        android:fontFamily="@font/poppins_medium"
+        android:background="@drawable/tab_pill_active_bg"
+        android:gravity="center"
+        android:paddingStart="16dp"
+        android:paddingEnd="16dp"
+        android:layout_marginEnd="10dp"
+        android:clickable="true"
+        android:focusable="true" />
+
+    <ImageView
+        android:id="@+id/declineButton"
+        android:layout_width="24dp"
+        android:layout_height="24dp"
+        android:src="@drawable/ic_close_x"
+        android:contentDescription="Decline"
+        android:clickable="true"
+        android:focusable="true" />
+
+</LinearLayout>

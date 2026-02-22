@@ -120,6 +120,18 @@ interface MessageDao {
     suspend fun getMessagesForContact(contactId: Long): List<Message>
 
     /**
+     * Get image messages for a contact (for media gallery)
+     */
+    @Query("SELECT $LITE_COLS FROM messages WHERE contactId = :contactId AND messageType = 'IMAGE' ORDER BY timestamp DESC")
+    suspend fun getImageMessagesForContact(contactId: Long): List<Message>
+
+    /**
+     * Get voice messages for a contact (for voice clips gallery)
+     */
+    @Query("SELECT $LITE_COLS FROM messages WHERE contactId = :contactId AND messageType = 'VOICE' ORDER BY timestamp DESC")
+    suspend fun getVoiceMessagesForContact(contactId: Long): List<Message>
+
+    /**
      * Get recent messages for a contact (limit N)
      */
     @Query("SELECT $LITE_COLS FROM messages WHERE contactId = :contactId AND messageType != 'PROFILE_UPDATE' ORDER BY timestamp DESC LIMIT :limit")

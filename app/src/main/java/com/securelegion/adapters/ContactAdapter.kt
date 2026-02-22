@@ -62,7 +62,11 @@ class ContactAdapter(
 
     class ContactViewHolder(view: View) : RecyclerView.ViewHolder(view) {
         val nameView: TextView = view.findViewById(R.id.contactName)
+        val usernameView: TextView = view.findViewById(R.id.contactUsername)
         val avatarView: com.securelegion.views.AvatarView = view.findViewById(R.id.contactAvatar)
+        val contactRow: View = view.findViewById(R.id.contactRow)
+        val divider: View = view.findViewById(R.id.contactDivider)
+        val dividerTop: View = view.findViewById(R.id.contactDividerTop)
         val initialView: TextView = view.findViewById(R.id.contactInitial)
         val lastMessageView: TextView = view.findViewById(R.id.lastMessage)
         val timestampView: TextView = view.findViewById(R.id.messageTimestamp)
@@ -97,23 +101,33 @@ class ContactAdapter(
             is ContactViewHolder -> {
                 val contact = item.contact ?: return
 
-                // Display contact name (without @ prefix, normal case)
-                val displayName = contact.name.removePrefix("@")
+                // Display nickname if set, otherwise username
+                val displayName = contact.nickname ?: contact.name.removePrefix("@")
                 holder.nameView.text = displayName
-                holder.nameView.paint.shader = null // Reset before re-applying
+                holder.nameView.paint.shader = null
                 com.securelegion.utils.TextGradient.apply(holder.nameView)
 
-                // Set avatar with photo or initials
-                holder.avatarView.setName(displayName)
+                // Always show @username on second line
+                val username = "@${contact.name.removePrefix("@")}"
+                holder.usernameView.text = username
+                holder.usernameView.visibility = View.VISIBLE
+
+                // Set avatar
+                holder.avatarView.setName(contact.name.removePrefix("@"))
                 if (!contact.profilePhotoBase64.isNullOrEmpty()) {
                     holder.avatarView.setPhotoBase64(contact.profilePhotoBase64)
                 } else {
                     holder.avatarView.clearPhoto()
                 }
 
-                Log.d("ContactAdapter", "Binding contact: ${contact.name}, display: $displayName")
+                // Top divider: show on first contact in each section (after section header or at start)
+                val isFirstInSection = position == 0 || listItems[position - 1].type == VIEW_TYPE_SECTION
+                holder.dividerTop.visibility = if (isFirstInSection) View.VISIBLE else View.GONE
 
-                holder.itemView.setOnClickListener { onContactClick(contact) }
+                // Bottom divider: always show (closes off the last contact in each section too)
+                holder.divider.visibility = View.VISIBLE
+
+                holder.contactRow.setOnClickListener { onContactClick(contact) }
             }
         }
     }

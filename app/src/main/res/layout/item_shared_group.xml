@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="horizontal"
+    android:gravity="center_vertical"
+    android:background="@drawable/settings_icon_bg"
+    android:padding="12dp"
+    android:layout_marginBottom="6dp">
+
+    <!-- Group icon -->
+    <FrameLayout
+        android:layout_width="36dp"
+        android:layout_height="36dp"
+        android:background="@drawable/profile_circle_bg"
+        android:layout_marginEnd="12dp">
+
+        <TextView
+            android:id="@+id/groupIcon"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:textSize="16sp" />
+
+    </FrameLayout>
+
+    <!-- Group name + member count -->
+    <LinearLayout
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="1"
+        android:orientation="vertical">
+
+        <TextView
+            android:id="@+id/groupName"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Group Name"
+            android:textSize="14sp"
+            android:textColor="#CCCCCC"
+            android:fontFamily="@font/poppins_medium"
+            android:maxLines="1"
+            android:ellipsize="end" />
+
+        <TextView
+            android:id="@+id/groupMembers"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="3 members"
+            android:textSize="11sp"
+            android:textColor="#555555"
+            android:fontFamily="@font/poppins_regular" />
+
+    </LinearLayout>
+
+</LinearLayout>

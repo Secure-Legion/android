@@ -46,6 +46,7 @@ class AddFriendActivity : BaseActivity() {
     private val selectedRequests = mutableSetOf<String>()
     private var scannedUsername: String? = null // Username from QR code scan
     @Volatile private var qrAutoSent = false   // Prevents double-fire from barcode scanner
+    private var isAutoMode = false // When true, activity is invisible (launched from bottom sheet QR/gallery)
 
     // Gallery QR picker launcher
     private val galleryQrLauncher = registerForActivityResult(
@@ -53,6 +54,9 @@ class AddFriendActivity : BaseActivity() {
     ) { uri ->
         if (uri != null) {
             decodeQrFromGalleryImage(uri)
+        } else if (isAutoMode) {
+            // User cancelled gallery picker — go back
+            finish()
         }
     }
 
@@ -108,25 +112,33 @@ class AddFriendActivity : BaseActivity() {
             }
         }
 
-        // Scan QR button (camera)
-        findViewById<View>(R.id.scanQrButton).setOnClickListener {
-            val intent = Intent(this, QRScannerActivity::class.java)
-            startActivityForResult(intent, QR_SCAN_REQUEST_CODE)
-        }
-
-        // Gallery QR button — pick QR image from photos
-        findViewById<View>(R.id.galleryQrButton).setOnClickListener {
-            galleryQrLauncher.launch("image/*")
-        }
+        // Hide scan buttons — QR scan/gallery are now accessed via bottom sheet
+        findViewById<View>(R.id.scanButtonsRow).visibility = View.GONE
 
         // Setup PIN boxes with auto-advance
         setupPinBoxes()
 
-        // Check legacy manual entry setting
-        val securityPrefs = getSharedPreferences("security_prefs", Context.MODE_PRIVATE)
-        val legacyManualEntry = securityPrefs.getBoolean("legacy_manual_entry", false)
-        if (legacyManualEntry) {
+        // Check if launched in auto mode (from bottom sheet QR/gallery)
+        isAutoMode = intent.getBooleanExtra("AUTO_SCAN", false) || intent.getBooleanExtra("AUTO_GALLERY", false)
+
+        if (isAutoMode) {
+            // Hide all content — activity acts as invisible processor
+            findViewById<View>(R.id.addFriendScrollView).visibility = View.GONE
+            findViewById<View>(R.id.header).visibility = View.GONE
+        } else {
+            // Manual mode — show input fields
             showManualInputSection()
+        }
+
+        // Auto-launch QR scanner if requested from bottom sheet
+        if (intent.getBooleanExtra("AUTO_SCAN", false)) {
+            val scanIntent = Intent(this, QRScannerActivity::class.java)
+            startActivityForResult(scanIntent, QR_SCAN_REQUEST_CODE)
+        }
+
+        // Auto-launch gallery picker if requested from bottom sheet
+        if (intent.getBooleanExtra("AUTO_GALLERY", false)) {
+            galleryQrLauncher.launch("image/*")
         }
 
         // Send Friend Request button
@@ -243,10 +255,17 @@ class AddFriendActivity : BaseActivity() {
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
 
-        if (requestCode == QR_SCAN_REQUEST_CODE && resultCode == Activity.RESULT_OK) {
-            val scannedData = data?.getStringExtra("SCANNED_ADDRESS")
-            if (!scannedData.isNullOrEmpty()) {
-                handleScannedQrData(scannedData)
+        if (requestCode == QR_SCAN_REQUEST_CODE) {
+            if (resultCode == Activity.RESULT_OK) {
+                val scannedData = data?.getStringExtra("SCANNED_ADDRESS")
+                if (!scannedData.isNullOrEmpty()) {
+                    handleScannedQrData(scannedData)
+                } else if (isAutoMode) {
+                    finish()
+                }
+            } else if (isAutoMode) {
+                // User cancelled scanner — go back
+                finish()
             }
         }
     }
@@ -309,6 +328,7 @@ class AddFriendActivity : BaseActivity() {
 
         if (onionAddress == null) {
             ThemedToast.show(this, "Invalid QR code — no .onion address found")
+            if (isAutoMode) finish()
             return
         }
 
@@ -325,7 +345,15 @@ class AddFriendActivity : BaseActivity() {
             initiateFriendRequest(onionAddress, pin)
         } else if (!qrAutoSent) {
             // Incomplete QR (missing PIN) — show manual entry for PIN only
+            if (isAutoMode) {
+                // Reveal UI for PIN entry
+                findViewById<View>(R.id.addFriendScrollView).visibility = View.VISIBLE
+                findViewById<View>(R.id.header).visibility = View.VISIBLE
+            }
             showManualInputSection()
+            if (username != null) {
+                findViewById<EditText>(R.id.usernameInput).setText(username)
+            }
             findViewById<EditText>(R.id.cidInput).setText(onionAddress)
             if (pin != null) {
                 fillPinBoxes(pin)
@@ -396,14 +424,17 @@ class AddFriendActivity : BaseActivity() {
                             handleScannedQrData(qrData)
                         } else {
                             ThemedToast.show(this, "QR code is empty")
+                            if (isAutoMode) finish()
                         }
                     } else {
                         ThemedToast.show(this, "No QR code found in image")
+                        if (isAutoMode) finish()
                     }
                 }
                 .addOnFailureListener { e ->
                     Log.e(TAG, "Failed to decode QR from gallery image", e)
                     ThemedToast.show(this, "Failed to read QR code from image")
+                    if (isAutoMode) finish()
                 }
         } catch (e: Exception) {
             Log.e(TAG, "Error processing gallery image", e)
@@ -1460,7 +1491,9 @@ class AddFriendActivity : BaseActivity() {
                 // Save as "sending" immediately — background worker will update to pending/failed
                 val requestId = java.util.UUID.randomUUID().toString()
                 val pendingRequest = com.securelegion.models.PendingFriendRequest(
-                    displayName = scannedUsername ?: "Pending Friend",
+                    displayName = scannedUsername
+                        ?: findViewById<EditText>(R.id.usernameInput).text.toString().trim().ifEmpty { null }
+                        ?: "Pending Friend",
                     ipfsCid = sanitizedOnion,
                     direction = com.securelegion.models.PendingFriendRequest.DIRECTION_OUTGOING,
                     status = com.securelegion.models.PendingFriendRequest.STATUS_SENDING,
@@ -1474,6 +1507,7 @@ class AddFriendActivity : BaseActivity() {
                 ThemedToast.show(this@AddFriendActivity, "Sending friend request...")
 
                 // Clear form
+                findViewById<EditText>(R.id.usernameInput).setText("")
                 findViewById<EditText>(R.id.cidInput).setText("")
                 findViewById<EditText>(R.id.pinBox1).setText("")
                 findViewById<EditText>(R.id.pinBox2).setText("")
@@ -1489,17 +1523,27 @@ class AddFriendActivity : BaseActivity() {
                 // Clear scanned username after use
                 scannedUsername = null
 
-                // Reload UI — shows clock icon for "sending" entry
-                loadPendingFriendRequests()
-
                 // Kick off background send via TorService (survives Activity navigation)
                 com.securelegion.services.TorService.sendFriendRequestInBackground(
                     requestId, sanitizedOnion, encryptedPhase1, applicationContext
                 )
 
+                if (isAutoMode) {
+                    // Navigate to Requests tab and close this invisible activity
+                    val mainIntent = Intent(this@AddFriendActivity, MainActivity::class.java)
+                    mainIntent.flags = Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
+                    mainIntent.putExtra("SHOW_REQUESTS_TAB", true)
+                    startActivity(mainIntent)
+                    finish()
+                } else {
+                    // Reload UI — shows clock icon for "sending" entry
+                    loadPendingFriendRequests()
+                }
+
             } catch (e: Exception) {
                 Log.e(TAG, "Phase 1 failed", e)
                 ThemedToast.show(this@AddFriendActivity, "Failed to send: ${e.message}")
+                if (isAutoMode) finish()
             }
         }
     }

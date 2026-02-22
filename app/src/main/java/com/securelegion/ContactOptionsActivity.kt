@@ -1,16 +1,23 @@
 package com.securelegion
 
 import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
 import android.util.Log
+import android.util.Patterns
+import android.view.LayoutInflater
 import android.view.View
+import android.view.ViewGroup
 import android.widget.ImageView
 import android.widget.TextView
-import androidx.core.view.ViewCompat
-import androidx.core.view.WindowCompat
-import androidx.core.view.WindowInsetsCompat
+import androidx.recyclerview.widget.GridLayoutManager
+import androidx.recyclerview.widget.LinearLayoutManager
+import androidx.recyclerview.widget.RecyclerView
+import com.securelegion.adapters.MediaGridAdapter
+import com.securelegion.adapters.VoiceClipAdapter
 import com.securelegion.crypto.KeyManager
 import com.securelegion.database.SecureLegionDatabase
+import com.securelegion.database.entities.Message
 import com.securelegion.utils.GlassBottomSheetDialog
 import com.securelegion.utils.ThemedToast
 import kotlinx.coroutines.CoroutineScope
@@ -35,7 +42,20 @@ class ContactOptionsActivity : BaseActivity() {
     private var contactId: Long = -1
     private var isTrustedContact: Boolean = false
     private var isBlocked: Boolean = false
+    private var isMuted: Boolean = false
     private var currentNickname: String? = null
+
+    // Tab views
+    private lateinit var tabMedia: TextView
+    private lateinit var tabVoice: TextView
+    private lateinit var tabFiles: TextView
+    private lateinit var tabLinks: TextView
+    private lateinit var tabGroups: TextView
+    private lateinit var mediaTabContent: View
+    private lateinit var voiceTabContent: View
+    private lateinit var filesTabContent: View
+    private lateinit var linksTabContent: View
+    private lateinit var groupsTabContent: View
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -51,7 +71,11 @@ class ContactOptionsActivity : BaseActivity() {
         setupContactInfo(name)
         loadContactStatus()
         setupClickListeners(name)
-        setupBottomNav()
+        setupTabs()
+        loadMediaContent()
+        loadVoiceContent()
+        loadLinksContent()
+        loadGroupsContent()
     }
 
     private fun initializeViews() {
@@ -62,6 +86,18 @@ class ContactOptionsActivity : BaseActivity() {
         blockContactSwitch = findViewById(R.id.blockContactSwitch)
         trustedContactSwitch = findViewById(R.id.trustedContactSwitch)
         trustedStarIcon = findViewById(R.id.trustedStarIcon)
+
+        // Tab views
+        tabMedia = findViewById(R.id.tabMedia)
+        tabVoice = findViewById(R.id.tabVoice)
+        tabFiles = findViewById(R.id.tabFiles)
+        tabLinks = findViewById(R.id.tabLinks)
+        tabGroups = findViewById(R.id.tabGroups)
+        mediaTabContent = findViewById(R.id.mediaTabContent)
+        voiceTabContent = findViewById(R.id.voiceTabContent)
+        filesTabContent = findViewById(R.id.filesTabContent)
+        linksTabContent = findViewById(R.id.linksTabContent)
+        groupsTabContent = findViewById(R.id.groupsTabContent)
     }
 
     private fun setupContactInfo(name: String) {
@@ -89,6 +125,7 @@ class ContactOptionsActivity : BaseActivity() {
                     updateNicknameUI(contact.displayName)
                     updateTrustedContactUI()
                     updateBlockUI()
+                    loadMuteStatus()
 
                     // Load contact's profile photo
                     if (!contact.profilePictureBase64.isNullOrEmpty()) {
@@ -115,23 +152,55 @@ class ContactOptionsActivity : BaseActivity() {
         val blockLabel = findViewById<TextView>(R.id.blockLabel)
         val blockIcon = findViewById<ImageView>(R.id.blockIcon)
         if (isBlocked) {
-            blockLabel?.text = "Unblock"
+            blockLabel?.text = "unblock"
             blockIcon?.setColorFilter(android.graphics.Color.parseColor("#FF4444"))
         } else {
-            blockLabel?.text = "Block"
+            blockLabel?.text = "block"
             blockIcon?.clearColorFilter()
         }
     }
 
     private fun updateTrustedContactUI() {
         trustedContactSwitch.isChecked = isTrustedContact
+        val favLabel = findViewById<TextView>(R.id.favLabel)
         if (isTrustedContact) {
             trustedStarIcon.setImageResource(R.drawable.ic_star_filled)
-            trustedStarIcon.setColorFilter(android.graphics.Color.parseColor("#FFD700"))
+            trustedStarIcon.setColorFilter(android.graphics.Color.WHITE)
+            favLabel?.text = "uncircle"
         } else {
             trustedStarIcon.setImageResource(R.drawable.ic_star_outline)
             trustedStarIcon.clearColorFilter()
+            favLabel?.text = "circle"
         }
+    }
+
+    private fun loadMuteStatus() {
+        val prefs = getSharedPreferences("muted_contacts", MODE_PRIVATE)
+        isMuted = prefs.getBoolean("muted_$contactId", false)
+        updateMuteUI()
+    }
+
+    private fun updateMuteUI() {
+        val muteIcon = findViewById<ImageView>(R.id.muteIcon)
+        val muteLabel = findViewById<TextView>(R.id.muteLabel)
+        if (isMuted) {
+            muteIcon?.setImageResource(R.drawable.ic_bell_muted)
+            muteLabel?.text = "unmute"
+        } else {
+            muteIcon?.setImageResource(R.drawable.ic_bell)
+            muteLabel?.text = "mute"
+        }
+    }
+
+    private fun toggleMuteStatus() {
+        isMuted = !isMuted
+        val prefs = getSharedPreferences("muted_contacts", MODE_PRIVATE)
+        prefs.edit().putBoolean("muted_$contactId", isMuted).apply()
+        updateMuteUI()
+
+        val message = if (isMuted) "Contact muted" else "Contact unmuted"
+        ThemedToast.show(this, message)
+        Log.i(TAG, "Mute status updated: $isMuted")
     }
 
     private fun toggleTrustedContactStatus() {
@@ -201,7 +270,7 @@ class ContactOptionsActivity : BaseActivity() {
             contactNickname.visibility = View.VISIBLE
             com.securelegion.utils.TextGradient.apply(contactNickname)
 
-            contactName.textSize = 16f
+            contactName.textSize = 14f
             contactName.text = username
             contactName.setTextColor(android.graphics.Color.parseColor("#6C6C6C"))
 
@@ -209,7 +278,7 @@ class ContactOptionsActivity : BaseActivity() {
         } else {
             // No nickname — show username large
             contactNickname.visibility = View.GONE
-            contactName.textSize = 34f
+            contactName.textSize = 26f
             contactName.text = username
             contactName.setTextColor(resources.getColor(R.color.lock_title_gray, theme))
             com.securelegion.utils.TextGradient.apply(contactName)
@@ -295,9 +364,6 @@ class ContactOptionsActivity : BaseActivity() {
             showNicknameDialog(name)
         }
 
-        // Call action — voice calling disabled in v1
-        findViewById<View>(R.id.actionCall).visibility = View.GONE
-
         // Message action
         findViewById<View>(R.id.actionMessage).setOnClickListener {
             val intent = Intent(this, ChatActivity::class.java)
@@ -305,6 +371,16 @@ class ContactOptionsActivity : BaseActivity() {
             intent.putExtra(ChatActivity.EXTRA_CONTACT_NAME, currentNickname ?: name)
             intent.putExtra(ChatActivity.EXTRA_CONTACT_ADDRESS, fullAddress)
             startActivity(intent)
+        }
+
+        // Mute action
+        findViewById<View>(R.id.actionMute).setOnClickListener {
+            toggleMuteStatus()
+        }
+
+        // Fav action (trusted contact toggle)
+        findViewById<View>(R.id.actionFav).setOnClickListener {
+            toggleTrustedContactStatus()
         }
 
         // Delete action
@@ -316,11 +392,320 @@ class ContactOptionsActivity : BaseActivity() {
         findViewById<View>(R.id.actionBlock).setOnClickListener {
             toggleBlockStatus()
         }
+    }
 
-        // Trusted star button (header)
-        findViewById<View>(R.id.trustedStarButton).setOnClickListener {
-            toggleTrustedContactStatus()
+    private fun setupTabs() {
+        val tabs = listOf(tabMedia, tabVoice, tabFiles, tabLinks, tabGroups)
+        val contents = listOf(mediaTabContent, voiceTabContent, filesTabContent, linksTabContent, groupsTabContent)
+
+        fun selectTab(index: Int) {
+            tabs.forEachIndexed { i, tab ->
+                if (i == index) {
+                    tab.setBackgroundResource(R.drawable.contact_tab_active)
+                    tab.setTextColor(0xFFFFFFFF.toInt())
+                } else {
+                    tab.setBackgroundResource(R.drawable.contact_tab_inactive)
+                    tab.setTextColor(0xFF666666.toInt())
+                }
+            }
+            contents.forEachIndexed { i, content ->
+                content.visibility = if (i == index) View.VISIBLE else View.GONE
+            }
         }
+
+        tabMedia.setOnClickListener { selectTab(0) }
+        tabVoice.setOnClickListener { selectTab(1) }
+        tabFiles.setOnClickListener { selectTab(2) }
+        tabLinks.setOnClickListener { selectTab(3) }
+        tabGroups.setOnClickListener { selectTab(4) }
+
+        // Default to Media tab
+        selectTab(0)
+    }
+
+    private fun loadMediaContent() {
+        if (contactId == -1L) return
+
+        CoroutineScope(Dispatchers.Main).launch {
+            try {
+                val keyManager = KeyManager.getInstance(this@ContactOptionsActivity)
+                val dbPassphrase = keyManager.getDatabasePassphrase()
+                val database = SecureLegionDatabase.getInstance(this@ContactOptionsActivity, dbPassphrase)
+
+                val imageMessages = withContext(Dispatchers.IO) {
+                    database.messageDao().getImageMessagesForContact(contactId)
+                }
+
+                val mediaRecyclerView = findViewById<RecyclerView>(R.id.mediaRecyclerView)
+                val mediaEmptyState = findViewById<TextView>(R.id.mediaEmptyState)
+
+                if (imageMessages.isEmpty()) {
+                    mediaRecyclerView.visibility = View.GONE
+                    mediaEmptyState.visibility = View.VISIBLE
+                    return@launch
+                }
+
+                // Convert to MediaItem list, filtering out entries without attachment data
+                val mediaItems = imageMessages.mapNotNull { msg ->
+                    val data = msg.attachmentData
+                    if (!data.isNullOrEmpty()) {
+                        MediaGridAdapter.MediaItem(
+                            attachmentData = data,
+                            messageId = msg.messageId,
+                            timestamp = msg.timestamp
+                        )
+                    } else null
+                }
+
+                if (mediaItems.isEmpty()) {
+                    mediaRecyclerView.visibility = View.GONE
+                    mediaEmptyState.visibility = View.VISIBLE
+                    return@launch
+                }
+
+                mediaEmptyState.visibility = View.GONE
+                mediaRecyclerView.visibility = View.VISIBLE
+                mediaRecyclerView.layoutManager = GridLayoutManager(this@ContactOptionsActivity, 3)
+                mediaRecyclerView.adapter = MediaGridAdapter(
+                    mediaItems = mediaItems,
+                    decryptImage = { encryptedBytes ->
+                        keyManager.decryptImageFile(encryptedBytes)
+                    }
+                )
+
+                Log.d(TAG, "Loaded ${mediaItems.size} media items for contact")
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to load media content", e)
+            }
+        }
+    }
+
+    private fun loadVoiceContent() {
+        if (contactId == -1L) return
+
+        CoroutineScope(Dispatchers.Main).launch {
+            try {
+                val keyManager = KeyManager.getInstance(this@ContactOptionsActivity)
+                val dbPassphrase = keyManager.getDatabasePassphrase()
+                val database = SecureLegionDatabase.getInstance(this@ContactOptionsActivity, dbPassphrase)
+
+                val voiceMessages = withContext(Dispatchers.IO) {
+                    database.messageDao().getVoiceMessagesForContact(contactId)
+                }
+
+                val voiceRecyclerView = findViewById<RecyclerView>(R.id.voiceRecyclerView)
+                val voiceEmptyState = findViewById<TextView>(R.id.voiceEmptyState)
+
+                if (voiceMessages.isEmpty()) {
+                    voiceRecyclerView.visibility = View.GONE
+                    voiceEmptyState.visibility = View.VISIBLE
+                    return@launch
+                }
+
+                val voiceItems = voiceMessages.map { msg ->
+                    VoiceClipAdapter.VoiceItem(
+                        voiceFilePath = msg.voiceFilePath,
+                        durationSeconds = msg.voiceDuration ?: 0,
+                        timestamp = msg.timestamp,
+                        isSentByMe = msg.isSentByMe
+                    )
+                }
+
+                voiceEmptyState.visibility = View.GONE
+                voiceRecyclerView.visibility = View.VISIBLE
+                voiceRecyclerView.layoutManager = androidx.recyclerview.widget.LinearLayoutManager(this@ContactOptionsActivity)
+                voiceRecyclerView.adapter = VoiceClipAdapter(voiceItems)
+
+                Log.d(TAG, "Loaded ${voiceItems.size} voice clips for contact")
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to load voice content", e)
+            }
+        }
+    }
+
+    private fun loadLinksContent() {
+        if (contactId == -1L) return
+
+        CoroutineScope(Dispatchers.Main).launch {
+            try {
+                val keyManager = KeyManager.getInstance(this@ContactOptionsActivity)
+                val dbPassphrase = keyManager.getDatabasePassphrase()
+                val database = SecureLegionDatabase.getInstance(this@ContactOptionsActivity, dbPassphrase)
+
+                val textMessages = withContext(Dispatchers.IO) {
+                    database.messageDao().getMessagesForContact(contactId)
+                }
+
+                // Extract URLs from message content
+                data class SharedLink(val url: String, val timestamp: Long)
+
+                val links = mutableListOf<SharedLink>()
+                val seenUrls = mutableSetOf<String>()
+
+                for (msg in textMessages) {
+                    val content = msg.encryptedContent ?: continue
+                    // encryptedContent is decrypted at display time in chat,
+                    // but for TEXT messages the content is stored as plaintext in local DB
+                    if (msg.messageType != "TEXT") continue
+
+                    val matcher = Patterns.WEB_URL.matcher(content)
+                    while (matcher.find()) {
+                        val url = matcher.group()
+                        if (url != null && seenUrls.add(url.lowercase())) {
+                            links.add(SharedLink(url, msg.timestamp))
+                        }
+                    }
+                }
+
+                // Sort newest first
+                links.sortByDescending { it.timestamp }
+
+                val linksRecyclerView = findViewById<RecyclerView>(R.id.linksRecyclerView)
+                val linksEmptyState = findViewById<TextView>(R.id.linksEmptyState)
+
+                if (links.isEmpty()) {
+                    linksRecyclerView.visibility = View.GONE
+                    linksEmptyState.visibility = View.VISIBLE
+                    return@launch
+                }
+
+                linksEmptyState.visibility = View.GONE
+                linksRecyclerView.visibility = View.VISIBLE
+                linksRecyclerView.layoutManager = LinearLayoutManager(this@ContactOptionsActivity)
+                linksRecyclerView.adapter = object : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
+                    inner class LinkViewHolder(view: View) : RecyclerView.ViewHolder(view) {
+                        val urlText: TextView = view.findViewById(R.id.linkUrl)
+                        val timestampText: TextView = view.findViewById(R.id.linkTimestamp)
+                    }
+
+                    override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): RecyclerView.ViewHolder {
+                        val view = LayoutInflater.from(parent.context).inflate(R.layout.item_shared_link, parent, false)
+                        return LinkViewHolder(view)
+                    }
+
+                    override fun onBindViewHolder(holder: RecyclerView.ViewHolder, position: Int) {
+                        val link = links[position]
+                        val h = holder as LinkViewHolder
+                        h.urlText.text = link.url
+                        val dateFormat = java.text.SimpleDateFormat("MMM d, yyyy", java.util.Locale.getDefault())
+                        h.timestampText.text = dateFormat.format(java.util.Date(link.timestamp))
+
+                        holder.itemView.setOnClickListener {
+                            showLinkWarning(link.url)
+                        }
+                    }
+
+                    override fun getItemCount(): Int = links.size
+                }
+
+                Log.d(TAG, "Loaded ${links.size} shared links for contact")
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to load links content", e)
+            }
+        }
+    }
+
+    private fun loadGroupsContent() {
+        if (contactId == -1L) return
+
+        CoroutineScope(Dispatchers.Main).launch {
+            try {
+                val keyManager = KeyManager.getInstance(this@ContactOptionsActivity)
+                val dbPassphrase = keyManager.getDatabasePassphrase()
+                val database = SecureLegionDatabase.getInstance(this@ContactOptionsActivity, dbPassphrase)
+
+                val contact = withContext(Dispatchers.IO) {
+                    database.contactDao().getContactById(contactId)
+                }
+
+                val onionAddress = contact?.messagingOnion
+                if (onionAddress.isNullOrEmpty()) {
+                    Log.d(TAG, "No onion address for contact, skipping groups load")
+                    return@launch
+                }
+
+                val sharedGroups = withContext(Dispatchers.IO) {
+                    val groupIds = database.groupPeerDao().getGroupIdsForPeer(onionAddress)
+                    groupIds.mapNotNull { gid -> database.groupDao().getGroupById(gid) }
+                }
+
+                val groupsRecyclerView = findViewById<RecyclerView>(R.id.groupsRecyclerView) ?: return@launch
+                val groupsEmptyState = findViewById<TextView>(R.id.groupsEmptyState) ?: return@launch
+
+                if (sharedGroups.isEmpty()) {
+                    groupsRecyclerView.visibility = View.GONE
+                    groupsEmptyState.visibility = View.VISIBLE
+                    return@launch
+                }
+
+                groupsEmptyState.visibility = View.GONE
+                groupsRecyclerView.visibility = View.VISIBLE
+                groupsRecyclerView.layoutManager = LinearLayoutManager(this@ContactOptionsActivity)
+                groupsRecyclerView.adapter = object : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
+                    inner class GroupViewHolder(view: View) : RecyclerView.ViewHolder(view) {
+                        val icon: TextView = view.findViewById(R.id.groupIcon)
+                        val name: TextView = view.findViewById(R.id.groupName)
+                        val members: TextView = view.findViewById(R.id.groupMembers)
+                    }
+
+                    override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): RecyclerView.ViewHolder {
+                        val view = LayoutInflater.from(parent.context).inflate(R.layout.item_shared_group, parent, false)
+                        return GroupViewHolder(view)
+                    }
+
+                    override fun onBindViewHolder(holder: RecyclerView.ViewHolder, position: Int) {
+                        val group = sharedGroups[position]
+                        val h = holder as GroupViewHolder
+                        h.icon.text = group.groupIcon ?: "\uD83D\uDC65"
+                        h.name.text = group.name
+                        h.members.text = "${group.memberCount} members"
+                    }
+
+                    override fun getItemCount(): Int = sharedGroups.size
+                }
+
+                Log.d(TAG, "Loaded ${sharedGroups.size} shared groups for contact")
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to load groups content", e)
+            }
+        }
+    }
+
+    private fun showLinkWarning(url: String) {
+        val bottomSheet = GlassBottomSheetDialog(this)
+        val view = layoutInflater.inflate(R.layout.bottom_sheet_link_warning, null)
+        bottomSheet.setContentView(view)
+
+        bottomSheet.behavior.isDraggable = true
+        bottomSheet.behavior.skipCollapsed = true
+
+        bottomSheet.window?.setBackgroundDrawableResource(android.R.color.transparent)
+        bottomSheet.window?.findViewById<View>(com.google.android.material.R.id.design_bottom_sheet)
+            ?.setBackgroundResource(android.R.color.transparent)
+        view.post {
+            (view.parent as? View)?.setBackgroundResource(android.R.color.transparent)
+        }
+
+        view.findViewById<TextView>(R.id.linkPreview).text = url
+
+        view.findViewById<View>(R.id.openLinkButton).setOnClickListener {
+            bottomSheet.dismiss()
+            try {
+                val intent = Intent(Intent.ACTION_VIEW, Uri.parse(
+                    if (url.startsWith("http://") || url.startsWith("https://")) url
+                    else "https://$url"
+                ))
+                startActivity(intent)
+            } catch (e: Exception) {
+                ThemedToast.show(this, "Failed to open link")
+            }
+        }
+
+        view.findViewById<View>(R.id.cancelLinkButton).setOnClickListener {
+            bottomSheet.dismiss()
+        }
+
+        bottomSheet.show()
     }
 
     private fun showDeleteConfirmationDialog(name: String) {
@@ -368,12 +753,10 @@ class ContactOptionsActivity : BaseActivity() {
 
                 if (contact != null) {
                     withContext(Dispatchers.IO) {
-                        // Lightweight projection: only fetch small columns needed for cleanup
                         val deleteInfos = database.messageDao().getDeleteInfoForContact(contact.id)
 
-                        // Securely wipe any voice/image files using DOD 3-pass
                         deleteInfos.forEach { info ->
-                            if (info.messageType == com.securelegion.database.entities.Message.MESSAGE_TYPE_VOICE &&
+                            if (info.messageType == Message.MESSAGE_TYPE_VOICE &&
                                 info.voiceFilePath != null) {
                                 try {
                                     val voiceFile = java.io.File(info.voiceFilePath)
@@ -385,7 +768,7 @@ class ContactOptionsActivity : BaseActivity() {
                                     Log.e(TAG, "Failed to securely wipe voice file", e)
                                 }
                             }
-                            if (info.messageType == com.securelegion.database.entities.Message.MESSAGE_TYPE_IMAGE) {
+                            if (info.messageType == Message.MESSAGE_TYPE_IMAGE) {
                                 try {
                                     val encFile = java.io.File(filesDir, "image_messages/${info.messageId}.enc")
                                     val imgFile = java.io.File(filesDir, "image_messages/${info.messageId}.img")
@@ -400,13 +783,9 @@ class ContactOptionsActivity : BaseActivity() {
                             }
                         }
 
-                        // Delete all messages for this contact
                         database.messageDao().deleteMessagesForContact(contact.id)
-
-                        // Delete the contact
                         database.contactDao().deleteContact(contact)
 
-                        // Unpin friend's contact list from IPFS mesh
                         if (contact.ipfsCid != null) {
                             try {
                                 val ipfsManager = com.securelegion.services.IPFSManager.getInstance(this@ContactOptionsActivity)
@@ -421,7 +800,6 @@ class ContactOptionsActivity : BaseActivity() {
                             }
                         }
 
-                        // Backup our own contact list (now excludes this deleted contact)
                         try {
                             val contactListManager = com.securelegion.services.ContactListManager.getInstance(this@ContactOptionsActivity)
                             val backupResult = contactListManager.backupToIPFS()
@@ -435,8 +813,10 @@ class ContactOptionsActivity : BaseActivity() {
                             Log.w(TAG, "Non-critical error during contact list backup", e)
                         }
 
-                        // Delete all ping_inbox entries for this contact
                         database.pingInboxDao().deleteByContact(contact.id)
+
+                        getSharedPreferences("muted_contacts", MODE_PRIVATE)
+                            .edit().remove("muted_$contactId").apply()
 
                         Log.i(TAG, "Contact and all messages securely deleted (DOD 3-pass): ${contact.displayName}")
                     }
@@ -455,17 +835,5 @@ class ContactOptionsActivity : BaseActivity() {
                 ThemedToast.show(this@ContactOptionsActivity, "Failed to delete contact")
             }
         }
-    }
-
-    private fun setupBottomNav() {
-        WindowCompat.setDecorFitsSystemWindows(window, false)
-        val bottomNav = findViewById<View>(R.id.bottomNav)
-        ViewCompat.setOnApplyWindowInsetsListener(findViewById(android.R.id.content)) { _, windowInsets ->
-            val insets = windowInsets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())
-            bottomNav.setPadding(bottomNav.paddingLeft, bottomNav.paddingTop, bottomNav.paddingRight, insets.bottom)
-            windowInsets
-        }
-
-        BottomNavigationHelper.setupBottomNavigation(this)
     }
 }

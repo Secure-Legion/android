@@ -49,7 +49,17 @@ object BadgeUtils {
     fun getPendingFriendRequestCount(context: Context): Int {
         val prefs = context.getSharedPreferences("friend_requests", Context.MODE_PRIVATE)
         val pendingRequestsSet = prefs.getStringSet("pending_requests_v2", mutableSetOf()) ?: mutableSetOf()
-        return pendingRequestsSet.size
+        return pendingRequestsSet.count { json ->
+            try {
+                val req = com.securelegion.models.PendingFriendRequest.fromJson(json)
+                // Only count requests that are actually visible in the UI
+                when (req.direction) {
+                    com.securelegion.models.PendingFriendRequest.DIRECTION_INCOMING ->
+                        req.status == com.securelegion.models.PendingFriendRequest.STATUS_PENDING
+                    else -> true // All outgoing requests count
+                }
+            } catch (e: Exception) { false }
+        }
     }
 
     private fun setBadge(badge: TextView?, count: Int) {

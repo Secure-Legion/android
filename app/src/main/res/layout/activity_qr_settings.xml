@@ -327,49 +327,6 @@
 
             </LinearLayout>
 
-            <!-- Manual Entry Toggle -->
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="horizontal"
-                android:background="@drawable/settings_box_bg"
-                android:padding="16dp"
-                android:gravity="center_vertical">
-
-                <LinearLayout
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:orientation="vertical">
-
-                    <TextView
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="Show Manual Entry"
-                        android:textSize="16sp"
-                        android:fontFamily="@font/poppins_medium"
-                        android:textColor="#8C8C8C" />
-
-                    <TextView
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="Display address and PIN on QR screen"
-                        android:textSize="12sp"
-                        android:textColor="#666666"
-                        android:fontFamily="@font/poppins_regular" />
-
-                </LinearLayout>
-
-                <androidx.appcompat.widget.SwitchCompat
-                    android:id="@+id/manualEntrySwitch"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:checked="false"
-                    app:thumbTint="#333333"
-                    app:trackTint="#888888" />
-
-            </LinearLayout>
-
         </LinearLayout>
 
     </ScrollView>
