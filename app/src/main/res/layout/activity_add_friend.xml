@@ -171,6 +171,36 @@
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
+                    android:text="Username"
+                    android:textSize="14sp"
+                    android:fontFamily="@font/poppins_medium"
+                    android:textColor="#8C8C8C"
+                    android:layout_marginBottom="8dp" />
+
+                <FrameLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="60dp"
+                    android:layout_marginBottom="24dp">
+
+                    <EditText
+                        android:id="@+id/usernameInput"
+                        android:layout_width="match_parent"
+                        android:layout_height="match_parent"
+                        android:background="@drawable/lock_password_input_bg"
+                        android:hint="Enter friend\u0027s username"
+                        android:inputType="text"
+                        android:textColorHint="#666666"
+                        android:textColor="#8C8C8C"
+                        android:fontFamily="@font/poppins_regular"
+                        android:textSize="16sp"
+                        android:paddingStart="16dp"
+                        android:paddingEnd="16dp" />
+
+                </FrameLayout>
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
                     android:text="Friends Address"
                     android:textSize="14sp"
                     android:fontFamily="@font/poppins_medium"

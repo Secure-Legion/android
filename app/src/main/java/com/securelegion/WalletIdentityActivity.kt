@@ -100,9 +100,9 @@ class WalletIdentityActivity : AppCompatActivity() {
             startActivity(Intent(this, QrSettingsActivity::class.java))
         }
 
-        // Share button
+        // Share button — opens bottom sheet with QR or manual text options
         findViewById<View>(R.id.shareQrButton).setOnClickListener {
-            shareQrCode(currentQrBitmap, currentFriendRequestOnion ?: "")
+            showShareBottomSheet()
         }
 
         loadUsername()
@@ -398,6 +398,82 @@ class WalletIdentityActivity : AppCompatActivity() {
         } catch (e: Exception) {
             Log.e("WalletIdentity", "Failed to share QR code", e)
             ThemedToast.show(this, "Failed to share QR code")
+        }
+    }
+
+    private fun showShareBottomSheet() {
+        val bottomSheet = GlassBottomSheetDialog(this)
+        val view = layoutInflater.inflate(R.layout.bottom_sheet_share_invite, null)
+        bottomSheet.setContentView(view)
+
+        bottomSheet.window?.setBackgroundDrawableResource(android.R.color.transparent)
+        bottomSheet.window?.findViewById<View>(com.google.android.material.R.id.design_bottom_sheet)
+            ?.setBackgroundResource(android.R.color.transparent)
+        view.post {
+            (view.parent as? View)?.setBackgroundResource(android.R.color.transparent)
+        }
+
+        // Option 1: Share QR Code image
+        view.findViewById<View>(R.id.optionShareQrCode).setOnClickListener {
+            bottomSheet.dismiss()
+            shareQrCode(currentQrBitmap, currentFriendRequestOnion ?: "")
+        }
+
+        // Option 2: Share manual text (onion + PIN + expiry)
+        view.findViewById<View>(R.id.optionShareManually).setOnClickListener {
+            bottomSheet.dismiss()
+            shareManualInfo()
+        }
+
+        bottomSheet.show()
+    }
+
+    private fun shareManualInfo() {
+        lifecycleScope.launch {
+            try {
+                val text = withContext(Dispatchers.Default) {
+                    val keyManager = KeyManager.getInstance(this@WalletIdentityActivity)
+                    val friendRequestOnion = keyManager.getFriendRequestOnion() ?: return@withContext null
+                    val pin = keyManager.getContactPin() ?: ""
+                    val username = keyManager.getUsername() ?: ""
+
+                    val securityPrefs = getSharedPreferences("security_prefs", Context.MODE_PRIVATE)
+                    val rotationIntervalMs = securityPrefs.getLong("pin_rotation_interval_ms", 24 * 60 * 60 * 1000L)
+                    val rotationTimestamp = keyManager.getPinRotationTimestamp()
+                    val expiryMs = if (rotationIntervalMs > 0 && rotationTimestamp > 0) {
+                        rotationTimestamp + rotationIntervalMs
+                    } else 0L
+
+                    buildString {
+                        append("Add me on Secure!")
+                        if (username.isNotEmpty()) append("\nUsername: $username")
+                        append("\nAddress: $friendRequestOnion")
+                        if (pin.isNotEmpty()) append("\nPIN: $pin")
+                        if (expiryMs > 0) {
+                            val remainingMs = expiryMs - System.currentTimeMillis()
+                            if (remainingMs > 0) {
+                                val hours = remainingMs / (60 * 60 * 1000)
+                                val minutes = (remainingMs % (60 * 60 * 1000)) / (60 * 1000)
+                                append("\nExpires in: ${hours}h ${minutes}m")
+                            }
+                        }
+                    }
+                }
+
+                if (text == null) {
+                    ThemedToast.show(this@WalletIdentityActivity, "Failed to load identity info")
+                    return@launch
+                }
+
+                val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                    type = "text/plain"
+                    putExtra(Intent.EXTRA_TEXT, text)
+                }
+                startActivity(Intent.createChooser(shareIntent, "Share Invite"))
+            } catch (e: Exception) {
+                Log.e("WalletIdentity", "Failed to share manual info", e)
+                ThemedToast.show(this@WalletIdentityActivity, "Failed to share")
+            }
         }
     }
 

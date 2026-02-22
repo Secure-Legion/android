@@ -48,7 +48,7 @@
             android:id="@+id/subtitleText"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="Freedom to Speak"
+            android:text="Leave no Footprint"
             android:textColor="@color/lock_subtitle_gray"
             android:textSize="14sp"
             android:lineSpacingMultiplier="1.5"

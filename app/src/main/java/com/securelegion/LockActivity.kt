@@ -264,26 +264,9 @@ class LockActivity : AppCompatActivity() {
 
     private fun setupForgotPasswordText() {
         val forgotPasswordTextView = findViewById<TextView>(R.id.forgotPasswordText)
-        val fullText = "Forgot Password? Import Recovery"
-        val spannableString = SpannableString(fullText)
-
-        // "Forgot Password? " (with space) in gray (#888888)
-        spannableString.setSpan(
-            ForegroundColorSpan(0xFF888888.toInt()),
-            0,
-            17, // "Forgot Password?" length (without space)
-            Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
-        )
-
-        // "Import Recovery" in white (#FFFFFF)
-        spannableString.setSpan(
-            ForegroundColorSpan(0xFFFFFFFF.toInt()),
-            17, // Start at space before "Import Recovery"
-            fullText.length,
-            Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
-        )
-
-        forgotPasswordTextView.text = spannableString
+        val fullText = "Import Recovery"
+        forgotPasswordTextView.text = fullText
+        forgotPasswordTextView.setTextColor(0xFFFFFFFF.toInt())
 
         // Make it clickable and open RestoreAccountActivity
         forgotPasswordTextView.setOnClickListener {

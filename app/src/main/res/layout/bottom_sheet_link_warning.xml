@@ -1,0 +1,92 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:background="@drawable/bottom_sheet_bg"
+    android:orientation="vertical"
+    android:paddingStart="24dp"
+    android:paddingEnd="24dp"
+    android:paddingTop="24dp"
+    android:paddingBottom="32dp">
+
+    <!-- Warning Icon -->
+    <ImageView
+        android:layout_width="48dp"
+        android:layout_height="48dp"
+        android:layout_gravity="center"
+        android:src="@drawable/ic_warning"
+        android:layout_marginBottom="16dp"
+        android:contentDescription="Warning" />
+
+    <!-- Title -->
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="External Link Warning"
+        android:textSize="20sp"
+        android:textColor="?attr/colorOnSurface"
+        android:fontFamily="@font/space_grotesk_bold"
+        android:gravity="center"
+        android:layout_marginBottom="12dp" />
+
+    <!-- Warning message -->
+    <TextView
+        android:id="@+id/warningMessage"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Opening this link without Tor VPN active will expose your real IP address. Only proceed if you trust this link."
+        android:textSize="14sp"
+        android:textColor="#999999"
+        android:fontFamily="@font/poppins_regular"
+        android:gravity="center"
+        android:layout_marginBottom="8dp" />
+
+    <!-- URL preview -->
+    <TextView
+        android:id="@+id/linkPreview"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="https://example.com"
+        android:textSize="12sp"
+        android:textColor="#666666"
+        android:fontFamily="@font/poppins_regular"
+        android:gravity="center"
+        android:background="@drawable/settings_icon_bg"
+        android:padding="10dp"
+        android:maxLines="3"
+        android:ellipsize="end"
+        android:layout_marginBottom="20dp" />
+
+    <!-- Open Button -->
+    <TextView
+        android:id="@+id/openLinkButton"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="I Understand, Open Link"
+        android:textSize="15sp"
+        android:textColor="#FFFFFF"
+        android:fontFamily="@font/poppins_medium"
+        android:gravity="center"
+        android:background="@drawable/settings_icon_bg"
+        android:paddingTop="14dp"
+        android:paddingBottom="14dp"
+        android:layout_marginBottom="10dp"
+        android:clickable="true"
+        android:focusable="true" />
+
+    <!-- Cancel Button -->
+    <TextView
+        android:id="@+id/cancelLinkButton"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Cancel"
+        android:textSize="15sp"
+        android:textColor="#666666"
+        android:fontFamily="@font/poppins_medium"
+        android:gravity="center"
+        android:paddingTop="10dp"
+        android:paddingBottom="10dp"
+        android:clickable="true"
+        android:focusable="true" />
+
+</LinearLayout>

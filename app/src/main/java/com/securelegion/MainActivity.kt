@@ -73,6 +73,7 @@ class MainActivity : BaseActivity() {
     }
 
     private var currentTab = "messages" // Track current tab: "messages", "groups", "contacts", or "wallet"
+    private var contactsSubTab = "contacts" // "contacts" or "requests"
     private var currentWallet: Wallet? = null // Track currently selected wallet
     private var isCallMode = false // Track if we're in call mode (Phone icon clicked)
     private var pendingCallContact: Contact? = null // Temporary storage for pending call after permission request
@@ -547,6 +548,11 @@ class MainActivity : BaseActivity() {
         if (intent.getBooleanExtra("SHOW_GROUPS", false)) {
             Log.d("MainActivity", "onNewIntent - showing groups tab from notification")
             showGroupsTab()
+        } else if (intent.getBooleanExtra("SHOW_REQUESTS_TAB", false)) {
+            Log.d("MainActivity", "onNewIntent - showing requests tab after QR send")
+            isCallMode = false
+            showContactsTab()
+            showRequestsSubTab()
         } else if (intent.getBooleanExtra("SHOW_CONTACTS", false)) {
             Log.d("MainActivity", "onNewIntent - showing contacts tab")
             isCallMode = false
@@ -1055,11 +1061,12 @@ class MainActivity : BaseActivity() {
 
                 Log.i("MainActivity", "Loaded ${dbContacts.size} contacts from database")
 
-                // Convert database entities to UI models (prefer nickname over displayName)
+                // Convert database entities to UI models
                 val contacts = dbContacts.map { dbContact ->
                     Contact(
                         id = dbContact.id.toString(),
-                        name = dbContact.nickname ?: dbContact.displayName,
+                        name = dbContact.displayName,
+                        nickname = dbContact.nickname,
                         address = dbContact.solanaAddress,
                         friendshipStatus = dbContact.friendshipStatus,
                         profilePhotoBase64 = dbContact.profilePictureBase64
@@ -1305,10 +1312,7 @@ class MainActivity : BaseActivity() {
         // Compose New Message / Add Friend Button
         findViewById<View>(R.id.newMessageBtn).setOnClickListener {
             when (currentTab) {
-                "contacts" -> {
-                    val intent = android.content.Intent(this, AddFriendActivity::class.java)
-                    startActivityWithSlideAnimation(intent)
-                }
+                "contacts" -> showAddContactBottomSheet()
                 "groups" -> {
                     val intent = android.content.Intent(this, CreateGroupActivity::class.java)
                     startActivityWithSlideAnimation(intent)
@@ -1340,11 +1344,19 @@ class MainActivity : BaseActivity() {
 
         // Tabs
         findViewById<View>(R.id.tabMessages).setOnClickListener {
-            showAllChatsTab()
+            if (currentTab == "contacts") {
+                showContactsSubTab()
+            } else {
+                showAllChatsTab()
+            }
         }
 
         findViewById<View>(R.id.tabGroups).setOnClickListener {
-            showGroupsTab()
+            if (currentTab == "contacts") {
+                showRequestsSubTab()
+            } else {
+                showGroupsTab()
+            }
         }
     }
 
@@ -1411,6 +1423,9 @@ class MainActivity : BaseActivity() {
 
     private fun showAllChatsTab() {
         Log.d("MainActivity", "Switching to messages tab")
+        // Restore pill labels for chats mode
+        findViewById<TextView>(R.id.tabMessages).text = "Messages"
+        findViewById<TextView>(R.id.tabGroups).text = "Groups"
         currentTab = "messages"
         findViewById<View>(R.id.chatListContainer).visibility = View.VISIBLE
         findViewById<View>(R.id.groupsView).visibility = View.GONE
@@ -1430,6 +1445,9 @@ class MainActivity : BaseActivity() {
         // Reload message threads when switching back to messages tab
         setupChatList()
 
+        // Clear groups badge (friend request badge may be stale from contacts tab)
+        findViewById<android.widget.TextView>(R.id.groupsBadge).visibility = View.GONE
+
         // Update tab pill styling - Messages active, Groups inactive
         findViewById<android.widget.TextView>(R.id.tabMessages).apply {
             setTextColor(ContextCompat.getColor(context, R.color.text_white))
@@ -1444,6 +1462,9 @@ class MainActivity : BaseActivity() {
 
     private fun showGroupsTab() {
         Log.d("MainActivity", "Switching to groups tab")
+        // Restore pill labels for chats mode
+        findViewById<TextView>(R.id.tabMessages).text = "Messages"
+        findViewById<TextView>(R.id.tabGroups).text = "Groups"
         currentTab = "groups"
         findViewById<View>(R.id.chatListContainer).visibility = View.GONE
         findViewById<View>(R.id.groupsView).visibility = View.VISIBLE
@@ -1482,23 +1503,487 @@ class MainActivity : BaseActivity() {
         findViewById<View>(R.id.groupsView).visibility = View.GONE
         findViewById<View>(R.id.contactsView).visibility = View.VISIBLE
 
-        // Hide tabs row — contacts is accessed from bottom nav, not tabs
-        findViewById<View>(R.id.tabsContainer).visibility = View.GONE
+        // Show tabs and set to Contacts/Requests pills
+        findViewById<View>(R.id.tabsContainer).visibility = View.VISIBLE
         findViewById<TextView>(R.id.headerTitle).text = "Contacts"
 
-        // Swap compose icon to add-friend
-        setNewMessageIcon(R.drawable.ic_add_friend)
+        // Relabel pills for contacts mode
+        findViewById<TextView>(R.id.tabMessages).text = "Contacts"
+        findViewById<TextView>(R.id.tabGroups).text = "Requests"
 
-        // Show pending friend request count on compose button
-        val count = BadgeUtils.getPendingFriendRequestCount(this)
-        val rootView = findViewById<View>(android.R.id.content)
-        BadgeUtils.updateComposeBadge(rootView, count)
+        // Update request badge count on Requests pill
+        updateRequestsPillBadge()
+
+        // Swap compose icon to + (add friend)
+        setNewMessageIcon(R.drawable.ic_add_friend)
+        BadgeUtils.updateComposeBadge(findViewById(android.R.id.content), 0)
 
         // Update search bar hint
         findViewById<android.widget.EditText>(R.id.searchBar).hint = "Search contacts..."
 
-        // Reload contacts list
+        // Show whichever sub-tab was last active
+        if (contactsSubTab == "requests") {
+            showRequestsSubTab()
+        } else {
+            showContactsSubTab()
+        }
+    }
+
+    private fun showContactsSubTab() {
+        contactsSubTab = "contacts"
+        val contactsView = findViewById<View>(R.id.contactsView)
+
+        contactsView.findViewById<View>(R.id.contactsList).visibility = View.VISIBLE
+        contactsView.findViewById<View>(R.id.requestsList).visibility = View.GONE
+        contactsView.findViewById<View>(R.id.emptyRequestsState).visibility = View.GONE
+
+        // Update pill styling — Contacts active
+        findViewById<android.widget.TextView>(R.id.tabMessages).apply {
+            setTextColor(androidx.core.content.ContextCompat.getColor(context, R.color.text_white))
+            setBackgroundResource(R.drawable.tab_pill_active_bg)
+        }
+        findViewById<android.widget.TextView>(R.id.tabGroups).apply {
+            setTextColor(androidx.core.content.ContextCompat.getColor(context, R.color.text_gray))
+            setBackgroundResource(R.drawable.tab_pill_bg)
+        }
+
+        // Update search bar hint
+        findViewById<android.widget.EditText>(R.id.searchBar).hint = "Search contacts..."
+
         setupContactsList()
+    }
+
+    private fun showRequestsSubTab() {
+        contactsSubTab = "requests"
+        val contactsView = findViewById<View>(R.id.contactsView)
+
+        contactsView.findViewById<View>(R.id.contactsList).visibility = View.GONE
+        contactsView.findViewById<View>(R.id.emptyContactsState).visibility = View.GONE
+        contactsView.findViewById<View>(R.id.requestsList).visibility = View.VISIBLE
+
+        // Update pill styling — Requests active
+        findViewById<android.widget.TextView>(R.id.tabMessages).apply {
+            setTextColor(androidx.core.content.ContextCompat.getColor(context, R.color.text_gray))
+            setBackgroundResource(R.drawable.tab_pill_bg)
+        }
+        findViewById<android.widget.TextView>(R.id.tabGroups).apply {
+            setTextColor(androidx.core.content.ContextCompat.getColor(context, R.color.text_white))
+            setBackgroundResource(R.drawable.tab_pill_active_bg)
+        }
+
+        // Update search bar hint
+        findViewById<android.widget.EditText>(R.id.searchBar).hint = "Search requests..."
+
+        setupRequestsList()
+    }
+
+    private fun setupRequestsList() {
+        val contactsView = findViewById<View>(R.id.contactsView)
+        val requestsList = contactsView.findViewById<androidx.recyclerview.widget.RecyclerView>(R.id.requestsList)
+        val emptyRequestsState = contactsView.findViewById<View>(R.id.emptyRequestsState)
+
+        val prefs = getSharedPreferences("friend_requests", android.content.Context.MODE_PRIVATE)
+        val pendingRequestsSet = prefs.getStringSet("pending_requests_v2", mutableSetOf()) ?: mutableSetOf()
+
+        val requests = mutableListOf<com.securelegion.models.PendingFriendRequest>()
+        for (json in pendingRequestsSet) {
+            try {
+                requests.add(com.securelegion.models.PendingFriendRequest.fromJson(json))
+            } catch (e: Exception) {
+                Log.e("MainActivity", "Failed to parse friend request", e)
+            }
+        }
+
+        if (requests.isEmpty()) {
+            requestsList.visibility = View.GONE
+            emptyRequestsState.visibility = View.VISIBLE
+            return
+        }
+
+        requestsList.visibility = View.VISIBLE
+        emptyRequestsState.visibility = View.GONE
+
+        val adapter = com.securelegion.adapters.FriendRequestAdapter(
+            onAccept = { request -> handleAcceptRequest(request) },
+            onDecline = { request -> handleDeclineRequest(request) },
+            onCancelSent = { request -> handleCancelSentRequest(request) }
+        )
+        requestsList.layoutManager = androidx.recyclerview.widget.LinearLayoutManager(this)
+        requestsList.adapter = adapter
+        adapter.updateRequests(requests)
+
+        // After adapter filtering, check if there are actually visible items
+        if (adapter.isEmpty()) {
+            requestsList.visibility = View.GONE
+            emptyRequestsState.visibility = View.VISIBLE
+        }
+    }
+
+    private fun handleAcceptRequest(request: com.securelegion.models.PendingFriendRequest) {
+        if (request.contactCardJson == null) {
+            com.securelegion.utils.ThemedToast.show(this, "No Phase 1 data — cannot accept")
+            return
+        }
+
+        lifecycleScope.launch {
+            try {
+                val phase1Obj = org.json.JSONObject(request.contactCardJson)
+                val senderUsername = phase1Obj.getString("username")
+                val senderFriendRequestOnion = phase1Obj.getString("friend_request_onion")
+                val senderX25519PublicKeyBase64 = phase1Obj.getString("x25519_public_key")
+                val senderX25519PublicKey = android.util.Base64.decode(senderX25519PublicKeyBase64, android.util.Base64.NO_WRAP)
+
+                val senderKyberPublicKey = if (phase1Obj.has("kyber_public_key")) {
+                    android.util.Base64.decode(phase1Obj.getString("kyber_public_key"), android.util.Base64.NO_WRAP)
+                } else null
+
+                // Verify Ed25519 signature if present
+                if (phase1Obj.has("signature") && phase1Obj.has("ed25519_public_key")) {
+                    val signature = android.util.Base64.decode(phase1Obj.getString("signature"), android.util.Base64.NO_WRAP)
+                    val senderEd25519PubKey = android.util.Base64.decode(phase1Obj.getString("ed25519_public_key"), android.util.Base64.NO_WRAP)
+                    val unsignedJson = org.json.JSONObject().apply {
+                        put("username", senderUsername)
+                        put("friend_request_onion", senderFriendRequestOnion)
+                        put("x25519_public_key", senderX25519PublicKeyBase64)
+                        put("kyber_public_key", phase1Obj.getString("kyber_public_key"))
+                        put("phase", 1)
+                    }.toString()
+                    if (!com.securelegion.crypto.RustBridge.verifySignature(
+                            unsignedJson.toByteArray(Charsets.UTF_8), signature, senderEd25519PubKey)) {
+                        com.securelegion.utils.ThemedToast.show(this@MainActivity, "Invalid signature — rejecting")
+                        return@launch
+                    }
+                }
+
+                // Build own contact card
+                val keyManager = KeyManager.getInstance(this@MainActivity)
+                val torManager = com.securelegion.crypto.TorManager.getInstance(applicationContext)
+                val ownCard = com.securelegion.models.ContactCard(
+                    displayName = keyManager.getUsername() ?: throw Exception("Username not set"),
+                    solanaPublicKey = keyManager.getSolanaPublicKey(),
+                    x25519PublicKey = keyManager.getEncryptionPublicKey(),
+                    kyberPublicKey = keyManager.getKyberPublicKey(),
+                    solanaAddress = keyManager.getSolanaAddress(),
+                    friendRequestOnion = keyManager.getFriendRequestOnion() ?: throw Exception("FR onion not set"),
+                    messagingOnion = keyManager.getMessagingOnion() ?: throw Exception("Messaging onion not set"),
+                    voiceOnion = torManager.getVoiceOnionAddress().takeUnless { it.isNullOrBlank() }
+                        ?: keyManager.getVoiceOnion().takeUnless { it.isNullOrBlank() } ?: "",
+                    contactPin = keyManager.getContactPin() ?: throw Exception("Contact PIN not set"),
+                    ipfsCid = keyManager.deriveContactListCID(),
+                    timestamp = System.currentTimeMillis() / 1000
+                )
+
+                // Hybrid Kyber encapsulation
+                var hybridSharedSecret: ByteArray? = null
+                val kyberCiphertextBase64 = withContext(Dispatchers.IO) {
+                    if (senderKyberPublicKey != null && senderKyberPublicKey.any { it != 0.toByte() }) {
+                        val encapResult = com.securelegion.crypto.RustBridge.hybridEncapsulate(senderX25519PublicKey, senderKyberPublicKey)
+                        hybridSharedSecret = encapResult.copyOfRange(0, 64)
+                        android.util.Base64.encodeToString(encapResult.copyOfRange(64, encapResult.size), android.util.Base64.NO_WRAP)
+                    } else null
+                }
+
+                // Build + sign Phase 2 payload
+                val phase2UnsignedJson = org.json.JSONObject().apply {
+                    put("contact_card", org.json.JSONObject(ownCard.toJson()))
+                    if (kyberCiphertextBase64 != null) put("kyber_ciphertext", kyberCiphertextBase64)
+                    put("phase", 2)
+                }.toString()
+
+                val phase2Signature = com.securelegion.crypto.RustBridge.signData(
+                    phase2UnsignedJson.toByteArray(Charsets.UTF_8), keyManager.getSigningKeyBytes()
+                )
+                val phase2Payload = org.json.JSONObject(phase2UnsignedJson).apply {
+                    put("ed25519_public_key", android.util.Base64.encodeToString(keyManager.getSigningPublicKey(), android.util.Base64.NO_WRAP))
+                    put("signature", android.util.Base64.encodeToString(phase2Signature, android.util.Base64.NO_WRAP))
+                }.toString()
+
+                // Encrypt with sender's X25519 key
+                val encryptedPhase2 = withContext(Dispatchers.IO) {
+                    com.securelegion.crypto.RustBridge.encryptMessage(phase2Payload, senderX25519PublicKey)
+                }
+
+                // Remove old incoming request, save new outgoing "sending" request
+                removePendingRequest(request)
+                val requestId = java.util.UUID.randomUUID().toString()
+                val partialContactJson = org.json.JSONObject().apply {
+                    put("username", senderUsername)
+                    put("friend_request_onion", senderFriendRequestOnion)
+                    put("x25519_public_key", senderX25519PublicKeyBase64)
+                    if (senderKyberPublicKey != null)
+                        put("kyber_public_key", android.util.Base64.encodeToString(senderKyberPublicKey, android.util.Base64.NO_WRAP))
+                    if (hybridSharedSecret != null)
+                        put("hybrid_shared_secret", android.util.Base64.encodeToString(hybridSharedSecret, android.util.Base64.NO_WRAP))
+                }.toString()
+                savePendingFriendRequest(com.securelegion.models.PendingFriendRequest(
+                    displayName = senderUsername,
+                    ipfsCid = senderFriendRequestOnion,
+                    direction = com.securelegion.models.PendingFriendRequest.DIRECTION_OUTGOING,
+                    status = com.securelegion.models.PendingFriendRequest.STATUS_SENDING,
+                    timestamp = System.currentTimeMillis(),
+                    contactCardJson = partialContactJson,
+                    id = requestId
+                ))
+
+                com.securelegion.utils.ThemedToast.show(this@MainActivity, "Accepting request from $senderUsername...")
+                setupRequestsList()
+                updateRequestsPillBadge()
+
+                // Fire Phase 2 send via TorService background
+                com.securelegion.services.TorService.acceptFriendRequestInBackground(
+                    requestId, senderFriendRequestOnion, encryptedPhase2, applicationContext
+                )
+
+            } catch (e: Exception) {
+                Log.e("MainActivity", "Phase 2 accept failed", e)
+                com.securelegion.utils.ThemedToast.show(this@MainActivity, "Failed to accept: ${e.message}")
+            }
+        }
+    }
+
+    private fun handleDeclineRequest(request: com.securelegion.models.PendingFriendRequest) {
+        removePendingRequest(request)
+        com.securelegion.utils.ThemedToast.show(this, "Request declined")
+        setupRequestsList()
+        updateRequestsPillBadge()
+    }
+
+    private fun handleCancelSentRequest(request: com.securelegion.models.PendingFriendRequest) {
+        removePendingRequest(request)
+        com.securelegion.utils.ThemedToast.show(this, "Request cancelled")
+        setupRequestsList()
+        updateRequestsPillBadge()
+    }
+
+    private fun savePendingFriendRequest(request: com.securelegion.models.PendingFriendRequest) {
+        val prefs = getSharedPreferences("friend_requests", android.content.Context.MODE_PRIVATE)
+        val requestsSet = prefs.getStringSet("pending_requests_v2", mutableSetOf())?.toMutableSet() ?: mutableSetOf()
+        requestsSet.add(request.toJson())
+        prefs.edit().putStringSet("pending_requests_v2", requestsSet).apply()
+    }
+
+    private fun removePendingRequest(request: com.securelegion.models.PendingFriendRequest) {
+        val prefs = getSharedPreferences("friend_requests", android.content.Context.MODE_PRIVATE)
+        val requestsSet = prefs.getStringSet("pending_requests_v2", mutableSetOf())?.toMutableSet() ?: mutableSetOf()
+        requestsSet.removeAll { json ->
+            try {
+                com.securelegion.models.PendingFriendRequest.fromJson(json).id == request.id
+            } catch (e: Exception) { false }
+        }
+        prefs.edit().putStringSet("pending_requests_v2", requestsSet).apply()
+    }
+
+    private fun updateRequestsPillBadge() {
+        val count = BadgeUtils.getPendingFriendRequestCount(this)
+        val badge = findViewById<android.widget.TextView>(R.id.groupsBadge)
+        if (currentTab == "contacts" && count > 0) {
+            badge.text = count.toString()
+            badge.visibility = View.VISIBLE
+        } else if (currentTab == "contacts") {
+            badge.visibility = View.GONE
+        }
+    }
+
+    private fun showAddContactBottomSheet() {
+        val bottomSheet = com.securelegion.utils.GlassBottomSheetDialog(this)
+        val view = layoutInflater.inflate(R.layout.bottom_sheet_add_contact, null)
+        bottomSheet.setContentView(view)
+
+        bottomSheet.window?.setBackgroundDrawableResource(android.R.color.transparent)
+        bottomSheet.window?.findViewById<View>(com.google.android.material.R.id.design_bottom_sheet)
+            ?.setBackgroundResource(android.R.color.transparent)
+        view.post {
+            (view.parent as? View)?.setBackgroundResource(android.R.color.transparent)
+        }
+
+        // Option 1: Scan QR Code — open camera scanner directly
+        view.findViewById<View>(R.id.optionScanQr).setOnClickListener {
+            bottomSheet.dismiss()
+            val intent = Intent(this, AddFriendActivity::class.java)
+            intent.putExtra("AUTO_SCAN", true)
+            startActivityWithSlideAnimation(intent)
+        }
+
+        // Option 2: Add QR from Gallery — open gallery picker directly
+        view.findViewById<View>(R.id.optionGalleryQr).setOnClickListener {
+            bottomSheet.dismiss()
+            val intent = Intent(this, AddFriendActivity::class.java)
+            intent.putExtra("AUTO_GALLERY", true)
+            startActivityWithSlideAnimation(intent)
+        }
+
+        // Option 3: Share Invite — open share bottom sheet (QR or manual)
+        view.findViewById<View>(R.id.optionShareInvite).setOnClickListener {
+            bottomSheet.dismiss()
+            showShareInviteBottomSheet()
+        }
+
+        // Option 4: Add Manually — open manual .onion + PIN entry
+        view.findViewById<View>(R.id.optionAddManually).setOnClickListener {
+            bottomSheet.dismiss()
+            val intent = Intent(this, AddFriendActivity::class.java)
+            startActivityWithSlideAnimation(intent)
+        }
+
+        bottomSheet.show()
+    }
+
+    private fun shareInviteQrCode() {
+        lifecycleScope.launch {
+            try {
+                val result = withContext(Dispatchers.Default) {
+                    val keyManager = KeyManager.getInstance(this@MainActivity)
+                    val friendRequestOnion = keyManager.getFriendRequestOnion() ?: return@withContext null
+                    val pin = keyManager.getContactPin() ?: ""
+                    val username = keyManager.getUsername() ?: ""
+
+                    val securityPrefs = getSharedPreferences("security_prefs", Context.MODE_PRIVATE)
+                    val rotationIntervalMs = securityPrefs.getLong("pin_rotation_interval_ms", 24 * 60 * 60 * 1000L)
+                    val rotationTimestamp = keyManager.getPinRotationTimestamp()
+                    val expiryMs = if (rotationIntervalMs > 0 && rotationTimestamp > 0) {
+                        rotationTimestamp + rotationIntervalMs
+                    } else 0L
+
+                    val expiryText = if (expiryMs > 0) {
+                        val remainingMs = expiryMs - System.currentTimeMillis()
+                        if (remainingMs > 0) {
+                            val hours = remainingMs / (60 * 60 * 1000)
+                            val minutes = (remainingMs % (60 * 60 * 1000)) / (60 * 1000)
+                            "Expires ${hours}h ${minutes}m"
+                        } else "Rotation pending"
+                    } else null
+
+                    val decryptCount = keyManager.getPinDecryptCount()
+                    val maxUses = securityPrefs.getInt("pin_max_uses", 5)
+                    val mintText = if (maxUses > 0) "$decryptCount/$maxUses" else null
+
+                    val qrContent = buildString {
+                        if (username.isNotEmpty()) append("$username@")
+                        append(friendRequestOnion)
+                        if (pin.isNotEmpty()) append("@$pin")
+                        if (expiryMs > 0) append("@exp$expiryMs")
+                    }
+
+                    val bitmap = com.securelegion.utils.BrandedQrGenerator.generate(
+                        this@MainActivity,
+                        com.securelegion.utils.BrandedQrGenerator.QrOptions(
+                            content = qrContent,
+                            size = 512,
+                            showLogo = true,
+                            mintText = mintText,
+                            expiryText = expiryText,
+                            showWebsite = true
+                        )
+                    )
+                    Pair(bitmap, friendRequestOnion)
+                }
+
+                if (result?.first == null) {
+                    ThemedToast.show(this@MainActivity, "Failed to generate QR code")
+                    return@launch
+                }
+
+                val bitmap = result.first!!
+                val friendRequestOnion = result.second
+
+                // Save bitmap to cache and share
+                val cachePath = java.io.File(cacheDir, "images")
+                cachePath.mkdirs()
+                val file = java.io.File(cachePath, "invite_qr.png")
+                java.io.FileOutputStream(file).use { stream ->
+                    bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, stream)
+                }
+
+                val contentUri = androidx.core.content.FileProvider.getUriForFile(
+                    this@MainActivity, "${packageName}.fileprovider", file
+                )
+
+                val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                    type = "image/png"
+                    putExtra(Intent.EXTRA_STREAM, contentUri)
+                    putExtra(Intent.EXTRA_TEXT, "Add me on Secure!\nFriend Request Address: $friendRequestOnion")
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                }
+                startActivity(Intent.createChooser(shareIntent, "Share Invite QR Code"))
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to share invite QR", e)
+                ThemedToast.show(this@MainActivity, "Failed to share QR code")
+            }
+        }
+    }
+
+    private fun showShareInviteBottomSheet() {
+        val bottomSheet = com.securelegion.utils.GlassBottomSheetDialog(this)
+        val view = layoutInflater.inflate(R.layout.bottom_sheet_share_invite, null)
+        bottomSheet.setContentView(view)
+
+        bottomSheet.window?.setBackgroundDrawableResource(android.R.color.transparent)
+        bottomSheet.window?.findViewById<View>(com.google.android.material.R.id.design_bottom_sheet)
+            ?.setBackgroundResource(android.R.color.transparent)
+        view.post {
+            (view.parent as? View)?.setBackgroundResource(android.R.color.transparent)
+        }
+
+        view.findViewById<View>(R.id.optionShareQrCode).setOnClickListener {
+            bottomSheet.dismiss()
+            shareInviteQrCode()
+        }
+
+        view.findViewById<View>(R.id.optionShareManually).setOnClickListener {
+            bottomSheet.dismiss()
+            shareManualInfo()
+        }
+
+        bottomSheet.show()
+    }
+
+    private fun shareManualInfo() {
+        lifecycleScope.launch {
+            try {
+                val text = withContext(Dispatchers.Default) {
+                    val keyManager = KeyManager.getInstance(this@MainActivity)
+                    val friendRequestOnion = keyManager.getFriendRequestOnion() ?: return@withContext null
+                    val pin = keyManager.getContactPin() ?: ""
+                    val username = keyManager.getUsername() ?: ""
+
+                    val securityPrefs = getSharedPreferences("security_prefs", Context.MODE_PRIVATE)
+                    val rotationIntervalMs = securityPrefs.getLong("pin_rotation_interval_ms", 24 * 60 * 60 * 1000L)
+                    val rotationTimestamp = keyManager.getPinRotationTimestamp()
+                    val expiryMs = if (rotationIntervalMs > 0 && rotationTimestamp > 0) {
+                        rotationTimestamp + rotationIntervalMs
+                    } else 0L
+
+                    buildString {
+                        append("Add me on Secure!")
+                        if (username.isNotEmpty()) append("\nUsername: $username")
+                        append("\nAddress: $friendRequestOnion")
+                        if (pin.isNotEmpty()) append("\nPIN: $pin")
+                        if (expiryMs > 0) {
+                            val remainingMs = expiryMs - System.currentTimeMillis()
+                            if (remainingMs > 0) {
+                                val hours = remainingMs / (60 * 60 * 1000)
+                                val minutes = (remainingMs % (60 * 60 * 1000)) / (60 * 1000)
+                                append("\nExpires in: ${hours}h ${minutes}m")
+                            }
+                        }
+                    }
+                }
+
+                if (text == null) {
+                    ThemedToast.show(this@MainActivity, "Failed to load identity info")
+                    return@launch
+                }
+
+                val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                    type = "text/plain"
+                    putExtra(Intent.EXTRA_TEXT, text)
+                }
+                startActivity(Intent.createChooser(shareIntent, "Share Invite"))
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to share manual info", e)
+                ThemedToast.show(this@MainActivity, "Failed to share")
+            }
+        }
     }
 
     private fun setNewMessageIcon(drawableRes: Int) {

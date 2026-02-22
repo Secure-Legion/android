@@ -3090,21 +3090,7 @@ class TorService : Service() {
             }
 
             if (decryptedJson == null) {
-                Log.e(TAG, "Failed to decrypt Phase 1 — sender used wrong PIN or data corrupted")
-
-                // Save as failed request so recipient sees "Invalid PIN" in their UI
-                val failedRequest = com.securelegion.models.PendingFriendRequest(
-                    displayName = "Unknown",
-                    ipfsCid = "",
-                    direction = com.securelegion.models.PendingFriendRequest.DIRECTION_INCOMING,
-                    status = com.securelegion.models.PendingFriendRequest.STATUS_INVALID_PIN,
-                    timestamp = System.currentTimeMillis()
-                )
-                savePendingFriendRequest(failedRequest)
-                showFriendRequestNotification("Someone (wrong PIN)")
-                val broadcastIntent = android.content.Intent("com.securelegion.FRIEND_REQUEST_RECEIVED")
-                broadcastIntent.setPackage(packageName)
-                sendBroadcast(broadcastIntent)
+                Log.w(TAG, "Failed to decrypt Phase 1 — sender used wrong PIN or data corrupted (not shown in UI)")
                 return
             }
 
