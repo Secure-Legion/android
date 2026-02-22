@@ -7,6 +7,7 @@ import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
 import android.os.Bundle
+import android.os.CountDownTimer
 import android.util.Log
 import android.view.View
 import android.widget.ImageView
@@ -32,9 +33,19 @@ import java.security.SecureRandom
 
 class WalletIdentityActivity : AppCompatActivity() {
 
+    companion object {
+        // In-memory QR cache — survives activity recreation within same process
+        private var cachedQrBitmap: Bitmap? = null
+        private var cachedExpiryMs: Long = 0L
+        private var cachedSettingsHash: String = ""
+        private var cachedDecryptCount: Int = 0
+        private var cachedFriendRequestOnion: String? = null
+    }
+
     private lateinit var profilePhotoAvatar: com.securelegion.views.AvatarView
     private var currentQrBitmap: Bitmap? = null
     private var currentFriendRequestOnion: String? = null
+    private var countdownTimer: CountDownTimer? = null
 
     // Image picker launchers
     private val galleryLauncher = registerForActivityResult(
@@ -97,21 +108,79 @@ class WalletIdentityActivity : AppCompatActivity() {
         loadUsername()
         setupBottomNavigation()
         setupProfilePhoto()
-        generateQrCode()
+        // QR loaded in onResume via cache-first approach
     }
 
     override fun onResume() {
         super.onResume()
-        // Refresh QR code and stats when returning from settings
-        generateQrCode()
+        loadOrGenerateQrCode()
     }
+
+    override fun onPause() {
+        super.onPause()
+        countdownTimer?.cancel()
+    }
+
+    /**
+     * Shows cached QR instantly if available, then checks in background
+     * whether the cache is still valid. Only regenerates if expired,
+     * uses changed, or settings changed.
+     */
+    private fun loadOrGenerateQrCode() {
+        // Show cached bitmap immediately (prevents blank screen)
+        if (cachedQrBitmap != null) {
+            findViewById<ImageView>(R.id.qrCodeImage).setImageBitmap(cachedQrBitmap)
+            currentQrBitmap = cachedQrBitmap
+            currentFriendRequestOnion = cachedFriendRequestOnion
+        }
+
+        // Check freshness in background (KeyManager calls may touch JNI)
+        lifecycleScope.launch {
+            val needsRegeneration = withContext(Dispatchers.Default) {
+                if (cachedQrBitmap == null) return@withContext true
+
+                val securityPrefs = getSharedPreferences("security_prefs", Context.MODE_PRIVATE)
+                val rotationIntervalMs = securityPrefs.getLong("pin_rotation_interval_ms", 24 * 60 * 60 * 1000L)
+                val maxUses = securityPrefs.getInt("pin_max_uses", 5)
+                val settingsHash = "$rotationIntervalMs:$maxUses"
+                if (settingsHash != cachedSettingsHash) return@withContext true
+
+                val keyManager = KeyManager.getInstance(this@WalletIdentityActivity)
+                val decryptCount = keyManager.getPinDecryptCount()
+                if (decryptCount != cachedDecryptCount) return@withContext true
+
+                // Check if expired
+                val rotationTimestamp = keyManager.getPinRotationTimestamp()
+                val expiryMs = if (rotationIntervalMs > 0 && rotationTimestamp > 0) {
+                    rotationTimestamp + rotationIntervalMs
+                } else 0L
+                if (expiryMs > 0 && expiryMs <= System.currentTimeMillis()) return@withContext true
+
+                false
+            }
+
+            if (needsRegeneration) {
+                generateQrCode()
+            } else {
+                // Cache still valid — just restart countdown
+                startExpiryCountdown(cachedExpiryMs)
+            }
+        }
+    }
+
+    private data class QrGenResult(
+        val bitmap: Bitmap?,
+        val expiryMs: Long,
+        val settingsHash: String,
+        val decryptCount: Int,
+        val friendRequestOnion: String?
+    )
 
     private fun generateQrCode() {
         lifecycleScope.launch {
-            val qrBitmap = withContext(Dispatchers.Default) {
+            val result = withContext(Dispatchers.Default) {
                 val keyManager = KeyManager.getInstance(this@WalletIdentityActivity)
                 val friendRequestOnion = keyManager.getFriendRequestOnion() ?: return@withContext null
-                currentFriendRequestOnion = friendRequestOnion
 
                 val pin = keyManager.getContactPin() ?: ""
                 val username = keyManager.getUsername() ?: ""
@@ -128,15 +197,6 @@ class WalletIdentityActivity : AppCompatActivity() {
                     rotationTimestamp + rotationIntervalMs
                 } else 0L
 
-                val expiryText = if (expiryMs > 0) {
-                    val remainingMs = expiryMs - System.currentTimeMillis()
-                    if (remainingMs > 0) {
-                        val hours = remainingMs / (60 * 60 * 1000)
-                        val minutes = (remainingMs % (60 * 60 * 1000)) / (60 * 1000)
-                        "Expires ${hours}h ${minutes}m"
-                    } else "Rotation pending"
-                } else null
-
                 // Build QR content with optional expiry timestamp
                 val qrContent = buildString {
                     if (username.isNotEmpty()) append("$username@")
@@ -145,25 +205,85 @@ class WalletIdentityActivity : AppCompatActivity() {
                     if (expiryMs > 0) append("@exp$expiryMs")
                 }
 
-                // Generate branded QR code (heavy bitmap work)
-                com.securelegion.utils.BrandedQrGenerator.generate(
+                // Generate branded QR code — expiry text is now a live overlay, not baked in
+                val bitmap = com.securelegion.utils.BrandedQrGenerator.generate(
                     this@WalletIdentityActivity,
                     com.securelegion.utils.BrandedQrGenerator.QrOptions(
                         content = qrContent,
                         size = 512,
                         showLogo = true,
                         mintText = mintText,
-                        expiryText = expiryText,
+                        expiryText = null,
                         showWebsite = true
                     )
                 )
+
+                val settingsHash = "$rotationIntervalMs:$maxUses"
+                QrGenResult(bitmap, expiryMs, settingsHash, decryptCount, friendRequestOnion)
             }
 
-            currentQrBitmap = qrBitmap
-            if (qrBitmap != null) {
-                findViewById<ImageView>(R.id.qrCodeImage).setImageBitmap(qrBitmap)
+            if (result != null) {
+                // Update cache
+                cachedQrBitmap = result.bitmap
+                cachedExpiryMs = result.expiryMs
+                cachedSettingsHash = result.settingsHash
+                cachedDecryptCount = result.decryptCount
+                cachedFriendRequestOnion = result.friendRequestOnion
+
+                currentQrBitmap = result.bitmap
+                currentFriendRequestOnion = result.friendRequestOnion
+                result.bitmap?.let {
+                    findViewById<ImageView>(R.id.qrCodeImage).setImageBitmap(it)
+                }
+                startExpiryCountdown(result.expiryMs)
             }
         }
+    }
+
+    /**
+     * Live countdown that ticks every second inside the QR card footer.
+     * When it hits zero, auto-regenerates the QR.
+     */
+    private fun startExpiryCountdown(expiryMs: Long) {
+        countdownTimer?.cancel()
+        val countdownText = findViewById<TextView>(R.id.expiryCountdownText)
+
+        if (expiryMs <= 0) {
+            countdownText.visibility = View.GONE
+            return
+        }
+
+        val remaining = expiryMs - System.currentTimeMillis()
+        if (remaining <= 0) {
+            countdownText.text = "Expired"
+            countdownText.visibility = View.VISIBLE
+            return
+        }
+
+        countdownText.visibility = View.VISIBLE
+        countdownTimer = object : CountDownTimer(remaining, 1000) {
+            override fun onTick(millisUntilFinished: Long) {
+                val totalSeconds = millisUntilFinished / 1000
+                val days = totalSeconds / 86400
+                val hours = (totalSeconds % 86400) / 3600
+                val minutes = (totalSeconds % 3600) / 60
+                val seconds = totalSeconds % 60
+
+                countdownText.text = when {
+                    days > 0 -> "Expires ${days}d ${hours}h ${minutes}m"
+                    hours > 0 -> "Expires ${hours}h ${minutes}m ${seconds}s"
+                    minutes > 0 -> "Expires ${minutes}m ${seconds}s"
+                    else -> "Expires ${seconds}s"
+                }
+            }
+
+            override fun onFinish() {
+                countdownText.text = "Expired"
+                // Invalidate cache and regenerate
+                cachedQrBitmap = null
+                generateQrCode()
+            }
+        }.start()
     }
 
     private fun showChangeIdentityConfirmation() {
@@ -222,7 +342,8 @@ class WalletIdentityActivity : AppCompatActivity() {
 
                 ThemedToast.showLong(this@WalletIdentityActivity, "New identity active! Tor is publishing your new address.")
 
-                // Refresh the inline QR code with new identity
+                // Invalidate cache and regenerate with new identity
+                cachedQrBitmap = null
                 generateQrCode()
 
             } catch (e: Exception) {
@@ -392,6 +513,7 @@ class WalletIdentityActivity : AppCompatActivity() {
 
                 // Refresh UI
                 loadUsername()
+                cachedQrBitmap = null // Force QR regeneration on return
 
                 // Show seed phrase backup screen
                 ThemedToast.showLong(this@WalletIdentityActivity, "New identity created! Backup your seed phrase!")

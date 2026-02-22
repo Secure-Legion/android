@@ -148,15 +148,46 @@
                 app:cardCornerRadius="16dp"
                 app:cardElevation="4dp">
 
-                <ImageView
-                    android:id="@+id/qrCodeImage"
+                <FrameLayout
                     android:layout_width="240dp"
-                    android:layout_height="240dp"
-                    android:padding="8dp"
-                    android:scaleType="fitCenter"
-                    android:contentDescription="Contact Card QR Code" />
+                    android:layout_height="240dp">
+
+                    <ImageView
+                        android:id="@+id/qrCodeImage"
+                        android:layout_width="match_parent"
+                        android:layout_height="match_parent"
+                        android:padding="8dp"
+                        android:scaleType="fitCenter"
+                        android:contentDescription="Contact Card QR Code" />
+
+                    <!-- Live countdown overlay (replaces static expiry baked into bitmap) -->
+                    <TextView
+                        android:id="@+id/expiryCountdownText"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_gravity="bottom|start"
+                        android:paddingStart="12dp"
+                        android:paddingBottom="10dp"
+                        android:textSize="9sp"
+                        android:textColor="#666666"
+                        android:fontFamily="sans-serif"
+                        android:visibility="gone" />
+
+                </FrameLayout>
 
             </androidx.cardview.widget.CardView>
+
+            <!-- Live Expiry Countdown -->
+            <TextView
+                android:id="@+id/expiryCountdownText"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:textSize="13sp"
+                android:textColor="#999999"
+                android:fontFamily="@font/space_grotesk_bold"
+                android:letterSpacing="0.05"
+                android:layout_marginBottom="12dp"
+                android:visibility="gone" />
 
             <!-- Share Button -->
             <TextView

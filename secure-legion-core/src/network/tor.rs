@@ -11,6 +11,7 @@ use tokio::net::{TcpListener, TcpStream};
 #[cfg(unix)]
 use tokio::net::UnixStream as TokioUnixStream;
 use tokio::sync::Mutex;
+use tokio_util::sync::CancellationToken;
 use ed25519_dalek::{SigningKey, VerifyingKey};
 use sha3::{Digest, Sha3_256};
 use std::sync::Mutex as StdMutex;
@@ -211,13 +212,58 @@ pub fn get_last_listener_heartbeat() -> u64 {
     LAST_LISTENER_HEARTBEAT.load(Ordering::SeqCst)
 }
 
-/// Update the listener heartbeat to now.
-fn touch_listener_heartbeat() {
-    let now = std::time::SystemTime::now()
+/// Monotonic-safe epoch millis helper (used by all heartbeat atomics).
+fn now_millis() -> u64 {
+    std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
-        .as_millis() as u64;
-    LAST_LISTENER_HEARTBEAT.store(now, Ordering::SeqCst);
+        .as_millis() as u64
+}
+
+/// Update the event listener heartbeat to now.
+fn touch_listener_heartbeat() {
+    LAST_LISTENER_HEARTBEAT.store(now_millis(), Ordering::SeqCst);
+}
+
+// ─── Hidden Service Listener Liveness ───────────────────────────────────────
+
+/// HS Listener liveness: epoch millis of the last accept-loop iteration.
+/// Proves the accept loop task is alive and not wedged.
+/// Updated every ~30s inside the accept loop via tokio::select! timeout tick.
+/// 0 means the HS listener has never started or was reset.
+pub static LAST_HS_LOOP_HEARTBEAT: AtomicU64 = AtomicU64::new(0);
+
+/// HS Accept liveness: epoch millis of the last successful protocol-level handshake.
+/// Updated ONLY after reading a valid frame header (not just TCP accept).
+/// 0 means no valid inbound connection has ever been processed.
+pub static LAST_HS_ACCEPT_HEARTBEAT: AtomicU64 = AtomicU64::new(0);
+
+/// Get the last HS loop heartbeat (proves accept loop is alive).
+pub fn get_last_hs_loop_heartbeat() -> u64 {
+    LAST_HS_LOOP_HEARTBEAT.load(Ordering::SeqCst)
+}
+
+/// Get the last HS accept heartbeat (proves real inbound traffic works).
+pub fn get_last_hs_accept_heartbeat() -> u64 {
+    LAST_HS_ACCEPT_HEARTBEAT.load(Ordering::SeqCst)
+}
+
+/// Touch the HS loop heartbeat (called periodically from the accept loop tick).
+fn touch_hs_loop_heartbeat() {
+    LAST_HS_LOOP_HEARTBEAT.store(now_millis(), Ordering::SeqCst);
+}
+
+/// Touch the HS accept heartbeat (called only after valid protocol handshake).
+/// Private — only called from handle_incoming_connection after frame validation.
+fn touch_hs_accept_heartbeat() {
+    LAST_HS_ACCEPT_HEARTBEAT.store(now_millis(), Ordering::SeqCst);
+}
+
+/// Reset both HS heartbeats to 0 (call when restarting the HS listener
+/// so staleness detection starts fresh).
+pub fn reset_hs_heartbeats() {
+    LAST_HS_LOOP_HEARTBEAT.store(0, Ordering::SeqCst);
+    LAST_HS_ACCEPT_HEARTBEAT.store(0, Ordering::SeqCst);
 }
 
 /// Cached hex-encoded cookie for control port authentication (used by voice Tor only)
@@ -1057,9 +1103,8 @@ pub struct PendingConnection {
 pub static PENDING_CONNECTIONS: Lazy<Arc<StdMutex<HashMap<u64, PendingConnection>>>> =
     Lazy::new(|| Arc::new(StdMutex::new(HashMap::new())));
 
-/// Counter for generating unique connection IDs
-pub static CONNECTION_ID_COUNTER: Lazy<Arc<StdMutex<u64>>> =
-    Lazy::new(|| Arc::new(StdMutex::new(0)));
+/// Counter for generating unique connection IDs (lock-free on the accept hot path)
+pub static CONNECTION_ID_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 /// Global friend request channel sender
 /// Separate from regular message channels to avoid interference with working message system
@@ -1178,6 +1223,7 @@ pub struct TorManager {
     hidden_service_address: Option<String>,
     voice_hidden_service_address: Option<String>,
     listener_handle: Option<tokio::task::JoinHandle<()>>,
+    listener_cancel: Option<CancellationToken>,
     incoming_ping_tx: Option<tokio::sync::mpsc::UnboundedSender<(u64, Vec<u8>)>>,
     pub(crate) incoming_pong_tx: Option<tokio::sync::mpsc::UnboundedSender<(u64, Vec<u8>)>>,
     hs_state: HiddenServiceState,
@@ -1196,6 +1242,7 @@ impl TorManager {
             hidden_service_address: None,
             voice_hidden_service_address: None,
             listener_handle: None,
+            listener_cancel: None,
             incoming_ping_tx: None,
             incoming_pong_tx: None,
             hs_state: HiddenServiceState {
@@ -2010,37 +2057,66 @@ impl TorManager {
         // Clone bind_addr for the async move block
         let bind_addr_for_task = bind_addr.clone();
 
-        // Spawn listener task
+        // Reset HS heartbeats so liveness detection starts fresh
+        reset_hs_heartbeats();
+
+        // CancellationToken for clean shutdown (no global state, no race)
+        let cancel = CancellationToken::new();
+        self.listener_cancel = Some(cancel.clone());
+
+        // Spawn listener task with select!-based loop heartbeat tick + structured cancellation
         log::info!("Spawning listener accept loop...");
         let handle = tokio::spawn(async move {
             log::info!("Listener task started, waiting for connections on {}...", bind_addr_for_task);
 
+            // Initial loop heartbeat (proves the task spawned)
+            touch_hs_loop_heartbeat();
+
+            // 30s tick — first fires after 30s (not immediately) so startup timing is clean
+            let start = tokio::time::Instant::now() + std::time::Duration::from_secs(30);
+            let mut tick = tokio::time::interval_at(start, std::time::Duration::from_secs(30));
+            tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
             loop {
-                match listener.accept().await {
-                    Ok((socket, addr)) => {
-                        log::info!("Incoming connection from {}", addr);
-
-                        // Generate unique connection ID
-                        let conn_id = {
-                            let mut counter = CONNECTION_ID_COUNTER.lock().unwrap();
-                            *counter += 1;
-                            *counter
-                        };
-
-                        // Spawn handler for this connection
-                        let ping_tx = incoming_tx.clone();
-                        let pong_tx = incoming_pong_tx.clone();
-                        tokio::spawn(async move {
-                            if let Err(e) = Self::handle_incoming_connection(socket, conn_id, ping_tx, pong_tx).await {
-                                log::error!("Error handling connection {}: {}", conn_id, e);
-                            }
-                        });
+                tokio::select! {
+                    // Clean shutdown: CancellationToken signaled by stop_listener()
+                    _ = cancel.cancelled() => {
+                        log::info!("HS listener: cancellation received, exiting accept loop");
+                        break;
                     }
-                    Err(e) => {
-                        log::error!("Error accepting connection: {}", e);
+                    // Tick branch: proves loop is alive even when idle
+                    _ = tick.tick() => {
+                        touch_hs_loop_heartbeat();
+                    }
+                    // Accept branch: handle incoming connections
+                    result = listener.accept() => {
+                        match result {
+                            Ok((socket, addr)) => {
+                                log::info!("Incoming connection from {}", addr);
+
+                                // Loop is alive — touch heartbeat on real activity too
+                                touch_hs_loop_heartbeat();
+
+                                // Lock-free connection ID
+                                let conn_id = CONNECTION_ID_COUNTER.fetch_add(1, Ordering::SeqCst) + 1;
+
+                                // Spawn handler for this connection
+                                let ping_tx = incoming_tx.clone();
+                                let pong_tx = incoming_pong_tx.clone();
+                                tokio::spawn(async move {
+                                    if let Err(e) = Self::handle_incoming_connection(socket, conn_id, ping_tx, pong_tx).await {
+                                        log::error!("Error handling connection {}: {}", conn_id, e);
+                                    }
+                                });
+                            }
+                            Err(e) => {
+                                log::error!("Error accepting connection: {}", e);
+                            }
+                        }
                     }
                 }
             }
+            log::info!("HS listener accept loop exited cleanly");
         });
 
         self.listener_handle = Some(handle);
@@ -2212,6 +2288,10 @@ impl TorManager {
             log::error!("Connection {}, rejecting packet (likely garbage/corruption)", conn_id);
             return Err(format!("Wire message too short: {} bytes (min {})", buf.len(), min_wire_len).into());
         }
+
+        // Valid protocol frame confirmed (type + min length) — touch accept heartbeat.
+        // Proves real inbound traffic path works (not just TCP accept / noise).
+        touch_hs_accept_heartbeat();
 
         log::info!("");
         log::info!("INCOMING CONNECTION {} (type=0x{:02x}, {} bytes total)", conn_id, msg_type, buf.len());
@@ -2405,16 +2485,37 @@ impl TorManager {
     /// CRITICAL: This awaits the aborted task to ensure the TCP socket is fully released
     /// before returning. Without this, immediate rebind fails with EADDRINUSE.
     pub async fn stop_listener(&mut self) {
-        if let Some(handle) = self.listener_handle.take() {
-            log::info!("Aborting hidden service listener task...");
-            handle.abort();
+        // Signal clean shutdown via CancellationToken first
+        if let Some(cancel) = self.listener_cancel.take() {
+            log::info!("Signaling HS listener shutdown via CancellationToken...");
+            cancel.cancel();
+        }
 
-            // CRITICAL: Await the handle to ensure task is fully dropped and socket is released
-            // This prevents EADDRINUSE when rebinding immediately after
-            match handle.await {
-                Ok(_) => log::info!("Hidden service listener exited cleanly"),
-                Err(e) if e.is_cancelled() => log::info!("Hidden service listener aborted (cancelled)"),
-                Err(e) => log::warn!("Hidden service listener aborted with error: {:?}", e),
+        if let Some(mut handle) = self.listener_handle.take() {
+            log::info!("Awaiting HS listener task exit...");
+
+            // Phase 1: Wait up to 3s for clean exit via CancellationToken.
+            // Phase 2: If task doesn't exit, hard-abort + await to guarantee socket drop.
+            // Uses select! so handle stays owned (can abort in timeout branch).
+            tokio::select! {
+                result = &mut handle => {
+                    // Task exited cleanly within 3s
+                    match result {
+                        Ok(_) => log::info!("HS listener stopped cleanly via cancellation"),
+                        Err(e) => log::warn!("HS listener task join error: {:?}", e),
+                    }
+                }
+                _ = tokio::time::sleep(std::time::Duration::from_secs(3)) => {
+                    // Task didn't exit — hard abort + await ensures socket is dropped
+                    // deterministically (prevents EADDRINUSE on immediate rebind)
+                    log::warn!("HS listener did not exit within 3s — aborting task");
+                    handle.abort();
+                    match handle.await {
+                        Ok(_) => log::info!("HS listener aborted and joined"),
+                        Err(e) if e.is_cancelled() => log::info!("HS listener aborted (cancelled)"),
+                        Err(e) => log::warn!("HS listener abort join error: {:?}", e),
+                    }
+                }
             }
 
             // Clear bound port tracking

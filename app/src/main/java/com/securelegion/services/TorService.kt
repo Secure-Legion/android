@@ -204,6 +204,10 @@ class TorService : Service() {
     @Volatile private var lastEventListenerRestartAttempt: Long = 0L
     private val EVENT_LISTENER_RESTART_COOLDOWN_MS = 10_000L // 10 seconds between restart attempts
 
+    // HS listener liveness: in-memory throttle for health-sample-triggered listener restarts
+    @Volatile private var lastHsListenerRestartMs: Long = 0L
+    private val HS_LISTENER_RESTART_COOLDOWN_MS = 120_000L // 2 minutes between sampler-triggered restarts
+
     /**
      * Update Tor state and log transition
      */
@@ -745,6 +749,31 @@ class TorService : Service() {
                         serviceScope.launch {
                             restartTor("health unhealthy: bootstrap=$bootstrapPercent%, circuits=${RustBridge.getCircuitEstablished()}, state=$torState")
                         }
+                    }
+                }
+            }
+        }
+
+        // HS listener liveness: if loop heartbeat is stale, the accept loop is wedged.
+        // This is a faster check (2s) than the Worker (60s) for the most critical failure mode.
+        // Throttled to prevent restart spam if heartbeat stays stale during recovery.
+        if (isHealthy && isListenerRunning) {
+            val hsLoopHb = RustBridge.getLastHsLoopHeartbeat()
+            if (hsLoopHb > 0) {
+                val hsLoopAgeMs = System.currentTimeMillis() - hsLoopHb
+                if (hsLoopAgeMs > 90_000) { // 90s stale threshold (same as Worker)
+                    val now = SystemClock.elapsedRealtime()
+                    if (now - lastHsListenerRestartMs >= HS_LISTENER_RESTART_COOLDOWN_MS) {
+                        Log.w(TAG, "HS loop heartbeat STALE (${hsLoopAgeMs}ms) → restarting listeners")
+                        lastHsListenerRestartMs = now
+                        serviceScope.launch {
+                            restartListeners()
+                            // Reset sticky flag AFTER restart is scheduled
+                            // so startIncomingListener() can re-set it on success
+                            isListenerRunning = false
+                        }
+                    } else {
+                        Log.d(TAG, "HS loop stale but restart cooldown active (${(now - lastHsListenerRestartMs) / 1000}s / ${HS_LISTENER_RESTART_COOLDOWN_MS / 1000}s)")
                     }
                 }
             }
@@ -1430,6 +1459,20 @@ class TorService : Service() {
             instance?.serviceScope?.launch {
                 instance?.restartTor("worker: $reason")
             }
+        }
+
+        /**
+         * Request HS listener restart (NOT full Tor restart) from Worker.
+         * Used when HS liveness checks detect dead/unreachable listener
+         * while Tor process itself is healthy (SOCKS + bootstrap OK).
+         */
+        fun requestListenerRestart(reason: String) {
+            Log.w(TAG, "Listener restart requested: $reason")
+            instance?.let { service ->
+                service.serviceScope.launch {
+                    service.restartListeners()
+                }
+            } ?: Log.e(TAG, "Cannot restart listeners: TorService instance is null")
         }
 
         /**

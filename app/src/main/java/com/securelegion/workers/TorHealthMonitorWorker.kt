@@ -1,6 +1,7 @@
 package com.securelegion.workers
 
 import android.content.Context
+import android.content.SharedPreferences
 import android.os.SystemClock
 import android.util.Log
 import androidx.work.*
@@ -28,7 +29,7 @@ import java.util.concurrent.TimeUnit
  * Health checks:
  * 1. SOCKS5 reachability (127.0.0.1:9050 socket connect)
  * 2. Bootstrap progress (assume 100% if SOCKS responds)
- * 3. Circuit test (TELEMETRY ONLY - never triggers restart)
+ * 3. HS listener liveness (loop heartbeat + accept heartbeat + self-circuit test)
  *
  * What is HEALTHY:
  * - SOCKS port responding + bootstrap complete
@@ -58,6 +59,13 @@ class TorHealthMonitorWorker(
         private const val WARMUP_WINDOW_MS = 120000 // 2 minutes: Tor/HS needs time to stabilize after restart
         private const val FAILURE_THRESHOLD = 5 // Go UNHEALTHY after 5 failures
         private const val TIME_SINCE_OK_THRESHOLD_MS = 120000 // 2 minutes: only restart if Tor has been good in last 2m
+
+        // HS liveness thresholds
+        private const val HS_LOOP_STALE_THRESHOLD_MS = 90_000L  // 90s: accept loop ticks every 30s, 3x margin
+        private const val HS_SELF_TEST_FAILURE_THRESHOLD = 3    // Restart listeners after 3 consecutive failures (~3min)
+        private const val HS_RESTART_COOLDOWN_MS = 3 * 60_000L  // 3 minutes between listener restarts
+        private const val HS_ACCEPT_RECENT_MS = 5 * 60_000L     // If accept heartbeat <5min old, skip self-test
+        private const val HS_SERVICE_PORT = 9150                 // Virtual port on .onion (9150 → local 8080)
 
         /**
          * Schedule periodic Tor health checks
@@ -149,38 +157,79 @@ class TorHealthMonitorWorker(
 
         Log.d(TAG, "Bootstrap complete (100%)")
 
-        // PHASE 3: Circuit test (TELEMETRY ONLY - NEVER TRIGGERS RESTART)
+        // PHASE 3: HS Listener Liveness (ACTIONABLE — triggers LISTENER restart, never Tor restart)
         //
-        // CRITICAL DESIGN CHANGE (per deep-dive analysis):
-        // Circuit failures (REP=6, TTL expired, onion offline, HS descriptor delays, timeouts)
-        // are NORMAL Tor behavior and do NOT indicate local Tor is broken.
+        // Tor process is HEALTHY at this point (SOCKS + bootstrap OK).
+        // But the hidden service listener may be dead/wedged → incoming messages broken.
         //
-        // Restarting Tor based on circuit failures creates a restart loop:
-        // - Normal circuit churn → onion CONNECT fails
-        // - Worker restarts Tor → tears down listeners/SOCKS/OkHttp
-        // - Restart causes MORE circuit churn
-        // - Loop repeats
+        // Two heartbeats from Rust:
+        //   loop heartbeat  = accept-loop task is alive (ticks every 30s)
+        //   accept heartbeat = valid protocol frame processed (real inbound traffic)
         //
-        // NEW LOGIC:
-        // - If SOCKS reachable AND bootstrap=100% → Tor is HEALTHY (period)
-        // - Circuit test is telemetry only (log but don't escalate)
-        // - Only restart on process-level failures (SOCKS down, bootstrap stuck)
+        // Decision tree:
+        //   1. loop == 0           → startup phase, skip
+        //   2. loop stale >90s     → listener task wedged → restart listeners (cooldown)
+        //   3. loop fresh + accept recent (<5min) → real traffic flowing → skip self-test
+        //   4. loop fresh + accept stale → run self-test; N failures → restart listeners (cooldown)
         //
-        val ownOnion = getTorOnionAddress()
-        if (ownOnion.isNotEmpty()) {
-            // Run circuit test for telemetry (helps diagnose HS descriptor issues)
-            val circuitWorking = checkCircuitToOnion(ownOnion, 9150)
-            if (circuitWorking) {
-                Log.i(TAG, "Circuit telemetry: Can reach own .onion:9150 ")
-            } else {
-                Log.i(TAG, "Circuit telemetry: Cannot reach own .onion:9150 (normal - descriptor delay, circuit churn, or listener not ready)")
+        val nowMs = System.currentTimeMillis()
+        val hsLoopHb = com.securelegion.crypto.RustBridge.getLastHsLoopHeartbeat()
+        val hsAcceptHb = com.securelegion.crypto.RustBridge.getLastHsAcceptHeartbeat()
+        val hsLoopAgeMs = if (hsLoopHb > 0) nowMs - hsLoopHb else Long.MAX_VALUE
+        val hsAcceptAgeMs = if (hsAcceptHb > 0) nowMs - hsAcceptHb else Long.MAX_VALUE
+
+        val healthPrefs = applicationContext.getSharedPreferences("tor_health", Context.MODE_PRIVATE)
+
+        when {
+            hsLoopHb == 0L -> {
+                // CASE 1: Listener never started yet
+                Log.d(TAG, "HS liveness: loop heartbeat not initialized (listener starting)")
             }
-        } else {
-            Log.d(TAG, "Circuit telemetry: Skipped (own onion not available)")
+            hsLoopAgeMs > HS_LOOP_STALE_THRESHOLD_MS -> {
+                // CASE 2: Loop heartbeat stale — accept loop is wedged/dead
+                Log.w(TAG, "HS liveness: loop heartbeat STALE (${hsLoopAgeMs}ms) → listener dead")
+                requestListenerRestartWithCooldown(healthPrefs, nowMs,
+                    "HS loop heartbeat stale: ${hsLoopAgeMs}ms")
+            }
+            hsAcceptAgeMs < HS_ACCEPT_RECENT_MS -> {
+                // CASE 3: Loop alive + real inbound traffic recently → fully healthy
+                Log.d(TAG, "HS liveness: loop OK, accept recent (${hsAcceptAgeMs}ms) → healthy")
+                healthPrefs.edit().putInt("hs_self_test_failures", 0).apply()
+            }
+            else -> {
+                // CASE 4: Loop alive but no recent inbound — run self-circuit test
+                // Skip self-test if cooldown is active (avoid hammering during recovery)
+                val lastRestart = healthPrefs.getLong("hs_last_restart_ms", 0L)
+                if (nowMs - lastRestart < HS_RESTART_COOLDOWN_MS) {
+                    Log.d(TAG, "HS liveness: cooldown active, skipping self-test")
+                } else {
+                    val ownOnion = getTorOnionAddress()
+                    if (ownOnion.isNotEmpty()) {
+                        val circuitWorking = checkCircuitToOnion(ownOnion, HS_SERVICE_PORT)
+                        if (circuitWorking) {
+                            Log.i(TAG, "HS self-test PASSED: .onion:$HS_SERVICE_PORT reachable")
+                            healthPrefs.edit().putInt("hs_self_test_failures", 0).apply()
+                        } else {
+                            val failures = healthPrefs.getInt("hs_self_test_failures", 0) + 1
+                            healthPrefs.edit().putInt("hs_self_test_failures", failures).apply()
+                            Log.w(TAG, "HS self-test FAILED ($failures/$HS_SELF_TEST_FAILURE_THRESHOLD)")
+
+                            if (failures >= HS_SELF_TEST_FAILURE_THRESHOLD) {
+                                healthPrefs.edit().putInt("hs_self_test_failures", 0).apply()
+                                requestListenerRestartWithCooldown(healthPrefs, nowMs,
+                                    "HS self-test failed $failures consecutive times")
+                            }
+                        }
+                    } else {
+                        Log.w(TAG, "HS self-test DISABLED: own onion not available — " +
+                            "inbound liveness limited to loop heartbeat only")
+                    }
+                }
+            }
         }
 
-        // If we got here: SOCKS is reachable AND bootstrap is 100%
-        // → Tor process is HEALTHY regardless of circuit test result
+        // Tor process is HEALTHY (SOCKS OK + bootstrap 100%)
+        // HS listener issues handled above via listener restart (not Tor restart)
         Log.i(TAG, "Tor process healthy (SOCKS OK + bootstrap 100%)")
         return current.copy(
             status = TorHealthStatus.HEALTHY,
@@ -314,13 +363,14 @@ class TorHealthMonitorWorker(
         return withContext(Dispatchers.IO) {
             try {
                 val keyManager = KeyManager.getInstance(applicationContext)
-                val dbPassphrase = keyManager.getDatabasePassphrase()
-                val database = SecureLegionDatabase.getInstance(applicationContext, dbPassphrase)
-
-                // Get own device's onion (stored in Contact or config)
-                // For now, return empty (will skip circuit test)
-                // TODO: Implement once you have a way to store own onion
-                ""
+                // Primary: messaging onion (the HS that listens on port 8080)
+                val onion = keyManager.getMessagingOnion()
+                if (!onion.isNullOrEmpty()) {
+                    return@withContext onion
+                }
+                // Fallback: TorManager's stored onion
+                val torManager = com.securelegion.crypto.TorManager.getInstance(applicationContext)
+                torManager.getOnionAddress() ?: ""
             } catch (e: Exception) {
                 Log.w(TAG, "Failed to get own onion address: ${e.message}")
                 ""
@@ -347,6 +397,28 @@ class TorHealthMonitorWorker(
             val timeUntilRetry = snapshot.restartCooldownMs - (SystemClock.elapsedRealtime() - snapshot.lastRestartElapsedMs)
             Log.d(TAG, "Restart cooldown active (retry in ${timeUntilRetry}ms)")
         }
+    }
+
+    /**
+     * Request HS listener restart with cooldown protection.
+     * Prevents restart loops during recovery or unstable networks.
+     */
+    private fun requestListenerRestartWithCooldown(
+        prefs: SharedPreferences,
+        nowMs: Long,
+        reason: String
+    ) {
+        val lastRestart = prefs.getLong("hs_last_restart_ms", 0L)
+        if (nowMs - lastRestart < HS_RESTART_COOLDOWN_MS) {
+            Log.w(TAG, "HS listener restart suppressed (cooldown active, ${(nowMs - lastRestart) / 1000}s / ${HS_RESTART_COOLDOWN_MS / 1000}s): $reason")
+            return
+        }
+        prefs.edit()
+            .putLong("hs_last_restart_ms", nowMs)
+            .putInt("hs_self_test_failures", 0)
+            .apply()
+        Log.w(TAG, "Requesting HS listener restart: $reason")
+        TorService.requestListenerRestart(reason)
     }
 
     /**
