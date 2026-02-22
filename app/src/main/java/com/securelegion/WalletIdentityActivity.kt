@@ -197,6 +197,16 @@ class WalletIdentityActivity : AppCompatActivity() {
                     rotationTimestamp + rotationIntervalMs
                 } else 0L
 
+                // Static expiry text for the bitmap (visible when shared)
+                val expiryText = if (expiryMs > 0) {
+                    val remainingMs = expiryMs - System.currentTimeMillis()
+                    if (remainingMs > 0) {
+                        val hours = remainingMs / (60 * 60 * 1000)
+                        val minutes = (remainingMs % (60 * 60 * 1000)) / (60 * 1000)
+                        "Expires ${hours}h ${minutes}m"
+                    } else "Rotation pending"
+                } else null
+
                 // Build QR content with optional expiry timestamp
                 val qrContent = buildString {
                     if (username.isNotEmpty()) append("$username@")
@@ -205,7 +215,8 @@ class WalletIdentityActivity : AppCompatActivity() {
                     if (expiryMs > 0) append("@exp$expiryMs")
                 }
 
-                // Generate branded QR code — expiry text is now a live overlay, not baked in
+                // Generate branded QR code (static expiry baked in for shares,
+                // live overlay covers it on-screen)
                 val bitmap = com.securelegion.utils.BrandedQrGenerator.generate(
                     this@WalletIdentityActivity,
                     com.securelegion.utils.BrandedQrGenerator.QrOptions(
@@ -213,7 +224,7 @@ class WalletIdentityActivity : AppCompatActivity() {
                         size = 512,
                         showLogo = true,
                         mintText = mintText,
-                        expiryText = null,
+                        expiryText = expiryText,
                         showWebsite = true
                     )
                 )
