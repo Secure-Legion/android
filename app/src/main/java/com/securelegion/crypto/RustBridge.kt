@@ -722,6 +722,22 @@ object RustBridge {
     external fun getLastListenerHeartbeat(): Long
 
     /**
+     * Get HS listener loop heartbeat (epoch millis).
+     * Proves the accept loop task is alive and ticking every ~30s.
+     * Returns 0 if listener never started or was reset.
+     * If stale >90s → listener task is wedged/dead → restart.
+     */
+    external fun getLastHsLoopHeartbeat(): Long
+
+    /**
+     * Get HS accept heartbeat (epoch millis).
+     * Updated only after a valid protocol frame is received (not just TCP accept).
+     * Returns 0 if no valid inbound connection has been processed.
+     * Use alongside self-circuit-test to distinguish "idle" from "broken".
+     */
+    external fun getLastHsAcceptHeartbeat(): Long
+
+    /**
      * Get HS descriptor upload count - how many HSDirs confirmed our descriptor
      * v3 onions upload to ~6-8 HSDirs; >= 1 means partially reachable, >= 3 is good
      * Updated in real-time by event listener (no control port query)
