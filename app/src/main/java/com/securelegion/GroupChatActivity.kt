@@ -270,10 +270,11 @@ class GroupChatActivity : BaseActivity() {
             )
 
             // Apply bottom inset to message input container
+            // Use IME inset when keyboard is visible, system nav bar inset otherwise
             currentBottomInset = if (imeVisible) {
                 imeInsets.bottom
             } else {
-                0
+                systemInsets.bottom
             }
 
             messageInputContainer.setPadding(
@@ -320,8 +321,9 @@ class GroupChatActivity : BaseActivity() {
                     val myEntry = members.find { it.pubkeyHex == myPubkeyHex }
                     myDeviceIdHex = myEntry?.deviceIdHex
 
-                    // Build deviceIdHex → displayName map (Contact → GroupPeer → hex fallback)
+                    // Build deviceIdHex → displayName and deviceIdHex → profilePhoto maps
                     val nameMap = mutableMapOf<String, String>()
+                    val photoMap = mutableMapOf<String, String?>()
                     for (member in members) {
                         if (member.pubkeyHex == myPubkeyHex) continue
                         try {
@@ -335,6 +337,7 @@ class GroupChatActivity : BaseActivity() {
                                 ?: db.groupPeerDao().getByGroupAndPubkey(currentGroupId, member.pubkeyHex)?.displayName
                                 ?: member.deviceIdHex.take(8)
                             nameMap[member.deviceIdHex] = displayName
+                            photoMap[member.deviceIdHex] = contact?.profilePictureBase64
                         } catch (_: Exception) {
                             nameMap[member.deviceIdHex] = member.deviceIdHex.take(8)
                         }
@@ -363,13 +366,16 @@ class GroupChatActivity : BaseActivity() {
 
                     // Map to UI model
                     val mapped = messages.map { msg ->
+                        val isMe = msg.authorDeviceHex == myDeviceIdHex
                         GroupChatMessage(
                             messageId = msg.msgIdHex,
                             text = msg.decryptedText ?: "[Encrypted]",
                             timestamp = msg.timestampMs,
-                            isSentByMe = msg.authorDeviceHex == myDeviceIdHex,
-                            senderName = if (msg.authorDeviceHex == myDeviceIdHex) ""
-                                else nameMap[msg.authorDeviceHex] ?: msg.authorDeviceHex.take(8)
+                            isSentByMe = isMe,
+                            senderName = if (isMe) ""
+                                else nameMap[msg.authorDeviceHex] ?: msg.authorDeviceHex.take(8),
+                            senderProfilePhotoBase64 = if (isMe) null
+                                else photoMap[msg.authorDeviceHex]
                         )
                     }
 

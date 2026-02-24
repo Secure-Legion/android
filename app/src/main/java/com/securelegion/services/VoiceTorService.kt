@@ -209,7 +209,7 @@ class VoiceTorService : Service() {
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("Voice Tor Service")
             .setContentText(message)
-            .setSmallIcon(R.drawable.ic_notification_logo)
+            .setSmallIcon(R.drawable.ic_shield)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .build()
     }

@@ -13,6 +13,7 @@ import com.securelegion.models.TorHealthStatus
 import com.securelegion.services.TorService
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import android.net.ConnectivityManager
 import java.net.InetSocketAddress
 import java.net.Socket
 import java.util.concurrent.TimeUnit
@@ -65,6 +66,10 @@ class TorHealthMonitorWorker(
         private const val HS_SELF_TEST_FAILURE_THRESHOLD = 3    // Restart listeners after 3 consecutive failures (~3min)
         private const val HS_RESTART_COOLDOWN_MS = 3 * 60_000L  // 3 minutes between listener restarts
         private const val HS_ACCEPT_RECENT_MS = 5 * 60_000L     // If accept heartbeat <5min old, skip self-test
+
+        // DEGRADED escalation: circuits=0 recovery ladder
+        private const val DEGRADED_GRACE_MS = 180_000L         // 3 minutes before escalating
+        private const val DEGRADED_RECOVERY_COOLDOWN_MS = 60_000L // 60s between recovery attempts
         private const val HS_SERVICE_PORT = 9150                 // Virtual port on .onion (9150 → local 8080)
 
         /**
@@ -228,9 +233,87 @@ class TorHealthMonitorWorker(
             }
         }
 
-        // Tor process is HEALTHY (SOCKS OK + bootstrap 100%)
-        // HS listener issues handled above via listener restart (not Tor restart)
-        Log.i(TAG, "Tor process healthy (SOCKS OK + bootstrap 100%)")
+        // PHASE 4: Circuit-level connectivity check
+        // SOCKS + bootstrap OK, but do we actually have circuits to the Tor network?
+        // Without circuits, outbound works via cached SOCKS but inbound is dead.
+        val circuitsEstablished = try {
+            com.securelegion.crypto.RustBridge.getCircuitEstablished()
+        } catch (e: Exception) { 0 }
+
+        if (circuitsEstablished != 1) {
+            Log.w(TAG, "SOCKS OK + bootstrap=$bootstrapPercent but circuits=0 → DEGRADED")
+
+            // --- DEGRADED escalation ladder ---
+            // Only escalate if bootstrap is nearly done AND device has internet
+            if (bootstrapPercent >= 90 && hasInternetConnectivity()) {
+                val degradedSince = healthPrefs.getLong("degraded_since_ms", 0L)
+                val degradedStep = healthPrefs.getInt("degraded_recovery_step", 0)
+                val lastRecovery = healthPrefs.getLong("degraded_last_recovery_ms", 0L)
+
+                // First time entering DEGRADED: record timestamp
+                if (degradedSince == 0L) {
+                    healthPrefs.edit().putLong("degraded_since_ms", nowMs).apply()
+                    Log.i(TAG, "DEGRADED: starting grace period (${DEGRADED_GRACE_MS / 1000}s)")
+                } else if (nowMs - degradedSince > DEGRADED_GRACE_MS
+                    && nowMs - lastRecovery > DEGRADED_RECOVERY_COOLDOWN_MS) {
+                    // Grace period elapsed + cooldown expired → escalate
+                    when (degradedStep) {
+                        0 -> {
+                            Log.w(TAG, "DEGRADED escalation step 0: sending NEWNYM")
+                            TorService.requestNewnym("DEGRADED escalation: circuits=0 for ${(nowMs - degradedSince) / 1000}s")
+                            healthPrefs.edit()
+                                .putInt("degraded_recovery_step", 1)
+                                .putLong("degraded_last_recovery_ms", nowMs)
+                                .apply()
+                        }
+                        1 -> {
+                            Log.w(TAG, "DEGRADED escalation step 1: restarting HS listeners")
+                            TorService.requestListenerRestart("DEGRADED escalation: circuits=0 after NEWNYM")
+                            healthPrefs.edit()
+                                .putInt("degraded_recovery_step", 2)
+                                .putLong("degraded_last_recovery_ms", nowMs)
+                                .apply()
+                        }
+                        else -> {
+                            Log.w(TAG, "DEGRADED escalation step 2: full Tor restart")
+                            TorService.requestRestart("DEGRADED escalation: circuits=0 after listener restart")
+                            healthPrefs.edit()
+                                .putInt("degraded_recovery_step", 0)
+                                .putLong("degraded_last_recovery_ms", nowMs)
+                                .putLong("degraded_since_ms", 0L)
+                                .apply()
+                        }
+                    }
+                } else {
+                    val graceRemaining = maxOf(0, DEGRADED_GRACE_MS - (nowMs - degradedSince)) / 1000
+                    val cooldownRemaining = maxOf(0, DEGRADED_RECOVERY_COOLDOWN_MS - (nowMs - lastRecovery)) / 1000
+                    Log.d(TAG, "DEGRADED: waiting (grace=${graceRemaining}s, cooldown=${cooldownRemaining}s, step=$degradedStep)")
+                }
+            } else {
+                Log.d(TAG, "DEGRADED: bootstrap=$bootstrapPercent (still starting) or no internet — skipping escalation")
+            }
+
+            return current.copy(
+                status = TorHealthStatus.DEGRADED,
+                lastCheckElapsedMs = now,
+                lastFailureType = TorFailureType.CIRCUIT_FAILED,
+                lastError = "No circuits established (bootstrap=$bootstrapPercent%)",
+                lastStatusChangeElapsedMs = if (current.status != TorHealthStatus.DEGRADED) now else current.lastStatusChangeElapsedMs
+            )
+        }
+
+        // Tor process is HEALTHY (SOCKS OK + bootstrap 100% + circuits established)
+        // Clear DEGRADED tracking if we were previously degraded
+        if (healthPrefs.getLong("degraded_since_ms", 0L) != 0L) {
+            Log.i(TAG, "Circuits recovered — clearing DEGRADED escalation state")
+            healthPrefs.edit()
+                .putLong("degraded_since_ms", 0L)
+                .putInt("degraded_recovery_step", 0)
+                .putLong("degraded_last_recovery_ms", 0L)
+                .apply()
+        }
+
+        Log.i(TAG, "Tor process healthy (SOCKS OK + bootstrap 100% + circuits=1)")
         return current.copy(
             status = TorHealthStatus.HEALTHY,
             lastOkElapsedMs = now,
@@ -265,12 +348,19 @@ class TorHealthMonitorWorker(
      * Currently uses a heuristic: assume 100% if SOCKS responds (simplest approach)
      * TODO: Integrate Tor control port for accurate bootstrap status
      */
-    private suspend fun checkTorBootstrap(): Int {
-        // Heuristic: if we got here, SOCKS is responding
-        // In a real implementation, you'd query Tor control port:
-        // `GETINFO status/bootstrap-phase`
-        // For now, trust that bootstrap is complete
-        return 100
+    private suspend fun checkTorBootstrap(): Int = withContext(Dispatchers.IO) {
+        try {
+            val bootstrap = com.securelegion.crypto.RustBridge.getBootstrapStatus()
+            if (bootstrap in 1..100) return@withContext bootstrap
+
+            // bootstrap==0 → event listener not attached yet OR Tor not started.
+            // Use circuitsEstablished as the real "Tor network usable" signal.
+            val circuits = com.securelegion.crypto.RustBridge.getCircuitEstablished()
+            if (circuits == 1) 100 else 0
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to read bootstrap status: ${e.message}")
+            0
+        }
     }
 
     /**
@@ -319,7 +409,7 @@ class TorHealthMonitorWorker(
 
                 // SOCKS5 CONNECT request to onion
                 val onionBytes = onionAddress.toByteArray()
-                val connectReq = ByteArray(6 + onionBytes.size)
+                val connectReq = ByteArray(7 + onionBytes.size)
                 connectReq[0] = 0x05 // VER
                 connectReq[1] = 0x01 // CMD=CONNECT
                 connectReq[2] = 0x00 // RSV
@@ -376,6 +466,18 @@ class TorHealthMonitorWorker(
                 ""
             }
         }
+    }
+
+    /**
+     * Check if device has internet connectivity (WiFi or cellular).
+     * Used to gate DEGRADED escalation — no point sending NEWNYM without a network.
+     */
+    private fun hasInternetConnectivity(): Boolean {
+        val cm = applicationContext.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+            ?: return false
+        val network = cm.activeNetwork ?: return false
+        val capabilities = cm.getNetworkCapabilities(network) ?: return false
+        return capabilities.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET)
     }
 
     /**

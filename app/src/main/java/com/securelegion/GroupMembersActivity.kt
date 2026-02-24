@@ -7,7 +7,6 @@ import android.view.View
 import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.TextView
-import androidx.appcompat.app.AlertDialog
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
@@ -20,8 +19,7 @@ import com.securelegion.crypto.KeyManager
 import com.securelegion.database.SecureLegionDatabase
 import com.securelegion.database.entities.ed25519PublicKeyBytes
 import com.securelegion.services.CrdtGroupManager
-import com.securelegion.ui.adapters.ContactSelectionAdapter
-import com.securelegion.utils.GlassBottomSheetDialog
+import androidx.activity.result.contract.ActivityResultContracts
 import com.securelegion.utils.GlassDialog
 import com.securelegion.utils.ThemedToast
 import kotlinx.coroutines.Dispatchers
@@ -51,6 +49,38 @@ class GroupMembersActivity : BaseActivity() {
     private var allMembers = listOf<GroupMemberItem>()
     private var filteredMembers = listOf<GroupMemberItem>()
     private var currentUserRole: String = "Member"
+
+    // Member selection launcher
+    private val addMembersLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == RESULT_OK) {
+            val idsStr = result.data?.getStringExtra(AddGroupMembersActivity.RESULT_SELECTED_IDS) ?: ""
+            val selectedIds = idsStr.split(",")
+                .filter { it.isNotBlank() }
+                .mapNotNull { it.trim().toLongOrNull() }
+                .toSet()
+
+            if (selectedIds.isNotEmpty()) {
+                val currentGroupId = groupId ?: return@registerForActivityResult
+                lifecycleScope.launch {
+                    try {
+                        val contacts = withContext(Dispatchers.IO) {
+                            val keyManager = KeyManager.getInstance(this@GroupMembersActivity)
+                            val dbPassphrase = keyManager.getDatabasePassphrase()
+                            val database = SecureLegionDatabase.getInstance(this@GroupMembersActivity, dbPassphrase)
+                            database.contactDao().getAllContacts().filter { it.id in selectedIds }
+                        }
+                        if (contacts.isNotEmpty()) {
+                            addMembersToGroup(currentGroupId, contacts)
+                        }
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Failed to resolve selected contacts", e)
+                    }
+                }
+            }
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -255,106 +285,35 @@ class GroupMembersActivity : BaseActivity() {
             return
         }
 
-        lifecycleScope.launch {
-            try {
-                val availableContacts = withContext(Dispatchers.IO) {
-                    val keyManager = KeyManager.getInstance(this@GroupMembersActivity)
-                    val dbPassphrase = keyManager.getDatabasePassphrase()
-                    val database = SecureLegionDatabase.getInstance(this@GroupMembersActivity, dbPassphrase)
-                    val mgr = CrdtGroupManager.getInstance(this@GroupMembersActivity)
-
-                    // Get all contacts
-                    val allContacts = database.contactDao().getAllContacts()
-
-                    // Get current CRDT member pubkeys (hex)
-                    val memberPubkeys = mgr.queryMembers(currentGroupId)
-                        .filter { !it.removed }
-                        .map { it.pubkeyHex }
-                        .toSet()
-
-                    // Filter out contacts already in the group
-                    allContacts.filter { contact ->
-                        val pubkeyHex = contact.ed25519PublicKeyBytes
-                            .joinToString("") { "%02x".format(it) }
-                        pubkeyHex !in memberPubkeys
-                    }
-                }
-
-                withContext(Dispatchers.Main) {
-                    if (availableContacts.isEmpty()) {
-                        ThemedToast.show(this@GroupMembersActivity, "All contacts are already members")
-                        return@withContext
-                    }
-
-                    val bottomSheetDialog = GlassBottomSheetDialog(this@GroupMembersActivity)
-                    val view = layoutInflater.inflate(R.layout.bottom_sheet_select_contacts, null)
-                    bottomSheetDialog.setContentView(view)
-
-                    bottomSheetDialog.behavior.isDraggable = true
-                    bottomSheetDialog.behavior.skipCollapsed = true
-
-                    bottomSheetDialog.setOnShowListener {
-                        (view.parent as? View)?.setBackgroundResource(android.R.color.transparent)
-                    }
-
-                    val contactsRecyclerView = view.findViewById<RecyclerView>(R.id.contactsRecyclerView)
-                    val doneButton = view.findViewById<TextView>(R.id.doneButton)
-
-                    val adapter = ContactSelectionAdapter(mutableSetOf())
-                    contactsRecyclerView.layoutManager = LinearLayoutManager(this@GroupMembersActivity)
-                    contactsRecyclerView.adapter = adapter
-                    adapter.submitList(availableContacts)
-
-                    doneButton.setOnClickListener {
-                        val selected = adapter.getSelectedContacts()
-                        if (selected.isEmpty()) {
-                            ThemedToast.show(this@GroupMembersActivity, "No contacts selected")
-                        } else {
-                            addMembersToGroup(currentGroupId, selected)
-                        }
-                        bottomSheetDialog.dismiss()
-                    }
-
-                    bottomSheetDialog.show()
-                }
-
-            } catch (e: Exception) {
-                Log.e(TAG, "Failed to load available contacts", e)
-                ThemedToast.show(this@GroupMembersActivity, "Failed to load contacts")
-            }
+        val intent = Intent(this, AddGroupMembersActivity::class.java).apply {
+            putExtra(AddGroupMembersActivity.EXTRA_GROUP_ID, currentGroupId)
         }
+        addMembersLauncher.launch(intent)
     }
 
     private fun addMembersToGroup(
         groupId: String,
         contacts: List<com.securelegion.database.entities.Contact>
     ) {
+        val mgr = CrdtGroupManager.getInstance(this@GroupMembersActivity)
+        val contactPairs = contacts.map { contact ->
+            val pubkeyHex = contact.ed25519PublicKeyBytes
+                .joinToString("") { "%02x".format(it) }
+            Pair(pubkeyHex, contact.displayName)
+        }
+        val batchId = mgr.inviteDispatcher.enqueue(groupId, contactPairs)
+
+        val memberNames = contacts.joinToString(", ") { it.displayName }
+        ThemedToast.show(this, "Inviting: $memberNames")
+
+        // Observe progress — refresh list on completion
         lifecycleScope.launch {
-            try {
-                withContext(Dispatchers.IO) {
-                    val mgr = CrdtGroupManager.getInstance(this@GroupMembersActivity)
-                    for ((index, contact) in contacts.withIndex()) {
-                        val pubkeyHex = contact.ed25519PublicKeyBytes
-                            .joinToString("") { "%02x".format(it) }
-                        mgr.inviteMember(groupId, pubkeyHex)
-                        Log.i(TAG, "Invited ${contact.displayName}")
-                        // Backpressure: give Tor circuits time to settle between invites
-                        if (index < contacts.size - 1) {
-                            kotlinx.coroutines.delay(800)
-                        }
-                    }
-                }
-
-                withContext(Dispatchers.Main) {
-                    val memberNames = contacts.joinToString(", ") { it.displayName }
-                    ThemedToast.show(this@GroupMembersActivity, "Invited: $memberNames")
+            mgr.inviteDispatcher.observeBatch(batchId).collect { state ->
+                if (state.isComplete) {
+                    ThemedToast.show(this@GroupMembersActivity, state.summaryText)
                     loadGroupMembers()
-                }
-
-            } catch (e: Exception) {
-                Log.e(TAG, "Failed to add members", e)
-                withContext(Dispatchers.Main) {
-                    ThemedToast.show(this@GroupMembersActivity, "Failed to add members: ${e.message}")
+                    mgr.inviteDispatcher.clearBatch(batchId)
+                    return@collect
                 }
             }
         }

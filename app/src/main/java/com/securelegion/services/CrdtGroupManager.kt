@@ -62,6 +62,11 @@ class CrdtGroupManager private constructor(private val context: Context) {
     /** Bounded concurrency for outbound Tor sends — matches Rust SEND_SEMAPHORE(6). */
     private val broadcastSemaphore = Semaphore(6)
 
+    /** Invite dispatcher — serializes invite flow to prevent semaphore starvation. */
+    val inviteDispatcher: InviteDispatcher by lazy {
+        InviteDispatcher.getInstance(context)
+    }
+
     /** Track which groups are currently loaded in Rust memory. */
     private val loadedGroups = mutableSetOf<String>()
 

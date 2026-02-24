@@ -160,6 +160,18 @@ class ChatActivity : BaseActivity() {
     // Media picking
     private var isWaitingForMediaResult = false // Track if waiting for media picker result
 
+    // Image preview/edit result
+    private val imagePreviewLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == RESULT_OK) {
+            val filePath = result.data?.getStringExtra(ImagePreviewActivity.RESULT_IMAGE_URI)
+            if (filePath != null) {
+                handleEditedImage(filePath)
+            }
+        }
+    }
+
     // Activity result launchers for image picking
     private val galleryLauncher = registerForActivityResult(
         ActivityResultContracts.GetContent()
@@ -168,7 +180,7 @@ class ChatActivity : BaseActivity() {
         // DON'T clear isWaitingForCameraGallery here - let onResume() clear it
         // after preventing auto-lock (callback runs before onResume)
 
-        uri?.let { handleSelectedImage(it) }
+        uri?.let { launchImagePreview(it) }
     }
 
     private val cameraLauncher = registerForActivityResult(
@@ -179,7 +191,7 @@ class ChatActivity : BaseActivity() {
         // after preventing auto-lock (callback runs before onResume)
 
         if (success && cameraPhotoUri != null) {
-            handleSelectedImage(cameraPhotoUri!!)
+            launchImagePreview(cameraPhotoUri!!)
         }
     }
 
@@ -366,11 +378,11 @@ class ChatActivity : BaseActivity() {
             )
 
             // Apply bottom inset to message input container
-            // Only apply IME inset when keyboard is visible (floating pill handles its own bottom margin)
+            // Use IME inset when keyboard is visible, system nav bar inset otherwise
             currentBottomInset = if (imeVisible) {
                 imeInsets.bottom
             } else {
-                0
+                systemInsets.bottom
             }
 
             messageInputContainer.setPadding(
@@ -678,6 +690,9 @@ class ChatActivity : BaseActivity() {
             },
             decryptImageFile = { encryptedBytes ->
                 KeyManager.getInstance(this).decryptImageFile(encryptedBytes)
+            },
+            onPinMessage = { message ->
+                pinMessage(message)
             }
         )
 
@@ -874,27 +889,46 @@ class ChatActivity : BaseActivity() {
 
         // Gallery action
         attachmentPanel.findViewById<View>(R.id.actionGallery).setOnClickListener {
+            flashAttachmentIcon(it)
             hideAttachmentPanel()
             openGallery()
         }
 
+        // Camera action
+        attachmentPanel.findViewById<View>(R.id.actionCamera).setOnClickListener {
+            flashAttachmentIcon(it)
+            hideAttachmentPanel()
+            openCamera()
+        }
+
         // File action
         attachmentPanel.findViewById<View>(R.id.actionFile).setOnClickListener {
+            flashAttachmentIcon(it)
             hideAttachmentPanel()
             ThemedToast.show(this, "File sharing coming soon")
         }
 
         // SecurePay action
         attachmentPanel.findViewById<View>(R.id.actionSecurePay).setOnClickListener {
+            flashAttachmentIcon(it)
             hideAttachmentPanel()
             ThemedToast.show(this, "SecurePay coming soon")
         }
 
         // Location action
         attachmentPanel.findViewById<View>(R.id.actionLocation).setOnClickListener {
+            flashAttachmentIcon(it)
             hideAttachmentPanel()
             ThemedToast.show(this, "Location sharing coming soon")
         }
+    }
+
+    private fun flashAttachmentIcon(actionView: View) {
+        val iconBg = (actionView as ViewGroup).getChildAt(0) as android.widget.FrameLayout
+        iconBg.setBackgroundResource(R.drawable.attachment_icon_circle_bg_active)
+        iconBg.postDelayed({
+            iconBg.setBackgroundResource(R.drawable.attachment_icon_circle_bg)
+        }, 300)
     }
 
     private fun showAttachmentPanel() {
@@ -979,7 +1013,7 @@ class ChatActivity : BaseActivity() {
             recyclerView.adapter = com.securelegion.adapters.PhotoPreviewAdapter(photos) { uri ->
                 bottomSheet?.dismiss()
                 hideAttachmentPanel()
-                handleSelectedImage(uri)
+                launchImagePreview(uri)
             }
         }
     }
@@ -1187,6 +1221,42 @@ class ChatActivity : BaseActivity() {
         galleryLauncher.launch("image/*")
     }
 
+    private fun launchImagePreview(uri: Uri) {
+        val intent = ImagePreviewActivity.createIntent(this, uri)
+        imagePreviewLauncher.launch(intent)
+    }
+
+    private fun handleEditedImage(filePath: String) {
+        lifecycleScope.launch {
+            try {
+                ThemedToast.show(this@ChatActivity, "Sending image...")
+
+                val compressedImageData = withContext(Dispatchers.IO) {
+                    compressImageFromFile(filePath)
+                }
+
+                if (compressedImageData == null) {
+                    ThemedToast.show(this@ChatActivity, "Failed to process image")
+                    return@launch
+                }
+
+                val imageSizeKB = compressedImageData.size / 1024
+                Log.d(TAG, "Edited image size: ${imageSizeKB}KB")
+
+                if (imageSizeKB > 500) {
+                    ThemedToast.show(this@ChatActivity, "Image too large (${imageSizeKB}KB). Max 500KB.")
+                    return@launch
+                }
+
+                sendImageMessage(compressedImageData)
+
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to send edited image", e)
+                ThemedToast.show(this@ChatActivity, "Failed to send image: ${e.message}")
+            }
+        }
+    }
+
     private fun handleSelectedImage(uri: Uri) {
         lifecycleScope.launch {
             try {
@@ -1267,6 +1337,51 @@ class ChatActivity : BaseActivity() {
             return outputStream.toByteArray()
         } catch (e: Exception) {
             Log.e(TAG, "Image compression failed", e)
+            return null
+        }
+    }
+
+    private fun compressImageFromFile(filePath: String): ByteArray? {
+        try {
+            val file = java.io.File(filePath)
+            if (!file.exists() || file.length() == 0L) {
+                Log.e(TAG, "Edited image file missing or empty: $filePath")
+                return null
+            }
+            Log.d(TAG, "compressImageFromFile: path=$filePath, size=${file.length()}")
+
+            // Decode bounds
+            val boundsOptions = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            BitmapFactory.decodeFile(filePath, boundsOptions)
+
+            val (width, height) = boundsOptions.outWidth to boundsOptions.outHeight
+            if (width <= 0 || height <= 0) {
+                Log.e(TAG, "Failed to decode bounds from file: ${width}x${height}")
+                return null
+            }
+
+            var sampleSize = 1
+            while (width / (sampleSize * 2) >= MAX_IMAGE_WIDTH && height / (sampleSize * 2) >= MAX_IMAGE_HEIGHT) {
+                sampleSize *= 2
+            }
+
+            // Decode actual bitmap
+            val decodeOptions = BitmapFactory.Options().apply { inSampleSize = sampleSize }
+            var bitmap = BitmapFactory.decodeFile(filePath, decodeOptions) ?: return null
+
+            // Scale if needed
+            bitmap = scaleBitmap(bitmap, MAX_IMAGE_WIDTH, MAX_IMAGE_HEIGHT)
+
+            // Compress to JPEG (strips EXIF metadata)
+            val outputStream = java.io.ByteArrayOutputStream()
+            bitmap.compress(Bitmap.CompressFormat.JPEG, JPEG_QUALITY, outputStream)
+            bitmap.recycle()
+
+            val result = outputStream.toByteArray()
+            Log.d(TAG, "compressImageFromFile: output ${result.size} bytes")
+            return result
+        } catch (e: Exception) {
+            Log.e(TAG, "compressImageFromFile failed", e)
             return null
         }
     }
@@ -2001,6 +2116,24 @@ class ChatActivity : BaseActivity() {
                 withContext(Dispatchers.Main) {
                     ThemedToast.show(this@ChatActivity, "Failed to delete message")
                 }
+            }
+        }
+    }
+
+    private fun pinMessage(message: Message) {
+        val newPinned = !message.isPinned
+        lifecycleScope.launch {
+            try {
+                withContext(Dispatchers.IO) {
+                    database.messageDao().setPinned(message.id, newPinned)
+                }
+                loadMessages()
+                ThemedToast.show(
+                    this@ChatActivity,
+                    if (newPinned) "Message pinned" else "Message unpinned"
+                )
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to pin/unpin message", e)
             }
         }
     }

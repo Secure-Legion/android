@@ -1,12 +1,15 @@
 package com.securelegion
 
+import android.app.Activity
 import android.content.Intent
+import android.graphics.Bitmap
 import android.os.Bundle
 import android.util.Log
 import android.view.View
 import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.TextView
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
@@ -14,6 +17,7 @@ import androidx.lifecycle.lifecycleScope
 import com.securelegion.crypto.KeyManager
 import com.securelegion.database.SecureLegionDatabase
 import com.securelegion.services.CrdtGroupManager
+import com.securelegion.utils.GlassBottomSheetDialog
 import com.securelegion.utils.ImagePicker
 import com.securelegion.utils.ThemedToast
 import kotlinx.coroutines.Dispatchers
@@ -41,6 +45,39 @@ class GroupProfileActivity : BaseActivity() {
     // Group data
     private var groupId: String? = null
     private var groupName: String = "Group"
+
+    // Image picker launchers
+    private val galleryLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK) {
+            val uri = result.data?.data
+            val base64 = ImagePicker.processImageUri(this, uri)
+            if (base64 != null) {
+                updateGroupIconPreview(base64)
+                saveGroupIcon(base64)
+                ThemedToast.show(this, "Group icon updated")
+            } else {
+                ThemedToast.show(this, "Failed to process image")
+            }
+        }
+    }
+
+    private val cameraLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK) {
+            val bitmap = result.data?.extras?.get("data") as? Bitmap
+            val base64 = ImagePicker.processImageBitmap(bitmap)
+            if (base64 != null) {
+                updateGroupIconPreview(base64)
+                saveGroupIcon(base64)
+                ThemedToast.show(this, "Group icon updated")
+            } else {
+                ThemedToast.show(this, "Failed to process image")
+            }
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -74,9 +111,9 @@ class GroupProfileActivity : BaseActivity() {
             finish()
         }
 
-        // Group icon - future: open icon/emoji picker
+        // Group icon - photo picker
         groupIconContainer.setOnClickListener {
-            ThemedToast.show(this, "Icon picker - Coming soon")
+            showGroupIconPickerDialog()
         }
 
         // Change PIN — hidden for CRDT groups
@@ -187,6 +224,72 @@ class GroupProfileActivity : BaseActivity() {
 
         ThemedToast.show(this, "Permissions - Coming soon")
         Log.i(TAG, "Permissions clicked for group: $groupName")
+    }
+
+    // ==================== GROUP ICON PICKER ====================
+
+    private fun showGroupIconPickerDialog() {
+        val bottomSheet = GlassBottomSheetDialog(this)
+        val view = layoutInflater.inflate(R.layout.bottom_sheet_photo_picker, null)
+        bottomSheet.setContentView(view)
+
+        bottomSheet.behavior.isDraggable = true
+        bottomSheet.behavior.skipCollapsed = true
+
+        bottomSheet.setOnShowListener {
+            (view.parent as? View)?.setBackgroundResource(android.R.color.transparent)
+        }
+
+        view.findViewById<View>(R.id.optionTakePhoto).setOnClickListener {
+            bottomSheet.dismiss()
+            ImagePicker.pickFromCamera(cameraLauncher)
+        }
+
+        view.findViewById<View>(R.id.optionGallery).setOnClickListener {
+            bottomSheet.dismiss()
+            ImagePicker.pickFromGallery(galleryLauncher)
+        }
+
+        view.findViewById<View>(R.id.optionRemovePhoto).setOnClickListener {
+            bottomSheet.dismiss()
+            removeGroupIcon()
+        }
+
+        bottomSheet.show()
+    }
+
+    private fun updateGroupIconPreview(base64: String) {
+        val bitmap = ImagePicker.decodeBase64ToBitmap(base64)
+        if (bitmap != null) {
+            groupIconImage.imageTintList = null
+            groupIconImage.setImageBitmap(bitmap)
+            groupIconImage.scaleType = ImageView.ScaleType.CENTER_CROP
+        }
+    }
+
+    private fun removeGroupIcon() {
+        groupIconImage.setImageResource(R.drawable.ic_contacts)
+        groupIconImage.scaleType = ImageView.ScaleType.CENTER_INSIDE
+        groupIconImage.imageTintList = android.content.res.ColorStateList.valueOf(
+            android.graphics.Color.parseColor("#999999")
+        )
+        saveGroupIcon(null)
+        ThemedToast.show(this, "Group icon removed")
+    }
+
+    private fun saveGroupIcon(base64: String?) {
+        val currentGroupId = groupId ?: return
+        lifecycleScope.launch {
+            try {
+                withContext(Dispatchers.IO) {
+                    val keyManager = KeyManager.getInstance(this@GroupProfileActivity)
+                    val db = SecureLegionDatabase.getInstance(this@GroupProfileActivity, keyManager.getDatabasePassphrase())
+                    db.groupDao().updateGroupIcon(currentGroupId, base64 ?: "")
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to save group icon", e)
+            }
+        }
     }
 
     private fun setupBottomNav() {

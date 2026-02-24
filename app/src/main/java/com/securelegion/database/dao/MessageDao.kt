@@ -59,7 +59,7 @@ interface MessageDao {
             retryCount, lastRetryTimestamp, nextRetryAtMs, lastError,
             pingDelivered, messageDelivered, tapDelivered, pongDelivered,
             pingWireBytes, paymentQuoteJson, paymentStatus, txSignature, paymentToken, paymentAmount,
-            correlationId"""
+            correlationId, isPinned"""
     }
 
     /**
@@ -93,6 +93,18 @@ interface MessageDao {
      */
     @Query("DELETE FROM messages WHERE id = :messageId")
     suspend fun deleteMessageById(messageId: Long)
+
+    /**
+     * Pin or unpin a message locally
+     */
+    @Query("UPDATE messages SET isPinned = :pinned WHERE id = :messageId")
+    suspend fun setPinned(messageId: Long, pinned: Boolean)
+
+    /**
+     * Get pinned messages for a contact (most recent first)
+     */
+    @Query("SELECT $LITE_COLS FROM messages WHERE contactId = :contactId AND isPinned = 1 ORDER BY timestamp DESC")
+    suspend fun getPinnedMessages(contactId: Long): List<Message>
 
     /**
      * Get message by ID (CursorWindow-safe: large columns excluded)

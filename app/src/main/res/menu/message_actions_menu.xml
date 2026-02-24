@@ -4,6 +4,9 @@
         android:id="@+id/action_resend"
         android:title="Resend" />
     <item
+        android:id="@+id/action_pin"
+        android:title="Pin" />
+    <item
         android:id="@+id/action_copy"
         android:title="Copy" />
     <item

@@ -118,7 +118,7 @@ class BootReceiver : BroadcastReceiver() {
         )
 
         val notification = NotificationCompat.Builder(context, CHANNEL_ID)
-            .setSmallIcon(R.drawable.ic_notification_logo)
+            .setSmallIcon(R.drawable.ic_shield)
             .setContentTitle("Secure Legion")
             .setContentText("Reconnecting to the Tor network...")
             .setContentIntent(pendingIntent)

@@ -11,13 +11,16 @@ import com.securelegion.database.entities.ContactKeyChain
 interface ContactKeyChainDao {
 
     /**
-     * Insert a new key chain for a contact
-     * This happens when a contact is added or when initializing key evolution
+     * Insert a new key chain for a contact (IGNORE if one already exists).
+     * CRITICAL: REPLACE was causing aead::Error decryption failures in dual friend
+     * request scenarios where Phase 2 and Phase 3 initialized with different KEM secrets.
+     * KeyChainManager also guards against re-init, but IGNORE is defense-in-depth.
+     * To truly re-initialize, delete the contact first (CASCADE deletes key chain).
      *
      * @param keyChain Key chain to insert
-     * @return ID of inserted key chain
+     * @return ID of inserted key chain, or -1 if already exists
      */
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertKeyChain(keyChain: ContactKeyChain): Long
 
     /**

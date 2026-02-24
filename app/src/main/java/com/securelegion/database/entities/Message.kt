@@ -327,7 +327,12 @@ data class Message(
      * Format: "stress_<runId>_<counter>" or null for normal messages
      * Enables diagnosis of SOCKS timeout root cause and MESSAGE_TX initialization race
      */
-    val correlationId: String? = null
+    val correlationId: String? = null,
+
+    /**
+     * Whether this message is pinned locally (device-only, not synced)
+     */
+    val isPinned: Boolean = false
 ) {
     companion object {
         // Message type constants

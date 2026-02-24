@@ -18,7 +18,7 @@
         android:paddingBottom="8dp"
         android:visibility="gone" />
 
-    <!-- Message Content Row -->
+    <!-- Message Content Row: Avatar + Bubble -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
@@ -37,15 +37,34 @@
             android:layout_marginEnd="8dp"
             android:visibility="gone" />
 
-        <!-- Message Bubble -->
+        <!-- Sender Avatar -->
+        <com.securelegion.views.AvatarView
+            android:id="@+id/senderAvatar"
+            android:layout_width="28dp"
+            android:layout_height="28dp"
+            android:layout_marginEnd="8dp"
+            android:layout_gravity="top"
+            android:layout_marginTop="2dp" />
+
+        <!-- Bubble with sender name -->
         <LinearLayout
             android:id="@+id/messageBubble"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:orientation="vertical"
-            android:maxWidth="280dp"
+            android:maxWidth="260dp"
             android:background="@drawable/message_received_bg"
             android:padding="12dp">
+
+            <!-- Sender Name (colored) -->
+            <TextView
+                android:id="@+id/senderName"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Sender"
+                android:textSize="13sp"
+                android:fontFamily="@font/space_grotesk_bold"
+                android:layout_marginBottom="2dp" />
 
             <TextView
                 android:id="@+id/pinIndicator"
@@ -58,6 +77,7 @@
                 android:layout_marginBottom="2dp"
                 android:visibility="gone" />
 
+            <!-- Message Text -->
             <TextView
                 android:id="@+id/messageText"
                 android:layout_width="wrap_content"

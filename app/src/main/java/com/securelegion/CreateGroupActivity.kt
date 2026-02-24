@@ -10,19 +10,17 @@ import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
+import android.content.Intent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.lifecycle.lifecycleScope
+import com.securelegion.utils.GlassBottomSheetDialog
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
-import com.google.android.material.bottomsheet.BottomSheetDialog
-import com.securelegion.utils.GlassBottomSheetDialog
-import android.content.Intent
 import com.securelegion.crypto.KeyManager
 import com.securelegion.database.SecureLegionDatabase
 import com.securelegion.database.entities.Contact
 import com.securelegion.database.entities.ed25519PublicKeyBytes
 import com.securelegion.services.CrdtGroupManager
-import com.securelegion.ui.adapters.ContactSelectionAdapter
 import com.securelegion.ui.adapters.SelectedMembersAdapter
 import com.securelegion.utils.ImagePicker
 import com.securelegion.utils.ThemedToast
@@ -83,6 +81,31 @@ class CreateGroupActivity : BaseActivity() {
                 ThemedToast.show(this, "Group icon updated")
             } else {
                 ThemedToast.show(this, "Failed to process image")
+            }
+        }
+    }
+
+    // Member selection launcher
+    private val addMembersLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK) {
+            val idsStr = result.data?.getStringExtra(AddGroupMembersActivity.RESULT_SELECTED_IDS) ?: ""
+            val selectedIds = idsStr.split(",")
+                .filter { it.isNotBlank() }
+                .mapNotNull { it.trim().toLongOrNull() }
+                .toSet()
+
+            lifecycleScope.launch {
+                val contacts = withContext(Dispatchers.IO) {
+                    val keyManager = KeyManager.getInstance(this@CreateGroupActivity)
+                    val dbPassphrase = keyManager.getDatabasePassphrase()
+                    val database = SecureLegionDatabase.getInstance(this@CreateGroupActivity, dbPassphrase)
+                    database.contactDao().getAllContacts().filter { it.id in selectedIds }
+                }
+                selectedMembers.clear()
+                selectedMembers.addAll(contacts)
+                updateSelectedMembersUI()
             }
         }
     }
@@ -167,61 +190,11 @@ class CreateGroupActivity : BaseActivity() {
     }
 
     private fun showContactSelectionDialog() {
-        lifecycleScope.launch {
-            val contacts = withContext(Dispatchers.IO) {
-                try {
-                    val keyManager = KeyManager.getInstance(this@CreateGroupActivity)
-                    val dbPassphrase = keyManager.getDatabasePassphrase()
-                    val database = SecureLegionDatabase.getInstance(this@CreateGroupActivity, dbPassphrase)
-                    database.contactDao().getAllContacts()
-                } catch (e: Exception) {
-                    Log.e(TAG, "Failed to load contacts", e)
-                    emptyList()
-                }
-            }
-
-            withContext(Dispatchers.Main) {
-                if (contacts.isEmpty()) {
-                    ThemedToast.show(this@CreateGroupActivity, "No contacts available. Add friends first!")
-                    return@withContext
-                }
-
-                // Create bottom sheet
-                val bottomSheetDialog = GlassBottomSheetDialog(this@CreateGroupActivity)
-                val view = layoutInflater.inflate(R.layout.bottom_sheet_select_contacts, null)
-                bottomSheetDialog.setContentView(view)
-
-                bottomSheetDialog.behavior.isDraggable = true
-                bottomSheetDialog.behavior.skipCollapsed = true
-
-                bottomSheetDialog.setOnShowListener {
-                    (view.parent as? View)?.setBackgroundResource(android.R.color.transparent)
-                }
-
-                // Setup RecyclerView in bottom sheet
-                val contactsRecyclerView = view.findViewById<RecyclerView>(R.id.contactsRecyclerView)
-                val doneButton = view.findViewById<TextView>(R.id.doneButton)
-
-                // Pre-select existing members
-                val selectedIds = selectedMembers.map { it.id }.toMutableSet()
-                val adapter = ContactSelectionAdapter(selectedIds)
-
-                contactsRecyclerView.layoutManager = LinearLayoutManager(this@CreateGroupActivity)
-                contactsRecyclerView.adapter = adapter
-                adapter.submitList(contacts)
-
-                // Done button
-                doneButton.setOnClickListener {
-                    // Update selected members list
-                    selectedMembers.clear()
-                    selectedMembers.addAll(adapter.getSelectedContacts())
-                    updateSelectedMembersUI()
-                    bottomSheetDialog.dismiss()
-                }
-
-                bottomSheetDialog.show()
-            }
+        val preselectedIds = selectedMembers.joinToString(",") { it.id.toString() }
+        val intent = Intent(this, AddGroupMembersActivity::class.java).apply {
+            putExtra(AddGroupMembersActivity.EXTRA_PRESELECTED_IDS, preselectedIds)
         }
+        addMembersLauncher.launch(intent)
     }
 
     private fun updateSelectedMembersUI() {
@@ -264,19 +237,27 @@ class CreateGroupActivity : BaseActivity() {
                     val mgr = CrdtGroupManager.getInstance(this@CreateGroupActivity)
                     val gid = mgr.createGroup(groupName, selectedGroupIcon)
 
-                    // Invite selected members (inviteMember handles broadcast + bundle internally)
-                    for (member in selectedMembers) {
-                        val pubkeyHex = member.ed25519PublicKeyBytes
-                            .joinToString("") { "%02x".format(it) }
-                        mgr.inviteMember(gid, pubkeyHex)
-                        Log.i(TAG, "Invited ${member.displayName}")
+                    // Enqueue invites — dispatcher handles sequencing, retry, backpressure
+                    if (selectedMembers.isNotEmpty()) {
+                        val contacts = selectedMembers.map { member ->
+                            val pubkeyHex = member.ed25519PublicKeyBytes
+                                .joinToString("") { "%02x".format(it) }
+                            Pair(pubkeyHex, member.displayName)
+                        }
+                        mgr.inviteDispatcher.enqueue(gid, contacts)
                     }
 
                     gid
                 }
 
                 withContext(Dispatchers.Main) {
-                    ThemedToast.show(this@CreateGroupActivity, "Group '$groupName' created!")
+                    val memberCount = selectedMembers.size
+                    val msg = if (memberCount > 0) {
+                        "Group '$groupName' created! Inviting $memberCount members..."
+                    } else {
+                        "Group '$groupName' created!"
+                    }
+                    ThemedToast.show(this@CreateGroupActivity, msg)
 
                     val intent = Intent(this@CreateGroupActivity, GroupChatActivity::class.java).apply {
                         putExtra(GroupChatActivity.EXTRA_GROUP_ID, groupId)

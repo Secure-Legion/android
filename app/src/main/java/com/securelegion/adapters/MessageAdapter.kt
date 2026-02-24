@@ -125,6 +125,7 @@ class MessageAdapter(
     private val onPriceRefreshClick: ((Message, TextView, TextView) -> Unit)? = null, // Refresh price callback
     private val onDeleteMessage: ((Message) -> Unit)? = null, // Delete single message callback
     private val onResendMessage: ((Message) -> Unit)? = null, // Resend failed message callback
+    private val onPinMessage: ((Message) -> Unit)? = null, // Pin/unpin message callback
     private val decryptImageFile: ((ByteArray) -> ByteArray)? = null // Decrypt AES-GCM encrypted image files
 ) : ListAdapter<ChatListItem, RecyclerView.ViewHolder>(ChatListItemDiffCallback) {
 
@@ -304,6 +305,7 @@ class MessageAdapter(
         val messageStatus: ImageView = view.findViewById(R.id.messageStatus)
         val swipeRevealedTime: TextView = view.findViewById(R.id.swipeRevealedTime)
         val messageCheckbox: CheckBox = view.findViewById(R.id.messageCheckbox)
+        val pinIndicator: TextView = view.findViewById(R.id.pinIndicator)
     }
 
     class ReceivedMessageViewHolder(view: View) : RecyclerView.ViewHolder(view) {
@@ -312,6 +314,7 @@ class MessageAdapter(
         val messageText: TextView = view.findViewById(R.id.messageText)
         val swipeRevealedTime: TextView = view.findViewById(R.id.swipeRevealedTime)
         val messageCheckbox: CheckBox = view.findViewById(R.id.messageCheckbox)
+        val pinIndicator: TextView = view.findViewById(R.id.pinIndicator)
     }
 
     class PendingMessageViewHolder(view: View) : RecyclerView.ViewHolder(view) {
@@ -600,6 +603,7 @@ class MessageAdapter(
     private fun bindSentMessage(holder: SentMessageViewHolder, message: Message, position: Int) {
         holder.messageText.text = message.encryptedContent
         holder.messageStatus.setImageResource(getStatusIcon(message))
+        holder.pinIndicator.visibility = if (message.isPinned) View.VISIBLE else View.GONE
 
         // Show timestamp header if this is the first message or date changed
         if (shouldShowTimestampHeader(position)) {
@@ -657,6 +661,7 @@ class MessageAdapter(
 
     private fun bindReceivedMessage(holder: ReceivedMessageViewHolder, message: Message, position: Int) {
         holder.messageText.text = message.encryptedContent
+        holder.pinIndicator.visibility = if (message.isPinned) View.VISIBLE else View.GONE
 
         // Show timestamp header if this is the first message or date changed
         if (shouldShowTimestampHeader(position)) {
@@ -1797,12 +1802,19 @@ class MessageAdapter(
             popup.menu.findItem(R.id.action_copy)?.isVisible = false
         }
 
+        // Toggle pin label based on current state
+        popup.menu.findItem(R.id.action_pin)?.title = if (message.isPinned) "Unpin" else "Pin"
+
         popup.setOnMenuItemClickListener { menuItem ->
             when (menuItem.itemId) {
                 R.id.action_resend -> {
                     // Resend failed message
                     onResendMessage?.invoke(message)
                     ThemedToast.show(view.context, "Resending message...")
+                    true
+                }
+                R.id.action_pin -> {
+                    onPinMessage?.invoke(message)
                     true
                 }
                 R.id.action_copy -> {

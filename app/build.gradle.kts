@@ -323,8 +323,8 @@ dependencies {
     // GIF rendering in chat bubbles and GIF picker
     implementation("pl.droidsonroids.gif:android-gif-drawable:1.2.29")
 
-    // Photo crop/rotate before sending
-    implementation("com.vanniktech:android-image-cropper:4.7.0")
+    // Photo crop/rotate before sending (UCrop - battle-tested crop UI)
+    implementation("com.github.yalantis:ucrop:2.2.11")
 
     // Photo editor (draw, text, emoji overlay before sending)
     implementation("com.burhanrashid52:photoeditor:3.0.2")

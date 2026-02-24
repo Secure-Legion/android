@@ -79,6 +79,21 @@ object KeyChainManager {
     ) {
         withContext(Dispatchers.IO) {
             try {
+                // GUARD: Don't overwrite an existing key chain.
+                // In dual-request scenarios (both parties send + accept friend requests),
+                // Phase 2 and Phase 3 both call initializeKeyChain with different shared
+                // secrets (each KEM encapsulation is random). The REPLACE strategy was
+                // silently overwriting the first key chain, causing aead::Error on every
+                // subsequent message. First initialization wins; to force fresh key chain,
+                // delete the contact (CASCADE deletes key chain) and re-add.
+                val keyManager = KeyManager.getInstance(context)
+                val dbPassphrase = keyManager.getDatabasePassphrase()
+                val checkDb = SecureLegionDatabase.getInstance(context, dbPassphrase)
+                if (checkDb.contactKeyChainDao().keyChainExists(contactId)) {
+                    Log.w(TAG, "Key chain already exists for contact $contactId — skipping re-init")
+                    return@withContext
+                }
+
                 // Check if Kyber key is present, correct size, AND non-zero (legacy cards use zero-filled placeholder)
                 val hasValidKyberKey = (theirKyberPublicKey != null
                     && theirKyberPublicKey.size == 1568  // correct ML-KEM-1024 public key size
@@ -92,8 +107,7 @@ object KeyChainManager {
 
                 Log.i(TAG, "Initializing $modeDesc key chain for contact $contactId")
 
-                // Get our keys from KeyManager
-                val keyManager = KeyManager.getInstance(context)
+                // Get our keys from KeyManager (keyManager already obtained in guard block above)
                 val ourX25519PrivateKey = keyManager.getEncryptionKeyBytes()
 
                 // Derive shared secret using Hybrid KEM or legacy X25519 ECDH
@@ -169,12 +183,13 @@ object KeyChainManager {
                     lastEvolutionTimestamp = System.currentTimeMillis()
                 )
 
-                // Insert key chain into database
-                val dbPassphrase = keyManager.getDatabasePassphrase()
-                val database = SecureLegionDatabase.getInstance(context, dbPassphrase)
-                database.contactKeyChainDao().insertKeyChain(keyChain)
-
-                Log.i(TAG, "Key chain initialized for contact $contactId")
+                // Insert key chain into database (IGNORE if already exists — defense-in-depth)
+                val insertedId = checkDb.contactKeyChainDao().insertKeyChain(keyChain)
+                if (insertedId == -1L) {
+                    Log.w(TAG, "DAO IGNORE: key chain already exists for contactId=$contactId (not overwritten)")
+                } else {
+                    Log.i(TAG, "Key chain initialized for contact $contactId (id=$insertedId)")
+                }
 
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to initialize key chain for contact $contactId", e)
