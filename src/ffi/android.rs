@@ -5,6 +5,7 @@ use std::panic;
 use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicU64, AtomicI32, Ordering};
 use once_cell::sync::{OnceCell, Lazy};
+use arc_swap::ArcSwapOption;
 use std::collections::HashMap;
 use zeroize::Zeroize;
 
@@ -180,13 +181,15 @@ fn normalize_wire_bytes(expected_type: u8, wire_bytes: &[u8]) -> Vec<u8> {
 /// Global TorManager instance
 /// Using tokio::sync::Mutex instead of std::sync::Mutex to prevent deadlocks when holding locks across .await
 static GLOBAL_TOR_MANAGER: OnceCell<Arc<Mutex<TorManager>>> = OnceCell::new();
-static GLOBAL_PING_RECEIVER: OnceCell<Arc<Mutex<mpsc::UnboundedReceiver<(u64, Vec<u8>)>>>> = OnceCell::new();
-static GLOBAL_TAP_RECEIVER: OnceCell<Arc<Mutex<mpsc::UnboundedReceiver<Vec<u8>>>>> = OnceCell::new();
-static GLOBAL_PONG_RECEIVER: OnceCell<Arc<Mutex<mpsc::UnboundedReceiver<(u64, Vec<u8>)>>>> = OnceCell::new();
-static GLOBAL_ACK_RECEIVER: OnceCell<Arc<Mutex<mpsc::UnboundedReceiver<(u64, Vec<u8>)>>>> = OnceCell::new();
-static GLOBAL_MESSAGE_RECEIVER: OnceCell<Arc<Mutex<mpsc::UnboundedReceiver<(u64, Vec<u8>)>>>> = OnceCell::new();
-static GLOBAL_VOICE_RECEIVER: OnceCell<Arc<Mutex<mpsc::UnboundedReceiver<(u64, Vec<u8>)>>>> = OnceCell::new();
-static GLOBAL_FRIEND_REQUEST_RECEIVER: OnceCell<Arc<Mutex<mpsc::UnboundedReceiver<Vec<u8>>>>> = OnceCell::new();
+// Channel receivers: ArcSwapOption allows atomic replacement on listener restart.
+// OnceCell was write-once, causing silent message drops after restartListeners() (the root cause of send-works-receive-dead).
+static GLOBAL_PING_RECEIVER: ArcSwapOption<Mutex<mpsc::UnboundedReceiver<(u64, Vec<u8>)>>> = ArcSwapOption::const_empty();
+static GLOBAL_TAP_RECEIVER: ArcSwapOption<Mutex<mpsc::UnboundedReceiver<Vec<u8>>>> = ArcSwapOption::const_empty();
+static GLOBAL_PONG_RECEIVER: ArcSwapOption<Mutex<mpsc::UnboundedReceiver<(u64, Vec<u8>)>>> = ArcSwapOption::const_empty();
+static GLOBAL_ACK_RECEIVER: ArcSwapOption<Mutex<mpsc::UnboundedReceiver<(u64, Vec<u8>)>>> = ArcSwapOption::const_empty();
+static GLOBAL_MESSAGE_RECEIVER: ArcSwapOption<Mutex<mpsc::UnboundedReceiver<(u64, Vec<u8>)>>> = ArcSwapOption::const_empty();
+static GLOBAL_VOICE_RECEIVER: ArcSwapOption<Mutex<mpsc::UnboundedReceiver<(u64, Vec<u8>)>>> = ArcSwapOption::const_empty();
+static GLOBAL_FRIEND_REQUEST_RECEIVER: ArcSwapOption<Mutex<mpsc::UnboundedReceiver<Vec<u8>>>> = ArcSwapOption::const_empty();
 
 /// Global Voice Streaming Listener (v2.0)
 static GLOBAL_VOICE_LISTENER: OnceCell<Arc<tokio::sync::Mutex<VoiceStreamingListener>>> = OnceCell::new();
@@ -257,10 +260,10 @@ fn get_voice_listener() -> Arc<tokio::sync::Mutex<VoiceStreamingListener>> {
 /// Returns None on timeout, channel closure, or if receiver not initialized.
 /// SAFETY: Must be called from a non-tokio thread (JVM Dispatchers.IO is safe).
 fn blocking_recv_pair(
-    receiver: &OnceCell<Arc<Mutex<mpsc::UnboundedReceiver<(u64, Vec<u8>)>>>>,
+    receiver: &ArcSwapOption<Mutex<mpsc::UnboundedReceiver<(u64, Vec<u8>)>>>,
     timeout_secs: u64,
 ) -> Option<(u64, Vec<u8>)> {
-    let rx_arc = receiver.get()?;
+    let rx_arc = receiver.load_full()?;
     let mut rx = rx_arc.lock().unwrap();
 
     GLOBAL_RUNTIME.block_on(async {
@@ -276,10 +279,10 @@ fn blocking_recv_pair(
 
 /// Blocking recv on a Vec<u8> channel with timeout.
 fn blocking_recv_vec(
-    receiver: &OnceCell<Arc<Mutex<mpsc::UnboundedReceiver<Vec<u8>>>>>,
+    receiver: &ArcSwapOption<Mutex<mpsc::UnboundedReceiver<Vec<u8>>>>,
     timeout_secs: u64,
 ) -> Option<Vec<u8>> {
-    let rx_arc = receiver.get()?;
+    let rx_arc = receiver.load_full()?;
     let mut rx = rx_arc.lock().unwrap();
 
     GLOBAL_RUNTIME.block_on(async {
@@ -1068,34 +1071,24 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_startHiddenServiceList
         match result {
             Ok((ping_receiver, pong_receiver)) => {
                 // Store both PING and PONG receivers globally (local channels, no globals in tor.rs)
-                if let Err(_) = GLOBAL_PING_RECEIVER.set(Arc::new(Mutex::new(ping_receiver))) {
-                    log::warn!("PING_RECEIVER already initialized (listener restart?)");
-                }
-                if let Err(_) = GLOBAL_PONG_RECEIVER.set(Arc::new(Mutex::new(pong_receiver))) {
-                    log::warn!("PONG_RECEIVER already initialized (listener restart?)");
-                }
+                // ArcSwapOption::store() atomically replaces the old channel — safe on restart
+                GLOBAL_PING_RECEIVER.store(Some(Arc::new(Mutex::new(ping_receiver))));
+                GLOBAL_PONG_RECEIVER.store(Some(Arc::new(Mutex::new(pong_receiver))));
+                log::info!("PING/PONG receivers stored (restart-safe via ArcSwap)");
 
                 // Initialize MESSAGE channel for TEXT/VOICE/IMAGE/PAYMENT routing
                 let (message_tx, message_rx) = mpsc::unbounded_channel::<(u64, Vec<u8>)>();
-                if let Err(_) = GLOBAL_MESSAGE_RECEIVER.set(Arc::new(Mutex::new(message_rx))) {
-                    log::warn!("MESSAGE_RECEIVER already initialized (listener restart?)");
-                }
+                GLOBAL_MESSAGE_RECEIVER.store(Some(Arc::new(Mutex::new(message_rx))));
                 let tx_arc = Arc::new(std::sync::Mutex::new(message_tx));
-                if let Err(_) = crate::network::tor::MESSAGE_TX.set(tx_arc) {
-                    log::warn!("MESSAGE_TX channel already initialized");
-                }
-                log::info!("MESSAGE channel initialized for direct routing");
+                crate::network::tor::MESSAGE_TX.store(Some(tx_arc));
+                log::info!("MESSAGE channel initialized (restart-safe via ArcSwap)");
 
                 // Initialize VOICE channel for CALL_SIGNALING routing
                 let (voice_tx, voice_rx) = mpsc::unbounded_channel::<(u64, Vec<u8>)>();
-                if let Err(_) = GLOBAL_VOICE_RECEIVER.set(Arc::new(Mutex::new(voice_rx))) {
-                    log::warn!("VOICE_RECEIVER already initialized (listener restart?)");
-                }
+                GLOBAL_VOICE_RECEIVER.store(Some(Arc::new(Mutex::new(voice_rx))));
                 let voice_tx_arc = Arc::new(std::sync::Mutex::new(voice_tx));
-                if let Err(_) = crate::network::tor::VOICE_TX.set(voice_tx_arc) {
-                    log::warn!("VOICE channel already initialized");
-                }
-                log::info!("VOICE channel initialized for call signaling (separate from MESSAGE)");
+                crate::network::tor::VOICE_TX.store(Some(voice_tx_arc));
+                log::info!("VOICE channel initialized (restart-safe via ArcSwap)");
 
                 1 as jboolean
             }
@@ -1265,7 +1258,7 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_pollIncomingPing(
     _class: JClass,
 ) -> jbyteArray {
     catch_panic!(env, {
-        if let Some(receiver) = GLOBAL_PING_RECEIVER.get() {
+        if let Some(receiver) = GLOBAL_PING_RECEIVER.load_full() {
             let mut rx = receiver.lock().unwrap();
 
             // Try to receive without blocking
@@ -1316,7 +1309,7 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_pollIncomingMessage(
     _class: JClass,
 ) -> jbyteArray {
     catch_panic!(env, {
-        if let Some(receiver) = GLOBAL_MESSAGE_RECEIVER.get() {
+        if let Some(receiver) = GLOBAL_MESSAGE_RECEIVER.load_full() {
             let mut rx = receiver.lock().unwrap();
 
             // Try to receive without blocking
@@ -1354,7 +1347,7 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_pollVoiceMessage(
     _class: JClass,
 ) -> jbyteArray {
     catch_panic!(env, {
-        if let Some(receiver) = GLOBAL_VOICE_RECEIVER.get() {
+        if let Some(receiver) = GLOBAL_VOICE_RECEIVER.load_full() {
             let mut rx = receiver.lock().unwrap();
 
             // Try to receive without blocking
@@ -2649,13 +2642,13 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_startTapListener(
                 // Create channel for friend request messages
                 let (fr_tx, fr_rx) = mpsc::unbounded_channel::<Vec<u8>>();
 
-                // Store receivers globally
-                let _ = GLOBAL_TAP_RECEIVER.set(Arc::new(Mutex::new(tap_rx)));
-                let _ = GLOBAL_FRIEND_REQUEST_RECEIVER.set(Arc::new(Mutex::new(fr_rx)));
+                // Store receivers globally (ArcSwap: atomically replaceable on restart)
+                GLOBAL_TAP_RECEIVER.store(Some(Arc::new(Mutex::new(tap_rx))));
+                GLOBAL_FRIEND_REQUEST_RECEIVER.store(Some(Arc::new(Mutex::new(fr_rx))));
 
                 // Store friend request sender in global FRIEND_REQUEST_TX for routing in tor.rs
                 let fr_tx_arc = Arc::new(std::sync::Mutex::new(fr_tx.clone()));
-                let _ = crate::network::tor::FRIEND_REQUEST_TX.set(fr_tx_arc);
+                crate::network::tor::FRIEND_REQUEST_TX.store(Some(fr_tx_arc));
                 log::info!("Friend request channel initialized successfully (shared port {})", port);
 
                 // Spawn task to receive from TorManager PING channel and route by message type
@@ -2710,7 +2703,7 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_pollIncomingTap(
     _class: JClass,
 ) -> jbyteArray {
     catch_panic!(env, {
-        if let Some(receiver) = GLOBAL_TAP_RECEIVER.get() {
+        if let Some(receiver) = GLOBAL_TAP_RECEIVER.load_full() {
             let mut rx = receiver.lock().unwrap();
 
             // Try to receive without blocking
@@ -2747,15 +2740,12 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_startFriendRequestList
         // Create channel for friend requests
         let (tx, rx) = mpsc::unbounded_channel::<Vec<u8>>();
 
-        // Store receiver globally for polling
-        let _ = GLOBAL_FRIEND_REQUEST_RECEIVER.set(Arc::new(Mutex::new(rx)));
+        // Store receiver globally for polling (ArcSwap: atomically replaceable on restart)
+        GLOBAL_FRIEND_REQUEST_RECEIVER.store(Some(Arc::new(Mutex::new(rx))));
 
         // Store sender in global FRIEND_REQUEST_TX for routing in tor.rs
         let tx_arc = Arc::new(std::sync::Mutex::new(tx));
-        if let Err(_) = crate::network::tor::FRIEND_REQUEST_TX.set(tx_arc) {
-            log::error!("Friend request channel already initialized");
-            return 0;
-        }
+        crate::network::tor::FRIEND_REQUEST_TX.store(Some(tx_arc));
 
         log::info!("Friend request listener channel initialized successfully");
         1 // success
@@ -2897,7 +2887,7 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_pollIncomingPong(
 ) -> jbyteArray {
     catch_panic!(env, {
         // Read from GLOBAL_PONG_RECEIVER (same pattern as GLOBAL_PING_RECEIVER)
-        if let Some(receiver) = GLOBAL_PONG_RECEIVER.get() {
+        if let Some(receiver) = GLOBAL_PONG_RECEIVER.load_full() {
             let mut rx = receiver.lock().unwrap();
 
             // Try to receive without blocking
@@ -6719,11 +6709,11 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_startAckListener(
                 // This channel is accessible from both port 9153 (normal path) and port 8080 (error recovery)
                 let (tx, rx) = mpsc::unbounded_channel::<(u64, Vec<u8>)>();
 
-                // Store receiver globally for polling
-                let _ = GLOBAL_ACK_RECEIVER.set(Arc::new(Mutex::new(rx)));
+                // Store receiver globally for polling (ArcSwap: atomically replaceable on restart)
+                GLOBAL_ACK_RECEIVER.store(Some(Arc::new(Mutex::new(rx))));
 
                 // Store sender globally so port 8080 can route misrouted ACKs
-                let _ = crate::network::tor::ACK_TX.set(Arc::new(std::sync::Mutex::new(tx.clone())));
+                crate::network::tor::ACK_TX.store(Some(Arc::new(std::sync::Mutex::new(tx.clone()))));
 
                 // Spawn task to receive from TorManager PING channel and forward to shared ACK channel
                 // Note: ACKs should be routed via ACK_TX in tor.rs, not via PING channel
@@ -6758,7 +6748,7 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_pollIncomingAck(
     _class: JClass,
 ) -> jbyteArray {
     catch_panic!(env, {
-        if let Some(receiver) = GLOBAL_ACK_RECEIVER.get() {
+        if let Some(receiver) = GLOBAL_ACK_RECEIVER.load_full() {
             let mut rx = receiver.lock().unwrap();
 
             // Try to receive without blocking
@@ -7554,7 +7544,7 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_pollFriendRequest(
     _class: JClass,
 ) -> jbyteArray {
     catch_panic!(env, {
-        if let Some(receiver) = GLOBAL_FRIEND_REQUEST_RECEIVER.get() {
+        if let Some(receiver) = GLOBAL_FRIEND_REQUEST_RECEIVER.load_full() {
             let mut rx = receiver.lock().unwrap();
 
             // Try to receive without blocking

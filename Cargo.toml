@@ -68,6 +68,7 @@ uuid = { version = "1.6", features = ["v4"] }
 
 # Sync primitives
 once_cell = "1.19"
+arc-swap = "1"  # Atomic swap for restartable channel lifecycle (replaces OnceCell for TX/RX channels)
 lru = "0.12"  # For replay cache (LRU eviction policy)
 
 # Async runtime (for Ping-Pong protocol and Tor control)
