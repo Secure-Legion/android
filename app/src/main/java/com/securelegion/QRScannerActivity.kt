@@ -4,7 +4,10 @@ import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
+import android.view.MotionEvent
 import android.view.View
 import androidx.appcompat.app.AppCompatActivity
 import androidx.camera.core.*
@@ -18,10 +21,14 @@ import com.google.mlkit.vision.common.InputImage
 import com.securelegion.utils.ThemedToast
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 
 class QRScannerActivity : AppCompatActivity() {
     private lateinit var cameraExecutor: ExecutorService
     private var imageAnalyzer: ImageAnalysis? = null
+    private var camera: Camera? = null
+    private val autoFocusHandler = Handler(Looper.getMainLooper())
+    private var autoFocusRunnable: Runnable? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -46,6 +53,7 @@ class QRScannerActivity : AppCompatActivity() {
 
     private fun startCamera() {
         val cameraProviderFuture = ProcessCameraProvider.getInstance(this)
+        val previewView = findViewById<PreviewView>(R.id.previewView)
 
         cameraProviderFuture.addListener({
             val cameraProvider = cameraProviderFuture.get()
@@ -54,7 +62,7 @@ class QRScannerActivity : AppCompatActivity() {
             val preview = Preview.Builder()
                 .build()
                 .also {
-                    it.setSurfaceProvider(findViewById<PreviewView>(R.id.previewView).surfaceProvider)
+                    it.setSurfaceProvider(previewView.surfaceProvider)
                 }
 
             // Image analyzer for QR code scanning
@@ -74,14 +82,63 @@ class QRScannerActivity : AppCompatActivity() {
 
             try {
                 cameraProvider.unbindAll()
-                cameraProvider.bindToLifecycle(
+                camera = cameraProvider.bindToLifecycle(
                     this, cameraSelector, preview, imageAnalyzer
                 )
+
+                // Tap-to-focus: user touches screen → camera refocuses at that point
+                setupTapToFocus(previewView)
+
+                // Periodic auto-refocus every 2s (helps Samsung close-range scanning)
+                startPeriodicAutoFocus(previewView)
+
             } catch (exc: Exception) {
                 Log.e(TAG, "Use case binding failed", exc)
             }
 
         }, ContextCompat.getMainExecutor(this))
+    }
+
+    @Suppress("ClickableViewAccessibility")
+    private fun setupTapToFocus(previewView: PreviewView) {
+        previewView.setOnTouchListener { _, event ->
+            if (event.action == MotionEvent.ACTION_DOWN) {
+                triggerFocusAt(previewView, event.x, event.y)
+            }
+            true
+        }
+    }
+
+    private fun triggerFocusAt(previewView: PreviewView, x: Float, y: Float) {
+        val cam = camera ?: return
+        val factory = previewView.meteringPointFactory
+        val point = factory.createPoint(x, y)
+        val action = FocusMeteringAction.Builder(point, FocusMeteringAction.FLAG_AF or FocusMeteringAction.FLAG_AE)
+            .setAutoCancelDuration(3, TimeUnit.SECONDS)
+            .build()
+        cam.cameraControl.startFocusAndMetering(action)
+        Log.d(TAG, "Tap-to-focus triggered at ($x, $y)")
+    }
+
+    private fun startPeriodicAutoFocus(previewView: PreviewView) {
+        autoFocusRunnable = object : Runnable {
+            override fun run() {
+                val cam = camera ?: return
+                // Focus on center of preview
+                val centerX = previewView.width / 2f
+                val centerY = previewView.height / 2f
+                if (centerX > 0 && centerY > 0) {
+                    val factory = previewView.meteringPointFactory
+                    val centerPoint = factory.createPoint(centerX, centerY)
+                    val action = FocusMeteringAction.Builder(centerPoint, FocusMeteringAction.FLAG_AF)
+                        .setAutoCancelDuration(2, TimeUnit.SECONDS)
+                        .build()
+                    cam.cameraControl.startFocusAndMetering(action)
+                }
+                autoFocusHandler.postDelayed(this, AUTO_FOCUS_INTERVAL_MS)
+            }
+        }
+        autoFocusHandler.postDelayed(autoFocusRunnable!!, AUTO_FOCUS_INTERVAL_MS)
     }
 
     private fun onQRCodeScanned(qrCode: String) {
@@ -114,6 +171,7 @@ class QRScannerActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
+        autoFocusRunnable?.let { autoFocusHandler.removeCallbacks(it) }
         cameraExecutor.shutdown()
     }
 
@@ -158,5 +216,6 @@ class QRScannerActivity : AppCompatActivity() {
     companion object {
         private const val TAG = "QRScannerActivity"
         private const val REQUEST_CODE_PERMISSIONS = 10
+        private const val AUTO_FOCUS_INTERVAL_MS = 2000L
     }
 }

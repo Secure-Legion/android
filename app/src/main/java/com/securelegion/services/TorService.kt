@@ -187,6 +187,9 @@ class TorService : Service() {
     private val startTorRequested = AtomicBoolean(false) // Guard: prevent concurrent startTor() calls
     @Volatile private var lastGlobalResetAt: Long = 0L // Rate limiter: prevent reset spam
 
+    // Offline bootstrap recovery: prevents repeated NEWNYM spam on flaky first-network
+    @Volatile private var offlineBootstrapFixAttempted = false
+
     // Fast message retry loop (runs in TorService, not subject to WorkManager 15-min limit)
     private var fastRetryJob: kotlinx.coroutines.Job? = null
 
@@ -1473,6 +1476,15 @@ class TorService : Service() {
                     service.restartListeners()
                 }
             } ?: Log.e(TAG, "Cannot restart listeners: TorService instance is null")
+        }
+
+        /**
+         * Request NEWNYM (circuit rotation) from external callers (e.g. TorHealthMonitorWorker).
+         * Routes through requestNewnymDebounced for dedup/cooldown safety.
+         */
+        fun requestNewnym(reason: String) {
+            instance?.requestNewnymDebounced(reason)
+                ?: Log.e(TAG, "Cannot send NEWNYM: TorService instance is null")
         }
 
         /**
@@ -6980,12 +6992,8 @@ class TorService : Service() {
     private fun handleNotificationDeleted() {
         Log.w(TAG, "Notification deleted by user - recreating to keep service alive")
 
-        // Determine current status
-        val status = when {
-            !torConnected -> "Connecting to Tor network..."
-            !listenersReady -> "Starting listeners..."
-            else -> "Connected to Tor"
-        }
+        // Use canonical status computation (reads live Tor state + network)
+        val status = computeNotificationStatus()
 
         // Recreate the notification and reattach to foreground
         val notification = createNotification(status)
@@ -7089,22 +7097,20 @@ class TorService : Service() {
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
 
-        // Determine if this is a problem state that needs user attention
-        val isProblemState = status.contains("Connecting", ignoreCase = true) ||
-                             status.contains("Reconnecting", ignoreCase = true) ||
-                             status.contains("Failed", ignoreCase = true) ||
-                             status.contains("Error", ignoreCase = true) ||
-                             status.contains("Retrying", ignoreCase = true)
+        // Detect "connected" states explicitly — everything else is a problem state.
+        // Safer than keyword matching: any new problem status is automatically caught
+        // instead of silently falling through to the "Connected" bandwidth display.
+        val isConnectedState = status == "Connected to Tor" ||
+                               status == "Connected to the Tor Network"
 
         val builder = NotificationCompat.Builder(this, CHANNEL_ID)
-            .setSmallIcon(R.drawable.ic_notification_logo)
+            .setSmallIcon(R.drawable.ic_shield)
             .setOngoing(true)
             .setContentIntent(pendingIntent)
             .setCategory(NotificationCompat.CATEGORY_SERVICE)
 
-        // Only show notification text for problem states
-        // Normal "Connected" state shows bandwidth stats
-        if (isProblemState) {
+        // Problem states show status text; connected state shows bandwidth stats
+        if (!isConnectedState) {
             builder.setContentTitle("Secure Legion")
                    .setContentText(status)
                    .setPriority(NotificationCompat.PRIORITY_DEFAULT)
@@ -7149,6 +7155,28 @@ class TorService : Service() {
         val notification = createNotification(status)
         val notificationManager = getSystemService(NotificationManager::class.java)
         notificationManager.notify(NOTIFICATION_ID, notification)
+    }
+
+    /**
+     * Compute the canonical notification status from live Tor state and device network.
+     * Single source of truth — prevents stale "Connected" from timers overwriting real state.
+     */
+    private fun computeNotificationStatus(): String {
+        if (!hasNetworkConnection()) {
+            return "Network disconnected"
+        }
+
+        return when (torState) {
+            TorState.OFF -> "Connecting to Tor network..."
+            TorState.STARTING -> "Starting Tor..."
+            TorState.BOOTSTRAPPING -> "Connecting to Tor ($bootstrapPercent%)..."
+            TorState.STOPPING -> "Tor stopping..."
+            TorState.ERROR -> "Reconnecting..."
+            TorState.RUNNING -> {
+                val circuits = try { RustBridge.getCircuitEstablished() } catch (_: Exception) { 0 }
+                if (circuits == 1) "Connected to the Tor Network" else "Tor reconnecting..."
+            }
+        }
     }
 
     // ==================== VOICE SERVICE ====================
@@ -7303,8 +7331,8 @@ class TorService : Service() {
         bandwidthUpdateRunnable = object : Runnable {
             override fun run() {
                 updateBandwidthStats()
-                // Update notification with current speeds
-                updateNotification("Connected to the Tor Network")
+                // Use computed status — prevents stale "Connected" when network/circuits are down
+                updateNotification(computeNotificationStatus())
 
                 // Adaptive update interval: fast when app open, slow when closed
                 val updateInterval = if (isAppInForeground) {
@@ -7468,12 +7496,52 @@ class TorService : Service() {
                     lastNetworkIsIpv6Only = event.isIpv6Only
                     lastNetworkHasInternet = event.hasInternet
                     lastNetworkChangeMs = System.currentTimeMillis()
-                    // DON'T mark as unstable on first detection
-                    // DON'T call rehydrator.onNetworkChanged()
+
+                    // FIX: If Tor bootstrapped while offline (100% but 0 circuits),
+                    // force NEWNYM to build circuits now that we have network.
+                    // Bounded: only attempt once, then fall back to health monitor.
+                    if (torState == TorState.RUNNING && event.hasInternet && !offlineBootstrapFixAttempted) {
+                        val circuitsEstablished = RustBridge.getCircuitEstablished() == 1
+                        if (!circuitsEstablished) {
+                            offlineBootstrapFixAttempted = true
+                            Log.w(TAG, "========== Tor bootstrapped OFFLINE — forcing NEWNYM to build circuits ==========")
+                            requestNewnymDebounced("first_network_after_offline_bootstrap", debounceMs = 500L)
+
+                            // One bounded retry at 10s, then let health monitor take over
+                            reconnectHandler.postDelayed({
+                                serviceScope.launch(Dispatchers.IO) {
+                                    val hasCircuits = RustBridge.getCircuitEstablished() == 1
+                                    val fullyReady = startupCompleted.get()
+                                    if (hasCircuits && fullyReady && !gate.isOpenNow()) {
+                                        Log.i(TAG, "Circuits + listeners ready after offline bootstrap — opening gate")
+                                        gate.open()
+                                    } else if (!hasCircuits) {
+                                        Log.w(TAG, "Still no circuits 10s after first network — one final NEWNYM, then health monitor owns it")
+                                        requestNewnymDebounced("first_network_retry", debounceMs = 0L)
+                                    }
+                                }
+                            }, 10_000)
+
+                            // Reset flag after 60s so this doesn't permanently block future recovery
+                            reconnectHandler.postDelayed({ offlineBootstrapFixAttempted = false }, 60_000)
+                        } else {
+                            Log.i(TAG, "Tor already has circuits on first network — no action needed")
+                        }
+                    }
+
                     return // Exit early to prevent further processing
                 } else {
-                    // Network available but no transport/IPv6 change - ignore (capability update only)
-                    Log.d(TAG, "Network capability change (no transport switch) - ignoring")
+                    // Network available but no transport/IPv6 change (e.g. WiFi off → WiFi on)
+                    // Rebuild circuits if gate is closed AND circuits are actually missing
+                    val circuitsEstablished = RustBridge.getCircuitEstablished() == 1
+                    if (!gate.isOpenNow() && !circuitsEstablished
+                        && (torState == TorState.RUNNING || torState == TorState.BOOTSTRAPPING)) {
+                        Log.w(TAG, "Network restored (same transport) but gate CLOSED + no circuits → forcing NEWNYM to rebuild")
+                        lastNetworkChangeMs = System.currentTimeMillis()
+                        requestNewnymDebounced("network_restored_same_transport", debounceMs = 500L)
+                    } else {
+                        Log.d(TAG, "Network capability change (no transport switch) - ignoring")
+                    }
                 }
 
                 // Recovery path depends on Tor state

@@ -1109,23 +1109,27 @@ pub static CONNECTION_ID_COUNTER: AtomicU64 = AtomicU64::new(0);
 /// Global friend request channel sender
 /// Separate from regular message channels to avoid interference with working message system
 /// Initialized from JNI via startFriendRequestListener()
-pub static FRIEND_REQUEST_TX: once_cell::sync::OnceCell<Arc<StdMutex<tokio::sync::mpsc::UnboundedSender<Vec<u8>>>>> = once_cell::sync::OnceCell::new();
+/// ArcSwapOption: atomically replaceable on listener restart (OnceCell was write-once → silent drop after restart)
+pub static FRIEND_REQUEST_TX: arc_swap::ArcSwapOption<StdMutex<tokio::sync::mpsc::UnboundedSender<Vec<u8>>>> = arc_swap::ArcSwapOption::const_empty();
 
 /// Global channel for MESSAGE types (TEXT/VOICE/IMAGE/PAYMENT)
 /// Separate from PING channel to enable direct routing without trial decryption
 /// Initialized when listener starts
-pub static MESSAGE_TX: once_cell::sync::OnceCell<Arc<StdMutex<tokio::sync::mpsc::UnboundedSender<(u64, Vec<u8>)>>>> = once_cell::sync::OnceCell::new();
+/// ArcSwapOption: atomically replaceable on listener restart
+pub static MESSAGE_TX: arc_swap::ArcSwapOption<StdMutex<tokio::sync::mpsc::UnboundedSender<(u64, Vec<u8>)>>> = arc_swap::ArcSwapOption::const_empty();
 
 /// Global channel for VOICE CALL types (CALL_SIGNALING)
 /// Completely separate from MESSAGE to allow simultaneous text messaging during voice calls
 /// Initialized when voice listener starts
-pub static VOICE_TX: once_cell::sync::OnceCell<Arc<StdMutex<tokio::sync::mpsc::UnboundedSender<(u64, Vec<u8>)>>>> = once_cell::sync::OnceCell::new();
+/// ArcSwapOption: atomically replaceable on listener restart
+pub static VOICE_TX: arc_swap::ArcSwapOption<StdMutex<tokio::sync::mpsc::UnboundedSender<(u64, Vec<u8>)>>> = arc_swap::ArcSwapOption::const_empty();
 
 /// Global channel for DELIVERY_CONFIRMATION (ACK) types
 /// Shared between port 8080 (main listener - error recovery) and port 9153 (dedicated ACK listener)
 /// This ensures ACKs arriving on wrong port still get processed (no message loss)
 /// Initialized when ACK listener starts on port 9153
-pub static ACK_TX: once_cell::sync::OnceCell<Arc<StdMutex<tokio::sync::mpsc::UnboundedSender<(u64, Vec<u8>)>>>> = once_cell::sync::OnceCell::new();
+/// ArcSwapOption: atomically replaceable on listener restart
+pub static ACK_TX: arc_swap::ArcSwapOption<StdMutex<tokio::sync::mpsc::UnboundedSender<(u64, Vec<u8>)>>> = arc_swap::ArcSwapOption::const_empty();
 /// Line-oriented Tor control protocol reader
 /// CRITICAL: Handles multi-line Tor responses properly
 /// Response formats:
@@ -2366,7 +2370,7 @@ impl TorManager {
 
                 // Route to MESSAGE channel (not PING channel)
                 // Send full buffer (INCLUDING type byte at offset 0)
-                if let Some(message_tx) = MESSAGE_TX.get() {
+                if let Some(message_tx) = MESSAGE_TX.load_full() {
                     let tx_lock = message_tx.lock().unwrap();
                     if let Err(e) = tx_lock.send((conn_id, buf)) {
                         log::error!("Failed to send message to MESSAGE channel: {}", e);
@@ -2395,7 +2399,7 @@ impl TorManager {
 
                 // Route to VOICE channel (separate from MESSAGE to allow simultaneous messaging during calls)
                 // Send full buffer (INCLUDING type byte at offset 0)
-                if let Some(voice_tx) = VOICE_TX.get() {
+                if let Some(voice_tx) = VOICE_TX.load_full() {
                     let tx_lock = voice_tx.lock().unwrap();
                     if let Err(e) = tx_lock.send((conn_id, buf)) {
                         log::error!("Failed to send call signaling to VOICE channel: {}", e);
@@ -2417,7 +2421,7 @@ impl TorManager {
                 // Route to shared ACK_TX channel so it still gets processed.
                 // This prevents permanent message delivery failures.
                 // Send full buffer (INCLUDING type byte at offset 0)
-                if let Some(ack_tx) = ACK_TX.get() {
+                if let Some(ack_tx) = ACK_TX.load_full() {
                     let tx_lock = ack_tx.lock().unwrap();
                     if let Err(e) = tx_lock.send((conn_id, buf)) {
                         log::error!("Failed to send ACK to ACK channel: {}", e);
@@ -2433,7 +2437,7 @@ impl TorManager {
                 log::info!("→ Routing to FRIEND_REQUEST handler (separate channel)");
                 // Friend requests routed to dedicated channel to avoid interference with message system
                 // buf already includes type byte - no need to prepend
-                if let Some(friend_tx) = FRIEND_REQUEST_TX.get() {
+                if let Some(friend_tx) = FRIEND_REQUEST_TX.load_full() {
                     let tx_lock = friend_tx.lock().unwrap();
                     if let Err(e) = tx_lock.send(buf) {
                         log::error!("Failed to send friend request to channel: {}", e);
@@ -2446,7 +2450,7 @@ impl TorManager {
                 log::info!("→ Routing to FRIEND_REQUEST_ACCEPTED handler (separate channel)");
                 // Friend request accepted routed to dedicated channel to avoid interference with message system
                 // buf already includes type byte at offset 0 so Kotlin can distinguish Phase 1 (0x07) from Phase 2 (0x08)
-                if let Some(friend_tx) = FRIEND_REQUEST_TX.get() {
+                if let Some(friend_tx) = FRIEND_REQUEST_TX.load_full() {
                     let tx_lock = friend_tx.lock().unwrap();
                     if let Err(e) = tx_lock.send(buf) { // Changed from constructing wire_data
                         log::error!("Failed to send friend request accepted to channel: {}", e);

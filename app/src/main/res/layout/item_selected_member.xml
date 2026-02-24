@@ -12,23 +12,12 @@
         android:layout_width="60dp"
         android:layout_height="60dp">
 
-        <!-- Profile Circle -->
-        <FrameLayout
+        <!-- Profile Avatar -->
+        <com.securelegion.views.AvatarView
+            android:id="@+id/memberAvatar"
             android:layout_width="60dp"
             android:layout_height="60dp"
-            android:background="@drawable/profile_circle_bg">
-
-            <TextView
-                android:id="@+id/memberInitial"
-                android:layout_width="match_parent"
-                android:layout_height="match_parent"
-                android:gravity="center"
-                android:text="A"
-                android:textColor="?attr/colorOnSurface"
-                android:textSize="22sp"
-                android:fontFamily="@font/poppins_bold" />
-
-        </FrameLayout>
+            android:background="@drawable/profile_circle_bg" />
 
         <!-- Remove Button (X) -->
         <ImageView

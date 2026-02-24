@@ -36,16 +36,34 @@
             android:padding="12dp"
             android:baselineAligned="false">
 
-            <TextView
-                android:id="@+id/messageText"
+            <LinearLayout
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
-                android:text="Message content"
-                android:textColor="?attr/colorOnSurface"
-                android:textSize="17sp"
-                android:fontFamily="sans-serif-medium"
-                android:lineSpacingMultiplier="1.2" />
+                android:orientation="vertical">
+
+                <TextView
+                    android:id="@+id/pinIndicator"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="📌 Pinned"
+                    android:textSize="10sp"
+                    android:textColor="#888888"
+                    android:fontFamily="@font/poppins_medium"
+                    android:layout_marginBottom="2dp"
+                    android:visibility="gone" />
+
+                <TextView
+                    android:id="@+id/messageText"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Message content"
+                    android:textColor="?attr/colorOnSurface"
+                    android:textSize="17sp"
+                    android:fontFamily="sans-serif-medium"
+                    android:lineSpacingMultiplier="1.2" />
+
+            </LinearLayout>
 
             <!-- Delivery status indicator (circle with checkmarks) - right of text, inline with text baseline -->
             <ImageView

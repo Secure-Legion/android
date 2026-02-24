@@ -16,6 +16,7 @@ import android.os.PowerManager
 import android.provider.Settings
 import android.util.Log
 import android.view.View
+import android.widget.ImageView
 import android.widget.Spinner
 import android.widget.AdapterView
 import android.widget.TextView
@@ -433,20 +434,46 @@ class MainActivity : BaseActivity() {
     }
 
     /**
-     * Observe Tor state and update the status dot next to "Chats"
-     * Polls every 2 seconds (lightweight, same cadence as TorHealthActivity)
+     * Observe Tor state and update the signal strength icon next to "Chats"
+     * Maps TorState + bootstrap percentage to 6 WiFi-style signal levels:
+     *   OFF/ERROR/STOPPING → disconnected (slash icon)
+     *   STARTING (0%)      → level 1 (dot only)
+     *   BOOTSTRAPPING 1-33%  → level 2 (dot + 1 arc)
+     *   BOOTSTRAPPING 34-66% → level 3 (dot + 2 arcs)
+     *   BOOTSTRAPPING 67-99% → level 4 (dot + 3 arcs)
+     *   RUNNING (100%)      → full signal (all arcs)
      */
     private fun observeTorStatus() {
         lifecycleScope.launch {
             while (isActive) {
-                val dot = findViewById<View>(R.id.torStatusDot)
+                val icon = findViewById<ImageView>(R.id.torStatusIcon)
                 val state = TorService.getCurrentTorState()
+                val bootstrapPercent = TorService.getBootstrapPercent()
                 val drawableRes = when (state) {
-                    TorService.TorState.RUNNING -> R.drawable.status_dot_green
-                    TorService.TorState.BOOTSTRAPPING, TorService.TorState.STARTING -> R.drawable.status_dot_yellow
-                    else -> R.drawable.status_dot_red
+                    TorService.TorState.RUNNING -> {
+                        // torState stays RUNNING during WiFi loss (keeps monitoring loops alive).
+                        // Check live circuits + heartbeat to show real connection quality.
+                        val circuits = try { com.securelegion.crypto.RustBridge.getCircuitEstablished() } catch (_: Exception) { 0 }
+                        val heartbeat = try { com.securelegion.crypto.RustBridge.getLastListenerHeartbeat() } catch (_: Exception) { 0L }
+                        val heartbeatAgeMs = if (heartbeat > 0) System.currentTimeMillis() - heartbeat else Long.MAX_VALUE
+                        val staleThresholdMs = 3 * 60 * 1000L // 3 minutes
+
+                        when {
+                            circuits >= 1 -> R.drawable.ic_tor_signal_full        // healthy
+                            heartbeatAgeMs < staleThresholdMs -> R.drawable.ic_tor_signal_1 // degraded (grace window)
+                            else -> R.drawable.ic_tor_signal_off                  // dead for >3 min
+                        }
+                    }
+                    TorService.TorState.BOOTSTRAPPING -> when {
+                        bootstrapPercent >= 67 -> R.drawable.ic_tor_signal_4
+                        bootstrapPercent >= 34 -> R.drawable.ic_tor_signal_3
+                        bootstrapPercent >= 1  -> R.drawable.ic_tor_signal_2
+                        else -> R.drawable.ic_tor_signal_1
+                    }
+                    TorService.TorState.STARTING -> R.drawable.ic_tor_signal_1
+                    else -> R.drawable.ic_tor_signal_off
                 }
-                dot?.setBackgroundResource(drawableRes)
+                icon?.setImageResource(drawableRes)
                 delay(2000)
             }
         }
@@ -1280,24 +1307,23 @@ class MainActivity : BaseActivity() {
                 val keyManager = KeyManager.getInstance(this@MainActivity)
 
                 withContext(Dispatchers.IO) {
-                    // Load the group into CRDT engine
-                    mgr.loadGroup(group.groupId)
+                    // Try to broadcast MemberRemove, but don't block local delete on failure
+                    try {
+                        mgr.loadGroup(group.groupId)
+                        val localPubkeyHex = keyManager.getSigningPublicKey()
+                            .joinToString("") { "%02x".format(it) }
+                        val opBytes = mgr.removeMember(group.groupId, localPubkeyHex, "Leave")
+                        mgr.broadcastOpToGroup(group.groupId, opBytes)
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Could not broadcast leave op (deleting locally anyway): ${e.message}")
+                    }
 
-                    // Get local pubkey hex for the MemberRemove op
-                    val localPubkeyHex = keyManager.getSigningPublicKey()
-                        .joinToString("") { "%02x".format(it) }
-
-                    // Create MemberRemove("Leave") op and broadcast it
-                    val opBytes = mgr.removeMember(group.groupId, localPubkeyHex, "Leave")
-                    mgr.broadcastOpToGroup(group.groupId, opBytes)
-
-                    // Delete group locally
+                    // Always delete group locally
                     mgr.deleteGroup(group.groupId)
                 }
 
                 ThemedToast.show(this@MainActivity, "Left group: ${group.name}")
                 setupGroupsList()
-                // Refresh messages tab in case group was pinned
                 if (currentTab == "messages") {
                     setupChatList()
                 }

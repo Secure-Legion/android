@@ -10,6 +10,7 @@ import androidx.recyclerview.widget.ListAdapter
 import androidx.recyclerview.widget.RecyclerView
 import com.securelegion.R
 import com.securelegion.database.entities.Contact
+import com.securelegion.views.AvatarView
 
 /**
  * Adapter for displaying selected group members as horizontal chips
@@ -29,13 +30,18 @@ class SelectedMembersAdapter(
     }
 
     class MemberViewHolder(itemView: View) : RecyclerView.ViewHolder(itemView) {
-        private val memberInitial: TextView = itemView.findViewById(R.id.memberInitial)
+        private val memberAvatar: AvatarView = itemView.findViewById(R.id.memberAvatar)
         private val memberName: TextView = itemView.findViewById(R.id.memberName)
         private val removeButton: ImageView = itemView.findViewById(R.id.removeButton)
 
         fun bind(contact: Contact, onRemove: (Contact) -> Unit) {
             memberName.text = contact.displayName
-            memberInitial.text = contact.displayName.firstOrNull()?.uppercase() ?: "?"
+            memberAvatar.setName(contact.displayName)
+            if (!contact.profilePictureBase64.isNullOrEmpty()) {
+                memberAvatar.setPhotoBase64(contact.profilePictureBase64)
+            } else {
+                memberAvatar.clearPhoto()
+            }
 
             removeButton.setOnClickListener {
                 onRemove(contact)

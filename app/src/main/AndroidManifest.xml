@@ -67,6 +67,11 @@
             android:exported="false"
             android:windowSoftInputMode="adjustPan" />
 
+        <activity
+            android:name=".ImagePreviewActivity"
+            android:exported="false"
+            android:windowSoftInputMode="adjustResize" />
+
         <!-- Voice Calling Activities -->
         <activity
             android:name=".VoiceCallActivity"
@@ -263,6 +268,10 @@
 
         <activity
             android:name=".GroupMembersActivity"
+            android:exported="false" />
+
+        <activity
+            android:name=".AddGroupMembersActivity"
             android:exported="false" />
 
         <activity

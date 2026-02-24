@@ -37,19 +37,22 @@
 
             <TextView
                 android:id="@+id/headerTitle"
-                android:layout_width="wrap_content"
+                android:layout_width="0dp"
                 android:layout_height="wrap_content"
+                android:layout_weight="1"
                 android:text="Chats"
                 android:textSize="34sp"
                 android:textColor="@color/lock_title_gray"
                 android:fontFamily="@font/space_grotesk_bold" />
 
-            <View
-                android:id="@+id/torStatusDot"
-                android:layout_width="8dp"
-                android:layout_height="8dp"
+            <ImageView
+                android:id="@+id/torStatusIcon"
+                android:layout_width="16dp"
+                android:layout_height="16dp"
                 android:layout_marginStart="8dp"
-                android:background="@drawable/status_dot_red" />
+                android:layout_marginTop="4dp"
+                android:src="@drawable/ic_tor_signal_off"
+                android:contentDescription="Tor connection status" />
 
         </LinearLayout>
 

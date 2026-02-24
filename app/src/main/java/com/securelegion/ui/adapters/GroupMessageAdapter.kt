@@ -1,5 +1,6 @@
 package com.securelegion.ui.adapters
 
+import android.graphics.Color
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
@@ -9,6 +10,7 @@ import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.ListAdapter
 import androidx.recyclerview.widget.RecyclerView
 import com.securelegion.R
+import com.securelegion.views.AvatarView
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -26,6 +28,19 @@ class GroupMessageAdapter(
         private const val VIEW_TYPE_SENT = 1
         private const val VIEW_TYPE_RECEIVED = 2
         private const val VIEW_TYPE_SYSTEM = 3
+
+        private val NAME_COLORS = arrayOf(
+            "#E57373", "#F06292", "#BA68C8", "#9575CD",
+            "#7986CB", "#64B5F6", "#4FC3F7", "#4DD0E1",
+            "#4DB6AC", "#81C784", "#AED581", "#FF8A65",
+            "#FFD54F", "#90A4AE"
+        )
+
+        fun generateNameColor(name: String): Int {
+            val hash = name.hashCode()
+            val index = (hash and 0x7FFFFFFF) % NAME_COLORS.size
+            return Color.parseColor(NAME_COLORS[index])
+        }
     }
 
     override fun getItemViewType(position: Int): Int {
@@ -45,7 +60,7 @@ class GroupMessageAdapter(
                 SentMessageViewHolder(view)
             }
             VIEW_TYPE_RECEIVED -> {
-                val view = inflater.inflate(R.layout.item_message_received, parent, false)
+                val view = inflater.inflate(R.layout.item_group_message_received, parent, false)
                 ReceivedMessageViewHolder(view)
             }
             VIEW_TYPE_SYSTEM -> {
@@ -94,6 +109,8 @@ class GroupMessageAdapter(
     }
 
     class ReceivedMessageViewHolder(itemView: View) : RecyclerView.ViewHolder(itemView) {
+        private val senderAvatar: AvatarView = itemView.findViewById(R.id.senderAvatar)
+        private val senderNameView: TextView = itemView.findViewById(R.id.senderName)
         private val messageText: TextView = itemView.findViewById(R.id.messageText)
         private val swipeRevealedTime: TextView = itemView.findViewById(R.id.swipeRevealedTime)
 
@@ -102,12 +119,19 @@ class GroupMessageAdapter(
             onClick: (GroupChatMessage) -> Unit,
             onLongClick: (GroupChatMessage) -> Unit
         ) {
-            val displayText = if (message.senderName.isNotEmpty()) {
-                "${message.senderName}: ${message.text}"
+            // Set sender avatar
+            senderAvatar.setName(message.senderName)
+            if (!message.senderProfilePhotoBase64.isNullOrEmpty()) {
+                senderAvatar.setPhotoBase64(message.senderProfilePhotoBase64)
             } else {
-                message.text
+                senderAvatar.clearPhoto()
             }
-            messageText.text = displayText
+
+            // Set colored sender name
+            senderNameView.text = message.senderName.ifEmpty { "Unknown" }
+            senderNameView.setTextColor(generateNameColor(message.senderName))
+
+            messageText.text = message.text
             swipeRevealedTime.text = formatTimestamp(message.timestamp)
 
             itemView.setOnClickListener { onClick(message) }
@@ -122,6 +146,7 @@ class GroupMessageAdapter(
             return sdf.format(Date(timestamp))
         }
     }
+
 
     class SystemMessageViewHolder(itemView: View) : RecyclerView.ViewHolder(itemView) {
         private val systemText: TextView = itemView.findViewById(R.id.systemMessageText)
@@ -152,5 +177,6 @@ data class GroupChatMessage(
     val timestamp: Long,
     val isSentByMe: Boolean,
     val senderName: String = "",
+    val senderProfilePhotoBase64: String? = null,
     val messageType: String = "TEXT" // "TEXT" or "SYSTEM"
 )

@@ -1408,6 +1408,10 @@ class AddFriendActivity : BaseActivity() {
 
                 // Reload UI — shows clock icon for "sending" entry
                 loadPendingFriendRequests()
+                updateFriendRequestBadge()
+
+                // Notify MainActivity so its badge + contact list update immediately
+                sendBroadcast(Intent("com.securelegion.FRIEND_REQUEST_RECEIVED"))
 
                 // Kick off background send via TorService (survives Activity navigation)
                 com.securelegion.services.TorService.acceptFriendRequestInBackground(
