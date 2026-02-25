@@ -1,4 +1,4 @@
-package com.securelegion.adapters
+﻿package com.securelegion.adapters
 
 import android.animation.AnimatorSet
 import android.animation.ObjectAnimator
@@ -1690,13 +1690,8 @@ class MessageAdapter(
             message.messageDelivered -> R.drawable.status_delivered // Solid circle with 2 checkmarks (message downloaded by receiver)
             message.pingDelivered -> R.drawable.status_sent // Circle with 1 checkmark (PING_ACK received, receiver notified)
             else -> {
-                // No ACK yet — check if Tor is available
-                val gate = com.securelegion.services.TorService.getTransportGate()
-                if (gate == null || !gate.isOpenNow()) {
-                    R.drawable.status_queued // Clock icon (queued, Tor offline)
-                } else {
-                    R.drawable.status_pending // Empty circle (sending, Tor online)
-                }
+                // No ACK yet — show queued clock (stored for retry)
+                R.drawable.status_queued
             }
         }
     }
@@ -1808,7 +1803,6 @@ class MessageAdapter(
                 R.id.action_resend -> {
                     // Resend failed message
                     onResendMessage?.invoke(message)
-                    ThemedToast.show(view.context, "Resending message...")
                     true
                 }
                 R.id.action_pin -> {

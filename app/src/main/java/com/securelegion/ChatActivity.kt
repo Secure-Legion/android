@@ -1,4 +1,4 @@
-package com.securelegion
+﻿package com.securelegion
 
 import com.securelegion.utils.GlassBottomSheetDialog
 import com.securelegion.utils.GlassDialog
@@ -127,10 +127,10 @@ class ChatActivity : BaseActivity() {
     private var isSelectionMode = false
 
     // Auto-download: Track if user has manually downloaded at least one message this session
-    // (Device Protection ON only — enables auto-PONG for subsequent pings in same session)
+    // (Device Protection ON only â€” enables auto-PONG for subsequent pings in same session)
     private var hasDownloadedOnce = false
 
-    // Lazy DB reference — avoids reconstructing KeyManager + passphrase on every call
+    // Lazy DB reference â€” avoids reconstructing KeyManager + passphrase on every call
     private val database by lazy {
         val keyManager = KeyManager.getInstance(this)
         val dbPassphrase = keyManager.getDatabasePassphrase()
@@ -249,7 +249,7 @@ class ChatActivity : BaseActivity() {
                     Log.d(TAG, "NEW_PING broadcast: receivedContactId=$receivedContactId, state=${com.securelegion.services.DownloadStateManager.getState(receivedContactId)}")
 
                     if (receivedContactId == contactId) {
-                        // NEW_PING for current contact — DownloadStateManager drives the UI,
+                        // NEW_PING for current contact â€” DownloadStateManager drives the UI,
                         // just refresh to pick up the latest state.
                         runOnUiThread {
                             lifecycleScope.launch {
@@ -270,7 +270,7 @@ class ChatActivity : BaseActivity() {
                                             }
                                     }
                                     if (pingSeen.isNotEmpty()) {
-                                        Log.i(TAG, "Device Protection ON but user active — auto-PONGing ${pingSeen.size} ping(s)")
+                                        Log.i(TAG, "Device Protection ON but user active â€” auto-PONGing ${pingSeen.size} ping(s)")
                                         pingSeen.forEach { ping ->
                                             Log.d(TAG, "Auto-PONGing ping: ${ping.pingId.take(8)}")
                                             com.securelegion.services.DownloadMessageService.start(
@@ -290,7 +290,7 @@ class ChatActivity : BaseActivity() {
                     val receivedContactId = intent.getLongExtra("CONTACT_ID", -1L)
                     Log.d(TAG, "DOWNLOAD_FAILED broadcast: receivedContactId=$receivedContactId, state=${com.securelegion.services.DownloadStateManager.getState(receivedContactId)}")
                     if (receivedContactId == contactId) {
-                        // DownloadStateManager already transitioned to BACKOFF — just refresh UI
+                        // DownloadStateManager already transitioned to BACKOFF â€” just refresh UI
                         loadMessagesDebounced()
                     }
                 }
@@ -422,7 +422,7 @@ class ChatActivity : BaseActivity() {
         // Download state will be determined from database (pending pings with DOWNLOADING/DECRYPTING state)
         // No need to check SharedPreferences - database is source of truth
 
-        // SharedPrefs migration removed — ping_inbox DB is single source of truth
+        // SharedPrefs migration removed â€” ping_inbox DB is single source of truth
 
         // Initialize services
         messageService = MessageService(this)
@@ -741,10 +741,10 @@ class ChatActivity : BaseActivity() {
             finish()
         }
 
-        // Call button — voice calling disabled in v1
+        // Call button â€” voice calling disabled in v1
         findViewById<View>(R.id.callButton).visibility = View.GONE
 
-        // Attachment panel (inline — replaces keyboard like media panel)
+        // Attachment panel (inline â€” replaces keyboard like media panel)
         attachmentPanel = findViewById(R.id.attachmentPanel)
         setupAttachmentPanel()
 
@@ -1059,7 +1059,7 @@ class ChatActivity : BaseActivity() {
 
         mediaKeyboardPanel.setOnGifSelectedListener { gifAssetPath ->
             hideMediaKeyboard()
-            // System GIFs are bundled assets — send as text code like stickers
+            // System GIFs are bundled assets â€” send as text code like stickers
             sendStickerMessage(gifAssetPath)
         }
     }
@@ -1184,7 +1184,7 @@ class ChatActivity : BaseActivity() {
 
             val uri = cameraPhotoUri
             if (uri == null) {
-                Log.e(TAG, "cameraPhotoUri is null — cannot launch camera")
+                Log.e(TAG, "cameraPhotoUri is null â€” cannot launch camera")
                 ThemedToast.show(this, "Camera unavailable. Please try again.")
                 return
             }
@@ -1872,8 +1872,8 @@ class ChatActivity : BaseActivity() {
                 Log.d(TAG, "Ping $index: ${ping.pingId.take(8)} - state=${ping.state}")
             }
 
-            // Suppress profile update pings (0x0F) — silent background sync, no lock icon or typing dots
-            // Wire format: [type_byte][X25519_pubkey_32][encrypted_payload] — first byte is unencrypted content type
+            // Suppress profile update pings (0x0F) â€” silent background sync, no lock icon or typing dots
+            // Wire format: [type_byte][X25519_pubkey_32][encrypted_payload] â€” first byte is unencrypted content type
             val pendingPingsToShow = activePingEntries.filter { ping ->
                 val wireBytes = ping.pingWireBytesBase64?.let {
                     try { android.util.Base64.decode(it, android.util.Base64.NO_WRAP) } catch (_: Exception) { null }
@@ -1881,7 +1881,7 @@ class ChatActivity : BaseActivity() {
                 wireBytes == null || wireBytes.isEmpty() || wireBytes[0] != 0x0F.toByte()
             }
 
-            // ── State machine drives UI ──────────────────────────────────────
+            // â”€â”€ State machine drives UI â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
             // DownloadStateManager is the single source of truth for typing/lock.
             // Typing indicator = DOWNLOADING only (active network I/O)
             // Lock icon        = PAUSED only (device protection ON, no retries)
@@ -1905,17 +1905,17 @@ class ChatActivity : BaseActivity() {
                         }
                     }
                     com.securelegion.services.DownloadStateManager.State.PAUSED -> {
-                        // Delivery paused — show lock icons for all pending pings
+                        // Delivery paused â€” show lock icons for all pending pings
                         pendingPingsToShow to false
                     }
                     else -> {
-                        // IDLE or BACKOFF — everything invisible, retries happen silently
+                        // IDLE or BACKOFF â€” everything invisible, retries happen silently
                         emptyList<com.securelegion.database.entities.PingInbox>() to false
                     }
                 }
             } else {
                 // Manual mode (Device Protection ON): show all pending pings as lock icons
-                // User taps lock → DownloadMessageService starts → state flips to DOWNLOADING → typing
+                // User taps lock â†’ DownloadMessageService starts â†’ state flips to DOWNLOADING â†’ typing
                 when (contactState) {
                     com.securelegion.services.DownloadStateManager.State.DOWNLOADING -> {
                         // Show 1 typing indicator for the actively-downloading ping
@@ -1932,7 +1932,7 @@ class ChatActivity : BaseActivity() {
                 }
             }
 
-            Log.d(TAG, "State machine: contact=$contactId state=$contactState devProtection=$devProtection → showing ${pingsForAdapter.size} pings (typing=$showTyping)")
+            Log.d(TAG, "State machine: contact=$contactId state=$contactState devProtection=$devProtection â†’ showing ${pingsForAdapter.size} pings (typing=$showTyping)")
 
             withContext(Dispatchers.Main) {
                 Log.d(TAG, "Updating adapter with ${messages.size} messages + ${pingsForAdapter.size} pending")
@@ -1950,7 +1950,7 @@ class ChatActivity : BaseActivity() {
                     pingsForAdapter,
                     showTyping
                 ) {
-                    // Runs AFTER DiffUtil commits — adapter itemCount is now correct
+                    // Runs AFTER DiffUtil commits â€” adapter itemCount is now correct
                     if (shouldScroll) {
                         scrollToBottom(smooth = !isFirstLoad)
                     }
@@ -1990,10 +1990,7 @@ class ChatActivity : BaseActivity() {
                 val gate = TorService.getTransportGate()
                 val gateOpen = gate?.isOpenNow() == true
                 if (!gateOpen) {
-                    // Show queued toast — message will be saved to DB and retried later
-                    withContext(Dispatchers.Main) {
-                        com.securelegion.utils.ThemedToast.show(this@ChatActivity, "Message queued \u2014 will send when connected")
-                    }
+                    // Message will be saved to DB and retried later
                 }
 
                 // Wait for transport gate to open (verifies Tor is healthy)
@@ -2043,18 +2040,18 @@ class ChatActivity : BaseActivity() {
             return
         }
 
-        // Atomic DB claim — prevents double-click race
+        // Atomic DB claim â€” prevents double-click race
         lifecycleScope.launch {
             val claimed = withContext(Dispatchers.IO) {
                 database.pingInboxDao().claimForManualDownload(pingId, System.currentTimeMillis())
             }
 
             if (claimed == 0) {
-                Log.w(TAG, "Ping ${pingId.take(8)} claim failed — already claimed or past DOWNLOAD_QUEUED")
+                Log.w(TAG, "Ping ${pingId.take(8)} claim failed â€” already claimed or past DOWNLOAD_QUEUED")
                 return@launch
             }
 
-            Log.d(TAG, "Ping ${pingId.take(8)} claimed (DB → DOWNLOAD_QUEUED)")
+            Log.d(TAG, "Ping ${pingId.take(8)} claimed (DB â†’ DOWNLOAD_QUEUED)")
 
             // Mark that user has downloaded at least once (enables auto-PONG for future pings)
             hasDownloadedOnce = true
@@ -2062,7 +2059,7 @@ class ChatActivity : BaseActivity() {
             // Refresh UI (DownloadStateManager will flip to DOWNLOADING when I/O starts)
             loadMessages()
 
-            // Start the download service — it calls DownloadStateManager.onDownloadStarted()
+            // Start the download service â€” it calls DownloadStateManager.onDownloadStarted()
             com.securelegion.services.DownloadMessageService.start(this@ChatActivity, contactId, contactName, pingId)
         }
     }
@@ -2152,19 +2149,14 @@ class ChatActivity : BaseActivity() {
 
                 if (result.isSuccess) {
                     withContext(Dispatchers.Main) {
-                        ThemedToast.show(this@ChatActivity, "Resending message...")
                         loadMessages() // Refresh UI to show updated status
                     }
                 } else {
-                    withContext(Dispatchers.Main) {
-                        ThemedToast.show(this@ChatActivity, "Failed to resend message")
-                    }
+                    // Message remains queued; retry worker will handle it
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to resend message", e)
-                withContext(Dispatchers.Main) {
-                    ThemedToast.show(this@ChatActivity, "Error resending message")
-                }
+                // Message remains queued; retry worker will handle it
             }
         }
     }
@@ -2340,8 +2332,8 @@ class ChatActivity : BaseActivity() {
      * Handle click on "Pay" or "Accept" button for a received payment request
      *
      * Two flows:
-     * 1. Request Money: They put their wallet as recipient → I pay to their wallet → SendMoneyActivity
-     * 2. Send Money: Recipient is empty → They want to send to me → AcceptPaymentActivity
+     * 1. Request Money: They put their wallet as recipient â†’ I pay to their wallet â†’ SendMoneyActivity
+     * 2. Send Money: Recipient is empty â†’ They want to send to me â†’ AcceptPaymentActivity
      */
     private fun handlePaymentRequestClick(message: Message) {
         Log.d(TAG, "Payment request clicked: ${message.messageId}")
@@ -2362,7 +2354,7 @@ class ChatActivity : BaseActivity() {
 
         // Check recipient field to determine flow type
         if (quote.recipient.isNullOrEmpty()) {
-            // Empty recipient = "Send Money" offer → They want to send me money
+            // Empty recipient = "Send Money" offer â†’ They want to send me money
             // Open AcceptPaymentActivity so I can provide my wallet address
             Log.d(TAG, "Send Money offer detected - opening AcceptPaymentActivity")
             val intent = Intent(this, AcceptPaymentActivity::class.java).apply {
@@ -2376,7 +2368,7 @@ class ChatActivity : BaseActivity() {
             }
             startActivity(intent)
         } else {
-            // Has recipient = "Request Money" → They're requesting money from me
+            // Has recipient = "Request Money" â†’ They're requesting money from me
             // Open SendMoneyActivity to pay them
             Log.d(TAG, "Request Money detected - opening SendMoneyActivity")
             val intent = Intent(this, SendMoneyActivity::class.java).apply {
@@ -2861,3 +2853,5 @@ class ChatActivity : BaseActivity() {
     }
 
 }
+
+
