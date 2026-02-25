@@ -49,6 +49,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
@@ -59,6 +60,8 @@ import kotlinx.coroutines.sync.withLock
 import kotlin.coroutines.resume
 import java.util.concurrent.ConcurrentHashMap
 import java.io.File
+import java.net.InetSocketAddress
+import java.net.Socket
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.min
 
@@ -102,6 +105,8 @@ class TorService : Service() {
     private var reconnectAttempts = 0
     private var lastReconnectTime = 0L
     private val reconnectHandler = Handler(Looper.getMainLooper())
+    private var delayedRehydrateRunnable: Runnable? = null
+    private var delayedRetryRunnable: Runnable? = null
 
     // SOCKS failure tracking
     private var socksFailureCount = 0
@@ -110,6 +115,9 @@ class TorService : Service() {
     private var downloadFailureWindowStart = 0L
     private val SOCKS_FAILURE_THRESHOLD = 3 // Restart Tor after 3 consecutive failures
     private val SOCKS_FAILURE_WINDOW = 60000L // 60 second window
+    private val TAP_COOLDOWN_MS = 15 * 60 * 1000L // 15 minutes per contact
+    private val TAP_WAVE2_DELAY_MS = 3000L // 3 seconds after wave 1
+    private val TAP_RECENT_WINDOW_MS = 30L * 24 * 60 * 60 * 1000L // 30 days
 
     // Debounced NEWNYM for network changes and stream failure escalation
     // Uses elapsedRealtime (monotonic) — immune to wall clock jumps
@@ -198,6 +206,7 @@ class TorService : Service() {
     private var socksHealthJob: kotlinx.coroutines.Job? = null
     private var downloadWatchdogJob: kotlinx.coroutines.Job? = null
     private var pinRotationJob: kotlinx.coroutines.Job? = null
+    private var hsSelfTestJob: Job? = null
     @Volatile private var lastHealthyMs: Long = 0L // When circuits were last healthy
     @Volatile private var consecutiveHealthyPolls: Int = 0 // Hysteresis: require 2 healthy polls before opening gate
     @Volatile private var consecutiveRestarts: Int = 0 // Track restart attempts for backoff
@@ -541,7 +550,7 @@ class TorService : Service() {
         serviceScope.launch {
             try {
                 val messageService = MessageService(this@TorService)
-                val result = messageService.pollForPongsAndSendMessages()
+                val result = messageService.retryAllPendingMessages()
                 if (result.isSuccess) {
                     val sentCount = result.getOrNull() ?: 0
                     if (sentCount > 0) {
@@ -649,6 +658,11 @@ class TorService : Service() {
         val listenerAlive = heartbeatAgeMs < 30_000
         if (!listenerAlive && torRunning && bootstrapComplete) {
             Log.w(TAG, "Event listener heartbeat stale (${heartbeatAgeMs}ms ago) — treating as unhealthy")
+            // Wake the listener from backoff sleep so it reconnects immediately
+            if (RustBridge.isEventListenerRunning()) {
+                Log.w(TAG, "Listener thread alive but heartbeat stale — sending wake signal")
+                RustBridge.wakeTorEventListener()
+            }
         }
 
         val isHealthy = bootstrapComplete && circuitsEstablished && torRunning && listenerAlive
@@ -891,13 +905,13 @@ class TorService : Service() {
                                         val result = messageService.sendPingForMessage(message)
                                         if (result.isSuccess) retried++
                                     }
-                                    com.securelegion.models.AckState.PONG_ACKED -> {
-                                        // Phase 2: PONG received — poll and send blob
-                                        Log.d(TAG, "Fast retry: PONG_ACK+BLOB for ${message.messageId}")
-                                        messageService.pollForPongsAndSendMessages()
+                                    com.securelegion.models.AckState.PONG_RECEIVED -> {
+                                        // Phase 2: PONG received — send blob
+                                        Log.d(TAG, "Fast retry: PONG received, sending blob for ${message.messageId}")
+                                        messageService.sendPendingMessagesForContact(message.contactId)
                                         retried++
                                     }
-                                    com.securelegion.models.AckState.MESSAGE_ACKED -> {
+                                    com.securelegion.models.AckState.DELIVERED -> {
                                         // Delivered — skip
                                         Log.d(TAG, "Fast retry: already delivered ${message.messageId}")
                                     }
@@ -1338,6 +1352,11 @@ class TorService : Service() {
         // Network stabilization window - wait after network change before listener rebind
         private const val NETWORK_STABILIZATION_WINDOW_MS = 45_000L // 45 seconds
 
+        // HS self-test constants — must match TorHealthMonitorWorker / Tor config
+        private const val SOCKS_HOST = "127.0.0.1"
+        private const val SOCKS_PORT = 9050
+        private const val HS_SERVICE_PORT = 9150 // Virtual port on .onion (9150 → local 8080)
+
         // Tor warm-up window - wait after Tor instability before sending traffic
         private const val TOR_WARMUP_WINDOW_MS = 10_000L // 10 seconds (TransportGate is the real guard)
 
@@ -1384,6 +1403,11 @@ class TorService : Service() {
          * Get current bootstrap progress (0-100)
          */
         fun getBootstrapPercent(): Int = instance?.bootstrapPercent ?: 0
+
+        /**
+         * Get timestamp of last network change (for UI stabilization window)
+         */
+        fun getLastNetworkChangeMs(): Long = instance?.lastNetworkChangeMs ?: 0L
 
         /**
          * Get transport gate for network resilience checks
@@ -1676,13 +1700,94 @@ class TorService : Service() {
         )
 
         // Start network watcher to detect Wi-Fi ↔ LTE switches and other network events
-        networkWatcher = NetworkWatcher(this) { event ->
+        networkWatcher = NetworkWatcher(this, scope = serviceScope) { event ->
             handleNetworkEvent(event)
         }
         networkWatcher!!.start()
 
         // Register Tor ControlPort event callback for fast reaction
         registerTorEventCallback()
+
+        // Observe DeviceProtectionGate for biometric auth results (DP mode)
+        val dpGate = com.securelegion.utils.DeviceProtectionGate.getInstance(this)
+        serviceScope.launch {
+            dpGate.gateState.collect { state ->
+                when (state) {
+                    is com.securelegion.utils.DeviceProtectionGate.GateState.Granted -> {
+                        // Auth succeeded — drain pending pings, send PONG (not DMS) for each
+                        val pendingPings = dpGate.drainPendingPings()
+                        for (pending in pendingPings) {
+                            serviceScope.launch(Dispatchers.IO) pongSend@{
+                                try {
+                                    // Add jitter (M5 timing mitigation)
+                                    val jitter = dpGate.calculateJitterMs()
+                                    Log.d(TAG, "DP gate passed for ${pending.pingId} — PONG in ${jitter}ms")
+                                    kotlinx.coroutines.delay(jitter)
+
+                                    // Generate PONG with deviceProtection=true
+                                    val pongBytes = com.securelegion.crypto.RustBridge.respondToPing(
+                                        pending.pingId, authenticated = true, deviceProtection = true
+                                    )
+                                    if (pongBytes == null) {
+                                        Log.e(TAG, "DP: Failed to create Pong for ${pending.pingId}")
+                                        return@pongSend
+                                    }
+
+                                    // Get DB instance for contact lookup and rate limiting
+                                    val keyManager = com.securelegion.crypto.KeyManager.getInstance(this@TorService)
+                                    val dbPassphrase = keyManager.getDatabasePassphrase()
+                                    val database = com.securelegion.database.SecureLegionDatabase.getInstance(this@TorService, dbPassphrase)
+
+                                    // M6 rate limit: prevent PONG resend amplification
+                                    val rateOk = database.pingInboxDao().tryMarkPongSent(
+                                        pending.pingId, System.currentTimeMillis(),
+                                        com.securelegion.database.entities.PingInbox.PONG_RESEND_COOLDOWN_MS
+                                    )
+                                    if (rateOk == 0) {
+                                        Log.d(TAG, "DP: PONG rate limited for ${pending.pingId}")
+                                        return@pongSend
+                                    }
+
+                                    val contact = database.contactDao().getContactById(pending.contactId)
+                                    val senderOnion = contact?.messagingOnion ?: contact?.torOnionAddress
+                                    if (senderOnion.isNullOrBlank()) {
+                                        Log.e(TAG, "DP: No onion address for contact ${pending.contactId}")
+                                        return@pongSend
+                                    }
+
+                                    // Send PONG via listener (connection is likely dead after biometric delay)
+                                    val sent = com.securelegion.crypto.RustBridge.sendPongToListener(senderOnion, pongBytes)
+                                    if (sent) {
+                                        Log.i(TAG, "DP: PONG sent via listener for ${pending.pingId}")
+                                        // PONG sent — start DMS to download the message
+                                        // DMS will restore ping session, rate-limit skip PONG, and poll for MESSAGE
+                                        val claimed = database.pingInboxDao().claimForAutoDownload(pending.pingId, System.currentTimeMillis())
+                                        if (claimed > 0) {
+                                            com.securelegion.services.DownloadMessageService.start(
+                                                this@TorService,
+                                                pending.contactId,
+                                                contact?.displayName ?: contact?.nickname ?: "Unknown",
+                                                pending.pingId,
+                                                -1L
+                                            )
+                                        }
+                                    } else {
+                                        Log.w(TAG, "DP: Failed to send PONG via listener for ${pending.pingId}")
+                                    }
+                                } catch (e: Exception) {
+                                    Log.e(TAG, "DP: Error sending PONG for ${pending.pingId}", e)
+                                }
+                            }
+                        }
+                    }
+                    is com.securelegion.utils.DeviceProtectionGate.GateState.Denied -> {
+                        Log.w(TAG, "DP gate denied: ${state.reason}")
+                        // Pings stay pending — user can retry via notification
+                    }
+                    else -> {} // Idle, PromptShowing — no action
+                }
+            }
+        }
 
         Log.i(TAG, "Transport gate system initialized")
     }
@@ -2825,6 +2930,14 @@ class TorService : Service() {
 
             // Look up contact by X25519 public key
             val keyManager = com.securelegion.crypto.KeyManager.getInstance(this)
+
+            // SELF-ECHO GUARD: Reject taps from ourselves
+            val ourX25519ForTap: ByteArray? = try { keyManager.getEncryptionPublicKey() } catch (_: Exception) { null }
+            if (ourX25519ForTap != null && senderX25519PubKey.contentEquals(ourX25519ForTap)) {
+                Log.w(TAG, "SELF_ECHO_BLOCKED: Dropping tap from ourselves")
+                return
+            }
+
             val dbPassphrase = keyManager.getDatabasePassphrase()
             val database = com.securelegion.database.SecureLegionDatabase.getInstance(this, dbPassphrase)
 
@@ -2919,53 +3032,27 @@ class TorService : Service() {
 
                     val messageService = com.securelegion.services.MessageService(this@TorService)
 
+                    // Protocol v2: One global retry pass discovers PONGs + sends ready blobs
+                    messageService.retryAllPendingMessages()
+
                     for (message in allMessages) {
-                        // ============ ACK-BASED FLOW CONTROL FOR TAP ============
-                        // Contact is online - check what phase each message is in and take action
+                        // ============ STATUS-BASED FLOW CONTROL (Protocol v2) ============
 
-                        // PHASE 4: MESSAGE_ACK received → Skip (already delivered)
-                        if (message.messageDelivered) {
-                            Log.d(TAG, "${message.messageId}: MESSAGE_ACK received, skip")
+                        // Already delivered or blob sent → skip
+                        if (message.messageDelivered || message.status == com.securelegion.database.entities.Message.STATUS_SENT ||
+                            message.status == com.securelegion.database.entities.Message.STATUS_DELIVERED) {
+                            Log.d(TAG, "${message.messageId}: delivered/sent, skip")
                             continue
                         }
 
-                        // PHASE 3: PONG_ACK received → Receiver is downloading, just wait
-                        if (message.pongDelivered) {
-                            Log.d(TAG, "${message.messageId}: PONG_ACK received, receiver downloading, skip")
+                        // PONG_RECEIVED → blob send in progress (retryAll already handled it)
+                        if (message.status == com.securelegion.database.entities.Message.STATUS_PONG_RECEIVED) {
+                            Log.d(TAG, "${message.messageId}: PONG_RECEIVED, blob send handled by retryAll")
                             continue
                         }
 
-                        // PHASE 2: PING_ACK received → They got notification, check for Pong
-                        if (message.pingDelivered) {
-                            Log.i(TAG, "${message.messageId}: PING_ACK received - checking for Pong (contact online)")
-                            // Poll for Pong - contact might have sent it
-                            val pongResult = messageService.pollForPongsAndSendMessages()
-                            if (pongResult.isSuccess) {
-                                val sentCount = pongResult.getOrNull() ?: 0
-                                if (sentCount > 0) {
-                                    Log.i(TAG, "Pong received and message blob sent!")
-                                }
-                            }
-                            continue
-                        }
-
-                        // PHASE 1: No PING_ACK → Check for Pong first, then retry Ping if needed
-                        Log.i(TAG, "→ ${message.messageId}: No PING_ACK yet - checking for Pong first (PING_ACK may have been lost)")
-
-                        // CRITICAL: Poll for Pong even without PING_ACK
-                        // Reason: PING_ACK might have been lost in transit, but receiver may have sent PONG
-                        // This prevents download stalls where receiver is waiting for blob but sender never checked for Pong
-                        val pongResult = messageService.pollForPongsAndSendMessages()
-                        if (pongResult.isSuccess) {
-                            val sentCount = pongResult.getOrNull() ?: 0
-                            if (sentCount > 0) {
-                                Log.i(TAG, "Pong found and message blob sent (PING_ACK was lost but Pong arrived)!")
-                                continue // Skip Ping retry - Pong was found
-                            }
-                        }
-
-                        // No Pong found - retry Ping since contact is online
-                        Log.i(TAG, "→ ${message.messageId}: No Pong found - retrying Ping (contact online via TAP)")
+                        // PING_SENT → still waiting for PONG, retry PING (contact is online via TAP)
+                        Log.i(TAG, "→ ${message.messageId}: STATUS_PING_SENT — retrying Ping (contact online via TAP)")
                         try {
                             val result = messageService.sendPingForMessage(message)
                             if (result.isSuccess) {
@@ -3679,11 +3766,11 @@ class TorService : Service() {
 
             Log.i(TAG, "Pong decrypted and stored successfully")
 
-            // IMMEDIATELY trigger sending the message payload (don't wait for retry worker!)
+            // Protocol v2: Discover which message this PONG belongs to and send blob
             serviceScope.launch(kotlinx.coroutines.Dispatchers.IO) {
                 try {
                     val messageService = MessageService(this@TorService)
-                    val result = messageService.pollForPongsAndSendMessages()
+                    val result = messageService.retryAllPendingMessages()
 
                     if (result.isSuccess) {
                         val sentCount = result.getOrNull() ?: 0
@@ -3772,6 +3859,9 @@ class TorService : Service() {
             // Call Rust cleanup for expired sessions (older than 5 minutes)
             RustBridge.cleanupExpiredSessions()
             Log.i(TAG, "Periodic Rust session cleanup completed")
+
+            // Clean up expired Device Protection gate pings
+            com.securelegion.utils.DeviceProtectionGate.getInstance(this@TorService).cleanupExpired()
 
             // CRITICAL FIX: Clean up old received_ids entries to prevent table bloat
             // Delete entries older than 7 days (604800000 ms)
@@ -3871,45 +3961,19 @@ class TorService : Service() {
     /**
      * Handle incoming ACK to update delivery status
      * @param itemId The ping_id or message_id that was acknowledged
-     * @param ackType The type of ACK: PING_ACK, MESSAGE_ACK, TAP_ACK, or PONG_ACK
+     * @param ackType The type of ACK: PING_ACK, PONG, MESSAGE_ACK, or TAP_ACK
      */
     private fun handleIncomingAck(itemId: String, ackType: String) {
         try {
-            // CRITICAL: PONG_ACK must go through the state machine!
-            // Previously, PONG_ACK was being ignored (early return), causing state to stay PING_ACKED
-            // This made MESSAGE_ACK fail validation (trying PING_ACKED → MESSAGE_ACK instead of PONG_ACKED → MESSAGE_ACK)
-            //
-            // PONG_ACK is received by the sender after sending PING
-            // The sender waits for receiver's PONG, then ACKs with PONG_ACK before sending message blob
-            // This ACK must update the state machine: PING_ACKED → PONG_ACKED
+            // Protocol v2: PONG_ACK eliminated. PONG itself is the sender-side acknowledgment.
+            // State machine: NONE → PONG_RECEIVED → DELIVERED (normal)
+            //                NONE → PING_ACKED → PONG_RECEIVED → DELIVERED (DP)
 
             serviceScope.launch(Dispatchers.IO) {
                 // Skip blob_ transport ACKs - we use pingId-based MESSAGE_ACK for delivery confirmation
                 if (ackType == "MESSAGE_ACK" && itemId.startsWith("blob_")) {
                     Log.d(TAG, "Ignoring transport MESSAGE_ACK for blob session: $itemId")
                     return@launch
-                }
-
-                // RECEIVER-SIDE SKIP: Short-circuit PONG_ACK on receiver
-                // If this device is the receiver (pingId exists in ping_inbox), skip processing.
-                // PONG_ACK is sent by sender to receiver, but receiver has no action to take.
-                // The message row doesn't exist yet on receiver (sender hasn't sent MESSAGE_ACK),
-                // so this is expected behavior, not an error.
-                if (ackType == "PONG_ACK") {
-                    try {
-                        val keyManager = com.securelegion.crypto.KeyManager.getInstance(this@TorService)
-                        val dbPassphrase = keyManager.getDatabasePassphrase()
-                        val database = com.securelegion.database.SecureLegionDatabase.getInstance(this@TorService, dbPassphrase)
-
-                        val isReceiver = database.pingInboxDao().exists(itemId)
-                        if (isReceiver) {
-                            Log.v(TAG, "⊘ Receiver ignoring inbound PONG_ACK for pingId=$itemId (expected behavior)")
-                            return@launch
-                        }
-                    } catch (e: Exception) {
-                        Log.w(TAG, "Error checking ping_inbox for PONG_ACK skip: ${e.message}")
-                        // Continue with normal processing if skip check fails (may be sender-side PONG_ACK)
-                    }
                 }
 
                 // Retry finding the message up to 5 times with exponential backoff
@@ -3919,7 +3983,7 @@ class TorService : Service() {
                 var message: com.securelegion.database.entities.Message? = null
 
                 // Determine lookup method based on ACK type
-                val lookupByPingId = (ackType == "PING_ACK" || ackType == "PONG_ACK" || ackType == "TAP_ACK" || ackType == "MESSAGE_ACK")
+                val lookupByPingId = (ackType == "PING_ACK" || ackType == "PONG" || ackType == "TAP_ACK" || ackType == "MESSAGE_ACK")
 
                 while (retryCount < maxRetries && message == null) {
                     try {
@@ -4015,20 +4079,8 @@ class TorService : Service() {
                                 Log.i(TAG, "Broadcast MESSAGE_RECEIVED to update sender UI (delivered) for contact ${message.contactId}")
                                 null // Already updated via targeted DAO call
                             }
-                            "PONG_ACK" -> {
-                                // PONG_ACK is state machine transition: PING_ACKED → PONG_ACKED
-                                // The sender has received PONG from receiver and will now send message blob
-                                Log.i(TAG, "Received PONG_ACK for message ${message.messageId} - sender will now send message blob")
-                                // Use targeted DAO update to prevent race with other delivery status changes
-                                database.messageDao().updatePongDelivered(message.id, true)
-                                // Broadcast to update sender UI
-                                val intent = Intent("com.securelegion.MESSAGE_RECEIVED")
-                                intent.setPackage(packageName)
-                                intent.putExtra("CONTACT_ID", message.contactId)
-                                sendBroadcast(intent)
-                                Log.i(TAG, "Broadcast MESSAGE_RECEIVED to update sender UI (PONG received) for contact ${message.contactId}")
-                                null // Already updated via targeted DAO call
-                            }
+                            // "PONG" case removed — Protocol v2: PONGs arrive via PONG channel
+                            // (wire type 0x02 → pong_tx), not the ACK channel (wire type 0x06).
                             "TAP_ACK" -> {
                                 Log.i(TAG, "Received TAP_ACK - contact ${message.contactId} confirmed online! Triggering retry for all pending messages")
 
@@ -4046,30 +4098,38 @@ class TorService : Service() {
                                             Log.i(TAG, "Found ${allMessages.size} pending messages to retry after TAP_ACK")
                                             val messageService = com.securelegion.services.MessageService(this@TorService)
 
+                                            // Protocol v2: global retry pass discovers PONGs + sends blobs
+                                            messageService.retryAllPendingMessages()
+
                                             for (msg in allMessages) {
                                                 try {
-                                                    // Skip if already delivered
-                                                    if (msg.messageDelivered) continue
+                                                    // Re-check fresh status (retryAll may have transitioned this message)
+                                                    val fresh = database.messageDao().getMessageById(msg.id) ?: continue
+                                                    if (fresh.messageDelivered) continue
 
-                                                    // Retry based on phase
-                                                    if (msg.pongDelivered) {
-                                                        // PONG received - receiver downloading
-                                                        Log.d(TAG, "${msg.messageId}: PONG received, waiting for download")
-                                                    } else if (msg.pingDelivered) {
-                                                        // PING delivered - poll for PONG
-                                                        Log.d(TAG, "${msg.messageId}: PING_ACK received, polling for PONG")
-                                                        messageService.pollForPongsAndSendMessages()
-                                                    } else {
-                                                        // No PING_ACK - retry PING
-                                                        Log.i(TAG, "${msg.messageId}: Retrying PING after TAP_ACK")
-                                                        messageService.sendPingForMessage(msg)
-                                                        // CRITICAL: Use partial update to avoid overwriting delivery status
-                                                        // (fixes race where MESSAGE_ACK sets delivered=true between read and write)
-                                                        database.messageDao().updateRetryState(
-                                                            msg.id,
-                                                            msg.retryCount + 1,
-                                                            System.currentTimeMillis()
-                                                        )
+                                                    when (fresh.status) {
+                                                        com.securelegion.database.entities.Message.STATUS_SENT,
+                                                        com.securelegion.database.entities.Message.STATUS_DELIVERED -> {
+                                                            // Already sent/delivered — skip
+                                                        }
+                                                        com.securelegion.database.entities.Message.STATUS_PONG_RECEIVED -> {
+                                                            // Blob send may have failed in retryAll — retry per-contact
+                                                            Log.d(TAG, "${msg.messageId}: PONG_RECEIVED, retrying blob send")
+                                                            messageService.sendPendingMessagesForContact(fresh.contactId)
+                                                        }
+                                                        com.securelegion.database.entities.Message.STATUS_PING_SENT -> {
+                                                            // Still waiting for PONG — retry PING (contact online via TAP_ACK)
+                                                            Log.i(TAG, "${msg.messageId}: Retrying PING after TAP_ACK")
+                                                            messageService.sendPingForMessage(msg)
+                                                            database.messageDao().updateRetryState(
+                                                                msg.id,
+                                                                msg.retryCount + 1,
+                                                                System.currentTimeMillis()
+                                                            )
+                                                        }
+                                                        else -> {
+                                                            Log.d(TAG, "${msg.messageId}: status=${fresh.status}, skipping")
+                                                        }
                                                     }
                                                 } catch (e: Exception) {
                                                     Log.e(TAG, "Failed to retry message ${msg.messageId} after TAP_ACK", e)
@@ -4145,9 +4205,10 @@ class TorService : Service() {
      */
     private fun handleIncomingVoiceMessage(encodedData: ByteArray) {
         try {
-            // Wire format: [Type byte][connection_id (8 bytes LE)][Sender X25519 key (32 bytes)][Encrypted payload]
-            if (encodedData.size < 41) { // 1 (type) + 8 + 32 minimum
-                Log.e(TAG, "Invalid VOICE data: too short (${encodedData.size} bytes)")
+            // Wire format: [Type byte][connection_id (8 bytes LE)][Sender X25519 key (32 bytes)][Encrypted payload][Signature 64 bytes]
+            val minSignedLen = 1 + 8 + 32 + 64 + 1
+            if (encodedData.size < minSignedLen) {
+                Log.e(TAG, "Invalid VOICE data: too short (${encodedData.size} bytes, min $minSignedLen)")
                 return
             }
 
@@ -4160,7 +4221,8 @@ class TorService : Service() {
             val senderX25519PublicKey = encodedData.copyOfRange(9, 41)
 
             // Extract encrypted payload (rest of bytes)
-            val encryptedPayload = encodedData.copyOfRange(41, encodedData.size)
+            val signatureBytes = encodedData.copyOfRange(encodedData.size - 64, encodedData.size)
+            val encryptedPayload = encodedData.copyOfRange(41, encodedData.size - 64)
 
             Log.i(TAG, "Received VOICE call signaling on connection $connectionId: ${encryptedPayload.size} bytes")
 
@@ -4185,6 +4247,15 @@ class TorService : Service() {
                 Log.w(TAG, "Cannot process VOICE call signaling - no onion address for contact ${contact.id}")
                 return
             }
+
+            // Verify signature before processing
+            val senderEd25519PublicKey = android.util.Base64.decode(contact.publicKeyBase64, android.util.Base64.NO_WRAP)
+            val signatureValid = RustBridge.verifySignature(encryptedPayload, signatureBytes, senderEd25519PublicKey)
+            if (!signatureValid) {
+                Log.e(TAG, "VOICE signaling signature verification FAILED - dropping message")
+                return
+            }
+            Log.i(TAG, "VOICE signaling signature verified (Ed25519)")
 
             // Process call signaling through MessageService
             kotlinx.coroutines.GlobalScope.launch(Dispatchers.IO) {
@@ -4263,6 +4334,15 @@ class TorService : Service() {
 
             // Get sender information from the Ping token
             val senderPublicKey = RustBridge.getPingSenderPublicKey(pingId)
+
+            // SELF-ECHO GUARD: Reject PINGs from ourselves (prevents self-download cycle)
+            if (senderPublicKey != null) {
+                val ourEd25519 = try { keyManager.getSigningPublicKey() } catch (_: Exception) { null }
+                if (ourEd25519 != null && senderPublicKey.contentEquals(ourEd25519)) {
+                    Log.w(TAG, "SELF_ECHO_BLOCKED: Dropping PING from ourselves (pingId=$pingId)")
+                    return
+                }
+            }
 
             // Look up sender in contacts database
             val contactInfo = if (senderPublicKey != null) {
@@ -4363,101 +4443,133 @@ class TorService : Service() {
                 }
             }
 
-            // Show notification for new pings only
-            // When auto-download is active (Device Protection OFF), defer notification to
-            // DownloadMessageService which shows type-specific notifications (e.g. "New voice clip")
-            // and suppresses notifications for hidden types like profile updates (0x0F).
-            // Profile updates (0x0F wire type) are completely silent — no notification, no broadcast.
+            // Profile updates (0x0F wire type) are completely silent — no notification, no broadcast, no DMS trigger
             val isProfileUpdate = encryptedPingWire.isNotEmpty() && (encryptedPingWire[0].toInt() and 0xFF) == 0x0F
-            if (shouldNotify) {
-                if (!isProfileUpdate) {
+
+            // PROTOCOL DISPATCH: Branch based on Device Protection mode
+            // Normal mode (4-hop): No PING_ACK — DMS sends PONG as first network action
+            // DP mode (5-hop): Send PING_ACK (liveness), then gate PONG on biometric
+            serviceScope.launch {
+                try {
                     val securityPrefs = getSharedPreferences("security", MODE_PRIVATE)
                     val deviceProtectionEnabled = securityPrefs.getBoolean(
                         SecurityModeActivity.PREF_DEVICE_PROTECTION_ENABLED, false
                     )
+
                     if (deviceProtectionEnabled) {
-                        // Device Protection ON — user must manually download, show generic notification
-                        showNewMessageNotification()
-
-                        // Broadcast to update chat list immediately (user needs to see pending message)
-                        val intent = Intent("com.securelegion.NEW_PING")
-                        intent.setPackage(packageName)
-                        intent.putExtra("CONTACT_ID", contactId)
-                        sendBroadcast(intent)
-                        Log.d(TAG, "Sent NEW_PING broadcast for contactId=$contactId")
-                    } else {
-                        // Auto-download active — defer ALL UI signals (notification + chat list)
-                        // to DownloadMessageService after message is fully downloaded.
-                        // This prevents "false alarm" where user opens chat before content is ready.
-                        Log.d(TAG, "Deferring notification + UI update to DownloadMessageService (auto-download active)")
-                    }
-                } else {
-                    Log.d(TAG, "Profile update ping $pingId — suppressing notification and UI broadcast")
-                }
-            }
-
-            // Send PING_ACK (always, regardless of state - "I saw your ping")
-            serviceScope.launch {
-                try {
-                    sendAckWithRetry(
-                        connectionId = connectionId,
-                        itemId = pingId,
-                        ackType = "PING_ACK",
-                        contactId = contactId,
-                        maxRetries = 10,
-                        initialDelayMs = 2000L
-                    )
-
-                    // Update pingAckedAt timestamp
-                    withContext(Dispatchers.IO) {
-                        database.pingInboxDao().updatePingAckTime(pingId, System.currentTimeMillis())
-                    }
-
-                    Log.d(TAG, "PING_ACK sent for pingId=$pingId")
-
-                    // AUTO-DOWNLOAD: Trigger for new pings AND retryable stuck pings
-                    if (shouldNotify || shouldRetryDownload) {
-                        val securityPrefs = getSharedPreferences("security", MODE_PRIVATE)
-                        val deviceProtectionEnabled = securityPrefs.getBoolean(
-                            SecurityModeActivity.PREF_DEVICE_PROTECTION_ENABLED, false
+                        // DP MODE: Send PING_ACK immediately (liveness signal only)
+                        sendAckWithRetry(
+                            connectionId = connectionId,
+                            itemId = pingId,
+                            ackType = "PING_ACK",
+                            contactId = contactId,
+                            maxRetries = 10,
+                            initialDelayMs = 2000L
                         )
+                        withContext(Dispatchers.IO) {
+                            database.pingInboxDao().updatePingAckTime(pingId, System.currentTimeMillis())
+                        }
+                        Log.d(TAG, "PING_ACK sent for pingId=$pingId (DP mode)")
 
-                        if (!deviceProtectionEnabled) {
-                            val reason = if (shouldRetryDownload) "retry stuck download" else "new ping"
-                            Log.i(TAG, "Auto-download ($reason) - triggering download for ping $pingId from $senderName")
-                            try {
-                                val claimed = withContext(Dispatchers.IO) {
-                                    val ts = System.currentTimeMillis()
-                                    if (shouldRetryDownload) {
-                                        // Reclaim from any stuck state → DOWNLOAD_QUEUED
-                                        val r = database.pingInboxDao().reclaimForRetry(pingId, ts)
-                                        if (r > 0) r else database.pingInboxDao().reclaimFromManual(pingId, ts)
-                                    } else {
-                                        // New ping: claim from PING_SEEN
-                                        database.pingInboxDao().claimForAutoDownload(pingId, ts)
+                        // DP mode: Do NOT show message notification or broadcast NEW_PING here.
+                        // No message has arrived yet — only a PING. The real notification fires
+                        // when the actual MESSAGE is received after the PONG→MESSAGE flow completes.
+
+                        // Enqueue for biometric gate — PONG fires only after gate passes
+                        val dpGate = com.securelegion.utils.DeviceProtectionGate.getInstance(this@TorService)
+                        val immediateRelease = dpGate.enqueue(pingId, contactId, connectionId)
+                        if (immediateRelease) {
+                            // Cooldown active — send PONG immediately (with jitter + rate limit)
+                            serviceScope.launch(Dispatchers.IO) {
+                                val jitter = dpGate.calculateJitterMs()
+                                kotlinx.coroutines.delay(jitter)
+
+                                // M6 rate limit: prevent PONG resend amplification
+                                val rateOk = database.pingInboxDao().tryMarkPongSent(
+                                    pingId, System.currentTimeMillis(),
+                                    com.securelegion.database.entities.PingInbox.PONG_RESEND_COOLDOWN_MS
+                                )
+                                if (rateOk == 0) {
+                                    Log.d(TAG, "DP cooldown: PONG rate limited for $pingId")
+                                    return@launch
+                                }
+
+                                val pongBytes = com.securelegion.crypto.RustBridge.respondToPing(
+                                    pingId, authenticated = true, deviceProtection = true
+                                )
+                                if (pongBytes == null) {
+                                    Log.e(TAG, "DP cooldown: Failed to create Pong for $pingId")
+                                    return@launch
+                                }
+
+                                val contact = database.contactDao().getContactById(contactId)
+                                val senderOnion = contact?.messagingOnion ?: contact?.torOnionAddress
+                                if (senderOnion.isNullOrBlank()) {
+                                    Log.e(TAG, "DP cooldown: No onion address for contact $contactId")
+                                    return@launch
+                                }
+
+                                val sent = com.securelegion.crypto.RustBridge.sendPongToListener(senderOnion, pongBytes)
+                                if (sent) {
+                                    Log.i(TAG, "DP cooldown: PONG sent for $pingId")
+                                    // PONG sent — start DMS to download the message
+                                    // DMS will restore ping session, rate-limit skip PONG, and poll for MESSAGE
+                                    val claimed = database.pingInboxDao().claimForAutoDownload(pingId, System.currentTimeMillis())
+                                    if (claimed > 0) {
+                                        com.securelegion.services.DownloadMessageService.start(
+                                            this@TorService,
+                                            contactId,
+                                            senderName,
+                                            pingId,
+                                            -1L
+                                        )
                                     }
-                                }
-                                if (claimed > 0) {
-                                    Log.i(TAG, "Claimed ping $pingId for auto-download ($reason) - starting DownloadMessageService")
-                                    com.securelegion.services.DownloadMessageService.start(
-                                        this@TorService,
-                                        contactId,
-                                        senderName,
-                                        pingId,
-                                        connectionId
-                                    )
                                 } else {
-                                    Log.d(TAG, "Ping $pingId claim failed (state may have changed) - skipping auto-download")
+                                    Log.w(TAG, "DP cooldown: Failed to send PONG for $pingId")
                                 }
-                            } catch (e: Exception) {
-                                Log.e(TAG, "Auto-download failed for ping $pingId", e)
                             }
                         } else {
-                            Log.d(TAG, "Device Protection ON - waiting for manual download for ping $pingId")
+                            // Queued for biometric — show notification if in background
+                            if (!isAppInForeground) {
+                                showDeviceProtectionNotification()
+                            }
+                            Log.d(TAG, "Device Protection ON — enqueued for biometric gate: $pingId")
                         }
+
+                    } else {
+                        // NORMAL MODE (4-hop): No PING_ACK — DMS sends PONG as acknowledgment
+                        if (isProfileUpdate) {
+                            Log.d(TAG, "Profile update ping $pingId — suppressing DMS trigger and notifications")
+                        } else if (shouldNotify || shouldRetryDownload) {
+                            val reason = if (shouldRetryDownload) "retry stuck download" else "new ping"
+                            Log.i(TAG, "Normal mode ($reason): starting DMS for ping $pingId from $senderName")
+
+                            val claimed = withContext(Dispatchers.IO) {
+                                val ts = System.currentTimeMillis()
+                                if (shouldRetryDownload) {
+                                    val r = database.pingInboxDao().reclaimForRetry(pingId, ts)
+                                    if (r > 0) r else database.pingInboxDao().reclaimFromManual(pingId, ts)
+                                } else {
+                                    database.pingInboxDao().claimForAutoDownload(pingId, ts)
+                                }
+                            }
+                            if (claimed > 0) {
+                                Log.i(TAG, "Claimed ping $pingId — starting DownloadMessageService (PONG-first)")
+                                com.securelegion.services.DownloadMessageService.start(
+                                    this@TorService,
+                                    contactId,
+                                    senderName,
+                                    pingId,
+                                    connectionId
+                                )
+                            } else {
+                                Log.d(TAG, "Ping $pingId claim failed (state may have changed)")
+                            }
+                        }
+                        // Normal mode: notification deferred to DMS after message downloaded
                     }
                 } catch (e: Exception) {
-                    Log.w(TAG, "Failed to send PING_ACK", e)
+                    Log.w(TAG, "Error in protocol dispatch for ping $pingId", e)
                 }
             }
 
@@ -4552,7 +4664,7 @@ class TorService : Service() {
      *
      * @param connectionId The connection ID from the incoming message
      * @param itemId The ping ID or message ID to acknowledge
-     * @param ackType "PING_ACK", "PONG_ACK", or "MESSAGE_ACK"
+     * @param ackType "PING_ACK", "MESSAGE_ACK", or "TAP_ACK"
      * @param contactId The contact database ID
      * @param maxRetries Maximum number of retry attempts (default: 3)
      * @param initialDelayMs Initial delay between retries in milliseconds (default: 1000ms)
@@ -4645,7 +4757,7 @@ class TorService : Service() {
                     delayMs = (delayMs * 2).coerceAtMost(30_000L) // Exponential backoff capped at 30s
                 } else {
                     Log.e(TAG, "$ackType send FAILED after $maxRetries attempts for $itemId")
-                    Log.e(TAG, "→ Sender will retry ${if (ackType == "PING_ACK") "PING" else if (ackType == "PONG_ACK") "PONG" else "MESSAGE"}, which is acceptable")
+                    Log.e(TAG, "→ Sender will retry ${if (ackType == "PING_ACK") "PING" else "MESSAGE"}, which is acceptable")
                 }
 
             } catch (e: Exception) {
@@ -4689,15 +4801,15 @@ class TorService : Service() {
             //   0x33 SYNC_CHUNK:    payload = [groupId:32][packedOps]
             val wireType = encryptedMessageWire[0].toInt() and 0xFF
             if (wireType == 0x30 || wireType == 0x32 || wireType == 0x33 || wireType == 0x35 || wireType == 0x36) {
-                val minSize = 1 + 32 + CRDT_GROUP_ID_LEN // type(1) + X25519(32) + groupId(32) = 65
+                val minSize = 1 + 32 + CRDT_GROUP_ID_LEN + 64 // type + X25519 + groupId + signature
                 if (encryptedMessageWire.size < minSize) {
                     Log.e(TAG, "CRDT wire 0x${"%02x".format(wireType)} too short: ${encryptedMessageWire.size} bytes (need >= $minSize)")
                     return
                 }
                 // Sender X25519 pubkey at [1..33] — needed for 0x32 reply
                 val senderX25519 = encryptedMessageWire.copyOfRange(1, 33)
-                // Body starts after type(1) + X25519(32) = 33
-                val crdtBody = encryptedMessageWire.copyOfRange(33, encryptedMessageWire.size)
+                // Body starts after type(1) + X25519(32) = 33, ends before 64-byte signature
+                val crdtBody = encryptedMessageWire.copyOfRange(33, encryptedMessageWire.size - 64)
                 val groupIdHex = crdtBody.copyOfRange(0, CRDT_GROUP_ID_LEN)
                     .joinToString("") { "%02x".format(it) }
                 val rest = crdtBody.copyOfRange(CRDT_GROUP_ID_LEN, crdtBody.size)
@@ -4791,8 +4903,30 @@ class TorService : Service() {
             }
 
             // Extract sender's X25519 public key (skip type byte at offset 0)
+            val msgType = encryptedMessageWire[0]
+            val isUnsignedType = msgType == 0x07.toByte() || msgType == 0x08.toByte() // Friend request types
+
+            val minSignedLen = 1 + 32 + 64 + 1 // type + x25519 + sig + at least 1 byte ciphertext
+            if (!isUnsignedType && encryptedMessageWire.size < minSignedLen) {
+                Log.e(TAG, "Signed wire too short (${encryptedMessageWire.size} bytes, min $minSignedLen)")
+                return
+            }
+            if (isUnsignedType && encryptedMessageWire.size < 33) {
+                Log.e(TAG, "Unsigned wire too short (${encryptedMessageWire.size} bytes)")
+                return
+            }
+
             val senderX25519PublicKey = encryptedMessageWire.copyOfRange(1, 33)
-            val encryptedPayload = encryptedMessageWire.copyOfRange(33, encryptedMessageWire.size)
+            val signatureBytes: ByteArray? = if (isUnsignedType) {
+                null
+            } else {
+                encryptedMessageWire.copyOfRange(encryptedMessageWire.size - 64, encryptedMessageWire.size)
+            }
+            val encryptedPayload = if (isUnsignedType) {
+                encryptedMessageWire.copyOfRange(33, encryptedMessageWire.size)
+            } else {
+                encryptedMessageWire.copyOfRange(33, encryptedMessageWire.size - 64)
+            }
 
             // Diagnostic: Verify extraction worked correctly
             Log.e(TAG, "EXTRACT pubkey len=${senderX25519PublicKey.size} head=${senderX25519PublicKey.take(8).joinToString("") { "%02x".format(it) }}")
@@ -4800,9 +4934,26 @@ class TorService : Service() {
 
             Log.d(TAG, "Sender X25519 pubkey: ${android.util.Base64.encodeToString(senderX25519PublicKey, android.util.Base64.NO_WRAP).take(16)}...")
             Log.d(TAG, "Encrypted payload: ${encryptedPayload.size} bytes")
+            if (signatureBytes != null) {
+                Log.d(TAG, "Signature: ${signatureBytes.size} bytes")
+            }
 
             // Look up contact by X25519 public key to see if sender is known
             val keyManager = com.securelegion.crypto.KeyManager.getInstance(this)
+
+            // SELF-ECHO GUARD: Reject messages where sender X25519 key matches our own.
+            // This prevents loopback messages (sent to our own .onion) from being stored as "received".
+            val ourX25519PublicKey: ByteArray? = try {
+                keyManager.getEncryptionPublicKey()
+            } catch (e: Exception) {
+                Log.w(TAG, "SELF_ECHO: KeyManager unavailable (${e.message}), skipping check")
+                null
+            }
+            if (ourX25519PublicKey != null && senderX25519PublicKey.contentEquals(ourX25519PublicKey)) {
+                Log.w(TAG, "SELF_ECHO_BLOCKED: Dropping message from ourselves (sender X25519 matches our own)")
+                return
+            }
+
             val dbPassphrase = keyManager.getDatabasePassphrase()
             val database = com.securelegion.database.SecureLegionDatabase.getInstance(this, dbPassphrase)
 
@@ -4850,10 +5001,28 @@ class TorService : Service() {
             val ourEd25519PublicKey = keyManager.getSigningPublicKey()
             val ourPrivateKey = keyManager.getSigningKeyBytes()
 
+            if (signatureBytes != null) {
+                val senderEd25519PublicKey = android.util.Base64.decode(contact.publicKeyBase64, android.util.Base64.NO_WRAP)
+                val signatureValid = RustBridge.verifySignature(encryptedPayload, signatureBytes, senderEd25519PublicKey)
+                if (!signatureValid) {
+                    Log.e(TAG, "Message signature verification FAILED - dropping message from ${contact.displayName}")
+                    return
+                }
+                Log.i(TAG, "Message signature verified (Ed25519)")
+            } else if (!isUnsignedType) {
+                Log.e(TAG, "Missing message signature for signed type - dropping")
+                return
+            }
+
             // Message type is INSIDE the plaintext (after decryption), not in ciphertext headers.
             var messageType = com.securelegion.database.entities.Message.MESSAGE_TYPE_TEXT
             var voiceDuration: Int? = null
             val actualEncryptedMessage = encryptedPayload // Raw ciphertext — pubkey already stripped from wire
+            val signatureBase64 = if (signatureBytes != null) {
+                android.util.Base64.encodeToString(signatureBytes, android.util.Base64.NO_WRAP)
+            } else {
+                ""
+            }
             var voiceFilePath: String? = null
 
             Log.d(TAG, "Received encrypted message: ${encryptedPayload.size} bytes (will decrypt first, then parse type)")
@@ -5483,7 +5652,7 @@ class TorService : Service() {
                         isSentByMe = false,
                         timestamp = System.currentTimeMillis(),
                         status = com.securelegion.database.entities.Message.STATUS_DELIVERED,
-                        signatureBase64 = "", // TODO: Verify signature
+                        signatureBase64 = signatureBase64,
                         nonceBase64 = "", // Not needed for already-decrypted messages
                         messageNonce = messageNonce, // CRITICAL: Stored once, reused on all retries
                         paymentQuoteJson = paymentQuoteJson,
@@ -6445,44 +6614,66 @@ class TorService : Service() {
                     return@launch
                 }
 
-                Log.i(TAG, "Sending taps to ${contacts.size} contact(s)")
+                val now = System.currentTimeMillis()
+                val recentCutoff = now - TAP_RECENT_WINDOW_MS
+                val prefs = getSharedPreferences("tap_cooldown", MODE_PRIVATE)
+
+                val wave1 = contacts.filter {
+                    it.needsTapSync || it.isDistressContact || it.lastContactTimestamp >= recentCutoff
+                }
+                val wave2 = contacts.filterNot { c -> wave1.any { it.id == c.id } }
+
+                Log.i(TAG, "Sending taps in waves: wave1=${wave1.size}, wave2=${wave2.size}")
 
                 var successCount = 0
                 var failureCount = 0
 
-                for (contact in contacts) {
-                    try {
-                        // Get contact keys
-                        val recipientEd25519PubKey = android.util.Base64.decode(contact.publicKeyBase64, android.util.Base64.NO_WRAP)
-                        val recipientX25519PubKey = android.util.Base64.decode(contact.x25519PublicKeyBase64, android.util.Base64.NO_WRAP)
+                suspend fun sendWave(wave: List<com.securelegion.database.entities.Contact>) {
+                    for ((index, contact) in wave.withIndex()) {
+                        try {
+                            val lastTap = prefs.getLong("last_tap_${contact.id}", 0L)
+                            if (now - lastTap < TAP_COOLDOWN_MS) {
+                                continue
+                            }
 
-                        // Send tap
-                        val success = RustBridge.sendTap(
-                            recipientEd25519PubKey,
-                            recipientX25519PubKey,
-                            contact.messagingOnion ?: ""
-                        )
+                            // Get contact keys
+                            val recipientEd25519PubKey = android.util.Base64.decode(contact.publicKeyBase64, android.util.Base64.NO_WRAP)
+                            val recipientX25519PubKey = android.util.Base64.decode(contact.x25519PublicKeyBase64, android.util.Base64.NO_WRAP)
 
-                        if (success) {
-                            Log.d(TAG, "Sent tap to ${contact.displayName}")
-                            successCount++
+                            // Send tap
+                            val success = RustBridge.sendTap(
+                                recipientEd25519PubKey,
+                                recipientX25519PubKey,
+                                contact.messagingOnion ?: ""
+                            )
 
-                            // Friend-side push recovery: check if this contact is recovering
-                            checkAndPushRecoveryBlob(contact)
-                        } else {
-                            Log.w(TAG, "Failed to send tap to ${contact.displayName}")
+                            if (success) {
+                                Log.d(TAG, "Sent tap to ${contact.displayName}")
+                                successCount++
+                                prefs.edit().putLong("last_tap_${contact.id}", now).apply()
+
+                                // Friend-side push recovery: check if this contact is recovering
+                                checkAndPushRecoveryBlob(contact)
+                            } else {
+                                Log.w(TAG, "Failed to send tap to ${contact.displayName}")
+                                failureCount++
+                            }
+
+                            if (index != wave.lastIndex) {
+                                val jitter = kotlin.random.Random.nextLong(0L, 150L)
+                                kotlinx.coroutines.delay(150L + jitter)
+                            }
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Error sending tap to ${contact.displayName}", e)
                             failureCount++
                         }
-
-                        // Small delay between attempts to avoid overwhelming Tor
-                        // (Don't delay after last contact)
-                        if (contact != contacts.last()) {
-                            kotlinx.coroutines.delay(150) // 150ms between taps
-                        }
-                    } catch (e: Exception) {
-                        Log.e(TAG, "Error sending tap to ${contact.displayName}", e)
-                        failureCount++
                     }
+                }
+
+                sendWave(wave1)
+                if (wave2.isNotEmpty()) {
+                    kotlinx.coroutines.delay(TAP_WAVE2_DELAY_MS)
+                    sendWave(wave2)
                 }
 
                 Log.i(TAG, "Tap broadcast complete: $successCount success, $failureCount failed")
@@ -6626,14 +6817,42 @@ class TorService : Service() {
     }
 
     /**
-     * Receive encrypted message after sending Pong
+     * Show notification for Device Protection mode — tapping opens biometric unlock.
      */
+    private fun showDeviceProtectionNotification() {
+        val intent = Intent(this, com.securelegion.DeviceProtectionUnlockActivity::class.java).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+        }
+        val pendingIntent = PendingIntent.getActivity(
+            this, 0, intent,
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
+
+        val notification = NotificationCompat.Builder(this, AUTH_CHANNEL_ID)
+            .setSmallIcon(R.drawable.ic_shield)
+            .setContentTitle("Unlock to receive messages")
+            .setContentText("Tap to verify your identity")
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setContentIntent(pendingIntent)
+            .setAutoCancel(true)
+            .build()
+
+        val nm = getSystemService(NotificationManager::class.java)
+        nm.notify(9999, notification) // Fixed ID — one notification for all pending pings
+    }
+
     /**
      * Process a received encrypted message (decrypt, save to database, notify)
      */
     private fun processReceivedMessage(encryptedMessage: ByteArray, pingId: String, senderName: String) {
         try {
             Log.i(TAG, "Processing received encrypted message: ${encryptedMessage.size} bytes")
+
+            val minSignedLen = 1 + 32 + 64 + 1 // type + x25519 + sig + at least 1 byte ciphertext
+            if (encryptedMessage.size < minSignedLen) {
+                Log.e(TAG, "Signed wire too short (${encryptedMessage.size} bytes, min $minSignedLen)")
+                return
+            }
 
             // Get sender's public key from the Ping token
             val senderPublicKey = RustBridge.getPingSenderPublicKey(pingId)
@@ -6644,6 +6863,11 @@ class TorService : Service() {
                 }
                 return
             }
+
+            // Parse wire: [type][sender_x25519][ciphertext][signature]
+            val senderX25519PublicKey = encryptedMessage.copyOfRange(1, 33)
+            val signatureBytes = encryptedMessage.copyOfRange(encryptedMessage.size - 64, encryptedMessage.size)
+            val encryptedPayload = encryptedMessage.copyOfRange(33, encryptedMessage.size - 64)
 
             // Look up sender in contacts database
             val keyManager = com.securelegion.crypto.KeyManager.getInstance(this)
@@ -6671,7 +6895,15 @@ class TorService : Service() {
 
             // Decrypt message using sender's Ed25519 public key and our private key
             val senderEd25519PublicKey = android.util.Base64.decode(contact.publicKeyBase64, android.util.Base64.NO_WRAP)
-            val messageText = RustBridge.decryptMessage(encryptedMessage, senderEd25519PublicKey, ourPrivateKey)
+            val signatureValid = RustBridge.verifySignature(encryptedPayload, signatureBytes, senderEd25519PublicKey)
+            if (!signatureValid) {
+                Log.e(TAG, "Message signature verification FAILED - dropping message from ${contact.displayName}")
+                return
+            }
+            Log.i(TAG, "Message signature verified (Ed25519)")
+
+            val wireForDecrypt = senderX25519PublicKey + encryptedPayload
+            val messageText = RustBridge.decryptMessage(wireForDecrypt, senderEd25519PublicKey, ourPrivateKey)
 
             if (messageText == null || messageText.isEmpty()) {
                 Log.e(TAG, "Failed to decrypt message")
@@ -6687,7 +6919,7 @@ class TorService : Service() {
             kotlinx.coroutines.runBlocking {
                 // Generate messageId from ENCRYPTED MESSAGE (consistent with PATH 1)
                 // This ensures same message arriving via both paths has same ID
-                val messageIdHash = java.security.MessageDigest.getInstance("SHA-256").digest(encryptedMessage)
+                val messageIdHash = java.security.MessageDigest.getInstance("SHA-256").digest(encryptedPayload)
                 val deterministicMessageId = "blob_" + android.util.Base64.encodeToString(messageIdHash, android.util.Base64.NO_WRAP).take(28)
 
                 Log.d(TAG, "Message ID generated from encrypted payload hash: $deterministicMessageId")
@@ -6729,7 +6961,7 @@ class TorService : Service() {
                     isSentByMe = false,
                     timestamp = System.currentTimeMillis(),
                     status = com.securelegion.database.entities.Message.STATUS_DELIVERED,
-                    signatureBase64 = "",
+                    signatureBase64 = android.util.Base64.encodeToString(signatureBytes, android.util.Base64.NO_WRAP),
                     nonceBase64 = "",
                     messageNonce = messageNonce, // CRITICAL: Stored once, reused on all retries
                     isRead = false,
@@ -7211,14 +7443,16 @@ class TorService : Service() {
                 override fun onSignalingMessage(senderPubkey: ByteArray, wireMessage: ByteArray) {
                     Log.i(TAG, "Voice signaling message received via HTTP: ${wireMessage.size} bytes")
 
-                    // Wire format: [Type][Sender X25519 Pubkey - 32 bytes][Encrypted Message]
-                    if (wireMessage.size < 33) {
-                        Log.e(TAG, "Invalid signaling message: too short (${wireMessage.size} bytes)")
+                    // Wire format: [Type][Sender X25519 Pubkey - 32 bytes][Encrypted Message][Signature 64 bytes]
+                    val minSignedLen = 1 + 32 + 64 + 1
+                    if (wireMessage.size < minSignedLen) {
+                        Log.e(TAG, "Invalid signaling message: too short (${wireMessage.size} bytes, min $minSignedLen)")
                         return
                     }
 
-                    // Extract encrypted payload (skip type byte + 32 byte pubkey)
-                    val encryptedPayload = wireMessage.copyOfRange(33, wireMessage.size)
+                    // Extract encrypted payload and signature (skip type byte + 32 byte pubkey)
+                    val signatureBytes = wireMessage.copyOfRange(wireMessage.size - 64, wireMessage.size)
+                    val encryptedPayload = wireMessage.copyOfRange(33, wireMessage.size - 64)
 
                     // Lookup contact by X25519 public key
                     kotlinx.coroutines.GlobalScope.launch(kotlinx.coroutines.Dispatchers.IO) {
@@ -7239,6 +7473,13 @@ class TorService : Service() {
                             val senderOnion = contact.voiceOnion ?: contact.messagingOnion ?: ""
                             if (senderOnion.isEmpty()) {
                                 Log.w(TAG, "Cannot process signaling - no onion address for contact ${contact.id}")
+                                return@launch
+                            }
+
+                            val senderEd25519PublicKey = android.util.Base64.decode(contact.publicKeyBase64, android.util.Base64.NO_WRAP)
+                            val signatureValid = RustBridge.verifySignature(encryptedPayload, signatureBytes, senderEd25519PublicKey)
+                            if (!signatureValid) {
+                                Log.e(TAG, "VOICE signaling signature verification FAILED - dropping message")
                                 return@launch
                             }
 
@@ -7442,6 +7683,24 @@ class TorService : Service() {
                 Log.i(TAG, "Network available - checking if reconnection needed")
                 Log.d(TAG, "Internet: ${event.hasInternet}, WiFi: ${event.isWifi}, IPv6-only: ${event.isIpv6Only}")
 
+                // Wake the Rust event listener from backoff sleep immediately so it
+                // reconnects to ControlSocket and updates CIRCUIT_ESTABLISHED + heartbeat.
+                // Without this, the listener can sleep up to 30s in exponential backoff.
+                if (RustBridge.isEventListenerRunning()) {
+                    Log.i(TAG, "Network available → waking event listener from backoff")
+                    RustBridge.wakeTorEventListener()
+                }
+
+                // Tell Rust network is validated — queues NEWNYM to rebuild circuits.
+                // Then start HS self-test retry loop: the only thing that proves
+                // "receivable via onion" and turns the signal icon green.
+                // Only when Tor is RUNNING — during BOOTSTRAPPING, self-test would fail
+                // for the wrong reason (Tor not ready, not network problem).
+                if (torState == TorState.RUNNING) {
+                    RustBridge.onNetworkValidated()
+                    startHsSelfTestLoop()
+                }
+
                 if (event.isIpv6Only) {
                     Log.w(TAG, "Network is IPv6-only - may affect Tor relay selection")
                 }
@@ -7461,6 +7720,24 @@ class TorService : Service() {
                         lastNetworkChangeMs = System.currentTimeMillis()
                         lastTorUnstableAt = System.currentTimeMillis() // Mark Tor as unstable
                         rehydrator.onNetworkChanged()
+
+                        // Bug fix: rehydrator fires within the 45s stabilization window and gets
+                        // rejected by handleRebindRequest(). Schedule a delayed retry so the gate
+                        // can be reopened after the window expires. Cancel any prior pending retry
+                        // to prevent stacking on rapid WiFi toggles.
+                        delayedRehydrateRunnable?.let { reconnectHandler.removeCallbacks(it) }
+                        val r = Runnable {
+                            serviceScope.launch(Dispatchers.IO) {
+                                val timeSinceChange = System.currentTimeMillis() - lastNetworkChangeMs
+                                if (!gate.isOpenNow() && torState == TorState.RUNNING
+                                    && timeSinceChange >= NETWORK_STABILIZATION_WINDOW_MS) {
+                                    Log.i(TAG, "Delayed rehydrator retry (post-stabilization window)")
+                                    rehydrator.onNetworkChanged()
+                                }
+                            }
+                        }
+                        delayedRehydrateRunnable = r
+                        reconnectHandler.postDelayed(r, NETWORK_STABILIZATION_WINDOW_MS + 2_000L)
                     }
                 }
 
@@ -7555,15 +7832,21 @@ class TorService : Service() {
                     // Tor daemon still alive — circuits will rebuild, health monitor will reopen gate
                     Log.i(TAG, "Network restored while Tor $torState — waiting for circuit rebuild + gate reopen")
 
-                    reconnectHandler.postDelayed({
-                        Log.i(TAG, "Tor circuits should be ready - sending TAPs and checking pending messages")
-                        sendTapsToAllContacts()
-
-                        // Also trigger immediate retry for any pending messages
+                    // Cancel any prior pending retry to prevent stacking
+                    // (Available + AirplaneModeChanged can fire on the same reconnect)
+                    delayedRetryRunnable?.let { reconnectHandler.removeCallbacks(it) }
+                    val retryRunnable = Runnable {
                         serviceScope.launch(Dispatchers.IO) {
+                            // Gate check: only retry if transport is actually verified
+                            if (!gate.isOpenNow()) {
+                                Log.w(TAG, "45s retry fired but gate still CLOSED — skipping retryAllPendingMessages")
+                                return@launch
+                            }
+                            Log.i(TAG, "Tor circuits should be ready - sending TAPs and checking pending messages")
+                            sendTapsToAllContacts()
                             try {
                                 val messageService = MessageService(this@TorService)
-                                val pongResult = messageService.pollForPongsAndSendMessages()
+                                val pongResult = messageService.retryAllPendingMessages()
                                 if (pongResult.isSuccess) {
                                     val sentCount = pongResult.getOrNull() ?: 0
                                     if (sentCount > 0) {
@@ -7574,7 +7857,9 @@ class TorService : Service() {
                                 Log.e(TAG, "Error checking pending messages after network restore", e)
                             }
                         }
-                    }, 45000) // 45 second delay for Tor circuit stabilization
+                    }
+                    delayedRetryRunnable = retryRunnable
+                    reconnectHandler.postDelayed(retryRunnable, 45000) // 45 second delay for Tor circuit stabilization
                 }
             }
 
@@ -7586,6 +7871,11 @@ class TorService : Service() {
                 // The Tor daemon is still alive — circuits are broken but will rebuild when
                 // network returns. The health monitor will detect unhealthy state and manage recovery.
                 updateNotification("Network disconnected")
+
+                // Enter "not receivable" epoch: clears circuit/HS/proof, enables suppression
+                // so Tor's zombie circuit-established=1 from the local socket is blocked.
+                // Suppression stays until HS self-test passes (set_tor_proof_ok).
+                RustBridge.onNetworkLost()
 
                 // Close gate to prevent outbound message attempts during outage
                 if (gate.isOpenNow()) {
@@ -7643,15 +7933,20 @@ class TorService : Service() {
                     // Airplane mode turned OFF and network is back
                     Log.i(TAG, "Airplane mode disabled - waiting 45 seconds for Tor circuits to stabilize")
 
-                    reconnectHandler.postDelayed({
-                        Log.i(TAG, "Tor circuits should be ready - sending TAPs now")
-                        sendTapsToAllContacts()
-
-                        // Also retry pending messages
+                    // Reuse the same deduplicated retry runnable as Available handler
+                    // (airplane off fires BOTH AirplaneModeChanged + Available — only one retry should run)
+                    delayedRetryRunnable?.let { reconnectHandler.removeCallbacks(it) }
+                    val retryRunnable = Runnable {
                         serviceScope.launch(Dispatchers.IO) {
+                            if (!gate.isOpenNow()) {
+                                Log.w(TAG, "45s retry (airplane) fired but gate still CLOSED — skipping")
+                                return@launch
+                            }
+                            Log.i(TAG, "Tor circuits should be ready - sending TAPs now")
+                            sendTapsToAllContacts()
                             try {
                                 val messageService = MessageService(this@TorService)
-                                val pongResult = messageService.pollForPongsAndSendMessages()
+                                val pongResult = messageService.retryAllPendingMessages()
                                 if (pongResult.isSuccess) {
                                     val sentCount = pongResult.getOrNull() ?: 0
                                     if (sentCount > 0) {
@@ -7662,7 +7957,9 @@ class TorService : Service() {
                                 Log.e(TAG, "Error checking pending messages after airplane mode", e)
                             }
                         }
-                    }, 45000) // 45 second delay for Tor circuit stabilization
+                    }
+                    delayedRetryRunnable = retryRunnable
+                    reconnectHandler.postDelayed(retryRunnable, 45000) // 45 second delay for Tor circuit stabilization
                 }
             }
 
@@ -8496,6 +8793,102 @@ class TorService : Service() {
             hsDescHealthy = true
             hsDescFailureCount = 0
             hsDescFailureWindowStart = now
+        }
+    }
+
+    // ─── HS Self-Test (proof of onion reachability) ────────────────────────
+    // Constants in existing companion object below
+
+    /**
+     * Start HS self-test retry loop after network recovery.
+     * Cancels any prior loop. Waits 10s for circuits to build, then retries
+     * every 5s (max 12 attempts = ~70s). On success: setTorProofOk() which
+     * records proof timestamp and lifts stale-status suppression → UI goes green.
+     */
+    private fun startHsSelfTestLoop() {
+        hsSelfTestJob?.cancel()
+        hsSelfTestJob = serviceScope.launch(Dispatchers.IO) {
+            delay(10_000) // Wait for NEWNYM + circuit rebuild
+            val keyManager = com.securelegion.crypto.KeyManager.getInstance(applicationContext)
+            val ownOnion = keyManager.getMessagingOnion()
+            if (ownOnion.isNullOrEmpty()) {
+                // Fallback: TorManager
+                val fallback = com.securelegion.crypto.TorManager.getInstance(applicationContext).getOnionAddress()
+                if (fallback.isNullOrEmpty()) {
+                    Log.w(TAG, "HS self-test: no own onion address available, skipping")
+                    return@launch
+                }
+                runSelfTestRetries(fallback)
+            } else {
+                runSelfTestRetries(ownOnion)
+            }
+        }
+    }
+
+    private suspend fun runSelfTestRetries(onion: String) {
+        repeat(12) { attempt ->
+            kotlin.coroutines.coroutineContext.ensureActive()
+            val ok = hsSelfTest(onion, HS_SERVICE_PORT)
+            if (ok) {
+                Log.i(TAG, "HS self-test PASSED (attempt ${attempt + 1}) → proof OK, UI goes green")
+                RustBridge.setTorProofOk()
+                return
+            }
+            Log.d(TAG, "HS self-test attempt ${attempt + 1}/12 failed, retrying in 5s")
+            delay(5_000)
+        }
+        Log.w(TAG, "HS self-test failed after 12 attempts — periodic health monitor will keep trying")
+    }
+
+    /**
+     * SOCKS5 connect to own .onion:port — proves our onion service is reachable.
+     * Same technique as TorHealthMonitorWorker.checkCircuitToOnion().
+     * Returns true if SOCKS5 CONNECT succeeds (REP=0x00).
+     */
+    private fun hsSelfTest(onionAddress: String, port: Int): Boolean {
+        val socket = Socket()
+        return try {
+            socket.soTimeout = 25000 // 25s: cold .onion connections need 10-20s after circuit rebuild
+            socket.connect(InetSocketAddress(SOCKS_HOST, SOCKS_PORT), 3000)
+
+            val output = socket.getOutputStream()
+            val input = socket.getInputStream()
+
+            // SOCKS5 auth: no auth required
+            output.write(byteArrayOf(0x05, 0x01, 0x00))
+            output.flush()
+            val authResp = ByteArray(2)
+            if (input.read(authResp) != 2 || authResp[0] != 0x05.toByte() || authResp[1] != 0x00.toByte()) {
+                return false
+            }
+
+            // SOCKS5 CONNECT to .onion:port
+            val addrBytes = onionAddress.toByteArray()
+            val connectReq = ByteArray(7 + addrBytes.size)
+            connectReq[0] = 0x05 // VER
+            connectReq[1] = 0x01 // CMD: CONNECT
+            connectReq[2] = 0x00 // RSV
+            connectReq[3] = 0x03 // ATYP: domain
+            connectReq[4] = addrBytes.size.toByte()
+            System.arraycopy(addrBytes, 0, connectReq, 5, addrBytes.size)
+            connectReq[5 + addrBytes.size] = ((port shr 8) and 0xFF).toByte()
+            connectReq[6 + addrBytes.size] = (port and 0xFF).toByte()
+            output.write(connectReq)
+            output.flush()
+
+            // Read only the 2-byte header (VER + REP) — all we need
+            val hdr = ByteArray(2)
+            if (input.read(hdr) != 2) return false
+            val success = hdr[0] == 0x05.toByte() && hdr[1] == 0x00.toByte()
+            if (!success) {
+                Log.d(TAG, "HS self-test: SOCKS5 REP=${hdr[1].toInt() and 0xFF} for $onionAddress:$port")
+            }
+            success
+        } catch (e: Exception) {
+            Log.d(TAG, "HS self-test failed for $onionAddress:$port: ${e.message}")
+            false
+        } finally {
+            try { socket.close() } catch (_: Exception) {}
         }
     }
 

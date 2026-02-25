@@ -947,10 +947,11 @@ class TorManager(private val context: Context) {
      * Respond to incoming Ping with Pong
      * @param pingId The Ping ID
      * @param authenticated Whether user successfully authenticated
+     * @param deviceProtection Whether Device Protection mode was used (M5 timing mitigation)
      * @return Pong token bytes, or null if authentication denied
      */
-    fun respondToPing(pingId: String, authenticated: Boolean): ByteArray? {
-        return RustBridge.respondToPing(pingId, authenticated)
+    fun respondToPing(pingId: String, authenticated: Boolean, deviceProtection: Boolean = false): ByteArray? {
+        return RustBridge.respondToPing(pingId, authenticated, deviceProtection)
     }
 
     /**

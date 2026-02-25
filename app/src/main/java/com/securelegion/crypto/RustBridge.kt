@@ -273,27 +273,9 @@ object RustBridge {
         pingBytes: ByteArray
     ): Boolean
 
-    /**
-     * FIX #7: Validate ACK ordering
-     * Enforces state machine: PING_ACK → PONG_ACK → MESSAGE_ACK
-     * Rejects out-of-order ACKs to prevent protocol violations
-     *
-     * @param contactId Contact identifier
-     * @param ackType ACK type: 0=PING_ACK, 1=PONG_ACK, 2=MESSAGE_ACK
-     * @return True if ACK is valid and accepted, False if rejected
-     */
-    external fun validateAckOrdering(
-        contactId: String,
-        ackType: Int
-    ): Boolean
-
-    /**
-     * FIX #7: Reset ACK state for a contact
-     * Call this after completing a message exchange to reset the state machine
-     *
-     * @param contactId Contact identifier
-     */
-    external fun resetAckState(contactId: String)
+    // validateAckOrdering and resetAckState removed — Protocol v2 simplified
+    // ACK flow to PING_ACK + MESSAGE_ACK only. PONG_ACK eliminated.
+    // JNI symbols kept in Rust for backward compatibility but no longer called.
 
     /**
      * Kotlin wrapper for encryptMessageDeferred with JSON parsing
@@ -699,6 +681,45 @@ object RustBridge {
      * Signals the listener to exit; the guard is cleared so a new one can be spawned.
      */
     external fun stopBootstrapListener()
+
+    /**
+     * Wake the event listener from exponential backoff sleep.
+     * Call when network returns so the listener reconnects to ControlSocket immediately
+     * instead of sleeping up to 30s. No-op if listener is not in backoff.
+     */
+    @JvmStatic
+    external fun wakeTorEventListener()
+
+    /**
+     * Called when Android detects network loss (NOT validated). Single entry point:
+     * clears circuit/HS/proof state, enables stale-status suppression so Tor's
+     * zombie circuit-established=1 from the local control socket is blocked.
+     */
+    @JvmStatic
+    external fun onNetworkLost()
+
+    /**
+     * Called when NET_CAPABILITY_VALIDATED flips true (real internet back).
+     * Queues SIGNAL NEWNYM to force Tor to drop zombie circuits (optimization).
+     */
+    @JvmStatic
+    external fun onNetworkValidated()
+
+    /**
+     * Called when HS self-test passes (SOCKS5 connect to own .onion succeeded).
+     * Records proof timestamp and lifts stale-status suppression.
+     * This is the gold-standard signal: our onion service is reachable.
+     */
+    @JvmStatic
+    external fun setTorProofOk()
+
+    /**
+     * Get last proof-of-reachability timestamp (epoch millis).
+     * Returns 0 if no proof since last network loss.
+     * UI compares against lastNetworkChangeMs to determine "receivable."
+     */
+    @JvmStatic
+    external fun getLastTorProofMs(): Long
 
     /**
      * Get Tor bootstrap status (0-100%)
@@ -1130,9 +1151,10 @@ object RustBridge {
      * Respond to an incoming Ping with a Pong
      * @param pingId The Ping ID from decryptIncomingPing
      * @param authenticated Whether user successfully authenticated
+     * @param deviceProtection Whether receiver used Device Protection mode (M5 timing mitigation)
      * @return Encrypted Pong wire message to send via sendPongBytes, or null if denied
      */
-    external fun respondToPing(pingId: String, authenticated: Boolean): ByteArray?
+    external fun respondToPing(pingId: String, authenticated: Boolean, deviceProtection: Boolean = false): ByteArray?
 
     /**
      * Send a "tap" (presence notification) to a contact

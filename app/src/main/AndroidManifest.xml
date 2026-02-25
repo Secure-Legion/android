@@ -319,6 +319,13 @@
             android:name=".AcceptPaymentActivity"
             android:exported="false" />
 
+        <activity
+            android:name=".DeviceProtectionUnlockActivity"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar"
+            android:exported="false"
+            android:taskAffinity=""
+            android:excludeFromRecents="true" />
+
         <!-- Tor daemon - In-process Tor via JNI (from tor-android library)
              Runs in main process (GP tor-android 0.4.9.5 requires Application init context) -->
         <service

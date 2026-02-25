@@ -37,6 +37,8 @@ class StressTestActivity : AppCompatActivity() {
     private lateinit var deliveredCountText: TextView
     private lateinit var failedCountText: TextView
     private lateinit var eventLogRecyclerView: RecyclerView
+    private lateinit var delayInput: EditText
+    private lateinit var delayLabel: TextView
     private lateinit var dumpCountersButton: FrameLayout
     private lateinit var resetStateButton: FrameLayout
 
@@ -68,6 +70,8 @@ class StressTestActivity : AppCompatActivity() {
         deliveredCountText = findViewById(R.id.deliveredCountText)
         failedCountText = findViewById(R.id.failedCountText)
         eventLogRecyclerView = findViewById(R.id.eventLogRecyclerView)
+        delayInput = findViewById(R.id.delayInput)
+        delayLabel = findViewById(R.id.delayLabel)
         dumpCountersButton = findViewById(R.id.dumpCountersButton)
         resetStateButton = findViewById(R.id.resetStateButton)
 
@@ -89,6 +93,26 @@ class StressTestActivity : AppCompatActivity() {
         val adapter = ArrayAdapter(this, android.R.layout.simple_spinner_item, scenarios)
         adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
         scenarioSpinner.adapter = adapter
+
+        scenarioSpinner.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
+                val selected = Scenario.values()[position]
+                // Show delay input for scenarios that use it
+                val showDelay = selected != Scenario.BURST && selected != Scenario.RETRY_STORM
+                delayInput.visibility = if (showDelay) View.VISIBLE else View.GONE
+                delayLabel.visibility = if (showDelay) View.VISIBLE else View.GONE
+
+                // Set default hint based on scenario
+                delayInput.hint = when (selected) {
+                    Scenario.RAPID_FIRE -> "200"
+                    Scenario.CASCADE -> "0 (waits for completion)"
+                    Scenario.CONCURRENT_CONTACTS -> "100"
+                    Scenario.MIXED -> "300"
+                    else -> "0"
+                }
+            }
+            override fun onNothingSelected(parent: AdapterView<*>?) {}
+        }
     }
 
     private fun setupContactSpinner() {
@@ -171,10 +195,13 @@ class StressTestActivity : AppCompatActivity() {
             return
         }
 
+        val delayMs = delayInput.text.toString().toLongOrNull() ?: 0L
+
         val config = StressTestConfig(
             scenario = scenario,
             messageCount = messageCount,
-            contactId = selectedContactId
+            contactId = selectedContactId,
+            delayMs = delayMs
         )
 
         Log.i(TAG, "Starting stress test: $scenario with $messageCount messages")
@@ -186,6 +213,7 @@ class StressTestActivity : AppCompatActivity() {
         stopButton.isEnabled = true
         scenarioSpinner.isEnabled = false
         messageCountInput.isEnabled = false
+        delayInput.isEnabled = false
         contactSpinner.isEnabled = false
 
         ThemedToast.show(this, "Stress test started")
@@ -200,6 +228,7 @@ class StressTestActivity : AppCompatActivity() {
         stopButton.isEnabled = false
         scenarioSpinner.isEnabled = true
         messageCountInput.isEnabled = true
+        delayInput.isEnabled = true
         contactSpinner.isEnabled = true
 
         ThemedToast.show(this, "Stress test stopped")

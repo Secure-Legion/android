@@ -144,11 +144,12 @@ data class StressRunId(val id: String) {
  * Stress test scenarios
  */
 enum class Scenario {
-    BURST, // Send N messages as fast as possible
-    CASCADE, // Test session leak fix (force first to fail, verify second works)
-    CONCURRENT_CONTACTS, // Round-robin sends to multiple contacts
-    RETRY_STORM, // Resend all failed messages
-    MIXED // Mixed message types (TEXT small, TEXT large, VOICE, IMAGE)
+    BURST,              // Send N messages concurrently (max stress)
+    RAPID_FIRE,         // Send at human typing speed (configurable delay)
+    CASCADE,            // Sequential: wait for each message to complete before next
+    CONCURRENT_CONTACTS,// Round-robin sends to multiple contacts
+    RETRY_STORM,        // Resend all failed messages from DB
+    MIXED               // Varying payload sizes (32B → 16KB)
 }
 
 /**

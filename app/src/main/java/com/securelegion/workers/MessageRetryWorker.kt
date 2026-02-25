@@ -43,21 +43,29 @@ class MessageRetryWorker(
          * Periodic background retry (long-term recovery)
          */
         fun schedule(context: Context) {
-            // NO CONSTRAINTS - TorService is always running, so network is always available
-            // NetworkType.CONNECTED was blocking execution (VPN, battery saver, etc.)
-            val work = PeriodicWorkRequestBuilder<MessageRetryWorker>(
-                REPEAT_INTERVAL_MINUTES,
-                TimeUnit.MINUTES
-            )
-                .build()
-
-            WorkManager.getInstance(context).enqueueUniquePeriodicWork(
+            // Kick off recurring retry chain immediately.
+            // Sub-15-minute cadence must use OneTimeWork chaining, not periodic work.
+            val wm = WorkManager.getInstance(context)
+            wm.cancelUniqueWork(WORK_NAME) // Migrate any legacy periodic registration with same name
+            val work = OneTimeWorkRequestBuilder<MessageRetryWorker>().build()
+            wm.enqueueUniqueWork(
                 WORK_NAME,
-                ExistingPeriodicWorkPolicy.REPLACE, // REPLACE old schedule (was KEEP - prevented interval change)
+                ExistingWorkPolicy.REPLACE,
                 work
             )
 
-            Log.w(TAG, "========== SCHEDULED PERIODIC MessageRetryWorker (every ${REPEAT_INTERVAL_MINUTES} minutes) ==========")
+            Log.w(TAG, "========== SCHEDULED RECURRING MessageRetryWorker (every ${REPEAT_INTERVAL_MINUTES} minutes) ==========")
+        }
+
+        private fun scheduleNextRecurring(context: Context) {
+            val next = OneTimeWorkRequestBuilder<MessageRetryWorker>()
+                .setInitialDelay(REPEAT_INTERVAL_MINUTES, TimeUnit.MINUTES)
+                .build()
+            WorkManager.getInstance(context).enqueueUniqueWork(
+                WORK_NAME,
+                ExistingWorkPolicy.APPEND,
+                next
+            )
         }
 
         /**
@@ -116,6 +124,7 @@ class MessageRetryWorker(
             // Periodic received_ids cleanup (30-day TTL, runs at most once per day)
             if (!isContactSpecific) {
                 cleanupReceivedIds()
+                scheduleNextRecurring(applicationContext)
             }
 
             Result.success()
@@ -225,13 +234,13 @@ class MessageRetryWorker(
                         Log.d(TAG, "→ Retrying PING for ${message.messageId}")
                         messageService.sendPingForMessage(message).isSuccess
                     }
-                    AckState.PONG_ACKED -> {
-                        // Phase 2: PONG received but message blob not sent - poll for PONG and advance
-                        Log.d(TAG, "→ PONG received, polling for message download ${message.messageId}")
-                        messageService.pollForPongsAndSendMessages()
-                        true // Assume poll was scheduled successfully
+                    AckState.PONG_RECEIVED -> {
+                        // Phase 2: PONG received — send blob for this contact
+                        Log.d(TAG, "→ PONG received, sending blob for ${message.messageId}")
+                        messageService.sendPendingMessagesForContact(message.contactId)
+                        true
                     }
-                    AckState.MESSAGE_ACKED -> {
+                    AckState.DELIVERED -> {
                         // Phase 3: Message fully delivered - skip retry
                         Log.d(TAG, "→ Message already delivered, skipping ${message.messageId}")
                         true // Skip, don't count as retry
@@ -246,15 +255,15 @@ class MessageRetryWorker(
             if (success) {
                 retriedCount++
                 Log.d(TAG, "Retry sent for ${message.messageId} (phase: $ackState)")
+                if (ackState != AckState.DELIVERED) {
+                    MessageService.scheduleRetry(database, message)
+                }
             } else {
                 // On failure: update message with error and schedule next retry with exponential backoff
                 val nextRetryMs = calculateNextRetryTime(message.retryCount, now)
                 val errorMsg = "Retry attempt ${message.retryCount + 1} failed (phase: $ackState)"
                 updateMessageRetryState(database, message, errorMsg, nextRetryMs)
             }
-
-            // Always schedule next retry (even on success, for indefinite retries)
-            MessageService.scheduleRetry(database, message)
         }
 
         retriedCount
@@ -280,10 +289,18 @@ class MessageRetryWorker(
 
             val now = System.currentTimeMillis()
 
-            // SOFT GATE: Check Tor health but still attempt retries (SOCKS health monitor will auto-restart)
-            if (TorHealthHelper.isTorUnavailable(applicationContext)) {
+            // Gate contact retries the same way as periodic retries to avoid failure churn.
+            val torUnavailable = TorHealthHelper.isTorUnavailable(applicationContext)
+            val bootstrapPercent = com.securelegion.crypto.RustBridge.getBootstrapStatus()
+            val circuitsEstablished = com.securelegion.crypto.RustBridge.getCircuitEstablished()
+            if (torUnavailable) {
                 val status = TorHealthHelper.getStatusString(applicationContext)
-                Log.w(TAG, "Tor unavailable ($status), attempting contact retry for $contactId anyway (SOCKS auto-restart enabled)")
+                Log.w(TAG, "Tor unavailable ($status), skipping contact retry for $contactId")
+                return@withContext 0
+            }
+            if (circuitsEstablished < 1) {
+                Log.w(TAG, "Contact retry skipped: bootstrap=${bootstrapPercent}%, circuits=${circuitsEstablished}")
+                return@withContext 0
             }
 
             val messages = database.messageDao().getMessagesNeedingRetry(
@@ -319,13 +336,13 @@ class MessageRetryWorker(
                             Log.d(TAG, "→ Retrying PING for ${message.messageId}")
                             messageService.sendPingForMessage(message).isSuccess
                         }
-                        AckState.PONG_ACKED -> {
-                            // Phase 2: PONG received - poll for PONG and send message
-                            Log.d(TAG, "→ TAP triggered, polling for message download ${message.messageId}")
-                            messageService.pollForPongsAndSendMessages()
+                        AckState.PONG_RECEIVED -> {
+                            // Phase 2: PONG received — send blob for this contact
+                            Log.d(TAG, "→ TAP triggered, sending blob for ${message.messageId}")
+                            messageService.sendPendingMessagesForContact(message.contactId)
                             true
                         }
-                        AckState.MESSAGE_ACKED -> {
+                        AckState.DELIVERED -> {
                             // Phase 3: Message fully delivered - skip retry
                             Log.d(TAG, "→ Message already delivered, skipping ${message.messageId}")
                             true
@@ -340,14 +357,15 @@ class MessageRetryWorker(
                 if (success) {
                     retriedCount++
                     Log.d(TAG, "Retry sent for ${message.messageId} (phase: $ackState)")
+                    if (ackState != AckState.DELIVERED) {
+                        MessageService.scheduleRetry(database, message)
+                    }
                 } else {
                     // On failure: update message with error and schedule next retry with exponential backoff
                     val nextRetryMs = calculateNextRetryTime(message.retryCount, now)
                     val errorMsg = "Contact retry attempt ${message.retryCount + 1} failed (phase: $ackState)"
                     updateMessageRetryState(database, message, errorMsg, nextRetryMs)
                 }
-
-                MessageService.scheduleRetry(database, message)
             }
 
             retriedCount

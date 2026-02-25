@@ -57,7 +57,7 @@ import net.zetetic.database.sqlcipher.SupportOpenHelperFactory
  */
 @Database(
     entities = [Contact::class, Message::class, Wallet::class, ReceivedId::class, UsedSignature::class, Group::class, CrdtOpLog::class, CallHistory::class, CallQualityLog::class, PingInbox::class, ContactKeyChain::class, SkippedMessageKey::class, PendingFriendRequest::class, PendingPing::class, GroupPeer::class, PendingGroupDelivery::class],
-    version = 45,
+    version = 47,
     exportSchema = false
 )
 abstract class SecureLegionDatabase : RoomDatabase() {
@@ -955,6 +955,108 @@ abstract class SecureLegionDatabase : RoomDatabase() {
         }
 
         /**
+         * Migration 45→46: Make pongDelivered nullable (protocol v2 removes PONG_ACK).
+         * SQLite can't ALTER a column to nullable, so we rebuild the table.
+         */
+        private val MIGRATION_45_46 = object : Migration(45, 46) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                Log.i(TAG, "Migrating database from version 45 to 46")
+
+                database.execSQL("PRAGMA foreign_keys=OFF")
+
+                database.execSQL("""
+                    CREATE TABLE IF NOT EXISTS `messages_new` (
+                        `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        `contactId` INTEGER NOT NULL,
+                        `messageId` TEXT NOT NULL,
+                        `encryptedContent` TEXT NOT NULL,
+                        `isSentByMe` INTEGER NOT NULL,
+                        `timestamp` INTEGER NOT NULL,
+                        `status` INTEGER NOT NULL DEFAULT 0,
+                        `signatureBase64` TEXT NOT NULL,
+                        `nonceBase64` TEXT NOT NULL,
+                        `messageNonce` INTEGER NOT NULL,
+                        `messageType` TEXT NOT NULL DEFAULT 'TEXT',
+                        `voiceDuration` INTEGER,
+                        `voiceFilePath` TEXT,
+                        `attachmentType` TEXT,
+                        `attachmentData` TEXT,
+                        `isRead` INTEGER NOT NULL DEFAULT 0,
+                        `selfDestructAt` INTEGER,
+                        `requiresReadReceipt` INTEGER NOT NULL DEFAULT 1,
+                        `pingId` TEXT,
+                        `pingTimestamp` INTEGER,
+                        `encryptedPayload` TEXT,
+                        `retryCount` INTEGER NOT NULL DEFAULT 0,
+                        `lastRetryTimestamp` INTEGER,
+                        `nextRetryAtMs` INTEGER,
+                        `lastError` TEXT,
+                        `pingDelivered` INTEGER NOT NULL DEFAULT 0,
+                        `messageDelivered` INTEGER NOT NULL DEFAULT 0,
+                        `tapDelivered` INTEGER NOT NULL DEFAULT 0,
+                        `pongDelivered` INTEGER,
+                        `pingWireBytes` TEXT,
+                        `paymentQuoteJson` TEXT,
+                        `paymentStatus` TEXT,
+                        `txSignature` TEXT,
+                        `paymentToken` TEXT,
+                        `paymentAmount` INTEGER,
+                        `correlationId` TEXT,
+                        `isPinned` INTEGER NOT NULL DEFAULT 0,
+                        FOREIGN KEY(`contactId`) REFERENCES `contacts`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE
+                    )
+                """.trimIndent())
+
+                database.execSQL("""
+                    INSERT INTO `messages_new` (
+                        `id`, `contactId`, `messageId`, `encryptedContent`, `isSentByMe`,
+                        `timestamp`, `status`, `signatureBase64`, `nonceBase64`, `messageNonce`,
+                        `messageType`, `voiceDuration`, `voiceFilePath`, `attachmentType`, `attachmentData`,
+                        `isRead`, `selfDestructAt`, `requiresReadReceipt`, `pingId`, `pingTimestamp`,
+                        `encryptedPayload`, `retryCount`, `lastRetryTimestamp`, `nextRetryAtMs`, `lastError`,
+                        `pingDelivered`, `messageDelivered`, `tapDelivered`, `pongDelivered`, `pingWireBytes`,
+                        `paymentQuoteJson`, `paymentStatus`, `txSignature`, `paymentToken`, `paymentAmount`,
+                        `correlationId`, `isPinned`
+                    )
+                    SELECT
+                        `id`, `contactId`, `messageId`, `encryptedContent`, `isSentByMe`,
+                        `timestamp`, `status`, `signatureBase64`, `nonceBase64`, `messageNonce`,
+                        `messageType`, `voiceDuration`, `voiceFilePath`, `attachmentType`, `attachmentData`,
+                        `isRead`, `selfDestructAt`, `requiresReadReceipt`, `pingId`, `pingTimestamp`,
+                        `encryptedPayload`, `retryCount`, `lastRetryTimestamp`, `nextRetryAtMs`, `lastError`,
+                        `pingDelivered`, `messageDelivered`, `tapDelivered`, `pongDelivered`, `pingWireBytes`,
+                        `paymentQuoteJson`, `paymentStatus`, `txSignature`, `paymentToken`, `paymentAmount`,
+                        `correlationId`, `isPinned`
+                    FROM `messages`
+                """.trimIndent())
+
+                database.execSQL("DROP TABLE `messages`")
+                database.execSQL("ALTER TABLE `messages_new` RENAME TO `messages`")
+
+                database.execSQL("CREATE INDEX IF NOT EXISTS `index_messages_contactId` ON `messages` (`contactId`)")
+                database.execSQL("CREATE INDEX IF NOT EXISTS `index_messages_timestamp` ON `messages` (`timestamp`)")
+                database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS `index_messages_messageId` ON `messages` (`messageId`)")
+                database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS `index_messages_pingId` ON `messages` (`pingId`)")
+
+                database.execSQL("PRAGMA foreign_keys=ON")
+
+                Log.i(TAG, "Migration 45→46 complete: pongDelivered now nullable (protocol v2)")
+            }
+        }
+
+        /**
+         * Migration 46→47: Add lastPongSentAt to ping_inbox for PONG resend rate limiting (M6).
+         * Nullable column — simple ALTER TABLE (no table rebuild needed).
+         */
+        private val MIGRATION_46_47 = object : Migration(46, 47) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                Log.i(TAG, "Migrating database from version 46 to 47")
+                database.execSQL("ALTER TABLE `ping_inbox` ADD COLUMN `lastPongSentAt` INTEGER")
+                Log.i(TAG, "Migration 46→47 complete: added lastPongSentAt to ping_inbox")
+            }
+        }
+
+        /**
          * All migrations in a single array for DRY registration + validation.
          * RULE: When adding a new migration, append it here AND bump the @Database version.
          */
@@ -969,7 +1071,8 @@ abstract class SecureLegionDatabase : RoomDatabase() {
             MIGRATION_29_30, MIGRATION_30_31, MIGRATION_31_32, MIGRATION_32_33,
             MIGRATION_33_34, MIGRATION_34_35, MIGRATION_35_36, MIGRATION_36_37,
             MIGRATION_37_38, MIGRATION_38_39, MIGRATION_39_40, MIGRATION_40_41,
-            MIGRATION_41_42, MIGRATION_42_43, MIGRATION_43_44, MIGRATION_44_45
+            MIGRATION_41_42, MIGRATION_42_43, MIGRATION_43_44, MIGRATION_44_45,
+            MIGRATION_45_46, MIGRATION_46_47
         )
 
         /**
@@ -1066,7 +1169,7 @@ abstract class SecureLegionDatabase : RoomDatabase() {
                     DATABASE_NAME
                 )
                     .openHelperFactory(factory)
-                    .addMigrations(*ALL_MIGRATIONS.also { validateMigrationChain(it, 45) })
+                    .addMigrations(*ALL_MIGRATIONS.also { validateMigrationChain(it, 47) })
                     .addCallback(object : RoomDatabase.Callback() {
                         override fun onCreate(db: SupportSQLiteDatabase) {
                             super.onCreate(db)

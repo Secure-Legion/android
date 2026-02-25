@@ -98,7 +98,13 @@ data class PingInbox(
      * Used by watchdog to release stuck claims (process died mid-download)
      * Null when not in DOWNLOAD_QUEUED state
      */
-    val downloadQueuedAt: Long? = null
+    val downloadQueuedAt: Long? = null,
+
+    /**
+     * When we last sent PONG for this ping (rate limit: max 1 per 5s per pingId)
+     * Used by M6 mitigation to prevent PONG resend amplification on duplicate PINGs
+     */
+    val lastPongSentAt: Long? = null
 ) {
     companion object {
         // Existing states (unchanged)
@@ -110,5 +116,9 @@ data class PingInbox(
         const val STATE_DOWNLOAD_QUEUED = 10 // Claimed for auto-download
         const val STATE_FAILED_TEMP = 11 // Auto-download failed, will retry
         const val STATE_MANUAL_REQUIRED = 12 // Retries exhausted, show lock icon once
+
+        // Rate limiting (M6: PONG resend amplification mitigation)
+        const val PONG_RESEND_COOLDOWN_MS = 5_000L // Max 1 PONG per 5s per pingId
+        const val PONG_RESEND_MAX_ATTEMPTS = 10 // Cap total PONG resends per pingId
     }
 }

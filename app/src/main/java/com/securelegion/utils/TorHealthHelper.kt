@@ -17,7 +17,10 @@ object TorHealthHelper {
         val prefs = context.getSharedPreferences("tor_health", Context.MODE_PRIVATE)
         val prefsString = prefs.getString("snapshot", "")
         return if (prefsString.isNullOrEmpty()) {
-            TorHealthSnapshot() // Default to HEALTHY if no data
+            // No snapshot yet (cold start / prefs wiped) → RECOVERING
+            // Prevents sends/retries before first real health check writes a sample.
+            // Previous default (HEALTHY) caused false gate opens and retry storms at startup.
+            TorHealthSnapshot(status = TorHealthStatus.RECOVERING, lastError = "no health snapshot yet")
         } else {
             TorHealthSnapshot.fromPrefsString(prefsString)
         }

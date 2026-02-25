@@ -37,6 +37,7 @@ import java.net.NetworkInterface
  */
 class NetworkWatcher(
     private val context: Context,
+    private val scope: kotlinx.coroutines.CoroutineScope = GlobalScope,
     private val onNetworkChanged: suspend (NetworkEvent) -> Unit
 ) {
     companion object {
@@ -350,13 +351,14 @@ class NetworkWatcher(
      * Fallback to WifiManager when ConnectivityManager is unavailable
      */
     private fun fallbackToWifiManager() {
-        Log.i(TAG, "Using WifiManager fallback for network detection")
+        Log.w(TAG, "Using WifiManager fallback for network detection")
 
-        // Assume we have internet connection (less harmful than assuming we don't)
-        hasNetworkConnection = true
-        isIpv6Only = true // Assume IPv6-only for safety
+        // Conservative: assume NO internet unless WiFi proves otherwise.
+        // Previous optimistic default (true) caused false gate opens, rebind attempts,
+        // and retry storms when ConnectivityManager threw SecurityException.
+        isIpv6Only = false
 
-        // Try to detect WiFi connection
+        // Try to detect WiFi connection — only claim internet if WiFi is active
         isWifiConnected = try {
             val wifiInfo = wifiManager?.connectionInfo
             wifiInfo != null && wifiInfo.ipAddress != 0
@@ -364,6 +366,7 @@ class NetworkWatcher(
             Log.w(TAG, "Error checking WiFi state", e)
             false
         }
+        hasNetworkConnection = isWifiConnected
     }
 
     /**
@@ -371,7 +374,7 @@ class NetworkWatcher(
      */
     private fun triggerEvent(event: NetworkEvent) {
         Log.d(TAG, "Triggering event: ${event.javaClass.simpleName}")
-        GlobalScope.launch(Dispatchers.Main) {
+        scope.launch(Dispatchers.Main) {
             try {
                 onNetworkChanged(event)
             } catch (e: Exception) {

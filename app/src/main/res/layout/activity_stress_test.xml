@@ -112,6 +112,30 @@
         android:fontFamily="@font/poppins_regular"
         android:layout_marginBottom="16dp"/>
 
+    <!-- Delay Input -->
+    <TextView
+        android:id="@+id/delayLabel"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Delay between sends (ms)"
+        android:textColor="?attr/colorOnSurfaceVariant"
+        android:textSize="12sp"
+        android:fontFamily="@font/poppins_regular"
+        android:layout_marginBottom="4dp"/>
+
+    <EditText
+        android:id="@+id/delayInput"
+        android:layout_width="match_parent"
+        android:layout_height="48dp"
+        android:background="?attr/colorSurfaceContainer"
+        android:textColor="?attr/colorOnSurface"
+        android:textColorHint="@color/text_gray"
+        android:hint="200"
+        android:inputType="number"
+        android:padding="12dp"
+        android:fontFamily="@font/poppins_regular"
+        android:layout_marginBottom="16dp"/>
+
     <!-- Contact Selector -->
     <TextView
         android:layout_width="match_parent"

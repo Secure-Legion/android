@@ -99,31 +99,43 @@ class TorHealthActivity : AppCompatActivity() {
             val bootstrapPercent = RustBridge.getBootstrapStatus()
             val circuitsEstablished = RustBridge.getCircuitEstablished()
 
-            // Determine main Tor status
+            // Network check first — Tor's local control socket stays alive even with WiFi dead,
+            // so circuits/bootstrap can look "healthy" while the network path is actually broken.
+            val connectivityManager = getSystemService(Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
+            val activeNetwork = connectivityManager.activeNetwork
+            val capabilities = connectivityManager.getNetworkCapabilities(activeNetwork)
+            val hasInternet = capabilities?.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_VALIDATED) == true
+
+            // Proof-based status: HS self-test passed since last network change
+            val lastProofMs = try { RustBridge.getLastTorProofMs() } catch (_: Exception) { 0L }
+            val lastNetworkChangeMs = com.securelegion.services.TorService.getLastNetworkChangeMs()
+            val hasFreshProof = lastProofMs > 0 && lastProofMs >= lastNetworkChangeMs
+            val hasTransportReady = bootstrapPercent >= 100 && circuitsEstablished == 1
+
             when {
-                bootstrapPercent < 0 -> {
+                !hasInternet -> {
                     mainTorStatusText.text = "Offline"
-                    mainTorStatusText.setTextColor(0xFF666666.toInt())
-                    mainTorStatusIndicator.setBackgroundResource(R.drawable.status_offline_indicator)
+                    mainTorStatusText.setTextColor(0xFFFF6666.toInt())
+                    mainTorStatusIndicator.setBackgroundResource(R.drawable.status_error_indicator)
                 }
-                bootstrapPercent < 100 -> {
-                    mainTorStatusText.text = "Connecting"
-                    mainTorStatusText.setTextColor(0xFFFFAA00.toInt())
-                    mainTorStatusIndicator.setBackgroundResource(R.drawable.status_warning_indicator)
+                hasFreshProof -> {
+                    mainTorStatusText.text = "Receivable"
+                    mainTorStatusText.setTextColor(0xFF00CC66.toInt())
+                    mainTorStatusIndicator.setBackgroundResource(R.drawable.status_healthy_indicator)
                 }
-                circuitsEstablished == 1 -> {
-                    mainTorStatusText.text = "Healthy"
+                hasTransportReady -> {
+                    // Outbound Tor transport is ready. Inbound proof may still be catching up.
+                    mainTorStatusText.text = "Connected"
                     mainTorStatusText.setTextColor(0xFF00CC66.toInt())
                     mainTorStatusIndicator.setBackgroundResource(R.drawable.status_healthy_indicator)
                 }
                 else -> {
-                    mainTorStatusText.text = "No Circuits"
-                    mainTorStatusText.setTextColor(0xFFFF6666.toInt())
-                    mainTorStatusIndicator.setBackgroundResource(R.drawable.status_error_indicator)
+                    mainTorStatusText.text = "Connecting"
+                    mainTorStatusText.setTextColor(0xFFFFAA00.toInt())
+                    mainTorStatusIndicator.setBackgroundResource(R.drawable.status_warning_indicator)
                 }
             }
 
-            // Update circuits and bootstrap
             mainCircuitsText.text = "Circuits: $circuitsEstablished"
             mainBootstrapText.text = "Bootstrap: $bootstrapPercent%"
 
@@ -132,12 +144,7 @@ class TorHealthActivity : AppCompatActivity() {
             voiceTorStatusText.setTextColor(0xFF666666.toInt())
             voiceTorStatusIndicator.setBackgroundResource(R.drawable.status_offline_indicator)
 
-            // Network Status (check Android connectivity)
-            val connectivityManager = getSystemService(Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
-            val activeNetwork = connectivityManager.activeNetwork
-            val capabilities = connectivityManager.getNetworkCapabilities(activeNetwork)
-            val hasInternet = capabilities?.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_VALIDATED) == true
-
+            // Network Status
             if (hasInternet) {
                 networkStatusText.text = "Live"
                 networkStatusText.setTextColor(0xFF00CC66.toInt())

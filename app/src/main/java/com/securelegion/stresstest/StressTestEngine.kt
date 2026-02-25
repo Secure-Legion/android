@@ -72,6 +72,7 @@ class StressTestEngine(
         try {
             when (config.scenario) {
                 Scenario.BURST -> executeBurst(runId, config)
+                Scenario.RAPID_FIRE -> executeRapidFire(runId, config)
                 Scenario.CASCADE -> executeCascade(runId, config)
                 Scenario.CONCURRENT_CONTACTS -> executeConcurrentContacts(runId, config)
                 Scenario.RETRY_STORM -> executeRetryStorm(runId, config)
@@ -182,39 +183,402 @@ class StressTestEngine(
     }
 
     /**
-     * CASCADE: Test session leak fix
-     * Force first message to fail (or succeed), verify second message works
+     * RAPID_FIRE: Send messages at human typing speed
+     * Uses configurable delay (default 200ms) between sequential sends
+     * Simulates someone smashing the send button as fast as they can
+     */
+    private suspend fun executeRapidFire(runId: StressRunId, config: StressTestConfig) {
+        val messageService = MessageService(context)
+        val keyManager = KeyManager.getInstance(context)
+        val database = SecureLegionDatabase.getInstance(context, keyManager.getDatabasePassphrase())
+
+        val contact = database.contactDao().getContactById(config.contactId)
+            ?: throw IllegalArgumentException("Contact not found: ${config.contactId}")
+
+        val delayBetween = if (config.delayMs > 0) config.delayMs else 200L
+
+        Log.i(TAG, "Starting rapid-fire: ${config.messageCount} msgs to ${contact.displayName}, ${delayBetween}ms between sends")
+
+        val counter = AtomicInteger(0)
+
+        for (i in 1..config.messageCount) {
+            val count = counter.incrementAndGet()
+            val correlationId = "stress_${runId.id}_$count"
+            val testMessage = generateTestMessage(config.messageSize, correlationId)
+
+            store.addEvent(StressEvent.MessageAttempt(
+                correlationId = correlationId,
+                localMessageId = 0,
+                contactId = config.contactId,
+                size = testMessage.length
+            ))
+
+            try {
+                val result = messageService.sendMessage(
+                    contactId = config.contactId,
+                    plaintext = testMessage,
+                    correlationId = correlationId
+                )
+
+                if (result.isSuccess) {
+                    val message = result.getOrNull()
+                    Log.d(TAG, "[$correlationId] Enqueued (id=${message?.id})")
+                    if (message != null) {
+                        // Monitor in background — don't block the next send
+                        CoroutineScope(Dispatchers.IO).launch {
+                            monitorMessageStatus(database, message.id, correlationId)
+                        }
+                    }
+                } else {
+                    store.addEvent(StressEvent.Phase(
+                        correlationId = correlationId,
+                        phase = "FAILED",
+                        ok = false,
+                        detail = result.exceptionOrNull()?.message
+                    ))
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "[$correlationId] Send failed", e)
+                store.addEvent(StressEvent.Phase(
+                    correlationId = correlationId,
+                    phase = "FAILED",
+                    ok = false,
+                    detail = e.message
+                ))
+            }
+
+            // Wait before next send (human typing speed)
+            delay(delayBetween)
+        }
+
+        Log.i(TAG, "Rapid-fire complete: ${config.messageCount} messages sent at ${delayBetween}ms intervals")
+    }
+
+    /**
+     * CASCADE: Sequential sends - each message waits for terminal state before next
+     * Tests session cleanup and handoff between consecutive messages
      */
     private suspend fun executeCascade(runId: StressRunId, config: StressTestConfig) {
-        // TODO: Implement cascade test (send 2 messages sequentially)
-        Log.i(TAG, "CASCADE test not yet implemented")
+        val messageService = MessageService(context)
+        val keyManager = KeyManager.getInstance(context)
+        val database = SecureLegionDatabase.getInstance(context, keyManager.getDatabasePassphrase())
+
+        val contact = database.contactDao().getContactById(config.contactId)
+            ?: throw IllegalArgumentException("Contact not found: ${config.contactId}")
+
+        Log.i(TAG, "Starting cascade: ${config.messageCount} sequential messages to ${contact.displayName}")
+
+        val counter = AtomicInteger(0)
+        val timeout = 30_000L // 30s per message
+
+        for (i in 1..config.messageCount) {
+            val count = counter.incrementAndGet()
+            val correlationId = "stress_${runId.id}_$count"
+            val testMessage = generateTestMessage(config.messageSize, correlationId)
+
+            store.addEvent(StressEvent.MessageAttempt(
+                correlationId = correlationId,
+                localMessageId = 0,
+                contactId = config.contactId,
+                size = testMessage.length
+            ))
+
+            try {
+                val result = messageService.sendMessage(
+                    contactId = config.contactId,
+                    plaintext = testMessage,
+                    correlationId = correlationId
+                )
+
+                if (result.isSuccess) {
+                    val message = result.getOrNull()
+                    Log.d(TAG, "[$correlationId] Enqueued (id=${message?.id}), waiting for terminal state...")
+
+                    // BLOCK until this message reaches terminal state
+                    if (message != null) {
+                        val startWait = System.currentTimeMillis()
+                        var terminal = false
+                        while (System.currentTimeMillis() - startWait < timeout) {
+                            val current = database.messageDao().getMessageById(message.id)
+                            if (current != null) {
+                                when (current.status) {
+                                    Message.STATUS_DELIVERED, Message.STATUS_SENT -> {
+                                        store.addEvent(StressEvent.Phase(
+                                            correlationId = correlationId,
+                                            phase = if (current.status == Message.STATUS_DELIVERED) "DELIVERED" else "MESSAGE_SENT",
+                                            ok = true
+                                        ))
+                                        terminal = true
+                                        break
+                                    }
+                                    Message.STATUS_FAILED -> {
+                                        store.addEvent(StressEvent.Phase(
+                                            correlationId = correlationId,
+                                            phase = "FAILED",
+                                            ok = false,
+                                            detail = current.lastError
+                                        ))
+                                        terminal = true
+                                        break
+                                    }
+                                }
+                            }
+                            delay(300)
+                        }
+                        if (!terminal) {
+                            store.addEvent(StressEvent.Phase(
+                                correlationId = correlationId,
+                                phase = "TIMEOUT",
+                                ok = false,
+                                detail = "No terminal state after ${timeout}ms"
+                            ))
+                        }
+                    }
+                } else {
+                    store.addEvent(StressEvent.Phase(
+                        correlationId = correlationId,
+                        phase = "FAILED",
+                        ok = false,
+                        detail = result.exceptionOrNull()?.message
+                    ))
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "[$correlationId] Send failed", e)
+                store.addEvent(StressEvent.Phase(
+                    correlationId = correlationId,
+                    phase = "FAILED",
+                    ok = false,
+                    detail = e.message
+                ))
+            }
+
+            Log.i(TAG, "Cascade [$i/${config.messageCount}] complete")
+        }
+
+        Log.i(TAG, "Cascade complete: ${config.messageCount} messages processed sequentially")
     }
 
     /**
-     * CONCURRENT_CONTACTS: Round-robin sends to multiple contacts
-     * Tests cross-contact contamination
+     * CONCURRENT_CONTACTS: Round-robin sends across ALL contacts
+     * Tests cross-contact session contamination
      */
     private suspend fun executeConcurrentContacts(runId: StressRunId, config: StressTestConfig) {
-        // TODO: Implement concurrent contacts test
-        Log.i(TAG, "CONCURRENT_CONTACTS test not yet implemented")
+        val messageService = MessageService(context)
+        val keyManager = KeyManager.getInstance(context)
+        val database = SecureLegionDatabase.getInstance(context, keyManager.getDatabasePassphrase())
+
+        // Get all contacts for round-robin
+        val allContacts = database.contactDao().getAllContacts()
+        if (allContacts.isEmpty()) {
+            Log.e(TAG, "No contacts available for concurrent test")
+            return
+        }
+
+        Log.i(TAG, "Starting concurrent contacts: ${config.messageCount} msgs across ${allContacts.size} contacts")
+
+        val counter = AtomicInteger(0)
+        val delayBetween = if (config.delayMs > 0) config.delayMs else 100L
+
+        // Round-robin messages across all contacts
+        val jobs = (1..config.messageCount).map { i ->
+            coroutineScope {
+                launch {
+                    val contactIndex = (i - 1) % allContacts.size
+                    val contact = allContacts[contactIndex]
+                    val count = counter.incrementAndGet()
+                    val correlationId = "stress_${runId.id}_${contact.id}_$count"
+                    val testMessage = generateTestMessage(config.messageSize, correlationId)
+
+                    store.addEvent(StressEvent.MessageAttempt(
+                        correlationId = correlationId,
+                        localMessageId = 0,
+                        contactId = contact.id,
+                        size = testMessage.length
+                    ))
+
+                    try {
+                        val result = messageService.sendMessage(
+                            contactId = contact.id,
+                            plaintext = testMessage,
+                            correlationId = correlationId
+                        )
+
+                        if (result.isSuccess) {
+                            val message = result.getOrNull()
+                            Log.d(TAG, "[$correlationId] → ${contact.displayName} enqueued (id=${message?.id})")
+                            if (message != null) {
+                                launch { monitorMessageStatus(database, message.id, correlationId) }
+                            }
+                        } else {
+                            store.addEvent(StressEvent.Phase(
+                                correlationId = correlationId,
+                                phase = "FAILED",
+                                ok = false,
+                                detail = result.exceptionOrNull()?.message
+                            ))
+                        }
+                    } catch (e: Exception) {
+                        Log.e(TAG, "[$correlationId] Send to ${contact.displayName} failed", e)
+                        store.addEvent(StressEvent.Phase(
+                            correlationId = correlationId,
+                            phase = "FAILED",
+                            ok = false,
+                            detail = e.message
+                        ))
+                    }
+
+                    if (delayBetween > 0) delay(delayBetween)
+                }
+            }
+        }
+
+        jobs.joinAll()
+        Log.i(TAG, "Concurrent contacts complete: ${config.messageCount} messages across ${allContacts.size} contacts")
     }
 
     /**
-     * RETRY_STORM: Resend all failed messages
+     * RETRY_STORM: Find all failed/pending messages in DB and retry them concurrently
      * Tests retry infrastructure under load
      */
     private suspend fun executeRetryStorm(runId: StressRunId, config: StressTestConfig) {
-        // TODO: Implement retry storm test
-        Log.i(TAG, "RETRY_STORM test not yet implemented")
+        val messageService = MessageService(context)
+        val keyManager = KeyManager.getInstance(context)
+        val database = SecureLegionDatabase.getInstance(context, keyManager.getDatabasePassphrase())
+
+        // Get all pending/failed messages
+        val pendingMessages = database.messageDao().getPendingMessages()
+
+        if (pendingMessages.isEmpty()) {
+            Log.i(TAG, "RETRY_STORM: No failed/pending messages to retry")
+            store.addEvent(StressEvent.Phase(
+                correlationId = "retry_storm_${runId.id}",
+                phase = "NO_MESSAGES",
+                ok = true,
+                detail = "No failed/pending messages found"
+            ))
+            return
+        }
+
+        Log.i(TAG, "Starting retry storm: ${pendingMessages.size} messages to retry")
+
+        val counter = AtomicInteger(0)
+
+        // Retry all failed messages concurrently
+        val jobs = pendingMessages.map { message ->
+            coroutineScope {
+                launch {
+                    val count = counter.incrementAndGet()
+                    val correlationId = "retry_${runId.id}_${message.id}_$count"
+
+                    store.addEvent(StressEvent.MessageAttempt(
+                        correlationId = correlationId,
+                        localMessageId = message.id,
+                        contactId = message.contactId,
+                        size = 0
+                    ))
+
+                    try {
+                        val result = messageService.retryMessageNow(message.id)
+
+                        if (result.isSuccess) {
+                            Log.d(TAG, "[$correlationId] Retry queued for msg ${message.id}")
+                            // Monitor the retried message
+                            launch { monitorMessageStatus(database, message.id, correlationId) }
+                        } else {
+                            store.addEvent(StressEvent.Phase(
+                                correlationId = correlationId,
+                                phase = "RETRY_FAILED",
+                                ok = false,
+                                detail = result.exceptionOrNull()?.message
+                            ))
+                        }
+                    } catch (e: Exception) {
+                        Log.e(TAG, "[$correlationId] Retry failed", e)
+                        store.addEvent(StressEvent.Phase(
+                            correlationId = correlationId,
+                            phase = "RETRY_FAILED",
+                            ok = false,
+                            detail = e.message
+                        ))
+                    }
+                }
+            }
+        }
+
+        jobs.joinAll()
+        Log.i(TAG, "Retry storm complete: ${pendingMessages.size} messages retried")
     }
 
     /**
-     * MIXED: Send mixed message types
-     * Tests type-byte routing and port selection
+     * MIXED: Send messages with varying payload sizes
+     * Tests payload handling from tiny (32B) to large (16KB)
      */
     private suspend fun executeMixed(runId: StressRunId, config: StressTestConfig) {
-        // TODO: Implement mixed types test
-        Log.i(TAG, "MIXED test not yet implemented")
+        val messageService = MessageService(context)
+        val keyManager = KeyManager.getInstance(context)
+        val database = SecureLegionDatabase.getInstance(context, keyManager.getDatabasePassphrase())
+
+        val contact = database.contactDao().getContactById(config.contactId)
+            ?: throw IllegalArgumentException("Contact not found: ${config.contactId}")
+
+        // Payload size tiers
+        val sizes = listOf(32, 128, 256, 1024, 4096, 16384)
+
+        Log.i(TAG, "Starting mixed: ${config.messageCount} msgs to ${contact.displayName}, sizes=${sizes}")
+
+        val counter = AtomicInteger(0)
+        val delayBetween = if (config.delayMs > 0) config.delayMs else 300L
+
+        for (i in 1..config.messageCount) {
+            val size = sizes[(i - 1) % sizes.size]
+            val count = counter.incrementAndGet()
+            val correlationId = "stress_${runId.id}_${size}B_$count"
+            val testMessage = generateTestMessage(size, correlationId)
+
+            store.addEvent(StressEvent.MessageAttempt(
+                correlationId = correlationId,
+                localMessageId = 0,
+                contactId = config.contactId,
+                size = testMessage.length
+            ))
+
+            try {
+                val result = messageService.sendMessage(
+                    contactId = config.contactId,
+                    plaintext = testMessage,
+                    correlationId = correlationId
+                )
+
+                if (result.isSuccess) {
+                    val message = result.getOrNull()
+                    Log.d(TAG, "[$correlationId] ${size}B enqueued (id=${message?.id})")
+                    if (message != null) {
+                        CoroutineScope(Dispatchers.IO).launch {
+                            monitorMessageStatus(database, message.id, correlationId)
+                        }
+                    }
+                } else {
+                    store.addEvent(StressEvent.Phase(
+                        correlationId = correlationId,
+                        phase = "FAILED",
+                        ok = false,
+                        detail = result.exceptionOrNull()?.message
+                    ))
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "[$correlationId] Send failed", e)
+                store.addEvent(StressEvent.Phase(
+                    correlationId = correlationId,
+                    phase = "FAILED",
+                    ok = false,
+                    detail = e.message
+                ))
+            }
+
+            delay(delayBetween)
+        }
+
+        Log.i(TAG, "Mixed complete: ${config.messageCount} messages with varying sizes")
     }
 
     /**

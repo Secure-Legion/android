@@ -278,7 +278,7 @@ data class Message(
      * true = receiver acknowledged PONG arrival (PONG_ACK received)
      * false = PONG not yet acknowledged
      */
-    val pongDelivered: Boolean = false,
+    val pongDelivered: Boolean? = null,
 
     /**
      * Encrypted Ping wire bytes (Base64-encoded)
@@ -358,7 +358,8 @@ data class Message(
         const val STATUS_READ = 3
         const val STATUS_FAILED = 4
         const val STATUS_PING_SENT = 5 // Ping sent, waiting for Pong
-        const val STATUS_PONG_SENT = 6 // Pong sent, waiting for message blob
+        const val STATUS_PONG_SENT = 6 // Pong sent, waiting for message blob (receiver side)
+        const val STATUS_PONG_RECEIVED = 7 // Protocol v2: PONG received, blob send ready
 
         // Self-destruct duration (24 hours in milliseconds)
         const val SELF_DESTRUCT_DURATION = 24 * 60 * 60 * 1000L

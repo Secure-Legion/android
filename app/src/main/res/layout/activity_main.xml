@@ -51,7 +51,12 @@
                 android:layout_height="16dp"
                 android:layout_marginStart="8dp"
                 android:layout_marginTop="4dp"
+                android:padding="0dp"
+                android:minWidth="40dp"
+                android:minHeight="40dp"
                 android:src="@drawable/ic_tor_signal_off"
+                android:clickable="true"
+                android:focusable="true"
                 android:contentDescription="Tor connection status" />
 
         </LinearLayout>
