@@ -228,6 +228,11 @@ class MainActivity : BaseActivity() {
         // Observe Tor state and update status dot next to "Chats"
         observeTorStatus()
 
+        // Tap signal icon → Tor Health page
+        findViewById<View>(R.id.torStatusIcon)?.setOnClickListener {
+            startActivity(Intent(this, TorHealthActivity::class.java))
+        }
+
         // Pull-down on chat list shows Tor status banner
         chatList.addOnScrollListener(object : RecyclerView.OnScrollListener() {
             override fun onScrolled(recyclerView: RecyclerView, dx: Int, dy: Int) {
@@ -451,17 +456,26 @@ class MainActivity : BaseActivity() {
                 val bootstrapPercent = TorService.getBootstrapPercent()
                 val drawableRes = when (state) {
                     TorService.TorState.RUNNING -> {
-                        // torState stays RUNNING during WiFi loss (keeps monitoring loops alive).
-                        // Check live circuits + heartbeat to show real connection quality.
-                        val circuits = try { com.securelegion.crypto.RustBridge.getCircuitEstablished() } catch (_: Exception) { 0 }
-                        val heartbeat = try { com.securelegion.crypto.RustBridge.getLastListenerHeartbeat() } catch (_: Exception) { 0L }
-                        val heartbeatAgeMs = if (heartbeat > 0) System.currentTimeMillis() - heartbeat else Long.MAX_VALUE
-                        val staleThresholdMs = 3 * 60 * 1000L // 3 minutes
+                        // Proof-based signal: "receivable via onion" = HS self-test passed
+                        // since last network change. Don't trust Tor's circuit-established
+                        // (zombie circuits via local control socket).
+                        val cm = getSystemService(android.content.Context.CONNECTIVITY_SERVICE) as? android.net.ConnectivityManager
+                        val caps = cm?.getNetworkCapabilities(cm.activeNetwork)
+                        val hasValidatedInternet = caps?.hasCapability(
+                            android.net.NetworkCapabilities.NET_CAPABILITY_VALIDATED
+                        ) == true
+
+                        val lastProofMs = try { com.securelegion.crypto.RustBridge.getLastTorProofMs() } catch (_: Exception) { 0L }
+                        val lastNetworkChangeMs = TorService.getLastNetworkChangeMs()
+                        val hasFreshProof = lastProofMs > 0 && lastProofMs >= lastNetworkChangeMs
+                        val circuitsEstablished = try { com.securelegion.crypto.RustBridge.getCircuitEstablished() } catch (_: Exception) { 0 }
+                        val hasTransportReady = bootstrapPercent >= 100 && circuitsEstablished == 1
 
                         when {
-                            circuits >= 1 -> R.drawable.ic_tor_signal_full        // healthy
-                            heartbeatAgeMs < staleThresholdMs -> R.drawable.ic_tor_signal_1 // degraded (grace window)
-                            else -> R.drawable.ic_tor_signal_off                  // dead for >3 min
+                            !hasValidatedInternet -> R.drawable.ic_tor_signal_off  // offline
+                            hasFreshProof -> R.drawable.ic_tor_signal_full         // receivable
+                            hasTransportReady -> R.drawable.ic_tor_signal_4        // connected (outbound ready)
+                            else -> R.drawable.ic_tor_signal_2                     // connecting
                         }
                     }
                     TorService.TorState.BOOTSTRAPPING -> when {
@@ -493,7 +507,26 @@ class MainActivity : BaseActivity() {
         val usingBridges = bridgeType != "none"
 
         banner.text = when (state) {
-            TorService.TorState.RUNNING -> if (usingBridges) "Tor connected via bridges" else "Tor connected"
+            TorService.TorState.RUNNING -> {
+                val cm = getSystemService(android.content.Context.CONNECTIVITY_SERVICE) as? android.net.ConnectivityManager
+                val caps = cm?.getNetworkCapabilities(cm.activeNetwork)
+                val hasValidatedInternet = caps?.hasCapability(
+                    android.net.NetworkCapabilities.NET_CAPABILITY_VALIDATED
+                ) == true
+
+                val lastProofMs = try { com.securelegion.crypto.RustBridge.getLastTorProofMs() } catch (_: Exception) { 0L }
+                val lastNetworkChangeMs = TorService.getLastNetworkChangeMs()
+                val hasFreshProof = lastProofMs > 0 && lastProofMs >= lastNetworkChangeMs
+                val circuitsEstablished = try { com.securelegion.crypto.RustBridge.getCircuitEstablished() } catch (_: Exception) { 0 }
+                val hasTransportReady = bootstrapPercent >= 100 && circuitsEstablished == 1
+
+                when {
+                    !hasValidatedInternet -> "Tor offline"
+                    hasFreshProof -> if (usingBridges) "Tor receivable via bridges" else "Tor receivable"
+                    hasTransportReady -> if (usingBridges) "Tor connected via bridges" else "Tor connected"
+                    else -> "Connecting to Tor..."
+                }
+            }
             TorService.TorState.BOOTSTRAPPING -> "Connecting to Tor... ($bootstrapPercent%)"
             TorService.TorState.STARTING -> "Starting Tor..."
             TorService.TorState.ERROR -> "Tor reconnecting..."

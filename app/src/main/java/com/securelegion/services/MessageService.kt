@@ -237,13 +237,15 @@ class MessageService(private val context: Context) {
                 val initialDelay = Message.INITIAL_RETRY_DELAY_MS
                 val backoffExponent = (retryCount - 1).toDouble()
                 val nextRetryDelay = (initialDelay * Math.pow(Message.RETRY_BACKOFF_MULTIPLIER, backoffExponent)).toLong()
+                val now = System.currentTimeMillis()
 
                 // CRITICAL: Use partial update to avoid overwriting delivery status
                 // (fixes race where MESSAGE_ACK sets delivered=true between read and write)
-                database.messageDao().updateRetryState(
+                database.messageDao().updateRetrySchedule(
                     message.id,
                     retryCount,
-                    System.currentTimeMillis()
+                    now,
+                    now + nextRetryDelay
                 )
                 Log.d(TAG, "Scheduled retry #$retryCount for message ${message.messageId}, next retry in ${nextRetryDelay}ms")
             } catch (e: Exception) {
@@ -2380,11 +2382,11 @@ class MessageService(private val context: Context) {
                             // Ping acknowledged - mark pingDelivered
                             message.copy(pingDelivered = true)
                         }
-                        AckState.PONG_ACKED -> {
-                            // Pong acknowledged - mark pongDelivered
-                            message.copy(pongDelivered = true)
+                        AckState.PONG_RECEIVED -> {
+                            // PONG received — mark pingDelivered + transition to PONG_RECEIVED status
+                            message.copy(pingDelivered = true, status = Message.STATUS_PONG_RECEIVED)
                         }
-                        AckState.MESSAGE_ACKED -> {
+                        AckState.DELIVERED -> {
                             // Full delivery - mark messageDelivered and status = DELIVERED
                             message.copy(
                                 messageDelivered = true,
@@ -2400,15 +2402,15 @@ class MessageService(private val context: Context) {
                         Log.d(TAG, "Updated message status: $currentState for $messageId")
 
                         // Broadcast UI update for all delivery status changes
-                        if (currentState == AckState.PING_ACKED || currentState == AckState.PONG_ACKED || currentState == AckState.MESSAGE_ACKED) {
+                        if (currentState == AckState.PING_ACKED || currentState == AckState.PONG_RECEIVED || currentState == AckState.DELIVERED) {
                             val intent = Intent("com.securelegion.MESSAGE_RECEIVED")
                             intent.setPackage(context.packageName)
                             intent.putExtra("CONTACT_ID", contactId)
                             context.sendBroadcast(intent)
                             val statusDesc = when(currentState) {
                                 AckState.PING_ACKED -> "PING_ACK"
-                                AckState.PONG_ACKED -> "PONG_ACK"
-                                AckState.MESSAGE_ACKED -> "MESSAGE_ACK"
+                                AckState.PONG_RECEIVED -> "PONG"
+                                AckState.DELIVERED -> "MESSAGE_ACK"
                                 else -> "UNKNOWN"
                             }
                             Log.d(TAG, "Broadcast MESSAGE_RECEIVED for $statusDesc (contact $contactId)")
@@ -2721,10 +2723,14 @@ class MessageService(private val context: Context) {
 
             Log.d(TAG, "Sending Ping for message ${message.messageId} (Ping ID: ${message.pingId})")
 
-            // Wait for transport gate (best-effort with send timeout — retry worker handles failures)
+            // Wait for transport gate — fail if gate doesn't open (retry worker handles recovery)
             Log.d(TAG, "Waiting for transport gate before sending Ping...")
-            TorService.getTransportGate()?.awaitOpen(com.securelegion.network.TransportGate.TIMEOUT_SEND_MS)
-            Log.d(TAG, "Transport gate check done - proceeding with Ping send")
+            val gateOpen = TorService.getTransportGate()?.awaitOpen(com.securelegion.network.TransportGate.TIMEOUT_SEND_MS) ?: true
+            if (!gateOpen) {
+                Log.w(TAG, "Transport gate timed out for Ping send — deferring to retry worker")
+                return@withContext Result.failure(Exception("Transport gate timeout"))
+            }
+            Log.d(TAG, "Transport gate open - proceeding with Ping send")
 
             // Check if Tor is warmed up (must wait 20s after restart/network change)
             val warmupRemainingMs = TorService.getTorWarmupRemainingMs()
@@ -2774,6 +2780,13 @@ class MessageService(private val context: Context) {
             // Send Ping via Rust bridge (with message for instant mode)
             val onionAddress = contact.messagingOnion ?: ""
             Log.d(TAG, "Resolved messaging .onion for ${contact.displayName}")
+
+            // SELF-SEND GUARD: Prevent sending messages to our own .onion address
+            val ourMessagingOnion = keyManager.getMessagingOnion()
+            if (ourMessagingOnion != null && onionAddress.isNotEmpty() && onionAddress == ourMessagingOnion) {
+                Log.e(TAG, "SELF_SEND_BLOCKED: contact ${contact.displayName} has OUR .onion address ($onionAddress)")
+                return@withContext Result.failure(Exception("Cannot send message to own .onion address"))
+            }
 
             // Validate message has pingId and timestamp (should be generated when message created)
             if (message.pingId == null || message.pingTimestamp == null) {
@@ -2889,92 +2902,12 @@ class MessageService(private val context: Context) {
     }
 
     /**
-     * Poll for Pongs and send message blobs (Phase 3: Async Pong handling)
-     * Checks all messages with STATUS_PING_SENT to see if their Pongs have arrived
-     * If Pong found, sends the message blob and updates status
+     * LEGACY ENTRYPOINT (kept for compatibility):
+     * Protocol v2: thin wrapper around retryAllPendingMessages().
+     * All call sites (fast retry, TAP retry, network restore, etc.) still work.
      */
-    suspend fun pollForPongsAndSendMessages(): Result<Int> = withContext(Dispatchers.IO) {
-        try {
-            // Quick gate check for background poll — don't block long
-            TorService.getTransportGate()?.awaitOpen(com.securelegion.network.TransportGate.TIMEOUT_QUICK_MS)
-
-            val dbPassphrase = keyManager.getDatabasePassphrase()
-            val database = SecureLegionDatabase.getInstance(context, dbPassphrase)
-
-            // Get all messages waiting for Pong
-            val pendingMessages = database.messageDao().getMessagesAwaitingPong()
-
-            if (pendingMessages.isEmpty()) {
-                return@withContext Result.success(0)
-            }
-
-            Log.d(TAG, "Polling for Pongs: ${pendingMessages.size} messages waiting")
-
-            var sentCount = 0
-
-            for (message in pendingMessages) {
-                val pingId = message.pingId ?: continue
-
-                // Skip if message already delivered to receiver (ACK received)
-                if (message.messageDelivered) {
-                    Log.d(TAG, "Message ${message.messageId} already delivered - skipping (no ghost message)")
-                    continue
-                }
-
-                Log.d(TAG, "Checking for Pong with Ping ID: $pingId (message: ${message.messageId}, contact: ${message.contactId})")
-
-                // Check if Pong has arrived (non-blocking)
-                val pongReceived = RustBridge.pollForPong(pingId)
-                Log.d(TAG, "pollForPong($pingId) returned: $pongReceived")
-
-                if (pongReceived) {
-                    Log.i(TAG, "Pong received for Ping ID $pingId! Sending PONG_ACK and message blob...")
-
-                    // Get contact for .onion address
-                    val contact = database.contactDao().getContactById(message.contactId)
-                    if (contact == null) {
-                        Log.e(TAG, "Contact not found for message ${message.id}")
-                        continue
-                    }
-
-                    // CRITICAL FIX: Send PONG_ACK BEFORE MESSAGE (ordering milestone)
-                    // Protocol: Sender receives PONG → sends PONG_ACK → then sends MESSAGE
-                    // Make this async so it doesn't block the polling loop, but enforce ordering with retries
-                    launch {
-                        try {
-                            val pongAckSent = sendPongAckWithRetry(
-                                itemId = pingId,
-                                contact = contact,
-                                maxRetries = 3
-                            )
-
-                            if (pongAckSent) {
-                                // Update persistent state: mark PONG_ACK as sent
-                                // CRITICAL: Use partial update to avoid overwriting delivery status
-                                // (fixes race where MESSAGE_ACK sets delivered=true between read and write)
-                                database.messageDao().updatePongDelivered(message.id, true)
-                                Log.i(TAG, "Marked PONG_ACK sent for message ${message.messageId}")
-
-                                // NOW send message blob (after PONG_ACK confirmed)
-                                sendMessageBlobAfterPongAck(message, contact, pingId)
-                            } else {
-                                Log.w(TAG, "Failed to send PONG_ACK for message ${message.messageId}, MESSAGE send skipped (will retry)")
-                                // MessageRetryWorker will retry the entire flow
-                            }
-                        } catch (e: Exception) {
-                            Log.e(TAG, "Exception in PONG_ACK sequence: ${e.message}")
-                        }
-                    }
-                }
-            }
-
-            Log.d(TAG, "Pong polling complete: $sentCount messages sent")
-            Result.success(sentCount)
-
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to poll for Pongs", e)
-            Result.failure(e)
-        }
+    suspend fun pollForPongsAndSendMessages(): Result<Int> {
+        return retryAllPendingMessages()
     }
 
     /**
@@ -3091,64 +3024,153 @@ class MessageService(private val context: Context) {
     }
 
     /**
-     * Send PONG_ACK with bounded retry (similar to AckWorker pattern)
-     * This is called asynchronously to avoid blocking message sending
+     * Protocol v2: Global retry — discover PONG arrivals and send ready blobs.
+     * Direct replacement for pollForPongsAndSendMessages() at all global call sites.
      *
-     * @return true if PONG_ACK was successfully sent, false if all retries failed
+     * Phase 1: Check STATUS_PING_SENT messages for PONG arrival (Rust poll)
+     *          → transition matches to STATUS_PONG_RECEIVED
+     * Phase 2: Send blobs for all STATUS_PONG_RECEIVED messages (per-contact)
+     *
+     * Called from: handleIncomingPong(), network reset, network restore, airplane mode restore
      */
-    private suspend fun sendPongAckWithRetry(
-        itemId: String,
-        contact: com.securelegion.database.entities.Contact,
-        maxRetries: Int = 3
-    ): Boolean {
-        repeat(maxRetries) { attempt ->
-            try {
-                val success = com.securelegion.crypto.RustBridge.sendDeliveryAck(
-                    itemId = itemId,
-                    ackType = "PONG_ACK",
-                    recipientEd25519Pubkey = android.util.Base64.decode(contact.publicKeyBase64, android.util.Base64.NO_WRAP),
-                    recipientX25519Pubkey = android.util.Base64.decode(contact.x25519PublicKeyBase64, android.util.Base64.NO_WRAP),
-                    recipientOnion = contact.messagingOnion ?: ""
-                )
+    suspend fun retryAllPendingMessages(): Result<Int> = withContext(Dispatchers.IO) {
+        try {
+            val dbPassphrase = keyManager.getDatabasePassphrase()
+            val database = SecureLegionDatabase.getInstance(context, dbPassphrase)
 
-                if (success) {
-                    Log.i(TAG, "Sent PONG_ACK for itemId=${itemId.take(8)}...")
-                    return true
-                }
+            // Phase 1: Discover PONGs for STATUS_PING_SENT messages
+            val awaiting = database.messageDao().getMessagesAwaitingPong()
+            val contactsWithReady = mutableSetOf<Long>()
+            var discovered = 0
 
-                if (attempt < maxRetries - 1) {
-                    kotlinx.coroutines.delay(1000L * (attempt + 1))
-                }
-
-            } catch (e: Exception) {
-                Log.e(TAG, "Exception sending PONG_ACK (attempt ${attempt + 1}/$maxRetries): ${e.message}")
-                if (attempt < maxRetries - 1) {
-                    kotlinx.coroutines.delay(1000L * (attempt + 1))
+            for (msg in awaiting) {
+                val pingId = msg.pingId ?: continue
+                if (RustBridge.pollForPong(pingId)) {
+                    database.messageDao().updatePingDeliveredStatus(
+                        msg.id, true, Message.STATUS_PONG_RECEIVED
+                    )
+                    contactsWithReady.add(msg.contactId)
+                    discovered++
+                    Log.i(TAG, "retryAll: PONG discovered for ${msg.messageId}")
                 }
             }
-        }
 
-        return false
+            // Phase 2: Include any existing PONG_RECEIVED backlog (from event-driven path)
+            contactsWithReady.addAll(database.messageDao().getContactsWithPongReceived())
+
+            // Phase 3: Send blobs per contact
+            var totalSent = 0
+            for (contactId in contactsWithReady) {
+                val result = sendPendingMessagesForContact(contactId)
+                if (result.isSuccess) {
+                    totalSent += result.getOrNull() ?: 0
+                }
+            }
+
+            if (discovered > 0 || totalSent > 0) {
+                Log.i(TAG, "retryAll: discovered=$discovered PONGs, sent=$totalSent blobs")
+            }
+            Result.success(totalSent)
+
+        } catch (e: Exception) {
+            Log.e(TAG, "retryAllPendingMessages failed", e)
+            Result.failure(e)
+        }
     }
 
     /**
-     * Send message blob after PONG_ACK has been confirmed
-     * This is extracted as a helper to keep the main loop clean
+     * Protocol v2: Send pending MESSAGE blobs for a contact after PONG received.
+     * Replaces pollForPongsAndSendMessages() — scoped to one contact, no PONG_ACK step.
+     *
+     * Called from:
+     * - TorService PONG handler (event-driven: PONG just arrived, status=PONG_RECEIVED)
+     * - MessageRetryWorker (recovery: picks up PONG_RECEIVED messages after restart)
+     *
+     * @return Result with count of messages successfully sent
+     */
+    suspend fun sendPendingMessagesForContact(contactId: Long): Result<Int> = withContext(Dispatchers.IO) {
+        try {
+            val dbPassphrase = keyManager.getDatabasePassphrase()
+            val database = SecureLegionDatabase.getInstance(context, dbPassphrase)
+
+            // Get all STATUS_PONG_RECEIVED messages for this contact (blob not yet sent)
+            val pendingMessages = database.messageDao().getMessagesPendingBlobSend(contactId)
+
+            if (pendingMessages.isEmpty()) {
+                return@withContext Result.success(0)
+            }
+
+            Log.d(TAG, "sendPendingMessagesForContact($contactId): ${pendingMessages.size} messages ready")
+
+            var sentCount = 0
+
+            for (message in pendingMessages) {
+                val pingId = message.pingId ?: continue
+
+                // Fresh DB check: skip if already delivered (MESSAGE_ACK arrived during iteration)
+                val fresh = database.messageDao().getMessageById(message.id)
+                if (fresh == null || fresh.messageDelivered) {
+                    Log.d(TAG, "${message.messageId}: already delivered — skipping")
+                    continue
+                }
+
+                // Get contact for .onion address
+                val contact = database.contactDao().getContactById(message.contactId)
+                if (contact == null) {
+                    Log.e(TAG, "Contact not found for message ${message.id}")
+                    continue
+                }
+
+                Log.i(TAG, "${message.messageId}: PONG received — sending MESSAGE blob (no PONG_ACK)")
+
+                // Protocol v2: Send blob directly — PONG itself is the ack
+                sendMessageBlobAfterPong(message, contact, pingId)
+                sentCount++
+            }
+
+            Log.d(TAG, "sendPendingMessagesForContact($contactId) complete: $sentCount sent")
+            Result.success(sentCount)
+
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to send pending messages for contact $contactId", e)
+            Result.failure(e)
+        }
+    }
+
+    /**
+     * Send message blob after PONG received (Protocol v2: no PONG_ACK step)
+     * Status transitions: PONG_RECEIVED → SENT (success) or PONG_RECEIVED → FAILED (failure)
      *
      * @param message The message to send
      * @param contact The recipient contact
      * @param pingId The ping ID (for session cleanup)
      */
-    private suspend fun sendMessageBlobAfterPongAck(
+    private suspend fun sendMessageBlobAfterPong(
         message: com.securelegion.database.entities.Message,
         contact: com.securelegion.database.entities.Contact,
         pingId: String
     ) {
         try {
-            // Quick gate check for blob send — message already ACKd, best-effort delivery
+            // Gate check for blob send — PONG received, must have transport
             Log.d(TAG, "Waiting for transport gate before sending message blob...")
-            TorService.getTransportGate()?.awaitOpen(com.securelegion.network.TransportGate.TIMEOUT_QUICK_MS)
-            Log.d(TAG, "Transport gate check done - proceeding with message blob send")
+            val gateOpen = TorService.getTransportGate()?.awaitOpen(com.securelegion.network.TransportGate.TIMEOUT_QUICK_MS) ?: true
+            if (!gateOpen) {
+                Log.w(TAG, "Transport gate timed out for blob send — failing message ${message.id} (retry worker will handle)")
+                val dbPassphrase = keyManager.getDatabasePassphrase()
+                val db = SecureLegionDatabase.getInstance(context, dbPassphrase)
+                db.messageDao().updateMessageStatus(message.id, Message.STATUS_FAILED)
+                db.messageDao().updateLastError(message.id, "Transport gate timeout (blob send)")
+                return
+            }
+            Log.d(TAG, "Transport gate open - proceeding with message blob send")
+
+            // SELF-SEND GUARD: Prevent sending blobs to our own .onion
+            val recipientOnion = contact.messagingOnion ?: ""
+            val ourOnionForBlob = keyManager.getMessagingOnion()
+            if (ourOnionForBlob != null && recipientOnion.isNotEmpty() && recipientOnion == ourOnionForBlob) {
+                Log.e(TAG, "SELF_SEND_BLOCKED: contact ${contact.displayName} has OUR .onion in sendMessageBlobAfterPong")
+                return
+            }
 
             val dbPassphrase = keyManager.getDatabasePassphrase()
             val database = SecureLegionDatabase.getInstance(context, dbPassphrase)
@@ -3217,7 +3239,7 @@ class MessageService(private val context: Context) {
                 )
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Error sending message blob after PONG_ACK: ${e.message}", e)
+            Log.e(TAG, "Error sending message blob after PONG: ${e.message}", e)
         }
     }
 }

@@ -396,8 +396,8 @@ class DownloadMessageService : Service() {
     // 
 
     private suspend fun restorePingSession(ctx: DownloadCtx): Boolean {
-        updateNotification(ctx.contactName, "[1/4] Preparing download...")
-        Log.i(TAG, "========== STAGE 1/4: PREPARING ==========")
+        updateNotification(ctx.contactName, "[1/3] Preparing download...")
+        Log.i(TAG, "========== STAGE 1/3: PREPARING ==========")
 
         val restoredPingId = try {
             Log.d(TAG, "Restoring Ping from wire bytes (pingId=${ctx.pingId})")
@@ -477,8 +477,8 @@ class DownloadMessageService : Service() {
      * Returns: true = instant message received, false = go to polling, null = fatal pong failure
      */
     private suspend fun sendPongAndGetMessage(ctx: DownloadCtx): Boolean? {
-        updateNotification(ctx.contactName, "[2/4] Creating response...")
-        Log.i(TAG, "========== STAGE 2/4: CREATING PONG ==========")
+        updateNotification(ctx.contactName, "[1/3] Responding to sender...")
+        Log.i(TAG, "========== STAGE 1/3: CREATING PONG (= acknowledgment) ==========")
 
         val pongBytes = withContext(Dispatchers.IO) {
             val torManager = TorManager.getInstance(this@DownloadMessageService)
@@ -492,25 +492,43 @@ class DownloadMessageService : Service() {
         }
 
         Log.i(TAG, "Pong created: ${pongBytes.size} bytes")
-        Log.i(TAG, "========== STAGE 3/4: DOWNLOADING MESSAGE ==========")
+        Log.i(TAG, "========== STAGE 2/3: DOWNLOADING MESSAGE ==========")
 
-        // DEDUPLICATION GUARD: Check if PONG was already sent for this pingId
-        // Only skip if state is exactly PONG_SENT(1) or MSG_STORED(2).
-        // States 10/11/12 (DOWNLOAD_QUEUED/FAILED_TEMP/MANUAL_REQUIRED) mean PONG was NOT sent yet.
+        // INVARIANT A: Only suppress PONG if MESSAGE was stored (sender moved on).
+        // If state is PONG_SENT, the PONG may have been lost in Tor — re-send it.
         val alreadySentPong = withContext(Dispatchers.IO) {
             try {
                 val pingInbox = ctx.database.pingInboxDao().getByPingId(ctx.pingId)
-                val state = pingInbox?.state
-                state == com.securelegion.database.entities.PingInbox.STATE_PONG_SENT ||
-                    state == com.securelegion.database.entities.PingInbox.STATE_MSG_STORED
+                pingInbox?.state == com.securelegion.database.entities.PingInbox.STATE_MSG_STORED
             } catch (e: Exception) {
-                Log.w(TAG, "Failed to check if PONG already sent (proceeding with send anyway): ${e.message}")
+                Log.w(TAG, "Failed to check ping state (proceeding with send): ${e.message}")
                 false
             }
         }
 
         if (alreadySentPong) {
-            Log.i(TAG, "⊘ PONG already sent for pingId=${ctx.pingId.take(8)}... (deduplication guard) - skipping send, proceeding to polling")
+            Log.i(TAG, "MSG_STORED for pingId=${ctx.pingId.take(8)}... — PONG suppressed (sender already moved on)")
+            return true
+        }
+
+        // M6: Rate limit PONG resends — cap total attempts per pingId
+        val pingInbox = withContext(Dispatchers.IO) {
+            ctx.database.pingInboxDao().getByPingId(ctx.pingId)
+        }
+        if ((pingInbox?.attemptCount ?: 0) > com.securelegion.database.entities.PingInbox.PONG_RESEND_MAX_ATTEMPTS) {
+            Log.w(TAG, "PONG resend cap reached for pingId=${ctx.pingId.take(8)}... (${pingInbox?.attemptCount} attempts)")
+            return null
+        }
+        // M6: Rate limit — max 1 PONG per 5s per pingId (atomic gate)
+        val rateAllowed = withContext(Dispatchers.IO) {
+            ctx.database.pingInboxDao().tryMarkPongSent(
+                ctx.pingId, System.currentTimeMillis(),
+                com.securelegion.database.entities.PingInbox.PONG_RESEND_COOLDOWN_MS
+            )
+        }
+        if (rateAllowed == 0) {
+            Log.d(TAG, "PONG rate limited for pingId=${ctx.pingId.take(8)}...")
+            return false
         }
 
         // DB state is PONG_SENT during download — UI reads from ping_inbox
@@ -539,7 +557,7 @@ class DownloadMessageService : Service() {
 
                 if (isAlive) {
                     Log.d(TAG, "Connection is alive, attempting instant Pong on connection ${ctx.connectionId}...")
-                    updateNotification(ctx.contactName, "[3/4] Downloading... (fast path)")
+                    updateNotification(ctx.contactName, "[2/3] Downloading... (fast path)")
                     pongSent = withContext(Dispatchers.IO) {
                         try {
                             val messageBytes = com.securelegion.crypto.RustBridge.sendPongBytes(ctx.connectionId, pongBytes)
@@ -559,7 +577,7 @@ class DownloadMessageService : Service() {
                     }
                 } else {
                     Log.d(TAG, "Connection is dead (not responding), skipping instant path - will use listener")
-                    updateNotification(ctx.contactName, "[3/4] Downloading... (slower path)")
+                    updateNotification(ctx.contactName, "[2/3] Downloading... (slower path)")
                 }
             }
 
@@ -574,7 +592,7 @@ class DownloadMessageService : Service() {
                         Log.w(TAG, "Watchdog fired during PONG retry — aborting")
                         break
                     }
-                    updateNotification(ctx.contactName, "[3/4] Sending response... ($pongAttempt/$maxPongRetries)")
+                    updateNotification(ctx.contactName, "[2/3] Sending response... ($pongAttempt/$maxPongRetries)")
                     pongSent = withContext(Dispatchers.IO) {
                         try {
                             com.securelegion.crypto.RustBridge.sendPongToListener(ctx.senderOnion, pongBytes)
@@ -935,8 +953,8 @@ class DownloadMessageService : Service() {
     private suspend fun handleInstantMessageBlob(messageBytes: ByteArray, contactId: Long, contactName: String, pingId: String, connectionId: Long) {
         try {
             // STAGE 4: Processing message
-            updateNotification(contactName, "[4/4] Processing message...")
-            Log.i(TAG, "========== STAGE 4/4: PROCESSING MESSAGE ==========")
+            updateNotification(contactName, "[3/3] Processing message...")
+            Log.i(TAG, "========== STAGE 3/3: PROCESSING MESSAGE ==========")
             Log.i(TAG, "Processing instant message blob: ${messageBytes.size} bytes")
 
             // Message blob format differs by type:
@@ -955,77 +973,84 @@ class DownloadMessageService : Service() {
             // Extract fields based on message type
             val senderX25519PublicKey: ByteArray
             val encryptedPayload: ByteArray
+            val signatureBytes: ByteArray
             val voiceDuration: Int?
 
             when (typeByte.toInt()) {
                 0x03 -> {
-                    // TEXT message: [0x03][X25519 32 bytes][Encrypted Text]
-                    // Minimum: 1 (type) + 32 (X25519) + 1 (version) + 8 (seq) + 24 (nonce) + 16 (tag) = 82 bytes
-                    if (messageBytes.size < 82) {
-                        Log.e(TAG, "TEXT message blob too small: ${messageBytes.size} bytes (need at least 82)")
+                    // TEXT message: [0x03][X25519 32 bytes][Encrypted Text][Signature 64 bytes]
+                    // Minimum: 1 (type) + 32 (X25519) + 1 (version) + 8 (seq) + 24 (nonce) + 16 (tag) + 64 (sig) = 146 bytes
+                    if (messageBytes.size < 146) {
+                        Log.e(TAG, "TEXT message blob too small: ${messageBytes.size} bytes (need at least 146)")
                         return
                     }
                     senderX25519PublicKey = messageBytes.copyOfRange(1, 33)
-                    encryptedPayload = messageBytes.copyOfRange(33, messageBytes.size)
+                    signatureBytes = messageBytes.copyOfRange(messageBytes.size - 64, messageBytes.size)
+                    encryptedPayload = messageBytes.copyOfRange(33, messageBytes.size - 64)
                     voiceDuration = null
                 }
                 0x04 -> {
                     // VOICE message: [0x04][X25519 32 bytes][Encrypted(0x01+duration+audio)]
                     // Same wire format as TEXT — duration is INSIDE the encrypted payload
-                    // Minimum: 1 (type) + 32 (X25519) + 1 (version) + 8 (seq) + 24 (nonce) + 16 (tag) = 82 bytes
-                    if (messageBytes.size < 82) {
-                        Log.e(TAG, "VOICE message blob too small: ${messageBytes.size} bytes (need at least 82)")
+                    // Minimum: 1 (type) + 32 (X25519) + 1 (version) + 8 (seq) + 24 (nonce) + 16 (tag) + 64 (sig) = 146 bytes
+                    if (messageBytes.size < 146) {
+                        Log.e(TAG, "VOICE message blob too small: ${messageBytes.size} bytes (need at least 146)")
                         return
                     }
                     senderX25519PublicKey = messageBytes.copyOfRange(1, 33)
-                    encryptedPayload = messageBytes.copyOfRange(33, messageBytes.size)
+                    signatureBytes = messageBytes.copyOfRange(messageBytes.size - 64, messageBytes.size)
+                    encryptedPayload = messageBytes.copyOfRange(33, messageBytes.size - 64)
                     voiceDuration = null // extracted from decrypted payload by receiveMessage
                 }
                 0x09 -> {
                     // IMAGE message: [0x09][X25519 32 bytes][Encrypted Image]
-                    // Minimum: 1 (type) + 32 (X25519) + 1 (version) + 8 (seq) + 24 (nonce) + 16 (tag) = 82 bytes
-                    if (messageBytes.size < 82) {
-                        Log.e(TAG, "IMAGE message blob too small: ${messageBytes.size} bytes (need at least 82)")
+                    // Minimum: 1 (type) + 32 (X25519) + 1 (version) + 8 (seq) + 24 (nonce) + 16 (tag) + 64 (sig) = 146 bytes
+                    if (messageBytes.size < 146) {
+                        Log.e(TAG, "IMAGE message blob too small: ${messageBytes.size} bytes (need at least 146)")
                         return
                     }
                     senderX25519PublicKey = messageBytes.copyOfRange(1, 33)
-                    encryptedPayload = messageBytes.copyOfRange(33, messageBytes.size)
+                    signatureBytes = messageBytes.copyOfRange(messageBytes.size - 64, messageBytes.size)
+                    encryptedPayload = messageBytes.copyOfRange(33, messageBytes.size - 64)
                     voiceDuration = null
                 }
                 0x0A, 0x0B, 0x0C -> {
                     // PAYMENT messages: [0x0A/0x0B/0x0C][X25519 32 bytes][Encrypted Payment Data]
                     // 0x0A = PAYMENT_REQUEST, 0x0B = PAYMENT_SENT, 0x0C = PAYMENT_ACCEPTED
-                    // Minimum: 1 (type) + 32 (X25519) + 1 (version) + 8 (seq) + 24 (nonce) + 16 (tag) = 82 bytes
-                    if (messageBytes.size < 82) {
-                        Log.e(TAG, "PAYMENT message blob too small: ${messageBytes.size} bytes (need at least 82)")
+                    // Minimum: 1 (type) + 32 (X25519) + 1 (version) + 8 (seq) + 24 (nonce) + 16 (tag) + 64 (sig) = 146 bytes
+                    if (messageBytes.size < 146) {
+                        Log.e(TAG, "PAYMENT message blob too small: ${messageBytes.size} bytes (need at least 146)")
                         return
                     }
                     senderX25519PublicKey = messageBytes.copyOfRange(1, 33)
-                    encryptedPayload = messageBytes.copyOfRange(33, messageBytes.size)
+                    signatureBytes = messageBytes.copyOfRange(messageBytes.size - 64, messageBytes.size)
+                    encryptedPayload = messageBytes.copyOfRange(33, messageBytes.size - 64)
                     voiceDuration = null
                     Log.d(TAG, "Payment message type: 0x${String.format("%02X", typeByte)}")
                 }
                 0x0E -> {
                     // STICKER: [0x0E][X25519 32 bytes][Encrypted Sticker]
                     // Same wire format as TEXT
-                    if (messageBytes.size < 82) {
-                        Log.e(TAG, "STICKER message blob too small: ${messageBytes.size} bytes (need at least 82)")
+                    if (messageBytes.size < 146) {
+                        Log.e(TAG, "STICKER message blob too small: ${messageBytes.size} bytes (need at least 146)")
                         return
                     }
                     senderX25519PublicKey = messageBytes.copyOfRange(1, 33)
-                    encryptedPayload = messageBytes.copyOfRange(33, messageBytes.size)
+                    signatureBytes = messageBytes.copyOfRange(messageBytes.size - 64, messageBytes.size)
+                    encryptedPayload = messageBytes.copyOfRange(33, messageBytes.size - 64)
                     voiceDuration = null
                     Log.d(TAG, "Sticker message received")
                 }
                 0x0F -> {
                     // PROFILE_UPDATE: [0x0F][X25519 32 bytes][Encrypted Photo]
                     // Same wire format as IMAGE/TEXT
-                    if (messageBytes.size < 82) {
-                        Log.e(TAG, "PROFILE_UPDATE message blob too small: ${messageBytes.size} bytes (need at least 82)")
+                    if (messageBytes.size < 146) {
+                        Log.e(TAG, "PROFILE_UPDATE message blob too small: ${messageBytes.size} bytes (need at least 146)")
                         return
                     }
                     senderX25519PublicKey = messageBytes.copyOfRange(1, 33)
-                    encryptedPayload = messageBytes.copyOfRange(33, messageBytes.size)
+                    signatureBytes = messageBytes.copyOfRange(messageBytes.size - 64, messageBytes.size)
+                    encryptedPayload = messageBytes.copyOfRange(33, messageBytes.size - 64)
                     voiceDuration = null
                     Log.d(TAG, "Profile update message received")
                 }
@@ -1036,12 +1061,27 @@ class DownloadMessageService : Service() {
             }
 
             Log.d(TAG, "Sender X25519 key: ${android.util.Base64.encodeToString(senderX25519PublicKey, android.util.Base64.NO_WRAP).take(16)}...")
+            Log.d(TAG, "Signature bytes: ${signatureBytes.size} bytes")
             Log.d(TAG, "Encrypted payload: ${encryptedPayload.size} bytes")
 
             // Get database
             val keyManager = KeyManager.getInstance(this@DownloadMessageService)
             val dbPassphrase = keyManager.getDatabasePassphrase()
             val database = SecureLegionDatabase.getInstance(this@DownloadMessageService, dbPassphrase)
+
+            // Cross-path dedup: Compute blob hash matching handleIncomingMessageBlob's format.
+            // If the listener path already processed this exact encrypted payload,
+            // receivedIdDao will have this hash — skip processing and ACK.
+            val blobHashBytes = java.security.MessageDigest.getInstance("SHA-256").digest(encryptedPayload)
+            val blobMessageId = "blob_" + android.util.Base64.encodeToString(blobHashBytes, android.util.Base64.NO_WRAP).take(28)
+            if (database.receivedIdDao().exists(blobMessageId, com.securelegion.database.entities.ReceivedId.TYPE_MESSAGE)) {
+                Log.i(TAG, "Cross-path dedup: $blobMessageId already in receivedIdDao — ACK and skip")
+                val now = System.currentTimeMillis()
+                database.pingInboxDao().transitionToMsgStored(pingId, now)
+                database.pingInboxDao().clearPingWireBytes(pingId, now)
+                sendMessageAck(contactId, contactName, connectionId, pingId)
+                return
+            }
 
             // Get contact info
             val contact = database.contactDao().getContactById(contactId)
@@ -1154,6 +1194,14 @@ class DownloadMessageService : Service() {
                                     val now = System.currentTimeMillis()
                                     database.pingInboxDao().transitionToMsgStored(pingId, now)
                                     database.pingInboxDao().clearPingWireBytes(pingId, now) // Free up DB space
+                                    // Cross-path dedup: atomically register blob hash with message save
+                                    database.receivedIdDao().insertReceivedId(
+                                        com.securelegion.database.entities.ReceivedId(
+                                            receivedId = blobMessageId,
+                                            idType = com.securelegion.database.entities.ReceivedId.TYPE_MESSAGE,
+                                            receivedTimestamp = now
+                                        )
+                                    )
                                 }
 
                                 insertResult
@@ -1248,6 +1296,13 @@ class DownloadMessageService : Service() {
                                     val now = System.currentTimeMillis()
                                     database.pingInboxDao().transitionToMsgStored(pingId, now)
                                     database.pingInboxDao().clearPingWireBytes(pingId, now) // Free up DB space
+                                    database.receivedIdDao().insertReceivedId(
+                                        com.securelegion.database.entities.ReceivedId(
+                                            receivedId = blobMessageId,
+                                            idType = com.securelegion.database.entities.ReceivedId.TYPE_MESSAGE,
+                                            receivedTimestamp = now
+                                        )
+                                    )
                                 }
 
                                 insertResult
@@ -1327,6 +1382,13 @@ class DownloadMessageService : Service() {
                                     val now = System.currentTimeMillis()
                                     database.pingInboxDao().transitionToMsgStored(pingId, now)
                                     database.pingInboxDao().clearPingWireBytes(pingId, now) // Free up DB space
+                                    database.receivedIdDao().insertReceivedId(
+                                        com.securelegion.database.entities.ReceivedId(
+                                            receivedId = blobMessageId,
+                                            idType = com.securelegion.database.entities.ReceivedId.TYPE_MESSAGE,
+                                            receivedTimestamp = now
+                                        )
+                                    )
                                 }
 
                                 insertResult
@@ -1522,6 +1584,13 @@ class DownloadMessageService : Service() {
                                     val now = System.currentTimeMillis()
                                     database.pingInboxDao().transitionToMsgStored(pingId, now)
                                     database.pingInboxDao().clearPingWireBytes(pingId, now)
+                                    database.receivedIdDao().insertReceivedId(
+                                        com.securelegion.database.entities.ReceivedId(
+                                            receivedId = blobMessageId,
+                                            idType = com.securelegion.database.entities.ReceivedId.TYPE_MESSAGE,
+                                            receivedTimestamp = now
+                                        )
+                                    )
                                 }
 
                                 insertResult
@@ -1616,6 +1685,24 @@ class DownloadMessageService : Service() {
                 else -> {
                     Log.w(TAG, "Unknown message type: 0x${String.format("%02X", typeByte)}")
                 }
+            }
+
+            // Cross-path dedup: Register blob hash so listener path won't re-process.
+            // Only insert if message was actually saved (verified by pingId lookup).
+            try {
+                val savedMsg = database.messageDao().getMessageByPingId(pingId)
+                if (savedMsg != null) {
+                    database.receivedIdDao().insertReceivedId(
+                        com.securelegion.database.entities.ReceivedId(
+                            receivedId = blobMessageId,
+                            idType = com.securelegion.database.entities.ReceivedId.TYPE_MESSAGE,
+                            receivedTimestamp = System.currentTimeMillis()
+                        )
+                    )
+                    Log.d(TAG, "Cross-path dedup: Registered $blobMessageId in receivedIdDao")
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Cross-path dedup registration failed (non-critical)", e)
             }
 
         } catch (e: Exception) {

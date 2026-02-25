@@ -116,7 +116,10 @@ class CrustService(
                     )
                 }
 
-                val responseJson = JSONObject(response.body!!.string())
+                val responseJson = JSONObject(
+                    response.body?.string()
+                        ?: return@withContext Result.failure(IOException("Upload succeeded but response body was empty"))
+                )
                 val cid = responseJson.getString("Hash")
 
                 Log.i(TAG, "Successfully uploaded to Crust: $cid")
@@ -252,7 +255,8 @@ class CrustService(
                 }
 
                 Log.d(TAG, "Reading response body...")
-                val encryptedData = response.body!!.bytes()
+                val encryptedData = response.body?.bytes()
+                    ?: return@withContext Result.failure(IOException("Download succeeded but response body was empty"))
                 Log.i(TAG, "Successfully downloaded from IPFS (${encryptedData.size} bytes in ${elapsedTime}ms)")
                 Result.success(encryptedData)
             }

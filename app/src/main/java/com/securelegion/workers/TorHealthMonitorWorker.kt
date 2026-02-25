@@ -6,6 +6,7 @@ import android.os.SystemClock
 import android.util.Log
 import androidx.work.*
 import com.securelegion.crypto.KeyManager
+import com.securelegion.crypto.RustBridge
 import com.securelegion.database.SecureLegionDatabase
 import com.securelegion.models.TorFailureType
 import com.securelegion.models.TorHealthSnapshot
@@ -53,6 +54,8 @@ class TorHealthMonitorWorker(
 
     companion object {
         private const val TAG = "TorHealthMonitor"
+        private const val WORK_NAME = "tor_health_monitor"
+        private const val CHECK_INTERVAL_SECONDS = 60L
         private const val SOCKS_HOST = "127.0.0.1"
         private const val SOCKS_PORT = 9050
         private const val SOCKS_TIMEOUT_MS = 2000 // Fast fail if SOCKS not responding
@@ -77,18 +80,28 @@ class TorHealthMonitorWorker(
          * Called once at app startup
          */
         fun schedulePeriodicCheck(context: Context) {
-            val healthCheckRequest = PeriodicWorkRequestBuilder<TorHealthMonitorWorker>(
-                60, // Run every 60 seconds
-                TimeUnit.SECONDS
-            ).build()
-
-            WorkManager.getInstance(context).enqueueUniquePeriodicWork(
-                "tor_health_monitor",
-                ExistingPeriodicWorkPolicy.KEEP,
-                healthCheckRequest
+            // Use a chained OneTimeWork cadence to support sub-15-minute intervals.
+            // WorkManager periodic requests enforce a 15-minute minimum.
+            val wm = WorkManager.getInstance(context)
+            wm.cancelUniqueWork(WORK_NAME) // Migrate any legacy periodic registration with same name
+            val kickoff = OneTimeWorkRequestBuilder<TorHealthMonitorWorker>().build()
+            wm.enqueueUniqueWork(
+                WORK_NAME,
+                ExistingWorkPolicy.REPLACE,
+                kickoff
             )
+            Log.i(TAG, "Scheduled Tor health monitor cadence (${CHECK_INTERVAL_SECONDS}s)")
+        }
 
-            Log.i(TAG, "Scheduled periodic Tor health monitor (60s)")
+        private fun scheduleNextCheck(context: Context) {
+            val next = OneTimeWorkRequestBuilder<TorHealthMonitorWorker>()
+                .setInitialDelay(CHECK_INTERVAL_SECONDS, TimeUnit.SECONDS)
+                .build()
+            WorkManager.getInstance(context).enqueueUniqueWork(
+                WORK_NAME,
+                ExistingWorkPolicy.APPEND,
+                next
+            )
         }
     }
 
@@ -97,6 +110,7 @@ class TorHealthMonitorWorker(
             try {
                 val snapshot = checkTorHealth()
                 saveTorHealthSnapshot(snapshot)
+                scheduleNextCheck(applicationContext)
 
                 Log.i(TAG, "Health check complete: ${snapshot.status} (failCount=${snapshot.failCount}, error=${snapshot.lastError.take(50)})")
                 Result.success()
@@ -185,7 +199,13 @@ class TorHealthMonitorWorker(
 
         val healthPrefs = applicationContext.getSharedPreferences("tor_health", Context.MODE_PRIVATE)
 
-        when {
+        // Warmup guard: skip HS liveness checks during post-restart stabilization
+        // Without this, the worker can restart listeners during normal bootstrap, fighting TorRehydrator
+        val timeSinceLastRestart = now - current.lastRestartElapsedMs
+        val hsInWarmup = current.lastRestartElapsedMs > 0 && timeSinceLastRestart < WARMUP_WINDOW_MS
+        if (hsInWarmup) {
+            Log.d(TAG, "HS liveness: skipping (warmup window, ${timeSinceLastRestart / 1000}s since restart)")
+        } else when {
             hsLoopHb == 0L -> {
                 // CASE 1: Listener never started yet
                 Log.d(TAG, "HS liveness: loop heartbeat not initialized (listener starting)")
@@ -198,8 +218,10 @@ class TorHealthMonitorWorker(
             }
             hsAcceptAgeMs < HS_ACCEPT_RECENT_MS -> {
                 // CASE 3: Loop alive + real inbound traffic recently → fully healthy
-                Log.d(TAG, "HS liveness: loop OK, accept recent (${hsAcceptAgeMs}ms) → healthy")
+                // Real inbound traffic IS proof of onion reachability (better than self-test)
+                Log.d(TAG, "HS liveness: loop OK, accept recent (${hsAcceptAgeMs}ms) → healthy + proof OK")
                 healthPrefs.edit().putInt("hs_self_test_failures", 0).apply()
+                RustBridge.setTorProofOk()
             }
             else -> {
                 // CASE 4: Loop alive but no recent inbound — run self-circuit test
@@ -214,6 +236,8 @@ class TorHealthMonitorWorker(
                         if (circuitWorking) {
                             Log.i(TAG, "HS self-test PASSED: .onion:$HS_SERVICE_PORT reachable")
                             healthPrefs.edit().putInt("hs_self_test_failures", 0).apply()
+                            // Record proof — UI uses this to determine "receivable via onion"
+                            RustBridge.setTorProofOk()
                         } else {
                             val failures = healthPrefs.getInt("hs_self_test_failures", 0) + 1
                             healthPrefs.edit().putInt("hs_self_test_failures", failures).apply()
@@ -240,15 +264,32 @@ class TorHealthMonitorWorker(
             com.securelegion.crypto.RustBridge.getCircuitEstablished()
         } catch (e: Exception) { 0 }
 
-        if (circuitsEstablished != 1) {
+        if (circuitsEstablished == 0) {
             Log.w(TAG, "SOCKS OK + bootstrap=$bootstrapPercent but circuits=0 → DEGRADED")
 
+            // Track consecutive zero-circuit samples to avoid false escalation from transient dips
+            val circuitsZeroStreak = healthPrefs.getInt("circuits_zero_streak", 0) + 1
+            healthPrefs.edit().putInt("circuits_zero_streak", circuitsZeroStreak).apply()
+
             // --- DEGRADED escalation ladder ---
-            // Only escalate if bootstrap is nearly done AND device has internet
-            if (bootstrapPercent >= 90 && hasInternetConnectivity()) {
+            // Guards:
+            //   A) Require consecutive circuits==0 samples (not single transient dip)
+            //   B) Require bootstrap nearly done AND device has VALIDATED internet
+            //   C) Warmup guard: don't escalate within 2min of last Tor restart
+            val timeSinceLastRestart = now - current.lastRestartElapsedMs
+            val inWarmup = current.lastRestartElapsedMs > 0 && timeSinceLastRestart < WARMUP_WINDOW_MS
+
+            if (circuitsZeroStreak < 2) {
+                Log.d(TAG, "DEGRADED: circuits=0 streak=$circuitsZeroStreak (need ≥2 consecutive) — waiting for next sample")
+            } else if (inWarmup) {
+                Log.d(TAG, "DEGRADED: in warmup window (${timeSinceLastRestart / 1000}s / ${WARMUP_WINDOW_MS / 1000}s since restart) — skipping escalation")
+            } else if (bootstrapPercent >= 90 && hasInternetConnectivity()) {
                 val degradedSince = healthPrefs.getLong("degraded_since_ms", 0L)
                 val degradedStep = healthPrefs.getInt("degraded_recovery_step", 0)
                 val lastRecovery = healthPrefs.getLong("degraded_last_recovery_ms", 0L)
+
+                // Guard D: Don't escalate listener restart if one happened recently
+                val lastListenerRestart = healthPrefs.getLong("hs_last_restart_ms", 0L)
 
                 // First time entering DEGRADED: record timestamp
                 if (degradedSince == 0L) {
@@ -267,8 +308,16 @@ class TorHealthMonitorWorker(
                                 .apply()
                         }
                         1 -> {
-                            Log.w(TAG, "DEGRADED escalation step 1: restarting HS listeners")
-                            TorService.requestListenerRestart("DEGRADED escalation: circuits=0 after NEWNYM")
+                            // Guard: skip if listener was recently restarted (by HS liveness or rehydrator)
+                            if (nowMs - lastListenerRestart < HS_RESTART_COOLDOWN_MS) {
+                                Log.w(TAG, "DEGRADED step 1 suppressed: listener restarted ${(nowMs - lastListenerRestart) / 1000}s ago")
+                            } else {
+                                Log.w(TAG, "DEGRADED escalation step 1: restarting HS listeners")
+                                TorService.requestListenerRestart("DEGRADED escalation: circuits=0 after NEWNYM")
+                                healthPrefs.edit()
+                                    .putLong("hs_last_restart_ms", nowMs)
+                                    .apply()
+                            }
                             healthPrefs.edit()
                                 .putInt("degraded_recovery_step", 2)
                                 .putLong("degraded_last_recovery_ms", nowMs)
@@ -290,7 +339,7 @@ class TorHealthMonitorWorker(
                     Log.d(TAG, "DEGRADED: waiting (grace=${graceRemaining}s, cooldown=${cooldownRemaining}s, step=$degradedStep)")
                 }
             } else {
-                Log.d(TAG, "DEGRADED: bootstrap=$bootstrapPercent (still starting) or no internet — skipping escalation")
+                Log.d(TAG, "DEGRADED: bootstrap=$bootstrapPercent (still starting) or no validated internet — skipping escalation")
             }
 
             return current.copy(
@@ -303,13 +352,16 @@ class TorHealthMonitorWorker(
         }
 
         // Tor process is HEALTHY (SOCKS OK + bootstrap 100% + circuits established)
-        // Clear DEGRADED tracking if we were previously degraded
-        if (healthPrefs.getLong("degraded_since_ms", 0L) != 0L) {
-            Log.i(TAG, "Circuits recovered — clearing DEGRADED escalation state")
+        // Clear DEGRADED tracking + zero-circuit streak if we were previously degraded
+        val prevDegradedSince = healthPrefs.getLong("degraded_since_ms", 0L)
+        val prevStreak = healthPrefs.getInt("circuits_zero_streak", 0)
+        if (prevDegradedSince != 0L || prevStreak > 0) {
+            Log.i(TAG, "Circuits recovered — clearing DEGRADED escalation state (streak was $prevStreak)")
             healthPrefs.edit()
                 .putLong("degraded_since_ms", 0L)
                 .putInt("degraded_recovery_step", 0)
                 .putLong("degraded_last_recovery_ms", 0L)
+                .putInt("circuits_zero_streak", 0)
                 .apply()
         }
 
@@ -386,7 +438,7 @@ class TorHealthMonitorWorker(
         return withContext(Dispatchers.IO) {
             try {
                 val socket = Socket()
-                socket.soTimeout = 3000 // 3s timeout for SOCKS handshake
+                socket.soTimeout = 25000 // 25s: cold .onion connections need 10-20s after circuit rebuild
                 socket.connect(InetSocketAddress(SOCKS_HOST, SOCKS_PORT), 2000)
 
                 val output = socket.getOutputStream()
@@ -477,7 +529,11 @@ class TorHealthMonitorWorker(
             ?: return false
         val network = cm.activeNetwork ?: return false
         val capabilities = cm.getNetworkCapabilities(network) ?: return false
+        // Require VALIDATED (not just INTERNET) to avoid false positives on dead wifi / captive portals.
+        // INTERNET alone only means "network claims it can reach internet" — VALIDATED means Android
+        // actually verified connectivity, which prevents NEWNYM/restart storms during dead wifi.
         return capabilities.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET)
+            && capabilities.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_VALIDATED)
     }
 
     /**
@@ -530,7 +586,8 @@ class TorHealthMonitorWorker(
         val prefs = applicationContext.getSharedPreferences("tor_health", Context.MODE_PRIVATE)
         val prefsString = prefs.getString("snapshot", "")
         return if (prefsString.isNullOrEmpty()) {
-            TorHealthSnapshot()
+            // No snapshot yet → RECOVERING (safe default, prevents false-healthy at cold start)
+            TorHealthSnapshot(status = TorHealthStatus.RECOVERING, lastError = "no health snapshot yet")
         } else {
             TorHealthSnapshot.fromPrefsString(prefsString)
         }

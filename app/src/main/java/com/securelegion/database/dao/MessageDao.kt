@@ -65,7 +65,7 @@ interface MessageDao {
     /**
      * Insert a new message. Returns row ID, or -1 if ignored (duplicate messageId/pingId).
      * IGNORE prevents REPLACE from silently deleting existing rows and resetting
-     * delivery state (pingDelivered, pongDelivered, messageDelivered) and auto-increment IDs.
+     * delivery state (pingDelivered, messageDelivered) and auto-increment IDs.
      */
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertMessage(message: Message): Long
@@ -193,6 +193,9 @@ interface MessageDao {
     @Query("UPDATE messages SET retryCount = :retryCount, lastRetryTimestamp = :lastRetryTimestamp WHERE id = :messageId")
     suspend fun updateRetryState(messageId: Long, retryCount: Int, lastRetryTimestamp: Long)
 
+    @Query("UPDATE messages SET retryCount = :retryCount, lastRetryTimestamp = :lastRetryTimestamp, nextRetryAtMs = :nextRetryAtMs WHERE id = :messageId")
+    suspend fun updateRetrySchedule(messageId: Long, retryCount: Int, lastRetryTimestamp: Long, nextRetryAtMs: Long)
+
     /**
      * Update retry fields with next retry time and error (for MessageRetryWorker)
      * CRITICAL: Partial update to avoid overwriting delivery status with stale data
@@ -200,19 +203,15 @@ interface MessageDao {
     @Query("UPDATE messages SET retryCount = :retryCount, lastRetryTimestamp = :lastRetryTimestamp, nextRetryAtMs = :nextRetryAtMs, lastError = :lastError WHERE id = :messageId")
     suspend fun updateRetryStateWithError(messageId: Long, retryCount: Int, lastRetryTimestamp: Long, nextRetryAtMs: Long, lastError: String?)
 
+    @Query("UPDATE messages SET lastError = :error WHERE id = :messageId")
+    suspend fun updateLastError(messageId: Long, error: String?)
+
     /**
      * Update pingWireBytes only (prevents race condition with delivery status updates)
      * CRITICAL: Use this instead of updateMessage() when only storing wire bytes for retry
      */
     @Query("UPDATE messages SET pingWireBytes = :pingWireBytes WHERE id = :messageId")
     suspend fun updatePingWireBytes(messageId: Long, pingWireBytes: String)
-
-    /**
-     * Update pongDelivered only (prevents race condition with delivery status updates)
-     * CRITICAL: Use this instead of updateMessage() when marking PONG_ACK sent
-     */
-    @Query("UPDATE messages SET pongDelivered = :pongDelivered WHERE id = :messageId")
-    suspend fun updatePongDelivered(messageId: Long, pongDelivered: Boolean)
 
     /**
      * Update pingDelivered and status only (prevents race condition with retry state updates)
@@ -275,11 +274,26 @@ interface MessageDao {
     suspend fun getPendingMessages(): List<Message>
 
     /**
-     * Get messages waiting for Pong (STATUS_PING_SENT)
-     * Used by Pong polling worker to check for Pong arrivals
+     * Get messages waiting for Pong (STATUS_PING_SENT, sent by us, with pingId)
+     * Used by retryAllPendingMessages() to poll Rust for PONG arrivals
      */
-    @Query("SELECT $LITE_COLS FROM messages WHERE status = ${Message.STATUS_PING_SENT} ORDER BY timestamp ASC")
+    @Query("SELECT $LITE_COLS FROM messages WHERE isSentByMe = 1 AND status = ${Message.STATUS_PING_SENT} AND pingId IS NOT NULL ORDER BY timestamp ASC")
     suspend fun getMessagesAwaitingPong(): List<Message>
+
+    /**
+     * Get messages ready for blob send (STATUS_PONG_RECEIVED, sent by us)
+     * Protocol v2: PONG handler transitions STATUS_PING_SENT → STATUS_PONG_RECEIVED,
+     * then sendPendingMessagesForContact() picks these up and sends the blob
+     */
+    @Query("SELECT $LITE_COLS FROM messages WHERE contactId = :contactId AND isSentByMe = 1 AND status = ${Message.STATUS_PONG_RECEIVED} AND pingId IS NOT NULL ORDER BY timestamp ASC")
+    suspend fun getMessagesPendingBlobSend(contactId: Long): List<Message>
+
+    /**
+     * Get distinct contact IDs with STATUS_PONG_RECEIVED messages (ready for blob send)
+     * Used by retryAllPendingMessages() to iterate per-contact
+     */
+    @Query("SELECT DISTINCT contactId FROM messages WHERE isSentByMe = 1 AND status = ${Message.STATUS_PONG_RECEIVED}")
+    suspend fun getContactsWithPongReceived(): List<Long>
 
     /**
      * Get message by Ping ID
