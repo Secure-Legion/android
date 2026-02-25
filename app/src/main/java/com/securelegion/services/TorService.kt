@@ -179,9 +179,15 @@ class TorService : Service() {
     @Volatile private var torState: TorState = TorState.OFF
     @Volatile private var bootstrapPercent: Int = 0
     @Volatile private var lastBootstrapProgressMs: Long = 0L // When bootstrap % last increased
+    @Volatile private var bootstrapOperationalSinceMs: Long = 0L // Near-complete bootstrap with live circuits
+    @Volatile private var lastBootstrapStallNewnymMs: Long = 0L // Throttle stall nudges
     @Volatile private var currentSocksPort: Int = 9050
     @Volatile private var lastRestartMs: Long = 0L // Debounce network change restarts
     private var bootstrapWatchdogJob: kotlinx.coroutines.Job? = null
+    private val BOOTSTRAP_OPERATIONAL_THRESHOLD = 95
+    private val BOOTSTRAP_OPERATIONAL_GRACE_MS = 20_000L
+    private val BOOTSTRAP_STALL_NEWNYM_COOLDOWN_MS = 45_000L
+    private val BOOTSTRAP_STALL_NEWNYM_GRACE_MS = 30_000L
 
     // Network change tracking (only restart on actual network changes, not capability changes)
     @Volatile private var lastNetworkIsWifi: Boolean? = null // null = no network yet
@@ -286,6 +292,30 @@ class TorService : Service() {
                             return@launch // Exit monitor loop
                         }
                     }
+
+                    // Fallback: some networks stall in the 95-99% range while circuits are
+                    // already established and message transport is functional.
+                    // Promote to RUNNING after a grace window to avoid permanent "Connecting".
+                    val circuitsEstablished = RustBridge.getCircuitEstablished() == 1
+                    val socksAlive = try { RustBridge.isSocksProxyRunning() } catch (_: Exception) { false }
+                    val nearCompleteOperational = percent >= BOOTSTRAP_OPERATIONAL_THRESHOLD && circuitsEstablished && socksAlive
+                    if (nearCompleteOperational) {
+                        val now = SystemClock.elapsedRealtime()
+                        if (bootstrapOperationalSinceMs == 0L) {
+                            bootstrapOperationalSinceMs = now
+                            Log.w(
+                                TAG,
+                                "Bootstrap fallback armed at $percent% (circuits+socks ready); promoting to RUNNING if stable for ${BOOTSTRAP_OPERATIONAL_GRACE_MS / 1000}s"
+                            )
+                        } else if (now - bootstrapOperationalSinceMs >= BOOTSTRAP_OPERATIONAL_GRACE_MS && torState != TorState.RUNNING) {
+                            bootstrapPercent = 100
+                            setState(TorState.RUNNING, "operational fallback at $percent% (circuits+socks healthy)")
+                            onTorReady()
+                            return@launch
+                        }
+                    } else {
+                        bootstrapOperationalSinceMs = 0L
+                    }
                 } catch (e: Exception) {
                     Log.e(TAG, "Error checking bootstrap status", e)
                 }
@@ -327,6 +357,30 @@ class TorService : Service() {
                 // Tor can be quiet even when working, but % must increase
                 val stalledMs = SystemClock.elapsedRealtime() - lastBootstrapProgressMs
                 if (stalledMs > stallTimeoutMs) {
+                    val nearComplete = bootstrapPercent >= 90
+                    if (nearComplete && hasNetworkConnection()) {
+                        val now = SystemClock.elapsedRealtime()
+                        val sinceNudge = now - lastBootstrapStallNewnymMs
+                        if (sinceNudge > BOOTSTRAP_STALL_NEWNYM_COOLDOWN_MS) {
+                            lastBootstrapStallNewnymMs = now
+                            Log.w(
+                                TAG,
+                                "WATCHDOG bootstrap stalled at $bootstrapPercent% - sending NEWNYM nudge before restart"
+                            )
+                            requestNewnymDebounced("bootstrap_stall_${bootstrapPercent}", debounceMs = 0L, cooldownMs = 10_000L)
+                            continue
+                        }
+
+                        // After a nudge, allow a short grace window before forcing restart.
+                        if (stalledMs <= stallTimeoutMs + BOOTSTRAP_STALL_NEWNYM_GRACE_MS) {
+                            Log.w(
+                                TAG,
+                                "WATCHDOG bootstrap still stalled at $bootstrapPercent% - waiting post-NEWNYM grace (${stalledMs / 1000}s)"
+                            )
+                            continue
+                        }
+                    }
+
                     Log.w(TAG, "WATCHDOG restarting Tor: no bootstrap progress for ${stalledMs / 1000}s, stuck at $bootstrapPercent%, bridgeType=$bridgeType, timeout=${stallTimeoutMs / 1000}s")
                     consecutiveBootstrapFailures++
                     restartTor("bootstrap stalled at $bootstrapPercent%")
@@ -984,8 +1038,30 @@ class TorService : Service() {
                     val bootstrap = RustBridge.getBootstrapStatus()
 
                     if (bootstrap < 100) {
-                        // Still bootstrapping — skip SOCKS check, failures are expected
-                        Log.d(TAG, "SOCKS health monitor: bootstrap at $bootstrap%, skipping check")
+                        val stalledMs = SystemClock.elapsedRealtime() - lastBootstrapProgressMs
+                        if (stalledMs < 45_000L) {
+                            // Early bootstrap churn is expected.
+                            Log.d(TAG, "SOCKS health monitor: bootstrap at $bootstrap%, skipping check")
+                        } else {
+                            // Probe SOCKS during prolonged bootstrap stalls so dead local proxy
+                            // does not hide behind bootstrap<100 forever.
+                            Log.w(TAG, "SOCKS health monitor: bootstrap stale (${stalledMs / 1000}s at $bootstrap%) - probing SOCKS early")
+                            val socksAlive = RustBridge.isSocksProxyRunning()
+
+                            if (!socksAlive) {
+                                Log.w(TAG, "SOCKS proxy DEAD during stale bootstrap - restarting proxy")
+                                val restarted = RustBridge.startSocksProxy()
+                                if (!restarted && hasNetworkConnection()) {
+                                    Log.e(TAG, "SOCKS restart failed during stale bootstrap - escalating to Tor restart")
+                                    serviceScope.launch {
+                                        restartTor("stale bootstrap with dead SOCKS (bootstrap=$bootstrap%)")
+                                    }
+                                }
+                            } else if (bootstrap >= 90) {
+                                // Near-complete bootstrap with healthy local SOCKS but no progress.
+                                maybeSendHealthNewnym()
+                            }
+                        }
                     } else {
                         val socksAlive = RustBridge.isSocksProxyRunning()
 
@@ -2004,6 +2080,8 @@ class TorService : Service() {
         setState(TorState.STARTING, "user requested")
         bootstrapPercent = 0
         lastBootstrapProgressMs = SystemClock.elapsedRealtime() // Reset watchdog timer
+        bootstrapOperationalSinceMs = 0L
+        lastBootstrapStallNewnymMs = 0L
         lastHealthyMs = SystemClock.elapsedRealtime() // Reset health timer
 
         try {
@@ -7963,9 +8041,30 @@ class TorService : Service() {
                 }
             }
 
-            is NetworkWatcher.NetworkEvent.ScreenOn,
-            is NetworkWatcher.NetworkEvent.ScreenOff,
             is NetworkWatcher.NetworkEvent.DozeModeChanged -> {
+                Log.i(TAG, "Doze mode changed - running Tor wake/recovery path")
+
+                if (RustBridge.isEventListenerRunning()) {
+                    RustBridge.wakeTorEventListener()
+                }
+
+                // If internet is validated after doze, force quick circuit refresh/recovery.
+                if (hasNetworkConnection()) {
+                    RustBridge.onNetworkValidated()
+                    startHsSelfTestLoop()
+                    if (!gate.isOpenNow() && (torState == TorState.RUNNING || torState == TorState.BOOTSTRAPPING)) {
+                        Log.w(TAG, "Doze recovery: gate closed while network validated - triggering rehydration")
+                        lastNetworkChangeMs = System.currentTimeMillis()
+                        lastTorUnstableAt = System.currentTimeMillis()
+                        rehydrator.onNetworkChanged()
+                    }
+                } else {
+                    Log.i(TAG, "Doze recovery: network not validated yet, waiting for Available event")
+                }
+            }
+
+            is NetworkWatcher.NetworkEvent.ScreenOn,
+            is NetworkWatcher.NetworkEvent.ScreenOff -> {
                 Log.i(TAG, "Power state changed - ignoring (no rebind)")
                 // Screen/Doze events do NOT mean network path changed
                 // These fire constantly during normal use and at startup
@@ -8907,3 +9006,4 @@ class TorService : Service() {
         }
     }
 }
+
