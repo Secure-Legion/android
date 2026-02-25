@@ -17,6 +17,7 @@ use sha3::{Digest, Sha3_256};
 use std::sync::Mutex as StdMutex;
 use std::collections::HashMap;
 use once_cell::sync::Lazy;
+use crate::util::lock_recover;
 
 /// Global bootstrap status (0-100%) - updated by event listener
 pub static BOOTSTRAP_STATUS: AtomicU32 = AtomicU32::new(0);
@@ -185,6 +186,8 @@ pub fn get_circuit_established_fast() -> u8 {
     CIRCUIT_ESTABLISHED.load(Ordering::SeqCst)
 }
 
+// clear_circuit_established() removed — replaced by on_network_lost() above.
+
 /// HS descriptor upload counter - incremented by event listener each time Tor confirms UPLOADED to an HSDir
 /// v3 onion services upload to multiple HSDirs (typically 6-8), so count >= 1 means partially reachable
 pub static HS_DESC_UPLOAD_COUNT: AtomicU32 = AtomicU32::new(0);
@@ -200,6 +203,68 @@ pub fn is_event_listener_running() -> bool {
 
 /// Shutdown signal for the event listener — set to true to tell it to exit
 static EVENT_LISTENER_SHUTDOWN: AtomicBool = AtomicBool::new(false);
+
+/// Wake signal: Kotlin sets this to interrupt the backoff sleep when network returns.
+/// The listener checks this every 200ms during backoff and reconnects immediately if set.
+static LISTENER_WAKE: AtomicBool = AtomicBool::new(false);
+
+/// Wake the event listener from backoff sleep (called by Kotlin when network returns).
+/// Resets backoff so the listener reconnects to ControlSocket immediately.
+pub fn wake_event_listener() {
+    LISTENER_WAKE.store(true, Ordering::SeqCst);
+    log::info!("Event listener: Wake signal sent (will interrupt backoff sleep)");
+}
+
+// ─── Network-Recovery Suppression ───────────────────────────────────────────
+//
+// Problem: Tor's local Unix domain socket stays alive during WiFi loss. The
+// event listener keeps polling GETINFO status/circuit-established and Tor
+// keeps answering "1" (zombie circuit). The UI is now proof-based
+// (LAST_TOR_PROOF_MS vs lastNetworkChangeMs), so stale circuit=1 is harmless.
+// CIRCUIT_ESTABLISHED flows through unguarded — the health monitor's DEGRADED
+// ladder needs real values to avoid false escalation.
+
+/// When true, the next periodic tick sends SIGNAL NEWNYM (optimization, not required
+/// for correctness — the HS self-test drives the UI, not circuit status).
+static NEWNYM_PENDING: AtomicBool = AtomicBool::new(false);
+
+/// Epoch millis of the last proof of real HS reachability (set by Kotlin after
+/// HS self-test passes — SOCKS5 connect to own .onion succeeded). UI compares
+/// this against lastNetworkChangeMs to determine "receivable via onion."
+pub static LAST_TOR_PROOF_MS: AtomicU64 = AtomicU64::new(0);
+
+/// Get last proof-of-reachability timestamp (epoch millis).
+/// Returns 0 if no proof since last network loss.
+pub fn get_last_tor_proof_ms() -> u64 {
+    LAST_TOR_PROOF_MS.load(Ordering::SeqCst)
+}
+
+/// Called by Kotlin when Android detects network loss (NOT validated).
+/// Clears proof so UI shows "Connecting" until HS self-test passes again.
+/// CIRCUIT_ESTABLISHED is NOT cleared — let Tor's real value flow through.
+/// The UI is proof-based, so stale circuit=1 won't cause a false "green".
+pub fn on_network_lost() {
+    HS_DESC_UPLOAD_COUNT.store(0, Ordering::SeqCst);
+    LAST_TOR_PROOF_MS.store(0, Ordering::SeqCst);
+    log::info!("on_network_lost: HS/proof cleared (circuit value left to Tor)");
+}
+
+/// Called by Kotlin when NET_CAPABILITY_VALIDATED flips true (real internet back).
+/// Queues NEWNYM so the event listener forces Tor to drop zombie circuits.
+/// This is an optimization — correctness comes from the HS self-test, not NEWNYM.
+pub fn on_network_validated() {
+    NEWNYM_PENDING.store(true, Ordering::SeqCst);
+    log::info!("on_network_validated: NEWNYM queued for next listener tick");
+}
+
+/// Called by Kotlin when HS self-test passes (SOCKS5 connect to own .onion succeeded).
+/// This is the gold-standard proof: our onion service is reachable right now.
+/// Records the proof timestamp — UI compares this against lastNetworkChangeMs.
+pub fn set_tor_proof_ok() {
+    let now = now_millis();
+    LAST_TOR_PROOF_MS.store(now, Ordering::SeqCst);
+    log::info!("set_tor_proof_ok: proof set at {}", now);
+}
 
 /// Heartbeat: epoch millis of the last successful event listener operation.
 /// Kotlin checks this to detect a frozen/dead listener even if atomics look healthy.
@@ -308,14 +373,18 @@ pub fn register_tor_event_callback<F>(callback: F)
 where
     F: Fn(TorEventType) + Send + Sync + 'static,
 {
-    let mut cb = GLOBAL_TOR_EVENT_CALLBACK.lock().unwrap();
+    let mut cb = lock_recover(&GLOBAL_TOR_EVENT_CALLBACK);
     *cb = Some(Arc::new(callback));
     log::info!("Tor event callback registered");
 }
 
 /// Forward event to Kotlin callback (if registered)
 fn forward_tor_event(event: TorEventType) {
-    if let Some(ref callback) = *GLOBAL_TOR_EVENT_CALLBACK.lock().unwrap() {
+    let callback = {
+        let guard = lock_recover(&GLOBAL_TOR_EVENT_CALLBACK);
+        guard.as_ref().cloned()
+    };
+    if let Some(callback) = callback {
         callback(event);
     }
 }
@@ -362,20 +431,31 @@ pub fn start_bootstrap_event_listener() {
     EVENT_LISTENER_SHUTDOWN.store(false, Ordering::SeqCst);
 
     std::thread::spawn(|| {
-        let rt = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .expect("Failed to create runtime for event listener");
-
-        rt.block_on(async {
-            if let Err(e) = bootstrap_event_listener_task().await {
-                log::error!("Bootstrap event listener failed: {}", e);
+        struct ListenerGuard;
+        impl Drop for ListenerGuard {
+            fn drop(&mut self) {
+                EVENT_LISTENER_RUNNING.store(false, Ordering::SeqCst);
+                log::info!("Event listener thread exited, guard cleared");
             }
-        });
+        }
 
-        // Clear the guard so a new listener can be spawned after this one exits
-        EVENT_LISTENER_RUNNING.store(false, Ordering::SeqCst);
-        log::info!("Event listener thread exited, guard cleared");
+        let _guard = ListenerGuard;
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("Failed to create runtime for event listener");
+
+            rt.block_on(async {
+                if let Err(e) = bootstrap_event_listener_task().await {
+                    log::error!("Bootstrap event listener failed: {}", e);
+                }
+            });
+        }));
+
+        if result.is_err() {
+            log::error!("Bootstrap event listener panicked");
+        }
     });
 }
 
@@ -446,8 +526,11 @@ async fn bootstrap_event_listener_task() -> Result<(), Box<dyn Error + Send + Sy
                 // Connection failed after all retries — backoff and retry
                 log::warn!("Event listener: Connection failed, backing off {}ms before retry", backoff_ms);
                 invalidate_listener_state();
-                sleep(Duration::from_millis(backoff_ms)).await;
-                backoff_ms = apply_backoff_with_jitter(backoff_ms);
+                if interruptible_backoff_sleep(backoff_ms).await {
+                    backoff_ms = 0; // Woken — reset for immediate retry
+                } else {
+                    backoff_ms = apply_backoff_with_jitter(backoff_ms);
+                }
                 consecutive_failures += 1;
                 continue;
             }
@@ -457,8 +540,11 @@ async fn bootstrap_event_listener_task() -> Result<(), Box<dyn Error + Send + Sy
         if let Err(e) = control.write_all(b"AUTHENTICATE\r\n").await {
             log::error!("Event listener: Failed to send auth command: {}", e);
             invalidate_listener_state();
-            sleep(Duration::from_millis(backoff_ms)).await;
-            backoff_ms = apply_backoff_with_jitter(backoff_ms);
+            if interruptible_backoff_sleep(backoff_ms).await {
+                backoff_ms = 0;
+            } else {
+                backoff_ms = apply_backoff_with_jitter(backoff_ms);
+            }
             consecutive_failures += 1;
             continue;
         }
@@ -468,8 +554,11 @@ async fn bootstrap_event_listener_task() -> Result<(), Box<dyn Error + Send + Sy
         if !auth_ok {
             log::error!("Event listener: Auth failed, will retry");
             invalidate_listener_state();
-            sleep(Duration::from_millis(backoff_ms)).await;
-            backoff_ms = apply_backoff_with_jitter(backoff_ms);
+            if interruptible_backoff_sleep(backoff_ms).await {
+                backoff_ms = 0;
+            } else {
+                backoff_ms = apply_backoff_with_jitter(backoff_ms);
+            }
             consecutive_failures += 1;
             continue;
         }
@@ -480,8 +569,11 @@ async fn bootstrap_event_listener_task() -> Result<(), Box<dyn Error + Send + Sy
         if let Err(e) = control.write_all(b"SETEVENTS STATUS_CLIENT CIRC HS_DESC STATUS_GENERAL\r\n").await {
             log::error!("Event listener: Failed to send SETEVENTS: {}", e);
             invalidate_listener_state();
-            sleep(Duration::from_millis(backoff_ms)).await;
-            backoff_ms = apply_backoff_with_jitter(backoff_ms);
+            if interruptible_backoff_sleep(backoff_ms).await {
+                backoff_ms = 0;
+            } else {
+                backoff_ms = apply_backoff_with_jitter(backoff_ms);
+            }
             consecutive_failures += 1;
             continue;
         }
@@ -490,8 +582,11 @@ async fn bootstrap_event_listener_task() -> Result<(), Box<dyn Error + Send + Sy
         if !sub_ok {
             log::error!("Event listener: SETEVENTS subscription failed, will retry");
             invalidate_listener_state();
-            sleep(Duration::from_millis(backoff_ms)).await;
-            backoff_ms = apply_backoff_with_jitter(backoff_ms);
+            if interruptible_backoff_sleep(backoff_ms).await {
+                backoff_ms = 0;
+            } else {
+                backoff_ms = apply_backoff_with_jitter(backoff_ms);
+            }
             consecutive_failures += 1;
             continue;
         }
@@ -503,6 +598,7 @@ async fn bootstrap_event_listener_task() -> Result<(), Box<dyn Error + Send + Sy
 
         // Connection + auth + subscribe succeeded — reset backoff
         backoff_ms = 1_000;
+        LISTENER_WAKE.store(false, Ordering::SeqCst); // Clear stale wake if any
         if consecutive_failures > 0 {
             log::info!("Event listener: Recovered after {} consecutive failures", consecutive_failures);
         }
@@ -526,6 +622,27 @@ async fn bootstrap_event_listener_task() -> Result<(), Box<dyn Error + Send + Sy
                 _ = poll_interval.tick() => {
                     if EVENT_LISTENER_SHUTDOWN.load(Ordering::SeqCst) {
                         return Ok(());
+                    }
+
+                    // Best-effort NEWNYM: force Tor to drop zombie circuits and build fresh ones.
+                    // Optimization only — UI correctness comes from HS self-test proof, not this.
+                    if NEWNYM_PENDING.swap(false, Ordering::SeqCst) {
+                        log::info!("Event listener: Sending SIGNAL NEWNYM (network recovered)");
+                        if let Ok(()) = control.write_all(b"SIGNAL NEWNYM\r\n").await {
+                            let mut nr = String::new();
+                            let nd = tokio::time::Instant::now() + Duration::from_millis(1000);
+                            loop {
+                                let rem = nd.saturating_duration_since(tokio::time::Instant::now());
+                                if rem.is_zero() { break; }
+                                match tokio::time::timeout(rem, control.read(&mut buf)).await {
+                                    Ok(Ok(0)) => break,
+                                    Ok(Ok(n)) => { nr.push_str(&String::from_utf8_lossy(&buf[..n])); }
+                                    _ => break,
+                                }
+                                if nr.contains("250 OK") { break; }
+                            }
+                            log::info!("Event listener: NEWNYM response: {}", nr.trim());
+                        }
                     }
 
                     // Poll circuit-established
@@ -693,11 +810,15 @@ async fn bootstrap_event_listener_task() -> Result<(), Box<dyn Error + Send + Sy
         log::warn!("Event listener: Connection lost ({}), clearing stale state", reason);
         invalidate_listener_state();
 
-        // Backoff with jitter before reconnecting
-        log::info!("Event listener: Will reconnect in {}ms", backoff_ms);
-        sleep(Duration::from_millis(backoff_ms)).await;
-        backoff_ms = apply_backoff_with_jitter(backoff_ms);
-        consecutive_failures += 1;
+        // Backoff with jitter before reconnecting (interruptible — Kotlin can wake us)
+        log::info!("Event listener: Will reconnect in {}ms (interruptible)", backoff_ms);
+        if interruptible_backoff_sleep(backoff_ms).await {
+            backoff_ms = 0; // Woken by Kotlin (network returned) — reconnect immediately
+            consecutive_failures = 0; // Treat wake as new epoch
+        } else {
+            backoff_ms = apply_backoff_with_jitter(backoff_ms);
+            consecutive_failures += 1;
+        }
     }
 
     Ok(())
@@ -812,6 +933,27 @@ fn apply_backoff_with_jitter(current_ms: u64) -> u64 {
         .subsec_nanos();
     let jitter_factor = 0.8 + (nanos % 400) as f64 / 1000.0; // 0.8 to 1.199
     (doubled as f64 * jitter_factor) as u64
+}
+
+/// Interruptible backoff sleep: checks LISTENER_WAKE and shutdown every 200ms.
+/// Returns true if woken by wake signal (caller should reset backoff), false otherwise.
+async fn interruptible_backoff_sleep(total_ms: u64) -> bool {
+    use tokio::time::{sleep, Duration};
+    const SLICE_MS: u64 = 200;
+    let mut remaining = total_ms;
+    while remaining > 0 {
+        if EVENT_LISTENER_SHUTDOWN.load(Ordering::SeqCst) {
+            return false;
+        }
+        if LISTENER_WAKE.swap(false, Ordering::SeqCst) {
+            log::info!("Event listener: Woken from backoff ({}ms remaining) — reconnecting immediately", remaining);
+            return true;
+        }
+        let step = remaining.min(SLICE_MS);
+        sleep(Duration::from_millis(step)).await;
+        remaining = remaining.saturating_sub(step);
+    }
+    false
 }
 
 /// Parse bootstrap progress percentage from Tor control response/event
@@ -2280,12 +2422,22 @@ impl TorManager {
             }
         }
 
-        // MINIMUM LENGTH CHECK: protocol messages have format [type][pubkey32][encrypted_payload]
-        // CRDT types (0x30,0x32,0x33) are NOT evolution-encrypted: [type][pubkey32][groupId32][data]
+        // MINIMUM LENGTH CHECK: protocol messages have format [type][pubkey32][payload][optional signature]
+        // CRDT/ROUTING types carry groupId32 after pubkey. Most message types are signed: +64 bytes.
+        let is_signed_type = !matches!(
+            msg_type,
+            MSG_TYPE_PING |
+            MSG_TYPE_PONG |
+            MSG_TYPE_TAP |
+            MSG_TYPE_DELIVERY_CONFIRMATION |
+            MSG_TYPE_FRIEND_REQUEST |
+            MSG_TYPE_FRIEND_REQUEST_ACCEPTED
+        );
+        let sig_len = if is_signed_type { 64 } else { 0 };
         let min_wire_len: usize = match msg_type {
             MSG_TYPE_CRDT_OPS | MSG_TYPE_SYNC_REQUEST | MSG_TYPE_SYNC_CHUNK |
-            MSG_TYPE_ROUTING_UPDATE | MSG_TYPE_ROUTING_REQUEST => 1 + 32 + 32, // type + X25519 + groupId
-            _ => 1 + 32 + 16, // type + pubkey + smallest possible ciphertext
+            MSG_TYPE_ROUTING_UPDATE | MSG_TYPE_ROUTING_REQUEST => 1 + 32 + 32 + sig_len, // type + X25519 + groupId + sig?
+            _ => 1 + 32 + 16 + sig_len, // type + pubkey + smallest possible ciphertext + sig?
         };
         if buf.len() < min_wire_len {
             log::error!("WIRE_TOO_SHORT_DROP: type=0x{:02x}, len={} (min={})", msg_type, buf.len(), min_wire_len);
@@ -2314,7 +2466,7 @@ impl TorManager {
                 // Store connection for instant Pong response
                 // BRIEF LOCK: Insert only, no async operations held
                 {
-                    let mut pending = PENDING_CONNECTIONS.lock().unwrap();
+                    let mut pending = lock_recover(&PENDING_CONNECTIONS);
                     pending.insert(conn_id, PendingConnection {
                         socket,
                         encrypted_ping: buf.clone(),
@@ -2325,6 +2477,8 @@ impl TorManager {
                 let buf_len = buf.len();
                 if let Err(_) = ping_tx.send((conn_id, buf)) {
                     log::error!("ROUTER_DROP: PING_TX send failed (receiver dropped), conn={} len={}", conn_id, buf_len);
+                    let mut pending = lock_recover(&PENDING_CONNECTIONS);
+                    pending.remove(&conn_id);
                 }
             }
             MSG_TYPE_PONG => {
@@ -2361,7 +2515,7 @@ impl TorManager {
                 // Messages might need connection stored for delivery confirmation
                 // BRIEF LOCK: Insert only, no async operations held
                 {
-                    let mut pending = PENDING_CONNECTIONS.lock().unwrap();
+                    let mut pending = lock_recover(&PENDING_CONNECTIONS);
                     pending.insert(conn_id, PendingConnection {
                         socket,
                         encrypted_ping: buf.clone(),
@@ -2371,9 +2525,11 @@ impl TorManager {
                 // Route to MESSAGE channel (not PING channel)
                 // Send full buffer (INCLUDING type byte at offset 0)
                 if let Some(message_tx) = MESSAGE_TX.load_full() {
-                    let tx_lock = message_tx.lock().unwrap();
+                    let tx_lock = lock_recover(&message_tx);
                     if let Err(e) = tx_lock.send((conn_id, buf)) {
                         log::error!("Failed to send message to MESSAGE channel: {}", e);
+                        let mut pending = lock_recover(&PENDING_CONNECTIONS);
+                        pending.remove(&conn_id);
                     } else {
                         // Successfully accepted message
                         crate::ffi::android::RX_MESSAGE_ACCEPT_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -2382,6 +2538,8 @@ impl TorManager {
                     log::warn!("MESSAGE channel not initialized - dropping message");
                     // Increment drop counter for stress test diagnostics
                     crate::ffi::android::RX_MESSAGE_TX_DROP_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    let mut pending = lock_recover(&PENDING_CONNECTIONS);
+                    pending.remove(&conn_id);
                 }
             }
             MSG_TYPE_CALL_SIGNALING => {
@@ -2390,7 +2548,7 @@ impl TorManager {
                 // Store connection for delivery confirmation
                 // BRIEF LOCK: Insert only, no async operations held
                 {
-                    let mut pending = PENDING_CONNECTIONS.lock().unwrap();
+                    let mut pending = lock_recover(&PENDING_CONNECTIONS);
                     pending.insert(conn_id, PendingConnection {
                         socket,
                         encrypted_ping: buf.clone(),
@@ -2400,12 +2558,16 @@ impl TorManager {
                 // Route to VOICE channel (separate from MESSAGE to allow simultaneous messaging during calls)
                 // Send full buffer (INCLUDING type byte at offset 0)
                 if let Some(voice_tx) = VOICE_TX.load_full() {
-                    let tx_lock = voice_tx.lock().unwrap();
+                    let tx_lock = lock_recover(&voice_tx);
                     if let Err(e) = tx_lock.send((conn_id, buf)) {
                         log::error!("Failed to send call signaling to VOICE channel: {}", e);
+                        let mut pending = lock_recover(&PENDING_CONNECTIONS);
+                        pending.remove(&conn_id);
                     }
                 } else {
                     log::warn!("VOICE channel not initialized - dropping call signaling");
+                    let mut pending = lock_recover(&PENDING_CONNECTIONS);
+                    pending.remove(&conn_id);
                 }
             }
             MSG_TYPE_TAP => {
@@ -2422,7 +2584,7 @@ impl TorManager {
                 // This prevents permanent message delivery failures.
                 // Send full buffer (INCLUDING type byte at offset 0)
                 if let Some(ack_tx) = ACK_TX.load_full() {
-                    let tx_lock = ack_tx.lock().unwrap();
+                    let tx_lock = lock_recover(&ack_tx);
                     if let Err(e) = tx_lock.send((conn_id, buf)) {
                         log::error!("Failed to send ACK to ACK channel: {}", e);
                     } else {
@@ -2438,7 +2600,7 @@ impl TorManager {
                 // Friend requests routed to dedicated channel to avoid interference with message system
                 // buf already includes type byte - no need to prepend
                 if let Some(friend_tx) = FRIEND_REQUEST_TX.load_full() {
-                    let tx_lock = friend_tx.lock().unwrap();
+                    let tx_lock = lock_recover(&friend_tx);
                     if let Err(e) = tx_lock.send(buf) {
                         log::error!("Failed to send friend request to channel: {}", e);
                     }
@@ -2451,7 +2613,7 @@ impl TorManager {
                 // Friend request accepted routed to dedicated channel to avoid interference with message system
                 // buf already includes type byte at offset 0 so Kotlin can distinguish Phase 1 (0x07) from Phase 2 (0x08)
                 if let Some(friend_tx) = FRIEND_REQUEST_TX.load_full() {
-                    let tx_lock = friend_tx.lock().unwrap();
+                    let tx_lock = lock_recover(&friend_tx);
                     if let Err(e) = tx_lock.send(buf) { // Changed from constructing wire_data
                         log::error!("Failed to send friend request accepted to channel: {}", e);
                     }
@@ -2465,14 +2627,17 @@ impl TorManager {
                 // Default to Ping behavior for unknown types
                 // BRIEF LOCK: Insert only, no async operations held
                 {
-                    let mut pending = PENDING_CONNECTIONS.lock().unwrap();
+                    let mut pending = lock_recover(&PENDING_CONNECTIONS);
                     pending.insert(conn_id, PendingConnection {
                         socket,
                         encrypted_ping: buf.clone(),
                     });
                 }
 
-                ping_tx.send((conn_id, buf)).ok();
+                if ping_tx.send((conn_id, buf)).is_err() {
+                    let mut pending = lock_recover(&PENDING_CONNECTIONS);
+                    pending.remove(&conn_id);
+                }
             }
         }
 
@@ -2527,7 +2692,7 @@ impl TorManager {
         }
 
         // Close all pending connections (forces fresh circuits on restart)
-        let mut pending = PENDING_CONNECTIONS.lock().unwrap();
+        let mut pending = lock_recover(&PENDING_CONNECTIONS);
         let count = pending.len();
         if count > 0 {
             log::info!("Closing {} pending connection(s) with stale circuits", count);
@@ -2808,7 +2973,7 @@ impl TorManager {
     pub async fn send_pong_response(connection_id: u64, pong_bytes: &[u8]) -> Result<Vec<u8>, Box<dyn Error>> {
         // Temporarily take the connection out to do async I/O (brief lock, then released)
         let mut conn = {
-            let mut pending = PENDING_CONNECTIONS.lock().unwrap();
+            let mut pending = lock_recover(&PENDING_CONNECTIONS);
             pending.remove(&connection_id)
                 .ok_or("Connection not found")?
         };
@@ -2872,7 +3037,7 @@ impl TorManager {
     pub async fn send_ack_on_connection(connection_id: u64, ack_type: u8, ack_bytes: &[u8]) -> Result<(), Box<dyn Error>> {
         // Take the connection out (brief lock, then released)
         let mut conn = {
-            let mut pending = PENDING_CONNECTIONS.lock().unwrap();
+            let mut pending = lock_recover(&PENDING_CONNECTIONS);
             pending.remove(&connection_id)
                 .ok_or("Connection not found")?
         };

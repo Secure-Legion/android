@@ -99,6 +99,7 @@ pub struct PongToken {
     pub pong_nonce: [u8; 24],
     pub timestamp: i64,
     pub authenticated: bool,
+    pub device_protection: bool,
     #[serde(with = "BigArray")]
     pub signature: [u8; 64],
 }
@@ -119,6 +120,10 @@ impl PongToken {
         data.extend_from_slice(&self.pong_nonce);
         data.extend_from_slice(&self.timestamp.to_le_bytes());
         data.push(if self.authenticated { 1 } else { 0 });
+        if self.device_protection {
+            let bucket = self.timestamp / 60;
+            data.extend_from_slice(&bucket.to_le_bytes());
+        }
         data
     }
 }
@@ -180,36 +185,8 @@ impl TapAckToken {
     }
 }
 
-/// PONG_ACK: Confirms that PONG (encrypted message payload) landed on recipient device
-/// Gap: Phone could crash between PONG_ACK and MESSAGE_ACK
-/// - PONG_ACK = "Encrypted bytes arrived on my device"
-/// - MESSAGE_ACK = "Decrypted, verified, and saved to database"
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PongAckToken {
-    pub pong_nonce: [u8; 24], // Nonce from the PONG being acknowledged
-    pub recipient_pubkey: [u8; 32], // Recipient's signing public key
-    pub timestamp: i64,
-    #[serde(with = "BigArray")]
-    pub signature: [u8; 64], // Signature over pong_nonce + timestamp
-}
-
-impl PongAckToken {
-    pub fn serialize(&self) -> Result<Vec<u8>, bincode::Error> {
-        bincode::serialize(self)
-    }
-
-    pub fn deserialize(data: &[u8]) -> Result<Self, bincode::Error> {
-        bincode::deserialize(data)
-    }
-
-    pub fn serialize_for_signing(&self) -> Vec<u8> {
-        let mut data = Vec::new();
-        data.extend_from_slice(&self.pong_nonce);
-        data.extend_from_slice(&self.recipient_pubkey);
-        data.extend_from_slice(&self.timestamp.to_le_bytes());
-        data
-    }
-}
+// PongAckToken removed — Protocol v2 eliminates PONG_ACK.
+// PONG itself is the acknowledgment; MESSAGE_ACK confirms final delivery.
 
 #[cfg(test)]
 mod tests {

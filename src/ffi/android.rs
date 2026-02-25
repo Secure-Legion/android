@@ -19,6 +19,7 @@ use crate::network::{TorManager, PENDING_CONNECTIONS};
 use crate::audio::voice_streaming::{VoiceStreamingListener, VoicePacket};
 use tokio::sync::mpsc;
 use tokio::io::AsyncReadExt;
+use ed25519_dalek::Signer;
 
 // ==================== PORT CONSTANTS (Single Source of Truth) ====================
 // These must match Kotlin side constants!
@@ -1903,6 +1904,7 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendPing(
                                             pong_nonce: pong_token.pong_nonce,
                                             timestamp: pong_token.timestamp,
                                             authenticated: pong_token.authenticated,
+                                            device_protection: pong_token.device_protection,
                                             signature: pong_token.signature,
                                         };
                                         match pingpong_pong.verify(&recipient_ed25519_verifying) {
@@ -1945,8 +1947,8 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendPing(
                     log::info!("INSTANT MODE: Pong verified, sending message payload...");
                     log::info!("Message size: {} bytes encrypted", message_bytes.len());
 
-                    // Build message wire format: [Type Byte][Sender X25519 Public Key - 32 bytes][Encrypted Message]
-                    // Receiver's handleInstantMessageBlob expects [type][x25519_32][payload]
+                    // Build message wire format: [Type Byte][Sender X25519 Public Key - 32 bytes][Encrypted Message][Signature 64 bytes]
+                    // Receiver expects [type][x25519_32][payload][sig]
 
                     // Validate message type before sending
                     let msg_type = message_type_byte as u8;
@@ -1961,12 +1963,16 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendPing(
                         return Err(format!("Encrypted payload too short: {}", message_bytes.len()).into());
                     }
 
-                    let mut message_wire = Vec::with_capacity(1 + 32 + message_bytes.len());
+                    let signature = sender_keypair.sign(&message_bytes);
+                    let signature_bytes = signature.to_bytes();
+
+                    let mut message_wire = Vec::with_capacity(1 + 32 + message_bytes.len() + signature_bytes.len());
                     message_wire.push(msg_type);
                     message_wire.extend_from_slice(&sender_x25519_pubkey); // Our X25519 public key
                     message_wire.extend_from_slice(&message_bytes); // Encrypted message payload
+                    message_wire.extend_from_slice(&signature_bytes); // Ed25519 signature over ciphertext
 
-                    log::info!("Sending message wire: {} bytes total (1 type + 32 x25519 + {} encrypted)",
+                    log::info!("Sending message wire: {} bytes total (1 type + 32 x25519 + {} encrypted + 64 sig)",
                         message_wire.len(), message_bytes.len());
 
                     // Send message on same connection (lock only during send)
@@ -1976,6 +1982,14 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendPing(
                     } // Lock released
 
                     log::info!("Message sent successfully ({} bytes) in INSTANT MODE", message_bytes.len());
+
+                    // CRITICAL: Remove PONG from GLOBAL_PONG_SESSIONS after instant MESSAGE send.
+                    // Without this, retryAllPendingMessages() would discover the stored PONG via
+                    // pollForPong() and send the MESSAGE blob AGAIN — creating a ghost duplicate
+                    // on the receiver (dual-path dedup uses different ID formats).
+                    crate::network::pingpong::remove_pong_session(&ping_id);
+                    log::info!("INSTANT MODE: Consumed PONG session for {} (prevents double MESSAGE send)", &ping_id[..8.min(ping_id.len())]);
+
                     Ok(())
                 }
                 Ok(Err(e)) => {
@@ -2583,7 +2597,6 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendAckOnConnection(
         let msg_type = match ack_type_str.as_str() {
             "PING_ACK" => crate::network::tor::MSG_TYPE_DELIVERY_CONFIRMATION,
             "MESSAGE_ACK" => crate::network::tor::MSG_TYPE_DELIVERY_CONFIRMATION,
-            "PONG_ACK" => crate::network::tor::MSG_TYPE_DELIVERY_CONFIRMATION,
             "TAP_ACK" => crate::network::tor::MSG_TYPE_DELIVERY_CONFIRMATION,
             _ => {
                 log::error!("Unknown ACK type: {}", ack_type_str);
@@ -3056,6 +3069,7 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_decryptAndStorePongFro
             pong_nonce: pong_token.pong_nonce,
             timestamp: pong_token.timestamp,
             authenticated: pong_token.authenticated,
+            device_protection: pong_token.device_protection,
             signature: pong_token.signature,
         };
 
@@ -3269,14 +3283,48 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendMessageBlob(
             return 0;
         }
 
-        // Create wire message: [Type Byte][Sender X25519 Public Key - 32 bytes][Encrypted Message]
-        let mut wire_message = Vec::with_capacity(1 + 32 + message_bytes.len());
+        let sign_payload = !matches!(
+            msg_type,
+            crate::network::tor::MSG_TYPE_FRIEND_REQUEST |
+            crate::network::tor::MSG_TYPE_FRIEND_REQUEST_ACCEPTED
+        );
+
+        let signature_bytes = if sign_payload {
+            let our_signing_private = match crate::ffi::keystore::get_signing_private_key(&mut env, &key_manager) {
+                Ok(k) => k,
+                Err(e) => {
+                    log::error!("Failed to get signing key: {}", e);
+                    return 0;
+                }
+            };
+            if our_signing_private.len() != 32 {
+                log::error!("Invalid Ed25519 private key length: {}", our_signing_private.len());
+                return 0;
+            }
+            let sk_bytes: [u8; 32] = our_signing_private.as_slice().try_into().unwrap();
+            let signer = ed25519_dalek::SigningKey::from_bytes(&sk_bytes);
+            let signature = signer.sign(&message_bytes);
+            signature.to_bytes().to_vec()
+        } else {
+            Vec::new()
+        };
+
+        // Create wire message: [Type Byte][Sender X25519 Public Key - 32 bytes][Encrypted Message][Signature?]
+        let mut wire_message = Vec::with_capacity(1 + 32 + message_bytes.len() + signature_bytes.len());
         wire_message.push(msg_type);
         wire_message.extend_from_slice(&our_x25519_public);
         wire_message.extend_from_slice(&message_bytes);
+        if sign_payload {
+            wire_message.extend_from_slice(&signature_bytes);
+        }
 
-        log::info!("Wire message: {} bytes (1-byte type + 32-byte X25519 pubkey + {} bytes encrypted)",
-            wire_message.len(), message_bytes.len());
+        if sign_payload {
+            log::info!("Wire message: {} bytes (1 type + 32 x25519 + {} encrypted + 64 sig)",
+                wire_message.len(), message_bytes.len());
+        } else {
+            log::info!("Wire message: {} bytes (1 type + 32 x25519 + {} encrypted)",
+                wire_message.len(), message_bytes.len());
+        }
 
         // Send message blob via Tor using global runtime.
         // No TorManager lock — connect_to_onion goes straight to SOCKS.
@@ -3385,12 +3433,52 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendHttpToVoiceOnion(
 
         log::info!("Sending call signaling via HTTP POST to voice onion {} ({} bytes encrypted)", onion_address, message_bytes.len());
 
+        // Get KeyManager for signing key
+        let context = match env.call_static_method(
+            "android/app/ActivityThread",
+            "currentApplication",
+            "()Landroid/app/Application;",
+            &[],
+        ) {
+            Ok(ctx) => ctx.l().unwrap(),
+            Err(e) => {
+                log::error!("Failed to get context: {}", e);
+                return 0;
+            }
+        };
+
+        let key_manager = match crate::ffi::keystore::get_key_manager(&mut env, &context) {
+            Ok(km) => km,
+            Err(e) => {
+                log::error!("Failed to get KeyManager: {}", e);
+                return 0;
+            }
+        };
+
+        let our_signing_private = match crate::ffi::keystore::get_signing_private_key(&mut env, &key_manager) {
+            Ok(k) => k,
+            Err(e) => {
+                log::error!("Failed to get signing key: {}", e);
+                return 0;
+            }
+        };
+
+        if our_signing_private.len() != 32 {
+            log::error!("Invalid Ed25519 private key length: {}", our_signing_private.len());
+            return 0;
+        }
+        let sk_bytes: [u8; 32] = our_signing_private.as_slice().try_into().unwrap();
+        let signer = ed25519_dalek::SigningKey::from_bytes(&sk_bytes);
+        let signature = signer.sign(&message_bytes);
+        let signature_bytes = signature.to_bytes();
+
         // Create wire message: [Type Byte 0x0D][Sender X25519 Public Key - 32 bytes][Encrypted Message]
         const MSG_TYPE_CALL_SIGNALING: u8 = 0x0D;
-        let mut wire_message = Vec::with_capacity(1 + 32 + message_bytes.len());
+        let mut wire_message = Vec::with_capacity(1 + 32 + message_bytes.len() + signature_bytes.len());
         wire_message.push(MSG_TYPE_CALL_SIGNALING);
         wire_message.extend_from_slice(&sender_pubkey);
         wire_message.extend_from_slice(&message_bytes);
+        wire_message.extend_from_slice(&signature_bytes);
 
         log::info!("Wire message: {} bytes total", wire_message.len());
 
@@ -3866,6 +3954,7 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_respondToPing(
     _class: JClass,
     ping_id: JString,
     authenticated: jboolean,
+    device_protection: jboolean,
 ) -> jbyteArray {
     catch_panic!(env, {
         // If not authenticated, return null (no Pong)
@@ -3938,7 +4027,7 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_respondToPing(
         };
 
         // Create PongToken
-        let pong_token = match crate::network::PongToken::new(&ping_token, &recipient_keypair, true) {
+        let pong_token = match crate::network::PongToken::new(&ping_token, &recipient_keypair, true, device_protection != 0) {
             Ok(token) => token,
             Err(e) => {
                 let _ = env.throw_new("java/lang/RuntimeException", format!("Failed to create Pong: {}", e));
@@ -3955,7 +4044,7 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_respondToPing(
             }
         };
 
-        log::info!("Pong created successfully for Ping {}", hex::encode(&ping_token.nonce));
+        log::info!("Pong created successfully for Ping {} (device_protection={})", hex::encode(&ping_token.nonce), device_protection != 0);
 
         // Get our X25519 private key for encryption
         let our_x25519_private = match crate::ffi::keystore::get_encryption_private_key(&mut env, &key_manager) {
@@ -4415,12 +4504,27 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendDirectMessage(
             log::info!("Pong received and authenticated! Sending message...");
 
             // Step 3: Send encrypted message (lock only during send)
-            // Wire format for message: [Type Byte][Sender X25519 Public Key][Encrypted Message]
+            // Wire format for message: [Type Byte][Sender X25519 Public Key][Encrypted Message][Signature?]
             // (Length prefix is added automatically by manager.send())
+            let sign_payload = !matches!(
+                msg_type,
+                crate::network::tor::MSG_TYPE_FRIEND_REQUEST |
+                crate::network::tor::MSG_TYPE_FRIEND_REQUEST_ACCEPTED
+            );
+            let signature_bytes = if sign_payload {
+                let signature = sender_keypair.sign(&message_bytes);
+                signature.to_bytes().to_vec()
+            } else {
+                Vec::new()
+            };
+
             let mut message_wire = Vec::new();
             message_wire.push(msg_type); // Type byte from parameter
             message_wire.extend_from_slice(&our_x25519_public); // Sender X25519 pubkey
             message_wire.extend_from_slice(&message_bytes); // Encrypted message
+            if sign_payload {
+                message_wire.extend_from_slice(&signature_bytes);
+            }
 
             {
                 let manager = tor_manager.lock().unwrap();
@@ -4566,6 +4670,67 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_stopBootstrapListener(
         log::info!("Stopping bootstrap event listener...");
         crate::network::tor::stop_bootstrap_event_listener();
     }, ())
+}
+
+/// Wake the bootstrap event listener from backoff sleep.
+/// Call this when network returns so the listener reconnects immediately
+/// instead of waiting out the exponential backoff (up to 30s).
+#[no_mangle]
+pub extern "C" fn Java_com_securelegion_crypto_RustBridge_wakeTorEventListener(
+    mut env: JNIEnv,
+    _class: JClass,
+) {
+    catch_panic!(env, {
+        crate::network::tor::wake_event_listener();
+    }, ())
+}
+
+/// Called when Android detects network loss (NOT validated). Single entry point:
+/// clears circuit/HS/proof state, enables stale-status suppression.
+#[no_mangle]
+pub extern "C" fn Java_com_securelegion_crypto_RustBridge_onNetworkLost(
+    mut env: JNIEnv,
+    _class: JClass,
+) {
+    catch_panic!(env, {
+        crate::network::tor::on_network_lost();
+    }, ())
+}
+
+/// Called when NET_CAPABILITY_VALIDATED flips true (real internet back).
+/// Queues SIGNAL NEWNYM to force Tor to drop zombie circuits.
+#[no_mangle]
+pub extern "C" fn Java_com_securelegion_crypto_RustBridge_onNetworkValidated(
+    mut env: JNIEnv,
+    _class: JClass,
+) {
+    catch_panic!(env, {
+        crate::network::tor::on_network_validated();
+    }, ())
+}
+
+/// Called when HS self-test passes (SOCKS5 connect to own .onion succeeded).
+/// Records proof timestamp and lifts stale-status suppression.
+#[no_mangle]
+pub extern "C" fn Java_com_securelegion_crypto_RustBridge_setTorProofOk(
+    mut env: JNIEnv,
+    _class: JClass,
+) {
+    catch_panic!(env, {
+        crate::network::tor::set_tor_proof_ok();
+    }, ())
+}
+
+/// Get last proof-of-reachability timestamp (epoch millis).
+/// Returns 0 if no proof since last network loss. UI compares against lastNetworkChangeMs.
+#[no_mangle]
+pub extern "C" fn Java_com_securelegion_crypto_RustBridge_getLastTorProofMs(
+    mut env: JNIEnv,
+    _class: JClass,
+) -> jlong {
+    catch_panic!(env, {
+        crate::network::tor::get_last_tor_proof_ms() as jlong
+    }, 0)
 }
 
 /// Get Tor bootstrap status (0-100%)
@@ -5132,6 +5297,7 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_createPongToken(
     _class: JClass,
     sender_x25519_pubkey: JByteArray,
     ping_id: JString,
+    device_protection: jboolean,
 ) -> jbyteArray {
     catch_panic!(env, {
         // 1. Convert inputs
@@ -5201,7 +5367,7 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_createPongToken(
         };
 
         // 6. Create PongToken
-        let pong_token = match crate::network::PongToken::new(&ping_token, &recipient_keypair, true) {
+        let pong_token = match crate::network::PongToken::new(&ping_token, &recipient_keypair, true, device_protection != 0) {
             Ok(token) => token,
             Err(e) => {
                 let _ = env.throw_new("java/lang/RuntimeException", format!("Failed to create Pong: {}", e));
@@ -6440,7 +6606,7 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_checkPingReplay(
 
 /// FIX #7: Validate ACK ordering according to protocol rules
 /// @param contactId Contact identifier
-/// @param ackType 0=PING_ACK, 1=PONG_ACK, 2=MESSAGE_ACK
+/// @param ackType 0=PING_ACK, 2=MESSAGE_ACK (1=PONG_ACK removed in protocol v2)
 /// @return true if ACK is valid, false if it violates ordering
 #[no_mangle]
 pub extern "C" fn Java_com_securelegion_crypto_RustBridge_validateAckOrdering(
@@ -7036,13 +7202,15 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_removeAckSession(
 /// Call this periodically as a safety net for orphaned entries from crashes
 #[no_mangle]
 pub extern "C" fn Java_com_securelegion_crypto_RustBridge_cleanupExpiredSessions(
-    _env: JNIEnv,
+    mut env: JNIEnv,
     _class: JClass,
 ) {
-    log::debug!("Cleaning up expired sessions...");
-    crate::network::cleanup_expired_pings();
-    crate::network::cleanup_expired_pongs();
-    crate::network::cleanup_expired_acks();
+    catch_panic!(env, {
+        log::debug!("Cleaning up expired sessions...");
+        crate::network::cleanup_expired_pings();
+        crate::network::cleanup_expired_pongs();
+        crate::network::cleanup_expired_acks();
+    }, ())
 }
 
 // ==================== NLx402 PAYMENT PROTOCOL ====================
@@ -8222,12 +8390,14 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_endVoiceSession(
 /// Get number of active voice sessions (v2.0)
 #[no_mangle]
 pub extern "C" fn Java_com_securelegion_crypto_RustBridge_getActiveVoiceSessions(
-    _env: JNIEnv,
+    mut env: JNIEnv,
     _class: JClass,
 ) -> jint {
-    let voice_listener = get_voice_listener();
-    let listener = voice_listener.blocking_lock();
-    listener.active_sessions() as jint
+    catch_panic!(env, {
+        let voice_listener = get_voice_listener();
+        let listener = voice_listener.blocking_lock();
+        listener.active_sessions() as jint
+    }, 0)
 }
 
 /// Rebuild a specific voice circuit (close and reconnect with fresh Tor path)

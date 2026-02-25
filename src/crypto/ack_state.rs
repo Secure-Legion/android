@@ -3,10 +3,10 @@ use std::sync::Mutex;
 use once_cell::sync::Lazy;
 
 /// ACK state for a single contact
+/// Protocol v2: Only PING_ACK and MESSAGE_ACK remain (PONG_ACK removed).
 #[derive(Debug, Clone, Default)]
 pub struct AckState {
     pub ping_ack_received: bool,
-    pub pong_ack_received: bool,
     pub message_ack_received: bool,
     /// Track which ACK types have been processed (for idempotency)
     pub processed_acks: HashSet<u8>,
@@ -17,9 +17,8 @@ static ACK_STATES: Lazy<Mutex<HashMap<String, AckState>>> = Lazy::new(|| {
     Mutex::new(HashMap::new())
 });
 
-/// ACK type constants
+/// ACK type constants (Protocol v2: PONG_ACK removed — PONG itself is the acknowledgment)
 pub const ACK_TYPE_PING: u8 = 0;
-pub const ACK_TYPE_PONG: u8 = 1;
 pub const ACK_TYPE_MESSAGE: u8 = 2;
 
 /// Validate ACK ordering and update state with idempotent handling
@@ -32,7 +31,7 @@ pub const ACK_TYPE_MESSAGE: u8 = 2;
 ///
 /// # Arguments
 /// * `contact_id` - Contact identifier
-/// * `ack_type` - Type of ACK (0=PING_ACK, 1=PONG_ACK, 2=MESSAGE_ACK)
+/// * `ack_type` - Type of ACK (0=PING_ACK, 2=MESSAGE_ACK)
 pub fn validate_and_record_ack(contact_id: &str, ack_type: u8) -> bool {
     let mut states = ACK_STATES.lock().unwrap();
     let state = states.entry(contact_id.to_string()).or_default();
@@ -51,21 +50,8 @@ pub fn validate_and_record_ack(contact_id: &str, ack_type: u8) -> bool {
             log::info!("PING_ACK accepted for contact {}", contact_id);
             true
         }
-        ACK_TYPE_PONG => {
-            // PONG_ACK normally requires PING_ACK first, but allow forward progress after circuit churn
-            if !state.ping_ack_received {
-                log::warn!("Out-of-order PONG_ACK allowed (forward progress) for contact {} - PING_ACK not received", contact_id);
-            }
-            state.pong_ack_received = true;
-            state.processed_acks.insert(ACK_TYPE_PONG);
-            log::info!("PONG_ACK accepted for contact {}", contact_id);
-            true
-        }
         ACK_TYPE_MESSAGE => {
-            // MESSAGE_ACK normally requires PONG_ACK first, but allow forward progress after circuit churn
-            if !state.pong_ack_received {
-                log::warn!("Out-of-order MESSAGE_ACK allowed (forward progress) for contact {} - PONG_ACK not received", contact_id);
-            }
+            // MESSAGE_ACK: always allowed (forward progress — PONG replaces old PONG_ACK step)
             state.message_ack_received = true;
             state.processed_acks.insert(ACK_TYPE_MESSAGE);
             log::info!("MESSAGE_ACK accepted for contact {}", contact_id);
@@ -104,10 +90,7 @@ mod tests {
         // PING_ACK should always be valid
         assert!(validate_and_record_ack(contact, ACK_TYPE_PING));
 
-        // PONG_ACK should be valid after PING_ACK
-        assert!(validate_and_record_ack(contact, ACK_TYPE_PONG));
-
-        // MESSAGE_ACK should be valid after PONG_ACK
+        // MESSAGE_ACK should be valid after PING_ACK
         assert!(validate_and_record_ack(contact, ACK_TYPE_MESSAGE));
     }
 
@@ -116,14 +99,8 @@ mod tests {
         clear_ack_states();
         let contact = "test_contact2";
 
-        // MESSAGE_ACK should be ALLOWED (forward progress) even without PONG_ACK
+        // MESSAGE_ACK should be ALLOWED (forward progress) even without PING_ACK
         assert!(validate_and_record_ack(contact, ACK_TYPE_MESSAGE));
-
-        clear_ack_states();
-        let contact2 = "test_contact3";
-
-        // PONG_ACK should be ALLOWED (forward progress) even without PING_ACK
-        assert!(validate_and_record_ack(contact2, ACK_TYPE_PONG));
     }
 
     #[test]

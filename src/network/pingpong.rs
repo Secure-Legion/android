@@ -6,6 +6,15 @@ use std::sync::{Arc, Mutex};
 use std::sync::OnceLock;
 use serde_big_array::BigArray;
 use super::tor::TorManager;
+use crate::util::lock_recover;
+
+#[inline]
+fn unix_secs_lossy() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
 
 /// Ping Token - sent from sender to recipient to initiate handshake
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -54,6 +63,9 @@ pub struct PongToken {
     /// Whether user authenticated successfully
     pub authenticated: bool,
 
+    /// Whether receiver used Device Protection mode (M5 timing mitigation)
+    pub device_protection: bool,
+
     /// Recipient's Ed25519 signature
     #[serde(with = "BigArray")]
     pub signature: [u8; 64],
@@ -66,7 +78,7 @@ pub struct DeliveryAck {
     /// ID of the item being acknowledged (ping_id, message_id, tap_nonce, or pong_nonce)
     pub item_id: String,
 
-    /// Type of ACK: "PING_ACK", "MESSAGE_ACK", "TAP_ACK", or "PONG_ACK"
+    /// Type of ACK: "PING_ACK", "MESSAGE_ACK", or "TAP_ACK"
     pub ack_type: String,
 
     /// Unix timestamp when ACK was created
@@ -134,14 +146,11 @@ fn get_ping_sessions() -> Arc<Mutex<HashMap<String, StoredPingSession>>> {
 /// Store a received Ping token by ping_id (hex-encoded nonce)
 pub fn store_ping_session(ping_id: &str, ping_token: PingToken) {
     let sessions = get_ping_sessions();
-    let mut sessions_lock = sessions.lock().unwrap();
+    let mut sessions_lock = lock_recover(&sessions);
 
     let session = StoredPingSession {
         ping_token,
-        received_at: SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs() as i64,
+        received_at: unix_secs_lossy() as i64,
     };
 
     sessions_lock.insert(ping_id.to_string(), session);
@@ -150,26 +159,23 @@ pub fn store_ping_session(ping_id: &str, ping_token: PingToken) {
 /// Retrieve a stored Ping token by ping_id
 pub fn get_ping_session(ping_id: &str) -> Option<StoredPingSession> {
     let sessions = get_ping_sessions();
-    let sessions_lock = sessions.lock().unwrap();
+    let sessions_lock = lock_recover(&sessions);
     sessions_lock.get(ping_id).cloned()
 }
 
 /// Remove a Ping session after Pong is sent
 pub fn remove_ping_session(ping_id: &str) {
     let sessions = get_ping_sessions();
-    let mut sessions_lock = sessions.lock().unwrap();
+    let mut sessions_lock = lock_recover(&sessions);
     sessions_lock.remove(ping_id);
 }
 
 /// Clean up expired Ping sessions (older than 5 minutes)
 pub fn cleanup_expired_pings() {
     let sessions = get_ping_sessions();
-    let mut sessions_lock = sessions.lock().unwrap();
+    let mut sessions_lock = lock_recover(&sessions);
 
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_secs() as i64;
+    let now = unix_secs_lossy() as i64;
 
     const MAX_AGE_SECONDS: i64 = 300; // 5 minutes
 
@@ -208,14 +214,11 @@ pub fn store_pong_session(ping_id: &str, pong_token: PongToken) {
     log::info!("");
 
     let sessions = get_pong_sessions();
-    let mut sessions_lock = sessions.lock().unwrap();
+    let mut sessions_lock = lock_recover(&sessions);
 
     let session = StoredPongSession {
         pong_token,
-        received_at: SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs() as i64,
+        received_at: unix_secs_lossy() as i64,
     };
 
     sessions_lock.insert(ping_id.to_string(), session);
@@ -225,7 +228,7 @@ pub fn store_pong_session(ping_id: &str, pong_token: PongToken) {
 /// Retrieve a stored Pong token by ping_id
 pub fn get_pong_session(ping_id: &str) -> Option<StoredPongSession> {
     let sessions = get_pong_sessions();
-    let sessions_lock = sessions.lock().unwrap();
+    let sessions_lock = lock_recover(&sessions);
     let result = sessions_lock.get(ping_id).cloned();
 
     if result.is_some() {
@@ -240,19 +243,16 @@ pub fn get_pong_session(ping_id: &str) -> Option<StoredPongSession> {
 /// Remove a Pong session after it's been processed
 pub fn remove_pong_session(ping_id: &str) {
     let sessions = get_pong_sessions();
-    let mut sessions_lock = sessions.lock().unwrap();
+    let mut sessions_lock = lock_recover(&sessions);
     sessions_lock.remove(ping_id);
 }
 
 /// Clean up expired Pong sessions (older than 5 minutes)
 pub fn cleanup_expired_pongs() {
     let sessions = get_pong_sessions();
-    let mut sessions_lock = sessions.lock().unwrap();
+    let mut sessions_lock = lock_recover(&sessions);
 
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_secs() as i64;
+    let now = unix_secs_lossy() as i64;
 
     const MAX_AGE_SECONDS: i64 = 300; // 5 minutes
 
@@ -291,14 +291,11 @@ pub fn store_ack_session(item_id: &str, ack_token: DeliveryAck) {
     log::info!("");
 
     let sessions = get_ack_sessions();
-    let mut sessions_lock = sessions.lock().unwrap();
+    let mut sessions_lock = lock_recover(&sessions);
 
     let session = StoredAckSession {
         ack_token,
-        received_at: SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs() as i64,
+        received_at: unix_secs_lossy() as i64,
     };
 
     sessions_lock.insert(item_id.to_string(), session);
@@ -308,7 +305,7 @@ pub fn store_ack_session(item_id: &str, ack_token: DeliveryAck) {
 /// Retrieve a stored ACK token by item_id
 pub fn get_ack_session(item_id: &str) -> Option<StoredAckSession> {
     let sessions = get_ack_sessions();
-    let sessions_lock = sessions.lock().unwrap();
+    let sessions_lock = lock_recover(&sessions);
     let result = sessions_lock.get(item_id).cloned();
 
     if result.is_some() {
@@ -323,19 +320,16 @@ pub fn get_ack_session(item_id: &str) -> Option<StoredAckSession> {
 /// Remove an ACK session after it's been processed
 pub fn remove_ack_session(item_id: &str) {
     let sessions = get_ack_sessions();
-    let mut sessions_lock = sessions.lock().unwrap();
+    let mut sessions_lock = lock_recover(&sessions);
     sessions_lock.remove(item_id);
 }
 
 /// Clean up expired ACK sessions (older than 5 minutes)
 pub fn cleanup_expired_acks() {
     let sessions = get_ack_sessions();
-    let mut sessions_lock = sessions.lock().unwrap();
+    let mut sessions_lock = lock_recover(&sessions);
 
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_secs() as i64;
+    let now = unix_secs_lossy() as i64;
 
     const MAX_AGE_SECONDS: i64 = 300; // 5 minutes
 
@@ -458,6 +452,7 @@ impl PongToken {
         ping: &PingToken,
         recipient_keypair: &SigningKey,
         authenticated: bool,
+        device_protection: bool,
     ) -> Result<Self, Box<dyn std::error::Error>> {
 
         // Generate new Pong nonce
@@ -476,6 +471,7 @@ impl PongToken {
             pong_nonce,
             timestamp,
             authenticated,
+            device_protection,
             signature: [0u8; 64],
         };
 
@@ -488,26 +484,31 @@ impl PongToken {
 
     /// Sign the Pong token
     fn sign(&self, keypair: &SigningKey) -> Result<Signature, Box<dyn std::error::Error>> {
-        let message = self.serialize_for_signing();
+        let message = self.signable_bytes();
         Ok(keypair.sign(&message))
     }
 
     /// Verify the Pong signature
     pub fn verify(&self, signer_pubkey: &VerifyingKey) -> Result<bool, Box<dyn std::error::Error>> {
         let signature = Signature::from_bytes(&self.signature);
-        let message = self.serialize_for_signing();
+        let message = self.signable_bytes();
 
         Ok(signer_pubkey.verify(&message, &signature).is_ok())
     }
 
-    /// Serialize Pong for signing
-    fn serialize_for_signing(&self) -> Vec<u8> {
+    /// Serialize Pong for signing (M5: includes timestamp_bucket when device_protection=true)
+    fn signable_bytes(&self) -> Vec<u8> {
         let mut bytes = Vec::new();
         bytes.push(self.protocol_version);
         bytes.extend_from_slice(&self.ping_nonce);
         bytes.extend_from_slice(&self.pong_nonce);
         bytes.extend_from_slice(&self.timestamp.to_le_bytes());
         bytes.push(if self.authenticated { 1 } else { 0 });
+        if self.device_protection {
+            // Minute-level bucket prevents timing side-channel of biometric completion
+            let bucket = self.timestamp / 60;
+            bytes.extend_from_slice(&bucket.to_le_bytes());
+        }
         bytes
     }
 
@@ -527,11 +528,10 @@ impl DeliveryAck {
     pub const ACK_TYPE_PING: &'static str = "PING_ACK";
     pub const ACK_TYPE_MESSAGE: &'static str = "MESSAGE_ACK";
     pub const ACK_TYPE_TAP: &'static str = "TAP_ACK";
-    pub const ACK_TYPE_PONG: &'static str = "PONG_ACK";
 
     /// Create a new Delivery ACK token
-    /// item_id: ping_id, message_id, tap_nonce, or pong_nonce being acknowledged
-    /// ack_type: "PING_ACK", "MESSAGE_ACK", "TAP_ACK", or "PONG_ACK"
+    /// item_id: ping_id, message_id, or tap_nonce being acknowledged
+    /// ack_type: "PING_ACK", "MESSAGE_ACK", or "TAP_ACK"
     /// keypair: Ed25519 signing key of the party sending the ACK
     pub fn new(
         item_id: &str,
@@ -629,13 +629,13 @@ impl PingPongManager {
             created_at: ping.timestamp,
         };
 
-        self.ping_sessions.lock().unwrap().insert(ping.nonce, session);
+        lock_recover(&self.ping_sessions).insert(ping.nonce, session);
 
         // Serialize Ping token
         let ping_bytes = ping.to_bytes()?;
 
         // Send Ping via Tor to recipient's .onion address
-        let tor_manager = self.tor_manager.lock().unwrap();
+        let tor_manager = lock_recover(&self.tor_manager);
 
         // Default Ping-Pong port
         const PING_PONG_PORT: u16 = 9150;
@@ -666,7 +666,7 @@ impl PingPongManager {
         let (tx, rx) = tokio::sync::oneshot::channel();
 
         // Register Pong waiter
-        self.pong_waiters.lock().unwrap().insert(nonce, PongWaiter { sender: tx });
+        lock_recover(&self.pong_waiters).insert(nonce, PongWaiter { sender: tx });
 
         // Wait for Pong with timeout
         let timeout_duration = std::time::Duration::from_secs(timeout_seconds);
@@ -718,7 +718,7 @@ impl PingPongManager {
 
         if user_authenticated {
             // Create and return Pong
-            let pong = PongToken::new(&ping, &self.keypair, true)?;
+            let pong = PongToken::new(&ping, &self.keypair, true, false)?;
             Ok(Some(pong))
         } else {
             // User not authenticated - don't send Pong yet
@@ -740,11 +740,7 @@ impl PingPongManager {
         let ping_nonce = pong.ping_nonce;
 
         // Find corresponding Ping session
-        let session = self.ping_sessions
-            .lock()
-            .unwrap()
-            .get(&ping_nonce)
-            .cloned();
+        let session = lock_recover(&self.ping_sessions).get(&ping_nonce).cloned();
 
         if let Some(session) = session {
             // Verify Pong signature
@@ -754,12 +750,12 @@ impl PingPongManager {
             }
 
             // Notify waiter
-            if let Some(waiter) = self.pong_waiters.lock().unwrap().remove(&ping_nonce) {
+            if let Some(waiter) = lock_recover(&self.pong_waiters).remove(&ping_nonce) {
                 let _ = waiter.sender.send(pong);
             }
 
             // Clean up session
-            self.ping_sessions.lock().unwrap().remove(&ping_nonce);
+            lock_recover(&self.ping_sessions).remove(&ping_nonce);
         }
 
         Ok(())
@@ -767,12 +763,9 @@ impl PingPongManager {
 
     /// Clean up expired Ping sessions
     pub fn cleanup_expired_sessions(&self, max_age_seconds: i64) {
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs() as i64;
+        let now = unix_secs_lossy() as i64;
 
-        let mut sessions = self.ping_sessions.lock().unwrap();
+        let mut sessions = lock_recover(&self.ping_sessions);
         sessions.retain(|_, session| {
             let age = now - session.created_at;
             age < max_age_seconds
