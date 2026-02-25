@@ -54,7 +54,7 @@
                 android:layout_height="wrap_content"
                 android:adjustViewBounds="true"
                 android:maxHeight="280dp"
-                android:scaleType="centerCrop"
+                android:scaleType="fitCenter"
                 android:contentDescription="Image message" />
 
         </androidx.cardview.widget.CardView>

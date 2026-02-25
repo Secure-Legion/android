@@ -601,7 +601,7 @@ class MessageService(private val context: Context) {
             // Save image to file encrypted at rest (AES-256-GCM, prevents CursorWindow overflow)
             val imageDir = java.io.File(context.filesDir, "image_messages")
             imageDir.mkdirs()
-            val imageFile = java.io.File(imageDir, "$messageId.enc")
+            val imageFile = java.io.File(imageDir, "${safeAttachmentFileName(messageId)}.enc")
             val encryptedImageBytes = keyManager.encryptImageFile(imageBytes)
             imageFile.writeBytes(encryptedImageBytes)
             val imageFilePath = imageFile.absolutePath
@@ -2011,7 +2011,7 @@ class MessageService(private val context: Context) {
                     // Save received image to file encrypted at rest (AES-256-GCM)
                     val imageDir = java.io.File(context.filesDir, "image_messages")
                     imageDir.mkdirs()
-                    val imageFile = java.io.File(imageDir, "$messageId.enc")
+                    val imageFile = java.io.File(imageDir, "${safeAttachmentFileName(messageId)}.enc")
                     val encryptedImageBytes = keyManager.encryptImageFile(imageBytes)
                     imageFile.writeBytes(encryptedImageBytes)
                     val imageFilePath = imageFile.absolutePath
@@ -2709,6 +2709,12 @@ class MessageService(private val context: Context) {
         val digest = MessageDigest.getInstance("SHA-256")
         val hash = digest.digest(data)
         return Base64.encodeToString(hash, Base64.NO_WRAP).take(32)
+    }
+
+    private fun safeAttachmentFileName(messageId: String): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+        val hash = digest.digest(messageId.toByteArray(Charsets.UTF_8))
+        return hash.joinToString("") { "%02x".format(it) }
     }
 
     /**
