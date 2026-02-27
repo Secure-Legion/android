@@ -342,29 +342,48 @@ class TorService : Service() {
             val torSettings = getSharedPreferences("tor_settings", MODE_PRIVATE)
             val bridgeType = torSettings.getString("bridge_type", "none") ?: "none"
             val usingBridges = bridgeType != "none"
-            // First-time users need more time — full consensus download from scratch
-            val keyManager = com.securelegion.crypto.KeyManager.getInstance(this@TorService)
-            val isFirstTime = !keyManager.isInitialized()
+            // First-time detection: check for cached consensus files (not KeyManager, which is
+            // already initialized by the time Tor starts after account creation)
+            val torDataDir = java.io.File(dataDir, "app_TorService/data")
+            val isFirstTime = !torDataDir.resolve("cached-microdesc-consensus").exists()
+                    && !torDataDir.resolve("cached-consensus").exists()
+                    && !torDataDir.resolve("state").exists()
             val stallTimeoutMs = when {
                 usingBridges -> 180_000L  // 3 min with bridges
                 isFirstTime -> 120_000L   // 2 min for first-time users (no consensus cache)
                 else -> 60_000L           // 1 min for returning users
             }
-
-            if (usingBridges || isFirstTime) {
-                Log.i(TAG, "Bootstrap watchdog: using extended timeout (${stallTimeoutMs / 1000}s) for bridge type '$bridgeType', firstTime=$isFirstTime")
+            // Hard cap: total bootstrap time before forced restart, regardless of slow progress.
+            // Prevents indefinite bootstrap when Tor gains 1% every ~50s (resetting the stall timer).
+            val totalBootstrapCapMs = when {
+                usingBridges -> 360_000L  // 6 min total with bridges
+                isFirstTime -> 240_000L   // 4 min total for first-time
+                else -> 180_000L          // 3 min total for returning users
             }
+            val bootstrapStartedMs = SystemClock.elapsedRealtime()
+
+            Log.i(TAG, "Bootstrap watchdog: stallTimeout=${stallTimeoutMs / 1000}s, totalCap=${totalBootstrapCapMs / 1000}s, bridges=$bridgeType, firstTime=$isFirstTime")
 
             while (torState == TorState.STARTING || torState == TorState.BOOTSTRAPPING) {
                 kotlinx.coroutines.delay(5000) // Check every 5 seconds
 
+                val now = SystemClock.elapsedRealtime()
+
+                // Hard cap: if total bootstrap time exceeds limit, force restart
+                val totalElapsedMs = now - bootstrapStartedMs
+                if (totalElapsedMs > totalBootstrapCapMs) {
+                    Log.w(TAG, "WATCHDOG total bootstrap time exceeded ${totalBootstrapCapMs / 1000}s (elapsed ${totalElapsedMs / 1000}s, at $bootstrapPercent%, bridges=$bridgeType, firstTime=$isFirstTime) — forcing restart")
+                    consecutiveBootstrapFailures++
+                    restartTor("bootstrap total time exceeded at $bootstrapPercent%")
+                    return@launch
+                }
+
                 // Track actual bootstrap progress, not log activity
                 // Tor can be quiet even when working, but % must increase
-                val stalledMs = SystemClock.elapsedRealtime() - lastBootstrapProgressMs
+                val stalledMs = now - lastBootstrapProgressMs
                 if (stalledMs > stallTimeoutMs) {
                     val nearComplete = bootstrapPercent >= 90
                     if (nearComplete && hasNetworkConnection()) {
-                        val now = SystemClock.elapsedRealtime()
                         val sinceNudge = now - lastBootstrapStallNewnymMs
                         if (sinceNudge > BOOTSTRAP_STALL_NEWNYM_COOLDOWN_MS) {
                             lastBootstrapStallNewnymMs = now
@@ -386,7 +405,7 @@ class TorService : Service() {
                         }
                     }
 
-                    Log.w(TAG, "WATCHDOG restarting Tor: no bootstrap progress for ${stalledMs / 1000}s, stuck at $bootstrapPercent%, bridgeType=$bridgeType, timeout=${stallTimeoutMs / 1000}s")
+                    Log.w(TAG, "WATCHDOG restarting Tor: no progress for ${stalledMs / 1000}s, stuck at $bootstrapPercent%, stallTimeout=${stallTimeoutMs / 1000}s, totalElapsed=${totalElapsedMs / 1000}s, bridges=$bridgeType, firstTime=$isFirstTime")
                     consecutiveBootstrapFailures++
                     restartTor("bootstrap stalled at $bootstrapPercent%")
                     return@launch

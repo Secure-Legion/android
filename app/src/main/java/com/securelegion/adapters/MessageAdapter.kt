@@ -1025,10 +1025,12 @@ class MessageAdapter(
             }
 
             // Add long-press listener to show popup menu with Delete option
-            holder.messageBubble.setOnLongClickListener {
+            val longClickListener = View.OnLongClickListener {
                 showMessagePopupMenu(it, message)
                 true
             }
+            holder.messageBubble.setOnLongClickListener(longClickListener)
+            holder.messageImage.setOnLongClickListener(longClickListener)
         }
 
         // Setup swipe gesture (disabled in selection mode)
@@ -1040,13 +1042,6 @@ class MessageAdapter(
     private fun bindImageReceivedMessage(holder: ImageReceivedMessageViewHolder, message: Message, position: Int) {
         // Load image from attachmentData (Base64 encoded)
         loadImageIntoView(holder.messageImage, message.attachmentData)
-
-        // Add click listener to open full screen image
-        holder.messageImage.setOnClickListener {
-            message.attachmentData?.let { imageData ->
-                onImageClick?.invoke(imageData)
-            }
-        }
 
         // Show timestamp header if this is the first message or date changed
         if (shouldShowTimestampHeader(position)) {
@@ -1092,12 +1087,17 @@ class MessageAdapter(
             holder.messageBubble.setOnClickListener {
                 onImageClick?.invoke(message.attachmentData ?: "")
             }
+            holder.messageImage.setOnClickListener {
+                onImageClick?.invoke(message.attachmentData ?: "")
+            }
 
             // Add long-press listener to show popup menu with Delete option
-            holder.messageBubble.setOnLongClickListener {
+            val longClickListener = View.OnLongClickListener {
                 showMessagePopupMenu(it, message)
                 true
             }
+            holder.messageBubble.setOnLongClickListener(longClickListener)
+            holder.messageImage.setOnLongClickListener(longClickListener)
         }
 
         // Setup swipe gesture (disabled in selection mode)

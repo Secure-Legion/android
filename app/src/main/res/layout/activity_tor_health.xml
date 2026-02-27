@@ -160,59 +160,6 @@
 
             </LinearLayout>
 
-            <!-- Voice Tor Status -->
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="vertical"
-                android:background="@drawable/settings_box_bg"
-                android:padding="20dp"
-                android:layout_marginBottom="16dp">
-
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="Voice Tor"
-                    android:textSize="18sp"
-                    android:textColor="?attr/colorOnSurface"
-                    android:fontFamily="@font/poppins_semibold"
-                    android:layout_marginBottom="12dp" />
-
-                <!-- Status Row -->
-                <LinearLayout
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:orientation="horizontal"
-                    android:gravity="center_vertical">
-
-                    <View
-                        android:id="@+id/voiceTorStatusIndicator"
-                        android:layout_width="12dp"
-                        android:layout_height="12dp"
-                        android:layout_marginEnd="12dp"
-                        android:background="@drawable/status_offline_indicator" />
-
-                    <TextView
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="Status: "
-                        android:textSize="14sp"
-                        android:textColor="#AAAAAA"
-                        android:fontFamily="@font/poppins_regular" />
-
-                    <TextView
-                        android:id="@+id/voiceTorStatusText"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="Not Monitored"
-                        android:textSize="14sp"
-                        android:textColor="#666666"
-                        android:fontFamily="@font/poppins_medium" />
-
-                </LinearLayout>
-
-            </LinearLayout>
-
             <!-- Network Status -->
             <LinearLayout
                 android:layout_width="match_parent"
