@@ -82,7 +82,7 @@
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="Version Beta 1.0.7"
+                android:text="Version Beta 2.0.7"
                 android:textSize="20sp"
                 android:fontFamily="@font/space_grotesk_bold"
                 android:textColor="?attr/colorOnSurfaceVariant"
