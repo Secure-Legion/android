@@ -23,10 +23,13 @@ import com.securelegion.utils.ThemedToast
 import com.securelegion.utils.BadgeUtils
 import com.securelegion.database.SecureLegionDatabase
 import com.securelegion.database.entities.Contact
+import com.securelegion.database.entities.PendingFriendRequest as PendingFriendRequestEntity
 import com.securelegion.models.ContactCard
 import com.securelegion.models.FriendRequest
 import com.securelegion.services.ContactCardManager
+import com.securelegion.services.FriendRequestRetryMigration
 import com.securelegion.crypto.RustBridge
+import com.securelegion.workers.FriendRequestWorker
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -37,6 +40,7 @@ class AddFriendActivity : BaseActivity() {
     companion object {
         private const val TAG = "AddFriend"
         private const val QR_SCAN_REQUEST_CODE = 1001
+        private const val FRIEND_RETRY_PREFS = "friend_request_retry_map"
     }
 
     private lateinit var loadingOverlay: FrameLayout
@@ -140,6 +144,14 @@ class AddFriendActivity : BaseActivity() {
         if (intent.getBooleanExtra("AUTO_GALLERY", false)) {
             galleryQrLauncher.launch("image/*")
         }
+
+        // Safety migration (idempotent): preserve legacy pending requests in Room retry records.
+        CoroutineScope(Dispatchers.IO).launch {
+            FriendRequestRetryMigration.runIfNeeded(applicationContext)
+        }
+
+        // Ensure periodic retry sweep is active for offline friend-request recovery.
+        FriendRequestWorker.schedulePeriodicSweep(applicationContext)
 
         // Send Friend Request button
         findViewById<View>(R.id.searchButton).setOnClickListener {
@@ -1386,6 +1398,12 @@ class AddFriendActivity : BaseActivity() {
                     id = requestId
                 )
                 savePendingFriendRequest(pendingContact)
+                persistPhase2RetryRecord(
+                    uiRequestId = requestId,
+                    recipientOnion = senderFriendRequestOnion,
+                    encryptedPhase2 = encryptedPhase2,
+                    partialContactJson = partialContactJson
+                )
 
                 // Immediate feedback — no blocking overlay
                 ThemedToast.show(this@AddFriendActivity, "Accepting friend request from $senderUsername...")
@@ -1506,6 +1524,12 @@ class AddFriendActivity : BaseActivity() {
                     id = requestId
                 )
                 savePendingFriendRequest(pendingRequest)
+                persistPhase1RetryRecord(
+                    uiRequestId = requestId,
+                    recipientOnion = sanitizedOnion,
+                    recipientPin = friendPin,
+                    phase1Payload = phase1Payload
+                )
 
                 // Immediate feedback — no blocking overlay
                 ThemedToast.show(this@AddFriendActivity, "Sending friend request...")
@@ -1710,6 +1734,75 @@ class AddFriendActivity : BaseActivity() {
 
     private fun setupBottomNav() {
         BottomNavigationHelper.setupBottomNavigation(this)
+    }
+
+    private suspend fun persistPhase1RetryRecord(
+        uiRequestId: String,
+        recipientOnion: String,
+        recipientPin: String,
+        phase1Payload: String
+    ) {
+        withContext(Dispatchers.IO) {
+            try {
+                val keyManager = KeyManager.getInstance(this@AddFriendActivity)
+                val dbPassphrase = keyManager.getDatabasePassphrase()
+                val database = SecureLegionDatabase.getInstance(this@AddFriendActivity, dbPassphrase)
+
+                val entity = PendingFriendRequestEntity(
+                    recipientOnion = recipientOnion,
+                    recipientPin = recipientPin,
+                    phase = PendingFriendRequestEntity.PHASE_1_SENT,
+                    direction = PendingFriendRequestEntity.DIRECTION_OUTGOING,
+                    needsRetry = false,
+                    phase1PayloadJson = phase1Payload
+                )
+                val dbId = database.pendingFriendRequestDao().insertRequest(entity)
+                rememberRetryDbId(uiRequestId, dbId)
+                Log.d(TAG, "Persisted Phase 1 retry record (ui=$uiRequestId, db=$dbId)")
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to persist Phase 1 retry record", e)
+            }
+        }
+    }
+
+    private suspend fun persistPhase2RetryRecord(
+        uiRequestId: String,
+        recipientOnion: String,
+        encryptedPhase2: ByteArray,
+        partialContactJson: String
+    ) {
+        withContext(Dispatchers.IO) {
+            try {
+                val keyManager = KeyManager.getInstance(this@AddFriendActivity)
+                val dbPassphrase = keyManager.getDatabasePassphrase()
+                val database = SecureLegionDatabase.getInstance(this@AddFriendActivity, dbPassphrase)
+
+                val entity = PendingFriendRequestEntity(
+                    recipientOnion = recipientOnion,
+                    phase = PendingFriendRequestEntity.PHASE_2_SENT,
+                    direction = PendingFriendRequestEntity.DIRECTION_OUTGOING,
+                    needsRetry = false,
+                    phase2PayloadBase64 = Base64.encodeToString(encryptedPhase2, Base64.NO_WRAP),
+                    contactCardJson = partialContactJson
+                )
+                val dbId = database.pendingFriendRequestDao().insertRequest(entity)
+                rememberRetryDbId(uiRequestId, dbId)
+                Log.d(TAG, "Persisted Phase 2 retry record (ui=$uiRequestId, db=$dbId)")
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to persist Phase 2 retry record", e)
+            }
+        }
+    }
+
+    private fun rememberRetryDbId(uiRequestId: String, dbId: Long) {
+        try {
+            getSharedPreferences(FRIEND_RETRY_PREFS, Context.MODE_PRIVATE)
+                .edit()
+                .putLong(uiRequestId, dbId)
+                .apply()
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to map retry dbId for request $uiRequestId", e)
+        }
     }
 
     private fun enterDeleteMode() {

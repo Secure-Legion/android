@@ -23,7 +23,9 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="horizontal"
-        android:gravity="start">
+        android:gravity="start"
+        android:clipChildren="false"
+        android:clipToPadding="false">
 
         <!-- Swipe-revealed timestamp (left side) -->
         <TextView
@@ -37,36 +39,69 @@
             android:layout_marginEnd="8dp"
             android:visibility="gone" />
 
-        <!-- Message Bubble -->
+        <!-- Bubble + reactions -->
         <LinearLayout
-            android:id="@+id/messageBubble"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:orientation="vertical"
-            android:maxWidth="280dp"
-            android:background="@drawable/message_received_bg"
-            android:padding="12dp">
+            android:gravity="start"
+            android:clipChildren="false"
+            android:clipToPadding="false">
 
             <TextView
-                android:id="@+id/pinIndicator"
+                android:id="@+id/reactionSummary"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="📌 Pinned"
-                android:textSize="10sp"
-                android:textColor="#888888"
-                android:fontFamily="@font/poppins_medium"
-                android:layout_marginBottom="2dp"
+                android:layout_marginBottom="-6dp"
+                android:layout_gravity="end"
+                android:translationX="14dp"
+                android:elevation="2dp"
+                android:background="@drawable/reaction_glass_bg"
+                android:paddingStart="10dp"
+                android:paddingEnd="10dp"
+                android:paddingTop="4dp"
+                android:paddingBottom="4dp"
+                android:textColor="#FFFFFF"
+                android:textSize="13sp"
+                android:singleLine="true"
+                android:ellipsize="end"
                 android:visibility="gone" />
 
-            <TextView
-                android:id="@+id/messageText"
+            <!-- Message Bubble -->
+            <LinearLayout
+                android:id="@+id/messageBubble"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="Message content"
-                android:textColor="?attr/colorOnSurface"
-                android:textSize="17sp"
-                android:fontFamily="sans-serif-medium"
-                android:lineSpacingMultiplier="1.2" />
+                android:orientation="vertical"
+                android:maxWidth="280dp"
+                android:background="@drawable/message_received_bg"
+                android:padding="12dp">
+
+                <TextView
+                    android:id="@+id/pinIndicator"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Pinned"
+                    android:textSize="10sp"
+                    android:textColor="#FFFFFF"
+                    android:fontFamily="@font/poppins_medium"
+                android:drawableStart="@drawable/ic_pin_small"
+                    android:drawableTint="#FFFFFF"
+                    android:drawablePadding="4dp"
+                    android:layout_marginBottom="2dp"
+                    android:visibility="gone" />
+
+                <TextView
+                    android:id="@+id/messageText"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Message content"
+                    android:textColor="?attr/colorOnSurface"
+                    android:textSize="17sp"
+                    android:fontFamily="sans-serif-medium"
+                    android:lineSpacingMultiplier="1.2" />
+
+            </LinearLayout>
 
         </LinearLayout>
 
@@ -83,3 +118,4 @@
     </LinearLayout>
 
 </LinearLayout>
+

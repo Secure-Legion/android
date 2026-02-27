@@ -135,6 +135,8 @@ class InviteDispatcher private constructor(private val appContext: Context) {
         try {
             val mgr = CrdtGroupManager.getInstance(appContext)
             mgr.inviteMember(job.groupId, job.contactPubkeyHex, job.role)
+            val authorName = com.securelegion.crypto.KeyManager.getInstance(appContext).getUsername() ?: "Someone"
+            mgr.sendSystemMessage(job.groupId, "$authorName added ${job.contactDisplayName}")
 
             val elapsedMs = System.currentTimeMillis() - startMs
             Log.i(TAG, "Invite succeeded: $tag (${elapsedMs}ms)")

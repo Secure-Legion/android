@@ -26,7 +26,9 @@ import com.securelegion.services.TorService
  *
  * Updates every 2 seconds
  */
-class TorHealthActivity : AppCompatActivity() {
+class
+
+TorHealthActivity : AppCompatActivity() {
 
     companion object {
         private const val TAG = "TorHealthActivity"

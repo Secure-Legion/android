@@ -1077,6 +1077,15 @@ object RustBridge {
     external fun sendPing(recipientEd25519PublicKey: ByteArray, recipientX25519PublicKey: ByteArray, recipientOnion: String, encryptedMessage: ByteArray, messageTypeByte: Byte, pingId: String, pingTimestamp: Long): String
 
     /**
+     * Preflight Tor SOCKS5 connect to a peer onion/port before sending payload.
+     * Returns JSON:
+     * {"ok":true,"onion":"...","port":9150,"latencyMs":123,"bootstrap":100,"circuits":1}
+     * or
+     * {"ok":false,"onion":"...","port":9150,"error":"...","bootstrap":100,"circuits":1}
+     */
+    external fun torPreflightConnect(onion: String, port: Int, timeoutMs: Int): String
+
+    /**
      * Resend a Ping using stored wire bytes (for retry without regenerating nonce)
      * This prevents ghost pings by ensuring retries use the SAME Ping ID
      * @param wireBytesBase64 Base64-encoded encrypted Ping wire bytes from sendPing response

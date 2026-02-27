@@ -543,9 +543,10 @@ class ContactOptionsActivity : BaseActivity() {
                 val seenUrls = mutableSetOf<String>()
 
                 for (msg in textMessages) {
-                    val content = msg.encryptedContent ?: continue
-                    // encryptedContent is decrypted at display time in chat,
-                    // but for TEXT messages the content is stored as plaintext in local DB
+                    val content = try {
+                        com.securelegion.crypto.KeyManager.getInstance(this@ContactOptionsActivity)
+                            .decryptMessageContent(msg.encryptedContent ?: continue)
+                    } catch (_: Exception) { continue }
                     if (msg.messageType != "TEXT") continue
 
                     val matcher = Patterns.WEB_URL.matcher(content)

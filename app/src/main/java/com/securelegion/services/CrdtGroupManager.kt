@@ -358,45 +358,54 @@ class CrdtGroupManager private constructor(private val context: Context) {
         val db = getDatabase()
         val members = queryMembers(groupId).filter { it.accepted && !it.removed }
         val localPubkeyHex = bytesToHex(keyManager.getSigningPublicKey())
+        val isSyncRequest = (wireType.toInt() and 0xFF) == 0x32
 
-        // Resolve targets via Contact → GroupPeer fallback
-        data class RawTarget(val onion: String, val deviceIdHex: String)
+        // Resolve targets via Contact -> GroupPeer fallback
+        data class RawTarget(val onion: String, val deviceIdHex: String, val pubkeyHex: String)
         val targets = mutableListOf<RawTarget>()
+        val unreachableRaw = mutableListOf<String>()
         for (member in members) {
             if (member.pubkeyHex == localPubkeyHex) continue
             val routing = resolveRouting(db, member.pubkeyHex, groupId)
             if (routing == null) {
-                Log.w(TAG, "broadcastRaw: no routing for ${member.deviceIdHex.take(8)} — skipping (sync protocol)")
+                Log.w(TAG, "broadcastRaw: no routing for ${member.deviceIdHex.take(8)} - skipping (sync protocol)")
+                unreachableRaw.add(member.pubkeyHex)
+                if (isSyncRequest) {
+                    queuePendingDelivery(groupId, member.pubkeyHex, wireType, payload)
+                }
                 continue
             }
-            targets.add(RawTarget(routing.onion, member.deviceIdHex))
+            targets.add(RawTarget(routing.onion, member.deviceIdHex, member.pubkeyHex))
         }
 
         // Send concurrently, bounded by semaphore
+        data class RawSendResult(val success: Boolean, val pubkeyHex: String)
         val results = coroutineScope {
             targets.map { target ->
                 async(Dispatchers.IO) {
                     broadcastSemaphore.withPermit {
                         try {
-                            RustBridge.sendMessageBlob(target.onion, payload, wireType)
+                            RawSendResult(
+                                success = RustBridge.sendMessageBlob(target.onion, payload, wireType),
+                                pubkeyHex = target.pubkeyHex
+                            )
                         } catch (e: Exception) {
                             Log.e(TAG, "broadcastRaw 0x${"%02x".format(wireType)} failed for ${target.deviceIdHex.take(8)}", e)
-                            false
+                            RawSendResult(success = false, pubkeyHex = target.pubkeyHex)
                         }
                     }
                 }
             }.awaitAll()
         }
 
-        val sent = results.count { it }
-        val failed = results.count { !it }
-
-        // Collect unreachable members for self-healing
-        val unreachableRaw = mutableListOf<String>()
-        for (member in members) {
-            if (member.pubkeyHex == localPubkeyHex) continue
-            val routing = resolveRouting(db, member.pubkeyHex, groupId)
-            if (routing == null) unreachableRaw.add(member.pubkeyHex)
+        val sent = results.count { it.success }
+        val failed = results.count { !it.success }
+        if (isSyncRequest) {
+            for (result in results) {
+                if (!result.success) {
+                    queuePendingDelivery(groupId, result.pubkeyHex, wireType, payload)
+                }
+            }
         }
 
         Log.i(TAG, "broadcastRaw 0x${"%02x".format(wireType)} group=${groupId.take(16)}: sent=$sent failed=$failed unreachable=${unreachableRaw.size}")
@@ -830,12 +839,23 @@ class CrdtGroupManager private constructor(private val context: Context) {
         buf.write(requestedPubkey)                         // 32 bytes
         val payload = buf.toByteArray()
 
-        try {
-            RustBridge.sendMessageBlob(targetOnion, payload, 0x36.toByte())
-            Log.i(TAG, "ROUTING_REQUEST: asked for ${requestedPubkeyHex.take(8)} via $targetOnion")
-        } catch (e: Exception) {
-            Log.e(TAG, "ROUTING_REQUEST: failed to send", e)
+        val maxAttempts = 3
+        for (attempt in 1..maxAttempts) {
+            try {
+                val success = RustBridge.sendMessageBlob(targetOnion, payload, 0x36.toByte())
+                if (success) {
+                    Log.i(TAG, "ROUTING_REQUEST: asked for ${requestedPubkeyHex.take(8)} via $targetOnion")
+                    return
+                }
+                Log.w(TAG, "ROUTING_REQUEST: send returned false (attempt $attempt/$maxAttempts) for ${requestedPubkeyHex.take(8)}")
+            } catch (e: Exception) {
+                Log.e(TAG, "ROUTING_REQUEST: send failed (attempt $attempt/$maxAttempts)", e)
+            }
+            if (attempt < maxAttempts) {
+                delay((attempt * 1_000L).coerceAtMost(3_000L))
+            }
         }
+        Log.e(TAG, "ROUTING_REQUEST: exhausted retries for ${requestedPubkeyHex.take(8)} via $targetOnion")
     }
 
     /**
@@ -1417,6 +1437,16 @@ class CrdtGroupManager private constructor(private val context: Context) {
         db.groupDao().updateLastMessagePreview(groupId, preview)
 
         return Pair(opBytes, msgIdHex)
+    }
+
+    /**
+     * Send a system message to the group (renders with SYSTEM theme in UI).
+     */
+    suspend fun sendSystemMessage(groupId: String, text: String): ByteArray {
+        val systemText = "[SYSTEM] $text"
+        val (opBytes, _) = sendMessage(groupId, systemText)
+        broadcastOpToGroup(groupId, opBytes)
+        return opBytes
     }
 
     /**

@@ -255,7 +255,7 @@
         android:visibility="gone"
         app:layout_constraintBottom_toBottomOf="parent">
 
-        <!-- Send Image Option -->
+        <!-- Stickers & GIFs Option -->
         <androidx.constraintlayout.widget.ConstraintLayout
             android:id="@+id/sendImageOption"
             android:layout_width="match_parent"
@@ -269,18 +269,18 @@
                 android:id="@+id/imageIcon"
                 android:layout_width="24dp"
                 android:layout_height="24dp"
-                android:src="@drawable/ic_image_placeholder"
+                android:src="@drawable/ic_sticker"
                 app:tint="#FFFFFF"
                 app:layout_constraintStart_toStartOf="parent"
                 app:layout_constraintTop_toTopOf="parent"
                 app:layout_constraintBottom_toBottomOf="parent"
-                android:contentDescription="Image" />
+                android:contentDescription="Stickers and GIFs" />
 
             <TextView
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_marginStart="16dp"
-                android:text="Send Image"
+                android:text="Stickers &amp; GIFs"
                 android:textSize="16sp"
                 android:textColor="?attr/colorOnSurface"
                 android:fontFamily="@font/poppins_medium"

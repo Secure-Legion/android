@@ -2,10 +2,12 @@ package com.securelegion.workers
 
 import android.content.Context
 import android.util.Log
+import android.util.Base64
 import androidx.work.*
 import com.securelegion.crypto.KeyManager
 import com.securelegion.database.SecureLegionDatabase
 import com.securelegion.database.entities.PendingFriendRequest
+import com.securelegion.models.ContactCard
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.util.concurrent.TimeUnit
@@ -33,6 +35,7 @@ class FriendRequestWorker(
     companion object {
         private const val TAG = "FriendRequestWorker"
         private const val PERIODIC_WORK_NAME = "friend_request_retry_work"
+        private const val IMMEDIATE_SWEEP_WORK_NAME = "friend_request_retry_immediate"
 
         /**
          * Schedule immediate retry for a specific friend request
@@ -84,6 +87,27 @@ class FriendRequestWorker(
             )
 
             Log.i(TAG, "Scheduled periodic friend request retry (every 30 minutes)")
+        }
+
+        /**
+         * Schedule an immediate sweep for all friend requests currently marked needsRetry.
+         */
+        fun scheduleImmediateSweep(context: Context) {
+            val constraints = Constraints.Builder()
+                .setRequiredNetworkType(NetworkType.CONNECTED)
+                .build()
+
+            val sweep = OneTimeWorkRequestBuilder<FriendRequestWorker>()
+                .setConstraints(constraints)
+                .build()
+
+            WorkManager.getInstance(context).enqueueUniqueWork(
+                IMMEDIATE_SWEEP_WORK_NAME,
+                ExistingWorkPolicy.REPLACE,
+                sweep
+            )
+
+            Log.i(TAG, "Scheduled immediate friend request retry sweep")
         }
 
         /**
@@ -144,6 +168,16 @@ class FriendRequestWorker(
 
             for (request in requestsNeedingRetry) {
                 try {
+                    if (isAlreadyFriend(database, request)) {
+                        database.pendingFriendRequestDao().markCompleted(
+                            requestId = request.id,
+                            timestamp = System.currentTimeMillis()
+                        )
+                        Log.i(TAG, "Skipping retry for request ${request.id}: contact already exists")
+                        successCount++
+                        continue
+                    }
+
                     val success = when (request.phase) {
                         PendingFriendRequest.PHASE_1_SENT -> retryPhase1(database, request)
                         PendingFriendRequest.PHASE_2_SENT -> retryPhase2(database, request)
@@ -402,5 +436,48 @@ class FriendRequestWorker(
         val cappedDelay = minOf(delayMs, maxDelayMs)
 
         return System.currentTimeMillis() + cappedDelay
+    }
+
+    private suspend fun isAlreadyFriend(
+        database: SecureLegionDatabase,
+        request: PendingFriendRequest
+    ): Boolean {
+        val contactDao = database.contactDao()
+
+        request.contactId?.let { contactId ->
+            if (contactDao.getContactById(contactId) != null) {
+                return true
+            }
+        }
+
+        if (contactDao.getContactByOnionAddress(request.recipientOnion) != null) {
+            return true
+        }
+
+        val contactCardJson = request.contactCardJson ?: return false
+        val card = try {
+            ContactCard.fromJson(contactCardJson)
+        } catch (_: Exception) {
+            return false
+        }
+
+        val publicKeyBase64 = Base64.encodeToString(card.solanaPublicKey, Base64.NO_WRAP)
+        if (contactDao.getContactByPublicKey(publicKeyBase64) != null) {
+            return true
+        }
+
+        if (card.friendRequestOnion.isNotBlank() &&
+            contactDao.getContactByOnionAddress(card.friendRequestOnion) != null
+        ) {
+            return true
+        }
+
+        if (card.messagingOnion.isNotBlank() &&
+            contactDao.getContactByOnionAddress(card.messagingOnion) != null
+        ) {
+            return true
+        }
+
+        return false
     }
 }

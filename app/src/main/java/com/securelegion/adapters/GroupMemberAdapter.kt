@@ -19,6 +19,7 @@ data class GroupMemberItem(
     val displayName: String,
     val role: String,       // "Admin", "Member", "Pending"
     val isMe: Boolean,
+    val isMuted: Boolean = false,
     val profilePhotoBase64: String? = null
 )
 
@@ -39,6 +40,7 @@ class GroupMemberAdapter(
         val memberRole: TextView = view.findViewById(R.id.memberRole)
         val foreground: View = view.findViewById(R.id.memberForeground)
         val actionMute: View = view.findViewById(R.id.actionMute)
+        val actionMuteLabel: TextView = view.findViewById(R.id.actionMuteLabel)
         val actionRemove: View = view.findViewById(R.id.actionRemove)
         val actionPromote: View = view.findViewById(R.id.actionPromote)
     }
@@ -76,6 +78,7 @@ class GroupMemberAdapter(
         }
 
         // Action button clicks
+        holder.actionMuteLabel.text = if (member.isMuted) "Unmute" else "Mute"
         holder.actionMute.setOnClickListener {
             closeItem(holder)
             onMuteClick(member)
