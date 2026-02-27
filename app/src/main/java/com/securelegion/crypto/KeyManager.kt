@@ -1620,6 +1620,95 @@ class KeyManager private constructor(context: Context) {
         }
     }
 
+    // ==================== MESSAGE CONTENT ENCRYPTION (AES-256-GCM at rest) ====================
+
+    /**
+     * Derive message content encryption key from BIP39 seed.
+     * Uses separate domain separator for key isolation from voice/image/database keys.
+     *
+     * SECURITY: Caller MUST zeroize the returned ByteArray after use.
+     */
+    fun getMessageContentEncryptionKey(): ByteArray {
+        if (!isInitialized()) {
+            throw IllegalStateException("KeyManager not initialized")
+        }
+        var seed: ByteArray? = null
+        try {
+            seed = getSeedBytes()
+            val digest = MessageDigest.getInstance("SHA-256")
+            digest.update(seed)
+            digest.update("secure_legion_message_content_v1".toByteArray(Charsets.UTF_8))
+            return digest.digest()
+        } finally {
+            seed?.let { java.util.Arrays.fill(it, 0.toByte()) }
+        }
+    }
+
+    /**
+     * Encrypt message content string for at-rest storage.
+     * Returns "ENC1:" + Base64([12-byte nonce][ciphertext + 16-byte auth tag]).
+     * Empty strings and already-encrypted strings (starting with "ENC1:") are returned unchanged.
+     */
+    fun encryptMessageContent(plaintext: String): String {
+        if (plaintext.isEmpty()) return plaintext
+        if (plaintext.startsWith("ENC1:")) return plaintext // Double-encrypt guard
+        var key: ByteArray? = null
+        try {
+            key = getMessageContentEncryptionKey()
+            val nonce = ByteArray(12)
+            java.security.SecureRandom().nextBytes(nonce)
+            val cipher = javax.crypto.Cipher.getInstance("AES/GCM/NoPadding")
+            val secretKey = javax.crypto.spec.SecretKeySpec(key, "AES")
+            val gcmSpec = javax.crypto.spec.GCMParameterSpec(128, nonce)
+            cipher.init(javax.crypto.Cipher.ENCRYPT_MODE, secretKey, gcmSpec)
+            val encrypted = cipher.doFinal(plaintext.toByteArray(Charsets.UTF_8))
+            val blob = ByteArray(12 + encrypted.size)
+            System.arraycopy(nonce, 0, blob, 0, 12)
+            System.arraycopy(encrypted, 0, blob, 12, encrypted.size)
+            return "ENC1:" + android.util.Base64.encodeToString(blob, android.util.Base64.NO_WRAP)
+        } finally {
+            key?.let { java.util.Arrays.fill(it, 0.toByte()) }
+        }
+    }
+
+    /**
+     * Decrypt message content string from at-rest storage.
+     * - Empty string   -> return ""          (VOICE/IMAGE messages)
+     * - "ENC1:" prefix -> decrypt and return plaintext
+     * - No prefix      -> return as-is       (legacy plaintext, backward compatible)
+     *
+     * Throws SecurityException if authenticated decryption fails (data corrupted or key mismatch).
+     */
+    fun decryptMessageContent(stored: String): String {
+        if (stored.isEmpty()) return stored
+        if (!stored.startsWith("ENC1:")) return stored // Legacy plaintext passthrough
+        var key: ByteArray? = null
+        try {
+            val blob = android.util.Base64.decode(
+                stored.removePrefix("ENC1:"),
+                android.util.Base64.NO_WRAP
+            )
+            if (blob.size < 12 + 16) {
+                throw IllegalArgumentException("Encrypted content blob too short (${blob.size} bytes)")
+            }
+            key = getMessageContentEncryptionKey()
+            val nonce = ByteArray(12)
+            System.arraycopy(blob, 0, nonce, 0, 12)
+            val ciphertext = ByteArray(blob.size - 12)
+            System.arraycopy(blob, 12, ciphertext, 0, ciphertext.size)
+            val cipher = javax.crypto.Cipher.getInstance("AES/GCM/NoPadding")
+            val secretKey = javax.crypto.spec.SecretKeySpec(key, "AES")
+            val gcmSpec = javax.crypto.spec.GCMParameterSpec(128, nonce)
+            cipher.init(javax.crypto.Cipher.DECRYPT_MODE, secretKey, gcmSpec)
+            return cipher.doFinal(ciphertext).toString(Charsets.UTF_8)
+        } catch (e: javax.crypto.AEADBadTagException) {
+            Log.e(TAG, "Message content authentication failed - data corrupted or key mismatch")
+            throw SecurityException("Message content authentication failed", e)
+        } finally {
+            key?.let { java.util.Arrays.fill(it, 0.toByte()) }
+        }
+    }
+
     /**
      * Extension function to zeroize ByteArray (fill with zeros)
      * Call this on sensitive data like passphrases after use

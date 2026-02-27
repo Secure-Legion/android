@@ -98,6 +98,23 @@ class GroupMembersActivity : BaseActivity() {
         setupBottomNav()
     }
 
+    override fun onResume() {
+        super.onResume()
+        loadGroupMembers()
+
+        val currentGroupId = groupId ?: return
+        lifecycleScope.launch {
+            try {
+                withContext(Dispatchers.IO) {
+                    CrdtGroupManager.getInstance(this@GroupMembersActivity)
+                        .requestSyncToAllPeers(currentGroupId)
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Members sync request failed (non-fatal)", e)
+            }
+        }
+    }
+
     private fun initializeViews() {
         backButton = findViewById(R.id.backButton)
         settingsIcon = findViewById(R.id.settingsIcon)
@@ -140,8 +157,25 @@ class GroupMembersActivity : BaseActivity() {
                 ThemedToast.show(this, "${member.displayName} — ${member.role}")
             },
             onMuteClick = { member ->
-                ThemedToast.show(this, "Muted ${member.displayName}")
-                Log.i(TAG, "Mute: ${member.displayName}")
+                val currentGroupId = groupId ?: return@GroupMemberAdapter
+                val prefs = getSharedPreferences("group_member_mute", MODE_PRIVATE)
+                val newMuted = !member.isMuted
+                prefs.edit().putBoolean("mute_${currentGroupId}_${member.pubkeyHex}", newMuted).apply()
+                ThemedToast.show(this, "${if (newMuted) "Muted" else "Unmuted"} ${member.displayName}")
+                Log.i(TAG, "Mute toggle: ${member.displayName} -> $newMuted")
+                lifecycleScope.launch {
+                    try {
+                        withContext(Dispatchers.IO) {
+                            val mgr = CrdtGroupManager.getInstance(this@GroupMembersActivity)
+                            val authorName = KeyManager.getInstance(this@GroupMembersActivity).getUsername() ?: "Someone"
+                            val action = if (newMuted) "muted" else "unmuted"
+                            mgr.sendSystemMessage(currentGroupId, "$authorName $action ${member.displayName}")
+                        }
+                        loadGroupMembers()
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Failed to broadcast mute system message", e)
+                    }
+                }
             },
             onRemoveClick = { member ->
                 confirmRemoveMember(member)
@@ -214,13 +248,16 @@ class GroupMembersActivity : BaseActivity() {
                     val memberList = crdtMembers.mapNotNull { member ->
                         val isMe = member.pubkeyHex == localPubkeyHex
                         val memberRole = if (!member.accepted) "Pending" else member.role
+                        val isMuted = getSharedPreferences("group_member_mute", MODE_PRIVATE)
+                            .getBoolean("mute_${currentGroupId}_${member.pubkeyHex}", false)
 
                         if (isMe) {
                             return@mapNotNull GroupMemberItem(
                                 pubkeyHex = member.pubkeyHex,
                                 displayName = "You",
                                 role = memberRole,
-                                isMe = true
+                                isMe = true,
+                                isMuted = isMuted
                             )
                         }
 
@@ -240,6 +277,7 @@ class GroupMembersActivity : BaseActivity() {
                             displayName = displayName,
                             role = memberRole,
                             isMe = false,
+                            isMuted = isMuted,
                             profilePhotoBase64 = photo
                         )
                     }
@@ -339,6 +377,8 @@ class GroupMembersActivity : BaseActivity() {
                             val mgr = CrdtGroupManager.getInstance(this@GroupMembersActivity)
                             val opBytes = mgr.removeMember(currentGroupId, member.pubkeyHex)
                             mgr.broadcastOpToGroup(currentGroupId, opBytes)
+                            val authorName = KeyManager.getInstance(this@GroupMembersActivity).getUsername() ?: "Someone"
+                            mgr.sendSystemMessage(currentGroupId, "$authorName removed ${member.displayName}")
                         }
                         ThemedToast.show(this@GroupMembersActivity, "${member.displayName} removed")
                         loadGroupMembers()

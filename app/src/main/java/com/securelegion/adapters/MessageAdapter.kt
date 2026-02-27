@@ -42,7 +42,7 @@ import java.util.Locale
  * DiffUtil will efficiently compute changes between lists of these items
  */
 sealed class ChatListItem {
-    data class MessageItem(val message: Message) : ChatListItem() {
+    data class MessageItem(val message: Message, val reactionSummary: String? = null) : ChatListItem() {
         override fun getStableId() = "msg_${message.messageId}".hashCode().toLong() and 0x7FFFFFFFL
     }
 
@@ -82,7 +82,9 @@ private object ChatListItemDiffCallback : DiffUtil.ItemCallback<ChatListItem>() 
                 oldItem.message.isSentByMe == newItem.message.isSentByMe &&
                 // Compare delivery status fields so ACK arrivals trigger UI updates
                 oldItem.message.pingDelivered == newItem.message.pingDelivered &&
-                oldItem.message.messageDelivered == newItem.message.messageDelivered
+                oldItem.message.messageDelivered == newItem.message.messageDelivered &&
+                // Compare reaction summaries so DiffUtil rebinds only changed items
+                oldItem.reactionSummary == newItem.reactionSummary
             oldItem is ChatListItem.PendingPingItem && newItem is ChatListItem.PendingPingItem ->
                 // Compare all fields that affect display
                 oldItem.pingInbox.pingId == newItem.pingInbox.pingId &&
@@ -124,8 +126,22 @@ class MessageAdapter(
     private val onDeleteMessage: ((Message) -> Unit)? = null, // Delete single message callback
     private val onResendMessage: ((Message) -> Unit)? = null, // Resend failed message callback
     private val onPinMessage: ((Message) -> Unit)? = null, // Pin/unpin message callback
-    private val decryptImageFile: ((ByteArray) -> ByteArray)? = null // Decrypt AES-GCM encrypted image files
+    private val onReactMessage: ((Message) -> Unit)? = null, // Add/change reaction callback
+    private val decryptImageFile: ((ByteArray) -> ByteArray)? = null, // Decrypt AES-GCM encrypted image files
+    private val decryptContent: ((String) -> String)? = null // Decrypt AES-GCM encrypted message content
 ) : ListAdapter<ChatListItem, RecyclerView.ViewHolder>(ChatListItemDiffCallback) {
+
+    /** Decrypt stored content, returning plaintext. Falls back to raw value on error. */
+    private fun resolveContent(stored: String): String {
+        if (stored.isEmpty()) return stored
+        val fn = decryptContent ?: return stored
+        return try {
+            fn(stored)
+        } catch (e: Exception) {
+            Log.e(TAG, "Content decryption failed", e)
+            "[decryption error]"
+        }
+    }
 
     companion object {
         private const val TAG = "MessageAdapter"
@@ -158,6 +174,13 @@ class MessageAdapter(
     // Track animated ellipsis for downloading/decrypting states
     private val ellipsisAnimations = mutableMapOf<TextView, Runnable>()
     private val ellipsisHandler = Handler(Looper.getMainLooper())
+    private var reactionSummaries: Map<String, String> = emptyMap()
+
+    fun setReactionSummaries(summaries: Map<String, String>) {
+        reactionSummaries = summaries
+        // No notifyItemRangeChanged here — reaction data flows through DiffUtil
+        // via ChatListItem.MessageItem.reactionSummary for targeted rebinding
+    }
 
     override fun getItemId(position: Int): Long {
         // Return stable IDs for DiffUtil - prevents bubble jumping
@@ -304,6 +327,7 @@ class MessageAdapter(
         val swipeRevealedTime: TextView = view.findViewById(R.id.swipeRevealedTime)
         val messageCheckbox: CheckBox = view.findViewById(R.id.messageCheckbox)
         val pinIndicator: TextView = view.findViewById(R.id.pinIndicator)
+        val reactionSummary: TextView = view.findViewById(R.id.reactionSummary)
     }
 
     class ReceivedMessageViewHolder(view: View) : RecyclerView.ViewHolder(view) {
@@ -313,6 +337,7 @@ class MessageAdapter(
         val swipeRevealedTime: TextView = view.findViewById(R.id.swipeRevealedTime)
         val messageCheckbox: CheckBox = view.findViewById(R.id.messageCheckbox)
         val pinIndicator: TextView = view.findViewById(R.id.pinIndicator)
+        val reactionSummary: TextView = view.findViewById(R.id.reactionSummary)
     }
 
     class PendingMessageViewHolder(view: View) : RecyclerView.ViewHolder(view) {
@@ -599,9 +624,12 @@ class MessageAdapter(
     }
 
     private fun bindSentMessage(holder: SentMessageViewHolder, message: Message, position: Int) {
-        holder.messageText.text = message.encryptedContent
+        holder.messageText.text = resolveContent(message.encryptedContent)
         holder.messageStatus.setImageResource(getStatusIcon(message))
         holder.pinIndicator.visibility = if (message.isPinned) View.VISIBLE else View.GONE
+        val reaction = reactionSummaries[message.messageId]
+        holder.reactionSummary.text = reaction ?: ""
+        holder.reactionSummary.visibility = if (reaction.isNullOrBlank()) View.GONE else View.VISIBLE
 
         // Show timestamp header if this is the first message or date changed
         if (shouldShowTimestampHeader(position)) {
@@ -658,8 +686,11 @@ class MessageAdapter(
     }
 
     private fun bindReceivedMessage(holder: ReceivedMessageViewHolder, message: Message, position: Int) {
-        holder.messageText.text = message.encryptedContent
+        holder.messageText.text = resolveContent(message.encryptedContent)
         holder.pinIndicator.visibility = if (message.isPinned) View.VISIBLE else View.GONE
+        val reaction = reactionSummaries[message.messageId]
+        holder.reactionSummary.text = reaction ?: ""
+        holder.reactionSummary.visibility = if (reaction.isNullOrBlank()) View.GONE else View.VISIBLE
 
         // Show timestamp header if this is the first message or date changed
         if (shouldShowTimestampHeader(position)) {
@@ -1760,8 +1791,8 @@ class MessageAdapter(
         // Build combined list of ChatListItem objects for DiffUtil to process atomically
         val combinedList = mutableListOf<ChatListItem>()
 
-        // Add all messages
-        combinedList.addAll(newMessages.map { ChatListItem.MessageItem(it) })
+        // Add all messages (include reaction summary so DiffUtil detects reaction changes)
+        combinedList.addAll(newMessages.map { ChatListItem.MessageItem(it, reactionSummaries[it.messageId]) })
 
         // Add pending pings (ChatActivity pre-filters: only DOWNLOADING or PAUSED items)
         combinedList.addAll(newPendingPings.map { pingInbox ->
@@ -1812,9 +1843,13 @@ class MessageAdapter(
                 R.id.action_copy -> {
                     // Copy message text
                     val clipboard = view.context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                    val clip = ClipData.newPlainText("Message", message.encryptedContent)
+                    val clip = ClipData.newPlainText("Message", resolveContent(message.encryptedContent))
                     clipboard.setPrimaryClip(clip)
                     ThemedToast.show(view.context, "Message copied")
+                    true
+                }
+                R.id.action_react -> {
+                    onReactMessage?.invoke(message)
                     true
                 }
                 R.id.action_delete -> {

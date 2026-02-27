@@ -1054,6 +1054,19 @@ class DownloadMessageService : Service() {
                     voiceDuration = null
                     Log.d(TAG, "Profile update message received")
                 }
+                0x10 -> {
+                    // REACTION: [0x10][X25519 32 bytes][Encrypted Reaction JSON]
+                    // Same wire format as TEXT
+                    if (messageBytes.size < 146) {
+                        Log.e(TAG, "REACTION message blob too small: ${messageBytes.size} bytes (need at least 146)")
+                        return
+                    }
+                    senderX25519PublicKey = messageBytes.copyOfRange(1, 33)
+                    signatureBytes = messageBytes.copyOfRange(messageBytes.size - 64, messageBytes.size)
+                    encryptedPayload = messageBytes.copyOfRange(33, messageBytes.size - 64)
+                    voiceDuration = null
+                    Log.d(TAG, "Reaction message received")
+                }
                 else -> {
                     Log.e(TAG, "Unknown message type: 0x${String.format("%02X", typeByte)}")
                     return
@@ -1680,6 +1693,56 @@ class DownloadMessageService : Service() {
                     sendBroadcast(msgReceivedIntent)
 
                     Log.i(TAG, "Profile update processed for ${contactName} (silent, no notification)")
+                }
+
+                0x10 -> {
+                    // REACTION - process via receiveMessage (silent, no notification)
+                    Log.d(TAG, "Processing REACTION message...")
+                    val messageService = MessageService(this@DownloadMessageService)
+                    val encryptedBase64 = android.util.Base64.encodeToString(encryptedPayload, android.util.Base64.NO_WRAP)
+
+                    val result = kotlin.runCatching {
+                        database.withTransaction {
+                            messageService.receiveMessage(
+                                encryptedData = encryptedBase64,
+                                senderPublicKey = senderPublicKey,
+                                senderOnionAddress = contact.messagingOnion ?: "",
+                                messageType = com.securelegion.database.entities.Message.MESSAGE_TYPE_REACTION,
+                                pingId = pingId
+                            )
+                        }
+                    }
+
+                    // Always ACK and transition state
+                    val now = System.currentTimeMillis()
+                    database.pingInboxDao().transitionToMsgStored(pingId, now)
+                    database.pingInboxDao().clearPingWireBytes(pingId, now)
+
+                    serviceScope.launch(Dispatchers.IO) {
+                        try {
+                            sendMessageAck(contactId, contactName, connectionId, pingId)
+                            Log.i(TAG, "REACTION MESSAGE_ACK sent")
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Failed to send MESSAGE_ACK for reaction", e)
+                        }
+                    }
+
+                    // Suppress notification — reactions are silent
+                    val notifManager = getSystemService(android.app.NotificationManager::class.java)
+                    val remainingPending = withContext(Dispatchers.IO) {
+                        database.pingInboxDao().countGlobalPending()
+                    }
+                    if (remainingPending == 0) {
+                        notifManager?.cancel(999)
+                    }
+
+                    // Broadcast to refresh chat UI (reaction summary update)
+                    val msgReceivedIntent = Intent("com.securelegion.MESSAGE_RECEIVED")
+                    msgReceivedIntent.setPackage(packageName)
+                    msgReceivedIntent.putExtra("CONTACT_ID", contactId)
+                    sendBroadcast(msgReceivedIntent)
+
+                    Log.i(TAG, "Reaction processed for ${contactName} (silent, no notification)")
                 }
 
                 else -> {

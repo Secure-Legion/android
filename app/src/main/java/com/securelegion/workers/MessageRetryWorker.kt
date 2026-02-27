@@ -176,16 +176,16 @@ class MessageRetryWorker(
 
         val now = System.currentTimeMillis()
 
-        // SOFT GATE: Check Tor health AND circuits before attempting retries
+        // SOFT GATE: Check live Tor status AND cached health snapshot before attempting retries
         // CRITICAL: SOCKS status 1 (general failure) usually means no circuits available
-        val torUnavailable = TorHealthHelper.isTorUnavailable(applicationContext)
         val bootstrapPercent = com.securelegion.crypto.RustBridge.getBootstrapStatus()
         val circuitsEstablished = com.securelegion.crypto.RustBridge.getCircuitEstablished()
+        val torUnavailable = TorHealthHelper.isTorUnavailable(applicationContext)
 
-        if (torUnavailable) {
-            val status = TorHealthHelper.getStatusString(applicationContext)
-            Log.w(TAG, "Tor unavailable ($status), skipping retry (will retry when healthy)")
-            return@withContext 0 // Exit early, don't attempt sends
+        // Live checks first (avoid stale snapshot blocking retries)
+        if (bootstrapPercent < 100) {
+            Log.w(TAG, "Tor bootstrapping (${bootstrapPercent}%) - skipping retry (will retry when healthy)")
+            return@withContext 0
         }
 
         if (circuitsEstablished < 1) {
@@ -195,7 +195,12 @@ class MessageRetryWorker(
             return@withContext 0 // Exit early, circuits not ready yet
         }
 
-        Log.i(TAG, "Tor healthy: bootstrap=${bootstrapPercent}%, circuits=${circuitsEstablished}, proceeding with retries")
+        if (torUnavailable) {
+            val status = TorHealthHelper.getStatusString(applicationContext)
+            Log.w(TAG, "Tor health snapshot unavailable ($status) but live checks OK; proceeding with retries")
+        } else {
+            Log.i(TAG, "Tor healthy: bootstrap=${bootstrapPercent}%, circuits=${circuitsEstablished}, proceeding with retries")
+        }
 
         // HARD GATE:
         // - Message not fully delivered

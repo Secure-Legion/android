@@ -1,4 +1,4 @@
-package com.securelegion.services
+﻿package com.securelegion.services
 
 import android.content.Context
 import android.content.Intent
@@ -30,6 +30,8 @@ import androidx.room.withTransaction
 import org.json.JSONObject
 import java.security.MessageDigest
 import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.ThreadLocalRandom
 
 /**
  * Message Service - Handles encrypted P2P messaging over Tor
@@ -47,9 +49,110 @@ class MessageService(private val context: Context) {
     companion object {
         private const val TAG = "MessageService"
 
-        // Throttle for TTL-expired → TorService SOCKS failure reports (signal, not noise)
+        // Throttle for TTL-expired -> TorService SOCKS failure reports (signal, not noise)
         @Volatile private var lastTtlReportMs: Long = 0L
         private const val TTL_REPORT_COOLDOWN_MS = 2_000L
+        private const val PING_HANDSHAKE_PORT = 9150
+        private const val PRECHECK_TIMEOUT_MS = 3500
+        private const val RETRYABLE_BACKOFF_BASE_MS = 200L
+        private const val RETRYABLE_BACKOFF_MAX_MS = 500L
+        private const val HOST_UNREACHABLE_BACKOFF_BASE_MS = 300L
+        private const val HOST_UNREACHABLE_BACKOFF_MAX_MS = 500L
+        private const val RETRYABLE_JITTER_MAX_MS = 50L
+        private const val STATUS4_DIAG_COOLDOWN_MS = 30_000L
+
+        private data class RetryablePeerState(
+            var streak: Int = 0,
+            var suppressUntilMs: Long = 0L,
+            var lastStatus4DiagMs: Long = 0L
+        )
+
+        private val retryablePeerState = ConcurrentHashMap<String, RetryablePeerState>()
+
+        private fun peerKey(onion: String): String = onion.trim().lowercase()
+
+        private fun getRetryableCooldownMs(onion: String, nowMs: Long = SystemClock.elapsedRealtime()): Long {
+            val state = retryablePeerState[peerKey(onion)] ?: return 0L
+            return synchronized(state) {
+                (state.suppressUntilMs - nowMs).coerceAtLeast(0L)
+            }
+        }
+
+        private fun hasRecentRetryableFailures(onion: String): Boolean {
+            val state = retryablePeerState[peerKey(onion)] ?: return false
+            return synchronized(state) { state.streak > 0 }
+        }
+
+        private fun registerRetryableFailure(onion: String, isHostUnreachable: Boolean, nowMs: Long = SystemClock.elapsedRealtime()): Long {
+            val key = peerKey(onion)
+            val state = retryablePeerState.computeIfAbsent(key) { RetryablePeerState() }
+            return synchronized(state) {
+                state.streak = (state.streak + 1).coerceAtMost(3)
+                val baseMs = if (isHostUnreachable) HOST_UNREACHABLE_BACKOFF_BASE_MS else RETRYABLE_BACKOFF_BASE_MS
+                val capMs = if (isHostUnreachable) HOST_UNREACHABLE_BACKOFF_MAX_MS else RETRYABLE_BACKOFF_MAX_MS
+                val exponential = (baseMs * (1L shl (state.streak - 1))).coerceAtMost(capMs)
+                val jitter = ThreadLocalRandom.current().nextLong(RETRYABLE_JITTER_MAX_MS + 1L)
+                val delayMs = (exponential + jitter).coerceAtMost(capMs + RETRYABLE_JITTER_MAX_MS)
+                state.suppressUntilMs = maxOf(state.suppressUntilMs, nowMs + delayMs)
+                (state.suppressUntilMs - nowMs).coerceAtLeast(0L)
+            }
+        }
+
+        private fun clearRetryableFailureState(onion: String) {
+            retryablePeerState.remove(peerKey(onion))
+        }
+
+        private fun shouldRunStatus4Diagnostics(onion: String, nowMs: Long = SystemClock.elapsedRealtime()): Boolean {
+            val state = retryablePeerState.computeIfAbsent(peerKey(onion)) { RetryablePeerState() }
+            return synchronized(state) {
+                if (nowMs - state.lastStatus4DiagMs < STATUS4_DIAG_COOLDOWN_MS) {
+                    false
+                } else {
+                    state.lastStatus4DiagMs = nowMs
+                    true
+                }
+            }
+        }
+
+        private fun computeBlobMessageIdFromEncryptedPayload(encryptedPayloadBase64: String): String? {
+            return try {
+                val encryptedBytes = Base64.decode(encryptedPayloadBase64, Base64.NO_WRAP)
+                val hash = MessageDigest.getInstance("SHA-256").digest(encryptedBytes)
+                "blob_" + Base64.encodeToString(hash, Base64.NO_WRAP).take(28)
+            } catch (_: Exception) {
+                null
+            }
+        }
+
+        /**
+         * Resolve reaction target to a local messageId.
+         * Handles cross-device mismatch where sender targets blob_* while receiver stores deterministic IDs.
+         */
+        suspend fun resolveReactionTargetIdForContact(
+            database: SecureLegionDatabase,
+            contactId: Long,
+            targetMessageId: String?,
+            targetBlobId: String?
+        ): String? {
+            val directTarget = targetMessageId?.takeIf { it.isNotBlank() }
+            val blobTarget = targetBlobId?.takeIf { it.isNotBlank() }
+
+            if (directTarget != null && database.messageDao().messageExists(directTarget)) {
+                return directTarget
+            }
+            if (blobTarget != null && database.messageDao().messageExists(blobTarget)) {
+                return blobTarget
+            }
+            if (blobTarget != null) {
+                val rows = database.messageDao().getBlobLookupRows(contactId)
+                val mapped = rows.firstOrNull { row ->
+                    val computedBlob = row.encryptedPayload?.let { computeBlobMessageIdFromEncryptedPayload(it) }
+                    computedBlob == blobTarget
+                }?.messageId
+                if (!mapped.isNullOrBlank()) return mapped
+            }
+            return directTarget
+        }
 
         /**
          * ACK State Tracker - Enforces strict ACK ordering per message
@@ -147,16 +250,16 @@ class MessageService(private val context: Context) {
          * SCENARIO (why this matters):
          * Alice sends to Bob:
          * Alice computes: conversationId = sort([AlicePubKey, BobPubKey])
-         * → "AlicePubKey|BobPubKey" (alphabetically sorted)
+         * -> "AlicePubKey|BobPubKey" (alphabetically sorted)
          *
          * Bob receives from Alice:
          * Bob computes: conversationId = sort([AlicePubKey, BobPubKey])
-         * → "AlicePubKey|BobPubKey" (SAME order, because it's sorted)
+         * -> "AlicePubKey|BobPubKey" (SAME order, because it's sorted)
          *
          * WITHOUT SORTING (broken):
          * Alice: conversationId = "AlicePubKey|BobPubKey"
-         * Bob: conversationId = "BobPubKey|AlicePubKey" ← DIFFERENT!
-         * → Two separate threads, broken dedup, "why do I see two chats?" bug
+         * Bob: conversationId = "BobPubKey|AlicePubKey" <- DIFFERENT!
+         * -> Two separate threads, broken dedup, "why do I see two chats?" bug
          *
          * Hash inputs (in this exact order for consistent ordering):
          * v1 || conversationId || senderEd25519 || recipientEd25519 || plaintextHash || messageNonce
@@ -203,9 +306,9 @@ class MessageService(private val context: Context) {
 
             // PHASE 1.2: SORTED PUBKEYS (MANDATORY)
             // Sort keys lexicographically to ensure Alice and Bob derive the same conversationId
-            // Alice: sort([AlicePubKey, BobPubKey]) → "AlicePubKey|BobPubKey"
-            // Bob: sort([AlicePubKey, BobPubKey]) → "AlicePubKey|BobPubKey" (SAME!)
-            // Without sorting: Alice gets "A|B", Bob gets "B|A" → TWO SEPARATE THREADS
+            // Alice: sort([AlicePubKey, BobPubKey]) -> "AlicePubKey|BobPubKey"
+            // Bob: sort([AlicePubKey, BobPubKey]) -> "AlicePubKey|BobPubKey" (SAME!)
+            // Without sorting: Alice gets "A|B", Bob gets "B|A" -> TWO SEPARATE THREADS
             // DO NOT REMOVE SORTING or 1-to-1 chats will break
             val sortedKeys = listOf(senderEd25519Base64, recipientEd25519Base64).sorted()
             val conversationId = sortedKeys.joinToString("|")
@@ -605,7 +708,7 @@ class MessageService(private val context: Context) {
             val encryptedImageBytes = keyManager.encryptImageFile(imageBytes)
             imageFile.writeBytes(encryptedImageBytes)
             val imageFilePath = imageFile.absolutePath
-            Log.d(TAG, "Saved encrypted image to file: $imageFilePath (${imageBytes.size} → ${encryptedImageBytes.size} bytes)")
+            Log.d(TAG, "Saved encrypted image to file: $imageFilePath (${imageBytes.size} -> ${encryptedImageBytes.size} bytes)")
 
             // Create message entity with IMAGE type
             val message = Message(
@@ -700,7 +803,7 @@ class MessageService(private val context: Context) {
     }
 
     /**
-     * Send a sticker message — asset path is sent as the payload so receiver
+     * Send a sticker message - asset path is sent as the payload so receiver
      * can look up the same bundled Lottie animation. Wire type 0x0E.
      */
     suspend fun sendStickerMessage(
@@ -811,6 +914,100 @@ class MessageService(private val context: Context) {
     }
 
     /**
+     * Send a reaction event for an existing message.
+     * Reuses the standard ping/pong reliability pipeline.
+     */
+    suspend fun sendReactionMessage(
+        contactId: Long,
+        targetMessageId: String,
+        targetBlobMessageId: String? = null,
+        emoji: String,
+        present: Boolean
+    ): Result<Unit> = withContext(Dispatchers.IO) {
+        try {
+            val dbPassphrase = keyManager.getDatabasePassphrase()
+            val database = SecureLegionDatabase.getInstance(context, dbPassphrase)
+            val contact = database.contactDao().getContactById(contactId)
+                ?: return@withContext Result.failure(Exception("Contact not found"))
+
+            val ourPublicKey = keyManager.getSigningPublicKey()
+            val ourPublicKeyBase64 = android.util.Base64.encodeToString(ourPublicKey, android.util.Base64.NO_WRAP)
+
+            val payloadJson = JSONObject().apply {
+                put("target_message_id", targetMessageId)
+                if (!targetBlobMessageId.isNullOrBlank()) {
+                    put("target_blob_id", targetBlobMessageId)
+                }
+                put("emoji", emoji)
+                put("present", present)
+                put("updated_at", System.currentTimeMillis())
+            }.toString()
+
+            val keyChain = KeyChainManager.getKeyChain(context, contactId)
+                ?: throw Exception("Key chain not found for contact ${contact.displayName}")
+
+            // REACTION format: [0x10][jsonUtf8...]
+            val reactionBytes = payloadJson.toByteArray(Charsets.UTF_8)
+            val plaintextWithType = byteArrayOf(0x10) + reactionBytes
+            val plaintextForEncryption = String(plaintextWithType, Charsets.ISO_8859_1)
+
+            // Encrypt with key chain evolution (CRITICAL: must evolve key for future messages)
+            val encryptResult = RustBridge.encryptMessageWithEvolution(
+                plaintextForEncryption,
+                keyChain.sendChainKeyBytes,
+                keyChain.sendCounter
+            )
+            val encryptedBytes = encryptResult.ciphertext
+
+            // Persist evolved send chain key
+            database.contactKeyChainDao().updateSendChainKey(
+                contactId = contactId,
+                newSendChainKeyBase64 = android.util.Base64.encodeToString(encryptResult.evolvedChainKey, android.util.Base64.NO_WRAP),
+                newSendCounter = keyChain.sendCounter + 1,
+                timestamp = System.currentTimeMillis()
+            )
+
+            // Update local reaction aggregate immediately (sender-side UI)
+            database.messageReactionDao().upsert(
+                com.securelegion.database.entities.MessageReaction(
+                    contactId = contactId,
+                    targetMessageId = targetMessageId,
+                    reactorPubKey = ourPublicKeyBase64,
+                    emoji = emoji,
+                    isRemoved = !present,
+                    updatedAt = System.currentTimeMillis()
+                )
+            )
+
+            // Send directly via Tor (no ping/pong, no typing indicator)
+            val onionAddress = contact.messagingOnion ?: ""
+            if (onionAddress.isBlank()) {
+                return@withContext Result.failure(Exception("Contact has no messaging onion"))
+            }
+
+            val success = RustBridge.sendMessageBlob(
+                onionAddress,
+                encryptedBytes,
+                0x10.toByte()
+            )
+
+            if (!success) {
+                return@withContext Result.failure(Exception("Reaction delivery failed"))
+            }
+
+            val intent = android.content.Intent("com.securelegion.MESSAGE_RECEIVED")
+            intent.setPackage(context.packageName)
+            intent.putExtra("CONTACT_ID", contactId)
+            context.sendBroadcast(intent)
+
+            Result.success(Unit)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to send reaction message", e)
+            Result.failure(e)
+        }
+    }
+
+    /**
      * Send a profile photo update to a single contact via Tor
      * Sends directly via RustBridge without saving to messages table (zero trace).
      * @param contactId Database ID of the recipient contact
@@ -859,7 +1056,7 @@ class MessageService(private val context: Context) {
                 newSendCounter = keyChain.sendCounter + 1,
                 timestamp = System.currentTimeMillis()
             )
-            Log.d(TAG, "Send chain key evolved: counter ${keyChain.sendCounter} → ${keyChain.sendCounter + 1}")
+            Log.d(TAG, "Send chain key evolved: counter ${keyChain.sendCounter} -> ${keyChain.sendCounter + 1}")
 
             // Get recipient keys for Ping
             val recipientEd25519PubKey = Base64.decode(contact.publicKeyBase64, Base64.NO_WRAP)
@@ -870,7 +1067,7 @@ class MessageService(private val context: Context) {
             val pingId = generatePingId()
             val pingTimestamp = System.currentTimeMillis()
 
-            // Send directly via Rust bridge — NO message saved to DB (zero trace)
+            // Send directly via Rust bridge - NO message saved to DB (zero trace)
             val pingResponse = RustBridge.sendPing(
                 recipientEd25519PubKey,
                 recipientX25519PubKey,
@@ -889,7 +1086,7 @@ class MessageService(private val context: Context) {
 
             Result.success(Unit)
         } catch (e: kotlinx.coroutines.CancellationException) {
-            throw e // Don't swallow cancellation — rethrow for structured concurrency
+            throw e // Don't swallow cancellation - rethrow for structured concurrency
         } catch (e: Exception) {
             Log.e(TAG, "Failed to send profile update to contact $contactId", e)
             Result.failure(e)
@@ -1052,7 +1249,7 @@ class MessageService(private val context: Context) {
             val message = Message(
                 contactId = contactId,
                 messageId = messageId,
-                encryptedContent = plaintext, // Store plaintext for now (will encrypt in future)
+                encryptedContent = keyManager.encryptMessageContent(plaintext),
                 isSentByMe = true,
                 timestamp = currentTime,
                 status = Message.STATUS_PING_SENT, // Start as PING_SENT so pollForPongsAndSendMessages() can find it
@@ -1252,7 +1449,7 @@ class MessageService(private val context: Context) {
             val message = Message(
                 contactId = contactId,
                 messageId = messageId,
-                encryptedContent = "Payment Request: ${quote.formattedAmount}", // Display text
+                encryptedContent = keyManager.encryptMessageContent("Payment Request: ${quote.formattedAmount}"),
                 messageType = Message.MESSAGE_TYPE_PAYMENT_REQUEST,
                 isSentByMe = true,
                 timestamp = currentTime,
@@ -1440,7 +1637,7 @@ class MessageService(private val context: Context) {
             val message = Message(
                 contactId = contactId,
                 messageId = messageId,
-                encryptedContent = "Paid: ${originalQuote.formattedAmount}", // Display text
+                encryptedContent = keyManager.encryptMessageContent("Paid: ${originalQuote.formattedAmount}"),
                 messageType = Message.MESSAGE_TYPE_PAYMENT_SENT,
                 isSentByMe = true,
                 timestamp = currentTime,
@@ -1589,7 +1786,7 @@ class MessageService(private val context: Context) {
             val message = Message(
                 contactId = contactId,
                 messageId = messageId,
-                encryptedContent = "Payment accepted: ${originalQuote.formattedAmount}",
+                encryptedContent = keyManager.encryptMessageContent("Payment accepted: ${originalQuote.formattedAmount}"),
                 messageType = Message.MESSAGE_TYPE_PAYMENT_ACCEPTED,
                 isSentByMe = true,
                 timestamp = currentTime,
@@ -1665,7 +1862,7 @@ class MessageService(private val context: Context) {
         val bodyUtf8: String       // best-effort UTF-8 decode of bodyBytes
     )
 
-    /** Known inner plaintext prefix bytes — only these are treated as type prefixes. */
+    /** Known inner plaintext prefix bytes - only these are treated as type prefixes. */
     private val KNOWN_APP_PREFIXES = setOf(
         0x00, // TEXT
         0x01, // VOICE
@@ -1674,7 +1871,8 @@ class MessageService(private val context: Context) {
         0x0B, // PAYMENT_SENT
         0x0C, // PAYMENT_ACCEPTED
         0x0E, // STICKER
-        0x0F  // PROFILE_UPDATE
+        0x0F, // PROFILE_UPDATE
+        0x10  // REACTION
     )
 
     /**
@@ -1947,7 +2145,7 @@ class MessageService(private val context: Context) {
                     // PHASE 1.2: Generate deterministic messageId using SORTED pubkeys
                     // Sender computed: generateDeterministicMessageId(audio, senderKey, recipientKey, nonce)
                     // Receiver computes: generateDeterministicMessageId(audio, senderKey, ourKey, nonce) with SORTED keys
-                    // sort([senderKey, ourKey]) == sort([ourKey, senderKey]) ← ensures same ID on both sides
+                    // sort([senderKey, ourKey]) == sort([ourKey, senderKey]) <- ensures same ID on both sides
                     val audioAsString = String(audioBytes, Charsets.ISO_8859_1)
                     val messageId = generateDeterministicMessageId(
                         plaintext = audioAsString,
@@ -1977,7 +2175,8 @@ class MessageService(private val context: Context) {
                         messageNonce = messageNonce, // CRITICAL: Stored once, reused on all retries
                         selfDestructAt = selfDestructAt,
                         requiresReadReceipt = requiresReadReceipt,
-                        pingId = pingId
+                        pingId = pingId,
+                        encryptedPayload = encryptedData // Store ciphertext for blob ID computation (reaction mapping)
                     )
                 }
                 Message.MESSAGE_TYPE_IMAGE -> {
@@ -2015,7 +2214,7 @@ class MessageService(private val context: Context) {
                     val encryptedImageBytes = keyManager.encryptImageFile(imageBytes)
                     imageFile.writeBytes(encryptedImageBytes)
                     val imageFilePath = imageFile.absolutePath
-                    Log.d(TAG, "Saved encrypted received image to file: $imageFilePath (${imageBytes.size} → ${encryptedImageBytes.size} bytes)")
+                    Log.d(TAG, "Saved encrypted received image to file: $imageFilePath (${imageBytes.size} -> ${encryptedImageBytes.size} bytes)")
 
                     Message(
                         contactId = contact.id,
@@ -2032,7 +2231,8 @@ class MessageService(private val context: Context) {
                         messageNonce = messageNonce, // CRITICAL: Stored once, reused on all retries
                         selfDestructAt = selfDestructAt,
                         requiresReadReceipt = requiresReadReceipt,
-                        pingId = pingId
+                        pingId = pingId,
+                        encryptedPayload = encryptedData // Store ciphertext for blob ID computation (reaction mapping)
                     )
                 }
                 Message.MESSAGE_TYPE_PAYMENT_REQUEST -> {
@@ -2070,7 +2270,8 @@ class MessageService(private val context: Context) {
                         messageNonce = messageNonce, // CRITICAL: Stored once, reused on all retries
                         selfDestructAt = selfDestructAt,
                         requiresReadReceipt = requiresReadReceipt,
-                        pingId = pingId
+                        pingId = pingId,
+                        encryptedPayload = encryptedData
                     )
                 }
                 Message.MESSAGE_TYPE_PAYMENT_SENT -> {
@@ -2111,7 +2312,8 @@ class MessageService(private val context: Context) {
                         messageNonce = messageNonce, // CRITICAL: Stored once, reused on all retries
                         selfDestructAt = selfDestructAt,
                         requiresReadReceipt = requiresReadReceipt,
-                        pingId = pingId
+                        pingId = pingId,
+                        encryptedPayload = encryptedData
                     )
                 }
                 Message.MESSAGE_TYPE_PAYMENT_ACCEPTED -> {
@@ -2134,7 +2336,7 @@ class MessageService(private val context: Context) {
                     Message(
                         contactId = contact.id,
                         messageId = messageId,
-                        encryptedContent = receiveAddress, // Store receive address in content field
+                        encryptedContent = keyManager.encryptMessageContent(receiveAddress),
                         messageType = Message.MESSAGE_TYPE_PAYMENT_ACCEPTED,
                         paymentStatus = Message.PAYMENT_STATUS_PENDING,
                         paymentToken = token,
@@ -2147,7 +2349,8 @@ class MessageService(private val context: Context) {
                         messageNonce = messageNonce, // CRITICAL: Stored once, reused on all retries
                         selfDestructAt = selfDestructAt,
                         requiresReadReceipt = requiresReadReceipt,
-                        pingId = pingId
+                        pingId = pingId,
+                        encryptedPayload = encryptedData
                     )
                 }
                 Message.MESSAGE_TYPE_PROFILE_UPDATE -> {
@@ -2179,6 +2382,69 @@ class MessageService(private val context: Context) {
                     }
                     return@withContext Result.failure(Exception("Profile update processed"))
                 }
+                Message.MESSAGE_TYPE_REACTION -> {
+                    // Reaction message: [0x10][jsonUtf8...]
+                    val rawBytes = decryptedData.toByteArray(Charsets.ISO_8859_1)
+                    val reactionJson = if (rawBytes.size >= 2 && rawBytes[0] == 0x10.toByte()) {
+                        String(rawBytes.copyOfRange(1, rawBytes.size), Charsets.UTF_8)
+                    } else {
+                        String(rawBytes, Charsets.UTF_8)
+                    }
+
+                    val obj = JSONObject(reactionJson)
+                    val targetMessageId = obj.optString("target_message_id")
+                    val targetBlobId = obj.optString("target_blob_id")
+                    val resolvedTargetId = resolveReactionTargetIdForContact(
+                        database = database,
+                        contactId = contact.id,
+                        targetMessageId = targetMessageId,
+                        targetBlobId = targetBlobId
+                    )
+                    val emoji = obj.optString("emoji")
+                    val present = obj.optBoolean("present", true)
+                    val updatedAt = obj.optLong("updated_at", System.currentTimeMillis())
+
+                    val messageId = generateDeterministicMessageId(
+                        plaintext = reactionJson,
+                        senderEd25519Base64 = senderPublicKeyBase64,
+                        recipientEd25519Base64 = ourPublicKeyBase64,
+                        messageNonce = messageNonce
+                    )
+                    if (database.messageDao().messageExists(messageId)) {
+                        Log.w(TAG, "Duplicate reaction message ignored: $messageId")
+                        return@withContext Result.failure(Exception("Duplicate message"))
+                    }
+
+                    if (!resolvedTargetId.isNullOrBlank()) {
+                        database.messageReactionDao().upsert(
+                            com.securelegion.database.entities.MessageReaction(
+                                contactId = contact.id,
+                                targetMessageId = resolvedTargetId,
+                                reactorPubKey = senderPublicKeyBase64,
+                                emoji = emoji,
+                                isRemoved = !present,
+                                updatedAt = updatedAt
+                            )
+                        )
+                    }
+
+                    Message(
+                        contactId = contact.id,
+                        messageId = messageId,
+                        encryptedContent = keyManager.encryptMessageContent(reactionJson),
+                        messageType = Message.MESSAGE_TYPE_REACTION,
+                        isSentByMe = false,
+                        timestamp = System.currentTimeMillis(),
+                        status = Message.STATUS_DELIVERED,
+                        signatureBase64 = "",
+                        nonceBase64 = nonceBase64,
+                        messageNonce = messageNonce,
+                        selfDestructAt = selfDestructAt,
+                        requiresReadReceipt = requiresReadReceipt,
+                        pingId = pingId,
+                        encryptedPayload = encryptedData
+                    )
+                }
                 Message.MESSAGE_TYPE_STICKER -> {
                     // Sticker message: decryptedData = [0x0E][assetPathUtf8...]
                     val rawBytes = decryptedData.toByteArray(Charsets.ISO_8859_1)
@@ -2187,7 +2453,7 @@ class MessageService(private val context: Context) {
                         assetPath = String(rawBytes.copyOfRange(1, rawBytes.size), Charsets.UTF_8)
                         Log.d(TAG, "Stripped 0x0E STICKER prefix, assetPath=$assetPath")
                     } else {
-                        // No prefix — treat entire payload as asset path (backward compat)
+                        // No prefix - treat entire payload as asset path (backward compat)
                         assetPath = String(rawBytes, Charsets.UTF_8)
                         Log.w(TAG, "Sticker payload missing 0x0E prefix, using raw: $assetPath")
                     }
@@ -2221,7 +2487,8 @@ class MessageService(private val context: Context) {
                         messageNonce = messageNonce,
                         selfDestructAt = selfDestructAt,
                         requiresReadReceipt = requiresReadReceipt,
-                        pingId = pingId
+                        pingId = pingId,
+                        encryptedPayload = encryptedData
                     )
                 }
                 else -> {
@@ -2245,15 +2512,52 @@ class MessageService(private val context: Context) {
                             actualAttachmentData = null
                         }
                         0x0E -> {
-                            // STICKER misrouted as TEXT — self-heal
+                            // STICKER misrouted as TEXT - self-heal
                             Log.w(TAG, "Sticker message misrouted as TEXT, self-healing to STICKER")
                             actualContent = ""
                             actualMessageType = Message.MESSAGE_TYPE_STICKER
                             actualAttachmentType = "sticker"
                             actualAttachmentData = decoded.bodyUtf8 // asset path
                         }
+                        0x10 -> {
+                            // REACTION misrouted as TEXT - keep payload so receive branch can parse.
+                            actualContent = decoded.bodyUtf8
+                            actualMessageType = Message.MESSAGE_TYPE_REACTION
+                            actualAttachmentType = null
+                            actualAttachmentData = null
+
+                            // Persist reaction aggregate (since we bypassed REACTION branch)
+                            try {
+                                val obj = JSONObject(decoded.bodyUtf8)
+                                val targetMessageId = obj.optString("target_message_id")
+                                val targetBlobId = obj.optString("target_blob_id")
+                                val resolvedTargetId = resolveReactionTargetIdForContact(
+                                    database = database,
+                                    contactId = contact.id,
+                                    targetMessageId = targetMessageId,
+                                    targetBlobId = targetBlobId
+                                )
+                                val emoji = obj.optString("emoji")
+                                val present = obj.optBoolean("present", true)
+                                val updatedAt = obj.optLong("updated_at", System.currentTimeMillis())
+                                if (!resolvedTargetId.isNullOrBlank()) {
+                                    database.messageReactionDao().upsert(
+                                        com.securelegion.database.entities.MessageReaction(
+                                            contactId = contact.id,
+                                            targetMessageId = resolvedTargetId,
+                                            reactorPubKey = senderPublicKeyBase64,
+                                            emoji = emoji,
+                                            isRemoved = !present,
+                                            updatedAt = updatedAt
+                                        )
+                                    )
+                                }
+                            } catch (e: Exception) {
+                                Log.w(TAG, "Failed to parse misrouted reaction payload", e)
+                            }
+                        }
                         else -> {
-                            // Other known type misrouted here — decode body, store as TEXT
+                            // Other known type misrouted here - decode body, store as TEXT
                             Log.w(TAG, "Unexpected appType 0x${String.format("%02X", decoded.appType)} in TEXT branch, storing body as TEXT")
                             actualContent = decoded.bodyUtf8
                             actualMessageType = Message.MESSAGE_TYPE_TEXT
@@ -2280,7 +2584,7 @@ class MessageService(private val context: Context) {
                     Message(
                         contactId = contact.id,
                         messageId = messageId,
-                        encryptedContent = actualContent,
+                        encryptedContent = keyManager.encryptMessageContent(actualContent),
                         messageType = actualMessageType,
                         attachmentType = actualAttachmentType,
                         attachmentData = actualAttachmentData,
@@ -2292,7 +2596,8 @@ class MessageService(private val context: Context) {
                         messageNonce = messageNonce, // CRITICAL: Stored once, reused on all retries
                         selfDestructAt = selfDestructAt,
                         requiresReadReceipt = requiresReadReceipt,
-                        pingId = pingId
+                        pingId = pingId,
+                        encryptedPayload = encryptedData // Store ciphertext for blob ID computation (reaction mapping)
                     )
                 }
             }
@@ -2383,7 +2688,7 @@ class MessageService(private val context: Context) {
                             message.copy(pingDelivered = true)
                         }
                         AckState.PONG_RECEIVED -> {
-                            // PONG received — mark pingDelivered + transition to PONG_RECEIVED status
+                            // PONG received - mark pingDelivered + transition to PONG_RECEIVED status
                             message.copy(pingDelivered = true, status = Message.STATUS_PONG_RECEIVED)
                         }
                         AckState.DELIVERED -> {
@@ -2644,7 +2949,7 @@ class MessageService(private val context: Context) {
             val messages = database.messageDao().getMessagesForContact(contactId)
             Log.d(TAG, "Loaded ${messages.size} messages for contact $contactId")
             messages.forEach { msg ->
-                Log.d(TAG, "- [${msg.messageType}] ${msg.encryptedContent.take(30)}... (id=${msg.id}, status=${msg.status})")
+                Log.d(TAG, "- [${msg.messageType}] [${msg.encryptedContent.length}B] (id=${msg.id}, status=${msg.status})")
             }
             messages
         } catch (e: Exception) {
@@ -2729,11 +3034,11 @@ class MessageService(private val context: Context) {
 
             Log.d(TAG, "Sending Ping for message ${message.messageId} (Ping ID: ${message.pingId})")
 
-            // Wait for transport gate — fail if gate doesn't open (retry worker handles recovery)
+            // Wait for transport gate - fail if gate doesn't open (retry worker handles recovery)
             Log.d(TAG, "Waiting for transport gate before sending Ping...")
             val gateOpen = TorService.getTransportGate()?.awaitOpen(com.securelegion.network.TransportGate.TIMEOUT_SEND_MS) ?: true
             if (!gateOpen) {
-                Log.w(TAG, "Transport gate timed out for Ping send — deferring to retry worker")
+                Log.w(TAG, "Transport gate timed out for Ping send - deferring to retry worker")
                 return@withContext Result.failure(Exception("Transport gate timeout"))
             }
             Log.d(TAG, "Transport gate open - proceeding with Ping send")
@@ -2760,7 +3065,7 @@ class MessageService(private val context: Context) {
             val recipientEd25519PubKey = Base64.decode(contact.publicKeyBase64, Base64.NO_WRAP)
             val recipientX25519PubKey = Base64.decode(contact.x25519PublicKeyBase64, Base64.NO_WRAP)
 
-            // Get encrypted message payload (on-demand loading for CursorWindow safety —
+            // Get encrypted message payload (on-demand loading for CursorWindow safety -
             // bulk queries exclude encryptedPayload via NULL AS, so load it here if needed)
             val encryptedPayloadStr = message.encryptedPayload
                 ?: database.messageDao().getEncryptedPayload(message.id)
@@ -2779,19 +3084,65 @@ class MessageService(private val context: Context) {
                 Message.MESSAGE_TYPE_PAYMENT_ACCEPTED -> 0x0C.toByte() // PAYMENT_ACCEPTED
                 Message.MESSAGE_TYPE_STICKER -> 0x0E.toByte() // STICKER
                 Message.MESSAGE_TYPE_PROFILE_UPDATE -> 0x0F.toByte() // PROFILE_UPDATE
+                Message.MESSAGE_TYPE_REACTION -> 0x10.toByte() // REACTION (own wire type, silent delivery)
                 else -> 0x03.toByte() // TEXT (default)
             }
-            Log.d(TAG, "Message type: ${message.messageType} → wire byte: 0x${messageTypeByte.toString(16).padStart(2, '0')}")
+            Log.d(TAG, "Message type: ${message.messageType} -> wire byte: 0x${messageTypeByte.toString(16).padStart(2, '0')}")
 
             // Send Ping via Rust bridge (with message for instant mode)
             val onionAddress = contact.messagingOnion ?: ""
             Log.d(TAG, "Resolved messaging .onion for ${contact.displayName}")
+
+            if (onionAddress.isBlank()) {
+                return@withContext Result.failure(Exception("Contact has no messaging .onion address"))
+            }
 
             // SELF-SEND GUARD: Prevent sending messages to our own .onion address
             val ourMessagingOnion = keyManager.getMessagingOnion()
             if (ourMessagingOnion != null && onionAddress.isNotEmpty() && onionAddress == ourMessagingOnion) {
                 Log.e(TAG, "SELF_SEND_BLOCKED: contact ${contact.displayName} has OUR .onion address ($onionAddress)")
                 return@withContext Result.failure(Exception("Cannot send message to own .onion address"))
+            }
+
+            // Suppress burst retries to the same peer while Tor circuits/HS routing is unstable.
+            val retryableCooldownMs = getRetryableCooldownMs(onionAddress)
+            if (retryableCooldownMs > 0L) {
+                Log.w(TAG, "Peer retry cooldown active for $onionAddress (${retryableCooldownMs}ms remaining)")
+                return@withContext Result.failure(
+                    Exception("RETRYABLE: peer cooldown active for $onionAddress; retry in ${retryableCooldownMs}ms")
+                )
+            }
+
+            // Preflight SOCKS connect only after repeated failures (streak >= 3).
+            // Avoids 3.5s latency hit on normal retries; only fires when peer is persistently unreachable.
+            val peerStreak = retryablePeerState[peerKey(onionAddress)]?.let { synchronized(it) { it.streak } } ?: 0
+            if (peerStreak >= 3) {
+                try {
+                    val preflightRaw = RustBridge.torPreflightConnect(onionAddress, PING_HANDSHAKE_PORT, PRECHECK_TIMEOUT_MS)
+                    val preflight = JSONObject(preflightRaw)
+                    val ok = preflight.optBoolean("ok", false)
+                    val latencyMs = preflight.optLong("latencyMs", -1L)
+                    if (ok) {
+                        Log.d(TAG, "Preflight OK for $onionAddress:$PING_HANDSHAKE_PORT (${latencyMs}ms)")
+                    } else {
+                        val preflightError = preflight.optString("error", "unknown preflight error")
+                        val preflightBootstrap = preflight.optInt("bootstrap", -1)
+                        val preflightCircuits = preflight.optInt("circuits", -1)
+                        val delayMs = registerRetryableFailure(
+                            onionAddress,
+                            isHostUnreachable = preflightError.contains("Host unreachable", ignoreCase = true)
+                        )
+                        Log.w(
+                            TAG,
+                            "Preflight failed for $onionAddress:$PING_HANDSHAKE_PORT (bootstrap=$preflightBootstrap, circuits=$preflightCircuits, err=$preflightError). retry in ${delayMs}ms"
+                        )
+                        return@withContext Result.failure(
+                            Exception("RETRYABLE: preflight failed ($preflightError); retry in ${delayMs}ms")
+                        )
+                    }
+                } catch (preflightEx: Exception) {
+                    Log.w(TAG, "Preflight check failed to parse/execute for $onionAddress: ${preflightEx.message}")
+                }
             }
 
             // Validate message has pingId and timestamp (should be generated when message created)
@@ -2814,6 +3165,8 @@ class MessageService(private val context: Context) {
                 )
             } catch (e: Exception) {
                 val errorMsg = e.message ?: "Unknown error"
+                val isHostUnreachable = errorMsg.contains("status 4", ignoreCase = true) ||
+                    errorMsg.contains("Host unreachable", ignoreCase = true)
 
                 // Check if this is a retryable SOCKS failure (Tor-native behavior)
                 val isRetryable = when {
@@ -2839,8 +3192,8 @@ class MessageService(private val context: Context) {
                     else -> false
                 }
 
-                // Report status 6 / TTL expired to TorService (feeds SOCKS failure counter → NEWNYM)
-                // Only status 6, not every retryable error — avoids noise from transient circuit/network issues
+                // Report status 6 / TTL expired to TorService (feeds SOCKS failure counter -> NEWNYM)
+                // Only status 6, not every retryable error - avoids noise from transient circuit/network issues
                 // Throttled to 1 report per 2s to prevent burst retries from spamming the counter
                 val isTtlExpired = errorMsg.contains("status 6", ignoreCase = true) ||
                                    errorMsg.contains("TTL expired", ignoreCase = true)
@@ -2852,30 +3205,64 @@ class MessageService(private val context: Context) {
                     }
                 }
 
+                if (isHostUnreachable && shouldRunStatus4Diagnostics(onionAddress)) {
+                    try {
+                        val diagRaw = RustBridge.torPreflightConnect(onionAddress, PING_HANDSHAKE_PORT, PRECHECK_TIMEOUT_MS)
+                        val diag = JSONObject(diagRaw)
+                        val diagOk = diag.optBoolean("ok", false)
+                        val diagErr = diag.optString("error", "")
+                        val diagBootstrap = diag.optInt("bootstrap", -1)
+                        val diagCircuits = diag.optInt("circuits", -1)
+                        val diagLatency = diag.optLong("latencyMs", -1L)
+                        Log.w(
+                            TAG,
+                            "Status4 diagnostics: peer=$onionAddress:$PING_HANDSHAKE_PORT ok=$diagOk bootstrap=$diagBootstrap circuits=$diagCircuits latencyMs=$diagLatency err=$diagErr"
+                        )
+                    } catch (diagEx: Exception) {
+                        Log.w(TAG, "Status4 diagnostics failed for $onionAddress: ${diagEx.message}")
+                    }
+                }
+
                 if (isRetryable) {
-                    Log.w(TAG, "Soft failure (retryable): $errorMsg")
-                    return@withContext Result.failure(Exception("RETRYABLE: $errorMsg"))
+                    val delayMs = registerRetryableFailure(onionAddress, isHostUnreachable)
+                    Log.w(TAG, "Soft failure (retryable): $errorMsg (next retry >= ${delayMs}ms)")
+                    return@withContext Result.failure(Exception("RETRYABLE: $errorMsg; retry in ${delayMs}ms"))
                 } else {
                     Log.e(TAG, "Hard failure (not retryable): $errorMsg", e)
                     return@withContext Result.failure(e)
                 }
             }
 
-            // Parse JSON response: {"pingId":"...","wireBytes":"..."}
+            // Parse JSON response: {"pingId":"...","wireBytes":"...","instantMode":true/false}
             val pingId: String
             val wireBytes: String
+            val instantMode: Boolean
             try {
                 val json = org.json.JSONObject(pingResponse)
                 pingId = json.getString("pingId")
                 wireBytes = json.getString("wireBytes")
-                Log.i(TAG, "Ping sent successfully (ID: ${pingId.take(8)}...)")
+                instantMode = json.optBoolean("instantMode", false)
+                Log.i(TAG, "Ping sent successfully (ID: ${pingId.take(8)}..., instantMode=$instantMode)")
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to parse sendPing response JSON", e)
                 return@withContext Result.failure(e)
             }
 
+            // INSTANT MODE: MESSAGE already sent on PING connection — mark STATUS_SENT
+            // immediately so retryAllPendingMessages() won't discover a stale PONG via
+            // pollForPong() and send a duplicate MESSAGE blob (different ID format → dedup miss).
+            if (instantMode) {
+                withContext(kotlinx.coroutines.NonCancellable) {
+                    database.messageDao().updatePingDeliveredStatus(
+                        message.id, true, Message.STATUS_SENT
+                    )
+                }
+                Log.i(TAG, "INSTANT_MODE: ${message.messageId} → STATUS_SENT (MESSAGE already delivered on PING connection)")
+            }
+
             // Store wire bytes for resendPingWithWireBytes (backup retry method)
-            if (message.pingWireBytes == null) {
+            // Skip if instant mode — message already sent, wire bytes only needed for delayed retry
+            if (!instantMode && message.pingWireBytes == null) {
                 withContext(kotlinx.coroutines.NonCancellable) {
                     // CRITICAL: Use partial update to avoid overwriting delivery status
                     // (fixes race where MESSAGE_ACK sets delivered=true between read and write)
@@ -2893,10 +3280,11 @@ class MessageService(private val context: Context) {
             }
 
             // Outgoing ping tracking handled by ping_inbox DB on receiver side
-            // Pong lookup uses ping_inbox.contactId — no SharedPrefs needed
+            // Pong lookup uses ping_inbox.contactId - no SharedPrefs needed
             Log.i(TAG, "Outgoing Ping sent: contact_id=${contact.id}, ping_id=$pingId")
 
-            Log.i(TAG, "Ping sent successfully: $pingId (waiting for PING_ACK from receiver)")
+            Log.i(TAG, "Ping sent successfully: $pingId (instantMode=$instantMode)")
+            clearRetryableFailureState(onionAddress)
             Result.success(pingId)
 
         } catch (e: Exception) {
@@ -3030,11 +3418,11 @@ class MessageService(private val context: Context) {
     }
 
     /**
-     * Protocol v2: Global retry — discover PONG arrivals and send ready blobs.
+     * Protocol v2: Global retry - discover PONG arrivals and send ready blobs.
      * Direct replacement for pollForPongsAndSendMessages() at all global call sites.
      *
      * Phase 1: Check STATUS_PING_SENT messages for PONG arrival (Rust poll)
-     *          → transition matches to STATUS_PONG_RECEIVED
+     *          -> transition matches to STATUS_PONG_RECEIVED
      * Phase 2: Send blobs for all STATUS_PONG_RECEIVED messages (per-contact)
      *
      * Called from: handleIncomingPong(), network reset, network restore, airplane mode restore
@@ -3052,6 +3440,12 @@ class MessageService(private val context: Context) {
             for (msg in awaiting) {
                 val pingId = msg.pingId ?: continue
                 if (RustBridge.pollForPong(pingId)) {
+                    // Guard: re-check status — instant mode may have already set STATUS_SENT
+                    val fresh = database.messageDao().getMessageById(msg.id)
+                    if (fresh == null || fresh.status == Message.STATUS_SENT || fresh.messageDelivered) {
+                        Log.d(TAG, "retryAll: ${msg.messageId} already sent/delivered (status=${fresh?.status}) — skipping PONG promotion")
+                        continue
+                    }
                     database.messageDao().updatePingDeliveredStatus(
                         msg.id, true, Message.STATUS_PONG_RECEIVED
                     )
@@ -3086,7 +3480,7 @@ class MessageService(private val context: Context) {
 
     /**
      * Protocol v2: Send pending MESSAGE blobs for a contact after PONG received.
-     * Replaces pollForPongsAndSendMessages() — scoped to one contact, no PONG_ACK step.
+     * Replaces pollForPongsAndSendMessages() - scoped to one contact, no PONG_ACK step.
      *
      * Called from:
      * - TorService PONG handler (event-driven: PONG just arrived, status=PONG_RECEIVED)
@@ -3113,10 +3507,10 @@ class MessageService(private val context: Context) {
             for (message in pendingMessages) {
                 val pingId = message.pingId ?: continue
 
-                // Fresh DB check: skip if already delivered (MESSAGE_ACK arrived during iteration)
+                // Fresh DB check: skip if already delivered or already sent via instant mode
                 val fresh = database.messageDao().getMessageById(message.id)
-                if (fresh == null || fresh.messageDelivered) {
-                    Log.d(TAG, "${message.messageId}: already delivered — skipping")
+                if (fresh == null || fresh.messageDelivered || fresh.status == Message.STATUS_SENT) {
+                    Log.d(TAG, "${message.messageId}: already delivered/sent (status=${fresh?.status}) — skipping")
                     continue
                 }
 
@@ -3127,9 +3521,9 @@ class MessageService(private val context: Context) {
                     continue
                 }
 
-                Log.i(TAG, "${message.messageId}: PONG received — sending MESSAGE blob (no PONG_ACK)")
+                Log.i(TAG, "${message.messageId}: PONG received - sending MESSAGE blob (no PONG_ACK)")
 
-                // Protocol v2: Send blob directly — PONG itself is the ack
+                // Protocol v2: Send blob directly - PONG itself is the ack
                 sendMessageBlobAfterPong(message, contact, pingId)
                 sentCount++
             }
@@ -3145,7 +3539,7 @@ class MessageService(private val context: Context) {
 
     /**
      * Send message blob after PONG received (Protocol v2: no PONG_ACK step)
-     * Status transitions: PONG_RECEIVED → SENT (success) or PONG_RECEIVED → FAILED (failure)
+     * Status transitions: PONG_RECEIVED -> SENT (success) or PONG_RECEIVED -> FAILED (failure)
      *
      * @param message The message to send
      * @param contact The recipient contact
@@ -3157,11 +3551,11 @@ class MessageService(private val context: Context) {
         pingId: String
     ) {
         try {
-            // Gate check for blob send — PONG received, must have transport
+            // Gate check for blob send - PONG received, must have transport
             Log.d(TAG, "Waiting for transport gate before sending message blob...")
             val gateOpen = TorService.getTransportGate()?.awaitOpen(com.securelegion.network.TransportGate.TIMEOUT_QUICK_MS) ?: true
             if (!gateOpen) {
-                Log.w(TAG, "Transport gate timed out for blob send — failing message ${message.id} (retry worker will handle)")
+                Log.w(TAG, "Transport gate timed out for blob send - failing message ${message.id} (retry worker will handle)")
                 val dbPassphrase = keyManager.getDatabasePassphrase()
                 val db = SecureLegionDatabase.getInstance(context, dbPassphrase)
                 db.messageDao().updateMessageStatus(message.id, Message.STATUS_FAILED)
@@ -3181,7 +3575,7 @@ class MessageService(private val context: Context) {
             val dbPassphrase = keyManager.getDatabasePassphrase()
             val database = SecureLegionDatabase.getInstance(context, dbPassphrase)
 
-            // Get stored encrypted payload (on-demand loading for CursorWindow safety —
+            // Get stored encrypted payload (on-demand loading for CursorWindow safety -
             // bulk queries exclude encryptedPayload via NULL AS, so load it here if needed)
             val encryptedPayload = message.encryptedPayload
                 ?: database.messageDao().getEncryptedPayload(message.id)
@@ -3202,6 +3596,7 @@ class MessageService(private val context: Context) {
                 com.securelegion.database.entities.Message.MESSAGE_TYPE_PAYMENT_ACCEPTED -> 0x0C.toByte() // PAYMENT_ACCEPTED
                 com.securelegion.database.entities.Message.MESSAGE_TYPE_STICKER -> 0x0E.toByte() // STICKER
                 com.securelegion.database.entities.Message.MESSAGE_TYPE_PROFILE_UPDATE -> 0x0F.toByte() // PROFILE_UPDATE
+                com.securelegion.database.entities.Message.MESSAGE_TYPE_REACTION -> 0x10.toByte() // REACTION (own wire type)
                 else -> 0x03.toByte() // TEXT (default)
             }
 
@@ -3249,3 +3644,4 @@ class MessageService(private val context: Context) {
         }
     }
 }
+

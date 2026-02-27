@@ -9,15 +9,18 @@ import android.widget.TextView
 import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.ListAdapter
 import androidx.recyclerview.widget.RecyclerView
+import com.airbnb.lottie.LottieAnimationView
 import com.securelegion.R
 import com.securelegion.views.AvatarView
+import pl.droidsonroids.gif.GifDrawable
 import java.text.SimpleDateFormat
-import java.util.*
+import java.util.Date
+import java.util.Locale
 
 /**
  * RecyclerView adapter for CRDT group chat messages.
  *
- * Uses GroupChatMessage — a UI-only data class mapped from CrdtGroupManager.CrdtMessage.
+ * Uses GroupChatMessage - a UI-only data class mapped from CrdtGroupManager.CrdtMessage.
  */
 class GroupMessageAdapter(
     private val onMessageClick: (GroupChatMessage) -> Unit = {},
@@ -28,6 +31,8 @@ class GroupMessageAdapter(
         private const val VIEW_TYPE_SENT = 1
         private const val VIEW_TYPE_RECEIVED = 2
         private const val VIEW_TYPE_SYSTEM = 3
+        private const val VIEW_TYPE_STICKER_SENT = 4
+        private const val VIEW_TYPE_STICKER_RECEIVED = 5
 
         private val NAME_COLORS = arrayOf(
             "#E57373", "#F06292", "#BA68C8", "#9575CD",
@@ -41,12 +46,41 @@ class GroupMessageAdapter(
             val index = (hash and 0x7FFFFFFF) % NAME_COLORS.size
             return Color.parseColor(NAME_COLORS[index])
         }
+
+        private fun formatTimestamp(timestamp: Long): String {
+            val sdf = SimpleDateFormat("HH:mm", Locale.getDefault())
+            return sdf.format(Date(timestamp))
+        }
+
+        private fun bindStickerAsset(stickerAnimation: LottieAnimationView, gifImage: ImageView, assetPath: String) {
+            if (assetPath.endsWith(".gif", ignoreCase = true)) {
+                stickerAnimation.visibility = View.GONE
+                gifImage.visibility = View.VISIBLE
+                try {
+                    val gifDrawable = GifDrawable(gifImage.context.assets, assetPath)
+                    gifImage.setImageDrawable(gifDrawable)
+                } catch (_: Exception) {
+                    gifImage.setImageDrawable(null)
+                }
+            } else {
+                gifImage.visibility = View.GONE
+                stickerAnimation.visibility = View.VISIBLE
+                try {
+                    stickerAnimation.setAnimation(assetPath)
+                    stickerAnimation.playAnimation()
+                } catch (_: Exception) {
+                    stickerAnimation.cancelAnimation()
+                }
+            }
+        }
     }
 
     override fun getItemViewType(position: Int): Int {
         val message = getItem(position)
         return when {
             message.messageType == "SYSTEM" -> VIEW_TYPE_SYSTEM
+            message.messageType == "STICKER" && message.isSentByMe -> VIEW_TYPE_STICKER_SENT
+            message.messageType == "STICKER" && !message.isSentByMe -> VIEW_TYPE_STICKER_RECEIVED
             message.isSentByMe -> VIEW_TYPE_SENT
             else -> VIEW_TYPE_RECEIVED
         }
@@ -67,6 +101,14 @@ class GroupMessageAdapter(
                 val view = inflater.inflate(R.layout.item_message_system, parent, false)
                 SystemMessageViewHolder(view)
             }
+            VIEW_TYPE_STICKER_SENT -> {
+                val view = inflater.inflate(R.layout.item_message_sticker_sent, parent, false)
+                StickerSentMessageViewHolder(view)
+            }
+            VIEW_TYPE_STICKER_RECEIVED -> {
+                val view = inflater.inflate(R.layout.item_message_sticker_received, parent, false)
+                StickerReceivedMessageViewHolder(view)
+            }
             else -> throw IllegalArgumentException("Invalid view type: $viewType")
         }
     }
@@ -77,6 +119,8 @@ class GroupMessageAdapter(
             is SentMessageViewHolder -> holder.bind(message, onMessageClick, onMessageLongClick)
             is ReceivedMessageViewHolder -> holder.bind(message, onMessageClick, onMessageLongClick)
             is SystemMessageViewHolder -> holder.bind(message)
+            is StickerSentMessageViewHolder -> holder.bind(message, onMessageClick, onMessageLongClick)
+            is StickerReceivedMessageViewHolder -> holder.bind(message, onMessageClick, onMessageLongClick)
         }
     }
 
@@ -101,11 +145,6 @@ class GroupMessageAdapter(
                 true
             }
         }
-
-        private fun formatTimestamp(timestamp: Long): String {
-            val sdf = SimpleDateFormat("HH:mm", Locale.getDefault())
-            return sdf.format(Date(timestamp))
-        }
     }
 
     class ReceivedMessageViewHolder(itemView: View) : RecyclerView.ViewHolder(itemView) {
@@ -119,7 +158,6 @@ class GroupMessageAdapter(
             onClick: (GroupChatMessage) -> Unit,
             onLongClick: (GroupChatMessage) -> Unit
         ) {
-            // Set sender avatar
             senderAvatar.setName(message.senderName)
             if (!message.senderProfilePhotoBase64.isNullOrEmpty()) {
                 senderAvatar.setPhotoBase64(message.senderProfilePhotoBase64)
@@ -127,7 +165,6 @@ class GroupMessageAdapter(
                 senderAvatar.clearPhoto()
             }
 
-            // Set colored sender name
             senderNameView.text = message.senderName.ifEmpty { "Unknown" }
             senderNameView.setTextColor(generateNameColor(message.senderName))
 
@@ -140,19 +177,55 @@ class GroupMessageAdapter(
                 true
             }
         }
-
-        private fun formatTimestamp(timestamp: Long): String {
-            val sdf = SimpleDateFormat("HH:mm", Locale.getDefault())
-            return sdf.format(Date(timestamp))
-        }
     }
-
 
     class SystemMessageViewHolder(itemView: View) : RecyclerView.ViewHolder(itemView) {
         private val systemText: TextView = itemView.findViewById(R.id.systemMessageText)
 
         fun bind(message: GroupChatMessage) {
             systemText.text = message.text
+        }
+    }
+
+    class StickerSentMessageViewHolder(itemView: View) : RecyclerView.ViewHolder(itemView) {
+        private val stickerAnimation: LottieAnimationView = itemView.findViewById(R.id.stickerAnimation)
+        private val gifImage: ImageView = itemView.findViewById(R.id.gifImage)
+        private val messageStatus: ImageView = itemView.findViewById(R.id.messageStatus)
+        private val swipeRevealedTime: TextView = itemView.findViewById(R.id.swipeRevealedTime)
+
+        fun bind(
+            message: GroupChatMessage,
+            onClick: (GroupChatMessage) -> Unit,
+            onLongClick: (GroupChatMessage) -> Unit
+        ) {
+            bindStickerAsset(stickerAnimation, gifImage, message.text)
+            messageStatus.visibility = View.GONE
+            swipeRevealedTime.text = formatTimestamp(message.timestamp)
+            itemView.setOnClickListener { onClick(message) }
+            itemView.setOnLongClickListener {
+                onLongClick(message)
+                true
+            }
+        }
+    }
+
+    class StickerReceivedMessageViewHolder(itemView: View) : RecyclerView.ViewHolder(itemView) {
+        private val stickerAnimation: LottieAnimationView = itemView.findViewById(R.id.stickerAnimation)
+        private val gifImage: ImageView = itemView.findViewById(R.id.gifImage)
+        private val swipeRevealedTime: TextView = itemView.findViewById(R.id.swipeRevealedTime)
+
+        fun bind(
+            message: GroupChatMessage,
+            onClick: (GroupChatMessage) -> Unit,
+            onLongClick: (GroupChatMessage) -> Unit
+        ) {
+            bindStickerAsset(stickerAnimation, gifImage, message.text)
+            swipeRevealedTime.text = formatTimestamp(message.timestamp)
+            itemView.setOnClickListener { onClick(message) }
+            itemView.setOnLongClickListener {
+                onLongClick(message)
+                true
+            }
         }
     }
 
@@ -178,5 +251,5 @@ data class GroupChatMessage(
     val isSentByMe: Boolean,
     val senderName: String = "",
     val senderProfilePhotoBase64: String? = null,
-    val messageType: String = "TEXT" // "TEXT" or "SYSTEM"
+    val messageType: String = "TEXT" // "TEXT", "SYSTEM", or "STICKER"
 )

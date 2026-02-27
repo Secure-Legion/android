@@ -15,6 +15,7 @@ import com.securelegion.database.dao.GroupDao
 import com.securelegion.database.dao.GroupPeerDao
 import com.securelegion.database.dao.CrdtOpLogDao
 import com.securelegion.database.dao.MessageDao
+import com.securelegion.database.dao.MessageReactionDao
 import com.securelegion.database.dao.PendingFriendRequestDao
 import com.securelegion.database.dao.PendingGroupDeliveryDao
 import com.securelegion.database.dao.PendingPingDao
@@ -31,6 +32,7 @@ import com.securelegion.database.entities.Group
 import com.securelegion.database.entities.GroupPeer
 import com.securelegion.database.entities.CrdtOpLog
 import com.securelegion.database.entities.Message
+import com.securelegion.database.entities.MessageReaction
 import com.securelegion.database.entities.PendingFriendRequest
 import com.securelegion.database.entities.PendingGroupDelivery
 import com.securelegion.database.entities.PendingPing
@@ -56,14 +58,15 @@ import net.zetetic.database.sqlcipher.SupportOpenHelperFactory
  * Database file location: /data/data/com.securelegion/databases/secure_legion.db
  */
 @Database(
-    entities = [Contact::class, Message::class, Wallet::class, ReceivedId::class, UsedSignature::class, Group::class, CrdtOpLog::class, CallHistory::class, CallQualityLog::class, PingInbox::class, ContactKeyChain::class, SkippedMessageKey::class, PendingFriendRequest::class, PendingPing::class, GroupPeer::class, PendingGroupDelivery::class],
-    version = 47,
+    entities = [Contact::class, Message::class, MessageReaction::class, Wallet::class, ReceivedId::class, UsedSignature::class, Group::class, CrdtOpLog::class, CallHistory::class, CallQualityLog::class, PingInbox::class, ContactKeyChain::class, SkippedMessageKey::class, PendingFriendRequest::class, PendingPing::class, GroupPeer::class, PendingGroupDelivery::class],
+    version = 48,
     exportSchema = false
 )
 abstract class SecureLegionDatabase : RoomDatabase() {
 
     abstract fun contactDao(): ContactDao
     abstract fun messageDao(): MessageDao
+    abstract fun messageReactionDao(): MessageReactionDao
     abstract fun walletDao(): WalletDao
     abstract fun receivedIdDao(): ReceivedIdDao
     abstract fun usedSignatureDao(): UsedSignatureDao
@@ -1057,6 +1060,35 @@ abstract class SecureLegionDatabase : RoomDatabase() {
         }
 
         /**
+         * Migration 47→48: Add message_reactions table for 1:1 emoji reactions.
+         */
+        private val MIGRATION_47_48 = object : Migration(47, 48) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                Log.i(TAG, "Migrating database from version 47 to 48")
+                database.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `message_reactions` (
+                        `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        `contactId` INTEGER NOT NULL,
+                        `targetMessageId` TEXT NOT NULL,
+                        `reactorPubKey` TEXT NOT NULL,
+                        `emoji` TEXT NOT NULL,
+                        `isRemoved` INTEGER NOT NULL DEFAULT 0,
+                        `createdAt` INTEGER NOT NULL,
+                        `updatedAt` INTEGER NOT NULL,
+                        FOREIGN KEY(`contactId`) REFERENCES `contacts`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE
+                    )
+                    """.trimIndent()
+                )
+                database.execSQL("CREATE INDEX IF NOT EXISTS `index_message_reactions_contactId` ON `message_reactions` (`contactId`)")
+                database.execSQL("CREATE INDEX IF NOT EXISTS `index_message_reactions_targetMessageId` ON `message_reactions` (`targetMessageId`)")
+                database.execSQL("CREATE INDEX IF NOT EXISTS `index_message_reactions_contactId_targetMessageId` ON `message_reactions` (`contactId`, `targetMessageId`)")
+                database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS `index_message_reactions_contactId_targetMessageId_reactorPubKey` ON `message_reactions` (`contactId`, `targetMessageId`, `reactorPubKey`)")
+                Log.i(TAG, "Migration 47→48 complete: added message_reactions table")
+            }
+        }
+
+        /**
          * All migrations in a single array for DRY registration + validation.
          * RULE: When adding a new migration, append it here AND bump the @Database version.
          */
@@ -1072,7 +1104,7 @@ abstract class SecureLegionDatabase : RoomDatabase() {
             MIGRATION_33_34, MIGRATION_34_35, MIGRATION_35_36, MIGRATION_36_37,
             MIGRATION_37_38, MIGRATION_38_39, MIGRATION_39_40, MIGRATION_40_41,
             MIGRATION_41_42, MIGRATION_42_43, MIGRATION_43_44, MIGRATION_44_45,
-            MIGRATION_45_46, MIGRATION_46_47
+            MIGRATION_45_46, MIGRATION_46_47, MIGRATION_47_48
         )
 
         /**
@@ -1169,7 +1201,7 @@ abstract class SecureLegionDatabase : RoomDatabase() {
                     DATABASE_NAME
                 )
                     .openHelperFactory(factory)
-                    .addMigrations(*ALL_MIGRATIONS.also { validateMigrationChain(it, 47) })
+                    .addMigrations(*ALL_MIGRATIONS.also { validateMigrationChain(it, 48) })
                     .addCallback(object : RoomDatabase.Callback() {
                         override fun onCreate(db: SupportSQLiteDatabase) {
                             super.onCreate(db)

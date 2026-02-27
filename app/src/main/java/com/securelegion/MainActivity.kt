@@ -819,7 +819,9 @@ class MainActivity : BaseActivity() {
                                 lastMessage.messageType == com.securelegion.database.entities.Message.MESSAGE_TYPE_PAYMENT_REQUEST -> "Payment request"
                                 lastMessage.messageType == com.securelegion.database.entities.Message.MESSAGE_TYPE_PAYMENT_SENT -> "Payment sent"
                                 lastMessage.messageType == com.securelegion.database.entities.Message.MESSAGE_TYPE_PAYMENT_ACCEPTED -> "Payment accepted"
-                                else -> lastMessage.encryptedContent
+                                else -> try {
+                                    com.securelegion.crypto.KeyManager.getInstance(this@MainActivity).decryptMessageContent(lastMessage.encryptedContent)
+                                } catch (_: Exception) { "[encrypted]" }
                             }
 
                             val chatDisplayName = contact.nickname ?: contact.displayName

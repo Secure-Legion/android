@@ -24,6 +24,8 @@ import android.text.Editable
 import android.text.TextWatcher
 import android.util.Base64
 import android.util.Log
+import android.view.Gravity
+import android.view.LayoutInflater
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
@@ -33,7 +35,6 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
@@ -119,18 +120,25 @@ class ChatActivity : BaseActivity() {
     private lateinit var cancelRecordingButton: ImageView
     private lateinit var sendVoiceButton: ImageView
     private lateinit var contactAvatar: com.securelegion.views.AvatarView
+    private lateinit var pinnedBanner: View
+    private lateinit var pinnedBannerText: TextView
+    private lateinit var pinnedBannerClose: ImageView
+    private var pinnedMessagePosition: Int = -1
+    private var pinnedMessageId: Long = -1
 
     private var contactId: Long = -1
     private var contactName: String = "@user"
     private var contactAddress: String = ""
+    private var myPubKeyBase64: String = ""
+    private var myReactionByMessageId: Map<String, String> = emptyMap()
     private var isShowingSendButton = false
     private var isSelectionMode = false
 
     // Auto-download: Track if user has manually downloaded at least one message this session
-    // (Device Protection ON only â€” enables auto-PONG for subsequent pings in same session)
+    // (Device Protection ON only - enables auto-PONG for subsequent pings in same session)
     private var hasDownloadedOnce = false
 
-    // Lazy DB reference â€” avoids reconstructing KeyManager + passphrase on every call
+    // Lazy DB reference - avoids reconstructing KeyManager + passphrase on every call
     private val database by lazy {
         val keyManager = KeyManager.getInstance(this)
         val dbPassphrase = keyManager.getDatabasePassphrase()
@@ -249,7 +257,7 @@ class ChatActivity : BaseActivity() {
                     Log.d(TAG, "NEW_PING broadcast: receivedContactId=$receivedContactId, state=${com.securelegion.services.DownloadStateManager.getState(receivedContactId)}")
 
                     if (receivedContactId == contactId) {
-                        // NEW_PING for current contact â€” DownloadStateManager drives the UI,
+                        // NEW_PING for current contact - DownloadStateManager drives the UI,
                         // just refresh to pick up the latest state.
                         runOnUiThread {
                             lifecycleScope.launch {
@@ -270,7 +278,7 @@ class ChatActivity : BaseActivity() {
                                             }
                                     }
                                     if (pingSeen.isNotEmpty()) {
-                                        Log.i(TAG, "Device Protection ON but user active â€” auto-PONGing ${pingSeen.size} ping(s)")
+                                        Log.i(TAG, "Device Protection ON but user active - auto-PONGing ${pingSeen.size} ping(s)")
                                         pingSeen.forEach { ping ->
                                             Log.d(TAG, "Auto-PONGing ping: ${ping.pingId.take(8)}")
                                             com.securelegion.services.DownloadMessageService.start(
@@ -290,7 +298,7 @@ class ChatActivity : BaseActivity() {
                     val receivedContactId = intent.getLongExtra("CONTACT_ID", -1L)
                     Log.d(TAG, "DOWNLOAD_FAILED broadcast: receivedContactId=$receivedContactId, state=${com.securelegion.services.DownloadStateManager.getState(receivedContactId)}")
                     if (receivedContactId == contactId) {
-                        // DownloadStateManager already transitioned to BACKOFF â€” just refresh UI
+                        // DownloadStateManager already transitioned to BACKOFF - just refresh UI
                         loadMessagesDebounced()
                     }
                 }
@@ -326,9 +334,16 @@ class ChatActivity : BaseActivity() {
         // Handle window insets for header and message input container
         val rootView = findViewById<View>(android.R.id.content)
         val chatHeader = findViewById<View>(R.id.chatHeader)
+        pinnedBanner = findViewById(R.id.pinnedBanner)
+        pinnedBannerText = findViewById(R.id.pinnedBannerText)
+        pinnedBannerClose = findViewById(R.id.pinnedBannerClose)
         val messageInputContainer = findViewById<View>(R.id.messageInputContainer)
         val recyclerView = findViewById<RecyclerView>(R.id.messagesRecyclerView)
         var wasImeVisible = false
+        val headerBasePaddingLeft = chatHeader.paddingLeft
+        val headerBasePaddingTop = chatHeader.paddingTop
+        val headerBasePaddingRight = chatHeader.paddingRight
+        val headerBasePaddingBottom = chatHeader.paddingBottom
 
         // Header floats above messages for glass effect
         chatHeader.elevation = 8 * resources.displayMetrics.density
@@ -343,9 +358,10 @@ class ChatActivity : BaseActivity() {
             val panelHeight = if (isAttachmentPanelVisible && ::attachmentPanel.isInitialized) attachmentPanel.height
                               else if (isMediaKeyboardVisible) findViewById<View>(R.id.mediaKeyboardPanel)?.height ?: 0
                               else 0
+            val pinnedHeight = if (pinnedBanner.visibility == View.VISIBLE) pinnedBanner.height else 0
             recyclerView.setPadding(
                 recyclerView.paddingLeft,
-                chatHeader.height,
+                chatHeader.height + pinnedHeight,
                 recyclerView.paddingRight,
                 currentBottomInset + inputContentHeight + bottomMargin + panelHeight
             )
@@ -353,6 +369,9 @@ class ChatActivity : BaseActivity() {
 
         // Recalculate RV padding whenever the header or input bar is laid out
         chatHeader.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
+            updateRecyclerPadding()
+        }
+        pinnedBanner.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
             updateRecyclerPadding()
         }
         messageInputContainer.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
@@ -371,10 +390,10 @@ class ChatActivity : BaseActivity() {
 
             // Apply top inset to header (for status bar and display cutout)
             chatHeader.setPadding(
-                systemInsets.left,
-                systemInsets.top,
-                systemInsets.right,
-                chatHeader.paddingBottom
+                headerBasePaddingLeft + systemInsets.left,
+                headerBasePaddingTop + systemInsets.top,
+                headerBasePaddingRight + systemInsets.right,
+                headerBasePaddingBottom
             )
 
             // Apply bottom inset to message input container
@@ -422,7 +441,7 @@ class ChatActivity : BaseActivity() {
         // Download state will be determined from database (pending pings with DOWNLOADING/DECRYPTING state)
         // No need to check SharedPreferences - database is source of truth
 
-        // SharedPrefs migration removed â€” ping_inbox DB is single source of truth
+        // SharedPrefs migration removed - ping_inbox DB is single source of truth
 
         // Initialize services
         messageService = MessageService(this)
@@ -693,6 +712,12 @@ class ChatActivity : BaseActivity() {
             },
             onPinMessage = { message ->
                 pinMessage(message)
+            },
+            onReactMessage = { message ->
+                showReactionPicker(message)
+            },
+            decryptContent = { stored ->
+                KeyManager.getInstance(this).decryptMessageContent(stored)
             }
         )
 
@@ -741,10 +766,10 @@ class ChatActivity : BaseActivity() {
             finish()
         }
 
-        // Call button â€” voice calling disabled in v1
+        // Call button - voice calling disabled in v1
         findViewById<View>(R.id.callButton).visibility = View.GONE
 
-        // Attachment panel (inline â€” replaces keyboard like media panel)
+        // Attachment panel (inline - replaces keyboard like media panel)
         attachmentPanel = findViewById(R.id.attachmentPanel)
         setupAttachmentPanel()
 
@@ -1059,7 +1084,7 @@ class ChatActivity : BaseActivity() {
 
         mediaKeyboardPanel.setOnGifSelectedListener { gifAssetPath ->
             hideMediaKeyboard()
-            // System GIFs are bundled assets â€” send as text code like stickers
+            // System GIFs are bundled assets - send as text code like stickers
             sendStickerMessage(gifAssetPath)
         }
     }
@@ -1184,7 +1209,7 @@ class ChatActivity : BaseActivity() {
 
             val uri = cameraPhotoUri
             if (uri == null) {
-                Log.e(TAG, "cameraPhotoUri is null â€” cannot launch camera")
+                Log.e(TAG, "cameraPhotoUri is null - cannot launch camera")
                 ThemedToast.show(this, "Camera unavailable. Please try again.")
                 return
             }
@@ -1806,6 +1831,60 @@ class ChatActivity : BaseActivity() {
         loadMessagesHandler.postDelayed(runnable, LOAD_MESSAGES_DEBOUNCE_MS)
     }
 
+    private fun pinnedPreviewFor(message: Message): String {
+        return when (message.messageType) {
+            Message.MESSAGE_TYPE_IMAGE -> "Photo"
+            Message.MESSAGE_TYPE_VOICE -> "Voice message"
+            Message.MESSAGE_TYPE_STICKER -> "Sticker"
+            Message.MESSAGE_TYPE_PAYMENT_REQUEST -> "Payment request"
+            Message.MESSAGE_TYPE_PAYMENT_SENT -> "Payment sent"
+            Message.MESSAGE_TYPE_PAYMENT_ACCEPTED -> "Payment accepted"
+            else -> try {
+                KeyManager.getInstance(this).decryptMessageContent(message.encryptedContent).ifBlank { "Pinned message" }
+            } catch (_: Exception) { "Pinned message" }
+        }
+    }
+
+    private fun updatePinnedBanner(messages: List<Message>) {
+        val pinnedMessage = messages.lastOrNull { it.isPinned }
+        if (pinnedMessage == null) {
+            pinnedBanner.visibility = View.GONE
+            pinnedMessagePosition = -1
+            pinnedMessageId = -1
+            return
+        }
+
+        pinnedBannerText.text = pinnedPreviewFor(pinnedMessage)
+        pinnedMessagePosition = messages.indexOfLast { it.id == pinnedMessage.id }
+        pinnedMessageId = pinnedMessage.id
+        pinnedBanner.visibility = View.VISIBLE
+
+        pinnedBanner.setOnClickListener {
+            val position = pinnedMessagePosition
+            if (position >= 0) {
+                messagesRecyclerView.smoothScrollToPosition(position)
+            }
+        }
+
+        pinnedBannerClose.setOnClickListener {
+            val messageId = pinnedMessageId
+            if (messageId <= 0) return@setOnClickListener
+            pinnedBanner.visibility = View.GONE
+            pinnedMessagePosition = -1
+            pinnedMessageId = -1
+            lifecycleScope.launch {
+                try {
+                    withContext(Dispatchers.IO) {
+                        database.messageDao().setPinned(messageId, false)
+                    }
+                    loadMessages()
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to unpin message", e)
+                }
+            }
+        }
+    }
+
     private suspend fun loadMessages() {
         try {
             Log.d(TAG, "Loading messages for contact: $contactId")
@@ -1814,13 +1893,16 @@ class ChatActivity : BaseActivity() {
             }
             Log.d(TAG, "Loaded ${messages.size} messages")
             messages.forEach { msg ->
-                Log.d(TAG, "Message: ${msg.encryptedContent.take(20)}... status=${msg.status}")
+                Log.d(TAG, "Message: [${msg.encryptedContent.length}B] status=${msg.status}")
             }
 
             // Get database instance (reuse for multiple operations)
             val keyManager = KeyManager.getInstance(this@ChatActivity)
             val dbPassphrase = keyManager.getDatabasePassphrase()
             val database = SecureLegionDatabase.getInstance(this@ChatActivity, dbPassphrase)
+            if (myPubKeyBase64.isBlank()) {
+                myPubKeyBase64 = Base64.encodeToString(keyManager.getSigningPublicKey(), Base64.NO_WRAP)
+            }
 
             // Mark all received messages as read (updates unread count)
             // TODO(ghost-badge): Replace per-message loop with bulk markAllAsRead(contactId)
@@ -1872,13 +1954,14 @@ class ChatActivity : BaseActivity() {
                 Log.d(TAG, "Ping $index: ${ping.pingId.take(8)} - state=${ping.state}")
             }
 
-            // Suppress profile update pings (0x0F) â€” silent background sync, no lock icon or typing dots
-            // Wire format: [type_byte][X25519_pubkey_32][encrypted_payload] â€” first byte is unencrypted content type
+            // Suppress silent pings (0x0F profile updates, 0x10 reactions) -- no lock icon or typing dots
+            // Wire format: [type_byte][X25519_pubkey_32][encrypted_payload] -- first byte is unencrypted content type
+            val silentWireTypes = setOf(0x0F.toByte(), 0x10.toByte())
             val pendingPingsToShow = activePingEntries.filter { ping ->
                 val wireBytes = ping.pingWireBytesBase64?.let {
                     try { android.util.Base64.decode(it, android.util.Base64.NO_WRAP) } catch (_: Exception) { null }
                 }
-                wireBytes == null || wireBytes.isEmpty() || wireBytes[0] != 0x0F.toByte()
+                wireBytes == null || wireBytes.isEmpty() || wireBytes[0] !in silentWireTypes
             }
 
             // â”€â”€ State machine drives UI â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -1904,23 +1987,19 @@ class ChatActivity : BaseActivity() {
                             emptyList<com.securelegion.database.entities.PingInbox>() to false
                         }
                     }
-                    com.securelegion.services.DownloadStateManager.State.PAUSED -> {
-                        // Delivery paused â€” show lock icons for all pending pings
-                        pendingPingsToShow to false
-                    }
                     else -> {
-                        // IDLE or BACKOFF â€” everything invisible, retries happen silently
+                        // IDLE, BACKOFF, or PAUSED - everything invisible, retries happen silently
                         emptyList<com.securelegion.database.entities.PingInbox>() to false
                     }
                 }
             } else {
                 // Manual mode (Device Protection ON): show all pending pings as lock icons
-                // User taps lock â†’ DownloadMessageService starts â†’ state flips to DOWNLOADING â†’ typing
+                // User taps lock -> DownloadMessageService starts -> state flips to DOWNLOADING -> typing
                 when (contactState) {
                     com.securelegion.services.DownloadStateManager.State.DOWNLOADING -> {
-                        // Show 1 typing indicator for the actively-downloading ping
+                        // Show 1 typing indicator (cap at 1 to avoid duplicate dots)
                         if (pendingPingsToShow.isNotEmpty()) {
-                            pendingPingsToShow to true
+                            listOf(pendingPingsToShow.first()) to true
                         } else {
                             emptyList<com.securelegion.database.entities.PingInbox>() to false
                         }
@@ -1932,10 +2011,28 @@ class ChatActivity : BaseActivity() {
                 }
             }
 
-            Log.d(TAG, "State machine: contact=$contactId state=$contactState devProtection=$devProtection â†’ showing ${pingsForAdapter.size} pings (typing=$showTyping)")
+            Log.d(TAG, "State machine: contact=$contactId state=$contactState devProtection=$devProtection -> showing ${pingsForAdapter.size} pings (typing=$showTyping)")
+
+            val reactionAgg = withContext(Dispatchers.IO) {
+                database.messageReactionDao().getAggregatesForContact(contactId, myPubKeyBase64)
+            }
+            val reactionSummaryByMessageId = mutableMapOf<String, MutableList<String>>()
+            val myReactionMap = mutableMapOf<String, String>()
+            reactionAgg.forEach { row ->
+                val display = if (row.count > 1) "${row.emoji} ${row.count}" else row.emoji
+                reactionSummaryByMessageId.getOrPut(row.targetMessageId) { mutableListOf() }.add(display)
+                if (row.mine == 1) {
+                    myReactionMap[row.targetMessageId] = row.emoji
+                }
+            }
+            myReactionByMessageId = myReactionMap
 
             withContext(Dispatchers.Main) {
                 Log.d(TAG, "Updating adapter with ${messages.size} messages + ${pingsForAdapter.size} pending")
+                updatePinnedBanner(messages)
+                messageAdapter.setReactionSummaries(
+                    reactionSummaryByMessageId.mapValues { (_, list) -> list.joinToString("  ") }
+                )
                 val layoutManager = messagesRecyclerView.layoutManager as? LinearLayoutManager
                 val lastVisiblePosition = layoutManager?.findLastVisibleItemPosition() ?: -1
                 val oldItemCount = messageAdapter.itemCount
@@ -1950,7 +2047,7 @@ class ChatActivity : BaseActivity() {
                     pingsForAdapter,
                     showTyping
                 ) {
-                    // Runs AFTER DiffUtil commits â€” adapter itemCount is now correct
+                    // Runs AFTER DiffUtil commits - adapter itemCount is now correct
                     if (shouldScroll) {
                         scrollToBottom(smooth = !isFirstLoad)
                     }
@@ -1965,6 +2062,97 @@ class ChatActivity : BaseActivity() {
                     "Failed to load messages: ${e.message}"
                 )
             }
+        }
+    }
+
+    private fun showReactionPicker(message: Message) {
+        val choices = listOf("👍", "❤️", "😂", "😮", "😢", "🔥", "🙏", "👎")
+        val currentMine = myReactionByMessageId[message.messageId]
+        val dialogView = LayoutInflater.from(this).inflate(R.layout.dialog_reaction_picker, null)
+        val emojiContainer = dialogView.findViewById<LinearLayout>(R.id.reactionEmojiContainer)
+        val removeButton = dialogView.findViewById<TextView>(R.id.reactionRemoveButton)
+
+        val dialog = GlassDialog.builder(this)
+            .setView(dialogView)
+            .create()
+
+        fun sendReaction(emoji: String, present: Boolean) {
+            lifecycleScope.launch {
+                val (targetMessageId, targetBlobMessageId) = withContext(Dispatchers.IO) {
+                    resolveReactionTargetIds(message)
+                }
+                val result = withContext(Dispatchers.IO) {
+                    messageService.sendReactionMessage(
+                        contactId = contactId,
+                        targetMessageId = targetMessageId,
+                        targetBlobMessageId = targetBlobMessageId,
+                        emoji = emoji,
+                        present = present
+                    )
+                }
+                if (result.isFailure) {
+                    ThemedToast.show(this@ChatActivity, "Failed to send reaction")
+                }
+                loadMessagesDebounced()
+            }
+            dialog.dismiss()
+        }
+
+        choices.forEach { emoji ->
+            val chip = TextView(this).apply {
+                text = emoji
+                textSize = 22f
+                gravity = Gravity.CENTER
+                background = ContextCompat.getDrawable(this@ChatActivity, R.drawable.glass_circle_bg)
+                layoutParams = LinearLayout.LayoutParams(dp(44), dp(44)).apply {
+                    marginEnd = dp(8)
+                }
+                setOnClickListener {
+                    sendReaction(emoji, present = true)
+                }
+            }
+            emojiContainer.addView(chip)
+        }
+
+        if (currentMine != null) {
+            removeButton.visibility = View.VISIBLE
+            removeButton.setOnClickListener {
+                sendReaction(currentMine, present = false)
+            }
+        } else {
+            removeButton.visibility = View.GONE
+        }
+
+        dialog.show()
+    }
+
+    private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
+
+    private suspend fun resolveReactionTargetIds(message: Message): Pair<String, String?> {
+        val localTargetId = message.messageId
+        if (localTargetId.startsWith("blob_")) {
+            return localTargetId to localTargetId
+        }
+
+        return try {
+            val encryptedPayload = message.encryptedPayload
+                ?: database.messageDao().getEncryptedPayload(message.id)
+            val blobId = encryptedPayload?.let { computeBlobMessageId(it) }
+            localTargetId to blobId
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to resolve blob message id for reaction target", e)
+            localTargetId to null
+        }
+    }
+
+    private fun computeBlobMessageId(encryptedPayloadBase64: String): String? {
+        return try {
+            val encryptedBytes = Base64.decode(encryptedPayloadBase64, Base64.NO_WRAP)
+            val hash = java.security.MessageDigest.getInstance("SHA-256").digest(encryptedBytes)
+            "blob_" + Base64.encodeToString(hash, Base64.NO_WRAP).take(28)
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to compute blob message id from encrypted payload", e)
+            null
         }
     }
 
@@ -1985,19 +2173,6 @@ class ChatActivity : BaseActivity() {
         messageInput.post {
         lifecycleScope.launch {
             try {
-
-                // Check if Tor is available before sending
-                val gate = TorService.getTransportGate()
-                val gateOpen = gate?.isOpenNow() == true
-                if (!gateOpen) {
-                    // Message will be saved to DB and retried later
-                }
-
-                // Wait for transport gate to open (verifies Tor is healthy)
-                // Best-effort: message is already saved to DB, retry worker handles failures
-                Log.d(TAG, "Waiting for transport gate to open before sending message...")
-                gate?.awaitOpen(com.securelegion.network.TransportGate.TIMEOUT_SEND_MS)
-                Log.d(TAG, "Transport gate opened (or timed out), proceeding with message send")
 
                 // Send message with security options
                 // Use callback to update UI immediately when message is saved (before Tor send)
@@ -2040,18 +2215,18 @@ class ChatActivity : BaseActivity() {
             return
         }
 
-        // Atomic DB claim â€” prevents double-click race
+        // Atomic DB claim - prevents double-click race
         lifecycleScope.launch {
             val claimed = withContext(Dispatchers.IO) {
                 database.pingInboxDao().claimForManualDownload(pingId, System.currentTimeMillis())
             }
 
             if (claimed == 0) {
-                Log.w(TAG, "Ping ${pingId.take(8)} claim failed â€” already claimed or past DOWNLOAD_QUEUED")
+                Log.w(TAG, "Ping ${pingId.take(8)} claim failed - already claimed or past DOWNLOAD_QUEUED")
                 return@launch
             }
 
-            Log.d(TAG, "Ping ${pingId.take(8)} claimed (DB â†’ DOWNLOAD_QUEUED)")
+            Log.d(TAG, "Ping ${pingId.take(8)} claimed (DB -> DOWNLOAD_QUEUED)")
 
             // Mark that user has downloaded at least once (enables auto-PONG for future pings)
             hasDownloadedOnce = true
@@ -2059,7 +2234,7 @@ class ChatActivity : BaseActivity() {
             // Refresh UI (DownloadStateManager will flip to DOWNLOADING when I/O starts)
             loadMessages()
 
-            // Start the download service â€” it calls DownloadStateManager.onDownloadStarted()
+            // Start the download service - it calls DownloadStateManager.onDownloadStarted()
             com.securelegion.services.DownloadMessageService.start(this@ChatActivity, contactId, contactName, pingId)
         }
     }
@@ -2332,8 +2507,8 @@ class ChatActivity : BaseActivity() {
      * Handle click on "Pay" or "Accept" button for a received payment request
      *
      * Two flows:
-     * 1. Request Money: They put their wallet as recipient â†’ I pay to their wallet â†’ SendMoneyActivity
-     * 2. Send Money: Recipient is empty â†’ They want to send to me â†’ AcceptPaymentActivity
+     * 1. Request Money: They put their wallet as recipient -> I pay to their wallet -> SendMoneyActivity
+     * 2. Send Money: Recipient is empty -> They want to send to me -> AcceptPaymentActivity
      */
     private fun handlePaymentRequestClick(message: Message) {
         Log.d(TAG, "Payment request clicked: ${message.messageId}")
@@ -2354,7 +2529,7 @@ class ChatActivity : BaseActivity() {
 
         // Check recipient field to determine flow type
         if (quote.recipient.isNullOrEmpty()) {
-            // Empty recipient = "Send Money" offer â†’ They want to send me money
+            // Empty recipient = "Send Money" offer -> They want to send me money
             // Open AcceptPaymentActivity so I can provide my wallet address
             Log.d(TAG, "Send Money offer detected - opening AcceptPaymentActivity")
             val intent = Intent(this, AcceptPaymentActivity::class.java).apply {
@@ -2368,7 +2543,7 @@ class ChatActivity : BaseActivity() {
             }
             startActivity(intent)
         } else {
-            // Has recipient = "Request Money" â†’ They're requesting money from me
+            // Has recipient = "Request Money" -> They're requesting money from me
             // Open SendMoneyActivity to pay them
             Log.d(TAG, "Request Money detected - opening SendMoneyActivity")
             val intent = Intent(this, SendMoneyActivity::class.java).apply {

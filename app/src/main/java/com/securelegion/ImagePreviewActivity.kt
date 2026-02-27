@@ -51,6 +51,7 @@ class ImagePreviewActivity : AppCompatActivity() {
     private lateinit var btnUndo: ImageView
     private lateinit var btnRedo: ImageView
     private var currentImageUri: Uri? = null
+    private var pendingCropDestUri: Uri? = null
     private var isDrawMode = false
     private var currentBrushColor = Color.RED
 
@@ -59,15 +60,22 @@ class ImagePreviewActivity : AppCompatActivity() {
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
         if (result.resultCode == RESULT_OK) {
-            val resultUri = UCrop.getOutput(result.data ?: return@registerForActivityResult)
+            val resultUri = UCrop.getOutput(result.data ?: Intent()).let { it ?: pendingCropDestUri }
+            pendingCropDestUri = null
             if (resultUri != null) {
                 currentImageUri = resultUri
                 loadImageIntoEditor(resultUri)
+            } else {
+                Log.e(TAG, "UCrop returned RESULT_OK but no output URI")
+                ThemedToast.show(this, "Crop failed")
             }
         } else if (result.resultCode == UCrop.RESULT_ERROR) {
+            pendingCropDestUri = null
             val error = UCrop.getError(result.data ?: return@registerForActivityResult)
             Log.e(TAG, "UCrop error: ${error?.message}", error)
             ThemedToast.show(this, "Crop failed")
+        } else {
+            pendingCropDestUri = null
         }
     }
 
@@ -279,6 +287,7 @@ class ImagePreviewActivity : AppCompatActivity() {
                     val destFile = File(File(cacheDir, "images").apply { mkdirs() },
                         "cropped_${System.currentTimeMillis()}.jpg")
                     val destUri = Uri.fromFile(destFile)
+                    pendingCropDestUri = destUri
 
                     Log.d(TAG, "Launching UCrop: source=${tempFile.absolutePath} (${tempFile.length()} bytes)")
 

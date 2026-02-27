@@ -21,6 +21,11 @@ data class MessageDeleteInfo(
     @ColumnInfo(name = "pingId") val pingId: String?
 )
 
+data class MessageBlobLookup(
+    @ColumnInfo(name = "messageId") val messageId: String,
+    @ColumnInfo(name = "encryptedPayload") val encryptedPayload: String?
+)
+
 /**
  * Data Access Object for Message operations
  * All queries run on background thread via coroutines
@@ -122,13 +127,13 @@ interface MessageDao {
      * Get all messages for a contact (ordered by timestamp)
      * Returns Flow for reactive updates
      */
-    @Query("SELECT $LITE_COLS FROM messages WHERE contactId = :contactId AND messageType != 'PROFILE_UPDATE' ORDER BY timestamp ASC")
+    @Query("SELECT $LITE_COLS FROM messages WHERE contactId = :contactId AND messageType NOT IN ('PROFILE_UPDATE', 'REACTION') ORDER BY timestamp ASC")
     fun getMessagesForContactFlow(contactId: Long): Flow<List<Message>>
 
     /**
      * Get all messages for a contact (one-shot query)
      */
-    @Query("SELECT $LITE_COLS FROM messages WHERE contactId = :contactId AND messageType != 'PROFILE_UPDATE' ORDER BY timestamp ASC")
+    @Query("SELECT $LITE_COLS FROM messages WHERE contactId = :contactId AND messageType NOT IN ('PROFILE_UPDATE', 'REACTION') ORDER BY timestamp ASC")
     suspend fun getMessagesForContact(contactId: Long): List<Message>
 
     /**
@@ -146,19 +151,19 @@ interface MessageDao {
     /**
      * Get recent messages for a contact (limit N)
      */
-    @Query("SELECT $LITE_COLS FROM messages WHERE contactId = :contactId AND messageType != 'PROFILE_UPDATE' ORDER BY timestamp DESC LIMIT :limit")
+    @Query("SELECT $LITE_COLS FROM messages WHERE contactId = :contactId AND messageType NOT IN ('PROFILE_UPDATE', 'REACTION') ORDER BY timestamp DESC LIMIT :limit")
     suspend fun getRecentMessages(contactId: Long, limit: Int): List<Message>
 
     /**
      * Get unread message count for a contact
      */
-    @Query("SELECT COUNT(*) FROM messages WHERE contactId = :contactId AND isSentByMe = 0 AND isRead = 0")
+    @Query("SELECT COUNT(*) FROM messages WHERE contactId = :contactId AND isSentByMe = 0 AND isRead = 0 AND messageType NOT IN ('PROFILE_UPDATE', 'REACTION')")
     suspend fun getUnreadCount(contactId: Long): Int
 
     /**
      * Get total unread message count (all contacts)
      */
-    @Query("SELECT COUNT(*) FROM messages WHERE isSentByMe = 0 AND isRead = 0")
+    @Query("SELECT COUNT(*) FROM messages WHERE isSentByMe = 0 AND isRead = 0 AND messageType NOT IN ('PROFILE_UPDATE', 'REACTION')")
     suspend fun getTotalUnreadCount(): Int
 
     /**
@@ -243,7 +248,7 @@ interface MessageDao {
     /**
      * Get last message for a contact
      */
-    @Query("SELECT $LITE_COLS FROM messages WHERE contactId = :contactId AND messageType != 'PROFILE_UPDATE' ORDER BY timestamp DESC LIMIT 1")
+    @Query("SELECT $LITE_COLS FROM messages WHERE contactId = :contactId AND messageType NOT IN ('PROFILE_UPDATE', 'REACTION') ORDER BY timestamp DESC LIMIT 1")
     suspend fun getLastMessage(contactId: Long): Message?
 
     /**
@@ -255,7 +260,7 @@ interface MessageDao {
         WHERE id IN (
             SELECT m2.id FROM messages m2
             INNER JOIN (
-                SELECT contactId, MAX(timestamp) as maxTs FROM messages WHERE messageType != 'PROFILE_UPDATE' GROUP BY contactId
+                SELECT contactId, MAX(timestamp) as maxTs FROM messages WHERE messageType NOT IN ('PROFILE_UPDATE', 'REACTION') GROUP BY contactId
             ) latest ON m2.contactId = latest.contactId AND m2.timestamp = latest.maxTs
         )
     """)
@@ -264,7 +269,7 @@ interface MessageDao {
     /**
      * Get unread counts grouped by contact in one query
      */
-    @Query("SELECT contactId, COUNT(*) as cnt FROM messages WHERE isSentByMe = 0 AND isRead = 0 GROUP BY contactId")
+    @Query("SELECT contactId, COUNT(*) as cnt FROM messages WHERE isSentByMe = 0 AND isRead = 0 AND messageType NOT IN ('PROFILE_UPDATE', 'REACTION') GROUP BY contactId")
     suspend fun getUnreadCountsGrouped(): List<UnreadCountResult>
 
     /**
@@ -396,7 +401,7 @@ interface MessageDao {
     /**
      * Get message count for a contact (CursorWindow-safe alternative to getMessagesForContact().size)
      */
-    @Query("SELECT COUNT(*) FROM messages WHERE contactId = :contactId AND messageType != 'PROFILE_UPDATE'")
+    @Query("SELECT COUNT(*) FROM messages WHERE contactId = :contactId AND messageType NOT IN ('PROFILE_UPDATE', 'REACTION')")
     suspend fun getMessageCountForContact(contactId: Long): Int
 
     /**
@@ -414,4 +419,11 @@ interface MessageDao {
     @Query("SELECT encryptedPayload FROM messages WHERE id = :messageId LIMIT 1")
     suspend fun getEncryptedPayload(messageId: Long): String?
 
+    /**
+     * Minimal projection for resolving blob_* transport IDs back to local messageId.
+     */
+    @Query("SELECT messageId, encryptedPayload FROM messages WHERE contactId = :contactId AND encryptedPayload IS NOT NULL")
+    suspend fun getBlobLookupRows(contactId: Long): List<MessageBlobLookup>
+
 }
+

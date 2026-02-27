@@ -28,6 +28,8 @@ import com.securelegion.services.TorService
 import com.securelegion.network.TransportGate
 import com.securelegion.ui.adapters.GroupMessageAdapter
 import com.securelegion.ui.adapters.GroupChatMessage
+import com.securelegion.views.MediaKeyboardView
+import com.securelegion.utils.GlassBottomSheetDialog
 import com.securelegion.utils.GlassDialog
 import com.securelegion.utils.ThemedToast
 import androidx.core.view.ViewCompat
@@ -43,6 +45,7 @@ class GroupChatActivity : BaseActivity() {
         private const val TAG = "GroupChat"
         const val EXTRA_GROUP_ID = "group_id"
         const val EXTRA_GROUP_NAME = "group_name"
+        private const val STICKER_PREFIX = "[STICKER]"
     }
 
     // Views
@@ -191,7 +194,7 @@ class GroupChatActivity : BaseActivity() {
 
         sendImageOption.setOnClickListener {
             hideBottomSheet()
-            ThemedToast.show(this, "Send image - Coming soon")
+            showStickerGifPicker()
         }
 
         addFriendOption.setOnClickListener {
@@ -234,6 +237,10 @@ class GroupChatActivity : BaseActivity() {
         val topBar = findViewById<View>(R.id.topBar)
         val messageInputContainer = findViewById<View>(R.id.messageInputContainer)
         var wasImeVisible = false
+        val topBarBasePaddingLeft = topBar.paddingLeft
+        val topBarBasePaddingTop = topBar.paddingTop
+        val topBarBasePaddingRight = topBar.paddingRight
+        val topBarBasePaddingBottom = topBar.paddingBottom
 
         var currentBottomInset = 0
 
@@ -263,10 +270,10 @@ class GroupChatActivity : BaseActivity() {
 
             // Apply top inset to header
             topBar.setPadding(
-                topBar.paddingLeft,
-                systemInsets.top,
-                topBar.paddingRight,
-                topBar.paddingBottom
+                topBarBasePaddingLeft + systemInsets.left,
+                topBarBasePaddingTop + systemInsets.top,
+                topBarBasePaddingRight + systemInsets.right,
+                topBarBasePaddingBottom
             )
 
             // Apply bottom inset to message input container
@@ -367,15 +374,29 @@ class GroupChatActivity : BaseActivity() {
                     // Map to UI model
                     val mapped = messages.map { msg ->
                         val isMe = msg.authorDeviceHex == myDeviceIdHex
+                        val decrypted = msg.decryptedText ?: "[Encrypted]"
+                        val isSystem = decrypted.startsWith("[SYSTEM] ")
+                        val isSticker = !isSystem && decrypted.startsWith(STICKER_PREFIX)
+                        val text = when {
+                            isSystem -> decrypted.removePrefix("[SYSTEM] ")
+                            isSticker -> decrypted.removePrefix(STICKER_PREFIX).trimStart()
+                            else -> decrypted
+                        }
+
                         GroupChatMessage(
                             messageId = msg.msgIdHex,
-                            text = msg.decryptedText ?: "[Encrypted]",
+                            text = text,
                             timestamp = msg.timestampMs,
                             isSentByMe = isMe,
                             senderName = if (isMe) ""
                                 else nameMap[msg.authorDeviceHex] ?: msg.authorDeviceHex.take(8),
                             senderProfilePhotoBase64 = if (isMe) null
-                                else photoMap[msg.authorDeviceHex]
+                                else photoMap[msg.authorDeviceHex],
+                            messageType = when {
+                                isSystem -> "SYSTEM"
+                                isSticker -> "STICKER"
+                                else -> "TEXT"
+                            }
                         )
                     }
 
@@ -497,9 +518,18 @@ class GroupChatActivity : BaseActivity() {
 
     private fun sendMessage() {
         val messageText = messageInput.text.toString().trim()
-        val currentGroupId = groupId
-
         if (messageText.isEmpty()) return
+        sendMessageText(messageText, restoreTextOnFailure = true)
+        messageInput.setText("")
+    }
+
+    private fun sendStickerMessage(assetPath: String) {
+        if (assetPath.isBlank()) return
+        sendMessageText("$STICKER_PREFIX $assetPath", restoreTextOnFailure = false)
+    }
+
+    private fun sendMessageText(messageText: String, restoreTextOnFailure: Boolean) {
+        val currentGroupId = groupId
 
         if (isPendingInvite) {
             ThemedToast.show(this, "Accept the invite first")
@@ -510,8 +540,6 @@ class GroupChatActivity : BaseActivity() {
             ThemedToast.show(this, "Invalid group")
             return
         }
-
-        messageInput.setText("")
 
         lifecycleScope.launch {
             try {
@@ -545,10 +573,38 @@ class GroupChatActivity : BaseActivity() {
                 Log.e(TAG, "Failed to send message", e)
                 withContext(Dispatchers.Main) {
                     ThemedToast.show(this@GroupChatActivity, "Failed to send message: ${e.message}")
-                    messageInput.setText(messageText)
+                    if (restoreTextOnFailure) {
+                        messageInput.setText(messageText)
+                    }
                 }
             }
         }
+    }
+
+    private fun showStickerGifPicker() {
+        val bottomSheet = GlassBottomSheetDialog(this)
+        val mediaKeyboard = layoutInflater.inflate(R.layout.view_media_keyboard, null) as MediaKeyboardView
+
+        mediaKeyboard.selectTab(1)
+        mediaKeyboard.setOnStickerSelectedListener { assetPath ->
+            bottomSheet.dismiss()
+            sendStickerMessage(assetPath)
+        }
+        mediaKeyboard.setOnGifSelectedListener { assetPath ->
+            bottomSheet.dismiss()
+            sendStickerMessage(assetPath)
+        }
+        mediaKeyboard.setOnEmojiSelectedListener { emoji ->
+            val start = messageInput.selectionStart.coerceAtLeast(0)
+            val end = messageInput.selectionEnd.coerceAtLeast(0)
+            messageInput.text.replace(start.coerceAtMost(end), start.coerceAtLeast(end), emoji)
+        }
+
+        bottomSheet.setContentView(mediaKeyboard)
+        bottomSheet.window?.setBackgroundDrawableResource(android.R.color.transparent)
+        bottomSheet.window?.findViewById<View>(com.google.android.material.R.id.design_bottom_sheet)
+            ?.setBackgroundResource(android.R.color.transparent)
+        bottomSheet.show()
     }
 
     private fun showBottomSheet() {
