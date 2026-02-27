@@ -37,6 +37,9 @@ secure-legion-android/
 conductor/
 relay-server/
 
+# Dev scripts
+scripts/
+
 # Misc
 nul
 *.log

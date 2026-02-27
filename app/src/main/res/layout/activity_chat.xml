@@ -17,7 +17,6 @@
         android:paddingEnd="20dp"
         android:paddingTop="16dp"
         android:paddingBottom="16dp"
-        android:fitsSystemWindows="true"
         android:gravity="center_vertical"
         app:layout_constraintTop_toTopOf="parent">
 

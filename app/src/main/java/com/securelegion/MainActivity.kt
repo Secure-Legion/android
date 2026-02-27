@@ -1533,10 +1533,10 @@ class MainActivity : BaseActivity() {
 
         // Show header and tabs
         findViewById<View>(R.id.tabsContainer).visibility = View.VISIBLE
-        findViewById<TextView>(R.id.headerTitle).text = "Chats"
+        findViewById<TextView>(R.id.headerTitle).text = "Groups"
 
-        // Restore compose icon and hide compose badge
-        setNewMessageIcon(R.drawable.ic_compose)
+        // Show create group icon and hide compose badge
+        setNewMessageIcon(R.drawable.ic_create_group)
         BadgeUtils.updateComposeBadge(findViewById(android.R.id.content), 0)
 
         // Update search bar hint
