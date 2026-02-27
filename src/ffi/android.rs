@@ -127,6 +127,7 @@ fn is_valid_message_type(msg_type: u8) -> bool {
         crate::network::tor::MSG_TYPE_CALL_SIGNALING |
         crate::network::tor::MSG_TYPE_STICKER |
         crate::network::tor::MSG_TYPE_PROFILE_UPDATE |
+        crate::network::tor::MSG_TYPE_REACTION |
         crate::network::tor::MSG_TYPE_CRDT_OPS |
         crate::network::tor::MSG_TYPE_SYNC_REQUEST |
         crate::network::tor::MSG_TYPE_SYNC_CHUNK |
@@ -1589,6 +1590,90 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendPongToListener(
 }
 
 #[no_mangle]
+pub extern "C" fn Java_com_securelegion_crypto_RustBridge_torPreflightConnect(
+    mut env: JNIEnv,
+    _class: JClass,
+    onion: JString,
+    port: jint,
+    timeout_ms: jint,
+) -> jstring {
+    catch_panic!(env, {
+        let onion_str = match jstring_to_string(&mut env, onion) {
+            Ok(s) => s,
+            Err(e) => {
+                let _ = env.throw_new("java/lang/IllegalArgumentException", e);
+                return std::ptr::null_mut();
+            }
+        };
+
+        let target_port = if port <= 0 { PING_PONG_HANDSHAKE_PORT } else { port as u16 };
+        let timeout_ms_u64 = (if timeout_ms <= 0 { 3500 } else { timeout_ms }) as u64;
+        let bootstrap = crate::network::tor::get_bootstrap_status_fast();
+        let circuits = crate::network::tor::get_circuit_established_fast();
+        let tor_manager = get_tor_manager();
+        let start = std::time::Instant::now();
+
+        let result = GLOBAL_RUNTIME.block_on(async {
+            tokio::time::timeout(
+                std::time::Duration::from_millis(timeout_ms_u64),
+                async {
+                    let _conn = {
+                        let tor = tor_manager.lock().unwrap();
+                        tor.connect(&onion_str, target_port).await?
+                    };
+                    Ok::<(), Box<dyn std::error::Error>>(())
+                },
+            )
+            .await
+        });
+
+        let latency_ms = start.elapsed().as_millis() as u64;
+        let json = match result {
+            Ok(Ok(())) => {
+                serde_json::json!({
+                    "ok": true,
+                    "onion": onion_str,
+                    "port": target_port,
+                    "latencyMs": latency_ms,
+                    "bootstrap": bootstrap,
+                    "circuits": circuits
+                })
+            }
+            Ok(Err(e)) => {
+                serde_json::json!({
+                    "ok": false,
+                    "onion": onion_str,
+                    "port": target_port,
+                    "error": e.to_string(),
+                    "latencyMs": latency_ms,
+                    "bootstrap": bootstrap,
+                    "circuits": circuits
+                })
+            }
+            Err(_) => {
+                serde_json::json!({
+                    "ok": false,
+                    "onion": onion_str,
+                    "port": target_port,
+                    "error": format!("timeout after {}ms", timeout_ms_u64),
+                    "latencyMs": latency_ms,
+                    "bootstrap": bootstrap,
+                    "circuits": circuits
+                })
+            }
+        };
+
+        match env.new_string(json.to_string()) {
+            Ok(s) => s.into_raw(),
+            Err(e) => {
+                let _ = env.throw_new("java/lang/RuntimeException", format!("Failed to create preflight JSON: {}", e));
+                std::ptr::null_mut()
+            }
+        }
+    }, std::ptr::null_mut())
+}
+
+#[no_mangle]
 pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendPing(
     mut env: JNIEnv,
     _class: JClass,
@@ -1827,14 +1912,15 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendPing(
         wire_message.extend_from_slice(&encrypted_ping);
 
         // Send encrypted Ping via Tor
-        // HYBRID MODE: Try instant Pong (30s timeout), fall back to delayed mode
+        // HYBRID MODE: Try instant Pong (1s timeout), fall back to delayed mode
         let tor_manager = get_tor_manager();
         let runtime = tokio::runtime::Runtime::new().expect("Failed to create Tokio runtime");
 
         const PING_PONG_PORT: u16 = 9150;
-        const INSTANT_PONG_TIMEOUT_SECS: u64 = 30;
+        const INSTANT_PONG_TIMEOUT_MS: u64 = 30000; // 30s — give Tor round-trip time to complete
 
-        let result: Result<(), Box<dyn std::error::Error>> = runtime.block_on(async {
+        // Returns true = instant mode (MESSAGE already sent), false = delayed mode (PONG pending)
+        let result: Result<bool, Box<dyn std::error::Error>> = runtime.block_on(async {
             // Connect and send Ping (lock only during operations)
             let mut conn = {
                 let manager = tor_manager.lock().unwrap();
@@ -1846,12 +1932,12 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendPing(
                 manager.send(&mut conn, &wire_message).await?;
             } // Lock released
 
-            log::info!("Ping sent successfully ({}), waiting for instant Pong ({}s timeout)...", ping_id, INSTANT_PONG_TIMEOUT_SECS);
+            log::info!("Ping sent successfully ({}), waiting for instant Pong ({}ms timeout)...", ping_id, INSTANT_PONG_TIMEOUT_MS);
 
             // Try to receive instant Pong response (recipient online and accepts immediately)
             // No lock needed - we own the connection
             let pong_result = tokio::time::timeout(
-                std::time::Duration::from_secs(INSTANT_PONG_TIMEOUT_SECS),
+                std::time::Duration::from_millis(INSTANT_PONG_TIMEOUT_MS),
                 async {
                     // Read length prefix
                     let mut len_buf = [0u8; 4];
@@ -1866,14 +1952,19 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendPing(
                     let mut type_byte = [0u8; 1];
                     conn.stream.read_exact(&mut type_byte).await?;
 
+                    // Accept PONG or DELIVERY_CONFIRMATION — either proves peer is alive
+                    if type_byte[0] == crate::network::tor::MSG_TYPE_DELIVERY_CONFIRMATION {
+                        log::info!("PEER_ALIVE: Received DELIVERY_CONFIRMATION (0x{:02x}) on PING connection — peer processed inline", type_byte[0]);
+                        // Drain remaining bytes so connection closes cleanly
+                        let data_len = total_len.saturating_sub(1);
+                        let mut drain = vec![0u8; data_len];
+                        let _ = conn.stream.read_exact(&mut drain).await;
+                        // Return empty vec to signal "peer alive but no PONG data"
+                        return Ok::<Vec<u8>, Box<dyn std::error::Error>>(Vec::new());
+                    }
                     if type_byte[0] != crate::network::tor::MSG_TYPE_PONG {
-                        if type_byte[0] == crate::network::tor::MSG_TYPE_DELIVERY_CONFIRMATION {
-                            log::warn!("Received PING_ACK (0x06) on PING connection - ignoring (should go to port 9153)");
-                            log::warn!("→ This is a bug - PING_ACK was sent to wrong port. Treating as 'no instant pong'.");
-                            return Err("PING_ACK received on wrong connection".into());
-                        }
-                        log::warn!("Expected PONG (0x02) but got type 0x{:02x}", type_byte[0]);
-                        return Err(format!("Wrong message type: expected PONG, got 0x{:02x}", type_byte[0]).into());
+                        log::warn!("Expected PONG (0x02) or DELIVERY_CONFIRMATION (0x06) but got type 0x{:02x}", type_byte[0]);
+                        return Err(format!("Wrong message type: expected PONG/DELIVERY_CONFIRMATION, got 0x{:02x}", type_byte[0]).into());
                     }
 
                     // Read the pong data
@@ -1888,10 +1979,21 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendPing(
             ).await;
 
             match pong_result {
+                Ok(Ok(pong_data)) if pong_data.is_empty() => {
+                    // DELIVERY_CONFIRMATION received — peer processed inline (e.g. reaction)
+                    // No PONG verification needed, no MESSAGE payload to send
+                    log::info!("INLINE_ACK_MODE: Peer confirmed receipt via DELIVERY_CONFIRMATION — done");
+                    Ok(true) // instant: peer already processed
+                }
                 Ok(Ok(pong_data)) => {
                     // Verify instant Pong signature before sending message payload
                     // Wire layout (after length+type stripping): [responder_x25519:32][encrypted_pong]
                     // recipient_ed25519_verifying = the contact we dialed (i.e. the PONG signer)
+                    //
+                    // Hoist verified PONG to outer scope so the send-failure branch can
+                    // store it for delayed recovery without a scope/lifetime issue.
+                    let verified_pong: crate::network::pingpong::PongToken;
+
                     if pong_data.len() >= 32 {
                         let pong_encrypted = &pong_data[32..];
                         match crate::crypto::encryption::decrypt_message(pong_encrypted, &shared_secret) {
@@ -1910,13 +2012,14 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendPing(
                                         match pingpong_pong.verify(&recipient_ed25519_verifying) {
                                             Ok(true) => {
                                                 log::info!("PONG_SIG_OK: Instant Pong signature verified for ping_id={}", ping_id);
-                                                // Store verified pong session for waitForPong to consume
-                                                crate::network::pingpong::store_pong_session(&ping_id, pingpong_pong);
+                                                // DO NOT store_pong_session here — we send MESSAGE
+                                                // immediately below. Storing creates a race window
+                                                // where Kotlin's retryAllPendingMessages() discovers
+                                                // the PONG via pollForPong() and sends a duplicate
+                                                // MESSAGE blob (different ID format → dedup miss).
                                                 // Track verification — prevents PONG_SIG_REJECT on late listener duplicates
                                                 VERIFIED_PONG_IDS.lock().unwrap().insert(ping_id.clone(), std::time::Instant::now());
-                                                // Deferred signer cleanup: keep signer for 5 min (periodic cleanup handles removal)
-                                                // This ensures late pongs can still verify if VERIFIED_PONG_IDS was lost to process restart
-                                                // Old behavior: immediate remove → caused PONG_SIG_REJECT race
+                                                verified_pong = pingpong_pong;
                                             },
                                             Ok(false) => {
                                                 log::error!("PONG_SIG_INVALID: Instant Pong signature verification FAILED for ping_id={}", ping_id);
@@ -1976,47 +2079,53 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendPing(
                         message_wire.len(), message_bytes.len());
 
                     // Send message on same connection (lock only during send)
-                    {
+                    match {
                         let manager = tor_manager.lock().unwrap();
-                        manager.send(&mut conn, &message_wire).await?;
-                    } // Lock released
-
-                    log::info!("Message sent successfully ({} bytes) in INSTANT MODE", message_bytes.len());
-
-                    // CRITICAL: Remove PONG from GLOBAL_PONG_SESSIONS after instant MESSAGE send.
-                    // Without this, retryAllPendingMessages() would discover the stored PONG via
-                    // pollForPong() and send the MESSAGE blob AGAIN — creating a ghost duplicate
-                    // on the receiver (dual-path dedup uses different ID formats).
-                    crate::network::pingpong::remove_pong_session(&ping_id);
-                    log::info!("INSTANT MODE: Consumed PONG session for {} (prevents double MESSAGE send)", &ping_id[..8.min(ping_id.len())]);
-
-                    Ok(())
+                        manager.send(&mut conn, &message_wire).await
+                    } {
+                        Ok(()) => {
+                            log::info!("INSTANT_DELIVERED: Message sent ({} bytes) on PING connection for {}", message_bytes.len(), &ping_id[..8.min(ping_id.len())]);
+                            // No PONG session was stored → nothing to remove.
+                            // Kotlin will mark STATUS_SENT based on instantMode=true.
+                            Ok(true) // instant success
+                        }
+                        Err(send_err) => {
+                            // MESSAGE send failed after PONG verified — store PONG for delayed recovery.
+                            // Kotlin's retryAllPendingMessages() will discover it via pollForPong().
+                            log::warn!("INSTANT_SEND_FAIL: MESSAGE send failed ({}), storing PONG for delayed recovery: {}", send_err, &ping_id[..8.min(ping_id.len())]);
+                            crate::network::pingpong::store_pong_session(&ping_id, verified_pong);
+                            Ok(false) // delayed: PONG stored, Kotlin will retry blob send
+                        }
+                    }
                 }
                 Ok(Err(e)) => {
                     log::warn!("Failed to receive instant Pong: {}", e);
                     log::info!("→ DELAYED MODE: Pong will arrive later via port 8080 main listener");
-                    Ok(())
+                    Ok(false) // delayed: no PONG received
                 }
                 Err(_) => {
-                    log::info!("→ DELAYED MODE: Instant Pong timeout ({}s) - recipient may be offline or busy", INSTANT_PONG_TIMEOUT_SECS);
+                    log::info!("→ DELAYED MODE: Instant Pong timeout ({}ms) - recipient may be offline or busy", INSTANT_PONG_TIMEOUT_MS);
                     log::info!("Pong will arrive later via port 8080 main listener when recipient comes online");
-                    Ok(())
+                    Ok(false) // delayed: timeout waiting for PONG
                 }
             }
         });
 
         match result {
-            Ok(_) => {
-                log::info!("Ping sent to {}: {}", recipient_onion_str, ping_id);
+            Ok(instant) => {
+                log::info!("Ping sent to {}: {} (instantMode={})", recipient_onion_str, ping_id, instant);
 
                 // Encode wire_message as Base64 for storage and retry
                 let wire_bytes_base64 = base64::encode(&wire_message);
 
-                // Return JSON with ping_id and wire_bytes for tracking and retry
+                // Return JSON with ping_id, wire_bytes, and instantMode flag
+                // instantMode=true  → MESSAGE already sent on PING connection (Kotlin marks STATUS_SENT)
+                // instantMode=false → delayed mode, Kotlin leaves STATUS_PING_SENT for retry
                 let json_response = format!(
-                    r#"{{"pingId":"{}","wireBytes":"{}"}}"#,
+                    r#"{{"pingId":"{}","wireBytes":"{}","instantMode":{}}}"#,
                     ping_id,
-                    wire_bytes_base64
+                    wire_bytes_base64,
+                    instant
                 );
 
                 match string_to_jstring(&mut env, &json_response) {
@@ -2025,7 +2134,24 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendPing(
                 }
             }
             Err(e) => {
-                log::error!("Failed to send Ping: {}", e);
+                let error_text = e.to_string();
+                let is_retryable = error_text.contains("status 1")
+                    || error_text.contains("status 3")
+                    || error_text.contains("status 4")
+                    || error_text.contains("status 5")
+                    || error_text.contains("status 6")
+                    || error_text.contains("general SOCKS server failure")
+                    || error_text.contains("Network unreachable")
+                    || error_text.contains("Host unreachable")
+                    || error_text.contains("Connection refused")
+                    || error_text.contains("TTL expired")
+                    || error_text.contains("MEASUREMENT_EXPIRED")
+                    || error_text.contains("circuit");
+                if is_retryable {
+                    log::warn!("Failed to send Ping (retryable): {}", error_text);
+                } else {
+                    log::error!("Failed to send Ping: {}", error_text);
+                }
                 let _ = env.throw_new("java/lang/RuntimeException", format!("Failed to send Ping: {}", e));
                 std::ptr::null_mut()
             }
@@ -2079,12 +2205,12 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_resendPingWithWireByte
         log::info!("Resending Ping with stored wire bytes ({} bytes) to {}", wire_message.len(), recipient_onion_str);
 
         // Send encrypted Ping via Tor
-        // HYBRID MODE: Try instant Pong (30s timeout), fall back to delayed mode
+        // HYBRID MODE: Try instant Pong (short timeout), fall back to delayed mode
         let tor_manager = get_tor_manager();
         let runtime = tokio::runtime::Runtime::new().expect("Failed to create Tokio runtime");
 
         const PING_PONG_PORT: u16 = 9150;
-        const INSTANT_PONG_TIMEOUT_SECS: u64 = 30;
+        const INSTANT_PONG_TIMEOUT_MS: u64 = 30000; // 30s — give Tor round-trip time to complete
 
         let result: Result<(), Box<dyn std::error::Error>> = runtime.block_on(async {
             // Connect and send Ping (lock only during operations)
@@ -2098,13 +2224,13 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_resendPingWithWireByte
                 manager.send(&mut conn, &wire_message).await?;
             } // Lock released
 
-            log::info!("Ping resent successfully, waiting for instant Pong ({}s timeout)...", INSTANT_PONG_TIMEOUT_SECS);
+            log::info!("Ping resent successfully, waiting for instant Pong ({}ms timeout)...", INSTANT_PONG_TIMEOUT_MS);
 
             // Try to receive instant Pong response (recipient online and accepts immediately)
             // Note: This retry doesn't include the message payload - that's already been sent before
             // We're just resending the Ping to get acknowledgment
             let pong_result = tokio::time::timeout(
-                std::time::Duration::from_secs(INSTANT_PONG_TIMEOUT_SECS),
+                std::time::Duration::from_millis(INSTANT_PONG_TIMEOUT_MS),
                 async {
                     // Read length prefix
                     let mut len_buf = [0u8; 4];
@@ -2119,14 +2245,17 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_resendPingWithWireByte
                     let mut type_byte = [0u8; 1];
                     conn.stream.read_exact(&mut type_byte).await?;
 
+                    // Accept PONG or DELIVERY_CONFIRMATION — either proves peer is alive
+                    if type_byte[0] == crate::network::tor::MSG_TYPE_DELIVERY_CONFIRMATION {
+                        log::info!("PEER_ALIVE: Received DELIVERY_CONFIRMATION (0x{:02x}) on PING connection during retry — peer processed inline", type_byte[0]);
+                        let data_len = total_len.saturating_sub(1);
+                        let mut drain = vec![0u8; data_len];
+                        let _ = conn.stream.read_exact(&mut drain).await;
+                        return Ok::<Vec<u8>, Box<dyn std::error::Error>>(Vec::new());
+                    }
                     if type_byte[0] != crate::network::tor::MSG_TYPE_PONG {
-                        if type_byte[0] == crate::network::tor::MSG_TYPE_DELIVERY_CONFIRMATION {
-                            log::warn!("Received PING_ACK (0x06) on PING connection during retry - ignoring (should go to port 9153)");
-                            log::warn!("→ This is a bug - PING_ACK was sent to wrong port. Treating as 'no instant pong'.");
-                            return Err("PING_ACK received on wrong connection".into());
-                        }
-                        log::warn!("Expected PONG (0x02) but got type 0x{:02x}", type_byte[0]);
-                        return Err(format!("Wrong message type: expected PONG, got 0x{:02x}", type_byte[0]).into());
+                        log::warn!("Expected PONG (0x02) or DELIVERY_CONFIRMATION (0x06) but got type 0x{:02x}", type_byte[0]);
+                        return Err(format!("Wrong message type: expected PONG/DELIVERY_CONFIRMATION, got 0x{:02x}", type_byte[0]).into());
                     }
 
                     // Read the pong data
@@ -2141,6 +2270,10 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_resendPingWithWireByte
             ).await;
 
             match pong_result {
+                Ok(Ok(pong_data)) if pong_data.is_empty() => {
+                    log::info!("INLINE_ACK_MODE: Peer confirmed receipt via DELIVERY_CONFIRMATION during retry — done");
+                    Ok(())
+                }
                 Ok(Ok(_pong_data)) => {
                     log::info!("INSTANT MODE: Pong received for resent Ping");
                     Ok(())
@@ -2151,7 +2284,7 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_resendPingWithWireByte
                     Ok(())
                 }
                 Err(_) => {
-                    log::info!("→ DELAYED MODE: Instant Pong timeout ({}s) for retry - recipient may be offline or busy", INSTANT_PONG_TIMEOUT_SECS);
+                    log::info!("→ DELAYED MODE: Instant Pong timeout ({}ms) for retry - recipient may be offline or busy", INSTANT_PONG_TIMEOUT_MS);
                     log::info!("Pong will arrive later via port 8080 main listener when recipient comes online");
                     Ok(())
                 }
@@ -2164,7 +2297,24 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_resendPingWithWireByte
                 1 // success
             }
             Err(e) => {
-                log::error!("Failed to resend Ping: {}", e);
+                let error_text = e.to_string();
+                let is_retryable = error_text.contains("status 1")
+                    || error_text.contains("status 3")
+                    || error_text.contains("status 4")
+                    || error_text.contains("status 5")
+                    || error_text.contains("status 6")
+                    || error_text.contains("general SOCKS server failure")
+                    || error_text.contains("Network unreachable")
+                    || error_text.contains("Host unreachable")
+                    || error_text.contains("Connection refused")
+                    || error_text.contains("TTL expired")
+                    || error_text.contains("MEASUREMENT_EXPIRED")
+                    || error_text.contains("circuit");
+                if is_retryable {
+                    log::warn!("Failed to resend Ping (retryable): {}", error_text);
+                } else {
+                    log::error!("Failed to resend Ping: {}", error_text);
+                }
                 0 // failure
             }
         }

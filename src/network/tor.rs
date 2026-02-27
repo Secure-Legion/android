@@ -1105,6 +1105,7 @@ pub const MSG_TYPE_PAYMENT_ACCEPTED: u8 = 0x0C;
 pub const MSG_TYPE_CALL_SIGNALING: u8 = 0x0D; // Voice call signaling (OFFER/ANSWER/REJECT/END/BUSY)
 pub const MSG_TYPE_STICKER: u8 = 0x0E; // Sticker/GIF message (asset path as payload)
 pub const MSG_TYPE_PROFILE_UPDATE: u8 = 0x0F; // Profile photo update (hidden, not shown in chat)
+pub const MSG_TYPE_REACTION: u8 = 0x10;       // Emoji reaction (inline processing, no PingInbox)
 
 // CRDT group wire types (not per-member encrypted — ops are Ed25519-signed, content is XChaCha20 group-secret encrypted)
 pub const MSG_TYPE_CRDT_OPS: u8 = 0x30;       // CRDT op bundle: [groupId:32][packedOps]
@@ -2101,6 +2102,7 @@ impl TorManager {
 
         if response[0] != 0x05 || response[1] != 0x00 {
             let status_code = response[1];
+            let is_retryable_status = matches!(status_code, 0x01 | 0x03 | 0x04 | 0x05 | 0x06);
             let error_message = match status_code {
                 0x00 => "succeeded".to_string(),
                 0x01 => "general SOCKS server failure".to_string(),
@@ -2114,31 +2116,36 @@ impl TorManager {
                 _ => format!("Unknown error code {}", status_code),
             };
 
-            log::error!("SOCKS5 connect failed: status {} ({})", status_code, error_message);
-            log::error!("Target: {}:{}", addr, port);
+            if is_retryable_status {
+                log::warn!("SOCKS5 connect failed (retryable): status {} ({})", status_code, error_message);
+                log::warn!("Target: {}:{}", addr, port);
+            } else {
+                log::error!("SOCKS5 connect failed: status {} ({})", status_code, error_message);
+                log::error!("Target: {}:{}", addr, port);
+            }
 
             // Provide specific diagnostic hints based on error code
             match status_code {
                 0x05 => {
-                    log::error!("Diagnosis: Connection refused by Tor proxy");
-                    log::error!("Possible causes:");
-                    log::error!("1. Tor not fully bootstrapped (check bootstrap status)");
-                    log::error!("2. Recipient's hidden service not reachable");
-                    log::error!("3. Recipient's hidden service listener not running on port {}", port);
-                    log::error!("4. .onion address is invalid or doesn't exist");
-                    log::error!("Recommended action: Verify Tor bootstrap is 100% before retrying");
+                    log::warn!("Diagnosis: Connection refused by Tor proxy");
+                    log::warn!("Possible causes:");
+                    log::warn!("1. Tor not fully bootstrapped (check bootstrap status)");
+                    log::warn!("2. Recipient's hidden service not reachable");
+                    log::warn!("3. Recipient's hidden service listener not running on port {}", port);
+                    log::warn!("4. .onion address is invalid or doesn't exist");
+                    log::warn!("Recommended action: Verify Tor bootstrap is 100% before retrying");
                 }
                 0x03 => {
-                    log::error!("Diagnosis: Network unreachable");
-                    log::error!("Possible causes:");
-                    log::error!("1. Tor circuits not established");
-                    log::error!("2. No network connectivity");
+                    log::warn!("Diagnosis: Network unreachable");
+                    log::warn!("Possible causes:");
+                    log::warn!("1. Tor circuits not established");
+                    log::warn!("2. No network connectivity");
                 }
                 0x04 => {
-                    log::error!("Diagnosis: Host unreachable");
-                    log::error!("Possible causes:");
-                    log::error!("1. Hidden service descriptors not published");
-                    log::error!("2. Hidden service offline");
+                    log::warn!("Diagnosis: Host unreachable");
+                    log::warn!("Possible causes:");
+                    log::warn!("1. Hidden service descriptors not published");
+                    log::warn!("2. Hidden service offline");
                 }
                 _ => {}
             }
@@ -2405,6 +2412,7 @@ impl TorManager {
             MSG_TYPE_PAYMENT_ACCEPTED |
             MSG_TYPE_CALL_SIGNALING |
             MSG_TYPE_PROFILE_UPDATE |
+            MSG_TYPE_REACTION |
             MSG_TYPE_CRDT_OPS |
             MSG_TYPE_SYNC_REQUEST |
             MSG_TYPE_SYNC_CHUNK |
@@ -2492,7 +2500,7 @@ impl TorManager {
                     log::info!("ROUTER: PONG dispatch ok, conn={} len={}", conn_id, buf.len());
                 }
             }
-            MSG_TYPE_TEXT | MSG_TYPE_VOICE | MSG_TYPE_IMAGE | MSG_TYPE_PAYMENT_REQUEST | MSG_TYPE_PAYMENT_SENT | MSG_TYPE_PAYMENT_ACCEPTED | MSG_TYPE_PROFILE_UPDATE |
+            MSG_TYPE_TEXT | MSG_TYPE_VOICE | MSG_TYPE_IMAGE | MSG_TYPE_PAYMENT_REQUEST | MSG_TYPE_PAYMENT_SENT | MSG_TYPE_PAYMENT_ACCEPTED | MSG_TYPE_PROFILE_UPDATE | MSG_TYPE_REACTION |
             MSG_TYPE_CRDT_OPS | MSG_TYPE_SYNC_REQUEST | MSG_TYPE_SYNC_CHUNK |
             MSG_TYPE_ROUTING_UPDATE | MSG_TYPE_ROUTING_REQUEST => {
                 log::info!("→ Routing to MESSAGE handler (separate channel, type={})",
@@ -2504,6 +2512,7 @@ impl TorManager {
                         MSG_TYPE_PAYMENT_SENT => "PAYMENT_SENT",
                         MSG_TYPE_PAYMENT_ACCEPTED => "PAYMENT_ACCEPTED",
                         MSG_TYPE_PROFILE_UPDATE => "PROFILE_UPDATE",
+                        MSG_TYPE_REACTION => "REACTION",
                         MSG_TYPE_CRDT_OPS => "CRDT_OPS",
                         MSG_TYPE_SYNC_REQUEST => "SYNC_REQUEST",
                         MSG_TYPE_SYNC_CHUNK => "SYNC_CHUNK",
