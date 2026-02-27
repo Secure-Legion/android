@@ -411,6 +411,10 @@
                 android:resource="@xml/file_paths" />
         </provider>
 
+        <activity
+            android:name="com.yalantis.ucrop.UCropActivity"
+            android:theme="@style/Theme.AppCompat.NoActionBar" />
+
     </application>
 
 </manifest>

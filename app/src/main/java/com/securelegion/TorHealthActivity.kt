@@ -41,8 +41,6 @@ TorHealthActivity : AppCompatActivity() {
     private lateinit var mainCircuitsText: TextView
     private lateinit var mainBootstrapText: TextView
 
-    private lateinit var voiceTorStatusText: TextView
-    private lateinit var voiceTorStatusIndicator: View
 
     private lateinit var networkStatusText: TextView
     private lateinit var networkStatusIndicator: View
@@ -65,9 +63,6 @@ TorHealthActivity : AppCompatActivity() {
         mainTorStatusIndicator = findViewById(R.id.mainTorStatusIndicator)
         mainCircuitsText = findViewById(R.id.mainCircuitsText)
         mainBootstrapText = findViewById(R.id.mainBootstrapText)
-
-        voiceTorStatusText = findViewById(R.id.voiceTorStatusText)
-        voiceTorStatusIndicator = findViewById(R.id.voiceTorStatusIndicator)
 
         networkStatusText = findViewById(R.id.networkStatusText)
         networkStatusIndicator = findViewById(R.id.networkStatusIndicator)
@@ -142,9 +137,6 @@ TorHealthActivity : AppCompatActivity() {
             mainBootstrapText.text = "Bootstrap: $bootstrapPercent%"
 
             // Voice Tor Health — disabled in v1
-            voiceTorStatusText.text = "Disabled"
-            voiceTorStatusText.setTextColor(0xFF666666.toInt())
-            voiceTorStatusIndicator.setBackgroundResource(R.drawable.status_offline_indicator)
 
             // Network Status
             if (hasInternet) {
