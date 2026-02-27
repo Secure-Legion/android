@@ -4,7 +4,9 @@
     android:layout_height="wrap_content"
     android:orientation="vertical"
     android:paddingTop="8dp"
-    android:paddingBottom="8dp">
+    android:paddingBottom="8dp"
+    android:clipChildren="false"
+    android:clipToPadding="false">
 
     <!-- Timestamp Header (Day/Date) -->
     <TextView
@@ -24,6 +26,8 @@
         android:layout_height="wrap_content"
         android:orientation="horizontal"
         android:gravity="end"
+        android:paddingStart="60dp"
+        android:paddingEnd="16dp"
         android:clipChildren="false"
         android:clipToPadding="false">
 
