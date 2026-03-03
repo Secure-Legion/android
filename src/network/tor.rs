@@ -56,6 +56,10 @@ pub fn compute_onion_address_from_ed25519_seed(ed25519_seed: &[u8; 32]) -> Strin
 /// Circuit established status (0 = no circuits, 1 = circuits established)
 /// Updated by event listener polling GETINFO status/circuit-established
 pub static CIRCUIT_ESTABLISHED: AtomicU8 = AtomicU8::new(0);
+/// Epoch millis when circuit-established was last observed as 1.
+pub static LAST_CIRCUIT_ESTABLISHED_MS: AtomicU64 = AtomicU64::new(0);
+/// Epoch millis when listener disconnected from ControlSocket (0 means connected/unknown).
+pub static LISTENER_DISCONNECTED_SINCE_MS: AtomicU64 = AtomicU64::new(0);
 
 /// Get bootstrap status — always returns immediately (atomic read).
 /// When the atomic is 0 (event listener hasn't caught up), spawns a background
@@ -186,6 +190,16 @@ pub fn get_circuit_established_fast() -> u8 {
     CIRCUIT_ESTABLISHED.load(Ordering::SeqCst)
 }
 
+/// Epoch millis when circuit-established was last observed as 1.
+pub fn get_last_circuit_established_ms() -> u64 {
+    LAST_CIRCUIT_ESTABLISHED_MS.load(Ordering::SeqCst)
+}
+
+/// Epoch millis when the ControlSocket listener last disconnected.
+pub fn get_listener_disconnected_since_ms() -> u64 {
+    LISTENER_DISCONNECTED_SINCE_MS.load(Ordering::SeqCst)
+}
+
 // clear_circuit_established() removed — replaced by on_network_lost() above.
 
 /// HS descriptor upload counter - incremented by event listener each time Tor confirms UPLOADED to an HSDir
@@ -288,6 +302,16 @@ fn now_millis() -> u64 {
 /// Update the event listener heartbeat to now.
 fn touch_listener_heartbeat() {
     LAST_LISTENER_HEARTBEAT.store(now_millis(), Ordering::SeqCst);
+}
+
+fn update_circuit_established(new_status: u8) {
+    let old_status = CIRCUIT_ESTABLISHED.swap(new_status, Ordering::SeqCst);
+    if new_status == 1 {
+        LAST_CIRCUIT_ESTABLISHED_MS.store(now_millis(), Ordering::SeqCst);
+    }
+    if new_status != old_status {
+        log::info!("Circuit established status changed: {} -> {}", old_status, new_status);
+    }
 }
 
 // ─── Hidden Service Listener Liveness ───────────────────────────────────────
@@ -603,6 +627,7 @@ async fn bootstrap_event_listener_task() -> Result<(), Box<dyn Error + Send + Sy
             log::info!("Event listener: Recovered after {} consecutive failures", consecutive_failures);
         }
         consecutive_failures = 0;
+        LISTENER_DISCONNECTED_SINCE_MS.store(0, Ordering::SeqCst);
         touch_listener_heartbeat();
 
         // ----- Phase 5: Event read loop -----
@@ -698,10 +723,7 @@ async fn bootstrap_event_listener_task() -> Result<(), Box<dyn Error + Send + Sy
                     }
 
                     let new_status = if circ_resp.contains("circuit-established=1") { 1 } else { 0 };
-                    let old_status = CIRCUIT_ESTABLISHED.swap(new_status, Ordering::SeqCst);
-                    if new_status != old_status {
-                        log::info!("Circuit established status changed: {} → {}", old_status, new_status);
-                    }
+                    update_circuit_established(new_status);
 
                     touch_listener_heartbeat();
 
@@ -835,9 +857,11 @@ fn build_control_auth_command() -> String {
 /// Does NOT clear BOOTSTRAP_STATUS — Tor daemon may still be running fine;
 /// zeroing it would flash the UI from 100% → 0%.
 fn invalidate_listener_state() {
-    CIRCUIT_ESTABLISHED.store(0, Ordering::SeqCst);
+    let now = now_millis();
+    LISTENER_DISCONNECTED_SINCE_MS.store(now, Ordering::SeqCst);
     LAST_LISTENER_HEARTBEAT.store(0, Ordering::SeqCst);
-    log::warn!("Event listener: Cleared CIRCUIT_ESTABLISHED=0, heartbeat=0 (BOOTSTRAP_STATUS preserved)");
+    CIRCUIT_ESTABLISHED.store(0, Ordering::SeqCst);
+    log::warn!("Event listener: Control disconnect - cleared CIRCUIT_ESTABLISHED=0, heartbeat=0 (BOOTSTRAP_STATUS preserved)");
 }
 
 /// Read from control socket until we see "250 OK" or timeout.
@@ -918,7 +942,7 @@ async fn poll_initial_state(
             if resp.len() > 16_384 { break; }
         }
         let circuits_established = if resp.contains("circuit-established=1") { 1 } else { 0 };
-        CIRCUIT_ESTABLISHED.store(circuits_established, Ordering::SeqCst);
+        update_circuit_established(circuits_established);
         log::info!("Event listener: Initial circuit-established: {}", circuits_established);
     }
 }
@@ -1787,11 +1811,11 @@ impl TorManager {
             .ok_or("Control port not connected")?;
 
         // Now create the hidden service - descriptors will be uploaded and we'll receive events
-        // IMPORTANT: Expose FOUR ports for Ping-Pong-Tap-ACK protocol:
-        // - Port 9150 → local 8080 (Ping listener - main hidden service port)
-        // - Port 8080 → local 8080 (Pong listener - SAME as main listener for routing)
-        // - Port 9151 → local 9151 (Tap listener)
-        // - Port 9153 → local 9153 (ACK/Delivery Confirmation listener)
+        // IMPORTANT: Expose FOUR service ports for compatibility:
+        // - Port 9150 -> local 8080 (primary messaging path: Ping/Pong/ACK)
+        // - Port 8080 -> local 8080 (legacy fallback path)
+        // - Port 9151 -> local 9151 (Tap/Friend request path)
+        // - Port 9153 -> local 8080 (ACK compatibility alias; no separate local ACK listener)
         let (actual_onion_address, is_new_service) = {
             let mut stream = control.lock().await;
 
@@ -1799,7 +1823,7 @@ impl TorManager {
             // Detach allows the service to persist beyond the control connection and be deleted from any connection
             // This fixes "service already registered" errors from crashed/orphaned services
             let command = format!(
-                "ADD_ONION ED25519-V3:{} Flags=Detach Port={},127.0.0.1:{} Port=8080,127.0.0.1:8080 Port=9151,127.0.0.1:9151 Port=9153,127.0.0.1:9153\r\n",
+                "ADD_ONION ED25519-V3:{} Flags=Detach Port={},127.0.0.1:{} Port=8080,127.0.0.1:8080 Port=9151,127.0.0.1:9151 Port=9153,127.0.0.1:8080\r\n",
                 key_base64, service_port, local_port
             );
 
@@ -2585,12 +2609,11 @@ impl TorManager {
                 ping_tx.send((conn_id, buf)).ok();
             }
             MSG_TYPE_DELIVERY_CONFIRMATION => {
-                log::warn!("Received ACK on main listener (port 8080) - should go to port 9153!");
-                log::info!("→ Routing to ACK channel (error recovery - ensures no message loss)");
+                log::info!("Received ACK on main listener (port 8080)");
+                log::info!("-> Routing to ACK channel");
 
-                // ERROR RECOVERY: ACK arrived on wrong port, but we MUST NOT drop it!
-                // Route to shared ACK_TX channel so it still gets processed.
-                // This prevents permanent message delivery failures.
+                // Primary ACK path: route delivery confirmations to shared ACK_TX.
+                // Port 9153 is now a compatibility alias to local 8080.
                 // Send full buffer (INCLUDING type byte at offset 0)
                 if let Some(ack_tx) = ACK_TX.load_full() {
                     let tx_lock = lock_recover(&ack_tx);
@@ -2601,7 +2624,7 @@ impl TorManager {
                     }
                 } else {
                     log::error!("ACK channel not initialized - ACK will be lost!");
-                    log::error!("Start ACK listener on port 9153 to initialize ACK_TX channel");
+                    log::error!("Initialize ACK channel in RustBridge.startAckListener() to enable ACK routing");
                 }
             }
             MSG_TYPE_FRIEND_REQUEST => {
@@ -3163,3 +3186,4 @@ impl TorConnection {
         Ok(data)
     }
 }
+

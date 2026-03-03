@@ -1922,6 +1922,10 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendPing(
         // Returns true = instant mode (MESSAGE already sent), false = delayed mode (PONG pending)
         let result: Result<bool, Box<dyn std::error::Error>> = runtime.block_on(async {
             // Connect and send Ping (lock only during operations)
+            log::info!(
+                "[MSG:9150][PING_SEND] connecting target={} ping_id={}",
+                recipient_onion_str, ping_id
+            );
             let mut conn = {
                 let manager = tor_manager.lock().unwrap();
                 manager.connect(&recipient_onion_str, PING_PONG_PORT).await?
@@ -1932,7 +1936,10 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendPing(
                 manager.send(&mut conn, &wire_message).await?;
             } // Lock released
 
-            log::info!("Ping sent successfully ({}), waiting for instant Pong ({}ms timeout)...", ping_id, INSTANT_PONG_TIMEOUT_MS);
+            log::info!(
+                "[MSG:9150][PING_SEND] sent ping_id={} waiting_for_pong_timeout_ms={}",
+                ping_id, INSTANT_PONG_TIMEOUT_MS
+            );
 
             // Try to receive instant Pong response (recipient online and accepts immediately)
             // No lock needed - we own the connection
@@ -1989,11 +1996,6 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendPing(
                     // Verify instant Pong signature before sending message payload
                     // Wire layout (after length+type stripping): [responder_x25519:32][encrypted_pong]
                     // recipient_ed25519_verifying = the contact we dialed (i.e. the PONG signer)
-                    //
-                    // Hoist verified PONG to outer scope so the send-failure branch can
-                    // store it for delayed recovery without a scope/lifetime issue.
-                    let verified_pong: crate::network::pingpong::PongToken;
-
                     if pong_data.len() >= 32 {
                         let pong_encrypted = &pong_data[32..];
                         match crate::crypto::encryption::decrypt_message(pong_encrypted, &shared_secret) {
@@ -2012,14 +2014,14 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendPing(
                                         match pingpong_pong.verify(&recipient_ed25519_verifying) {
                                             Ok(true) => {
                                                 log::info!("PONG_SIG_OK: Instant Pong signature verified for ping_id={}", ping_id);
-                                                // DO NOT store_pong_session here — we send MESSAGE
-                                                // immediately below. Storing creates a race window
-                                                // where Kotlin's retryAllPendingMessages() discovers
-                                                // the PONG via pollForPong() and sends a duplicate
-                                                // MESSAGE blob (different ID format → dedup miss).
+                                                // [2026-03-03] Store PONG immediately after verification.
+                                                // Retry loop checks for stored PONG to decide: resend
+                                                // MESSAGE (PONG exists) vs re-PING (no PONG). Without
+                                                // this, failed MESSAGE sends cause ghost pings instead
+                                                // of harmless duplicate MESSAGEs (receiver dedup handles those).
+                                                crate::network::pingpong::store_pong_session(&ping_id, pingpong_pong);
                                                 // Track verification — prevents PONG_SIG_REJECT on late listener duplicates
                                                 VERIFIED_PONG_IDS.lock().unwrap().insert(ping_id.clone(), std::time::Instant::now());
-                                                verified_pong = pingpong_pong;
                                             },
                                             Ok(false) => {
                                                 log::error!("PONG_SIG_INVALID: Instant Pong signature verification FAILED for ping_id={}", ping_id);
@@ -2085,16 +2087,15 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendPing(
                     } {
                         Ok(()) => {
                             log::info!("INSTANT_DELIVERED: Message sent ({} bytes) on PING connection for {}", message_bytes.len(), &ping_id[..8.min(ping_id.len())]);
-                            // No PONG session was stored → nothing to remove.
-                            // Kotlin will mark STATUS_SENT based on instantMode=true.
+                            // [2026-03-03] Remove stored PONG — message delivered, retry not needed.
+                            crate::network::pingpong::remove_pong_session(&ping_id);
                             Ok(true) // instant success
                         }
                         Err(send_err) => {
-                            // MESSAGE send failed after PONG verified — store PONG for delayed recovery.
-                            // Kotlin's retryAllPendingMessages() will discover it via pollForPong().
-                            log::warn!("INSTANT_SEND_FAIL: MESSAGE send failed ({}), storing PONG for delayed recovery: {}", send_err, &ping_id[..8.min(ping_id.len())]);
-                            crate::network::pingpong::store_pong_session(&ping_id, verified_pong);
-                            Ok(false) // delayed: PONG stored, Kotlin will retry blob send
+                            // [2026-03-03] MESSAGE send failed — PONG already stored above,
+                            // so retry loop will find it and resend MESSAGE (not re-PING).
+                            log::warn!("INSTANT_SEND_FAIL: MESSAGE send failed ({}), PONG stored for delayed recovery: {}", send_err, &ping_id[..8.min(ping_id.len())]);
+                            Ok(false) // delayed: PONG already stored, Kotlin will retry blob send
                         }
                     }
                 }
@@ -2113,7 +2114,10 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendPing(
 
         match result {
             Ok(instant) => {
-                log::info!("Ping sent to {}: {} (instantMode={})", recipient_onion_str, ping_id, instant);
+                log::info!(
+                    "[MSG:9150][PING_SEND] completed target={} ping_id={} instant_mode={}",
+                    recipient_onion_str, ping_id, instant
+                );
 
                 // Encode wire_message as Base64 for storage and retry
                 let wire_bytes_base64 = base64::encode(&wire_message);
@@ -2148,9 +2152,15 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendPing(
                     || error_text.contains("MEASUREMENT_EXPIRED")
                     || error_text.contains("circuit");
                 if is_retryable {
-                    log::warn!("Failed to send Ping (retryable): {}", error_text);
+                    log::warn!(
+                        "[MSG:9150][PING_SEND] failed retryable target={} error={}",
+                        recipient_onion_str, error_text
+                    );
                 } else {
-                    log::error!("Failed to send Ping: {}", error_text);
+                    log::error!(
+                        "[MSG:9150][PING_SEND] failed target={} error={}",
+                        recipient_onion_str, error_text
+                    );
                 }
                 let _ = env.throw_new("java/lang/RuntimeException", format!("Failed to send Ping: {}", e));
                 std::ptr::null_mut()
@@ -2202,7 +2212,10 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_resendPingWithWireByte
             log::info!("LEGACY_WIRE_MIGRATED: prepended PING type byte ({} → {} bytes)", original_len, wire_message.len());
         }
 
-        log::info!("Resending Ping with stored wire bytes ({} bytes) to {}", wire_message.len(), recipient_onion_str);
+        log::info!(
+            "[MSG:9150][PING_RESEND] start target={} wire_bytes={}",
+            recipient_onion_str, wire_message.len()
+        );
 
         // Send encrypted Ping via Tor
         // HYBRID MODE: Try instant Pong (short timeout), fall back to delayed mode
@@ -2214,6 +2227,7 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_resendPingWithWireByte
 
         let result: Result<(), Box<dyn std::error::Error>> = runtime.block_on(async {
             // Connect and send Ping (lock only during operations)
+            log::info!("[MSG:9150][PING_RESEND] connecting target={}", recipient_onion_str);
             let mut conn = {
                 let manager = tor_manager.lock().unwrap();
                 manager.connect(&recipient_onion_str, PING_PONG_PORT).await?
@@ -2224,7 +2238,10 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_resendPingWithWireByte
                 manager.send(&mut conn, &wire_message).await?;
             } // Lock released
 
-            log::info!("Ping resent successfully, waiting for instant Pong ({}ms timeout)...", INSTANT_PONG_TIMEOUT_MS);
+            log::info!(
+                "[MSG:9150][PING_RESEND] sent waiting_for_pong_timeout_ms={}",
+                INSTANT_PONG_TIMEOUT_MS
+            );
 
             // Try to receive instant Pong response (recipient online and accepts immediately)
             // Note: This retry doesn't include the message payload - that's already been sent before
@@ -2293,7 +2310,7 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_resendPingWithWireByte
 
         match result {
             Ok(_) => {
-                log::info!("Ping resent successfully to {}", recipient_onion_str);
+                log::info!("[MSG:9150][PING_RESEND] completed target={}", recipient_onion_str);
                 1 // success
             }
             Err(e) => {
@@ -2311,9 +2328,15 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_resendPingWithWireByte
                     || error_text.contains("MEASUREMENT_EXPIRED")
                     || error_text.contains("circuit");
                 if is_retryable {
-                    log::warn!("Failed to resend Ping (retryable): {}", error_text);
+                    log::warn!(
+                        "[MSG:9150][PING_RESEND] failed retryable target={} error={}",
+                        recipient_onion_str, error_text
+                    );
                 } else {
-                    log::error!("Failed to resend Ping: {}", error_text);
+                    log::error!(
+                        "[MSG:9150][PING_RESEND] failed target={} error={}",
+                        recipient_onion_str, error_text
+                    );
                 }
                 0 // failure
             }
@@ -2347,7 +2370,7 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendTap(
             }
         };
 
-        log::info!("Sending tap to {}", recipient_onion_str);
+        log::info!("[TAP:9151][TAP_SEND] start target={}", recipient_onion_str);
 
         // Get KeyManager for our keys
         let context = match env.call_static_method(
@@ -2445,20 +2468,21 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendTap(
 
         let result = runtime.block_on(async {
             let manager = tor_manager.lock().unwrap();
+            log::info!("[TAP:9151][TAP_SEND] connecting target={}", recipient_onion_str);
             let mut conn = manager.connect(&recipient_onion_str, TAP_PORT).await?;
             manager.send(&mut conn, &wire_message).await?;
 
-            log::info!("Tap sent successfully to {}", recipient_onion_str);
+            log::info!("[TAP:9151][TAP_SEND] sent target={}", recipient_onion_str);
             Ok::<(), Box<dyn std::error::Error>>(())
         });
 
         match result {
             Ok(_) => {
-                log::info!("Tap sent successfully to {}", recipient_onion_str);
+                log::info!("[TAP:9151][TAP_SEND] completed target={}", recipient_onion_str);
                 1 // success
             }
             Err(e) => {
-                log::error!("Failed to send tap to {}: {}", recipient_onion_str, e);
+                log::error!("[TAP:9151][TAP_SEND] failed target={} error={}", recipient_onion_str, e);
                 0 // failure
             }
         }
@@ -2492,7 +2516,10 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendFriendRequest(
             }
         };
 
-        log::info!("Sending friend request to {} ({} bytes)", recipient_onion_str, friend_request_bytes.len());
+        log::info!(
+            "[FR:9151->8080][FR_SEND] start target={} payload_bytes={}",
+            recipient_onion_str, friend_request_bytes.len()
+        );
 
         // Build wire message with type byte 0x07 (FRIEND_REQUEST)
         // Wire format: [0x07][Sender X25519 - 32 bytes][Encrypted Friend Request]
@@ -2504,6 +2531,13 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendFriendRequest(
 
         // Send friend request via Tor (fire-and-forget, no response expected)
         let tor_manager = get_tor_manager();
+        if let Err(preflight_err) = wait_for_local_socks_ready("sendFriendRequest", 6_000, 500, 2) {
+            log::warn!(
+                "Friend request deferred for {}: {}",
+                recipient_onion_str, preflight_err
+            );
+            return 0;
+        }
         let runtime = match tokio::runtime::Runtime::new() {
             Ok(rt) => rt,
             Err(e) => {
@@ -2528,11 +2562,17 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendFriendRequest(
 
             match result {
                 Ok(_) => {
-                    log::info!("Friend request sent successfully to {} on port {} (attempt {})", recipient_onion_str, FRIEND_REQUEST_PORT, attempt);
+                    log::info!(
+                        "[FR:9151->8080][FR_SEND] success target={} port={} attempt={}/{}",
+                        recipient_onion_str, FRIEND_REQUEST_PORT, attempt, MAX_RETRIES
+                    );
                     return 1;
                 }
                 Err(e) => {
-                    log::warn!("Port {} attempt {}/{} failed: {}. Trying fallback port {}...", FRIEND_REQUEST_PORT, attempt, MAX_RETRIES, e, FALLBACK_PORT);
+                    log::warn!(
+                        "[FR:9151->8080][FR_SEND] primary_failed target={} port={} attempt={}/{} error={} fallback_port={}",
+                        recipient_onion_str, FRIEND_REQUEST_PORT, attempt, MAX_RETRIES, e, FALLBACK_PORT
+                    );
 
                     // Fallback to port 8080
                     let fallback_result = runtime.block_on(async {
@@ -2544,17 +2584,24 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendFriendRequest(
 
                     match fallback_result {
                         Ok(_) => {
-                            log::info!("Friend request sent via fallback port {} (attempt {})", FALLBACK_PORT, attempt);
+                            log::info!(
+                                "[FR:9151->8080][FR_SEND] fallback_success target={} port={} attempt={}/{}",
+                                recipient_onion_str, FALLBACK_PORT, attempt, MAX_RETRIES
+                            );
                             return 1;
                         }
                         Err(fallback_err) => {
                             if attempt < MAX_RETRIES {
-                                log::warn!("Friend request attempt {}/{} failed (both ports): {}. Retrying in {}s...",
-                                    attempt, MAX_RETRIES, fallback_err, RETRY_DELAY_SECS);
+                                log::warn!(
+                                    "[FR:9151->8080][FR_SEND] failed target={} attempt={}/{} primary_port={} fallback_port={} error={} retry_in_s={}",
+                                    recipient_onion_str, attempt, MAX_RETRIES, FRIEND_REQUEST_PORT, FALLBACK_PORT, fallback_err, RETRY_DELAY_SECS
+                                );
                                 std::thread::sleep(std::time::Duration::from_secs(RETRY_DELAY_SECS));
                             } else {
-                                log::error!("Failed to send friend request to {} after {} attempts: {}",
-                                    recipient_onion_str, MAX_RETRIES, fallback_err);
+                                log::error!(
+                                    "[FR:9151->8080][FR_SEND] exhausted target={} attempts={} last_error={}",
+                                    recipient_onion_str, MAX_RETRIES, fallback_err
+                                );
                             }
                         }
                     }
@@ -2597,7 +2644,10 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendFriendRequestAccep
             }
         };
 
-        log::info!("Sending friend request accepted to {} ({} bytes)", recipient_onion_str, acceptance_bytes.len());
+        log::info!(
+            "[FRA:9151->8080][FR_ACCEPT] start target={} payload_bytes={}",
+            recipient_onion_str, acceptance_bytes.len()
+        );
 
         // Build wire message with type byte 0x08 (FRIEND_REQUEST_ACCEPTED)
         // Wire format: [0x08][Encrypted Acceptance]
@@ -2609,6 +2659,13 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendFriendRequestAccep
 
         // Send acceptance via Tor (fire-and-forget, no response expected)
         let tor_manager = get_tor_manager();
+        if let Err(preflight_err) = wait_for_local_socks_ready("sendFriendRequestAccepted", 6_000, 500, 2) {
+            log::warn!(
+                "Friend request acceptance deferred for {}: {}",
+                recipient_onion_str, preflight_err
+            );
+            return 0;
+        }
         let runtime = match tokio::runtime::Runtime::new() {
             Ok(rt) => rt,
             Err(e) => {
@@ -2633,11 +2690,17 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendFriendRequestAccep
 
             match result {
                 Ok(_) => {
-                    log::info!("Friend request acceptance sent to {} on port {} (attempt {})", recipient_onion_str, FRIEND_REQUEST_PORT, attempt);
+                    log::info!(
+                        "[FRA:9151->8080][FR_ACCEPT] success target={} port={} attempt={}/{}",
+                        recipient_onion_str, FRIEND_REQUEST_PORT, attempt, MAX_RETRIES
+                    );
                     return 1;
                 }
                 Err(e) => {
-                    log::warn!("Port {} attempt {}/{} failed: {}. Trying fallback port {}...", FRIEND_REQUEST_PORT, attempt, MAX_RETRIES, e, FALLBACK_PORT);
+                    log::warn!(
+                        "[FRA:9151->8080][FR_ACCEPT] primary_failed target={} port={} attempt={}/{} error={} fallback_port={}",
+                        recipient_onion_str, FRIEND_REQUEST_PORT, attempt, MAX_RETRIES, e, FALLBACK_PORT
+                    );
 
                     // Fallback to port 8080
                     let fallback_result = runtime.block_on(async {
@@ -2649,17 +2712,24 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendFriendRequestAccep
 
                     match fallback_result {
                         Ok(_) => {
-                            log::info!("Friend request acceptance sent via fallback port {} (attempt {})", FALLBACK_PORT, attempt);
+                            log::info!(
+                                "[FRA:9151->8080][FR_ACCEPT] fallback_success target={} port={} attempt={}/{}",
+                                recipient_onion_str, FALLBACK_PORT, attempt, MAX_RETRIES
+                            );
                             return 1;
                         }
                         Err(fallback_err) => {
                             if attempt < MAX_RETRIES {
-                                log::warn!("Acceptance attempt {}/{} failed (both ports): {}. Retrying in {}s...",
-                                    attempt, MAX_RETRIES, fallback_err, RETRY_DELAY_SECS);
+                                log::warn!(
+                                    "[FRA:9151->8080][FR_ACCEPT] failed target={} attempt={}/{} primary_port={} fallback_port={} error={} retry_in_s={}",
+                                    recipient_onion_str, attempt, MAX_RETRIES, FRIEND_REQUEST_PORT, FALLBACK_PORT, fallback_err, RETRY_DELAY_SECS
+                                );
                                 std::thread::sleep(std::time::Duration::from_secs(RETRY_DELAY_SECS));
                             } else {
-                                log::error!("Failed to send friend request acceptance to {} after {} attempts: {}",
-                                    recipient_onion_str, MAX_RETRIES, fallback_err);
+                                log::error!(
+                                    "[FRA:9151->8080][FR_ACCEPT] exhausted target={} attempts={} last_error={}",
+                                    recipient_onion_str, MAX_RETRIES, fallback_err
+                                );
                             }
                         }
                     }
@@ -4626,8 +4696,8 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendDirectMessage(
             let type_byte = pong_response[0];
             if type_byte != crate::network::tor::MSG_TYPE_PONG {
                 if type_byte == crate::network::tor::MSG_TYPE_DELIVERY_CONFIRMATION {
-                    log::warn!("Received PING_ACK (0x06) when expecting PONG - ignoring (should go to port 9153)");
-                    log::warn!("→ This is a bug - PING_ACK was sent to wrong port. Continuing without instant pong.");
+                    log::warn!("Received PING_ACK (0x06) when expecting PONG - ignoring (ACK likely arrived on shared messaging path)");
+                    log::warn!("ACK arrived on a shared path while waiting for PONG. Continuing without instant pong.");
                     return Err("PING_ACK received instead of PONG".into());
                 }
                 log::warn!("Expected PONG (0x02) but got type 0x{:02x}", type_byte);
@@ -4925,6 +4995,69 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_getLastListenerHeartbe
 ) -> jlong {
     catch_panic!(env, {
         crate::network::tor::get_last_listener_heartbeat() as jlong
+    }, 0 as jlong)
+}
+
+/// Fast local SOCKS preflight used to avoid burning retry budgets while Tor's
+/// local proxy is still coming up.
+fn wait_for_local_socks_ready(
+    op_name: &str,
+    max_wait_ms: u64,
+    poll_ms: u64,
+    stable_required: u8,
+) -> Result<(), String> {
+    use std::net::{SocketAddr, TcpStream};
+    use std::time::{Duration, Instant};
+
+    let deadline = Instant::now() + Duration::from_millis(max_wait_ms);
+    let addr = SocketAddr::from(([127, 0, 0, 1], 9050));
+    let mut stable_passes: u8 = 0;
+
+    while Instant::now() < deadline {
+        let ready = TcpStream::connect_timeout(&addr, Duration::from_millis(400)).is_ok();
+        if ready {
+            stable_passes = stable_passes.saturating_add(1);
+            if stable_passes >= stable_required {
+                if stable_passes > 1 {
+                    log::info!("{}: SOCKS preflight ready (stable passes={})", op_name, stable_passes);
+                }
+                return Ok(());
+            }
+            // Re-check immediately after a success so we don't introduce fixed latency
+            // on healthy paths.
+            continue;
+        } else {
+            stable_passes = 0;
+        }
+        std::thread::sleep(Duration::from_millis(poll_ms));
+    }
+
+    Err(format!(
+        "{}: SOCKS proxy unreachable: Connection refused (preflight, 127.0.0.1:9050 not accepting after {}ms)",
+        op_name, max_wait_ms
+    ))
+}
+
+/// Get epoch millis when circuit-established was last observed as 1.
+#[no_mangle]
+pub extern "C" fn Java_com_securelegion_crypto_RustBridge_getLastCircuitEstablishedMs(
+    mut env: JNIEnv,
+    _class: JClass,
+) -> jlong {
+    catch_panic!(env, {
+        crate::network::tor::get_last_circuit_established_ms() as jlong
+    }, 0 as jlong)
+}
+
+/// Get epoch millis when the ControlSocket event listener disconnected.
+/// Returns 0 when listener is connected or no disconnect has been recorded.
+#[no_mangle]
+pub extern "C" fn Java_com_securelegion_crypto_RustBridge_getListenerDisconnectedSinceMs(
+    mut env: JNIEnv,
+    _class: JClass,
+) -> jlong {
+    catch_panic!(env, {
+        crate::network::tor::get_listener_disconnected_since_ms() as jlong
     }, 0 as jlong)
 }
 
@@ -6860,12 +6993,10 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendDeliveryAck(
             }
         };
 
-        log::info!("");
-        log::info!("SENDING DELIVERY ACK");
-        log::info!("Item ID: {}", item_id_str);
-        log::info!("ACK Type: {}", ack_type_str);
-        log::info!("Recipient: {}", recipient_onion_str);
-        log::info!("");
+        log::info!(
+            "[ACK:9150][DELIVERY_ACK] start target={} ack_type={} item_id={}",
+            recipient_onion_str, ack_type_str, item_id_str
+        );
 
         // Get KeyManager for our keys
         let context = match env.call_static_method(
@@ -6979,10 +7110,12 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendDeliveryAck(
         let tor_manager = get_tor_manager();
         let runtime = tokio::runtime::Runtime::new().expect("Failed to create Tokio runtime");
 
-        const ACK_PORT: u16 = 9153;
+        const ACK_PORT: u16 = 9150;
+        const ACK_FALLBACK_PORT: u16 = 9153;
 
         let result: Result<(), Box<dyn std::error::Error>> = runtime.block_on(async {
             let manager = tor_manager.lock().unwrap();
+            log::info!("[ACK:9150][DELIVERY_ACK] connecting target={}", recipient_onion_str);
             let mut conn = manager.connect(&recipient_onion_str, ACK_PORT).await?;
             manager.send(&mut conn, &wire_message).await?;
             Ok(())
@@ -6990,18 +7123,75 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendDeliveryAck(
 
         match result {
             Ok(_) => {
-                log::info!("ACK sent successfully: {} for {}", ack_type_str, item_id_str);
+                log::info!(
+                    "[ACK:9150][DELIVERY_ACK] success target={} ack_type={} item_id={}",
+                    recipient_onion_str, ack_type_str, item_id_str
+                );
                 1 // success
             }
             Err(e) => {
-                log::error!("Failed to send ACK: {}", e);
-                0 // failure
+                let error_text = e.to_string();
+                let retryable = error_text.contains("status 1")
+                    || error_text.contains("status 3")
+                    || error_text.contains("status 4")
+                    || error_text.contains("status 5")
+                    || error_text.contains("status 6")
+                    || error_text.contains("general SOCKS server failure")
+                    || error_text.contains("Network unreachable")
+                    || error_text.contains("Host unreachable")
+                    || error_text.contains("Connection refused")
+                    || error_text.contains("TTL expired")
+                    || error_text.contains("MEASUREMENT_EXPIRED")
+                    || error_text.contains("circuit");
+
+                log::warn!(
+                    "[ACK:9150][DELIVERY_ACK] failed target={} ack_type={} item_id={} retryable={} error={}",
+                    recipient_onion_str, ack_type_str, item_id_str, retryable, error_text
+                );
+
+                if retryable {
+                    log::warn!(
+                        "[ACK:9150->9153][DELIVERY_ACK] fallback_start target={} ack_type={} item_id={} fallback_port={}",
+                        recipient_onion_str, ack_type_str, item_id_str, ACK_FALLBACK_PORT
+                    );
+
+                    let fallback_result: Result<(), Box<dyn std::error::Error>> = runtime.block_on(async {
+                        let manager = tor_manager.lock().unwrap();
+                        log::info!("[ACK:9153][DELIVERY_ACK] connecting target={}", recipient_onion_str);
+                        let mut conn = manager.connect(&recipient_onion_str, ACK_FALLBACK_PORT).await?;
+                        manager.send(&mut conn, &wire_message).await?;
+                        Ok(())
+                    });
+
+                    match fallback_result {
+                        Ok(_) => {
+                            log::info!(
+                                "[ACK:9153][DELIVERY_ACK] fallback_success target={} ack_type={} item_id={}",
+                                recipient_onion_str, ack_type_str, item_id_str
+                            );
+                            return 1;
+                        }
+                        Err(fallback_err) => {
+                            log::error!(
+                                "[ACK:9153][DELIVERY_ACK] fallback_failed target={} ack_type={} item_id={} error={}",
+                                recipient_onion_str, ack_type_str, item_id_str, fallback_err
+                            );
+                        }
+                    }
+                } else {
+                    log::error!(
+                        "[ACK:9150][DELIVERY_ACK] non_retryable target={} ack_type={} item_id={} error={}",
+                        recipient_onion_str, ack_type_str, item_id_str, error_text
+                    );
+                }
+
+                0
             }
         }
     }, 0)
 }
 
-/// Start ACK listener on port 9153
+/// Initialize ACK routing channel (ACK frames are delivered via the main listener path)
 #[no_mangle]
 pub extern "C" fn Java_com_securelegion_crypto_RustBridge_startAckListener(
     mut env: JNIEnv,
@@ -7009,51 +7199,17 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_startAckListener(
     port: jint,
 ) -> jboolean {
     catch_panic!(env, {
-        log::info!("Starting ACK listener on port {}...", port);
+        // Compatibility mode: ACKs are routed through main listener (8080/9150 path).
+        // We only initialize the shared ACK channel here.
+        let (tx, rx) = mpsc::unbounded_channel::<(u64, Vec<u8>)>();
+        GLOBAL_ACK_RECEIVER.store(Some(Arc::new(Mutex::new(rx))));
+        crate::network::tor::ACK_TX.store(Some(Arc::new(std::sync::Mutex::new(tx))));
 
-        let tor_manager = get_tor_manager();
-
-        // Run async listener start using the global runtime
-        let result = GLOBAL_RUNTIME.block_on(async {
-            let mut manager = tor_manager.lock().unwrap();
-            manager.start_listener(Some(port as u16)).await
-        });
-
-        match result {
-            Ok((mut ping_receiver, _pong_receiver)) => {
-                // Create shared channel for ACK messages
-                // This channel is accessible from both port 9153 (normal path) and port 8080 (error recovery)
-                let (tx, rx) = mpsc::unbounded_channel::<(u64, Vec<u8>)>();
-
-                // Store receiver globally for polling (ArcSwap: atomically replaceable on restart)
-                GLOBAL_ACK_RECEIVER.store(Some(Arc::new(Mutex::new(rx))));
-
-                // Store sender globally so port 8080 can route misrouted ACKs
-                crate::network::tor::ACK_TX.store(Some(Arc::new(std::sync::Mutex::new(tx.clone()))));
-
-                // Spawn task to receive from TorManager PING channel and forward to shared ACK channel
-                // Note: ACKs should be routed via ACK_TX in tor.rs, not via PING channel
-                GLOBAL_RUNTIME.spawn(async move {
-                    while let Some((connection_id, ack_bytes)) = ping_receiver.recv().await {
-                        log::info!("Received ACK via port 9153 listener: {} bytes", ack_bytes.len());
-
-                        // Forward to shared ACK channel
-                        if let Err(e) = tx.send((connection_id, ack_bytes)) {
-                            log::error!("Failed to send ACK to shared channel: {}", e);
-                            break;
-                        }
-                    }
-                    log::warn!("ACK listener receiver closed");
-                });
-
-                log::info!("ACK listener started successfully on port {} with shared channel", port);
-                1 // success
-            }
-            Err(e) => {
-                log::error!("Failed to start ACK listener: {}", e);
-                0 // failure
-            }
-        }
+        log::info!(
+            "ACK channel initialized (requested_port={}, routed_via_main_listener=true)",
+            port
+        );
+        1
     }, 0)
 }
 
