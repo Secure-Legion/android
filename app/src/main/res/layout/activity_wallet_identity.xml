@@ -180,9 +180,9 @@
 
             </androidx.cardview.widget.CardView>
 
-            <!-- Live Expiry Countdown -->
+            <!-- Live Expiry Countdown (standalone, below card) -->
             <TextView
-                android:id="@+id/expiryCountdownText"
+                android:id="@+id/expiryCountdownTextStandalone"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:textSize="13sp"
