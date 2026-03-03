@@ -112,7 +112,9 @@ object BrandedQrGenerator {
     }
 
     /**
-     * Redraw the three finder patterns (corner squares) with accent color and rounded outer.
+     * Redraw the three finder patterns (corner squares) with standard high-contrast colors.
+     * Finder patterns must be easily detectable — they're how scanners locate the QR code.
+     * Uses white (QR_MODULE_COLOR) on dark background for maximum contrast and scanner compatibility.
      */
     private fun drawFinderPatterns(
         canvas: Canvas, bitMatrix: com.google.zxing.common.BitMatrix,
@@ -136,9 +138,9 @@ object BrandedQrGenerator {
                 clearPaint
             )
 
-            // Outer ring (7x7) — accent color, rounded
+            // Outer ring (7x7) — white, high contrast for scanner detection
             val outerPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                color = ACCENT_COLOR
+                color = QR_MODULE_COLOR
                 style = Paint.Style.STROKE
                 strokeWidth = moduleW * 1.0f
             }
@@ -150,9 +152,9 @@ object BrandedQrGenerator {
             )
             canvas.drawRoundRect(outerRect, moduleW * 2f, moduleH * 2f, outerPaint)
 
-            // Inner square (3x3 centered) — solid accent
+            // Inner square (3x3 centered) — solid white
             val innerPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                color = ACCENT_COLOR
+                color = QR_MODULE_COLOR
                 style = Paint.Style.FILL
             }
             val innerRect = RectF(
@@ -170,7 +172,7 @@ object BrandedQrGenerator {
      * Clears QR modules behind it so the shield stands out directly on the dark background.
      */
     private fun drawCenterLogo(context: Context, canvas: Canvas, canvasWidth: Int, canvasHeight: Int) {
-        val logoSize = (canvasWidth * 0.28f).toInt() // 28% of QR width — large and prominent
+        val logoSize = (canvasWidth * 0.20f).toInt() // 20% of QR width — visible but scanner-safe
         val clearRadius = logoSize * 0.58f
 
         val cx = canvasWidth / 2f

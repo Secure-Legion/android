@@ -1702,13 +1702,12 @@ class MainActivity : BaseActivity() {
                 if (phase1Obj.has("signature") && phase1Obj.has("ed25519_public_key")) {
                     val signature = android.util.Base64.decode(phase1Obj.getString("signature"), android.util.Base64.NO_WRAP)
                     val senderEd25519PubKey = android.util.Base64.decode(phase1Obj.getString("ed25519_public_key"), android.util.Base64.NO_WRAP)
-                    val unsignedJson = org.json.JSONObject().apply {
-                        put("username", senderUsername)
-                        put("friend_request_onion", senderFriendRequestOnion)
-                        put("x25519_public_key", senderX25519PublicKeyBase64)
-                        put("kyber_public_key", phase1Obj.getString("kyber_public_key"))
-                        put("phase", 1)
-                    }.toString()
+                    // Strip signature fields from original to recover exact signed bytes
+                    // (rebuilding a new JSONObject can produce different toString() output)
+                    val unsignedObj = org.json.JSONObject(phase1Obj.toString())
+                    unsignedObj.remove("signature")
+                    unsignedObj.remove("ed25519_public_key")
+                    val unsignedJson = unsignedObj.toString()
                     if (!com.securelegion.crypto.RustBridge.verifySignature(
                             unsignedJson.toByteArray(Charsets.UTF_8), signature, senderEd25519PubKey)) {
                         com.securelegion.utils.ThemedToast.show(this@MainActivity, "Invalid signature — rejecting")

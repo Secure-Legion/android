@@ -404,10 +404,46 @@ class AddFriendActivity : BaseActivity() {
     }
 
     /**
-     * Decode a QR code from a gallery image using MLKit barcode scanning
+     * Read EXIF orientation from a content URI and return rotation degrees (0, 90, 180, 270).
+     */
+    private fun getExifRotation(uri: android.net.Uri): Int {
+        return try {
+            val stream = contentResolver.openInputStream(uri) ?: return 0
+            val exif = android.media.ExifInterface(stream)
+            stream.close()
+            when (exif.getAttributeInt(
+                android.media.ExifInterface.TAG_ORIENTATION,
+                android.media.ExifInterface.ORIENTATION_NORMAL
+            )) {
+                android.media.ExifInterface.ORIENTATION_ROTATE_90 -> 90
+                android.media.ExifInterface.ORIENTATION_ROTATE_180 -> 180
+                android.media.ExifInterface.ORIENTATION_ROTATE_270 -> 270
+                else -> 0
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not read EXIF orientation", e)
+            0
+        }
+    }
+
+    /**
+     * Rotate a bitmap by the given degrees. Returns the original if rotation is 0.
+     */
+    private fun rotateBitmap(bitmap: android.graphics.Bitmap, degrees: Int): android.graphics.Bitmap {
+        if (degrees == 0) return bitmap
+        val matrix = android.graphics.Matrix()
+        matrix.postRotate(degrees.toFloat())
+        return android.graphics.Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
+    }
+
+    /**
+     * Decode a QR code from a gallery image using MLKit barcode scanning.
+     * Reads EXIF orientation so rotated gallery photos are handled correctly.
      */
     private fun decodeQrFromGalleryImage(uri: android.net.Uri) {
         try {
+            val rotationDegrees = getExifRotation(uri)
+
             // Load bitmap from content URI (more reliable than fromFilePath for gallery URIs)
             val inputStream = contentResolver.openInputStream(uri)
             if (inputStream == null) {
@@ -422,11 +458,15 @@ class AddFriendActivity : BaseActivity() {
                 return
             }
 
-            val image = com.google.mlkit.vision.common.InputImage.fromBitmap(bitmap, 0)
+            // Pass EXIF rotation to ML Kit (camera path does this via CameraX rotationDegrees)
+            val image = com.google.mlkit.vision.common.InputImage.fromBitmap(bitmap, rotationDegrees)
             val options = com.google.mlkit.vision.barcode.BarcodeScannerOptions.Builder()
                 .setBarcodeFormats(com.google.mlkit.vision.barcode.common.Barcode.FORMAT_QR_CODE)
                 .build()
             val scanner = com.google.mlkit.vision.barcode.BarcodeScanning.getClient(options)
+
+            // Pre-rotate bitmap for ZXing fallback (ML Kit handles rotation internally)
+            val rotatedBitmap = rotateBitmap(bitmap, rotationDegrees)
 
             scanner.process(image)
                 .addOnSuccessListener { barcodes ->
@@ -439,18 +479,74 @@ class AddFriendActivity : BaseActivity() {
                             if (isAutoMode) finish()
                         }
                     } else {
-                        ThemedToast.show(this, "No QR code found in image")
-                        if (isAutoMode) finish()
+                        // ML Kit failed — try ZXing with rotation-corrected bitmap
+                        tryZxingFallback(rotatedBitmap)
                     }
                 }
                 .addOnFailureListener { e ->
-                    Log.e(TAG, "Failed to decode QR from gallery image", e)
-                    ThemedToast.show(this, "Failed to read QR code from image")
-                    if (isAutoMode) finish()
+                    Log.e(TAG, "ML Kit failed, trying ZXing fallback", e)
+                    tryZxingFallback(rotatedBitmap)
                 }
         } catch (e: Exception) {
             Log.e(TAG, "Error processing gallery image", e)
             ThemedToast.show(this, "Failed to process image")
+        }
+    }
+
+    /**
+     * ZXing fallback for branded/inverted QR codes that ML Kit can't read.
+     * Tries normal then inverted (white-on-dark → dark-on-white) with TRY_HARDER.
+     * Expects an already rotation-corrected bitmap.
+     */
+    private fun tryZxingFallback(bitmap: android.graphics.Bitmap) {
+        try {
+            val width = bitmap.width
+            val height = bitmap.height
+            val pixels = IntArray(width * height)
+            bitmap.getPixels(pixels, 0, width, 0, 0, width, height)
+
+            val hints = mapOf<com.google.zxing.DecodeHintType, Any>(
+                com.google.zxing.DecodeHintType.TRY_HARDER to true,
+                com.google.zxing.DecodeHintType.POSSIBLE_FORMATS to listOf(com.google.zxing.BarcodeFormat.QR_CODE)
+            )
+            val reader = com.google.zxing.qrcode.QRCodeReader()
+
+            // Try normal bitmap first
+            var qrData: String? = try {
+                val source = com.google.zxing.RGBLuminanceSource(width, height, pixels)
+                val binaryBitmap = com.google.zxing.BinaryBitmap(
+                    com.google.zxing.common.HybridBinarizer(source)
+                )
+                reader.decode(binaryBitmap, hints).text
+            } catch (_: Exception) { null }
+
+            // If normal failed, try inverted (white-on-dark → standard dark-on-white)
+            if (qrData.isNullOrEmpty()) {
+                val inverted = IntArray(pixels.size) { i ->
+                    val p = pixels[i]
+                    val a = p and 0xFF000000.toInt()
+                    val r = 255 - ((p shr 16) and 0xFF)
+                    val g = 255 - ((p shr 8) and 0xFF)
+                    val b = 255 - (p and 0xFF)
+                    a or (r shl 16) or (g shl 8) or b
+                }
+                val source = com.google.zxing.RGBLuminanceSource(width, height, inverted)
+                val binaryBitmap = com.google.zxing.BinaryBitmap(
+                    com.google.zxing.common.HybridBinarizer(source)
+                )
+                qrData = reader.decode(binaryBitmap, hints).text
+            }
+
+            if (!qrData.isNullOrEmpty()) {
+                handleScannedQrData(qrData)
+            } else {
+                ThemedToast.show(this, "QR code is empty")
+                if (isAutoMode) finish()
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "ZXing fallback also failed", e)
+            ThemedToast.show(this, "No QR code found in image")
+            if (isAutoMode) finish()
         }
     }
 
@@ -1264,14 +1360,12 @@ class AddFriendActivity : BaseActivity() {
                     val signature = Base64.decode(phase1Obj.getString("signature"), Base64.NO_WRAP)
                     val senderEd25519PublicKey = Base64.decode(phase1Obj.getString("ed25519_public_key"), Base64.NO_WRAP)
 
-                    // Reconstruct unsigned JSON to verify signature
-                    val unsignedJson = org.json.JSONObject().apply {
-                        put("username", senderUsername)
-                        put("friend_request_onion", senderFriendRequestOnion)
-                        put("x25519_public_key", senderX25519PublicKeyBase64)
-                        put("kyber_public_key", phase1Obj.getString("kyber_public_key"))
-                        put("phase", 1)
-                    }.toString()
+                    // Strip signature fields from original to recover exact signed bytes
+                    // (rebuilding a new JSONObject can produce different toString() output)
+                    val unsignedObj = org.json.JSONObject(phase1Obj.toString())
+                    unsignedObj.remove("signature")
+                    unsignedObj.remove("ed25519_public_key")
+                    val unsignedJson = unsignedObj.toString()
 
                     val signatureValid = com.securelegion.crypto.RustBridge.verifySignature(
                         unsignedJson.toByteArray(Charsets.UTF_8),
