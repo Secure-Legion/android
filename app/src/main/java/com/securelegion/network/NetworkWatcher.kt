@@ -277,8 +277,11 @@ class NetworkWatcher(
             val activeNetwork = connectivityManager.activeNetwork
             val capabilities = connectivityManager.getNetworkCapabilities(activeNetwork)
 
-            // Use VALIDATED so Tor recovery does not trigger on captive/no-route links.
-            hasNetworkConnection = capabilities?.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED) == true
+            // [2026-03-03] INTERNET not VALIDATED — VALIDATED flickers during normal
+            // operation (Android's external probe), which disrupts Tor circuits and
+            // causes slow messaging. INTERNET = interface exists, good enough for Tor.
+            // Confirmed fix: v2.0.6 test build with only this change restored fast messaging.
+            hasNetworkConnection = capabilities?.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) == true
             isWifiConnected = capabilities?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true
 
             // Check if network is IPv6-only
