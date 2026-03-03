@@ -53,41 +53,28 @@
             app:layout_constraintTop_toBottomOf="@id/titleText"
             app:layout_constraintStart_toStartOf="parent" />
 
-        <!-- Seed Phrase Grid (12 words in 4 rows x 3 columns) -->
-        <GridLayout
-            android:id="@+id/seedPhraseGrid"
+        <!-- Seed Phrase Input (single box — paste all 12 words) -->
+        <EditText
+            android:id="@+id/seedPhraseInput"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
+            android:minHeight="140dp"
             android:layout_marginStart="32dp"
             android:layout_marginEnd="32dp"
             android:layout_marginTop="16dp"
-            android:columnCount="3"
-            android:rowCount="4"
+            android:padding="16dp"
+            android:hint="Enter or paste your 12-word seed phrase"
+            android:textColorHint="#666666"
+            android:textColor="?attr/colorOnSurface"
+            android:fontFamily="@font/poppins_medium"
+            android:textSize="16sp"
+            android:lineSpacingExtra="6dp"
+            android:background="@drawable/lock_password_input_bg"
+            android:inputType="textMultiLine"
+            android:gravity="top|start"
             app:layout_constraintTop_toBottomOf="@id/seedHeading"
             app:layout_constraintStart_toStartOf="parent"
-            app:layout_constraintEnd_toEndOf="parent">
-
-            <!-- Row 1 -->
-            <EditText android:id="@+id/word1" style="@style/SeedWordInput" android:hint="1" />
-            <EditText android:id="@+id/word2" style="@style/SeedWordInput" android:hint="2" />
-            <EditText android:id="@+id/word3" style="@style/SeedWordInput" android:hint="3" />
-
-            <!-- Row 2 -->
-            <EditText android:id="@+id/word4" style="@style/SeedWordInput" android:hint="4" />
-            <EditText android:id="@+id/word5" style="@style/SeedWordInput" android:hint="5" />
-            <EditText android:id="@+id/word6" style="@style/SeedWordInput" android:hint="6" />
-
-            <!-- Row 3 -->
-            <EditText android:id="@+id/word7" style="@style/SeedWordInput" android:hint="7" />
-            <EditText android:id="@+id/word8" style="@style/SeedWordInput" android:hint="8" />
-            <EditText android:id="@+id/word9" style="@style/SeedWordInput" android:hint="9" />
-
-            <!-- Row 4 -->
-            <EditText android:id="@+id/word10" style="@style/SeedWordInput" android:hint="10" />
-            <EditText android:id="@+id/word11" style="@style/SeedWordInput" android:hint="11" />
-            <EditText android:id="@+id/word12" style="@style/SeedWordInput" android:hint="12" />
-
-        </GridLayout>
+            app:layout_constraintEnd_toEndOf="parent" />
 
         <!-- Seed Phrase Description -->
         <TextView
@@ -101,7 +88,7 @@
             android:fontFamily="@font/poppins_regular"
             android:textSize="13sp"
             android:textColor="#5C5C5C"
-            app:layout_constraintTop_toBottomOf="@id/seedPhraseGrid"
+            app:layout_constraintTop_toBottomOf="@id/seedPhraseInput"
             app:layout_constraintStart_toStartOf="parent"
             app:layout_constraintEnd_toEndOf="parent" />
 

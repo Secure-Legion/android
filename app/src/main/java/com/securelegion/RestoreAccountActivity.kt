@@ -16,7 +16,7 @@ import org.web3j.crypto.MnemonicUtils
 
 class RestoreAccountActivity : AppCompatActivity() {
 
-    private val seedWords = mutableListOf<EditText>()
+    private lateinit var seedPhraseInput: EditText
     private lateinit var importButton: TextView
 
     // BIP39 word list for per-word validation (2048 standard English words)
@@ -71,43 +71,8 @@ class RestoreAccountActivity : AppCompatActivity() {
     }
 
     private fun initializeViews() {
-        // Initialize all 12 seed word EditTexts
-        seedWords.add(findViewById(R.id.word1))
-        seedWords.add(findViewById(R.id.word2))
-        seedWords.add(findViewById(R.id.word3))
-        seedWords.add(findViewById(R.id.word4))
-        seedWords.add(findViewById(R.id.word5))
-        seedWords.add(findViewById(R.id.word6))
-        seedWords.add(findViewById(R.id.word7))
-        seedWords.add(findViewById(R.id.word8))
-        seedWords.add(findViewById(R.id.word9))
-        seedWords.add(findViewById(R.id.word10))
-        seedWords.add(findViewById(R.id.word11))
-        seedWords.add(findViewById(R.id.word12))
-
+        seedPhraseInput = findViewById(R.id.seedPhraseInput)
         importButton = findViewById(R.id.importButton)
-
-        // Add per-word BIP39 validation as user types
-        val defaultBg = seedWords[0].background
-        for (editText in seedWords) {
-            editText.addTextChangedListener(object : TextWatcher {
-                override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
-                override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
-                override fun afterTextChanged(s: Editable?) {
-                    val word = s.toString().trim().lowercase()
-                    if (word.isEmpty()) {
-                        // Reset to default
-                        editText.setTextColor(0xFFFFFFFF.toInt())
-                    } else if (bip39Words.contains(word)) {
-                        // Valid BIP39 word — green
-                        editText.setTextColor(0xFF00CC66.toInt())
-                    } else {
-                        // Invalid word — red
-                        editText.setTextColor(0xFFFF6666.toInt())
-                    }
-                }
-            })
-        }
     }
 
     private fun setupClickListeners() {
@@ -125,11 +90,16 @@ class RestoreAccountActivity : AppCompatActivity() {
                 return@setOnClickListener
             }
 
+            val words = seedPhrase.split(" ")
+            if (words.size != 12) {
+                ThemedToast.show(this, "Need exactly 12 words (got ${words.size})")
+                return@setOnClickListener
+            }
+
             // Check each word individually and report which are invalid
             val invalidWords = mutableListOf<Int>()
-            for (i in seedWords.indices) {
-                val word = seedWords[i].text.toString().trim().lowercase()
-                if (!bip39Words.contains(word)) {
+            for (i in words.indices) {
+                if (!bip39Words.contains(words[i])) {
                     invalidWords.add(i + 1)
                 }
             }
@@ -158,14 +128,10 @@ class RestoreAccountActivity : AppCompatActivity() {
     }
 
     private fun collectSeedPhrase(): String {
-        val words = mutableListOf<String>()
-        for (editText in seedWords) {
-            val word = editText.text.toString().trim()
-            if (word.isEmpty()) {
-                return ""
-            }
-            words.add(word)
-        }
+        val raw = seedPhraseInput.text.toString().trim().lowercase()
+        if (raw.isEmpty()) return ""
+        // Normalize whitespace (handles newlines, tabs, multiple spaces)
+        val words = raw.split("\\s+".toRegex()).filter { it.isNotEmpty() }
         return words.joinToString(" ")
     }
 

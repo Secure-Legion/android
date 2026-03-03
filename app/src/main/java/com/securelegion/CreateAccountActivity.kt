@@ -490,6 +490,10 @@ class CreateAccountActivity : AppCompatActivity() {
                             .putString("expected_cid", contactListCID)
                             .apply()
                         Log.i("CreateAccount", "Recovery mode enabled (CID: ${contactListCID.take(20)}...)")
+
+                        // Restart TorService so it picks up new hidden service keys
+                        // (if Tor was already running from before the restore)
+                        com.securelegion.services.TorService.requestRestart("seed phrase restore")
                     } else {
                         // New account — user must confirm backup
                         setupPrefs.edit().putBoolean("seed_phrase_confirmed", false).apply()

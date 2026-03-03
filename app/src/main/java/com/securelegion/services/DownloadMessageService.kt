@@ -362,21 +362,15 @@ class DownloadMessageService : Service() {
         }
         Log.i(TAG, "Tor bootstrap: 100%")
 
-        val socksRunning = withContext(Dispatchers.IO) {
-            try {
-                com.securelegion.crypto.RustBridge.isSocksProxyRunning()
-            } catch (e: Exception) {
-                Log.e(TAG, "Failed to check SOCKS status", e)
-                false
-            }
-        }
-
-        if (!socksRunning) {
-            Log.e(TAG, "Pre-flight check failed: SOCKS proxy not running")
-            showFailureNotification(ctx.contactName, "SOCKS proxy not running", ctx.pingId, ctx.contactId)
+        // SOCKS proxy check: use transport gate (non-blocking) instead of
+        // isSocksProxyRunning() JNI call which can hang for 45+ seconds
+        val gateOpen = com.securelegion.services.TorService.getTransportGate()?.isOpenNow() ?: false
+        if (!gateOpen) {
+            Log.e(TAG, "Pre-flight check failed: transport gate closed (SOCKS not verified)")
+            showFailureNotification(ctx.contactName, "Tor not ready", ctx.pingId, ctx.contactId)
             return false
         }
-        Log.i(TAG, "SOCKS proxy: running")
+        Log.i(TAG, "SOCKS proxy: gate open")
 
         // Check circuit status from the already-authenticated event listener (no raw control-port probe)
         val circuitsEstablished = com.securelegion.crypto.RustBridge.getCircuitEstablished() >= 1

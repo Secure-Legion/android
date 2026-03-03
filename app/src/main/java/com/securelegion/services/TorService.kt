@@ -731,8 +731,21 @@ class TorService : Service() {
      * Evaluate Tor health from ControlPort and manage gate + restart logic
      */
     private fun onHealthSample() {
-        val bootstrapComplete = bootstrapPercent >= 100
         val circuitsEstablished = RustBridge.getCircuitEstablished() == 1
+
+        // Safety net: if bootstrap monitor missed the 100% transition,
+        // poll Rust directly and promote to RUNNING so gate can open
+        if (torState == TorState.BOOTSTRAPPING && circuitsEstablished) {
+            val actualBootstrap = RustBridge.getBootstrapStatus()
+            if (actualBootstrap >= 100 && bootstrapPercent < 100) {
+                Log.w(TAG, "Health monitor: bootstrap stuck at $bootstrapPercent% but Rust reports $actualBootstrap% with circuits — promoting to RUNNING")
+                bootstrapPercent = 100
+                setState(TorState.RUNNING, "health monitor promotion")
+                onTorReady()
+            }
+        }
+
+        val bootstrapComplete = bootstrapPercent >= 100
         val torRunning = torState == TorState.RUNNING
 
         // Auto-restart Rust event listener if it died (CRITICAL: without this, health data freezes)

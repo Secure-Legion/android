@@ -25,8 +25,8 @@ android {
         applicationId = "com.securelegion"
         minSdk = 27  // Increased from 26 for Zcash SDK compatibility
         targetSdk = 36
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = 208
+        versionName = "Beta 2.0.8"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -39,7 +39,7 @@ android {
         create("master") {
             dimension = "version"
             applicationId = "com.securelegion.master"
-            versionNameSuffix = "-master"
+            // versionNameSuffix = "-master"
 
             buildConfigField("boolean", "ENABLE_TOR", "true")
             buildConfigField("boolean", "ENABLE_VOICE", "true")
