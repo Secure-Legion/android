@@ -5663,16 +5663,24 @@ class TorService : Service() {
                         }
                     }
 
-                    // If it's an image message, convert bytes to Base64 for storage
-                    var imageBase64: String? = null
+                    // If it's an image message, save encrypted file (same as DownloadMessageService path)
+                    var imageFilePath: String? = null
                     if (messageType == com.securelegion.database.entities.Message.MESSAGE_TYPE_IMAGE) {
                         try {
                             val imageBytes = plaintext.toByteArray(Charsets.ISO_8859_1)
-                            imageBase64 = android.util.Base64.encodeToString(imageBytes, android.util.Base64.NO_WRAP)
-                            Log.d(TAG, "Converted image to Base64: ${imageBase64.length} chars")
+                            val imageDir = java.io.File(filesDir, "image_messages")
+                            imageDir.mkdirs()
+                            val hash = java.security.MessageDigest.getInstance("SHA-256")
+                                .digest(messageId.toByteArray(Charsets.UTF_8))
+                                .joinToString("") { "%02x".format(it) }
+                            val imageFile = java.io.File(imageDir, "${hash}.enc")
+                            val imgKeyManager = com.securelegion.crypto.KeyManager.getInstance(this@TorService)
+                            val encryptedImageBytes = imgKeyManager.encryptImageFile(imageBytes)
+                            imageFile.writeBytes(encryptedImageBytes)
+                            imageFilePath = imageFile.absolutePath
+                            Log.d(TAG, "Saved encrypted received image to file: $imageFilePath (${imageBytes.size} -> ${encryptedImageBytes.size} bytes)")
                         } catch (e: Exception) {
-                            Log.e(TAG, "Failed to convert image to Base64", e)
-                            // Continue anyway
+                            Log.e(TAG, "Failed to save image file", e)
                         }
                     }
 
@@ -5820,7 +5828,7 @@ class TorService : Service() {
                             else -> null
                         },
                         attachmentData = when (messageType) {
-                            com.securelegion.database.entities.Message.MESSAGE_TYPE_IMAGE -> imageBase64
+                            com.securelegion.database.entities.Message.MESSAGE_TYPE_IMAGE -> imageFilePath
                             com.securelegion.database.entities.Message.MESSAGE_TYPE_STICKER -> messageContent // asset path
                             else -> null
                         },
