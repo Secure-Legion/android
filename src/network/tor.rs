@@ -61,128 +61,12 @@ pub static LAST_CIRCUIT_ESTABLISHED_MS: AtomicU64 = AtomicU64::new(0);
 /// Epoch millis when listener disconnected from ControlSocket (0 means connected/unknown).
 pub static LISTENER_DISCONNECTED_SINCE_MS: AtomicU64 = AtomicU64::new(0);
 
-/// Get bootstrap status — always returns immediately (atomic read).
-/// When the atomic is 0 (event listener hasn't caught up), spawns a background
-/// thread that keeps a persistent control port connection and polls every 500ms
-/// until bootstrap reaches 100% or 10 seconds elapse.
+/// Get bootstrap status - always returns immediately (atomic read).
+/// Legacy ControlSocket direct-poll fallback removed for Arti-only mode.
 pub fn get_bootstrap_status_fast() -> u32 {
-    let cached = BOOTSTRAP_STATUS.load(Ordering::SeqCst);
-    if cached > 0 {
-        return cached;
-    }
-
-    // Atomic is 0 — kick off a persistent background poller (at most one at a time)
-    static QUERY_RUNNING: AtomicBool = AtomicBool::new(false);
-    if QUERY_RUNNING.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst).is_ok() {
-        std::thread::spawn(move || {
-            bootstrap_direct_poll_loop();
-            QUERY_RUNNING.store(false, Ordering::SeqCst);
-        });
-    }
-
-    0 // Return immediately; background thread will update atomic for next poll
+    BOOTSTRAP_STATUS.load(Ordering::SeqCst)
 }
 
-/// Background polling loop: opens one Unix domain socket connection to the ControlSocket,
-/// then queries GETINFO status/bootstrap-phase every 500ms until 100%.
-fn bootstrap_direct_poll_loop() {
-    use std::io::{Read, Write};
-    use std::time::Duration;
-
-    // Get ControlSocket path from global (set by Kotlin via JNI)
-    let socket_path = match CONTROL_SOCKET_PATH.lock().ok().and_then(|g| g.clone()) {
-        Some(p) => p,
-        None => {
-            log::warn!("Direct poll: No ControlSocket path set, cannot poll");
-            return;
-        }
-    };
-
-    // Try to connect (retry up to 30 times = 6 seconds at 200ms)
-    let mut stream = None;
-    for _ in 0..30 {
-        match std::os::unix::net::UnixStream::connect(&socket_path) {
-            Ok(s) => {
-                stream = Some(s);
-                break;
-            }
-            Err(_) => {
-                std::thread::sleep(Duration::from_millis(200));
-            }
-        }
-    }
-
-    let mut stream = match stream {
-        Some(s) => s,
-        None => return, // ControlSocket not available
-    };
-
-    let _ = stream.set_read_timeout(Some(Duration::from_millis(500)));
-    let _ = stream.set_write_timeout(Some(Duration::from_millis(300)));
-
-    // Authenticate — GP tor-android 0.4.9.5 uses CookieAuthentication 0 (empty auth)
-    if stream.write_all(b"AUTHENTICATE\r\n").is_err() {
-        return;
-    }
-    let mut buf = vec![0u8; 2048];
-    let n = match stream.read(&mut buf) {
-        Ok(n) => n,
-        Err(_) => return,
-    };
-    let response = String::from_utf8_lossy(&buf[..n]);
-    if !response.contains("250 OK") {
-        return;
-    }
-
-    log::info!("Direct bootstrap poller: connected and authenticated");
-
-    // Poll loop: query every 500ms until bootstrap >= 100 or 20 iterations (10s)
-    for i in 0..20 {
-        // If the event listener has already updated the atomic, we can stop
-        let current = BOOTSTRAP_STATUS.load(Ordering::SeqCst);
-        if current >= 100 {
-            log::info!("Direct bootstrap poller: event listener caught up ({}%), stopping", current);
-            break;
-        }
-
-        // Send GETINFO
-        if stream.write_all(b"GETINFO status/bootstrap-phase\r\n").is_err() {
-            break;
-        }
-
-        // Accumulate response until "250 OK"
-        let mut resp = String::new();
-        loop {
-            let n = match stream.read(&mut buf) {
-                Ok(0) => { resp.clear(); break; }
-                Ok(n) => n,
-                Err(_) => { break; }
-            };
-            resp.push_str(&String::from_utf8_lossy(&buf[..n]));
-            if resp.contains("\r\n250 OK\r\n") || resp.ends_with("250 OK\r\n") {
-                break;
-            }
-            if resp.len() > 8192 {
-                break;
-            }
-        }
-
-        if let Some(progress) = parse_bootstrap_progress(&resp) {
-            let old = BOOTSTRAP_STATUS.swap(progress, Ordering::SeqCst);
-            if progress != old {
-                log::info!("Direct bootstrap poller: {}% (poll #{})", progress, i + 1);
-            }
-            if progress >= 100 {
-                break;
-            }
-        }
-
-        std::thread::sleep(Duration::from_millis(500));
-    }
-
-    let _ = stream.write_all(b"QUIT\r\n");
-    log::info!("Direct bootstrap poller: done");
-}
 
 /// Get circuit established status from the global atomic (fast, no control port query)
 /// Returns 0 (no circuits) or 1 (circuits established)
@@ -3172,4 +3056,6 @@ impl TorConnection {
         Ok(data)
     }
 }
+
+
 
