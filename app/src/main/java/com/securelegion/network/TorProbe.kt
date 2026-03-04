@@ -12,11 +12,13 @@ import com.securelegion.crypto.RustBridge
  * 3. Works on all networks - doesn't depend on external hosts being reachable
  * 4. Fast - no network round-trip needed
  */
+@Deprecated(
+    message = "Legacy Kotlin-side Tor probe. Keep for telemetry only while Arti owns liveness decisions.",
+    level = DeprecationLevel.WARNING
+)
 class TorProbe {
     companion object {
         private const val TAG = "TorProbe"
-        private const val SOCKS_HOST = "127.0.0.1"
-        private const val SOCKS_PORT = 9050
     }
 
     /**

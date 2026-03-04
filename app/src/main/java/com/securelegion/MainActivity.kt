@@ -1717,7 +1717,6 @@ class MainActivity : BaseActivity() {
 
                 // Build own contact card
                 val keyManager = KeyManager.getInstance(this@MainActivity)
-                val torManager = com.securelegion.crypto.TorManager.getInstance(applicationContext)
                 val ownCard = com.securelegion.models.ContactCard(
                     displayName = keyManager.getUsername() ?: throw Exception("Username not set"),
                     solanaPublicKey = keyManager.getSolanaPublicKey(),
@@ -1726,8 +1725,7 @@ class MainActivity : BaseActivity() {
                     solanaAddress = keyManager.getSolanaAddress(),
                     friendRequestOnion = keyManager.getFriendRequestOnion() ?: throw Exception("FR onion not set"),
                     messagingOnion = keyManager.getMessagingOnion() ?: throw Exception("Messaging onion not set"),
-                    voiceOnion = torManager.getVoiceOnionAddress().takeUnless { it.isNullOrBlank() }
-                        ?: keyManager.getVoiceOnion().takeUnless { it.isNullOrBlank() } ?: "",
+                    voiceOnion = keyManager.getVoiceOnion().takeUnless { it.isNullOrBlank() } ?: "",
                     contactPin = keyManager.getContactPin() ?: throw Exception("Contact PIN not set"),
                     ipfsCid = keyManager.deriveContactListCID(),
                     timestamp = System.currentTimeMillis() / 1000
@@ -2178,8 +2176,7 @@ class MainActivity : BaseActivity() {
                 startActivity(intent)
 
                 // Get voice onion once for reuse in retries
-                val torManager = com.securelegion.crypto.TorManager.getInstance(this@MainActivity)
-                val myVoiceOnion = torManager.getVoiceOnionAddress() ?: ""
+                val myVoiceOnion = keyManager.getVoiceOnion() ?: ""
                 if (myVoiceOnion.isEmpty()) {
                     Log.w("MainActivity", "Voice onion address not yet created - call may fail")
                 } else {

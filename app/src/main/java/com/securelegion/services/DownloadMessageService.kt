@@ -15,7 +15,6 @@ import com.securelegion.ChatActivity
 import com.securelegion.LockActivity
 import com.securelegion.R
 import com.securelegion.crypto.KeyManager
-import com.securelegion.crypto.TorManager
 import com.securelegion.database.SecureLegionDatabase
 import kotlinx.coroutines.*
 import androidx.room.withTransaction
@@ -475,8 +474,7 @@ class DownloadMessageService : Service() {
         Log.i(TAG, "========== STAGE 1/3: CREATING PONG (= acknowledgment) ==========")
 
         val pongBytes = withContext(Dispatchers.IO) {
-            val torManager = TorManager.getInstance(this@DownloadMessageService)
-            torManager.respondToPing(ctx.pingId, authenticated = true)
+            com.securelegion.crypto.RustBridge.respondToPing(ctx.pingId, authenticated = true)
         }
 
         if (pongBytes == null) {

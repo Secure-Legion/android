@@ -1388,7 +1388,6 @@ class AddFriendActivity : BaseActivity() {
 
                 // Build YOUR full contact card
                 val keyManager = KeyManager.getInstance(this@AddFriendActivity)
-                val torManager = com.securelegion.crypto.TorManager.getInstance(applicationContext)
                 val ownContactCard = ContactCard(
                     displayName = keyManager.getUsername() ?: throw Exception("Username not set"),
                     solanaPublicKey = keyManager.getSolanaPublicKey(),
@@ -1397,9 +1396,7 @@ class AddFriendActivity : BaseActivity() {
                     solanaAddress = keyManager.getSolanaAddress(),
                     friendRequestOnion = keyManager.getFriendRequestOnion() ?: throw Exception("Friend request .onion not set"),
                     messagingOnion = keyManager.getMessagingOnion() ?: throw Exception("Messaging .onion not set"),
-                    voiceOnion = torManager.getVoiceOnionAddress().takeUnless { it.isNullOrBlank() }
-                        ?: keyManager.getVoiceOnion().takeUnless { it.isNullOrBlank() }
-                        ?: "",
+                    voiceOnion = keyManager.getVoiceOnion().takeUnless { it.isNullOrBlank() } ?: "",
                     contactPin = keyManager.getContactPin() ?: throw Exception("Contact PIN not set"),
                     ipfsCid = keyManager.deriveContactListCID(), // v5: Send contact LIST CID for backup mesh
                     timestamp = System.currentTimeMillis() / 1000

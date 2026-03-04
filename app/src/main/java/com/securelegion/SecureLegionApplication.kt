@@ -11,8 +11,6 @@ import android.util.Log
 import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.ProcessLifecycleOwner
-import com.securelegion.crypto.TorManager
-import IPtProxy.Controller
 import java.io.File
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -40,19 +38,15 @@ class SecureLegionApplication : Application() {
         // Track current foreground activity
         private var currentActivity: Activity? = null
 
-        // IPtProxy controller for pluggable transports (shared across app)
-        lateinit var iptProxyController: Controller
-            private set
+        // IPtProxy removed — Arti handles Tor in-process
     }
 
     override fun onCreate() {
         super.onCreate()
 
         // CRITICAL: Check if we're in the main process
-        // When GP TorService runs in android:process=":tor", Android creates a new
-        // SecureLegionApplication instance in that process. We must skip ALL initialization
-        // in non-main processes to avoid: conflicting IPtProxy ports, duplicate Tor startup,
-        // duplicate IPFS init, and potential exit(1) from Go/native runtime conflicts.
+        // We must skip ALL initialization in non-main processes to avoid
+        // duplicate Tor startup, duplicate IPFS init, and potential native runtime conflicts.
         val processName = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
             getProcessName()
         } else {
@@ -75,16 +69,7 @@ class SecureLegionApplication : Application() {
         // Create notification channels
         createNotificationChannels()
 
-        // Initialize IPtProxy controller for pluggable transports
-        // This MUST be done before any bridge configuration
-        try {
-            val ptStateDir = File(cacheDir, "pt_state")
-            ptStateDir.mkdirs()
-            iptProxyController = Controller(ptStateDir.absolutePath, true, false, "INFO", null)
-            Log.d(TAG, "IPtProxy Controller initialized at: ${ptStateDir.absolutePath}")
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to initialize IPtProxy Controller", e)
-        }
+        // IPtProxy removed — Arti handles Tor in-process, no pluggable transport controller needed
 
         // Register lifecycle observer for auto-lock on background
         registerLifecycleObserver()
@@ -225,16 +210,7 @@ class SecureLegionApplication : Application() {
     }
 
     private fun initializeTor() {
-        val torManager = TorManager.getInstance(this)
-
-        // Initialize Tor asynchronously (this takes a few seconds)
-        torManager.initializeAsync { success, onionAddress ->
-            if (success && onionAddress != null) {
-                Log.i(TAG, "Tor initialized successfully")
-                Log.i(TAG, "Our .onion address initialized")
-            } else {
-                Log.e(TAG, "Tor initialization failed!")
-            }
-        }
+        Log.i(TAG, "Starting TorService (Arti-owned lifecycle)")
+        com.securelegion.services.TorService.start(this)
     }
 }

@@ -299,8 +299,10 @@ class KeyManager private constructor(context: Context) {
         // Derive seed from mnemonic
         val seed = mnemonicToSeed(seedPhraseString)
 
-        // Derive friend request keypair
-        val keyPair = deriveFriendRequestKeyPair(seed)
+        // Derive friend request keypair using the active rotation domain.
+        val count = getFriendReqRotationCount()
+        val domain = if (count > 0) "friend_req_$count" else "friend_req"
+        val keyPair = deriveFriendRequestKeyPair(seed, domain)
 
         return keyPair.privateKey
     }
@@ -393,14 +395,10 @@ class KeyManager private constructor(context: Context) {
     }
 
     /**
-     * Get Tor onion address from TorManager
-     * Uses the actual address that Tor created, not a computed one
+     * Get Tor onion address from RustBridge hidden service state.
      */
     fun getTorOnionAddress(): String {
-        // Get the actual address from TorManager instead of computing
-        // This ensures we always use the exact address that Tor generated
-        val torManager = TorManager.getInstance(appContext)
-        return torManager.getOnionAddress()
+        return RustBridge.getHiddenServiceAddress()
             ?: throw KeyManagerException("Tor onion address not found. Initialize Tor first.")
     }
 
@@ -608,11 +606,11 @@ class KeyManager private constructor(context: Context) {
      * Uses domain separation: SHA-256(seed || "friend_req")
      * This is DIFFERENT from the messaging .onion to enable two-onion architecture
      */
-    private fun deriveFriendRequestKeyPair(seed: ByteArray): KeyPair {
-        // Domain separation: hash seed with "friend_req" to derive different key
+    private fun deriveFriendRequestKeyPair(seed: ByteArray, domainSep: String = "friend_req"): KeyPair {
+        // Domain separation: hash seed with friend request domain to derive different key
         val messageDigest = MessageDigest.getInstance("SHA-256")
         messageDigest.update(seed)
-        messageDigest.update("friend_req".toByteArray())
+        messageDigest.update(domainSep.toByteArray())
         val frSeed = messageDigest.digest()
 
         // Generate Ed25519 keypair from seed using libsodium

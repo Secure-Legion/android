@@ -355,7 +355,6 @@ class FriendRequestWorker(
 
         // Rebuild Phase 3 ACK with our contact card
         val keyManager = KeyManager.getInstance(applicationContext)
-        val torManager = com.securelegion.crypto.TorManager.getInstance(applicationContext)
 
         val ownContactCard = com.securelegion.models.ContactCard(
             displayName = keyManager.getUsername() ?: "Unknown",
@@ -364,8 +363,10 @@ class FriendRequestWorker(
             kyberPublicKey = keyManager.getKyberPublicKey(),
             solanaAddress = keyManager.getSolanaAddress(),
             friendRequestOnion = keyManager.getFriendRequestOnion() ?: "",
-            messagingOnion = torManager.getOnionAddress() ?: "",
-            voiceOnion = torManager.getVoiceOnionAddress() ?: "",
+            messagingOnion = keyManager.getMessagingOnion()
+                ?: com.securelegion.crypto.RustBridge.getHiddenServiceAddress()
+                ?: "",
+            voiceOnion = keyManager.getVoiceOnion() ?: "",
             contactPin = keyManager.getContactPin() ?: "",
             timestamp = System.currentTimeMillis() / 1000
         )

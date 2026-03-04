@@ -483,8 +483,7 @@ class TorService : Service() {
         val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         notificationManager.cancel(9901)
 
-        // Verify bridge usage if bridges were requested
-        verifyBridgeUsage()
+        // Bridges removed — Arti uses direct connections only
 
         Log.w(TAG, "========== onTorReady() COMPLETE ==========")
 
@@ -494,81 +493,15 @@ class TorService : Service() {
 
     /**
      * Post-bootstrap verification: check if bridges are actually in use.
-     * Connects to Tor ControlSocket (Unix domain socket) with empty auth and checks
-     * entry guards to confirm bridge connectivity when user selected bridges.
+     * With Arti, there's no ControlSocket to query — bridges not yet supported.
      */
     private fun verifyBridgeUsage() {
         val torSettings = getSharedPreferences("tor_settings", MODE_PRIVATE)
         val bridgeType = torSettings.getString("bridge_type", "none") ?: "none"
-        if (bridgeType == "none") return // No bridges expected
+        if (bridgeType == "none") return
 
-        serviceScope.launch(kotlinx.coroutines.Dispatchers.IO) {
-            try {
-                // Connect to ControlSocket (Unix domain socket, GP tor-android 0.4.9.5)
-                val socketFile = File(dataDir, "app_TorService/data/ControlSocket")
-                if (!socketFile.exists()) {
-                    Log.w(TAG, "Bridge verify: ControlSocket not found at ${socketFile.absolutePath}, skipping")
-                    return@launch
-                }
-
-                val socket = android.net.LocalSocket()
-                socket.connect(android.net.LocalSocketAddress(socketFile.absolutePath, android.net.LocalSocketAddress.Namespace.FILESYSTEM))
-                socket.soTimeout = 5000
-                val writer = socket.outputStream.bufferedWriter()
-                val reader = socket.inputStream.bufferedReader()
-
-                // Authenticate (empty auth — GP CookieAuthentication 0)
-                writer.write("AUTHENTICATE\r\n")
-                writer.flush()
-                val authReply = reader.readLine()
-                if (authReply != "250 OK") {
-                    Log.w(TAG, "Bridge verify: auth failed: $authReply")
-                    socket.close()
-                    return@launch
-                }
-
-                // Check entry guards - bridges show as "Bridge" type
-                writer.write("GETINFO entry-guards\r\n")
-                writer.flush()
-
-                val guardLines = mutableListOf<String>()
-                var line = reader.readLine()
-                while (line != null && !line.startsWith("250 ")) {
-                    guardLines.add(line)
-                    line = reader.readLine()
-                }
-
-                // Check if UseBridges is set
-                writer.write("GETCONF UseBridges\r\n")
-                writer.flush()
-                val bridgeConf = reader.readLine()
-
-                // Close connection
-                writer.write("QUIT\r\n")
-                writer.flush()
-                socket.close()
-
-                val useBridges = bridgeConf?.contains("1") == true
-                val hasBridgeGuards = guardLines.any { it.contains("Bridge", ignoreCase = true) }
-
-                if (useBridges) {
-                    Log.i(TAG, "Bridge verify: UseBridges=1, bridge guards=${guardLines.size} " +
-                            "(type=$bridgeType) — bridges ARE configured in Tor")
-                    if (hasBridgeGuards) {
-                        Log.i(TAG, "Bridge verify: Entry guards contain bridge entries — bridges ACTIVE")
-                    }
-                } else {
-                    Log.e(TAG, "Bridge verify: UseBridges NOT set but user selected '$bridgeType' — " +
-                            "Tor may be running WITHOUT bridges!")
-                    // Broadcast warning so UI can inform user
-                    val warnIntent = android.content.Intent("com.securelegion.BRIDGE_VERIFICATION_WARNING")
-                    warnIntent.putExtra("message", "Bridges may not be active. Selected: $bridgeType but UseBridges not set.")
-                    sendBroadcast(warnIntent)
-                }
-            } catch (e: Exception) {
-                Log.w(TAG, "Bridge verify: failed to verify bridge usage: ${e.message}")
-            }
-        }
+        // Arti: bridge verification not available (no control protocol)
+        Log.w(TAG, "Bridge verify: Arti does not support bridge verification yet (type=$bridgeType)")
     }
 
     /**
@@ -755,8 +688,7 @@ class TorService : Service() {
                 lastEventListenerRestartAttempt = now
                 Log.w(TAG, "Event listener dead — restarting (health data was stale)")
                 try {
-                    val socketFile = java.io.File(dataDir, "app_TorService/data/ControlSocket")
-                    RustBridge.startBootstrapListener(socketFile.absolutePath)
+                    RustBridge.startBootstrapListener(null)
                     Log.i(TAG, "Event listener restarted successfully")
                 } catch (e: Exception) {
                     Log.e(TAG, "Failed to restart event listener", e)
@@ -764,19 +696,9 @@ class TorService : Service() {
             }
         }
 
-        // Detect stale/frozen event listener: if heartbeat is >30s old while tor is RUNNING,
-        // the control port listener is dead and cached atomics are lies.
-        val listenerHeartbeat = RustBridge.getLastListenerHeartbeat()
-        val heartbeatAgeMs = if (listenerHeartbeat > 0) System.currentTimeMillis() - listenerHeartbeat else Long.MAX_VALUE
-        val listenerAlive = heartbeatAgeMs < 30_000
-        if (!listenerAlive && torRunning && bootstrapComplete) {
-            Log.w(TAG, "Event listener heartbeat stale (${heartbeatAgeMs}ms ago) — treating as unhealthy")
-            // Wake the listener from backoff sleep so it reconnects immediately
-            if (RustBridge.isEventListenerRunning()) {
-                Log.w(TAG, "Listener thread alive but heartbeat stale — sending wake signal")
-                RustBridge.wakeTorEventListener()
-            }
-        }
+        // Arti reports status in-process via atomics — no external listener heartbeat needed.
+        // listenerAlive is always true when Arti is ready (isSocksProxyRunning checks arti::is_arti_ready).
+        val listenerAlive = RustBridge.isSocksProxyRunning()
 
         val isHealthy = bootstrapComplete && circuitsEstablished && torRunning && listenerAlive
 
@@ -801,7 +723,7 @@ class TorService : Service() {
 
             // Log unhealthy state for debugging
             val circuits = RustBridge.getCircuitEstablished()
-            Log.w(TAG, "Tor health: unhealthy (bootstrap=$bootstrapPercent%, circuits=$circuits, state=$torState, listenerAlive=$listenerAlive, heartbeatAge=${heartbeatAgeMs}ms)")
+            Log.w(TAG, "Tor health: unhealthy (bootstrap=$bootstrapPercent%, circuits=$circuits, state=$torState, artiReady=$listenerAlive)")
 
             // CRITICAL FIX: Only close gate if SOCKS proxy itself is unreachable
             // DO NOT close gate on:
@@ -876,9 +798,10 @@ class TorService : Service() {
 
                         Log.w(TAG, "Tor unhealthy for ${unhealthyMs}ms → restarting (attempt #$consecutiveRestarts, next backoff: ${backoffDelays[min(consecutiveRestarts, backoffDelays.size - 1)] / 1000}s)")
 
-                        serviceScope.launch {
-                            restartTor("health unhealthy: bootstrap=$bootstrapPercent%, circuits=${RustBridge.getCircuitEstablished()}, state=$torState")
-                        }
+                        Log.w(
+                            TAG,
+                            "Health-triggered restart suppressed (observe-only): bootstrap=$bootstrapPercent, circuits=${RustBridge.getCircuitEstablished()}, state=$torState"
+                        )
                     }
                 }
             }
@@ -919,9 +842,7 @@ class TorService : Service() {
                 lastHsHupSentAt = 0L // Reset so we don't re-trigger every health poll
                 hsDescHealthy = true  // Reset to avoid immediate re-escalation after restart
                 hsDescFailureCount = 0
-                serviceScope.launch {
-                    restartTor("HS descriptor stall: HUP failed to recover after 90s")
-                }
+                Log.w(TAG, "HS descriptor auto-restart suppressed (observe-only mode)")
             }
         }
     }
@@ -1070,84 +991,35 @@ class TorService : Service() {
     }
 
     /**
-     * Monitor SOCKS proxy health and auto-restart if it dies
-     * Checks every 5 seconds, restarts immediately if dead
-     *
-     * CRITICAL: SOCKS failures (status 1) mean the proxy itself is down,
-     * not just that a remote host is unreachable. This needs aggressive monitoring.
+     * Monitor Arti readiness (replaces SOCKS proxy health monitor).
+     * With Arti, there's no separate SOCKS proxy — just check if Arti is ready.
      */
     private fun startSocksHealthMonitor() {
         socksHealthJob?.cancel()
         socksHealthJob = serviceScope.launch(Dispatchers.IO) {
-            Log.i(TAG, "Starting SOCKS proxy health monitor (5s interval)")
+            Log.i(TAG, "Starting Arti readiness monitor (10s interval)")
 
-            // NEVER-DIE MONITOR: Only exit on OFF/STOPPING (user-initiated shutdown).
-            // ERROR state is transient — wait and recover, don't die permanently.
-            // If the monitor dies, nothing reopens the TransportGate, and all
-            // messaging stops forever until app restart.
             while (isActive && torState != TorState.OFF && torState != TorState.STOPPING) {
                 try {
-                    // If torState is ERROR, wait for recovery instead of exiting
                     if (torState == TorState.ERROR) {
-                        Log.w(TAG, "SOCKS health monitor: torState=ERROR, waiting for recovery (not exiting)...")
-                        kotlinx.coroutines.delay(10_000) // Back off 10s during error state
+                        kotlinx.coroutines.delay(10_000)
                         continue
                     }
 
                     val bootstrap = RustBridge.getBootstrapStatus()
+                    val artiReady = RustBridge.isSocksProxyRunning() // Returns true if Arti is ready
 
-                    if (bootstrap < 100) {
-                        val stalledMs = SystemClock.elapsedRealtime() - lastBootstrapProgressMs
-                        if (stalledMs < 45_000L) {
-                            // Early bootstrap churn is expected.
-                            Log.d(TAG, "SOCKS health monitor: bootstrap at $bootstrap%, skipping check")
-                        } else {
-                            // Probe SOCKS during prolonged bootstrap stalls so dead local proxy
-                            // does not hide behind bootstrap<100 forever.
-                            Log.w(TAG, "SOCKS health monitor: bootstrap stale (${stalledMs / 1000}s at $bootstrap%) - probing SOCKS early")
-                            val socksAlive = RustBridge.isSocksProxyRunning()
-
-                            if (!socksAlive) {
-                                Log.w(TAG, "SOCKS proxy DEAD during stale bootstrap - restarting proxy")
-                                acquireWakeLock("socks_restart_stale_bootstrap", wakeLockQuickTimeoutMs)
-                                val restarted = RustBridge.startSocksProxy()
-                                if (!restarted && hasNetworkConnection()) {
-                                    Log.e(TAG, "SOCKS restart failed during stale bootstrap - escalating to Tor restart")
-                                    serviceScope.launch {
-                                        restartTor("stale bootstrap with dead SOCKS (bootstrap=$bootstrap%)")
-                                    }
-                                }
-                            } else if (bootstrap >= 90) {
-                                // Near-complete bootstrap with healthy local SOCKS but no progress.
-                                maybeSendHealthNewnym()
-                            }
-                        }
-                    } else {
-                        val socksAlive = RustBridge.isSocksProxyRunning()
-
-                        if (!socksAlive) {
-                            Log.w(TAG, "SOCKS proxy DEAD (bootstrap=$bootstrap%) - restarting immediately...")
-
-                            // Try to restart
-                            acquireWakeLock("socks_restart", wakeLockQuickTimeoutMs)
-                            val restarted = RustBridge.startSocksProxy()
-                            if (restarted) {
-                                Log.i(TAG, "SOCKS proxy restarted successfully")
-                            } else {
-                                Log.e(TAG, "SOCKS proxy restart FAILED")
-                            }
-                        } else {
-                            Log.d(TAG, "SOCKS proxy health check: alive")
-                        }
+                    if (bootstrap >= 100 && !artiReady) {
+                        Log.w(TAG, "Arti readiness check: bootstrap=$bootstrap% but not ready")
                     }
                 } catch (e: Exception) {
-                    Log.e(TAG, "Error checking SOCKS proxy health", e)
+                    Log.e(TAG, "Error in Arti readiness monitor", e)
                 }
 
-                kotlinx.coroutines.delay(5000) // Check every 5 seconds
+                kotlinx.coroutines.delay(10_000) // Check every 10s (Arti is more stable than C Tor)
             }
 
-            Log.i(TAG, "SOCKS health monitor stopped (torState=$torState)")
+            Log.i(TAG, "Arti readiness monitor stopped (torState=$torState)")
         }
     }
 
@@ -2241,17 +2113,14 @@ class TorService : Service() {
             // Prevents duplicate listeners when startTor() is called multiple times
             RustBridge.stopBootstrapListener()
 
-            // Start bootstrap listener (Rust side) with ControlSocket path
-            val socketFile = java.io.File(dataDir, "app_TorService/data/ControlSocket")
-            Log.i(TAG, "ControlSocket exists: ${socketFile.exists()}")
-            // Pass path so Rust knows where to connect (GP tor-android creates this Unix socket)
-            RustBridge.startBootstrapListener(socketFile.absolutePath)
+            // Start Arti bootstrap listener (no ControlSocket needed)
+            RustBridge.startBootstrapListener(null)
 
             // Start bootstrap monitor (polls getBootstrapStatus)
             startBootstrapMonitor()
 
-            // Start watchdog (detects stalled bootstrap)
-            startBootstrapWatchdog()
+            // Disabled: percent/time bootstrap watchdog caused false restarts on slow links.
+            Log.i(TAG, "Bootstrap watchdog disabled (observe-only mode)")
 
             // Start health monitor (polls ControlPort for circuit health)
             startHealthMonitor()
@@ -2259,8 +2128,8 @@ class TorService : Service() {
             // Start PIN rotation monitor (auto-rotates PIN based on time/count)
             startPinRotationMonitor()
 
-            // Start SOCKS health monitor (detects dead proxy, auto-restarts)
-            startSocksHealthMonitor()
+            // Disabled here: avoid pre-RUNNING watchdog interference during bootstrap.
+            Log.i(TAG, "SOCKS health watchdog disabled (observe-only mode)")
 
             // Start fast retry loop (gates on isOpenNow, safe to start early)
             startFastRetryLoop()
@@ -2369,59 +2238,26 @@ class TorService : Service() {
     }
 
     /**
-     * Send a command to Tor via ControlSocket (Unix domain socket).
-     * Uses empty auth (GP tor-android 0.4.9.5 uses --CookieAuthentication 0).
-     * Same pattern as TorManager.probeTorControl() and verifyBridgeUsage().
-     * @return true if command was acknowledged with 250 OK
+     * Send a command to Tor. With Arti, there's no control socket — map known commands
+     * to RustBridge equivalents or no-op.
      */
     private fun sendTorControlCommand(command: String): Boolean {
         return try {
-            val controlSocketFile = File(dataDir, "app_TorService/data/ControlSocket")
-            if (!controlSocketFile.exists()) {
-                Log.w(TAG, "ControlSocket not found, cannot send: $command")
-                return false
+            when {
+                command.contains("NEWNYM", ignoreCase = true) -> {
+                    RustBridge.sendNewnym()
+                    true
+                }
+                command.contains("HUP", ignoreCase = true) -> {
+                    // No equivalent in Arti — HS descriptors are managed automatically
+                    Log.i(TAG, "SIGNAL HUP: no-op (Arti manages HS descriptors automatically)")
+                    true
+                }
+                else -> {
+                    Log.w(TAG, "Tor control command not supported with Arti: $command")
+                    false
+                }
             }
-
-            val sock = android.net.LocalSocket()
-            sock.connect(android.net.LocalSocketAddress(
-                controlSocketFile.absolutePath,
-                android.net.LocalSocketAddress.Namespace.FILESYSTEM
-            ))
-            sock.soTimeout = 3000
-
-            val output = sock.outputStream
-            val input = sock.inputStream
-
-            // Empty auth (GP tor-android 0.4.9.5 uses --CookieAuthentication 0)
-            output.write("AUTHENTICATE\r\n".toByteArray())
-            output.flush()
-
-            val authBuf = ByteArray(256)
-            val authLen = input.read(authBuf)
-            if (authLen <= 0) {
-                Log.w(TAG, "Tor control: no auth response")
-                sock.close()
-                return false
-            }
-            val authResp = String(authBuf, 0, authLen)
-            if (!authResp.startsWith("250")) {
-                Log.w(TAG, "Tor control auth failed: $authResp")
-                sock.close()
-                return false
-            }
-
-            // Send the actual command
-            output.write("$command\r\n".toByteArray())
-            output.flush()
-
-            val replyBuf = ByteArray(256)
-            val replyLen = input.read(replyBuf)
-            val reply = if (replyLen > 0) String(replyBuf, 0, replyLen) else ""
-            val ok = reply.contains("250")
-            Log.i(TAG, "Tor control '$command' → ${reply.trim()}")
-
-            sock.close()
-            ok
         } catch (e: Exception) {
             Log.w(TAG, "Failed to send Tor control '$command': ${e.message}")
             false
@@ -2429,68 +2265,19 @@ class TorService : Service() {
     }
 
     /**
-     * Stop the Guardian Project TorService (the actual tor daemon).
-     *
-     * KEY FIX: GP TorService runs Tor in-process via JNI. stopService() is async —
-     * it asks Android to call onDestroy() at its convenience, but the native Tor
-     * thread can outlive it. This caused "zombie Tor" holding ports while a new
-     * instance tried to start ("two connections" bug).
-     *
-     * Fix: Send SIGNAL SHUTDOWN via ControlSocket first, which tells the native
-     * Tor thread to exit from within. This is what force-stop effectively does
-     * (kills the process, which kills the thread) — but without killing the app.
-     *
-     * HS identity is preserved — it lives in key files, not the running process.
+     * Stop Tor process. With Arti, Tor runs in-process in Rust — no GP TorService to stop.
+     * Signal NEWNYM to rotate circuits, then stop listeners.
      */
     private suspend fun stopGpTorProcess() {
-        val controlSocket = File(dataDir, "app_TorService/data/ControlSocket")
-
         try {
-            // Step 1: Tell Tor to exit gracefully via control protocol
-            if (controlSocket.exists()) {
-                val shutdownOk = withContext(Dispatchers.IO) {
-                    sendTorControlCommand("SIGNAL SHUTDOWN")
-                }
-
-                if (shutdownOk) {
-                    Log.i(TAG, "SIGNAL SHUTDOWN accepted — waiting for native Tor thread to exit")
-                } else {
-                    // SHUTDOWN failed (maybe control socket wedged) — try HALT (immediate, non-graceful)
-                    Log.w(TAG, "SIGNAL SHUTDOWN failed — trying HALT (immediate)")
-                    withContext(Dispatchers.IO) {
-                        sendTorControlCommand("SIGNAL HALT")
-                    }
-                }
-
-                // Wait for ControlSocket to disappear (confirms native thread exited)
-                val maxWaitMs = 8_000L
-                val pollIntervalMs = 200L
-                var waited = 0L
-                while (controlSocket.exists() && waited < maxWaitMs) {
-                    delay(pollIntervalMs)
-                    waited += pollIntervalMs
-                }
-
-                if (controlSocket.exists()) {
-                    Log.e(TAG, "ControlSocket persists after SHUTDOWN+HALT and ${waited}ms — Tor truly wedged")
-                } else {
-                    Log.i(TAG, "Tor exited cleanly after ${waited}ms (via SIGNAL SHUTDOWN)")
-                }
-            } else {
-                Log.d(TAG, "ControlSocket already gone — Tor not running")
+            Log.i(TAG, "stopGpTorProcess: stopping Arti listeners...")
+            withContext(Dispatchers.IO) {
+                RustBridge.stopListeners()
+                RustBridge.stopHiddenServiceListener()
             }
-
-            // Step 2: Stop the Android service wrapper (cleanup, even if native thread already exited)
-            val gpStopIntent = Intent(this, org.torproject.jni.TorService::class.java)
-            stopService(gpStopIntent)
-            Log.i(TAG, "Sent stopService to GP TorService")
-
+            Log.i(TAG, "Arti listeners stopped")
         } catch (e: Exception) {
-            Log.w(TAG, "Failed to stop GP TorService: ${e.message}")
-            // Fallback: still try stopService even if control commands failed
-            try {
-                stopService(Intent(this, org.torproject.jni.TorService::class.java))
-            } catch (_: Exception) {}
+            Log.w(TAG, "Error stopping Arti listeners: ${e.message}")
         }
     }
 
@@ -2601,11 +2388,9 @@ class TorService : Service() {
 
             stopTor()
 
-            // Nuclear option: after 2 consecutive bootstrap failures, wipe tor data
-            // (preserving HS keys so .onion identity is stable)
+            // Auto-wipe disabled: preserve Tor state on repeated bootstrap failures.
             if (consecutiveBootstrapFailures >= 2) {
-                Log.w(TAG, "NUCLEAR RESTART: $consecutiveBootstrapFailures consecutive failures — wiping tor data (preserving HS keys)")
-                nuclearCleanupTorData()
+                Log.w(TAG, "Auto-wipe disabled: $consecutiveBootstrapFailures consecutive bootstrap failures (Tor data preserved)")
                 consecutiveBootstrapFailures = 0 // Reset after nuclear
             }
 
@@ -2785,6 +2570,7 @@ class TorService : Service() {
                 startMessagePoller()
                 // startVoicePoller() — voice calling disabled in v1
                 startTapPoller()
+                startOrRepairFriendRequestTransport()
                 startSessionCleanup()
 
                 // CRITICAL: Always initialize voice service when listener is running
@@ -2797,7 +2583,25 @@ class TorService : Service() {
                 return
             }
 
-            // PHASE 2: Now safe to start main listener on port 8080
+            // PHASE 2: Create Arti onion service (must happen BEFORE starting listener)
+            // Arti requires explicit create_onion_service() to prepare the RendRequest stream.
+            // C Tor handled this implicitly via HiddenServiceDir in torrc.
+            Log.d(TAG, "Creating Arti hidden service...")
+            try {
+                val onionAddress = RustBridge.createHiddenService()
+                Log.i(TAG, "Arti hidden service created: $onionAddress")
+            } catch (e: Exception) {
+                Log.e(TAG, "FATAL: Failed to create Arti hidden service: ${e.message}", e)
+                // Schedule retry — without the HS, the listener can't accept connections
+                serviceScope.launch {
+                    kotlinx.coroutines.delay(5000)
+                    Log.w(TAG, "Retrying listener start after HS creation failure...")
+                    startIncomingListener()
+                }
+                return
+            }
+
+            // PHASE 3: Now safe to start main listener on port 8080
             Log.d(TAG, "Starting hidden service listener on port 8080...")
             val success = RustBridge.startHiddenServiceListener(8080)
             if (success) {
@@ -2824,7 +2628,7 @@ class TorService : Service() {
             startMessagePoller()
             // startVoicePoller() — voice calling disabled in v1
 
-            // PHASE 3: Start tap listener on port 9151
+            // PHASE 4: Start tap listener (Arti routes TAPs via main HS by msg type)
             Log.d(TAG, "Starting tap listener on port 9151...")
             val tapSuccess = RustBridge.startTapListener(9151)
             if (tapSuccess) {
@@ -2835,10 +2639,8 @@ class TorService : Service() {
 
             // Start polling for incoming taps
             startTapPoller()
-
-            // Start polling for incoming friend requests
-            // Both share port 9151, routed by message type in Rust
-            startFriendRequestPoller()
+            // PHASE 5-6: Ensure friend-request hosted onion + listener are active.
+            startOrRepairFriendRequestTransport()
 
             // PONGs arrive at main listener (port 8080) and are routed by message type
             // Start polling for incoming pongs from main listener queue
@@ -2850,64 +2652,74 @@ class TorService : Service() {
             // Start periodic session cleanup (5-minute intervals)
             startSessionCleanup()
 
-            // Ensure SOCKS proxy is running for outgoing connections
-            ensureSocksProxyRunning()
-
-            // Verify SOCKS proxy is actually running
-            if (RustBridge.isSocksProxyRunning()) {
-                // All listeners, pollers, and SOCKS proxy ready - mark as ready for messaging
-                listenersReady = true
-                Log.i(TAG, "All listeners, pollers, and SOCKS proxy (9050) ready - messaging enabled")
-
-                // Open transport gate - allow all Tor operations to proceed
-                gate.open()
-                Log.i(TAG, "Transport gate opened - Tor is fully operational")
-
-                // Start bandwidth monitoring now that Tor is fully operational
-                startBandwidthMonitoring()
-
-                // Initialize voice service
-                startVoiceService()
+            // Verify Arti is ready for outbound connections
+            // Under Arti, there's no SOCKS proxy — isSocksProxyRunning() checks is_arti_ready()
+            val artiReady = RustBridge.isSocksProxyRunning()
+            if (artiReady) {
+                Log.i(TAG, "Arti ready — all listeners, pollers, and outbound connections operational")
             } else {
-                Log.w(TAG, "SOCKS proxy not running - messaging may not work for outgoing messages")
-                listenersReady = true // Still mark as ready since incoming works
-
-                // Open gate anyway - outgoing may still work if listener is running
-                gate.open()
-
-                // Start bandwidth monitoring anyway
-                startBandwidthMonitoring()
-
-                // Initialize voice service anyway
-                startVoiceService()
+                Log.w(TAG, "Arti not fully ready — outbound connections may fail until bootstrap completes")
             }
+
+            // Mark listeners as ready and open gate regardless — incoming HS is up
+            listenersReady = true
+            gate.open()
+            Log.i(TAG, "Transport gate opened — Tor is fully operational")
+
+            // Start bandwidth monitoring and voice service
+            startBandwidthMonitoring()
+            startVoiceService()
 
             // Start poller watchdog to auto-restart any dead pollers
             startPollerWatchdog()
         } catch (e: Exception) {
-            Log.e(TAG, "Error starting listener", e)
-            // Mark as running anyway to prevent restart attempts
-            isListenerRunning = true
-            // Try to start Ping poller anyway in case listener is already running
-            startPingPoller()
-            // Try to start tap poller
-            try {
-                startTapPoller()
-            } catch (e2: Exception) {
-                Log.e(TAG, "Error starting tap poller", e2)
-            }
-            // Try to start ACK poller
-            try {
-                startAckPoller()
-            } catch (e4: Exception) {
-                Log.e(TAG, "Error starting ACK poller", e4)
-            }
-            // Mark as ready even if some pollers failed (best effort)
-            listenersReady = true
-            Log.w(TAG, "Listeners ready with some errors - messaging may be limited")
+            Log.e(TAG, "FATAL: startIncomingListener() threw exception", e)
+            // DO NOT mark isListenerRunning=true or listenersReady=true on failure.
+            // This was masking HS creation failures — the health monitor will detect
+            // the unhealthy state and trigger a retry via startIncomingListener().
+            Log.e(TAG, "Messaging will NOT work until listener starts successfully")
 
-            // Start poller watchdog even on errors (best effort)
-            startPollerWatchdog()
+            // Schedule retry after delay
+            serviceScope.launch {
+                kotlinx.coroutines.delay(10_000) // 10 seconds
+                Log.w(TAG, "Retrying listener start after exception...")
+                startIncomingListener()
+            }
+        }
+    }
+
+    /**
+     * Ensure friend-request transport is running:
+     * - Create/launch FR hosted onion service
+     * - Start FR listener + HS acceptor
+     * - Start FR poller
+     *
+     * Safe to call repeatedly for repair/recovery.
+     */
+    private fun startOrRepairFriendRequestTransport() {
+        Log.d(TAG, "Creating friend-request Arti onion service...")
+        try {
+            val torDataDir = java.io.File(filesDir, "tor")
+            val frHsDir = java.io.File(torDataDir, "friend_request_hidden_service")
+            frHsDir.mkdirs()
+            val frOnionAddress = RustBridge.createFriendRequestHiddenService(
+                servicePort = 9151,
+                localPort = 9151,
+                directory = frHsDir.absolutePath
+            )
+            Log.i(TAG, "Friend-request onion service HOSTED: $frOnionAddress")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to create FR onion service: ${e.message}", e)
+            return
+        }
+
+        Log.d(TAG, "Starting friend request listener + FR HS acceptor...")
+        val frListenerSuccess = RustBridge.startFriendRequestListener()
+        if (frListenerSuccess) {
+            Log.i(TAG, "Friend request listener + FR HS acceptor started")
+            startFriendRequestPoller()
+        } else {
+            Log.e(TAG, "Friend request listener failed to start")
         }
     }
 
@@ -8791,14 +8603,8 @@ class TorService : Service() {
         isServiceRunning = false
         startTorRequested.set(false)
 
-        // Stop Guardian Project's :tor process to prevent SIGABRT on next start
-        try {
-            val gpStopIntent = Intent(this, org.torproject.jni.TorService::class.java)
-            stopService(gpStopIntent)
-            Log.d(TAG, "Sent stopService to Guardian Project TorService")
-        } catch (e: Exception) {
-            Log.w(TAG, "Error stopping GP TorService in onDestroy: ${e.message}")
-        }
+        // GP TorService removed — Arti runs in-process, no separate service to stop
+        Log.d(TAG, "onDestroy: Arti in-process, no GP TorService to stop")
 
         // Record shutdown timestamp so startTor() can enforce a cooldown
         try {
@@ -8846,26 +8652,22 @@ class TorService : Service() {
     }
 
     /**
-     * Ensure SOCKS proxy is running for outgoing Tor connections
-     * Checks if proxy is running and starts it if not
-     * ALWAYS runs in background thread to avoid blocking the caller
+     * Check Arti readiness for outgoing Tor connections.
+     * Under Arti, there is no SOCKS proxy — outbound connections use client.connect() directly.
+     * isSocksProxyRunning() maps to is_arti_ready() in Rust.
      */
     private fun ensureSocksProxyRunning() {
         Thread {
             try {
                 if (!RustBridge.isSocksProxyRunning()) {
-                    Log.i(TAG, "SOCKS proxy not running, starting...")
-                    val started = RustBridge.startSocksProxy()
-                    if (started) {
-                        Log.i(TAG, "SOCKS proxy started successfully on 127.0.0.1:9050")
-                    } else {
-                        Log.e(TAG, "Failed to start SOCKS proxy")
-                    }
+                    Log.w(TAG, "Arti not ready yet — outbound connections will fail")
+                    // startSocksProxy() is a no-op under Arti (returns 1 always)
+                    RustBridge.startSocksProxy()
                 } else {
-                    Log.d(TAG, "SOCKS proxy already running")
+                    Log.d(TAG, "Arti ready for outbound connections")
                 }
             } catch (e: Exception) {
-                Log.e(TAG, "Error checking/starting SOCKS proxy", e)
+                Log.e(TAG, "Error checking Arti readiness", e)
             }
         }.start()
     }
@@ -9282,55 +9084,13 @@ class TorService : Service() {
     }
 
     /**
-     * SOCKS5 connect to own .onion:port — proves our onion service is reachable.
-     * Same technique as TorHealthMonitorWorker.checkCircuitToOnion().
-     * Returns true if SOCKS5 CONNECT succeeds (REP=0x00).
+     * HS self-test: under Arti there is no SOCKS5 proxy, so SOCKS-based self-test
+     * cannot work. HS liveness is determined by loop/accept heartbeats instead.
+     * Always returns false so startHsSelfTestLoop falls through gracefully.
      */
     private fun hsSelfTest(onionAddress: String, port: Int): Boolean {
-        val socket = Socket()
-        return try {
-            socket.soTimeout = 25000 // 25s: cold .onion connections need 10-20s after circuit rebuild
-            socket.connect(InetSocketAddress(SOCKS_HOST, SOCKS_PORT), 3000)
-
-            val output = socket.getOutputStream()
-            val input = socket.getInputStream()
-
-            // SOCKS5 auth: no auth required
-            output.write(byteArrayOf(0x05, 0x01, 0x00))
-            output.flush()
-            val authResp = ByteArray(2)
-            if (input.read(authResp) != 2 || authResp[0] != 0x05.toByte() || authResp[1] != 0x00.toByte()) {
-                return false
-            }
-
-            // SOCKS5 CONNECT to .onion:port
-            val addrBytes = onionAddress.toByteArray()
-            val connectReq = ByteArray(7 + addrBytes.size)
-            connectReq[0] = 0x05 // VER
-            connectReq[1] = 0x01 // CMD: CONNECT
-            connectReq[2] = 0x00 // RSV
-            connectReq[3] = 0x03 // ATYP: domain
-            connectReq[4] = addrBytes.size.toByte()
-            System.arraycopy(addrBytes, 0, connectReq, 5, addrBytes.size)
-            connectReq[5 + addrBytes.size] = ((port shr 8) and 0xFF).toByte()
-            connectReq[6 + addrBytes.size] = (port and 0xFF).toByte()
-            output.write(connectReq)
-            output.flush()
-
-            // Read only the 2-byte header (VER + REP) — all we need
-            val hdr = ByteArray(2)
-            if (input.read(hdr) != 2) return false
-            val success = hdr[0] == 0x05.toByte() && hdr[1] == 0x00.toByte()
-            if (!success) {
-                Log.d(TAG, "HS self-test: SOCKS5 REP=${hdr[1].toInt() and 0xFF} for $onionAddress:$port")
-            }
-            success
-        } catch (e: Exception) {
-            Log.d(TAG, "HS self-test failed for $onionAddress:$port: ${e.message}")
-            false
-        } finally {
-            try { socket.close() } catch (_: Exception) {}
-        }
+        Log.d(TAG, "HS self-test skipped (no SOCKS proxy under Arti) — relying on heartbeats")
+        return false
     }
 
     /**
@@ -9348,4 +9108,5 @@ class TorService : Service() {
         }
     }
 }
+
 

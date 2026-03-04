@@ -983,10 +983,13 @@ class VoiceCallActivity : BaseActivity() {
                     val ourEphemeralKeypair = crypto.generateEphemeralKeypair()
                     android.util.Log.d(TAG, "Generated single ephemeral keypair for incoming call")
 
+                    // Get our keys/onion once for signaling
+                    val keyManager = com.securelegion.crypto.KeyManager.getInstance(this@VoiceCallActivity)
+                    val ourX25519PublicKey = keyManager.getEncryptionPublicKey()
+
                     // IMMEDIATELY send CALL_ANSWER to notify caller (before creating Tor circuits)
                     // This allows the calling device to transition from "Calling..." to "Connecting..." right away
-                    val torManager = com.securelegion.crypto.TorManager.getInstance(this@VoiceCallActivity)
-                    val myVoiceOnion = torManager.getVoiceOnionAddress() ?: ""
+                    val myVoiceOnion = keyManager.getVoiceOnion() ?: ""
                     if (myVoiceOnion.isEmpty()) {
                         android.util.Log.w(TAG, "Voice onion address not yet created - call may fail")
                     }
@@ -1000,10 +1003,6 @@ class VoiceCallActivity : BaseActivity() {
                     android.util.Log.d(TAG, "callId: $callId")
                     android.util.Log.d(TAG, "myVoiceOnion: $myVoiceOnion")
                     android.util.Log.d(TAG, "ourEphemeralKeypair.publicKey size: ${ourEphemeralKeypair.publicKey.asBytes.size}")
-
-                    // Get our X25519 public key for HTTP wire format
-                    val keyManager = com.securelegion.crypto.KeyManager.getInstance(this@VoiceCallActivity)
-                    val ourX25519PublicKey = keyManager.getEncryptionPublicKey()
 
                     // Update UI to show we're sending the answer
                     updateCallStatus("Sending call response...")

@@ -8,18 +8,9 @@ import android.net.LocalSocketAddress
 import android.os.Build
 import android.util.Log
 import okhttp3.OkHttpClient
-import org.torproject.jni.TorService
 import com.securelegion.network.OkHttpProvider
 import java.io.File
-import IPtProxy.Controller
-import IPtProxy.IPtProxy
 import com.securelegion.SecureLegionApplication
-
-/**
- * Thrown when a user-selected bridge transport fails to start.
- * Prevents silent fallback to direct Tor when bridges were explicitly requested.
- */
-class BridgeTransportFailedException(message: String) : Exception(message)
 
 /**
  * Manages Tor network initialization and hidden service setup using TorService JNI
@@ -30,6 +21,10 @@ class BridgeTransportFailedException(message: String) : Exception(message)
  * - Store/retrieve .onion address
  * - Provide access to Tor SOCKS proxy
  */
+@Deprecated(
+    message = "Legacy Kotlin Tor orchestrator. Migration target is Rust/Arti-owned lifecycle.",
+    level = DeprecationLevel.WARNING
+)
 class TorManager(private val context: Context) {
 
     private val prefs: SharedPreferences by lazy {
@@ -146,45 +141,12 @@ class TorManager(private val context: Context) {
      * @return true if Tor responds with 250 OK, false if dead/unreachable
      */
     private fun probeTorControl(): Boolean {
+        // Arti: check bootstrap status via RustBridge instead of ControlSocket
         return try {
-            val socketPath = File(context.dataDir, "app_TorService/data/ControlSocket").absolutePath
-            val sock = LocalSocket()
-            sock.connect(LocalSocketAddress(socketPath, LocalSocketAddress.Namespace.FILESYSTEM))
-            sock.soTimeout = 3000 // 3s timeout
-
-            val output = sock.outputStream
-            val input = sock.inputStream
-
-            // Empty auth (GP tor-android 0.4.9.5 uses --CookieAuthentication 0)
-            output.write("AUTHENTICATE\r\n".toByteArray())
-            output.flush()
-
-            // Read auth response
-            val authBuf = ByteArray(256)
-            val authLen = input.read(authBuf)
-            val authResp = String(authBuf, 0, authLen)
-            if (!authResp.startsWith("250")) {
-                Log.w(TAG, "probeTorControl: auth failed: $authResp")
-                sock.close()
-                return false
-            }
-
-            // Probe bootstrap state
-            output.write("GETINFO status/bootstrap-phase\r\n".toByteArray())
-            output.flush()
-
-            val infoBuf = ByteArray(512)
-            val infoLen = input.read(infoBuf)
-            val infoResp = String(infoBuf, 0, infoLen)
-            sock.close()
-
-            val ok = infoResp.contains("250")
-            if (ok) {
-                Log.d(TAG, "probeTorControl: Tor alive — $infoResp")
-            } else {
-                Log.w(TAG, "probeTorControl: unexpected response — $infoResp")
-            }
-            ok
+            val bootstrap = RustBridge.getBootstrapStatus()
+            val alive = bootstrap >= 100
+            Log.d(TAG, "probeTorControl: Arti bootstrap=$bootstrap% alive=$alive")
+            alive
         } catch (e: Exception) {
             Log.w(TAG, "probeTorControl: failed — ${e.message}")
             false
@@ -192,18 +154,11 @@ class TorManager(private val context: Context) {
     }
 
     /**
-     * Start GP TorService via our custom TorService (foreground-safe).
-     * Uses startForegroundService on Android O+ to avoid background execution limits.
+     * Start Tor — now a no-op since Arti is initialized in Rust.
+     * GP TorService removed.
      */
     private fun startGpTor() {
-        // CRITICAL: Start GP's org.torproject.jni.TorService (imported as TorService),
-        // NOT our com.securelegion.services.TorService.
-        // Use startService() (not startForegroundService) because:
-        // 1. GP's TorService has no foregroundServiceType in manifest
-        // 2. Our custom TorService is already foreground, keeping the process alive
-        val serviceIntent = Intent(context, TorService::class.java)
-        serviceIntent.action = "org.torproject.android.intent.action.START"
-        context.startService(serviceIntent)
+        Log.i(TAG, "startGpTor: no-op (Arti handles Tor in-process via Rust)")
     }
 
     /**
@@ -324,58 +279,12 @@ class TorManager(private val context: Context) {
                     Log.d(TAG, "No account yet — skipping hidden service key seeding")
                 }
 
-                // Get the torrc file location that TorService expects
-                val torrc = TorService.getTorrc(context)
+                // Get the torrc file location (legacy — Arti uses its own config)
+                val torrc = File(context.filesDir, "torrc")
                 torrc.parentFile?.mkdirs()
 
-                // Read bridge settings
-                val bridgeConfig = getBridgeConfiguration()
-
-                // Detect device performance to set appropriate initial timeouts
-                // Slower devices (Android < 13 or low-end) need more conservative timeouts
-                val sdkInt = android.os.Build.VERSION.SDK_INT
-                val isSlowerDevice = sdkInt < 33 // Android 13+
-
-                // Set initial CircuitBuildTimeout based on device
-                // Tor will learn and adapt from this starting point
-                val initialCircuitTimeout = if (isSlowerDevice) {
-                    "CircuitBuildTimeout 45" // Slower devices: start with 45s
-                } else {
-                    "CircuitBuildTimeout 30" // Faster devices: start with 30s
-                }
-
-                Log.i(TAG, "Device: Android $sdkInt, using initial timeout: ${if (isSlowerDevice) "45s (slower device)" else "30s (faster device)"}")
-
-                // Bridge performance profile: keep circuits alive longer to avoid expensive rebuilds,
-                // and send keepalives more frequently to survive mobile NAT timeouts
-                val usingBridges = bridgeConfig.isNotEmpty()
-                val bridgePerformanceConfig = if (usingBridges) {
-                    // MaxCircuitDirtiness 1800 = 30 min circuit reuse (default 10 min)
-                    // Bridge circuits are expensive to rebuild (30-60s), so reuse them longer.
-                    // Privacy cost is minimal for a messaging app with persistent onion identity.
-                    // KeepalivePeriod 120 = 2 min keepalive (default 5 min)
-                    // Mobile NATs can drop idle connections in 30-60s on some carriers.
-                    // 120s balances keeping connections alive vs battery/traffic overhead.
-                    Log.i(TAG, "Bridge mode: applying performance profile (MaxCircuitDirtiness=1800, KeepalivePeriod=120)")
-                    """
-                    MaxCircuitDirtiness 1800
-                    KeepalivePeriod 120
-                    """.trimIndent()
-                } else {
-                    "" // Use Tor defaults for direct connections
-                }
-
-                // Generate torrc content
-                // PERSISTENT HIDDEN SERVICES (not ephemeral):
-                // Keys are seeded from BIP39 seed ABOVE before Tor starts.
-                // Tor loads these deterministic keys on every startup (no collision errors).
-                //
-                // NOTE: Guardian Project's TorService uses /app_TorService/data as DataDirectory
-                // Do NOT specify DataDirectory here - let TorService manage it
-                // NOTE: ControlPort and CookieAuthentication are NOT set here.
-                // GP tor-android 0.4.9.5 manages these via command-line flags:
-                //   --ControlSocket <DataDir>/ControlSocket
-                //   --CookieAuthentication 0
+                // Bridges removed — Arti uses direct Tor connections only.
+                // Torrc is legacy (kept for reference only, Arti ignores it).
                 val torrcContent = """
                     Log notice stdout
                     SocksPort 127.0.0.1:9050
@@ -383,19 +292,14 @@ class TorManager(private val context: Context) {
                     AvoidDiskWrites 1
                     DormantCanceledByStartup 1
                     DormantClientTimeout 525600 minutes
-                    LearnCircuitBuildTimeout 1
-                    $initialCircuitTimeout
-                    $bridgePerformanceConfig
                     HiddenServiceDir ${messagingHiddenServiceDir.absolutePath}
                     HiddenServicePort $DEFAULT_SERVICE_PORT 127.0.0.1:$DEFAULT_LOCAL_PORT
                     HiddenServicePort 9153 127.0.0.1:9153
                     HiddenServiceDir ${friendRequestHiddenServiceDir.absolutePath}
                     HiddenServicePort 9151 127.0.0.1:9151
                     HiddenServicePort 9152 127.0.0.1:8081
-                    $bridgeConfig
                 """.trimIndent()
 
-                // Only write torrc if content changed (avoid unnecessary rewrites)
                 val needsUpdate = !torrc.exists() || torrc.readText() != torrcContent
                 if (needsUpdate) {
                     torrc.writeText(torrcContent)
@@ -405,9 +309,6 @@ class TorManager(private val context: Context) {
                 }
 
                 Log.d(TAG, "Torrc written to: ${torrc.absolutePath}")
-                if (bridgeConfig.isNotEmpty()) {
-                    Log.i(TAG, "Bridge configuration applied: ${bridgeConfig.lines().first()}")
-                }
 
                 if (!alreadyRunning || needsUpdate) {
                     // If Tor is running but torrc changed, restart it to pick up new config
@@ -415,7 +316,7 @@ class TorManager(private val context: Context) {
                         Log.i(TAG, "Torrc configuration changed - restarting Tor to apply changes...")
                         try {
                             // Stop TorService first
-                            val stopIntent = Intent(context, TorService::class.java)
+                            val stopIntent = Intent(context, com.securelegion.services.TorService::class.java)
                             context.stopService(stopIntent)
 
                             // Give Tor time to shut down
@@ -439,191 +340,68 @@ class TorManager(private val context: Context) {
                     }
                     Log.i(TAG, "Custom TorService started as foreground (KEEP_ALIVE)")
 
-                    // Step 2: Start Guardian Project's TorService to launch native Tor daemon via JNI
-                    // GP TorService runs in main process (no separate :tor process)
-                    if (isTorProcessAlive()) {
-                        Log.i(TAG, "ControlSocket exists — probing Tor control connection...")
-                        if (probeTorControl()) {
-                            Log.i(TAG, "Tor alive and responsive — reusing existing instance")
-                        } else {
-                            Log.w(TAG, "ControlSocket stale (Tor unresponsive) — restarting")
-                            try {
-                                context.stopService(Intent(context, org.torproject.jni.TorService::class.java))
-                            } catch (e: Exception) {
-                                Log.w(TAG, "Failed to stop GP TorService: ${e.message}")
-                            }
-                            Thread.sleep(1500)
-                            startGpTor()
-                            Log.w(TAG, "========== GP TOR DAEMON RESTARTED AFTER STALE SOCKET ==========")
-                        }
-                    } else {
-                        startGpTor()
-                        Log.w(TAG, "========== GUARDIAN PROJECT TOR DAEMON START COMMAND SENT ==========")
-                    }
-                    Log.d(TAG, "Waiting for control port to be ready...")
+                    // Step 2: Arti handles Tor in-process — no external daemon needed
+                    Log.i(TAG, "Arti in-process — no GP TorService to start")
                 } else {
                     Log.d(TAG, "Tor already running and torrc unchanged")
                 }
 
-                // Wait for Tor ControlSocket file to appear (GP 0.4.9.5 uses Unix domain socket)
-                // 120s to accommodate bridge transports on slow networks (~1.3 MB/s in Iran)
-                var controlSocketPath = File(context.dataDir, "app_TorService/data/ControlSocket")
-                var attempts = 0
-                val maxAttempts = 120 // 120 seconds max (bridges need more time)
-                var controlPortReady = false
-
-                while (attempts < maxAttempts && !controlPortReady) {
-                    if (controlSocketPath.exists()) {
-                        controlPortReady = true
-                        Log.d(TAG, "Tor ControlSocket ready after ${attempts + 1} attempts at ${controlSocketPath.absolutePath}")
-                    } else if (attempts % 10 == 9) {
-                        // Every 10s, search for the ControlSocket in case GP puts it elsewhere
-                        val found = findControlSocket()
-                        if (found != null) {
-                            controlSocketPath = found
-                            controlPortReady = true
-                            Log.w(TAG, "ControlSocket found at UNEXPECTED path: ${found.absolutePath}")
-                        } else {
-                            Log.d(TAG, "ControlSocket not found after ${attempts + 1}s (checked ${controlSocketPath.absolutePath})")
-                        }
-                    }
-                    if (!controlPortReady) {
-                        Thread.sleep(1000)
-                        attempts++
-                    }
-                }
-
-                if (!controlPortReady) {
-                    // Diagnostic dump: what DOES exist under app dirs?
-                    try {
-                        val dataDir = context.dataDir
-                        val appTorDir = File(dataDir, "app_TorService")
-                        Log.e(TAG, "ControlSocket TIMEOUT — diagnostics:")
-                        Log.e(TAG, "  dataDir: ${dataDir.absolutePath} exists=${dataDir.exists()}")
-                        Log.e(TAG, "  filesDir: ${context.filesDir.absolutePath} exists=${context.filesDir.exists()}")
-                        Log.e(TAG, "  app_TorService: ${appTorDir.absolutePath} exists=${appTorDir.exists()}")
-                        if (appTorDir.exists()) {
-                            appTorDir.walkTopDown().maxDepth(3).forEach {
-                                Log.e(TAG, "    ${it.absolutePath} (${if (it.isDirectory) "dir" else "file"}, ${it.length()}b)")
-                            }
-                        }
-                        val filesAppTor = File(context.filesDir, "app_TorService")
-                        if (filesAppTor.exists()) {
-                            Log.e(TAG, "  files/app_TorService EXISTS (unexpected):")
-                            filesAppTor.walkTopDown().maxDepth(3).forEach {
-                                Log.e(TAG, "    ${it.absolutePath}")
-                            }
-                        }
-                    } catch (e: Exception) {
-                        Log.e(TAG, "Diagnostic dump failed: ${e.message}")
-                    }
-                    throw Exception("Tor ControlSocket failed to appear after ${maxAttempts} seconds")
-                }
-
-                Log.d(TAG, "Tor is ready — ControlSocket at ${controlSocketPath.absolutePath}")
-
-                // If ControlSocket was found at a non-default path, restart the Rust listener
-                // with the correct path so it can connect
-                val defaultPath = File(context.dataDir, "app_TorService/data/ControlSocket").absolutePath
-                if (controlSocketPath.absolutePath != defaultPath) {
-                    Log.w(TAG, "ControlSocket at non-default path — restarting Rust listener with correct path")
-                    RustBridge.stopBootstrapListener()
-                    RustBridge.startBootstrapListener(controlSocketPath.absolutePath)
-                }
-
-                // CRITICAL: Also wait for SOCKS port to be ready
-                // 90s to accommodate bridge transports on slow networks (~1.3 MB/s in Iran)
-                Log.d(TAG, "Waiting for Tor SOCKS proxy on port 9050...")
-                var socksAttempts = 0
-                val maxSocksAttempts = 90 // 90 seconds max (bridges need more time)
-                var socksPortReady = false
-
-                while (socksAttempts < maxSocksAttempts && !socksPortReady) {
-                    try {
-                        // Try to connect to SOCKS port
-                        val testSocket = java.net.Socket()
-                        testSocket.connect(java.net.InetSocketAddress("127.0.0.1", 9050), 1000)
-                        testSocket.close()
-                        socksPortReady = true
-                        Log.i(TAG, "Tor SOCKS proxy ready on 127.0.0.1:9050 after ${socksAttempts + 1} attempts")
-                    } catch (e: Exception) {
-                        // SOCKS port not ready yet
-                        Thread.sleep(1000)
-                        socksAttempts++
-                    }
-                }
-
-                if (!socksPortReady) {
-                    throw Exception("Tor SOCKS proxy failed to become ready after $maxSocksAttempts seconds")
-                }
-
-                Log.d(TAG, "Tor SOCKS proxy available at 127.0.0.1:9050")
-
-                // Initialize Rust TorManager (connects to control port)
-                Log.d(TAG, "Initializing Rust TorManager...")
+                // Initialize Rust TorManager + Arti (in-process Tor)
+                Log.d(TAG, "Initializing Arti (in-process Rust Tor)...")
                 val rustStatus = RustBridge.initializeTor()
-                Log.d(TAG, "Rust TorManager initialized: $rustStatus")
+                Log.d(TAG, "Arti initialized: $rustStatus")
+
+                // Wait for Arti to bootstrap (up to 120s for slow networks)
+                // Arti handles connections in-process — no ControlSocket or SOCKS proxy needed
+                Log.d(TAG, "Waiting for Arti bootstrap...")
+                var artiAttempts = 0
+                val maxArtiAttempts = 120 // 120s to accommodate slow networks
+                var artiReady = false
+
+                while (artiAttempts < maxArtiAttempts && !artiReady) {
+                    try {
+                        val bootstrapStatus = RustBridge.getBootstrapStatus()
+                        if (bootstrapStatus >= 95 || RustBridge.isSocksProxyRunning()) {
+                            artiReady = true
+                            Log.i(TAG, "Arti ready after ${artiAttempts + 1}s (bootstrap: $bootstrapStatus%)")
+                        } else {
+                            if (artiAttempts % 10 == 9) {
+                                Log.d(TAG, "Arti bootstrap: $bootstrapStatus% (${artiAttempts + 1}s)")
+                            }
+                            Thread.sleep(1000)
+                            artiAttempts++
+                        }
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Bootstrap check error: ${e.message}")
+                        Thread.sleep(1000)
+                        artiAttempts++
+                    }
+                }
+
+                if (!artiReady) {
+                    throw Exception("Arti failed to bootstrap after $maxArtiAttempts seconds")
+                }
+
+                Log.d(TAG, "Arti bootstrapped and ready")
 
                 // Read persistent hidden service .onion addresses from filesystem
                 // Keys were seeded above — Tor should have loaded our deterministic keys
                 val onionAddress = if (keyManager.isInitialized()) {
-                    // Wait for Tor to load hidden service keys
-                    Log.d(TAG, "Waiting for Tor to load seeded hidden service keys...")
-
-                    val address = try {
-                        waitForValidHostname(messagingHiddenServiceDir, timeoutMs = 60_000)
-                    } catch (e: Exception) {
-                        Log.e(TAG, "Failed to get messaging hidden service address", e)
-                        throw e
+                    // Arti creates hidden services from the same Ed25519 keys
+                    // Use KeyManager's pre-computed onion addresses (derived from BIP39 seed)
+                    val address = keyManager.getMessagingOnion()
+                    if (address != null) {
+                        saveOnionAddress(address)
+                        Log.i(TAG, "Messaging onion address (from KeyManager): $address")
+                    } else {
+                        Log.w(TAG, "No messaging onion address in KeyManager")
                     }
 
-                    // Verify determinism: pre-computed onion MUST match Tor's address
-                    // If they don't match, key seeding failed — delete + reseed + restart
-                    val precomputedMessaging = keyManager.getMessagingOnion()
-                    if (precomputedMessaging != null && precomputedMessaging != address) {
-                        Log.e(TAG, "FATAL: Messaging onion mismatch — determinism broken!")
-                        Log.e(TAG, "  precomputed=$precomputedMessaging")
-                        Log.e(TAG, "  tor=$address")
-                        // Reseed the directory so next Tor restart picks up correct keys
-                        messagingHiddenServiceDir.deleteRecursively()
-                        messagingHiddenServiceDir.mkdirs()
-                        messagingHiddenServiceDir.setReadable(true, true)
-                        messagingHiddenServiceDir.setWritable(true, true)
-                        messagingHiddenServiceDir.setExecutable(true, true)
-                        keyManager.seedHiddenServiceDir(messagingHiddenServiceDir, "tor_hs")
-                        Log.e(TAG, "  Reseeded messaging directory — restart required")
-                        throw Exception("Onion address determinism broken for messaging. Reseeded keys, restart Tor.")
-                    }
-
-                    saveOnionAddress(address)
-                    keyManager.storeMessagingOnion(address)
-                    Log.i(TAG, "Messaging hidden service ready (deterministic, persistent)")
-
-                    // Read friend-request .onion address
-                    try {
-                        val friendRequestOnion = waitForValidHostname(friendRequestHiddenServiceDir, timeoutMs = 60_000)
-
-                        // Verify determinism for friend-request onion too
-                        val precomputedFR = keyManager.getFriendRequestOnion()
-                        if (precomputedFR != null && precomputedFR != friendRequestOnion) {
-                            Log.e(TAG, "FATAL: Friend-request onion mismatch — determinism broken!")
-                            Log.e(TAG, "  precomputed=$precomputedFR")
-                            Log.e(TAG, "  tor=$friendRequestOnion")
-                            friendRequestHiddenServiceDir.deleteRecursively()
-                            friendRequestHiddenServiceDir.mkdirs()
-                            friendRequestHiddenServiceDir.setReadable(true, true)
-                            friendRequestHiddenServiceDir.setWritable(true, true)
-                            friendRequestHiddenServiceDir.setExecutable(true, true)
-                            keyManager.seedHiddenServiceDir(friendRequestHiddenServiceDir, "friend_req")
-                            Log.e(TAG, "  Reseeded friend-request directory — restart required")
-                            throw Exception("Onion address determinism broken for friend-request. Reseeded keys, restart Tor.")
-                        }
-
-                        keyManager.storeFriendRequestOnion(friendRequestOnion)
-                        Log.i(TAG, "Friend-request hidden service ready (deterministic): $friendRequestOnion")
-                    } catch (e: Exception) {
-                        if (e.message?.contains("determinism broken") == true) throw e
-                        Log.w(TAG, "Friend-request hidden service not ready: ${e.message}")
+                    val friendRequestOnion = keyManager.getFriendRequestOnion()
+                    if (friendRequestOnion != null) {
+                        Log.i(TAG, "Friend-request onion address (from KeyManager): $friendRequestOnion")
+                    } else {
+                        Log.w(TAG, "No friend-request onion address in KeyManager")
                     }
 
                     // Note: Voice hidden service is created later by TorService.startVoiceService()
@@ -649,18 +427,6 @@ class TorManager(private val context: Context) {
                     val callbacks = initCallbacks.toList()
                     initCallbacks.clear()
                     callbacks.forEach { it(true, onionAddress) }
-                }
-            } catch (e: BridgeTransportFailedException) {
-                Log.e(TAG, "Bridge transport failed - Tor will NOT start without bridges: ${e.message}", e)
-                // Broadcast bridge failure so UI can inform the user
-                val failIntent = Intent("com.securelegion.BRIDGE_TRANSPORT_FAILED")
-                failIntent.putExtra("error_message", e.message)
-                context.sendBroadcast(failIntent)
-                synchronized(this) {
-                    isInitializing = false
-                    val callbacks = initCallbacks.toList()
-                    initCallbacks.clear()
-                    callbacks.forEach { it(false, null) }
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Tor initialization failed", e)
@@ -965,360 +731,7 @@ class TorManager(private val context: Context) {
         return OkHttpProvider.getGenericClient()
     }
 
-    /**
-     * Start IPtProxy pluggable transports for the selected bridge type
-     */
-    private fun startIPtProxy(bridgeType: String) {
-        try {
-            val app = context.applicationContext as? SecureLegionApplication
-            val controller = app?.let { SecureLegionApplication.iptProxyController }
-
-            if (controller == null) {
-                Log.e(TAG, "IPtProxy Controller not initialized - cannot start transport")
-                return
-            }
-
-            when (bridgeType) {
-                "obfs4" -> {
-                    Log.d(TAG, "Starting obfs4 transport...")
-                    controller.start(IPtProxy.Obfs4, null)
-
-                    // Wait for obfs4 to start and bind to a port
-                    var port = 0L
-                    var attempts = 0
-                    while (port == 0L && attempts < 90) {
-                        Thread.sleep(1000)
-                        port = controller.port(IPtProxy.Obfs4)
-                        attempts++
-                        if (port > 0) {
-                            Log.i(TAG, "obfs4 transport started on port $port after ${attempts}s")
-                            break
-                        }
-                        Log.d(TAG, "Waiting for obfs4 to start... (${attempts}s)")
-                    }
-
-                    if (port == 0L) {
-                        Log.e(TAG, "obfs4 failed to start after 90 seconds")
-                    }
-                }
-                "snowflake" -> {
-                    Log.d(TAG, "Configuring snowflake transport...")
-                    // AMP Cache method - proven to work from Iran
-                    // Uses Google's AMP CDN as rendezvous, which is not blocked
-                    controller.snowflakeBrokerUrl = "https://snowflake-broker.torproject.net/"
-                    controller.snowflakeFrontDomains = "www.google.com"
-                    controller.snowflakeAmpCacheUrl = "https://cdn.ampproject.org/"
-                    controller.snowflakeIceServers = "stun:stun.antisip.com:3478,stun:stun.epygi.com:3478,stun:stun.uls.co.za:3478,stun:stun.voipgate.com:3478,stun:stun.mixvoip.com:3478,stun:stun.nextcloud.com:3478,stun:stun.bethesda.net:3478,stun:stun.nextcloud.com:443"
-                    Log.d(TAG, "Starting snowflake transport with AMP cache...")
-                    controller.start(IPtProxy.Snowflake, null)
-
-                    // Wait for Snowflake to start and bind to a port
-                    var port = 0L
-                    var attempts = 0
-                    while (port == 0L && attempts < 90) {
-                        Thread.sleep(1000)
-                        port = controller.port(IPtProxy.Snowflake)
-                        attempts++
-                        if (port > 0) {
-                            Log.i(TAG, "Snowflake transport started on port $port after ${attempts}s")
-                            break
-                        }
-                        Log.d(TAG, "Waiting for Snowflake to start... (${attempts}s)")
-                    }
-
-                    if (port == 0L) {
-                        Log.e(TAG, "Snowflake failed to start after 90 seconds")
-                    }
-                }
-                "meek" -> {
-                    Log.d(TAG, "Starting meek_lite transport...")
-                    controller.start(IPtProxy.MeekLite, null)
-
-                    // Wait for meek_lite to start and bind to a port
-                    var port = 0L
-                    var attempts = 0
-                    while (port == 0L && attempts < 90) {
-                        Thread.sleep(1000)
-                        port = controller.port(IPtProxy.MeekLite)
-                        attempts++
-                        if (port > 0) {
-                            Log.i(TAG, "meek_lite transport started on port $port after ${attempts}s")
-                            break
-                        }
-                        Log.d(TAG, "Waiting for meek_lite to start... (${attempts}s)")
-                    }
-
-                    if (port == 0L) {
-                        Log.e(TAG, "meek_lite failed to start after 90 seconds")
-                    }
-                }
-                "webtunnel" -> {
-                    Log.d(TAG, "Starting webtunnel transport...")
-                    controller.start(IPtProxy.Webtunnel, "")
-
-                    // Wait for webtunnel to start and bind to a port
-                    var port = 0L
-                    var attempts = 0
-                    while (port == 0L && attempts < 90) {
-                        Thread.sleep(1000)
-                        port = controller.port(IPtProxy.Webtunnel)
-                        attempts++
-                        if (port > 0) {
-                            Log.i(TAG, "webtunnel transport started on port $port after ${attempts}s")
-                            break
-                        }
-                        Log.d(TAG, "Waiting for webtunnel to start... (${attempts}s)")
-                    }
-
-                    if (port == 0L) {
-                        Log.e(TAG, "webtunnel failed to start after 90 seconds")
-                    }
-                }
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to start IPtProxy transport for $bridgeType: ${e.message}", e)
-            throw BridgeTransportFailedException("Failed to start $bridgeType transport: ${e.message}")
-        }
-    }
-
-    /**
-     * Fetch bridge lines from Tor Project's circumvention map API.
-     * Returns null if the API is unreachable (e.g. in censored regions before Tor is up).
-     * API endpoint: https://bridges.torproject.org/moat/circumvention/map
-     */
-    private fun fetchCircumventionBridges(bridgeType: String): List<String>? {
-        return try {
-            Log.d(TAG, "Fetching bridges from circumvention API for type=$bridgeType...")
-            val url = java.net.URL("https://bridges.torproject.org/moat/circumvention/map")
-            val connection = url.openConnection() as java.net.HttpURLConnection
-            connection.connectTimeout = 45_000
-            connection.readTimeout = 45_000
-            connection.requestMethod = "GET"
-
-            val responseCode = connection.responseCode
-            if (responseCode != 200) {
-                Log.w(TAG, "Circumvention API returned $responseCode")
-                return null
-            }
-
-            val responseBody = connection.inputStream.bufferedReader().readText()
-            connection.disconnect()
-
-            val json = org.json.JSONObject(responseBody)
-
-            // Try Iran first, then fallback to other regions
-            val countryCode = "ir"
-            val countryData = json.optJSONObject(countryCode) ?: run {
-                Log.w(TAG, "No circumvention data for country=$countryCode")
-                return null
-            }
-
-            val settings = countryData.optJSONArray("settings") ?: return null
-
-            for (i in 0 until settings.length()) {
-                val setting = settings.getJSONObject(i)
-                val bridges = setting.optJSONObject("bridges") ?: continue
-                val type = bridges.optString("type", "")
-
-                if (type == bridgeType) {
-                    val bridgeStrings = bridges.optJSONArray("bridge_strings") ?: continue
-                    val result = mutableListOf<String>()
-                    for (j in 0 until bridgeStrings.length()) {
-                        result.add(bridgeStrings.getString(j))
-                    }
-                    if (result.isNotEmpty()) {
-                        Log.i(TAG, "Circumvention API: got ${result.size} $bridgeType bridges for $countryCode")
-                        // Cache the bridges for future use
-                        try {
-                            val prefs = context.getSharedPreferences("tor_settings", Context.MODE_PRIVATE)
-                            prefs.edit()
-                                .putString("cached_${bridgeType}_bridges", result.joinToString("\n"))
-                                .putLong("cached_${bridgeType}_timestamp", System.currentTimeMillis())
-                                .apply()
-                        } catch (e: Exception) {
-                            Log.w(TAG, "Failed to cache bridges: ${e.message}")
-                        }
-                        return result
-                    }
-                }
-            }
-
-            Log.w(TAG, "No $bridgeType bridges found in API response for $countryCode")
-            // Try cached bridges
-            getCachedBridges(bridgeType)
-        } catch (e: Exception) {
-            Log.w(TAG, "Circumvention API fetch failed: ${e.message}")
-            // Try cached bridges
-            getCachedBridges(bridgeType)
-        }
-    }
-
-    /**
-     * Get previously cached bridges from SharedPreferences.
-     * Returns null if no cache exists or cache is older than 24 hours.
-     */
-    private fun getCachedBridges(bridgeType: String): List<String>? {
-        return try {
-            val prefs = context.getSharedPreferences("tor_settings", Context.MODE_PRIVATE)
-            val cached = prefs.getString("cached_${bridgeType}_bridges", null) ?: return null
-            val timestamp = prefs.getLong("cached_${bridgeType}_timestamp", 0)
-            val ageMs = System.currentTimeMillis() - timestamp
-
-            // Cache valid for 24 hours
-            if (ageMs > 24 * 60 * 60 * 1000) {
-                Log.d(TAG, "Cached $bridgeType bridges expired (${ageMs / 1000}s old)")
-                return null
-            }
-
-            val bridges = cached.split("\n").filter { it.isNotBlank() }
-            if (bridges.isNotEmpty()) {
-                Log.i(TAG, "Using ${bridges.size} cached $bridgeType bridges (${ageMs / 1000}s old)")
-                bridges
-            } else null
-        } catch (e: Exception) {
-            Log.w(TAG, "Failed to read cached bridges: ${e.message}")
-            null
-        }
-    }
-
-    /**
-     * Get bridge configuration for torrc based on user settings
-     * Uses IPtProxy for obfs4 and snowflake pluggable transports
-     */
-    private fun getBridgeConfiguration(): String {
-        val torSettings = context.getSharedPreferences("tor_settings", Context.MODE_PRIVATE)
-        val bridgeType = torSettings.getString("bridge_type", "none") ?: "none"
-
-        // Start IPtProxy if needed
-        if (bridgeType in listOf("obfs4", "snowflake", "meek", "webtunnel")) {
-            startIPtProxy(bridgeType)
-        }
-
-        return when (bridgeType) {
-            "snowflake" -> {
-                // Snowflake - uses IPtProxy pluggable transport
-                // Bridge lines from Tor Project circumvention API: bridges.torproject.org/moat/circumvention/map
-                // Iran (ir) specific config: CDN77 domain-fronted rendezvous, no SQS
-                val app = context.applicationContext as? SecureLegionApplication
-                val controller = app?.let { SecureLegionApplication.iptProxyController }
-                val port = controller?.port(IPtProxy.Snowflake) ?: 0
-                if (port == 0L) {
-                    throw BridgeTransportFailedException("Snowflake transport failed to start - no SOCKS port available")
-                } else {
-                    // Try fetching fresh bridges from circumvention API first
-                    val apiBridges = fetchCircumventionBridges("snowflake")
-                    if (apiBridges != null) {
-                        Log.i(TAG, "Using ${apiBridges.size} snowflake bridges from circumvention API")
-                        val bridgeLines = apiBridges.joinToString("\n") { "Bridge $it" }
-                        """
-                        UseBridges 1
-                        ClientTransportPlugin snowflake socks5 127.0.0.1:$port
-                        $bridgeLines
-                        """.trimIndent()
-                    } else {
-                        // Fallback: hardcoded bridges for Iran
-                        // AMP Cache bridges first (proven to work from Iran), then CDN77, Netlify, SQS
-                        Log.i(TAG, "Using hardcoded snowflake bridges (API unavailable)")
-                        """
-                        UseBridges 1
-                        ClientTransportPlugin snowflake socks5 127.0.0.1:$port
-                        Bridge snowflake 192.0.2.5:80 2B280B23E1107BB62ABFC40DDCC8824814F80A72 fingerprint=2B280B23E1107BB62ABFC40DDCC8824814F80A72 url=https://snowflake-broker.torproject.net/ ampcache=https://cdn.ampproject.org/ front=www.google.com ice=stun:stun.antisip.com:3478,stun:stun.epygi.com:3478,stun:stun.uls.co.za:3478,stun:stun.voipgate.com:3478,stun:stun.mixvoip.com:3478,stun:stun.nextcloud.com:3478,stun:stun.bethesda.net:3478,stun:stun.nextcloud.com:443 utls-imitate=hellorandomizedalpn
-                        Bridge snowflake 192.0.2.6:80 8838024498816A039FCBBAB14E6F40A0843051FA fingerprint=8838024498816A039FCBBAB14E6F40A0843051FA url=https://snowflake-broker.torproject.net/ ampcache=https://cdn.ampproject.org/ front=www.google.com ice=stun:stun.antisip.com:3478,stun:stun.epygi.com:3478,stun:stun.uls.co.za:3478,stun:stun.voipgate.com:3478,stun:stun.mixvoip.com:3478,stun:stun.nextcloud.com:3478,stun:stun.bethesda.net:3478,stun:stun.nextcloud.com:443 utls-imitate=hellorandomizedalpn
-                        Bridge snowflake 192.0.2.3:80 2B280B23E1107BB62ABFC40DDCC8824814F80A72 fingerprint=2B280B23E1107BB62ABFC40DDCC8824814F80A72 url=https://1098762253.rsc.cdn77.org front=www.phpmyadmin.net,cdn.zk.mk ice=stun:stun.antisip.com:3478,stun:stun.epygi.com:3478,stun:stun.uls.co.za:3478,stun:stun.voipgate.com:3478,stun:stun.mixvoip.com:3478,stun:stun.nextcloud.com:3478,stun:stun.bethesda.net:3478,stun:stun.nextcloud.com:443 utls-imitate=hellorandomizedalpn
-                        Bridge snowflake 192.0.2.4:80 8838024498816A039FCBBAB14E6F40A0843051FA fingerprint=8838024498816A039FCBBAB14E6F40A0843051FA url=https://1098762253.rsc.cdn77.org front=www.phpmyadmin.net,cdn.zk.mk ice=stun:stun.antisip.com:3478,stun:stun.epygi.com:3478,stun:stun.uls.co.za:3478,stun:stun.voipgate.com:3478,stun:stun.mixvoip.com:3478,stun:stun.nextcloud.com:3478,stun:stun.bethesda.net:3478,stun:stun.nextcloud.com:443 utls-imitate=hellorandomizedalpn
-                        Bridge snowflake 192.0.2.3:80 2B280B23E1107BB62ABFC40DDCC8824814F80A72 fingerprint=2B280B23E1107BB62ABFC40DDCC8824814F80A72 url=https://voluble-torrone-fc39bf.netlify.app/ fronts=vuejs.org ice=stun:stun.antisip.com:3478,stun:stun.epygi.com:3478,stun:stun.uls.co.za:3478,stun:stun.voipgate.com:3478,stun:stun.mixvoip.com:3478,stun:stun.nextcloud.com:3478,stun:stun.bethesda.net:3478,stun:stun.nextcloud.com:443 utls-imitate=hellorandomizedalpn
-                        Bridge snowflake 192.0.2.4:80 8838024498816A039FCBBAB14E6F40A0843051FA fingerprint=8838024498816A039FCBBAB14E6F40A0843051FA url=https://voluble-torrone-fc39bf.netlify.app/ fronts=vuejs.org ice=stun:stun.antisip.com:3478,stun:stun.epygi.com:3478,stun:stun.uls.co.za:3478,stun:stun.voipgate.com:3478,stun:stun.mixvoip.com:3478,stun:stun.nextcloud.com:3478,stun:stun.bethesda.net:3478,stun:stun.nextcloud.com:443 utls-imitate=hellorandomizedalpn
-                        Bridge snowflake 192.0.2.5:80 2B280B23E1107BB62ABFC40DDCC8824814F80A72 fingerprint=2B280B23E1107BB62ABFC40DDCC8824814F80A72 sqsqueue=https://sqs.us-east-1.amazonaws.com/893902434899/snowflake-broker sqscreds=eyJhd3MtYWNjZXNzLWtleS1pZCI6IkFLSUE1QUlGNFdKSlhTN1lIRUczIiwiYXdzLXNlY3JldC1rZXkiOiI3U0RNc0pBNHM1RitXZWJ1L3pMOHZrMFFXV0lsa1c2Y1dOZlVsQ0tRIn0= ice=stun:stun.antisip.com:3478,stun:stun.epygi.com:3478,stun:stun.uls.co.za:3478,stun:stun.voipgate.com:3478,stun:stun.nextcloud.com:3478,stun:stun.bethesda.net:3478,stun:stun.nextcloud.com:443 utls-imitate=hellorandomizedalpn
-                        Bridge snowflake 192.0.2.6:80 8838024498816A039FCBBAB14E6F40A0843051FA fingerprint=8838024498816A039FCBBAB14E6F40A0843051FA sqsqueue=https://sqs.us-east-1.amazonaws.com/893902434899/snowflake-broker sqscreds=eyJhd3MtYWNjZXNzLWtleS1pZCI6IkFLSUE1QUlGNFdKSlhTN1lIRUczIiwiYXdzLXNlY3JldC1rZXkiOiI3U0RNc0pBNHM1RitXZWJ1L3pMOHZrMFFXV0lsa1c2Y1dOZlVsQ0tRIn0= ice=stun:stun.antisip.com:3478,stun:stun.epygi.com:3478,stun:stun.uls.co.za:3478,stun:stun.voipgate.com:3478,stun:stun.nextcloud.com:3478,stun:stun.bethesda.net:3478,stun:stun.nextcloud.com:443 utls-imitate=hellorandomizedalpn
-                        """.trimIndent()
-                    }
-                }
-            }
-            "obfs4" -> {
-                // obfs4 bridges from https://github.com/scriptzteam/Tor-Bridges-Collector
-                // and https://bridges.torproject.org - uses IPtProxy pluggable transport
-                val app = context.applicationContext as? SecureLegionApplication
-                val controller = app?.let { SecureLegionApplication.iptProxyController }
-                val port = controller?.port(IPtProxy.Obfs4) ?: 0
-                if (port == 0L) {
-                    throw BridgeTransportFailedException("obfs4 transport failed to start - no SOCKS port available")
-                } else {
-                    """
-                    UseBridges 1
-                    ClientTransportPlugin obfs4 socks5 127.0.0.1:$port
-                    Bridge obfs4 1.2.217.144:5987 DCE57AC308CB82958C56B1B5C9C3D08D225EC942 cert=Uemn6kep2gxo9J0P81geJV3gTWQtkrNHvEh1DL3wzhvLaUaIrn0/e0a1mvyB3T4c0jmHKg iat-mode=0
-                    Bridge obfs4 2.35.113.108:9906 5A3E33D354B7B7BAE5D3873EF8A68E79B4194A2A cert=IJXo/z1hPSJ0Yr2bShs3UVnBS35rweyktBxY+azSyQwSwD2qAdrVpo8VSWhVxly6wIWkDg iat-mode=0
-                    Bridge obfs4 2.37.211.221:9875 3A16586D003E32EE9798055C75D38498863FEC7A cert=afdvowWWudLtKXb3m5L9mQ/Ko9tm1Lu3rZDsb+rgEkHFEVKvuJihbfAyJlCUZbk42QwGZA iat-mode=0
-                    Bridge obfs4 82.65.66.15:16380 4E08190BD91F309DD41CF5D6BE2AFFFF298C8A9F cert=+rOOVaQl8pO8zLKl4NNCEm+r1s2NAV55q/+INNaX4pHHvJg7wXfk8KFvTSK0NzgXfn7nFw iat-mode=0
-                    Bridge obfs4 185.177.207.156:8443 85039DCAC3BBFB86A09BB0C58878FECD79AE33DA cert=9+nXWUOkB/vGawa21fYwAv8v66QvflMgsx3KExXhHInwU6GzBF/MdWtoAvIZ2YKThUCpdA iat-mode=0
-                    """.trimIndent()
-                }
-            }
-            "meek" -> {
-                // Meek-azure bridge - uses IPtProxy pluggable transport
-                // Uses Microsoft Azure CDN for domain fronting
-                val app = context.applicationContext as? SecureLegionApplication
-                val controller = app?.let { SecureLegionApplication.iptProxyController }
-                val port = controller?.port(IPtProxy.MeekLite) ?: 0
-                if (port == 0L) {
-                    throw BridgeTransportFailedException("meek_lite transport failed to start - no SOCKS port available")
-                } else {
-                    """
-                    UseBridges 1
-                    ClientTransportPlugin meek_lite socks5 127.0.0.1:$port
-                    Bridge meek_lite 192.0.2.2:2 97700DFE9F483596DDA6264C4D7DF7641E1E39CE url=https://meek.azureedge.net/ front=ajax.aspnetcdn.com
-                    """.trimIndent()
-                }
-            }
-            "webtunnel" -> {
-                // WebTunnel - disguises Tor traffic as HTTPS WebSocket connections
-                // Iran priority #1 in Tor Project circumvention API
-                val app = context.applicationContext as? SecureLegionApplication
-                val controller = app?.let { SecureLegionApplication.iptProxyController }
-                val port = controller?.port(IPtProxy.Webtunnel) ?: 0
-                if (port == 0L) {
-                    throw BridgeTransportFailedException("webtunnel transport failed to start - no SOCKS port available")
-                } else {
-                    // Try fetching fresh bridges from circumvention API first
-                    val apiBridges = fetchCircumventionBridges("webtunnel")
-                    if (apiBridges != null) {
-                        Log.i(TAG, "Using ${apiBridges.size} webtunnel bridges from circumvention API")
-                        val bridgeLines = apiBridges.joinToString("\n") { "Bridge $it" }
-                        """
-                        UseBridges 1
-                        ClientTransportPlugin webtunnel socks5 127.0.0.1:$port
-                        $bridgeLines
-                        """.trimIndent()
-                    } else {
-                        // Fallback: hardcoded webtunnel bridges
-                        Log.i(TAG, "Using hardcoded webtunnel bridges (API unavailable)")
-                        """
-                        UseBridges 1
-                        ClientTransportPlugin webtunnel socks5 127.0.0.1:$port
-                        Bridge webtunnel [2001:db8:1fc0:eebe:5e6e:d6ee:f53e:6889]:443 4A3859C089DF40A4FFADC10A79DFEBE4F8272535 url=https://verry.org/K2A2utQIMou4Ia2WjVseyDjV ver=0.0.1
-                        Bridge webtunnel [2001:db8:2ae3:679a:856c:c72a:2746:1a1b]:443 8943BF53C9561C75A7302ED59575EF71E2B26562 url=https://allium.heelsn.eu/X1uzc7J4omPPBbqkJMDgBtXP ver=0.0.3
-                        Bridge webtunnel [2001:db8:2b58:9764:2fcf:67a0:1d1d:b622]:443 9255D4ADB05B7F8792E49779E4DF382BF7B2BE01 url=https://3124.null-f.org/KFfqlXliDgBsyHEtT0SKO1i5 ver=0.0.1
-                        Bridge webtunnel [2001:db8:2b84:8d:b5af:2b7c:2528:ecbc]:443 F99CFE52EDFF8EAA332CD73C1E638035210C0336 url=https://cdn-26.privacyguides.net/cFwsJGX85KZ4INwnDHvVxs0G ver=0.0.2
-                        Bridge webtunnel [2001:db8:2c2a:de34:35ec:ef86:f18a:e2fc]:443 B2DD1165FE69D5E934002AF882D3397CFCE441DC url=https://doxy.ptnpnhcdn.net/ptnpnh/ ver=0.0.1
-                        """.trimIndent()
-                    }
-                }
-            }
-            "custom" -> {
-                // Custom bridge provided by user
-                val customBridge = torSettings.getString("custom_bridge", "")
-                if (!customBridge.isNullOrEmpty()) {
-                    """
-                    UseBridges 1
-                    $customBridge
-                    """.trimIndent()
-                } else {
-                    "" // No custom bridge provided
-                }
-            }
-            else -> "" // No bridges (default)
-        }
-    }
+    // Bridges removed — Arti uses direct Tor connections only.
 
     /**
      * Clear all Tor data (for account wipe)

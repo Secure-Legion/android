@@ -62,7 +62,6 @@ class FriendRequestService(private val context: Context) {
                     ?: return@withContext Result.failure(Exception("No PIN"))
 
                 // Create contact card
-                val torManager = com.securelegion.crypto.TorManager.getInstance(context)
                 val contactCard = com.securelegion.models.ContactCard(
                     displayName = keyManager.getUsername() ?: "User",
                     solanaPublicKey = keyManager.getSolanaPublicKey(),
@@ -71,7 +70,7 @@ class FriendRequestService(private val context: Context) {
                     solanaAddress = keyManager.getSolanaAddress(),
                     friendRequestOnion = keyManager.getFriendRequestOnion() ?: "",
                     messagingOnion = keyManager.getMessagingOnion() ?: "",
-                    voiceOnion = torManager.getVoiceOnionAddress() ?: "",
+                    voiceOnion = keyManager.getVoiceOnion() ?: "",
                     contactPin = pin,
                     ipfsCid = cid,
                     timestamp = System.currentTimeMillis()

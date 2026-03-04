@@ -11,12 +11,9 @@ import com.securelegion.database.SecureLegionDatabase
 import com.securelegion.models.TorFailureType
 import com.securelegion.models.TorHealthSnapshot
 import com.securelegion.models.TorHealthStatus
-import com.securelegion.services.TorService
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import android.net.ConnectivityManager
-import java.net.InetSocketAddress
-import java.net.Socket
 import java.util.concurrent.TimeUnit
 
 /**
@@ -29,15 +26,15 @@ import java.util.concurrent.TimeUnit
  * - NEVER restart on circuit-level failures (they are normal Tor behavior)
  *
  * Health checks:
- * 1. SOCKS5 reachability (127.0.0.1:9050 socket connect)
- * 2. Bootstrap progress (assume 100% if SOCKS responds)
- * 3. HS listener liveness (loop heartbeat + accept heartbeat + self-circuit test)
+ * 1. Arti readiness (RustBridge.isSocksProxyRunning → is_arti_ready)
+ * 2. Bootstrap progress (RustBridge.getBootstrapStatus)
+ * 3. HS listener liveness (loop heartbeat + accept heartbeat)
  *
  * What is HEALTHY:
- * - SOCKS port responding + bootstrap complete
+ * - Arti ready + bootstrap complete
  *
  * What is UNHEALTHY (restart):
- * - SOCKS port not responding for >N checks
+ * - Arti not ready for >N checks
  * - Bootstrap stuck < 100% (future implementation)
  *
  * What is NOT a failure:
@@ -56,9 +53,7 @@ class TorHealthMonitorWorker(
         private const val TAG = "TorHealthMonitor"
         private const val WORK_NAME = "tor_health_monitor"
         private const val CHECK_INTERVAL_SECONDS = 60L
-        private const val SOCKS_HOST = "127.0.0.1"
-        private const val SOCKS_PORT = 9050
-        private const val SOCKS_TIMEOUT_MS = 2000 // Fast fail if SOCKS not responding
+        // Legacy SOCKS constants removed — Arti has no SOCKS proxy
 
         private const val WARMUP_WINDOW_MS = 120000 // 2 minutes: Tor/HS needs time to stabilize after restart
         private const val FAILURE_THRESHOLD = 5 // Go UNHEALTHY after 5 failures
@@ -139,23 +134,23 @@ class TorHealthMonitorWorker(
 
         Log.d(TAG, "Starting health check (current status: ${current.status})")
 
-        // PHASE 1: SOCKS5 reachability (fast, hard fail)
-        val socksAlive = checkSocks5Reachable()
-        if (!socksAlive) {
-            Log.w(TAG, "SOCKS5 not responding on port $SOCKS_PORT")
+        // PHASE 1: Arti readiness (fast, hard fail)
+        val artiReady = checkSocks5Reachable()
+        if (!artiReady) {
+            Log.w(TAG, "Arti not ready")
             val updated = current.copy(
                 status = TorHealthStatus.UNHEALTHY,
                 failCount = current.failCount + 1,
                 lastCheckElapsedMs = now,
                 lastFailureType = TorFailureType.SOCKS_DOWN,
-                lastError = "SOCKS5 not responding on port $SOCKS_PORT",
+                lastError = "Arti not ready",
                 lastStatusChangeElapsedMs = if (current.status != TorHealthStatus.UNHEALTHY) now else current.lastStatusChangeElapsedMs
             )
             attemptRestartIfAllowed(updated)
             return updated
         }
 
-        Log.d(TAG, "SOCKS5 reachable")
+        Log.d(TAG, "Arti ready")
 
         // PHASE 2: Check Tor bootstrap status
         val bootstrapPercent = checkTorBootstrap()
@@ -300,8 +295,7 @@ class TorHealthMonitorWorker(
                     // Grace period elapsed + cooldown expired → escalate
                     when (degradedStep) {
                         0 -> {
-                            Log.w(TAG, "DEGRADED escalation step 0: sending NEWNYM")
-                            TorService.requestNewnym("DEGRADED escalation: circuits=0 for ${(nowMs - degradedSince) / 1000}s")
+                            Log.w(TAG, "DEGRADED step 0 suppressed: Kotlin worker no longer sends NEWNYM")
                             healthPrefs.edit()
                                 .putInt("degraded_recovery_step", 1)
                                 .putLong("degraded_last_recovery_ms", nowMs)
@@ -312,8 +306,7 @@ class TorHealthMonitorWorker(
                             if (nowMs - lastListenerRestart < HS_RESTART_COOLDOWN_MS) {
                                 Log.w(TAG, "DEGRADED step 1 suppressed: listener restarted ${(nowMs - lastListenerRestart) / 1000}s ago")
                             } else {
-                                Log.w(TAG, "DEGRADED escalation step 1: restarting HS listeners")
-                                TorService.requestListenerRestart("DEGRADED escalation: circuits=0 after NEWNYM")
+                                Log.w(TAG, "DEGRADED step 1 suppressed: Kotlin worker no longer restarts HS listeners")
                                 healthPrefs.edit()
                                     .putLong("hs_last_restart_ms", nowMs)
                                     .apply()
@@ -324,8 +317,7 @@ class TorHealthMonitorWorker(
                                 .apply()
                         }
                         else -> {
-                            Log.w(TAG, "DEGRADED escalation step 2: full Tor restart")
-                            TorService.requestRestart("DEGRADED escalation: circuits=0 after listener restart")
+                            Log.w(TAG, "DEGRADED step 2 suppressed: Kotlin worker no longer requests Tor restart")
                             healthPrefs.edit()
                                 .putInt("degraded_recovery_step", 0)
                                 .putLong("degraded_last_recovery_ms", nowMs)
@@ -377,18 +369,15 @@ class TorHealthMonitorWorker(
     }
 
     /**
-     * Check if SOCKS5 proxy is reachable on 127.0.0.1:9050
-     * Fast check: 2 second timeout
+     * Check if Arti is ready for outbound connections.
+     * Under Arti there is no SOCKS5 proxy — isSocksProxyRunning() maps to is_arti_ready() in Rust.
      */
     private suspend fun checkSocks5Reachable(): Boolean {
         return withContext(Dispatchers.IO) {
             try {
-                val socket = Socket()
-                socket.connect(InetSocketAddress(SOCKS_HOST, SOCKS_PORT), SOCKS_TIMEOUT_MS)
-                socket.close()
-                true
+                RustBridge.isSocksProxyRunning()
             } catch (e: Exception) {
-                Log.d(TAG, "SOCKS5 check failed: ${e.message}")
+                Log.d(TAG, "Arti readiness check failed: ${e.message}")
                 false
             }
         }
@@ -416,86 +405,14 @@ class TorHealthMonitorWorker(
     }
 
     /**
-     * Test if Tor can route to an onion via SOCKS5 CONNECT
-     *
-     * TELEMETRY ONLY - NEVER USE THIS TO TRIGGER RESTARTS 
-     *
-     * This test is useful for diagnosing HS descriptor issues, but failures
-     * do NOT indicate local Tor is broken. Common normal failures:
-     * - REP=6: TTL expired (circuit churned mid-connect)
-     * - REP=5: Connection refused (onion offline or listener not ready)
-     * - Timeout: HS descriptor not yet published, rendezvous delay
-     *
-     * SOCKS5 protocol:
-     * 1. Connect to SOCKS5 server (127.0.0.1:9050)
-     * 2. Auth handshake (no auth required)
-     * 3. Send CONNECT request with onion address + port
-     * 4. Server responds with REP code (0=success, 5=refused, 6=TTL expired, etc.)
-     *
-     * REP ≠ 0 is NORMAL on mobile Tor and does NOT mean restart is needed.
+     * Test if own onion is reachable.
+     * Under Arti there is no SOCKS5 proxy, so SOCKS-based self-test is not possible.
+     * HS liveness is determined by heartbeats (loop + accept) in the main check instead.
+     * Always returns false so the caller falls through to heartbeat-based liveness.
      */
     private suspend fun checkCircuitToOnion(onionAddress: String, port: Int): Boolean {
-        return withContext(Dispatchers.IO) {
-            try {
-                val socket = Socket()
-                socket.soTimeout = 25000 // 25s: cold .onion connections need 10-20s after circuit rebuild
-                socket.connect(InetSocketAddress(SOCKS_HOST, SOCKS_PORT), 2000)
-
-                val output = socket.getOutputStream()
-                val input = socket.getInputStream()
-
-                // SOCKS5 auth handshake: no auth required
-                output.write(byteArrayOf(0x05, 0x01, 0x00)) // VER=5, NMETHODS=1, METHOD=0
-                output.flush()
-
-                val authResp = ByteArray(2)
-                if (input.read(authResp) != 2) {
-                    socket.close()
-                    return@withContext false
-                }
-
-                if (authResp[0] != 0x05.toByte() || authResp[1] != 0x00.toByte()) {
-                    socket.close()
-                    return@withContext false
-                }
-
-                // SOCKS5 CONNECT request to onion
-                val onionBytes = onionAddress.toByteArray()
-                val connectReq = ByteArray(7 + onionBytes.size)
-                connectReq[0] = 0x05 // VER
-                connectReq[1] = 0x01 // CMD=CONNECT
-                connectReq[2] = 0x00 // RSV
-                connectReq[3] = 0x03 // ATYP=DOMAINNAME
-                connectReq[4] = onionBytes.size.toByte() // domain length
-                onionBytes.copyInto(connectReq, 5)
-                connectReq[5 + onionBytes.size] = (port shr 8).toByte() // port high byte
-                connectReq[6 + onionBytes.size] = (port and 0xFF).toByte() // port low byte
-
-                output.write(connectReq)
-                output.flush()
-
-                // Read CONNECT response
-                val connectResp = ByteArray(4 + 256) // max domain response
-                val bytesRead = input.read(connectResp)
-                socket.close()
-
-                // Response: VER=5, REP (0=success, others=fail), RSV=0, ATYP, ADDR, PORT
-                if (bytesRead < 4) {
-                    return@withContext false
-                }
-
-                val isSuccess = connectResp[0] == 0x05.toByte() && connectResp[1] == 0x00.toByte()
-                if (!isSuccess) {
-                    val repCode = connectResp[1].toInt() and 0xFF
-                    Log.d(TAG, "Circuit test to $onionAddress:$port failed: SOCKS5 status $repCode")
-                }
-
-                isSuccess
-            } catch (e: Exception) {
-                Log.d(TAG, "Circuit test to $onionAddress:$port failed: ${e.message}")
-                false
-            }
-        }
+        Log.d(TAG, "HS self-test skipped (no SOCKS proxy under Arti) — relying on heartbeats")
+        return false
     }
 
     /**
@@ -510,9 +427,8 @@ class TorHealthMonitorWorker(
                 if (!onion.isNullOrEmpty()) {
                     return@withContext onion
                 }
-                // Fallback: TorManager's stored onion
-                val torManager = com.securelegion.crypto.TorManager.getInstance(applicationContext)
-                torManager.getOnionAddress() ?: ""
+                // Fallback: RustBridge hidden service address (no TorManager dependency)
+                com.securelegion.crypto.RustBridge.getHiddenServiceAddress() ?: ""
             } catch (e: Exception) {
                 Log.w(TAG, "Failed to get own onion address: ${e.message}")
                 ""
@@ -542,8 +458,7 @@ class TorHealthMonitorWorker(
      */
     private suspend fun attemptRestartIfAllowed(snapshot: TorHealthSnapshot) {
         if (snapshot.shouldAttemptRestart()) {
-            Log.w(TAG, "Triggering Tor restart (reason: ${snapshot.lastFailureType})")
-            TorService.requestRestart("health monitor: ${snapshot.lastFailureType}")
+            Log.w(TAG, "Restart suppressed by policy (reason: ${snapshot.lastFailureType})")
 
             val updated = snapshot.copy(
                 status = TorHealthStatus.RECOVERING,
@@ -575,8 +490,7 @@ class TorHealthMonitorWorker(
             .putLong("hs_last_restart_ms", nowMs)
             .putInt("hs_self_test_failures", 0)
             .apply()
-        Log.w(TAG, "Requesting HS listener restart: $reason")
-        TorService.requestListenerRestart(reason)
+        Log.w(TAG, "Listener restart suppressed by policy: $reason")
     }
 
     /**

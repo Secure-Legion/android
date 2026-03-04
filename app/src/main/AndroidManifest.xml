@@ -326,13 +326,7 @@
             android:taskAffinity=""
             android:excludeFromRecents="true" />
 
-        <!-- Tor daemon - In-process Tor via JNI (from tor-android library)
-             Runs in main process (GP tor-android 0.4.9.5 requires Application init context) -->
-        <service
-            android:name="org.torproject.jni.TorService"
-            android:enabled="true"
-            android:exported="false"
-            android:stopWithTask="false" />
+        <!-- GP TorService removed — Arti (in-process Rust Tor) replaces it -->
 
         <!-- Tor foreground service - Shows notification and handles Ping-Pong protocol -->
         <service

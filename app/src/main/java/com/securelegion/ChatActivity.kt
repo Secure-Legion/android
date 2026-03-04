@@ -2816,8 +2816,7 @@ class ChatActivity : BaseActivity() {
                 startActivity(intent)
 
                 // Get voice onion once for reuse in retries
-                val torManager = com.securelegion.crypto.TorManager.getInstance(this@ChatActivity)
-                val myVoiceOnion = torManager.getVoiceOnionAddress() ?: ""
+                val myVoiceOnion = keyManager.getVoiceOnion() ?: ""
 
                 // Get our X25519 public key for HTTP wire format (reuse existing keyManager from earlier)
                 val ourX25519PublicKey = keyManager.getEncryptionPublicKey()

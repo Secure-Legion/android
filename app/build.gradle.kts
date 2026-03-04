@@ -298,14 +298,9 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-process:2.8.7")
     implementation("androidx.lifecycle:lifecycle-common:2.8.7")
 
-    // Tor binaries for Android (provides libtor.so)
-    implementation("info.guardianproject:tor-android:0.4.9.5")
-
-    // Tor control library for managing Tor via control port
-    implementation("info.guardianproject:jtorctl:0.4.5.7")
-
-    // Pluggable Transports for bridges (obfs4, snowflake, meek)
-    // IPtProxy includes obfs4proxy (Lyrebird), snowflake, and meek_lite pluggable transports
+    // Tor: Arti (in-process Rust) — Guardian Project C Tor deps removed
+    // tor-android + jtorctl no longer needed (C Tor daemon replaced by Arti)
+    // IPtProxy kept — required by OnionMasq VPN for pluggable transports
     implementation("com.netzarchitekten:IPtProxy:5.1.0")
 
     // Voice Calling - Opus codec for audio compression
