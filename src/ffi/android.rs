@@ -96,6 +96,41 @@ fn string_to_jstring<'a>(env: &mut JNIEnv<'a>, string: &str) -> Result<JString<'
         .map_err(|e| format!("Failed to create string: {}", e))
 }
 
+/// Get the Android app's internal data directory (e.g. /data/data/com.securelegion/files).
+/// Used for Arti state/cache storage.
+fn get_android_data_dir(env: &mut JNIEnv) -> Result<String, String> {
+    let context = env.call_static_method(
+        "android/app/ActivityThread",
+        "currentApplication",
+        "()Landroid/app/Application;",
+        &[],
+    ).map_err(|e| format!("Failed to get app context: {}", e))?
+     .l().map_err(|e| format!("Context is null: {}", e))?;
+
+    let files_dir = env.call_method(
+        &context,
+        "getFilesDir",
+        "()Ljava/io/File;",
+        &[],
+    ).map_err(|e| format!("getFilesDir failed: {}", e))?
+     .l().map_err(|e| format!("filesDir is null: {}", e))?;
+
+    let path = env.call_method(
+        &files_dir,
+        "getAbsolutePath",
+        "()Ljava/lang/String;",
+        &[],
+    ).map_err(|e| format!("getAbsolutePath failed: {}", e))?
+     .l().map_err(|e| format!("path is null: {}", e))?;
+
+    let path_jstring = JString::from(path);
+    let path_str: String = env.get_string(&path_jstring)
+        .map_err(|e| format!("Failed to convert path: {}", e))?
+        .into();
+
+    Ok(path_str)
+}
+
 /// Safely execute a function and catch panics
 macro_rules! catch_panic {
     ($env:expr, $code:expr, $default:expr) => {
@@ -693,21 +728,26 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_initializeTor(
     _class: JClass,
 ) -> jstring {
     catch_panic!(env, {
+        // Get Android app data directory for Arti state/cache storage
+        let data_dir = match get_android_data_dir(&mut env) {
+            Ok(d) => d,
+            Err(e) => {
+                let _ = env.throw_new("java/lang/RuntimeException",
+                    format!("Failed to get data directory: {}", e));
+                return std::ptr::null_mut();
+            }
+        };
 
-        let tor_manager = get_tor_manager();
-
-        // Event listener should already be started via startBootstrapListener()
-        // Run async initialization using global runtime
+        // Initialize Arti (in-process Rust Tor) — replaces C Tor subprocess + control port
         let result = GLOBAL_RUNTIME.block_on(async {
-            let mut manager = tor_manager.lock().unwrap();
-            manager.initialize().await
+            crate::network::arti::initialize_arti(&data_dir).await
         });
 
         match result {
-            Ok(status) => {
-                log::info!("Tor initialized successfully");
-
-                match string_to_jstring(&mut env, &status) {
+            Ok(()) => {
+                log::info!("Arti (in-process Tor) initialized successfully");
+                let status = "Arti bootstrapped";
+                match string_to_jstring(&mut env, status) {
                     Ok(s) => s.into_raw(),
                     Err(_) => {
                         let _ = env.throw_new("java/lang/RuntimeException", "Failed to create status string");
@@ -716,7 +756,7 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_initializeTor(
                 }
             },
             Err(e) => {
-                let error_msg = format!("Tor initialization failed: {}", e);
+                let error_msg = format!("Arti initialization failed: {}", e);
                 let _ = env.throw_new("java/lang/RuntimeException", error_msg);
                 std::ptr::null_mut()
             }
@@ -724,50 +764,29 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_initializeTor(
     }, std::ptr::null_mut())
 }
 
-/// Initialize VOICE Tor control connection (port 9052)
-/// This must be called AFTER voice Tor daemon is started by TorManager.kt
-/// Voice Tor runs with Single Onion Service configuration (HiddenServiceNonAnonymousMode 1)
-/// cookie_path: The full filesystem path to the voice Tor control_auth_cookie file
+/// Initialize VOICE Tor control connection
+/// With Arti, voice uses the same in-process client — just verify readiness
+/// cookie_path: Ignored (kept for JNI signature compatibility)
 #[no_mangle]
 pub extern "C" fn Java_com_securelegion_crypto_RustBridge_initializeVoiceTorControl(
     mut env: JNIEnv,
     _class: JClass,
-    cookie_path: JString,
+    _cookie_path: JString,
 ) -> jstring {
     catch_panic!(env, {
-        let cookie_path_str: String = match env.get_string(&cookie_path) {
-            Ok(s) => s.into(),
-            Err(_) => {
-                let _ = env.throw_new("java/lang/RuntimeException", "Failed to read cookie path string");
-                return std::ptr::null_mut();
-            }
-        };
-
-        let tor_manager = get_tor_manager();
-
-        // Connect to voice Tor control port (9052)
-        let result = GLOBAL_RUNTIME.block_on(async {
-            let mut manager = tor_manager.lock().unwrap();
-            manager.initialize_voice_control(&cookie_path_str).await
-        });
-
-        match result {
-            Ok(status) => {
-                log::info!("Voice Tor control initialized successfully");
-
-                match string_to_jstring(&mut env, &status) {
-                    Ok(s) => s.into_raw(),
-                    Err(_) => {
-                        let _ = env.throw_new("java/lang/RuntimeException", "Failed to create status string");
-                        std::ptr::null_mut()
-                    }
+        // Arti: voice uses same client, no separate control port
+        if crate::network::arti::is_arti_ready() {
+            log::info!("Voice Tor control: Arti ready (shared client)");
+            match string_to_jstring(&mut env, "Arti ready") {
+                Ok(s) => s.into_raw(),
+                Err(_) => {
+                    let _ = env.throw_new("java/lang/RuntimeException", "Failed to create status string");
+                    std::ptr::null_mut()
                 }
-            },
-            Err(e) => {
-                let error_msg = format!("Voice Tor control initialization failed: {}", e);
-                let _ = env.throw_new("java/lang/RuntimeException", error_msg);
-                std::ptr::null_mut()
             }
+        } else {
+            let _ = env.throw_new("java/lang/RuntimeException", "Arti not initialized");
+            std::ptr::null_mut()
         }
     }, std::ptr::null_mut())
 }
@@ -823,12 +842,17 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_createHiddenService(
             }
         };
 
-        let tor_manager = get_tor_manager();
+        // Arti only — no C Tor fallback
+        if hs_private_key.len() < 32 {
+            let _ = env.throw_new("java/lang/RuntimeException",
+                format!("HS private key too short: {} bytes", hs_private_key.len()));
+            return std::ptr::null_mut();
+        }
+        let mut seed = [0u8; 32];
+        seed.copy_from_slice(&hs_private_key[..32]);
 
-        // Run async hidden service creation with seed-derived key using global runtime
         let result = GLOBAL_RUNTIME.block_on(async {
-            let mut manager = tor_manager.lock().unwrap();
-            manager.create_hidden_service(service_port as u16, local_port as u16, &hs_private_key).await
+            crate::network::arti::create_onion_service(&seed).await
         });
 
         match result {
@@ -935,34 +959,16 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_computeOnionAddressFro
 }
 
 /// Clear all ephemeral hidden services
-/// This removes orphaned services from previous failed account creation attempts
-/// Returns the number of services deleted
+/// With Arti, services are in-process — no control port DEL_ONION needed
+/// Returns 0 (Arti manages services via RUNNING_HS global)
 #[no_mangle]
 pub extern "C" fn Java_com_securelegion_crypto_RustBridge_clearAllEphemeralServices(
     mut env: JNIEnv,
     _class: JClass,
 ) -> jint {
     catch_panic!(env, {
-        let tor_manager = get_tor_manager();
-
-        // Run async clear operation using global runtime
-        let result = GLOBAL_RUNTIME.block_on(async {
-            let manager = tor_manager.lock().unwrap();
-            manager.clear_all_ephemeral_services().await
-        });
-
-        match result {
-            Ok(count) => {
-                log::info!("Cleared {} ephemeral service(s)", count);
-                count as jint
-            },
-            Err(e) => {
-                let error_msg = format!("Failed to clear ephemeral services: {}", e);
-                log::error!("{}", error_msg);
-                let _ = env.throw_new("java/lang/RuntimeException", error_msg);
-                -1
-            }
-        }
+        log::info!("clearAllEphemeralServices: no-op (Arti manages services in-process)");
+        0
     }, -1)
 }
 
@@ -1006,12 +1012,17 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_createVoiceHiddenServi
             }
         };
 
-        let tor_manager = get_tor_manager();
+        // Arti: create voice HS using same client, different key
+        if voice_private_key.len() < 32 {
+            let _ = env.throw_new("java/lang/RuntimeException",
+                format!("Voice private key too short: {} bytes", voice_private_key.len()));
+            return std::ptr::null_mut();
+        }
+        let mut seed = [0u8; 32];
+        seed.copy_from_slice(&voice_private_key[..32]);
 
-        // Run async voice hidden service creation using global runtime
         let result = GLOBAL_RUNTIME.block_on(async {
-            let mut manager = tor_manager.lock().unwrap();
-            manager.create_voice_hidden_service(&voice_private_key).await
+            crate::network::arti::create_voice_onion_service(&seed).await
         });
 
         match result {
@@ -1039,10 +1050,8 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_getHiddenServiceAddres
     _class: JClass,
 ) -> jstring {
     catch_panic!(env, {
-        let tor_manager = get_tor_manager();
-        let manager = tor_manager.lock().unwrap();
-
-        match manager.get_hidden_service_address() {
+        // Read from Arti's ONION_ADDRESS global
+        match crate::network::arti::get_onion_address() {
             Some(address) => match string_to_jstring(&mut env, &address) {
                 Ok(s) => s.into_raw(),
                 Err(_) => std::ptr::null_mut(),
@@ -1062,44 +1071,45 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_startHiddenServiceList
     port: jint,
 ) -> jboolean {
     catch_panic!(env, {
-        let tor_manager = get_tor_manager();
-
-        // Run async listener start using the global runtime (persists for process lifetime)
-        let result = GLOBAL_RUNTIME.block_on(async {
-            let mut manager = tor_manager.lock().unwrap();
-            manager.start_listener(Some(port as u16)).await
-        });
-
-        match result {
-            Ok((ping_receiver, pong_receiver)) => {
-                // Store both PING and PONG receivers globally (local channels, no globals in tor.rs)
-                // ArcSwapOption::store() atomically replaces the old channel — safe on restart
-                GLOBAL_PING_RECEIVER.store(Some(Arc::new(Mutex::new(ping_receiver))));
-                GLOBAL_PONG_RECEIVER.store(Some(Arc::new(Mutex::new(pong_receiver))));
-                log::info!("PING/PONG receivers stored (restart-safe via ArcSwap)");
-
-                // Initialize MESSAGE channel for TEXT/VOICE/IMAGE/PAYMENT routing
-                let (message_tx, message_rx) = mpsc::unbounded_channel::<(u64, Vec<u8>)>();
-                GLOBAL_MESSAGE_RECEIVER.store(Some(Arc::new(Mutex::new(message_rx))));
-                let tx_arc = Arc::new(std::sync::Mutex::new(message_tx));
-                crate::network::tor::MESSAGE_TX.store(Some(tx_arc));
-                log::info!("MESSAGE channel initialized (restart-safe via ArcSwap)");
-
-                // Initialize VOICE channel for CALL_SIGNALING routing
-                let (voice_tx, voice_rx) = mpsc::unbounded_channel::<(u64, Vec<u8>)>();
-                GLOBAL_VOICE_RECEIVER.store(Some(Arc::new(Mutex::new(voice_rx))));
-                let voice_tx_arc = Arc::new(std::sync::Mutex::new(voice_tx));
-                crate::network::tor::VOICE_TX.store(Some(voice_tx_arc));
-                log::info!("VOICE channel initialized (restart-safe via ArcSwap)");
-
-                1 as jboolean
-            }
+        // Arti only — no C Tor fallback
+        let (ping_receiver, pong_receiver) = match crate::network::arti::start_arti_listener() {
+            Ok(receivers) => receivers,
             Err(e) => {
-                let error_msg = format!("Failed to start listener: {}", e);
-                let _ = env.throw_new("java/lang/RuntimeException", error_msg);
-                0 as jboolean
+                let error_msg = format!("Failed to start Arti listener: {}", e);
+                let _ = env.throw_new("java/lang/RuntimeException", &error_msg);
+                return 0 as jboolean;
             }
-        }
+        };
+
+        GLOBAL_PING_RECEIVER.store(Some(Arc::new(Mutex::new(ping_receiver))));
+        GLOBAL_PONG_RECEIVER.store(Some(Arc::new(Mutex::new(pong_receiver))));
+        log::info!("Arti: PING/PONG receivers stored");
+
+        // Initialize MESSAGE channel for TEXT/VOICE/IMAGE/PAYMENT routing
+        let (message_tx, message_rx) = mpsc::unbounded_channel::<(u64, Vec<u8>)>();
+        GLOBAL_MESSAGE_RECEIVER.store(Some(Arc::new(Mutex::new(message_rx))));
+        let tx_arc = Arc::new(std::sync::Mutex::new(message_tx));
+        crate::network::tor::MESSAGE_TX.store(Some(tx_arc));
+        log::info!("Arti: MESSAGE channel initialized");
+
+        // Initialize VOICE channel for CALL_SIGNALING routing
+        let (voice_tx, voice_rx) = mpsc::unbounded_channel::<(u64, Vec<u8>)>();
+        GLOBAL_VOICE_RECEIVER.store(Some(Arc::new(Mutex::new(voice_rx))));
+        let voice_tx_arc = Arc::new(std::sync::Mutex::new(voice_tx));
+        crate::network::tor::VOICE_TX.store(Some(voice_tx_arc));
+        log::info!("Arti: VOICE channel initialized");
+
+        // Initialize ACK channel
+        let (ack_tx, ack_rx) = mpsc::unbounded_channel::<(u64, Vec<u8>)>();
+        GLOBAL_ACK_RECEIVER.store(Some(Arc::new(Mutex::new(ack_rx))));
+        let ack_tx_arc = Arc::new(std::sync::Mutex::new(ack_tx));
+        crate::network::tor::ACK_TX.store(Some(ack_tx_arc));
+        log::info!("Arti: ACK channel initialized");
+
+        // NOTE: FRIEND_REQUEST channel is initialized by startFriendRequestListener(),
+        // which also starts the FR HS acceptor. Do NOT initialize here to avoid channel mismatch.
+
+        1 as jboolean
     }, 0 as jboolean)
 }
 
@@ -1110,13 +1120,9 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_stopHiddenServiceListe
     _class: JClass,
 ) {
     catch_panic!(env, {
-        let tor_manager = get_tor_manager();
-
-        // stop_listener is now async, need to await it
-        GLOBAL_RUNTIME.block_on(async {
-            let mut manager = tor_manager.lock().unwrap();
-            manager.stop_listener().await;
-        });
+        // Cancel Arti HS acceptor
+        crate::network::arti::stop_arti_listener();
+        log::info!("Arti: hidden service listener stopped");
     }, ())
 }
 
@@ -1128,22 +1134,9 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_startSocksProxy(
     _class: JClass,
 ) -> jboolean {
     catch_panic!(env, {
-        let tor_manager = get_tor_manager();
-        let mut manager = tor_manager.lock().unwrap();
-
-        // Use the global persistent Tokio runtime
-        match GLOBAL_RUNTIME.block_on(manager.start_socks_proxy()) {
-            Ok(_) => {
-                log::info!("SOCKS proxy started successfully on persistent runtime");
-                1 as jboolean
-            }
-            Err(e) => {
-                log::error!("Failed to start SOCKS proxy: {}", e);
-                let _ = env.throw_new("java/lang/RuntimeException",
-                    format!("Failed to start SOCKS proxy: {}", e));
-                0 as jboolean
-            }
-        }
+        // Arti handles connections in-process — no SOCKS proxy needed
+        log::info!("Arti in-process — no SOCKS proxy needed (no-op)");
+        1 as jboolean
     }, 0 as jboolean)
 }
 
@@ -1154,10 +1147,8 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_stopSocksProxy(
     _class: JClass,
 ) {
     catch_panic!(env, {
-        let tor_manager = get_tor_manager();
-        let mut manager = tor_manager.lock().unwrap();
-        manager.stop_socks_proxy();
-        log::info!("SOCKS proxy stopped");
+        // Arti has no SOCKS proxy — no-op
+        log::info!("stopSocksProxy: no-op (Arti in-process)");
     }, ())
 }
 
@@ -1168,9 +1159,8 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_isSocksProxyRunning(
     _class: JClass,
 ) -> jboolean {
     catch_panic!(env, {
-        let tor_manager = get_tor_manager();
-        let manager = tor_manager.lock().unwrap();
-        if manager.is_socks_proxy_running() {
+        // Arti: ready = can connect. No SOCKS proxy to check.
+        if crate::network::arti::is_arti_ready() {
             1 as jboolean
         } else {
             0 as jboolean
@@ -1186,19 +1176,12 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_testSocksConnectivity(
     _class: JClass,
 ) -> jboolean {
     catch_panic!(env, {
-        let tor_manager = get_tor_manager();
-        let manager = tor_manager.lock().unwrap();
-
-        // Use the global persistent Tokio runtime
-        match GLOBAL_RUNTIME.block_on(manager.test_socks_connectivity()) {
-            true => {
-                log::info!("SOCKS connectivity test passed");
-                1 as jboolean
-            }
-            false => {
-                log::warn!("SOCKS connectivity test failed");
-                0 as jboolean
-            }
+        // Arti: connectivity is implicit — if bootstrapped, we can connect
+        if crate::network::arti::is_arti_ready() {
+            log::info!("Arti connectivity check: ready");
+            1 as jboolean
+        } else {
+            0 as jboolean
         }
     }, 0 as jboolean)
 }
@@ -1212,13 +1195,8 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_stopListeners(
     catch_panic!(env, {
         log::info!("Stopping all listeners...");
 
-        let tor_manager = get_tor_manager();
-
-        // Stop the hidden service listener (now async)
-        GLOBAL_RUNTIME.block_on(async {
-            let mut manager = tor_manager.lock().unwrap();
-            manager.stop_listener().await;
-        });
+        // Cancel Arti HS acceptor
+        crate::network::arti::stop_arti_listener();
 
         // Note: TAP listener and PING listener are managed through global channels
         // They will naturally stop when no longer polled
@@ -1236,18 +1214,9 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendNewnym(
     _class: JClass,
 ) -> jboolean {
     catch_panic!(env, {
-        let tor_manager = get_tor_manager();
-
-        let result = GLOBAL_RUNTIME.block_on(async {
-            let manager = tor_manager.lock().unwrap();
-            manager.send_newnym().await
-        });
-
-        if result {
-            JNI_TRUE
-        } else {
-            JNI_FALSE
-        }
+        // Arti: request circuit isolation (equivalent to SIGNAL NEWNYM)
+        crate::network::arti::send_newnym();
+        JNI_TRUE
     }, JNI_FALSE)
 }
 
@@ -2517,7 +2486,7 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendFriendRequest(
         };
 
         log::info!(
-            "[FR:9151->8080][FR_SEND] start target={} payload_bytes={}",
+            "[FR][FR_SEND] start target={} payload_bytes={}",
             recipient_onion_str, friend_request_bytes.len()
         );
 
@@ -2529,81 +2498,47 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendFriendRequest(
 
         log::info!("Wire message: {} bytes (type={:02X})", wire_message.len(), wire_message[0]);
 
-        // Send friend request via Tor (fire-and-forget, no response expected)
-        let tor_manager = get_tor_manager();
-        if let Err(preflight_err) = wait_for_local_socks_ready("sendFriendRequest", 6_000, 500, 2) {
-            log::warn!(
-                "Friend request deferred for {}: {}",
-                recipient_onion_str, preflight_err
-            );
+        // STRICT ISOLATION: Send FR only to peer's FR onion, port 9151. NO fallback to 8080.
+        // FR traffic must ONLY go to the peer's friend-request .onion address.
+        if !crate::network::arti::is_arti_ready() {
+            log::warn!("[FR][FR_SEND] deferred for {}: Arti not ready", recipient_onion_str);
             return 0;
         }
-        let runtime = match tokio::runtime::Runtime::new() {
-            Ok(rt) => rt,
-            Err(e) => {
-                log::error!("Failed to create runtime: {}", e);
-                return 0;
-            }
-        };
 
-        const FRIEND_REQUEST_PORT: u16 = 9151; // Friend request .onion port (wire protocol)
-        const FALLBACK_PORT: u16 = 8080; // Fallback to main listener if 9151 fails
-        const MAX_RETRIES: u32 = 24; // 24 retries x 5s = 2 min for slow bridges (Snowflake)
+        const FRIEND_REQUEST_PORT: u16 = 9151;
+        const MAX_RETRIES: u32 = 24;
         const RETRY_DELAY_SECS: u64 = 5;
 
         for attempt in 1..=MAX_RETRIES {
-            // Try port 9151 first
-            let result = runtime.block_on(async {
-                let manager = tor_manager.lock().unwrap();
-                let mut conn = manager.connect(&recipient_onion_str, FRIEND_REQUEST_PORT).await?;
-                manager.send(&mut conn, &wire_message).await?;
-                Ok::<(), Box<dyn std::error::Error>>(())
+            // Connect via Arti to peer's FR onion — no C Tor, no fallback port
+            let result = GLOBAL_RUNTIME.block_on(async {
+                let mut stream = crate::network::arti::arti_connect_to_onion(
+                    &recipient_onion_str, FRIEND_REQUEST_PORT
+                ).await?;
+                stream.write_message(&wire_message).await?;
+                Ok::<(), Box<dyn std::error::Error + Send + Sync>>(())
             });
 
             match result {
                 Ok(_) => {
                     log::info!(
-                        "[FR:9151->8080][FR_SEND] success target={} port={} attempt={}/{}",
+                        "[FR][FR_SEND] success target={} port={} attempt={}/{}",
                         recipient_onion_str, FRIEND_REQUEST_PORT, attempt, MAX_RETRIES
                     );
                     return 1;
                 }
                 Err(e) => {
-                    log::warn!(
-                        "[FR:9151->8080][FR_SEND] primary_failed target={} port={} attempt={}/{} error={} fallback_port={}",
-                        recipient_onion_str, FRIEND_REQUEST_PORT, attempt, MAX_RETRIES, e, FALLBACK_PORT
-                    );
-
-                    // Fallback to port 8080
-                    let fallback_result = runtime.block_on(async {
-                        let manager = tor_manager.lock().unwrap();
-                        let mut conn = manager.connect(&recipient_onion_str, FALLBACK_PORT).await?;
-                        manager.send(&mut conn, &wire_message).await?;
-                        Ok::<(), Box<dyn std::error::Error>>(())
-                    });
-
-                    match fallback_result {
-                        Ok(_) => {
-                            log::info!(
-                                "[FR:9151->8080][FR_SEND] fallback_success target={} port={} attempt={}/{}",
-                                recipient_onion_str, FALLBACK_PORT, attempt, MAX_RETRIES
-                            );
-                            return 1;
-                        }
-                        Err(fallback_err) => {
-                            if attempt < MAX_RETRIES {
-                                log::warn!(
-                                    "[FR:9151->8080][FR_SEND] failed target={} attempt={}/{} primary_port={} fallback_port={} error={} retry_in_s={}",
-                                    recipient_onion_str, attempt, MAX_RETRIES, FRIEND_REQUEST_PORT, FALLBACK_PORT, fallback_err, RETRY_DELAY_SECS
-                                );
-                                std::thread::sleep(std::time::Duration::from_secs(RETRY_DELAY_SECS));
-                            } else {
-                                log::error!(
-                                    "[FR:9151->8080][FR_SEND] exhausted target={} attempts={} last_error={}",
-                                    recipient_onion_str, MAX_RETRIES, fallback_err
-                                );
-                            }
-                        }
+                    if attempt < MAX_RETRIES {
+                        log::warn!(
+                            "[FR][FR_SEND] failed target={} attempt={}/{} error={} retry_in_s={}",
+                            recipient_onion_str, attempt, MAX_RETRIES, e, RETRY_DELAY_SECS
+                        );
+                        std::thread::sleep(std::time::Duration::from_secs(RETRY_DELAY_SECS));
+                    } else {
+                        log::error!(
+                            "[FR][FR_SEND] exhausted target={} attempts={} last_error={}",
+                            recipient_onion_str, MAX_RETRIES, e
+                        );
                     }
                 }
             }
@@ -2645,7 +2580,7 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendFriendRequestAccep
         };
 
         log::info!(
-            "[FRA:9151->8080][FR_ACCEPT] start target={} payload_bytes={}",
+            "[FRA][FR_ACCEPT] start target={} payload_bytes={}",
             recipient_onion_str, acceptance_bytes.len()
         );
 
@@ -2657,81 +2592,46 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendFriendRequestAccep
 
         log::info!("Wire message: {} bytes (type={:02X})", wire_message.len(), wire_message[0]);
 
-        // Send acceptance via Tor (fire-and-forget, no response expected)
-        let tor_manager = get_tor_manager();
-        if let Err(preflight_err) = wait_for_local_socks_ready("sendFriendRequestAccepted", 6_000, 500, 2) {
-            log::warn!(
-                "Friend request acceptance deferred for {}: {}",
-                recipient_onion_str, preflight_err
-            );
+        // STRICT ISOLATION: Send FR_ACCEPTED only to peer's FR onion, port 9151. NO fallback to 8080.
+        if !crate::network::arti::is_arti_ready() {
+            log::warn!("[FRA][FR_ACCEPT] deferred for {}: Arti not ready", recipient_onion_str);
             return 0;
         }
-        let runtime = match tokio::runtime::Runtime::new() {
-            Ok(rt) => rt,
-            Err(e) => {
-                log::error!("Failed to create runtime: {}", e);
-                return 0;
-            }
-        };
 
-        const FRIEND_REQUEST_PORT: u16 = 9151; // Friend request .onion port (wire protocol)
-        const FALLBACK_PORT: u16 = 8080; // Fallback to main listener if 9151 fails
-        const MAX_RETRIES: u32 = 24; // 24 retries x 5s = 2 min for slow bridges (Snowflake)
+        const FRIEND_REQUEST_PORT: u16 = 9151;
+        const MAX_RETRIES: u32 = 24;
         const RETRY_DELAY_SECS: u64 = 5;
 
         for attempt in 1..=MAX_RETRIES {
-            // Try port 9151 first
-            let result = runtime.block_on(async {
-                let manager = tor_manager.lock().unwrap();
-                let mut conn = manager.connect(&recipient_onion_str, FRIEND_REQUEST_PORT).await?;
-                manager.send(&mut conn, &wire_message).await?;
-                Ok::<(), Box<dyn std::error::Error>>(())
+            // Connect via Arti to peer's FR onion — no C Tor, no fallback port
+            let result = GLOBAL_RUNTIME.block_on(async {
+                let mut stream = crate::network::arti::arti_connect_to_onion(
+                    &recipient_onion_str, FRIEND_REQUEST_PORT
+                ).await?;
+                stream.write_message(&wire_message).await?;
+                Ok::<(), Box<dyn std::error::Error + Send + Sync>>(())
             });
 
             match result {
                 Ok(_) => {
                     log::info!(
-                        "[FRA:9151->8080][FR_ACCEPT] success target={} port={} attempt={}/{}",
+                        "[FRA][FR_ACCEPT] success target={} port={} attempt={}/{}",
                         recipient_onion_str, FRIEND_REQUEST_PORT, attempt, MAX_RETRIES
                     );
                     return 1;
                 }
                 Err(e) => {
-                    log::warn!(
-                        "[FRA:9151->8080][FR_ACCEPT] primary_failed target={} port={} attempt={}/{} error={} fallback_port={}",
-                        recipient_onion_str, FRIEND_REQUEST_PORT, attempt, MAX_RETRIES, e, FALLBACK_PORT
-                    );
-
-                    // Fallback to port 8080
-                    let fallback_result = runtime.block_on(async {
-                        let manager = tor_manager.lock().unwrap();
-                        let mut conn = manager.connect(&recipient_onion_str, FALLBACK_PORT).await?;
-                        manager.send(&mut conn, &wire_message).await?;
-                        Ok::<(), Box<dyn std::error::Error>>(())
-                    });
-
-                    match fallback_result {
-                        Ok(_) => {
-                            log::info!(
-                                "[FRA:9151->8080][FR_ACCEPT] fallback_success target={} port={} attempt={}/{}",
-                                recipient_onion_str, FALLBACK_PORT, attempt, MAX_RETRIES
-                            );
-                            return 1;
-                        }
-                        Err(fallback_err) => {
-                            if attempt < MAX_RETRIES {
-                                log::warn!(
-                                    "[FRA:9151->8080][FR_ACCEPT] failed target={} attempt={}/{} primary_port={} fallback_port={} error={} retry_in_s={}",
-                                    recipient_onion_str, attempt, MAX_RETRIES, FRIEND_REQUEST_PORT, FALLBACK_PORT, fallback_err, RETRY_DELAY_SECS
-                                );
-                                std::thread::sleep(std::time::Duration::from_secs(RETRY_DELAY_SECS));
-                            } else {
-                                log::error!(
-                                    "[FRA:9151->8080][FR_ACCEPT] exhausted target={} attempts={} last_error={}",
-                                    recipient_onion_str, MAX_RETRIES, fallback_err
-                                );
-                            }
-                        }
+                    if attempt < MAX_RETRIES {
+                        log::warn!(
+                            "[FRA][FR_ACCEPT] failed target={} attempt={}/{} error={} retry_in_s={}",
+                            recipient_onion_str, attempt, MAX_RETRIES, e, RETRY_DELAY_SECS
+                        );
+                        std::thread::sleep(std::time::Duration::from_secs(RETRY_DELAY_SECS));
+                    } else {
+                        log::error!(
+                            "[FRA][FR_ACCEPT] exhausted target={} attempts={} last_error={}",
+                            recipient_onion_str, MAX_RETRIES, e
+                        );
                     }
                 }
             }
@@ -2858,55 +2758,18 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_startTapListener(
     port: jint,
 ) -> jboolean {
     catch_panic!(env, {
-        log::info!("Starting multiplexed listener on port {} (TAP + FRIEND_REQUEST)", port);
+        // Arti: TAP and FRIEND_REQUEST are already routed by the main HS acceptor
+        // (accept_and_handle in arti.rs). We just need to ensure the TAP channel exists.
+        log::info!("startTapListener(port={}): Arti routes TAP+FRIEND_REQUEST via main HS listener", port);
 
-        let tor_manager = get_tor_manager();
+        // Initialize TAP channel if not already set up
+        let (tap_tx, tap_rx) = mpsc::unbounded_channel::<Vec<u8>>();
+        GLOBAL_TAP_RECEIVER.store(Some(Arc::new(Mutex::new(tap_rx))));
+        // TAP_TX is used by arti.rs accept_and_handle — store it
+        crate::network::tor::TAP_TX.store(Some(Arc::new(std::sync::Mutex::new(tap_tx))));
+        log::info!("TAP channel initialized (Arti handles routing)");
 
-        // Run async listener start using the global runtime
-        let result = GLOBAL_RUNTIME.block_on(async {
-            let mut manager = tor_manager.lock().unwrap();
-            manager.start_listener(Some(port as u16)).await
-        });
-
-        match result {
-            Ok((mut ping_receiver, _pong_receiver)) => {
-                // Create channel for tap messages
-                let (tap_tx, tap_rx) = mpsc::unbounded_channel::<Vec<u8>>();
-                // Create channel for friend request messages
-                let (fr_tx, fr_rx) = mpsc::unbounded_channel::<Vec<u8>>();
-
-                // Store receivers globally (ArcSwap: atomically replaceable on restart)
-                GLOBAL_TAP_RECEIVER.store(Some(Arc::new(Mutex::new(tap_rx))));
-                GLOBAL_FRIEND_REQUEST_RECEIVER.store(Some(Arc::new(Mutex::new(fr_rx))));
-
-                // Store friend request sender in global FRIEND_REQUEST_TX for routing in tor.rs
-                let fr_tx_arc = Arc::new(std::sync::Mutex::new(fr_tx.clone()));
-                crate::network::tor::FRIEND_REQUEST_TX.store(Some(fr_tx_arc));
-                log::info!("Friend request channel initialized successfully (shared port {})", port);
-
-                // Spawn task to receive from TorManager PING channel and route by message type
-                GLOBAL_RUNTIME.spawn(async move {
-                    while let Some((_connection_id, tap_bytes)) = ping_receiver.recv().await {
-                        log::info!("Received message via multiplexed listener: {} bytes", tap_bytes.len());
-
-                        // Send to tap channel (friend requests already routed by tor.rs)
-                        if let Err(e) = tap_tx.send(tap_bytes) {
-                            log::error!("Failed to send to TAP channel: {}", e);
-                            // Don't break - keep listener alive even if one message fails
-                            continue;
-                        }
-                    }
-                    log::warn!("Multiplexed listener receiver closed");
-                });
-
-                log::info!("Multiplexed listener started on port {} - routing TAP and FRIEND_REQUEST by message type", port);
-                1 // success
-            }
-            Err(e) => {
-                log::error!("Failed to start multiplexed listener: {}", e);
-                0 // failure
-            }
-        }
+        1 // success — Arti already accepts TAP/FRIEND_REQUEST on main listener
     }, 0)
 }
 
@@ -2960,15 +2823,15 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_pollIncomingTap(
     }, std::ptr::null_mut())
 }
 
-/// Start friend request listener (separate from TAP to avoid interference)
-/// Initializes the global friend request channel
+/// Start friend request listener — initializes FR channel AND starts FR HS acceptor.
+/// Must be called AFTER createFriendRequestHiddenService() so the FR RendRequest stream exists.
 #[no_mangle]
 pub extern "C" fn Java_com_securelegion_crypto_RustBridge_startFriendRequestListener(
     mut env: JNIEnv,
     _class: JClass,
 ) -> jboolean {
     catch_panic!(env, {
-        log::info!("Initializing friend request listener channel");
+        log::info!("Initializing friend request listener channel + FR HS acceptor");
 
         // Create channel for friend requests
         let (tx, rx) = mpsc::unbounded_channel::<Vec<u8>>();
@@ -2976,12 +2839,24 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_startFriendRequestList
         // Store receiver globally for polling (ArcSwap: atomically replaceable on restart)
         GLOBAL_FRIEND_REQUEST_RECEIVER.store(Some(Arc::new(Mutex::new(rx))));
 
-        // Store sender in global FRIEND_REQUEST_TX for routing in tor.rs
+        // Store sender in global FRIEND_REQUEST_TX for routing in both messaging and FR HS
         let tx_arc = Arc::new(std::sync::Mutex::new(tx));
         crate::network::tor::FRIEND_REQUEST_TX.store(Some(tx_arc));
 
-        log::info!("Friend request listener channel initialized successfully");
-        1 // success
+        // Start the FR HS acceptor (consumes the RendRequest stream from create_friend_request_onion_service)
+        match crate::network::arti::start_fr_listener() {
+            Ok(()) => {
+                log::info!("Friend request HS acceptor started — FR onion is live");
+                log::info!("Friend request listener channel initialized successfully");
+                1 // success
+            }
+            Err(e) => {
+                // Strict isolation mode: FR frames are NOT accepted on messaging HS.
+                // If FR acceptor fails to start, treat as hard failure.
+                log::error!("FR HS acceptor failed to start: {}", e);
+                0 // failure
+            }
+        }
     }, 0)
 }
 
@@ -4857,15 +4732,9 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_startBootstrapListener
     socket_path: JObject,
 ) {
     catch_panic!(env, {
-        let path: Option<String> = if socket_path.is_null() {
-            None
-        } else {
-            let js = JString::from(socket_path);
-            env.get_string(&js).ok().map(|s| s.into())
-        };
-        log::info!("Starting bootstrap event listener (ControlSocket: {})...",
-            if path.is_some() { "set" } else { "not set" });
-        crate::network::tor::start_bootstrap_event_listener_with_socket(path);
+        // Arti only — no C Tor event listener
+        log::info!("Starting Arti bootstrap listener...");
+        crate::network::arti::start_bootstrap_listener();
     }, ())
 }
 
@@ -4876,7 +4745,8 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_isEventListenerRunning
     _env: JNIEnv,
     _class: JClass,
 ) -> jboolean {
-    crate::network::tor::is_event_listener_running() as jboolean
+    // Arti bootstrap listener is always "running" if Arti is initialized
+    crate::network::arti::is_arti_ready() as jboolean
 }
 
 /// Stop the bootstrap event listener (signal it to exit)
@@ -4887,8 +4757,8 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_stopBootstrapListener(
     _class: JClass,
 ) {
     catch_panic!(env, {
-        log::info!("Stopping bootstrap event listener...");
-        crate::network::tor::stop_bootstrap_event_listener();
+        log::info!("Stopping Arti bootstrap listener...");
+        crate::network::arti::stop_bootstrap_listener();
     }, ())
 }
 
@@ -4901,7 +4771,8 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_wakeTorEventListener(
     _class: JClass,
 ) {
     catch_panic!(env, {
-        crate::network::tor::wake_event_listener();
+        // Arti has no backoff sleep to wake — no-op
+        log::debug!("wakeTorEventListener: no-op (Arti in-process)");
     }, ())
 }
 
@@ -7847,29 +7718,33 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_createFriendRequestHid
             }
         };
 
-        let tor_manager = get_tor_manager();
+        // Arti: launch a REAL friend-request onion service (separate .onion from messaging).
+        // This is the public/discoverable onion — only accepts FR/FR_ACCEPTED frames.
+        if fr_private_key.len() < 32 {
+            let _ = env.throw_new("java/lang/RuntimeException",
+                format!("FR private key too short: {} bytes", fr_private_key.len()));
+            return std::ptr::null_mut();
+        }
+        let mut fr_seed = [0u8; 32];
+        fr_seed.copy_from_slice(&fr_private_key[..32]);
 
-        // Run async hidden service creation with friend request key
         let result = GLOBAL_RUNTIME.block_on(async {
-            let mut manager = tor_manager.lock().unwrap();
-            manager.create_hidden_service(service_port as u16, local_port as u16, &fr_private_key).await
+            crate::network::arti::create_friend_request_onion_service(&fr_seed).await
         });
 
         match result {
             Ok(onion_address) => {
-                log::info!("Friend request hidden service created successfully: {}", onion_address);
-
+                log::info!("Friend request onion service HOSTED at: {}", onion_address);
                 match string_to_jstring(&mut env, &onion_address) {
                     Ok(s) => s.into_raw(),
-                    Err(e) => {
-                        let _ = env.throw_new("java/lang/RuntimeException", e);
+                    Err(_) => {
+                        let _ = env.throw_new("java/lang/RuntimeException", "Failed to create FR onion address string");
                         std::ptr::null_mut()
                     }
                 }
             },
             Err(e) => {
-                let error_msg = format!("Failed to create friend request hidden service: {}", e);
-                log::error!("{}", error_msg);
+                let error_msg = format!("Friend request HS creation failed: {}", e);
                 let _ = env.throw_new("java/lang/RuntimeException", error_msg);
                 std::ptr::null_mut()
             }
@@ -8103,25 +7978,38 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_httpGetViaTor(
 
         log::info!("HTTP GET via Tor: {}", url_str);
 
-        // Create SOCKS5 client and make request
-        let client = crate::network::Socks5Client::tor_default();
+        // Try Arti first (in-process, no SOCKS5)
+        if crate::network::arti::is_arti_ready() {
+            match GLOBAL_RUNTIME.block_on(crate::network::arti::http_get_via_arti(&url_str)) {
+                Ok(body) => {
+                    log::info!("HTTP GET via Arti successful ({} bytes)", body.len());
+                    match string_to_jstring(&mut env, &body) {
+                        Ok(s) => return s.into_raw(),
+                        Err(e) => {
+                            let _ = env.throw_new("java/lang/RuntimeException", e);
+                            return std::ptr::null_mut();
+                        }
+                    }
+                }
+                Err(e) => {
+                    log::warn!("HTTP GET via Arti failed, falling back to SOCKS5: {}", e);
+                }
+            }
+        }
 
+        // Fallback: SOCKS5 client (C Tor)
+        let client = crate::network::Socks5Client::tor_default();
         match client.http_get(&url_str) {
             Ok(response) => {
-                // Extract body from response
                 if let Some(body) = crate::network::socks5_client::extract_http_body(&response) {
                     match string_to_jstring(&mut env, &body) {
-                        Ok(s) => {
-                            log::info!("HTTP GET successful ({} bytes)", body.len());
-                            s.into_raw()
-                        }
+                        Ok(s) => s.into_raw(),
                         Err(e) => {
                             let _ = env.throw_new("java/lang/RuntimeException", e);
                             std::ptr::null_mut()
                         }
                     }
                 } else {
-                    // Return full response if can't extract body
                     match string_to_jstring(&mut env, &response) {
                         Ok(s) => s.into_raw(),
                         Err(e) => {
@@ -8133,8 +8021,7 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_httpGetViaTor(
             }
             Err(e) => {
                 log::error!("HTTP GET via Tor failed: {}", e);
-                let error_msg = format!("HTTP GET failed: {}", e);
-                let _ = env.throw_new("java/io/IOException", &error_msg);
+                let _ = env.throw_new("java/io/IOException", format!("HTTP GET failed: {}", e));
                 std::ptr::null_mut()
             }
         }
@@ -8169,26 +8056,38 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_httpPostViaTor(
 
         log::info!("HTTP POST via Tor: {} (body length: {})", url_str, body_str.len());
 
-        // Create SOCKS5 client and make request
-        let client = crate::network::Socks5Client::tor_default();
+        // Try Arti first
+        if crate::network::arti::is_arti_ready() {
+            match GLOBAL_RUNTIME.block_on(crate::network::arti::http_post_via_arti(&url_str, &body_str)) {
+                Ok(response_body) => {
+                    log::info!("HTTP POST via Arti successful ({} bytes)", response_body.len());
+                    match string_to_jstring(&mut env, &response_body) {
+                        Ok(s) => return s.into_raw(),
+                        Err(e) => {
+                            let _ = env.throw_new("java/lang/RuntimeException", e);
+                            return std::ptr::null_mut();
+                        }
+                    }
+                }
+                Err(e) => {
+                    log::warn!("HTTP POST via Arti failed, falling back to SOCKS5: {}", e);
+                }
+            }
+        }
 
-        // Use application/json as default content type
+        // Fallback: SOCKS5 client (C Tor)
+        let client = crate::network::Socks5Client::tor_default();
         match client.http_post(&url_str, &body_str, "application/json") {
             Ok(response) => {
-                // Extract body from response
                 if let Some(body) = crate::network::socks5_client::extract_http_body(&response) {
                     match string_to_jstring(&mut env, &body) {
-                        Ok(s) => {
-                            log::info!("HTTP POST successful ({} bytes)", body.len());
-                            s.into_raw()
-                        }
+                        Ok(s) => s.into_raw(),
                         Err(e) => {
                             let _ = env.throw_new("java/lang/RuntimeException", e);
                             std::ptr::null_mut()
                         }
                     }
                 } else {
-                    // Return full response if can't extract body
                     match string_to_jstring(&mut env, &response) {
                         Ok(s) => s.into_raw(),
                         Err(e) => {
@@ -8200,8 +8099,7 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_httpPostViaTor(
             }
             Err(e) => {
                 log::error!("HTTP POST via Tor failed: {}", e);
-                let error_msg = format!("HTTP POST failed: {}", e);
-                let _ = env.throw_new("java/io/IOException", &error_msg);
+                let _ = env.throw_new("java/io/IOException", format!("HTTP POST failed: {}", e));
                 std::ptr::null_mut()
             }
         }

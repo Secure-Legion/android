@@ -338,13 +338,13 @@ pub fn get_last_hs_accept_heartbeat() -> u64 {
 }
 
 /// Touch the HS loop heartbeat (called periodically from the accept loop tick).
-fn touch_hs_loop_heartbeat() {
+pub fn touch_hs_loop_heartbeat() {
     LAST_HS_LOOP_HEARTBEAT.store(now_millis(), Ordering::SeqCst);
 }
 
 /// Touch the HS accept heartbeat (called only after valid protocol handshake).
-/// Private — only called from handle_incoming_connection after frame validation.
-fn touch_hs_accept_heartbeat() {
+/// Also called from arti.rs acceptor after frame validation.
+pub fn touch_hs_accept_heartbeat() {
     LAST_HS_ACCEPT_HEARTBEAT.store(now_millis(), Ordering::SeqCst);
 }
 
@@ -856,7 +856,17 @@ fn build_control_auth_command() -> String {
 /// Clears CIRCUIT_ESTABLISHED (health-critical) and heartbeat (staleness detection).
 /// Does NOT clear BOOTSTRAP_STATUS — Tor daemon may still be running fine;
 /// zeroing it would flash the UI from 100% → 0%.
+///
+/// GUARD: Under Arti-only mode, the C Tor control socket loop is dead.
+/// If this function is called when Arti is active, skip the state clear
+/// to prevent false unhealthy transitions.
 fn invalidate_listener_state() {
+    // Arti guard: don't clear circuit state if Arti is managing connections
+    if crate::network::arti::is_arti_ready() {
+        log::debug!("invalidate_listener_state: skipped — Arti is active, circuit state managed by Arti");
+        return;
+    }
+
     let now = now_millis();
     LISTENER_DISCONNECTED_SINCE_MS.store(now, Ordering::SeqCst);
     LAST_LISTENER_HEARTBEAT.store(0, Ordering::SeqCst);
@@ -1152,99 +1162,97 @@ pub const PORT_SOCKS: u16 = 9050; // SOCKS5 proxy port
 
 /// Standalone SOCKS5 connect — no TorManager lock needed.
 ///
-/// Connects to a .onion address through the local Tor SOCKS5 proxy.
-/// Safe to call concurrently from multiple tasks — only opens new TCP
-/// connections to the SOCKS proxy (no shared mutable state).
+/// Connects to a .onion address via Arti (in-process Tor).
+/// Safe to call concurrently from multiple tasks.
 pub async fn connect_to_onion(onion_address: &str, port: u16) -> Result<TorConnection, Box<dyn Error + Send + Sync>> {
-    let socks_addr = format!("127.0.0.1:{}", PORT_SOCKS);
-    let mut stream = TcpStream::connect(&socks_addr).await.map_err(|e| {
-        log::error!("SOCKS proxy unreachable at {}: {}", socks_addr, e);
-        format!("SOCKS proxy unreachable: {}", e)
-    })?;
+    // Arti only — no C Tor SOCKS5 fallback
+    if super::arti::get_arti_client().is_none() {
+        return Err("Arti not initialized — cannot connect".into());
+    }
 
-    socks5_handshake(&mut stream, onion_address, port).await?;
+    log::info!("connect_to_onion: using Arti (in-process) for {}:{}", onion_address, port);
+    let arti_stream = super::arti::arti_connect_to_onion(onion_address, port).await?;
+
+    // Bridge Arti's DataStream to a local TCP socket pair so existing code
+    // (which expects TcpStream in TorConnection) works unchanged.
+    let (local_stream, remote_stream) = tokio_socketpair().await?;
+
+    // Spawn bridge task: proxy between Arti DataStream and local TcpStream
+    let arti_data_stream = arti_stream.stream;
+    tokio::spawn(async move {
+        bridge_arti_to_tcp(arti_data_stream, remote_stream).await;
+    });
 
     Ok(TorConnection {
-        stream,
+        stream: local_stream,
         onion_address: onion_address.to_string(),
         port,
     })
 }
 
-/// Standalone SOCKS5 handshake — pure protocol, no TorManager state.
-async fn socks5_handshake(stream: &mut TcpStream, addr: &str, port: u16) -> Result<(), Box<dyn Error + Send + Sync>> {
-    // SOCKS5 greeting: version 5, 1 method, no auth
-    stream.write_all(&[0x05, 0x01, 0x00]).await?;
-
-    let mut buf = [0u8; 2];
-    stream.read_exact(&mut buf).await?;
-    if buf[0] != 0x05 || buf[1] != 0x00 {
-        return Err(format!("SOCKS5 auth failed: version={}, method={}", buf[0], buf[1]).into());
-    }
-
-    // SOCKS5 CONNECT request: VER CMD RSV ATYP(domain) LEN ADDR PORT
-    let mut request = vec![0x05, 0x01, 0x00, 0x03];
-    request.push(addr.len() as u8);
-    request.extend_from_slice(addr.as_bytes());
-    request.extend_from_slice(&port.to_be_bytes());
-    stream.write_all(&request).await?;
-
-    // Read response header: VER, REP, RSV, ATYP
-    let mut hdr = [0u8; 4];
-    stream.read_exact(&mut hdr).await?;
-
-    if hdr[0] != 0x05 {
-        return Err(format!("SOCKS5 bad version in reply: {}", hdr[0]).into());
-    }
-
-    let rep = hdr[1];
-    let atyp = hdr[3];
-
-    if rep != 0x00 {
-        let error_message = match rep {
-            0x01 => "general SOCKS server failure",
-            0x02 => "connection not allowed by ruleset",
-            0x03 => "network unreachable",
-            0x04 => "host unreachable",
-            0x05 => "connection refused",
-            0x06 => "TTL expired",
-            0x07 => "command not supported",
-            0x08 => "address type not supported",
-            _ => "unknown error",
-        };
-        return Err(format!(
-            "SOCKS5 connect to {}:{} failed: status 0x{:02x} ({})",
-            addr, port, rep, error_message
-        ).into());
-    }
-
-    // Consume BND.ADDR + BND.PORT (must read to clear stream, values unused)
-    match atyp {
-        0x01 => {
-            // IPv4: 4 addr + 2 port
-            let mut skip = [0u8; 4 + 2];
-            stream.read_exact(&mut skip).await?;
-        }
-        0x03 => {
-            // Domain: 1 len + N addr + 2 port
-            let mut len = [0u8; 1];
-            stream.read_exact(&mut len).await?;
-            let n = len[0] as usize;
-            let mut skip = vec![0u8; n + 2];
-            stream.read_exact(&mut skip).await?;
-        }
-        0x04 => {
-            // IPv6: 16 addr + 2 port
-            let mut skip = [0u8; 16 + 2];
-            stream.read_exact(&mut skip).await?;
-        }
-        _ => {
-            return Err(format!("SOCKS5 unknown ATYP in reply: 0x{:02x}", atyp).into());
-        }
-    }
-
-    Ok(())
+/// Create a local TCP socket pair for bridging Arti DataStream to TcpStream.
+/// Returns (client_side, server_side) — both are TcpStreams.
+async fn tokio_socketpair() -> Result<(TcpStream, TcpStream), Box<dyn Error + Send + Sync>> {
+    // Bind a temporary listener on localhost, connect to it, accept the connection
+    let listener = TcpListener::bind("127.0.0.1:0").await?;
+    let addr = listener.local_addr()?;
+    let (client, server) = tokio::join!(
+        TcpStream::connect(addr),
+        async { listener.accept().await.map(|(s, _)| s) }
+    );
+    Ok((client?, server?))
 }
+
+/// Bridge data between an Arti DataStream and a local TcpStream.
+/// Runs until either side closes or errors.
+async fn bridge_arti_to_tcp(
+    arti_stream: arti_client::DataStream,
+    tcp_stream: TcpStream,
+) {
+    use futures::io::{AsyncReadExt as FuturesReadExt, AsyncWriteExt as FuturesWriteExt};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    // Split both streams
+    let (mut arti_read, mut arti_write) = arti_stream.split();
+    let (mut tcp_read, mut tcp_write) = tokio::io::split(tcp_stream);
+
+    // Arti → TCP direction
+    let a2t = tokio::spawn(async move {
+        let mut buf = vec![0u8; 16384];
+        loop {
+            match FuturesReadExt::read(&mut arti_read, &mut buf).await {
+                Ok(0) => break,
+                Ok(n) => {
+                    if tcp_write.write_all(&buf[..n]).await.is_err() { break; }
+                }
+                Err(_) => break,
+            }
+        }
+    });
+
+    // TCP → Arti direction
+    let t2a = tokio::spawn(async move {
+        let mut buf = vec![0u8; 16384];
+        loop {
+            match tcp_read.read(&mut buf).await {
+                Ok(0) => break,
+                Ok(n) => {
+                    if FuturesWriteExt::write_all(&mut arti_write, &buf[..n]).await.is_err() { break; }
+                    if FuturesWriteExt::flush(&mut arti_write).await.is_err() { break; }
+                }
+                Err(_) => break,
+            }
+        }
+    });
+
+    // Wait for either direction to complete
+    let _ = tokio::select! {
+        r = a2t => r,
+        r = t2a => r,
+    };
+}
+
+// socks5_handshake removed — Arti connects in-process, no SOCKS5 proxy
 
 /// JNI context availability check
 /// CRITICAL: Some Android lifecycle contexts don't have application context
@@ -1297,6 +1305,11 @@ pub static VOICE_TX: arc_swap::ArcSwapOption<StdMutex<tokio::sync::mpsc::Unbound
 /// Initialized when ACK listener starts on port 9153
 /// ArcSwapOption: atomically replaceable on listener restart
 pub static ACK_TX: arc_swap::ArcSwapOption<StdMutex<tokio::sync::mpsc::UnboundedSender<(u64, Vec<u8>)>>> = arc_swap::ArcSwapOption::const_empty();
+
+/// Global channel for TAP message types
+/// Arti routes TAP messages here from accept_and_handle; Kotlin polls GLOBAL_TAP_RECEIVER
+pub static TAP_TX: arc_swap::ArcSwapOption<StdMutex<tokio::sync::mpsc::UnboundedSender<Vec<u8>>>> = arc_swap::ArcSwapOption::const_empty();
+
 /// Line-oriented Tor control protocol reader
 /// CRITICAL: Handles multi-line Tor responses properly
 /// Response formats:
@@ -2064,36 +2077,9 @@ impl TorManager {
 
     /// Connect to a peer via Tor SOCKS5 proxy (.onion address)
     pub async fn connect(&self, onion_address: &str, port: u16) -> Result<TorConnection, Box<dyn Error>> {
-        log::info!("Connecting to {}:{} via Tor SOCKS5 proxy", onion_address, port);
-
-        // Connect to local SOCKS5 proxy
-        log::info!("Connecting to SOCKS5 proxy at 127.0.0.1:{}...", PORT_SOCKS);
-        let socks_addr = format!("127.0.0.1:{}", PORT_SOCKS);
-        let mut stream = match TcpStream::connect(&socks_addr).await {
-            Ok(s) => {
-                log::info!("Connected to SOCKS5 proxy");
-                s
-            }
-            Err(e) => {
-                log::error!("Failed to connect to SOCKS5 proxy at 127.0.0.1:9050: {}", e);
-                log::error!("Possible causes:");
-                log::error!("1. Tor daemon not running");
-                log::error!("2. SOCKS proxy not listening on port 9050");
-                log::error!("3. Port blocked by firewall");
-                return Err(format!("SOCKS proxy unreachable: {}", e).into());
-            }
-        };
-
-        // Perform SOCKS5 handshake
-        log::info!("Performing SOCKS5 handshake for {}:{}...", onion_address, port);
-        self.socks5_connect(&mut stream, onion_address, port).await?;
-
-        log::info!("Successfully connected to {}", onion_address);
-
-        Ok(TorConnection {
-            stream,
-            onion_address: onion_address.to_string(),
-            port,
+        // Delegate to standalone connect_to_onion which handles Arti vs SOCKS5 routing
+        connect_to_onion(onion_address, port).await.map_err(|e| {
+            Box::<dyn Error>::from(e.to_string())
         })
     }
 

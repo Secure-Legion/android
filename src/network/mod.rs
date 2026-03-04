@@ -1,5 +1,6 @@
 pub mod pingpong;
 pub mod tor;
+pub mod arti;
 pub mod friend_request_server;
 pub mod socks5_client;
 
