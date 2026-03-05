@@ -804,6 +804,11 @@ object RustBridge {
     external fun sendNewnym(): Boolean
 
     /**
+     * Notify Arti that the network changed. Forces circuit teardown and HS re-publication.
+     */
+    external fun notifyNetworkChanged()
+
+    /**
      * Poll for an incoming Ping token (non-blocking)
      * @return Encoded data: [connection_id (8 bytes)][encrypted_ping_bytes] or null if no ping available
      */

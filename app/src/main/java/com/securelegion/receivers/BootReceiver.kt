@@ -51,14 +51,11 @@ class BootReceiver : BroadcastReceiver() {
             return
         }
 
-        // SECURITY: Verify this is a system broadcast, not from a malicious app
-        // System broadcasts have no extras or only system-specific extras
-        if (intent.extras != null && !intent.extras!!.isEmpty) {
-            Log.w(TAG, "Ignoring broadcast with unexpected extras (potential spoofing)")
-            return
-        }
+        // NOTE: BOOT_COMPLETED is a protected broadcast — only the system can send it.
+        // Android includes system extras (e.g. android.intent.extra.user_handle) so we
+        // must not reject broadcasts with extras present.
 
-        Log.i(TAG, "Device boot completed - initializing Secure Legion services")
+        Log.i(TAG, "Device boot completed (action=$action) - initializing Secure Legion services")
 
         try {
             // Only start services if account is initialized
