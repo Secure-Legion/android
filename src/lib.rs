@@ -1,11 +1,14 @@
 pub mod crypto;
 pub mod protocol;
 pub mod network;
-pub mod nlx402;
-pub mod audio;
 pub mod ffi;
-pub mod crdt;
-pub mod util;
+
+// Re-export public crate modules
+pub use securelegion_crypto;
+pub use securelegion_crypto::crdt;
+pub use securelegion_crypto::audio;
+pub use securelegion_crypto::nlx402;
+pub use securelegion_crypto::util;
 
 // Re-export main types
 pub use crypto::{
@@ -28,11 +31,8 @@ pub fn get_version() -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     #[test]
     fn test_version() {
-        let version = get_version();
-        assert!(!version.is_empty());
+        assert!(!super::VERSION.is_empty());
     }
 }

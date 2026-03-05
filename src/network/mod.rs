@@ -1,8 +1,15 @@
 pub mod pingpong;
-pub mod tor;
-pub mod arti;
-pub mod friend_request_server;
-pub mod socks5_client;
+
+// Re-export public network modules from securelegion-crypto
+pub use securelegion_crypto::network::tor;
+pub use securelegion_crypto::network::arti;
+pub use securelegion_crypto::network::friend_request_server;
+pub use securelegion_crypto::network::socks5_client;
+
+pub use securelegion_crypto::network::{TorManager, PENDING_CONNECTIONS, PendingConnection, compute_onion_address_from_ed25519_seed};
+pub use securelegion_crypto::network::{ContactExchangeEndpoint, get_endpoint};
+pub use securelegion_crypto::network::Socks5Client;
+pub use securelegion_crypto::network::{RX_MESSAGE_ACCEPT_COUNT, RX_MESSAGE_TX_DROP_COUNT};
 
 pub use pingpong::{
     PingToken,
@@ -17,6 +24,3 @@ pub use pingpong::{
     remove_ack_session,
     cleanup_expired_acks,
 };
-pub use tor::{TorManager, PENDING_CONNECTIONS, PendingConnection, compute_onion_address_from_ed25519_seed};
-pub use friend_request_server::{ContactExchangeEndpoint, get_endpoint};
-pub use socks5_client::Socks5Client;

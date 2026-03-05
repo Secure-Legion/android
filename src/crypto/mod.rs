@@ -1,11 +1,26 @@
 pub mod encryption;
-pub mod signing;
-pub mod key_exchange;
-pub mod hashing;
-pub mod pqc;
-pub mod replay_cache;
 pub mod ack_state;
-pub mod zkproofs;
+
+// Re-export public crypto from securelegion-crypto
+pub use securelegion_crypto::crypto::signing;
+pub use securelegion_crypto::crypto::key_exchange;
+pub use securelegion_crypto::crypto::hashing;
+pub use securelegion_crypto::crypto::pqc;
+pub use securelegion_crypto::crypto::replay_cache;
+pub use securelegion_crypto::crypto::zkproofs;
+
+// Re-export the same public API the old mod.rs had
+pub use securelegion_crypto::crypto::signing::{sign_data, verify_signature, generate_keypair};
+pub use securelegion_crypto::crypto::key_exchange::{derive_shared_secret, generate_ephemeral_key};
+pub use securelegion_crypto::crypto::hashing::{hash_password, hash_handle};
+pub use securelegion_crypto::crypto::pqc::{
+    generate_hybrid_keypair_from_seed,
+    hybrid_encapsulate,
+    hybrid_decapsulate,
+    HybridKEMKeypair,
+    HybridCiphertext,
+};
+pub use securelegion_crypto::crypto::zkproofs::{generate_range_proof, verify_range_proof};
 
 pub use encryption::{
     encrypt_message,
@@ -17,14 +32,3 @@ pub use encryption::{
     decrypt_message_with_evolution,
     derive_receive_key_at_sequence,
 };
-pub use signing::{sign_data, verify_signature, generate_keypair};
-pub use key_exchange::{derive_shared_secret, generate_ephemeral_key};
-pub use hashing::{hash_password, hash_handle};
-pub use pqc::{
-    generate_hybrid_keypair_from_seed,
-    hybrid_encapsulate,
-    hybrid_decapsulate,
-    HybridKEMKeypair,
-    HybridCiphertext,
-};
-pub use zkproofs::{generate_range_proof, verify_range_proof};

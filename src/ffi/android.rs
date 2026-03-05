@@ -15,7 +15,7 @@ use crate::crypto::{
     encrypt_message_with_evolution, decrypt_message_with_evolution,
     derive_receive_key_at_sequence,
 };
-use crate::network::{TorManager, PENDING_CONNECTIONS};
+use crate::network::{TorManager, PENDING_CONNECTIONS, RX_MESSAGE_ACCEPT_COUNT, RX_MESSAGE_TX_DROP_COUNT};
 use crate::audio::voice_streaming::{VoiceStreamingListener, VoicePacket};
 use tokio::sync::mpsc;
 use tokio::io::AsyncReadExt;
@@ -37,10 +37,6 @@ pub static BLOB_FAIL_CONNECT_ERR: AtomicU64 = AtomicU64::new(0);
 pub static BLOB_FAIL_TOR_NOT_READY: AtomicU64 = AtomicU64::new(0);
 pub static BLOB_FAIL_WRITE_ERR: AtomicU64 = AtomicU64::new(0);
 pub static BLOB_FAIL_UNKNOWN: AtomicU64 = AtomicU64::new(0);
-
-/// Receiver-side metrics
-pub static RX_MESSAGE_ACCEPT_COUNT: AtomicU64 = AtomicU64::new(0); // Messages successfully accepted by receiver
-pub static RX_MESSAGE_TX_DROP_COUNT: AtomicU64 = AtomicU64::new(0); // Messages dropped due to channel not initialized
 
 /// Listener lifecycle metrics
 pub static LISTENER_BIND_COUNT: AtomicU64 = AtomicU64::new(0); // Total listener bind attempts
