@@ -843,16 +843,28 @@ pub async fn http_post_via_arti(url: &str, body: &str) -> Result<String, Box<dyn
 /// Arti doesn't have a direct NEWNYM equivalent, but `isolated_client()` creates
 /// a new circuit isolation context, which achieves the same effect.
 pub fn send_newnym() {
-    if let Some(_client) = ARTI_CLIENT.get() {
-        // isolated_client() creates a new stream isolation context
-        // Future connections through this client will use different circuits
-        log::info!("Arti: NEWNYM equivalent — creating isolated client context");
-        // The isolation happens automatically per-connection in Arti.
-        // For a global NEWNYM effect, we'd need to reconfigure the client.
-        // For now, log that the request was received.
-        log::info!("Arti: circuit isolation requested (Arti handles this per-stream)");
+    if let Some(client) = ARTI_CLIENT.get() {
+        // Cycle dormant mode to force Arti to drop existing circuits and rebuild fresh ones.
+        // This is the Arti equivalent of C Tor's SIGNAL NEWNYM.
+        log::info!("Arti: NEWNYM — cycling dormant mode to retire circuits");
+        client.set_dormant(arti_client::DormantMode::Soft);
+        client.set_dormant(arti_client::DormantMode::Normal);
+        log::info!("Arti: NEWNYM complete — circuits will rebuild, HS will re-establish IPTs");
     } else {
         log::warn!("Arti: NEWNYM requested but client not initialized");
+    }
+}
+
+/// Notify Arti that the network changed (e.g., WiFi → mobile, offline → online).
+/// Cycles dormant mode to force dead circuit teardown and HS descriptor re-publication.
+pub fn notify_network_changed() {
+    if let Some(client) = ARTI_CLIENT.get() {
+        log::info!("Arti: network change detected — cycling dormant mode to rebuild circuits + HS");
+        client.set_dormant(arti_client::DormantMode::Soft);
+        client.set_dormant(arti_client::DormantMode::Normal);
+        log::info!("Arti: dormant cycle complete — Arti will rebuild circuits and re-publish HS descriptors");
+    } else {
+        log::warn!("Arti: network change notified but client not initialized");
     }
 }
 

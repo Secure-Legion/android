@@ -1220,6 +1220,15 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendNewnym(
     }, JNI_FALSE)
 }
 
+/// Notify Arti that the network changed. Forces circuit teardown and HS re-publication.
+#[no_mangle]
+pub extern "C" fn Java_com_securelegion_crypto_RustBridge_notifyNetworkChanged(
+    _env: JNIEnv,
+    _class: JClass,
+) {
+    crate::network::arti::notify_network_changed();
+}
+
 /// Poll for an incoming Ping token (non-blocking)
 /// Returns encoded data: [connection_id (8 bytes)][encrypted_ping_bytes]
 /// or null if no ping available
