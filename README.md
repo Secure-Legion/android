@@ -20,7 +20,7 @@
 
 > "No servers. Metadata resistance. No compromises."
 
-[Provisional Patent](https://securelegion.org/patent) | [Download Beta APK](https://securelegion.org/download) | [Documentation](https://securelegion.org/architecture) | [Roadmap](https://securelegion.org/roadmap)
+[Download Beta APK](https://securelegion.org/download) | [Documentation](https://securelegion.org/docs) | [Roadmap](https://securelegion.org/roadmap)
 
 </div>
 
@@ -778,10 +778,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for detailed guidelines (coming soon).
 
 **Official Documentation:**
 - [Website](https://securelegion.org) - Project overview and feature showcase
-- [Architecture](https://securelegion.org/architecture) - System design and technical components
-- [Security Model](https://securelegion.org/security-model) - Threat analysis and security guarantees
-- [Ping-Pong Protocol](https://securelegion.org/ping-pong-protocol) - P2P messaging protocol specification
-- [Feasibility Audit](https://securelegion.org/feasibility-audit) - Technical validation and proof-of-concept
+- [Documentation](https://securelegion.org/docs) - System design and technical components
 
 **Repository Documentation:**
 - [CHANGELOG.md](CHANGELOG.md) - Version history and release notes
