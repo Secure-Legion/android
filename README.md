@@ -20,7 +20,7 @@
 
 > Open-source cryptographic foundation of [Secure](https://securelegion.org) — the serverless, post-quantum private messenger.
 
-[Website](https://securelegion.org) | [Documentation](https://securelegion.org/architecture) | [Android App](https://github.com/Secure-Legion/android)
+[Website](https://securelegion.org) | [Documentation](https://securelegion.org/docs) | [Android App](https://github.com/Secure-Legion/android)
 
 </div>
 
