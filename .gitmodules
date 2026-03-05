@@ -1,3 +1,6 @@
 [submodule "secure-legion-core"]
 	path = secure-legion-core
 	url = https://github.com/Secure-Legion/rust-core.git
+[submodule "securelegion-crypto"]
+	path = securelegion-crypto
+	url = https://github.com/Secure-Legion/securelegion-crypto.git
