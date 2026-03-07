@@ -459,9 +459,16 @@ pub async fn create_onion_service(
     let addr_clone = expected_addr.clone();
     runtime_spawn(async move {
         let mut events = svc_clone.status_events();
+        let mut proof_set = false;
         loop {
             let status = svc_clone.status();
             log::info!("Arti: messaging HS status update: {:?} for {}", status, addr_clone);
+            // Once HS has an onion address and is running, set proof so UI goes green
+            if !proof_set && svc_clone.onion_address().is_some() {
+                super::tor::set_tor_proof_ok();
+                log::info!("Arti: HS reachable for {} — set_tor_proof_ok()", addr_clone);
+                proof_set = true;
+            }
             // Wait for next status change (or timeout after 60s)
             tokio::select! {
                 _ = events.next() => {}
