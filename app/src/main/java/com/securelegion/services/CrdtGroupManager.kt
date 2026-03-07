@@ -126,6 +126,33 @@ class CrdtGroupManager private constructor(private val context: Context) {
         return null
     }
 
+    /**
+     * Resolve Ed25519 pubkey (hex) from X25519 pubkey.
+     * Used to queue reliable retries for SYNC_CHUNK (0x33) replies.
+     */
+    suspend fun resolvePubkeyByX25519(x25519B64: String, groupIdHex: String): String? {
+        val db = getDatabase()
+        // 1. Contact table
+        val contact = db.contactDao().getContactByX25519PublicKey(x25519B64)
+        if (contact?.publicKeyBase64 != null) {
+            try {
+                val pubkeyBytes = Base64.decode(contact.publicKeyBase64, Base64.NO_WRAP)
+                if (pubkeyBytes.size == 32) {
+                    return bytesToHex(pubkeyBytes)
+                }
+            } catch (_: Exception) { }
+        }
+
+        // 2. GroupPeer table
+        return try {
+            val x25519Bytes = Base64.decode(x25519B64, Base64.NO_WRAP)
+            val x25519Hex = bytesToHex(x25519Bytes)
+            db.groupPeerDao().getByGroupAndX25519(groupIdHex, x25519Hex)?.pubkeyHex
+        } catch (_: Exception) {
+            null
+        }
+    }
+
     // ==================== Pending Delivery Queue ====================
 
     /**
@@ -1151,7 +1178,12 @@ class CrdtGroupManager private constructor(private val context: Context) {
      * @param requestBytes [afterLamport:u64 BE][limit:u32 BE] (12 bytes)
      * @param senderOnion the peer's .onion address to reply to
      */
-    suspend fun handleSyncRequest(groupId: String, requestBytes: ByteArray, senderOnion: String) {
+    suspend fun handleSyncRequest(
+        groupId: String,
+        requestBytes: ByteArray,
+        senderOnion: String,
+        senderPubkeyHex: String? = null
+    ) {
         if (requestBytes.size < 12) {
             Log.w(TAG, "SYNC_REQUEST requestBytes too short: ${requestBytes.size}")
             return
@@ -1178,9 +1210,21 @@ class CrdtGroupManager private constructor(private val context: Context) {
                 Log.i(TAG, "SYNC_CHUNK sent successfully")
             } else {
                 Log.w(TAG, "SYNC_CHUNK sendMessageBlob returned false")
+                if (!senderPubkeyHex.isNullOrEmpty()) {
+                    queuePendingDelivery(groupId, senderPubkeyHex, 0x33.toByte(), payload)
+                    Log.i(TAG, "SYNC_CHUNK queued for retry to ${senderPubkeyHex.take(8)}")
+                } else {
+                    Log.w(TAG, "SYNC_CHUNK retry queue skipped: sender pubkey unknown")
+                }
             }
         } catch (e: Exception) {
             Log.e(TAG, "SYNC_CHUNK send failed", e)
+            if (!senderPubkeyHex.isNullOrEmpty()) {
+                queuePendingDelivery(groupId, senderPubkeyHex, 0x33.toByte(), payload)
+                Log.i(TAG, "SYNC_CHUNK queued for retry after exception to ${senderPubkeyHex.take(8)}")
+            } else {
+                Log.w(TAG, "SYNC_CHUNK retry queue skipped after exception: sender pubkey unknown")
+            }
         }
     }
 

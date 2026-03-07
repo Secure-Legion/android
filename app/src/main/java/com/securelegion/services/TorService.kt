@@ -5001,11 +5001,12 @@ class TorService : Service() {
                                 val senderX25519B64 = android.util.Base64.encodeToString(senderX25519, android.util.Base64.NO_WRAP)
                                 val mgr = CrdtGroupManager.getInstance(this@TorService)
                                 val senderOnion = mgr.resolveOnionByX25519(senderX25519B64, groupIdHex)
+                                val senderPubkeyHex = mgr.resolvePubkeyByX25519(senderX25519B64, groupIdHex)
                                 if (senderOnion.isNullOrEmpty()) {
                                     Log.w(TAG, "SYNC_REQUEST from unknown peer — no onion to reply")
                                     return@launch
                                 }
-                                mgr.handleSyncRequest(groupIdHex, rest, senderOnion)
+                                mgr.handleSyncRequest(groupIdHex, rest, senderOnion, senderPubkeyHex)
                             } catch (e: Exception) {
                                 Log.e(TAG, "Error handling SYNC_REQUEST", e)
                             }
