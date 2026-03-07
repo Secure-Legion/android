@@ -1253,11 +1253,11 @@ class MainActivity : BaseActivity() {
                         emptyState.visibility = View.VISIBLE
                     }
 
-                    // Update groups tab badge with count of pending invite groups
-                    val pendingCount = groupsWithCounts.count { it.group.isPendingInvite }
+                    // Update groups tab badge with pending invites + unread messages
+                    val badgeCount = groupsWithCounts.count { it.group.isPendingInvite || it.group.unreadCount > 0 }
                     val groupsBadge = findViewById<TextView>(R.id.groupsBadge)
-                    if (pendingCount > 0) {
-                        groupsBadge.text = pendingCount.toString()
+                    if (badgeCount > 0) {
+                        groupsBadge.text = badgeCount.toString()
                         groupsBadge.visibility = View.VISIBLE
                     } else {
                         groupsBadge.visibility = View.GONE
@@ -1271,7 +1271,7 @@ class MainActivity : BaseActivity() {
     }
 
     /**
-     * Lightweight badge-only update — queries pending invite count without refreshing the full groups list.
+     * Lightweight badge-only update — counts pending invites + unread messages.
      * Safe to call from any tab.
      */
     private fun updateGroupsBadge() {
@@ -1280,12 +1280,12 @@ class MainActivity : BaseActivity() {
                 val keyManager = KeyManager.getInstance(this@MainActivity)
                 val dbPassphrase = keyManager.getDatabasePassphrase()
                 val database = SecureLegionDatabase.getInstance(this@MainActivity, dbPassphrase)
-                val pendingCount = withContext(Dispatchers.IO) {
-                    database.groupDao().countPendingInvites()
+                val badgeCount = withContext(Dispatchers.IO) {
+                    database.groupDao().countGroupsNeedingAttention()
                 }
                 val groupsBadge = findViewById<TextView>(R.id.groupsBadge)
-                if (pendingCount > 0) {
-                    groupsBadge.text = pendingCount.toString()
+                if (badgeCount > 0) {
+                    groupsBadge.text = badgeCount.toString()
                     groupsBadge.visibility = View.VISIBLE
                 } else {
                     groupsBadge.visibility = View.GONE

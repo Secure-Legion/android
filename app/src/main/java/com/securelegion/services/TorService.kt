@@ -4514,11 +4514,28 @@ class TorService : Service() {
 
             when {
                 existingPing != null && existingPing.state == com.securelegion.database.entities.PingInbox.STATE_MSG_STORED -> {
-                    // Message already stored - just update retry tracking
+                    // Message already stored — sender is retrying because it never got our DELIVERY_ACK.
+                    // Re-send MESSAGE_ACK so the sender can mark the message as delivered.
                     Log.i(TAG, "Message $pingId already stored (state=MSG_STORED)")
-                    Log.i(TAG, "→ Updating retry tracking and sending PING_ACK (idempotent)")
+                    Log.i(TAG, "→ Re-sending MESSAGE_ACK (sender missed original)")
                     withContext(Dispatchers.IO) {
                         database.pingInboxDao().updatePingRetry(pingId, now)
+                    }
+                    // Re-send the DELIVERY_ACK that the sender missed
+                    serviceScope.launch(Dispatchers.IO) {
+                        try {
+                            sendAckWithRetry(
+                                connectionId = null,
+                                itemId = pingId,
+                                ackType = "MESSAGE_ACK",
+                                contactId = contactId,
+                                maxRetries = 3,
+                                initialDelayMs = 1000L
+                            )
+                            Log.i(TAG, "Re-sent MESSAGE_ACK for $pingId")
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Failed to re-send MESSAGE_ACK for $pingId", e)
+                        }
                     }
                     // No notification or download needed
                 }
@@ -4963,6 +4980,9 @@ class TorService : Service() {
                                 val mgr = CrdtGroupManager.getInstance(this@TorService)
                                 val (applied, rejected) = mgr.applyReceivedOps(groupIdHex, rest)
                                 Log.i(TAG, "CRDT_OPS applied=$applied rejected=$rejected group=${groupIdHex.take(16)}...")
+                                if (applied > 0) {
+                                    mgr.incrementUnreadCount(groupIdHex)
+                                }
                                 sendBroadcast(android.content.Intent("com.securelegion.NEW_GROUP_MESSAGE").apply {
                                     setPackage(packageName)
                                     putExtra("GROUP_ID", groupIdHex)
@@ -4999,6 +5019,9 @@ class TorService : Service() {
                                 val mgr = CrdtGroupManager.getInstance(this@TorService)
                                 val (applied, rejected) = mgr.applyReceivedOps(groupIdHex, rest)
                                 Log.i(TAG, "SYNC_CHUNK applied=$applied rejected=$rejected group=${groupIdHex.take(16)}...")
+                                if (applied > 0) {
+                                    mgr.incrementUnreadCount(groupIdHex)
+                                }
                                 sendBroadcast(android.content.Intent("com.securelegion.NEW_GROUP_MESSAGE").apply {
                                     setPackage(packageName)
                                     putExtra("GROUP_ID", groupIdHex)
@@ -5406,6 +5429,9 @@ class TorService : Service() {
                                         val mgr = CrdtGroupManager.getInstance(this@TorService)
                                         val (applied, rejected) = mgr.applyReceivedOps(groupIdHex, packedOps)
                                         Log.i(TAG, "CRDT_OPS applied=$applied rejected=$rejected group=${groupIdHex.take(16)}...")
+                                        if (applied > 0) {
+                                            mgr.incrementUnreadCount(groupIdHex)
+                                        }
                                         val intent = android.content.Intent("com.securelegion.NEW_GROUP_MESSAGE")
                                         intent.setPackage(packageName)
                                         intent.putExtra("GROUP_ID", groupIdHex)
@@ -5581,6 +5607,9 @@ class TorService : Service() {
                             val mgr = CrdtGroupManager.getInstance(this@TorService)
                             val (applied, rejected) = mgr.applyReceivedOps(groupIdHex, packedOps)
                             Log.i(TAG, "CRDT_OPS applied=$applied rejected=$rejected group=${groupIdHex.take(16)}...")
+                            if (applied > 0) {
+                                mgr.incrementUnreadCount(groupIdHex)
+                            }
                             val intent = android.content.Intent("com.securelegion.NEW_GROUP_MESSAGE").apply {
                                 setPackage(packageName)
                                 putExtra("GROUP_ID", groupIdHex)

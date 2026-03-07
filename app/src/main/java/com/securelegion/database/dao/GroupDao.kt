@@ -122,10 +122,28 @@ interface GroupDao {
     suspend fun groupExists(groupId: String): Boolean
 
     /**
+     * Increment unread count for a group
+     */
+    @Query("UPDATE groups SET unreadCount = unreadCount + 1 WHERE groupId = :groupId")
+    suspend fun incrementUnreadCount(groupId: String)
+
+    /**
+     * Clear unread count for a group (when user opens chat)
+     */
+    @Query("UPDATE groups SET unreadCount = 0 WHERE groupId = :groupId")
+    suspend fun clearUnreadCount(groupId: String)
+
+    /**
      * Count groups with pending invites (for badge)
      */
     @Query("SELECT COUNT(*) FROM groups WHERE isPendingInvite = 1")
     suspend fun countPendingInvites(): Int
+
+    /**
+     * Count groups needing attention: pending invites OR unread messages (for badge)
+     */
+    @Query("SELECT COUNT(*) FROM groups WHERE isPendingInvite = 1 OR unreadCount > 0")
+    suspend fun countGroupsNeedingAttention(): Int
 
     /**
      * Delete all groups (for testing or account wipe)

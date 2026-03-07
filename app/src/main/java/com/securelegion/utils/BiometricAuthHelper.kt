@@ -47,7 +47,7 @@ class BiometricAuthHelper(private val context: Context) {
         val biometricManager = BiometricManager.from(context)
         // Check for any biometric (strong OR weak) — face unlock is Class 2 (WEAK) on most devices
         val allowedAuthenticators = BiometricManager.Authenticators.BIOMETRIC_STRONG or
-                BiometricManager.Authenticators.BIOMETRIC_WEAK
+                BiometricManager.Authenticators.DEVICE_CREDENTIAL
         val result = biometricManager.canAuthenticate(allowedAuthenticators)
 
         android.util.Log.d(TAG, "BiometricManager.canAuthenticate(STRONG|WEAK) returned: $result")
@@ -237,11 +237,10 @@ class BiometricAuthHelper(private val context: Context) {
 
             val promptInfo = BiometricPrompt.PromptInfo.Builder()
                 .setTitle("Unlock Secure Legion")
-                .setSubtitle("Verify your identity to unlock")
-                .setNegativeButtonText("Use Password")
+                .setSubtitle("Use fingerprint, face, or device PIN to unlock")
                 .setAllowedAuthenticators(
                     BiometricManager.Authenticators.BIOMETRIC_STRONG or
-                    BiometricManager.Authenticators.BIOMETRIC_WEAK
+                    BiometricManager.Authenticators.DEVICE_CREDENTIAL
                 )
                 .build()
 

@@ -80,5 +80,11 @@ data class Group(
     /**
      * Whether this group is pinned to the main messages tab
      */
-    val isPinned: Boolean = false
+    val isPinned: Boolean = false,
+
+    /**
+     * Number of unread messages in this group.
+     * Incremented on incoming message, cleared when user opens group chat.
+     */
+    val unreadCount: Int = 0
 )

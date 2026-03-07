@@ -75,6 +75,7 @@ class CrdtGroupManager private constructor(private val context: Context) {
 
     init {
         startPendingDeliveryRetryLoop()
+        startRoutingReconciliationLoop()
     }
 
     // ==================== Routing Resolution ====================
@@ -211,6 +212,74 @@ class CrdtGroupManager private constructor(private val context: Context) {
         }
     }
 
+    /**
+     * Periodic routing reconciliation — every 5 minutes, compare accepted members
+     * vs resolved routing. For any member with no route (Contact or GroupPeer),
+     * request the full routing directory from a reachable peer.
+     */
+    /**
+     * Periodic routing reconciliation + background sync — every 5 minutes:
+     * 1. For each group, check accepted members vs resolved routing
+     * 2. Request full routing directory for any unresolved members
+     * 3. Trigger CRDT sync to catch messages missed while routes were broken
+     */
+    private fun startRoutingReconciliationLoop() {
+        managerScope.launch {
+            delay(30_000L) // initial delay: 30s after init
+            while (isActive) {
+                try {
+                    val db = getDatabase()
+                    val localPubkeyHex = bytesToHex(keyManager.getSigningPublicKey())
+                    val allGroups = db.groupDao().getAllGroups()
+
+                    for (group in allGroups) {
+                        if (group.isPendingInvite) continue
+                        try {
+                            val members = queryMembers(group.groupId).filter { it.accepted && !it.removed }
+                            val unresolved = mutableListOf<String>()
+                            var firstReachableOnion: String? = null
+
+                            for (member in members) {
+                                if (member.pubkeyHex == localPubkeyHex) continue
+                                val routing = resolveRouting(db, member.pubkeyHex, group.groupId)
+                                if (routing == null) {
+                                    unresolved.add(member.deviceIdHex.take(8))
+                                } else if (firstReachableOnion == null) {
+                                    firstReachableOnion = routing.onion
+                                }
+                            }
+
+                            if (unresolved.isNotEmpty() && firstReachableOnion != null) {
+                                Log.i(TAG, "ROUTING_RECONCILE: group=${group.groupId.take(16)} unresolved=${unresolved.size} [${unresolved.joinToString()}]")
+                                try {
+                                    val allZeros = "0".repeat(64)
+                                    sendRoutingRequest(group.groupId, allZeros, firstReachableOnion)
+                                } catch (e: Exception) {
+                                    Log.w(TAG, "ROUTING_RECONCILE: request failed for group=${group.groupId.take(16)}", e)
+                                }
+                            }
+
+                            // Background CRDT sync — catch messages missed while routes were broken.
+                            // Only runs if at least one peer is reachable.
+                            if (firstReachableOnion != null && members.size > 1) {
+                                try {
+                                    requestSyncToAllPeers(group.groupId)
+                                } catch (e: Exception) {
+                                    Log.w(TAG, "BACKGROUND_SYNC: failed for group=${group.groupId.take(16)}", e)
+                                }
+                            }
+                        } catch (e: Exception) {
+                            Log.w(TAG, "ROUTING_RECONCILE: skipping group=${group.groupId.take(16)}", e)
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "ROUTING_RECONCILE: sweep error", e)
+                }
+                delay(60_000L) // run every 60s (matches CRDT plan poll interval)
+            }
+        }
+    }
+
     private fun getDatabase(): SecureLegionDatabase {
         val dbPassphrase = keyManager.getDatabasePassphrase()
         return SecureLegionDatabase.getInstance(context, dbPassphrase)
@@ -324,7 +393,8 @@ class CrdtGroupManager private constructor(private val context: Context) {
 
         val sent = results.count { it.success }
         val failed = results.count { !it.success }
-        Log.i(TAG, "Broadcast op to group ${groupId.take(16)}: sent=$sent failed=$failed unreachable=${unreachable.size}")
+        val totalMembers = members.size - 1 // exclude self
+        Log.i(TAG, "GROUP_SEND group=${groupId.take(16)}: members=$totalMembers resolved=${targets.size} unresolved=${unreachable.size} sent=$sent failed=$failed queued=${unreachable.size + failed}")
 
         // Queue failed sends for retry (Tor flakiness is common)
         for (result in results) {
@@ -333,15 +403,16 @@ class CrdtGroupManager private constructor(private val context: Context) {
             }
         }
 
-        // Self-healing: request routing for unreachable members from any successful target
+        // Self-healing: request full routing directory when members are unreachable.
+        // One all-zeros request fetches the entire directory (faster convergence than per-member).
         if (unreachable.isNotEmpty() && targets.isNotEmpty()) {
             val reachableOnion = targets.first().onion
-            for ((pubkeyHex, deviceIdHex) in unreachable) {
-                try {
-                    sendRoutingRequest(groupId, pubkeyHex, reachableOnion)
-                } catch (e: Exception) {
-                    Log.e(TAG, "Failed to request routing for ${deviceIdHex.take(8)}", e)
-                }
+            try {
+                val allZeros = "0".repeat(64)
+                sendRoutingRequest(groupId, allZeros, reachableOnion)
+                Log.i(TAG, "SELF_HEAL: requested full routing directory for ${unreachable.size} unreachable members via ${targets.first().displayName}")
+            } catch (e: Exception) {
+                Log.e(TAG, "SELF_HEAL: full routing directory request failed", e)
             }
         }
     }
@@ -368,11 +439,9 @@ class CrdtGroupManager private constructor(private val context: Context) {
             if (member.pubkeyHex == localPubkeyHex) continue
             val routing = resolveRouting(db, member.pubkeyHex, groupId)
             if (routing == null) {
-                Log.w(TAG, "broadcastRaw: no routing for ${member.deviceIdHex.take(8)} - skipping (sync protocol)")
+                Log.w(TAG, "broadcastRaw: no routing for ${member.deviceIdHex.take(8)} — queueing 0x${"%02x".format(wireType)}")
                 unreachableRaw.add(member.pubkeyHex)
-                if (isSyncRequest) {
-                    queuePendingDelivery(groupId, member.pubkeyHex, wireType, payload)
-                }
+                queuePendingDelivery(groupId, member.pubkeyHex, wireType, payload)
                 continue
             }
             targets.add(RawTarget(routing.onion, member.deviceIdHex, member.pubkeyHex))
@@ -400,15 +469,14 @@ class CrdtGroupManager private constructor(private val context: Context) {
 
         val sent = results.count { it.success }
         val failed = results.count { !it.success }
-        if (isSyncRequest) {
-            for (result in results) {
-                if (!result.success) {
-                    queuePendingDelivery(groupId, result.pubkeyHex, wireType, payload)
-                }
+        for (result in results) {
+            if (!result.success) {
+                queuePendingDelivery(groupId, result.pubkeyHex, wireType, payload)
             }
         }
 
-        Log.i(TAG, "broadcastRaw 0x${"%02x".format(wireType)} group=${groupId.take(16)}: sent=$sent failed=$failed unreachable=${unreachableRaw.size}")
+        val totalMembers = members.size - 1
+        Log.i(TAG, "broadcastRaw 0x${"%02x".format(wireType)} group=${groupId.take(16)}: members=$totalMembers resolved=${targets.size} unresolved=${unreachableRaw.size} sent=$sent failed=$failed queued=${unreachableRaw.size + failed}")
 
         // Self-healing: request routing for unreachable members
         if (unreachableRaw.isNotEmpty() && targets.isNotEmpty()) {
@@ -959,8 +1027,8 @@ class CrdtGroupManager private constructor(private val context: Context) {
         if (!myEntry.accepted && myEntry.invitedByOpId.isNotEmpty()) {
             try {
                 Log.i(TAG, "checkPendingInvites: auto-accepting membership for protocol for $groupId (opId=${myEntry.invitedByOpId})")
-                val opBytes = acceptInvite(groupId, myEntry.invitedByOpId)
-                // Note: do NOT clear isPendingInvite here — let the UI Accept button do that
+                val opBytes = acceptInvite(groupId, myEntry.invitedByOpId, clearPendingFlag = false)
+                // isPendingInvite stays true — UI Accept button clears it
                 Log.i(TAG, "checkPendingInvites: protocol-accept successful — UI still shows pending until user confirms")
             } catch (e: Exception) {
                 Log.w(TAG, "checkPendingInvites: auto-accept failed (user can manually accept later)", e)
@@ -978,6 +1046,28 @@ class CrdtGroupManager private constructor(private val context: Context) {
         })
 
         return true
+    }
+
+    /**
+     * Increment unread count for a group (called when new messages arrive).
+     */
+    suspend fun incrementUnreadCount(groupId: String) {
+        try {
+            getDatabase().groupDao().incrementUnreadCount(groupId)
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to increment unread count for $groupId", e)
+        }
+    }
+
+    /**
+     * Clear unread count for a group (called when user opens the chat).
+     */
+    suspend fun clearUnreadCount(groupId: String) {
+        try {
+            getDatabase().groupDao().clearUnreadCount(groupId)
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to clear unread count for $groupId", e)
+        }
     }
 
     /**
@@ -1330,7 +1420,7 @@ class CrdtGroupManager private constructor(private val context: Context) {
      * @param inviteOpIdHex the op_id of the MemberInvite op ("authorHex:lamportHex:nonceHex")
      * @return raw op bytes (broadcast already done internally)
      */
-    suspend fun acceptInvite(groupId: String, inviteOpIdHex: String): ByteArray {
+    suspend fun acceptInvite(groupId: String, inviteOpIdHex: String, clearPendingFlag: Boolean = true): ByteArray {
         val authorPubkey = keyManager.getSigningPublicKey()
         val authorPrivkey = keyManager.getSigningKeyBytes()
 
@@ -1347,7 +1437,9 @@ class CrdtGroupManager private constructor(private val context: Context) {
 
         // Clear pending invite flag + update member count
         val db = getDatabase()
-        db.groupDao().updatePendingInvite(groupId, false)
+        if (clearPendingFlag) {
+            db.groupDao().updatePendingInvite(groupId, false)
+        }
         try {
             val members = queryMembers(groupId)
             db.groupDao().updateMemberCount(groupId, members.count { it.accepted && !it.removed })
@@ -1355,6 +1447,25 @@ class CrdtGroupManager private constructor(private val context: Context) {
 
         // Broadcast MemberAccept to all group members
         broadcastOpToGroup(groupId, opBytes)
+
+        // Request full routing directory from any reachable member so we can
+        // reach non-friend members. Use all-zeros pubkey = "send me everything."
+        try {
+            val localPubkeyHex = bytesToHex(keyManager.getSigningPublicKey())
+            val members = queryMembers(groupId).filter { it.accepted && !it.removed }
+            val reachable = members.firstOrNull { member ->
+                member.pubkeyHex != localPubkeyHex &&
+                    resolveRouting(db, member.pubkeyHex, groupId) != null
+            }
+            if (reachable != null) {
+                val routing = resolveRouting(db, reachable.pubkeyHex, groupId)!!
+                val allZeros = "0".repeat(64) // request full directory
+                sendRoutingRequest(groupId, allZeros, routing.onion)
+                Log.i(TAG, "acceptInvite: requested full routing directory from ${routing.displayName}")
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "acceptInvite: routing directory request failed (non-fatal)", e)
+        }
 
         return opBytes
     }

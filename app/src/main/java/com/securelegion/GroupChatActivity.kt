@@ -736,8 +736,15 @@ class GroupChatActivity : BaseActivity() {
             registerReceiver(groupMessageReceiver, filter)
         }
 
-        // Pull-based sync: request missing ops from peers on every resume
+        // Clear unread badge when user opens this group chat
         val currentGroupId = groupId ?: return
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                CrdtGroupManager.getInstance(this@GroupChatActivity).clearUnreadCount(currentGroupId)
+            } catch (_: Exception) { }
+        }
+
+        // Pull-based sync: request missing ops from peers on every resume
         lifecycleScope.launch {
             try {
                 kotlinx.coroutines.withContext(Dispatchers.IO) {
