@@ -119,7 +119,30 @@ class TorVpnService : VpnService(), ISocketProtect {
     override fun onDestroy() {
         super.onDestroy()
         Log.d(TAG, "TorVpnService destroyed")
+
+        // Safety net: ensure VPN is fully torn down even if stopVpn() wasn't called
         running.set(false)
+
+        bandwidthUpdateThread?.interrupt()
+        bandwidthUpdateThread = null
+
+        try {
+            if (OnionMasq.isRunning()) {
+                OnionMasq.stop()
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error stopping OnionMasq in onDestroy", e)
+        }
+
+        try {
+            vpnInterface?.close()
+            vpnInterface = null
+        } catch (e: Exception) {
+            Log.e(TAG, "Error closing VPN interface in onDestroy", e)
+        }
+
+        OnionMasq.unbindVPNService()
+        broadcastVpnStats(0, 0, false)
         executor.shutdown()
     }
 

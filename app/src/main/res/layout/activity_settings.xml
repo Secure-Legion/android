@@ -548,11 +548,12 @@
 
             </LinearLayout>
 
-            <!-- Bridge -->
+            <!-- Bridge (hidden until bridge support is ready) -->
             <LinearLayout
                 android:id="@+id/bridgeItem"
                 android:layout_width="match_parent"
                 android:layout_height="80dp"
+                android:visibility="gone"
                 android:orientation="horizontal"
                 android:background="@drawable/settings_box_bg"
                 android:paddingStart="10dp"

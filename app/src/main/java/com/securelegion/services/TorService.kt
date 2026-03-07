@@ -3374,17 +3374,21 @@ class TorService : Service() {
                         val signature = android.util.Base64.decode(phase2Obj.getString("signature"), android.util.Base64.NO_WRAP)
                         val senderEd25519PublicKey = android.util.Base64.decode(phase2Obj.getString("ed25519_public_key"), android.util.Base64.NO_WRAP)
 
-                        // Reconstruct unsigned JSON
-                        val unsignedJson = org.json.JSONObject().apply {
-                            put("contact_card", phase2Obj.getJSONObject("contact_card"))
-                            if (phase2Obj.has("kyber_ciphertext")) {
-                                put("kyber_ciphertext", phase2Obj.getString("kyber_ciphertext"))
-                            }
-                            put("phase", 2)
-                        }.toString()
+                        // Use exact signed bytes if available (v2.0.8+), fall back to reconstruction
+                        val unsignedBytes = if (phase2Obj.has("signed_payload")) {
+                            android.util.Base64.decode(phase2Obj.getString("signed_payload"), android.util.Base64.NO_WRAP)
+                        } else {
+                            org.json.JSONObject().apply {
+                                put("contact_card", phase2Obj.getJSONObject("contact_card"))
+                                if (phase2Obj.has("kyber_ciphertext")) {
+                                    put("kyber_ciphertext", phase2Obj.getString("kyber_ciphertext"))
+                                }
+                                put("phase", 2)
+                            }.toString().toByteArray(Charsets.UTF_8)
+                        }
 
                         val signatureValid = RustBridge.verifySignature(
-                            unsignedJson.toByteArray(Charsets.UTF_8),
+                            unsignedBytes,
                             signature,
                             senderEd25519PublicKey
                         )
@@ -4578,9 +4582,9 @@ class TorService : Service() {
                 }
             }
 
-            // Classify wire type for UI + DMS decisions
-            // Note: 0x10 (REACTION) is already handled above via inline processing + early return
-            val isProfileUpdate = pingWireType == 0x0F  // No notification, no DMS (inline delivery only)
+            // Note: 0x10 (REACTION) and 0x0F (PROFILE_UPDATE) now use sendMessageBlob
+            // and arrive via handleIncomingMessageBlob — they never reach this ping handler.
+            val isProfileUpdate = false
 
             // PROTOCOL DISPATCH: Branch based on Device Protection mode
             // Normal mode (4-hop): No PING_ACK — DMS sends PONG as first network action
@@ -6096,17 +6100,21 @@ class TorService : Service() {
                         val signature = android.util.Base64.decode(phase2Obj.getString("signature"), android.util.Base64.NO_WRAP)
                         val senderEd25519PublicKey = android.util.Base64.decode(phase2Obj.getString("ed25519_public_key"), android.util.Base64.NO_WRAP)
 
-                        // Reconstruct unsigned JSON to verify signature
-                        val unsignedJson = org.json.JSONObject().apply {
-                            put("contact_card", phase2Obj.getJSONObject("contact_card"))
-                            if (phase2Obj.has("kyber_ciphertext")) {
-                                put("kyber_ciphertext", phase2Obj.getString("kyber_ciphertext"))
-                            }
-                            put("phase", 2)
-                        }.toString()
+                        // Use exact signed bytes if available (v2.0.8+), fall back to reconstruction
+                        val unsignedBytes = if (phase2Obj.has("signed_payload")) {
+                            android.util.Base64.decode(phase2Obj.getString("signed_payload"), android.util.Base64.NO_WRAP)
+                        } else {
+                            org.json.JSONObject().apply {
+                                put("contact_card", phase2Obj.getJSONObject("contact_card"))
+                                if (phase2Obj.has("kyber_ciphertext")) {
+                                    put("kyber_ciphertext", phase2Obj.getString("kyber_ciphertext"))
+                                }
+                                put("phase", 2)
+                            }.toString().toByteArray(Charsets.UTF_8)
+                        }
 
                         val signatureValid = RustBridge.verifySignature(
-                            unsignedJson.toByteArray(Charsets.UTF_8),
+                            unsignedBytes,
                             signature,
                             senderEd25519PublicKey
                         )

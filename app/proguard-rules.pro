@@ -52,6 +52,19 @@
 -keep class com.securelegion.crypto.RustBridge { *; }
 -keep class com.securelegion.crypto.RustBridge$* { *; }
 
+# JNI callback interfaces - Rust calls these by method name at runtime
+-keep interface com.securelegion.crypto.RustBridge$TorEventCallback { *; }
+-keep interface com.securelegion.crypto.RustBridge$VoicePacketCallback { *; }
+-keep interface com.securelegion.crypto.RustBridge$VoiceSignalingCallback { *; }
+
+# Keep all classes that implement JNI callback interfaces (method names must not be obfuscated)
+-keep class * implements com.securelegion.crypto.RustBridge$TorEventCallback { *; }
+-keep class * implements com.securelegion.crypto.RustBridge$VoicePacketCallback { *; }
+-keep class * implements com.securelegion.crypto.RustBridge$VoiceSignalingCallback { *; }
+
+# PendingPingStore - accessed via JNI FindClass from Rust sendPing
+-keep class com.securelegion.database.PendingPingStore { *; }
+
 # ==================== APPLICATION CLASS ====================
 
 -keep class com.securelegion.SecureLegionApplication { *; }
@@ -101,13 +114,8 @@
 
 # ==================== SERVICES (MANIFEST + INTENT REFERENCED) ====================
 
--keep class com.securelegion.services.TorService { *; }
--keep class com.securelegion.services.DownloadMessageService { *; }
--keep class com.securelegion.services.MessageService { *; }
--keep class com.securelegion.services.SolanaService { *; }
--keep class com.securelegion.services.ZcashService { *; }
--keep class com.securelegion.services.ContactCardManager { *; }
--keep class com.securelegion.services.CrustService { *; }
+# Keep all services — many are started by intent/class name or referenced from JNI
+-keep class com.securelegion.services.** { *; }
 
 # ==================== BROADCAST RECEIVERS (MANIFEST REFERENCED) ====================
 
@@ -244,6 +252,11 @@
 -keep class org.torproject.jni.TorService { *; }
 -dontwarn org.torproject.**
 
+# OnionMasq Java bridge/events are consumed by Rust JNI callbacks and Gson reflection.
+# Keep class/member names to prevent runtime breakage in Rust->Java calls and event parsing.
+-keep class org.torproject.onionmasq.** { *; }
+-keepclassmembers class org.torproject.onionmasq.** { *; }
+
 # Tor control library
 -keep class net.freehaven.tor.control.** { *; }
 -dontwarn net.freehaven.tor.control.**
@@ -347,6 +360,9 @@
     public <init>(android.content.Context, android.util.AttributeSet);
     public <init>(android.content.Context, android.util.AttributeSet, int);
 }
+
+# Custom views — inflated by class name in XML layouts
+-keep class com.securelegion.views.** { *; }
 
 # ==================== ENUMS ====================
 

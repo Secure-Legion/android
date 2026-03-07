@@ -1360,15 +1360,22 @@ class AddFriendActivity : BaseActivity() {
                     val signature = Base64.decode(phase1Obj.getString("signature"), Base64.NO_WRAP)
                     val senderEd25519PublicKey = Base64.decode(phase1Obj.getString("ed25519_public_key"), Base64.NO_WRAP)
 
-                    // Strip signature fields from original to recover exact signed bytes
-                    // (rebuilding a new JSONObject can produce different toString() output)
-                    val unsignedObj = org.json.JSONObject(phase1Obj.toString())
-                    unsignedObj.remove("signature")
-                    unsignedObj.remove("ed25519_public_key")
-                    val unsignedJson = unsignedObj.toString()
+                    // Use exact signed bytes if available (v2.0.8+), fall back to reconstruction
+                    val unsignedBytes = if (phase1Obj.has("signed_payload")) {
+                        Base64.decode(phase1Obj.getString("signed_payload"), Base64.NO_WRAP)
+                    } else {
+                        // Legacy fallback: reconstruct with known key order
+                        org.json.JSONObject().apply {
+                            put("username", phase1Obj.getString("username"))
+                            put("friend_request_onion", phase1Obj.getString("friend_request_onion"))
+                            put("x25519_public_key", phase1Obj.getString("x25519_public_key"))
+                            put("kyber_public_key", phase1Obj.getString("kyber_public_key"))
+                            put("phase", phase1Obj.getInt("phase"))
+                        }.toString().toByteArray(Charsets.UTF_8)
+                    }
 
                     val signatureValid = com.securelegion.crypto.RustBridge.verifySignature(
-                        unsignedJson.toByteArray(Charsets.UTF_8),
+                        unsignedBytes,
                         signature,
                         senderEd25519PublicKey
                     )
@@ -1443,10 +1450,11 @@ class AddFriendActivity : BaseActivity() {
                     ownSigningKey
                 )
 
-                // Add signature to payload
+                // Add signature and exact signed bytes to payload
                 val phase2Payload = org.json.JSONObject(phase2UnsignedJson).apply {
                     put("ed25519_public_key", Base64.encodeToString(ownSigningPublicKey, Base64.NO_WRAP))
                     put("signature", Base64.encodeToString(phase2Signature, Base64.NO_WRAP))
+                    put("signed_payload", Base64.encodeToString(phase2UnsignedJson.toByteArray(Charsets.UTF_8), Base64.NO_WRAP))
                 }.toString()
 
                 Log.d(TAG, "Phase 2 payload signed with Ed25519")
@@ -1585,10 +1593,11 @@ class AddFriendActivity : BaseActivity() {
                     ownSigningKey
                 )
 
-                // Add signature and signing public key to payload
+                // Add signature, signing public key, and exact signed bytes to payload
                 val phase1Payload = org.json.JSONObject(phase1UnsignedJson).apply {
                     put("ed25519_public_key", android.util.Base64.encodeToString(ownSigningPublicKey, android.util.Base64.NO_WRAP))
                     put("signature", android.util.Base64.encodeToString(phase1Signature, android.util.Base64.NO_WRAP))
+                    put("signed_payload", android.util.Base64.encodeToString(phase1UnsignedJson.toByteArray(Charsets.UTF_8), android.util.Base64.NO_WRAP))
                 }.toString()
 
                 Log.d(TAG, "Phase 1 payload signed with Ed25519")

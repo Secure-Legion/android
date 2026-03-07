@@ -79,11 +79,6 @@ class SettingsActivity : BaseActivity() {
             startActivity(Intent(this, WipeAccountActivity::class.java))
         }
 
-        // Bridge
-        findViewById<View>(R.id.bridgeItem).setOnClickListener {
-            startActivity(Intent(this, BridgeActivity::class.java))
-        }
-
         // Communication Mode
         findViewById<View>(R.id.communicationModeItem).setOnClickListener {
             startActivity(Intent(this, CommunicationModeActivity::class.java))
@@ -295,10 +290,14 @@ class SettingsActivity : BaseActivity() {
     private fun stopTorVpnService() {
         try {
             Log.i("SettingsActivity", "Stopping Tor VPN service...")
+            // Send stop action so stopVpn() runs cleanup (OnionMasq.stop, etc.)
             val intent = Intent(this, TorVpnService::class.java).apply {
                 action = TorVpnService.ACTION_STOP_VPN
             }
             startService(intent)
+            // Also call stopService() to ensure the service is destroyed
+            // onDestroy() has safety-net cleanup in case the stop action didn't complete
+            stopService(Intent(this, TorVpnService::class.java))
             ThemedToast.show(this, "Tor Mode disabled")
         } catch (e: Exception) {
             Log.e("SettingsActivity", "Failed to stop Tor VPN", e)

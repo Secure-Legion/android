@@ -59,6 +59,7 @@ import com.securelegion.database.entities.ed25519PublicKeyBytes
 import com.securelegion.database.entities.x25519PublicKeyBytes
 import java.util.UUID
 import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
@@ -80,6 +81,8 @@ class MainActivity : BaseActivity() {
     private var pendingCallContact: Contact? = null // Temporary storage for pending call after permission request
     private var isInitiatingCall = false // Prevent duplicate call initiations
     private var dbDeferred: Deferred<SecureLegionDatabase>? = null // Pre-warmed DB connection
+    private var chatRefreshJob: Job? = null // Cancel-on-reentry guard for setupChatList
+    private var chatScrollGateListener: RecyclerView.OnScrollListener? = null
 
     // BroadcastReceiver to listen for incoming Pings and message status updates
     private val pingReceiver = object : BroadcastReceiver() {
@@ -757,10 +760,22 @@ class MainActivity : BaseActivity() {
     private fun setupChatList() {
         val chatList = findViewById<RecyclerView>(R.id.chatList)
 
+        // Set LayoutManager + empty adapter immediately so the RecyclerView
+        // is structurally ready before data arrives — eliminates blank flash.
+        // On subsequent calls (refresh), the existing adapter stays visible.
+        if (chatList.layoutManager == null) {
+            chatList.layoutManager = LinearLayoutManager(this@MainActivity)
+            chatList.adapter = ChatAdapter(chats = emptyList(), onChatClick = {})
+        }
+
         Log.d("MainActivity", "Loading message threads...")
 
+        // Cancel any in-flight refresh so we don't stack coroutines
+        chatRefreshJob?.cancel()
+
         // Load real message threads from database
-        lifecycleScope.launch {
+        // The existing adapter stays visible until new data is ready — no blank flash
+        chatRefreshJob = lifecycleScope.launch {
             try {
                 // Use pre-warmed DB if available, otherwise open fresh
                 val database = dbDeferred?.await() ?: run {
@@ -891,8 +906,6 @@ class MainActivity : BaseActivity() {
                 }
 
                 Log.d("MainActivity", "Setting up RecyclerView adapter with ${chats.size} items")
-                // Set adapter
-                chatList.layoutManager = LinearLayoutManager(this@MainActivity)
                 val chatAdapter = ChatAdapter(
                     chats = chats,
                     onChatClick = { chat ->
@@ -933,12 +946,14 @@ class MainActivity : BaseActivity() {
                 )
                 chatList.adapter = chatAdapter
 
-                // Scroll gate: block taps while dragging or settling after fling
-                chatList.addOnScrollListener(object : RecyclerView.OnScrollListener() {
+                // Remove only our prior chat scroll-gate listener, keep all others intact
+                chatScrollGateListener?.let { chatList.removeOnScrollListener(it) }
+                chatScrollGateListener = object : RecyclerView.OnScrollListener() {
                     override fun onScrollStateChanged(rv: RecyclerView, newState: Int) {
                         chatAdapter.listIsScrolling = newState != RecyclerView.SCROLL_STATE_IDLE
                     }
-                })
+                }
+                chatList.addOnScrollListener(chatScrollGateListener!!)
 
                 Log.d("MainActivity", "RecyclerView adapter set successfully")
             } catch (e: Exception) {
@@ -1702,14 +1717,23 @@ class MainActivity : BaseActivity() {
                 if (phase1Obj.has("signature") && phase1Obj.has("ed25519_public_key")) {
                     val signature = android.util.Base64.decode(phase1Obj.getString("signature"), android.util.Base64.NO_WRAP)
                     val senderEd25519PubKey = android.util.Base64.decode(phase1Obj.getString("ed25519_public_key"), android.util.Base64.NO_WRAP)
-                    // Strip signature fields from original to recover exact signed bytes
-                    // (rebuilding a new JSONObject can produce different toString() output)
-                    val unsignedObj = org.json.JSONObject(phase1Obj.toString())
-                    unsignedObj.remove("signature")
-                    unsignedObj.remove("ed25519_public_key")
-                    val unsignedJson = unsignedObj.toString()
+
+                    // Use exact signed bytes if available (v2.0.8+), fall back to reconstruction
+                    val unsignedBytes = if (phase1Obj.has("signed_payload")) {
+                        android.util.Base64.decode(phase1Obj.getString("signed_payload"), android.util.Base64.NO_WRAP)
+                    } else {
+                        // Legacy fallback: reconstruct with known key order
+                        org.json.JSONObject().apply {
+                            put("username", phase1Obj.getString("username"))
+                            put("friend_request_onion", phase1Obj.getString("friend_request_onion"))
+                            put("x25519_public_key", phase1Obj.getString("x25519_public_key"))
+                            put("kyber_public_key", phase1Obj.getString("kyber_public_key"))
+                            put("phase", phase1Obj.getInt("phase"))
+                        }.toString().toByteArray(Charsets.UTF_8)
+                    }
+
                     if (!com.securelegion.crypto.RustBridge.verifySignature(
-                            unsignedJson.toByteArray(Charsets.UTF_8), signature, senderEd25519PubKey)) {
+                            unsignedBytes, signature, senderEd25519PubKey)) {
                         com.securelegion.utils.ThemedToast.show(this@MainActivity, "Invalid signature — rejecting")
                         return@launch
                     }
@@ -1754,6 +1778,7 @@ class MainActivity : BaseActivity() {
                 val phase2Payload = org.json.JSONObject(phase2UnsignedJson).apply {
                     put("ed25519_public_key", android.util.Base64.encodeToString(keyManager.getSigningPublicKey(), android.util.Base64.NO_WRAP))
                     put("signature", android.util.Base64.encodeToString(phase2Signature, android.util.Base64.NO_WRAP))
+                    put("signed_payload", android.util.Base64.encodeToString(phase2UnsignedJson.toByteArray(Charsets.UTF_8), android.util.Base64.NO_WRAP))
                 }.toString()
 
                 // Encrypt with sender's X25519 key

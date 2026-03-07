@@ -20,6 +20,7 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.PopupMenu
 import android.widget.TextView
+import android.widget.FrameLayout
 import androidx.cardview.widget.CardView
 import androidx.core.content.ContextCompat
 import androidx.recyclerview.widget.DiffUtil
@@ -376,7 +377,7 @@ class MessageAdapter(
 
     class ImageSentMessageViewHolder(view: View) : RecyclerView.ViewHolder(view) {
         val timestampHeader: TextView = view.findViewById(R.id.timestampHeader)
-        val messageBubble: CardView = view.findViewById(R.id.messageBubble)
+        val messageBubble: View = view.findViewById(R.id.messageBubble)
         val messageImage: ImageView = view.findViewById(R.id.messageImage)
         val messageStatus: ImageView = view.findViewById(R.id.messageStatus)
         val swipeRevealedTime: TextView = view.findViewById(R.id.swipeRevealedTime)
@@ -385,7 +386,7 @@ class MessageAdapter(
 
     class ImageReceivedMessageViewHolder(view: View) : RecyclerView.ViewHolder(view) {
         val timestampHeader: TextView = view.findViewById(R.id.timestampHeader)
-        val messageBubble: CardView = view.findViewById(R.id.messageBubble)
+        val messageBubble: View = view.findViewById(R.id.messageBubble)
         val messageImage: ImageView = view.findViewById(R.id.messageImage)
         val swipeRevealedTime: TextView = view.findViewById(R.id.swipeRevealedTime)
         val messageCheckbox: CheckBox = view.findViewById(R.id.messageCheckbox)
@@ -1540,7 +1541,7 @@ class MessageAdapter(
     }
 
     private fun setupSwipeGestureForCard(
-        bubble: CardView,
+        bubble: View,
         timeView: TextView,
         statusView: ImageView?,
         position: Int,

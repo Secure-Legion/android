@@ -4,8 +4,8 @@
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
     android:orientation="vertical"
-    android:paddingTop="8dp"
-    android:paddingBottom="8dp">
+    android:paddingTop="2dp"
+    android:paddingBottom="2dp">
 
     <!-- Timestamp Header (Day/Date) -->
     <TextView
@@ -25,10 +25,10 @@
         android:layout_height="wrap_content"
         android:orientation="horizontal"
         android:gravity="start"
-        android:paddingStart="16dp"
-        android:paddingEnd="60dp">
+        android:paddingStart="12dp"
+        android:paddingEnd="16dp">
 
-        <!-- Swipe-revealed timestamp (left side) -->
+        <!-- Swipe-revealed timestamp -->
         <TextView
             android:id="@+id/swipeRevealedTime"
             android:layout_width="wrap_content"
@@ -40,28 +40,25 @@
             android:layout_marginEnd="8dp"
             android:visibility="gone" />
 
-        <!-- Image with rounded corners (no bubble background) -->
-        <androidx.cardview.widget.CardView
+        <!-- Image with rounded corners via ShapeableImageView -->
+        <FrameLayout
             android:id="@+id/messageBubble"
             android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            app:cardCornerRadius="12dp"
-            app:cardElevation="0dp"
-            app:cardBackgroundColor="@android:color/transparent">
+            android:layout_height="wrap_content">
 
-            <!-- Image Content -->
-            <ImageView
+            <com.google.android.material.imageview.ShapeableImageView
                 android:id="@+id/messageImage"
-                android:layout_width="220dp"
+                android:layout_width="240dp"
                 android:layout_height="wrap_content"
                 android:adjustViewBounds="true"
-                android:maxHeight="280dp"
-                android:scaleType="fitCenter"
+                android:maxHeight="300dp"
+                android:scaleType="centerCrop"
+                app:shapeAppearanceOverlay="@style/RoundedImageShape"
                 android:contentDescription="Image message" />
 
-        </androidx.cardview.widget.CardView>
+        </FrameLayout>
 
-        <!-- Selection Checkbox (shown in delete mode) -->
+        <!-- Selection Checkbox -->
         <CheckBox
             android:id="@+id/messageCheckbox"
             android:layout_width="18dp"

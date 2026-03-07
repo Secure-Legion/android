@@ -13,4 +13,10 @@
         <item name="android:focusable">true</item>
         <item name="android:background">?attr/selectableItemBackgroundBorderless</item>
     </style>
+
+    <!-- Rounded corners for image messages -->
+    <style name="RoundedImageShape" parent="">
+        <item name="cornerFamily">rounded</item>
+        <item name="cornerSize">12dp</item>
+    </style>
 </resources>

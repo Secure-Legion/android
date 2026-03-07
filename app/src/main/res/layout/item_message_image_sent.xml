@@ -4,8 +4,8 @@
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
     android:orientation="vertical"
-    android:paddingTop="8dp"
-    android:paddingBottom="8dp">
+    android:paddingTop="2dp"
+    android:paddingBottom="2dp">
 
     <!-- Timestamp Header (Day/Date) -->
     <TextView
@@ -25,49 +25,39 @@
         android:layout_height="wrap_content"
         android:orientation="horizontal"
         android:gravity="end"
-        android:paddingStart="60dp"
-        android:paddingEnd="16dp">
+        android:paddingStart="16dp"
+        android:paddingEnd="12dp">
 
-        <!-- Image with rounded corners (no bubble background) -->
-        <androidx.cardview.widget.CardView
+        <!-- Image bubble with rounded corners via ShapeableImageView -->
+        <FrameLayout
             android:id="@+id/messageBubble"
             android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            app:cardCornerRadius="12dp"
-            app:cardElevation="0dp"
-            app:cardBackgroundColor="@android:color/transparent">
+            android:layout_height="wrap_content">
 
-            <FrameLayout
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content">
+            <com.google.android.material.imageview.ShapeableImageView
+                android:id="@+id/messageImage"
+                android:layout_width="240dp"
+                android:layout_height="wrap_content"
+                android:adjustViewBounds="true"
+                android:maxHeight="300dp"
+                android:scaleType="centerCrop"
+                app:shapeAppearanceOverlay="@style/RoundedImageShape"
+                android:contentDescription="Image message" />
 
-                <!-- Image Content -->
-                <ImageView
-                    android:id="@+id/messageImage"
-                    android:layout_width="220dp"
-                    android:layout_height="wrap_content"
-                    android:adjustViewBounds="true"
-                    android:maxHeight="280dp"
-                    android:scaleType="fitCenter"
-                    android:contentDescription="Image message" />
+            <!-- Delivery status overlay -->
+            <ImageView
+                android:id="@+id/messageStatus"
+                android:layout_width="14dp"
+                android:layout_height="14dp"
+                android:src="@drawable/status_pending"
+                android:layout_gravity="bottom|end"
+                android:layout_marginEnd="8dp"
+                android:layout_marginBottom="8dp"
+                android:contentDescription="Message status" />
 
-                <!-- Delivery status indicator - inside image, bottom right -->
-                <ImageView
-                    android:id="@+id/messageStatus"
-                    android:layout_width="12dp"
-                    android:layout_height="12dp"
-                    android:src="@drawable/status_pending"
-                    android:layout_gravity="bottom|end"
-                    android:layout_marginEnd="6dp"
-                    android:layout_marginBottom="6dp"
-                    android:contentDescription="Message status"
-                    android:visibility="visible" />
+        </FrameLayout>
 
-            </FrameLayout>
-
-        </androidx.cardview.widget.CardView>
-
-        <!-- Swipe-revealed timestamp (right side) -->
+        <!-- Swipe-revealed timestamp -->
         <TextView
             android:id="@+id/swipeRevealedTime"
             android:layout_width="wrap_content"
@@ -79,7 +69,7 @@
             android:layout_marginStart="8dp"
             android:visibility="gone" />
 
-        <!-- Selection Checkbox (shown in delete mode) -->
+        <!-- Selection Checkbox -->
         <CheckBox
             android:id="@+id/messageCheckbox"
             android:layout_width="18dp"

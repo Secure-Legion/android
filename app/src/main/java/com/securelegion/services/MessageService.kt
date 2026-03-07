@@ -1058,30 +1058,23 @@ class MessageService(private val context: Context) {
             )
             Log.d(TAG, "Send chain key evolved: counter ${keyChain.sendCounter} -> ${keyChain.sendCounter + 1}")
 
-            // Get recipient keys for Ping
-            val recipientEd25519PubKey = Base64.decode(contact.publicKeyBase64, Base64.NO_WRAP)
-            val recipientX25519PubKey = Base64.decode(contact.x25519PublicKeyBase64, Base64.NO_WRAP)
+            // Send directly via message blob (like reactions) — no Ping-Pong-ACK,
+            // no DMS, no "downloading" notification, no typing indicator.
             val onionAddress = contact.messagingOnion ?: ""
+            if (onionAddress.isBlank()) {
+                return@withContext Result.failure(Exception("Contact has no messaging onion"))
+            }
 
-            // Generate ping ID for this send
-            val pingId = generatePingId()
-            val pingTimestamp = System.currentTimeMillis()
-
-            // Send directly via Rust bridge - NO message saved to DB (zero trace)
-            val pingResponse = RustBridge.sendPing(
-                recipientEd25519PubKey,
-                recipientX25519PubKey,
+            val success = RustBridge.sendMessageBlob(
                 onionAddress,
                 encryptedBytes,
-                0x0F.toByte(), // PROFILE_UPDATE wire byte
-                pingId,
-                pingTimestamp
+                0x0F.toByte() // PROFILE_UPDATE wire byte
             )
 
-            if (pingResponse != null) {
-                Log.i(TAG, "Profile update sent to ${contact.displayName} (ping: ${pingId.take(8)}...)")
+            if (success) {
+                Log.i(TAG, "Profile update sent to ${contact.displayName} via message blob")
             } else {
-                Log.w(TAG, "Profile update ping returned null for ${contact.displayName}")
+                Log.w(TAG, "Profile update delivery failed for ${contact.displayName}")
             }
 
             Result.success(Unit)

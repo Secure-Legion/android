@@ -27,6 +27,9 @@ captures/
 *.dylib                  # macOS libs not needed
 *.dll                    # Windows libs not needed
 
+# Opus source (only needed at Rust build time — see BUILD_FIX_OPUS.md)
+opus-official/
+
 # Rust
 secure-legion-core/target/
 secure-legion-core/**/*.rs.bk
