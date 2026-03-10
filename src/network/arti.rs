@@ -313,20 +313,43 @@ pub async fn arti_connect_to_onion(
 ) -> Result<ArtiStream, Box<dyn Error + Send + Sync>> {
     let client = ARTI_CLIENT.get().ok_or("Arti not initialized")?;
 
-    log::info!("Arti: connecting to {}:{}", onion_address, port);
+    const MAX_RETRIES: u32 = 3;
+    const BACKOFF_SECS: [u64; 3] = [5, 10, 20];
 
-    let stream = client.connect((onion_address, port)).await.map_err(|e| {
-        log::error!("Arti connect to {}:{} failed: {}", onion_address, port, e);
-        format!("Arti connect failed: {}", e)
-    })?;
+    let mut last_err = String::new();
 
-    log::info!("Arti: connected to {}:{}", onion_address, port);
+    for attempt in 0..MAX_RETRIES {
+        log::info!("Arti: connecting to {}:{} (attempt {}/{})", onion_address, port, attempt + 1, MAX_RETRIES);
 
-    Ok(ArtiStream {
-        stream,
-        onion_address: onion_address.to_string(),
-        port,
-    })
+        match client.connect((onion_address, port)).await {
+            Ok(stream) => {
+                if attempt > 0 {
+                    log::info!("Arti: connected to {}:{} after {} retries", onion_address, port, attempt);
+                } else {
+                    log::info!("Arti: connected to {}:{}", onion_address, port);
+                }
+                return Ok(ArtiStream {
+                    stream,
+                    onion_address: onion_address.to_string(),
+                    port,
+                });
+            }
+            Err(e) => {
+                last_err = e.to_string();
+                log::warn!("Arti connect to {}:{} attempt {}/{} failed: {}",
+                    onion_address, port, attempt + 1, MAX_RETRIES, last_err);
+
+                if attempt + 1 < MAX_RETRIES {
+                    let delay = BACKOFF_SECS[attempt as usize];
+                    log::info!("Arti: retrying {}:{} in {}s", onion_address, port, delay);
+                    tokio::time::sleep(std::time::Duration::from_secs(delay)).await;
+                }
+            }
+        }
+    }
+
+    log::error!("Arti connect to {}:{} failed after {} attempts: {}", onion_address, port, MAX_RETRIES, last_err);
+    Err(format!("Arti connect failed: {}", last_err).into())
 }
 
 /// Arti stream wrapper — replaces TorConnection (which held a TcpStream from SOCKS5).
