@@ -4,15 +4,10 @@ import android.content.Context
 import android.util.Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import okhttp3.MediaType.Companion.toMediaType
-import okhttp3.Request
-import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
 import com.securelegion.crypto.KeyManager
 import com.securelegion.crypto.RustBridge
-import com.securelegion.crypto.TorManager
-import com.securelegion.network.OkHttpProvider
 import java.io.IOException
 import android.util.Base64
 import org.bitcoinj.core.Base58
@@ -64,8 +59,23 @@ class SolanaService(private val context: Context) {
         return url
     }
 
-    // Get OkHttpClient from centralized provider (supports connection reset on network changes)
-    private val client get() = OkHttpProvider.getSolanaClient()
+    /**
+     * Make a JSON-RPC POST request via Arti (Rust Tor)
+     */
+    private fun rpcPost(url: String, body: String): String {
+        val response = RustBridge.httpPostViaTor(url, body)
+            ?: throw IOException("Tor request failed (null response)")
+        return response
+    }
+
+    /**
+     * Make a GET request via Arti (Rust Tor)
+     */
+    private fun torGet(url: String): String {
+        val response = RustBridge.httpGetViaTor(url)
+            ?: throw IOException("Tor GET request failed (null response)")
+        return response
+    }
 
     /**
      * Get SOL balance for a wallet address
@@ -75,9 +85,7 @@ class SolanaService(private val context: Context) {
     suspend fun getBalance(publicKey: String): Result<Double> = withContext(Dispatchers.IO) {
         try {
             Log.d(TAG, "Fetching SOL balance for: $publicKey")
-            Log.d(TAG, "Making request to: $HELIUS_RPC_URL")
 
-            // Build JSON-RPC 2.0 request with "processed" commitment for fastest balance updates
             val rpcRequest = JSONObject().apply {
                 put("jsonrpc", "2.0")
                 put("id", 1)
@@ -90,46 +98,23 @@ class SolanaService(private val context: Context) {
                 })
             }
 
-            val requestBody = rpcRequest.toString()
-                .toRequestBody("application/json".toMediaType())
+            val responseBody = rpcPost(getRpcUrl(), rpcRequest.toString())
+            val jsonResponse = JSONObject(responseBody)
 
-            val request = Request.Builder()
-                .url(getRpcUrl())
-                .post(requestBody)
-                .build()
-
-            Log.d(TAG, "Executing RPC request...")
-            client.newCall(request).execute().use { response ->
-                Log.d(TAG, "Got response: ${response.code} ${response.message}")
-                if (!response.isSuccessful) {
-                    Log.e(TAG, "RPC request failed: ${response.code}")
-                    return@withContext Result.failure(IOException("HTTP ${response.code}: ${response.message}"))
-                }
-
-                val responseBody = response.body?.string()
-                    ?: return@withContext Result.failure(IOException("Empty response body"))
-
-                val jsonResponse = JSONObject(responseBody)
-
-                // Check for RPC error
-                if (jsonResponse.has("error")) {
-                    val error = jsonResponse.getJSONObject("error")
-                    val errorCode = error.optInt("code", -1)
-                    val errorMessage = error.optString("message", "Unknown RPC error")
-                    Log.e(TAG, "getBalance RPC error $errorCode: $errorMessage")
-                    return@withContext Result.failure(IOException("RPC error $errorCode: $errorMessage"))
-                }
-
-                // Extract balance in lamports
-                val result = jsonResponse.getJSONObject("result")
-                val lamports = result.getLong("value")
-
-                // Convert lamports to SOL
-                val balanceSOL = lamports.toDouble() / LAMPORTS_PER_SOL
-
-                Log.i(TAG, "Balance: $balanceSOL SOL ($lamports lamports)")
-                Result.success(balanceSOL)
+            if (jsonResponse.has("error")) {
+                val error = jsonResponse.getJSONObject("error")
+                val errorCode = error.optInt("code", -1)
+                val errorMessage = error.optString("message", "Unknown RPC error")
+                Log.e(TAG, "getBalance RPC error $errorCode: $errorMessage")
+                return@withContext Result.failure(IOException("RPC error $errorCode: $errorMessage"))
             }
+
+            val result = jsonResponse.getJSONObject("result")
+            val lamports = result.getLong("value")
+            val balanceSOL = lamports.toDouble() / LAMPORTS_PER_SOL
+
+            Log.i(TAG, "Balance: $balanceSOL SOL ($lamports lamports)")
+            Result.success(balanceSOL)
 
         } catch (e: Exception) {
             Log.e(TAG, "Failed to fetch balance", e)
@@ -240,101 +225,80 @@ class SolanaService(private val context: Context) {
                 })
             }
 
-            val requestBody = rpcRequest.toString()
-                .toRequestBody("application/json".toMediaType())
+            val responseBody = rpcPost(getRpcUrl(), rpcRequest.toString())
+            val jsonResponse = JSONObject(responseBody)
 
-            val request = Request.Builder()
-                .url(getRpcUrl())
-                .post(requestBody)
-                .build()
+            if (jsonResponse.has("error")) {
+                val error = jsonResponse.getJSONObject("error")
+                val errorCode = error.optInt("code", -1)
+                val errorMessage = error.optString("message", "Unknown RPC error")
+                Log.e(TAG, "getTransaction RPC error $errorCode: $errorMessage")
+                return Result.failure(IOException("RPC error $errorCode: $errorMessage"))
+            }
 
-            client.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) {
-                    return Result.failure(IOException("HTTP ${response.code}"))
-                }
+            val result = jsonResponse.optJSONObject("result")
+            if (result == null) {
+                Log.w(TAG, "Transaction not found or unavailable (result is null)")
+                return Result.failure(IOException("Transaction data unavailable"))
+            }
 
-                val responseBody = response.body?.string()
-                    ?: return Result.failure(IOException("Empty response"))
+            val blockTime = result.optLong("blockTime", 0L)
+            val meta = result.optJSONObject("meta")
+            val transaction = result.optJSONObject("transaction")
 
-                val jsonResponse = JSONObject(responseBody)
+            var amount = 0.0
+            var type = "receive"
+            var otherPartyAddress = ""
 
-                if (jsonResponse.has("error")) {
-                    val error = jsonResponse.getJSONObject("error")
-                    val errorCode = error.optInt("code", -1)
-                    val errorMessage = error.optString("message", "Unknown RPC error")
-                    Log.e(TAG, "getTransaction RPC error $errorCode: $errorMessage")
-                    return Result.failure(IOException("RPC error $errorCode: $errorMessage"))
-                }
+            if (meta != null && transaction != null) {
+                val preBalances = meta.optJSONArray("preBalances")
+                val postBalances = meta.optJSONArray("postBalances")
+                val accountKeys = transaction.getJSONObject("message").getJSONArray("accountKeys")
 
-                val result = jsonResponse.optJSONObject("result")
-                if (result == null) {
-                    Log.w(TAG, "Transaction not found or unavailable (result is null)")
-                    return Result.failure(IOException("Transaction data unavailable"))
-                }
-
-                val blockTime = result.optLong("blockTime", 0L)
-                val meta = result.optJSONObject("meta")
-                val transaction = result.optJSONObject("transaction")
-
-                // Parse transaction to determine if send or receive
-                var amount = 0.0
-                var type = "receive"
-                var otherPartyAddress = ""
-
-                if (meta != null && transaction != null) {
-                    // Get pre and post balances
-                    val preBalances = meta.optJSONArray("preBalances")
-                    val postBalances = meta.optJSONArray("postBalances")
-                    val accountKeys = transaction.getJSONObject("message").getJSONArray("accountKeys")
-
-                    // Find wallet's account index
-                    var walletIndex = -1
-                    for (i in 0 until accountKeys.length()) {
-                        val account = accountKeys.getJSONObject(i)
-                        if (account.getString("pubkey") == walletAddress) {
-                            walletIndex = i
-                            break
-                        }
+                var walletIndex = -1
+                for (i in 0 until accountKeys.length()) {
+                    val account = accountKeys.getJSONObject(i)
+                    if (account.getString("pubkey") == walletAddress) {
+                        walletIndex = i
+                        break
                     }
+                }
 
-                    if (walletIndex >= 0 && preBalances != null && postBalances != null) {
-                        val preBal = preBalances.getLong(walletIndex)
-                        val postBal = postBalances.getLong(walletIndex)
-                        val diff = postBal - preBal
+                if (walletIndex >= 0 && preBalances != null && postBalances != null) {
+                    val preBal = preBalances.getLong(walletIndex)
+                    val postBal = postBalances.getLong(walletIndex)
+                    val diff = postBal - preBal
 
-                        amount = kotlin.math.abs(diff.toDouble()) / LAMPORTS_PER_SOL
-                        type = if (diff < 0) "send" else "receive"
+                    amount = kotlin.math.abs(diff.toDouble()) / LAMPORTS_PER_SOL
+                    type = if (diff < 0) "send" else "receive"
 
-                        // Find the other party's address (the other account that's not the wallet and not a program)
-                        for (i in 0 until accountKeys.length()) {
-                            if (i != walletIndex && preBalances != null && postBalances != null && i < preBalances.length() && i < postBalances.length()) {
-                                val account = accountKeys.getJSONObject(i)
-                                val address = account.getString("pubkey")
-                                // Check if this account's balance changed (not a program account)
-                                val accPreBal = preBalances.getLong(i)
-                                val accPostBal = postBalances.getLong(i)
-                                if (accPreBal != accPostBal && address != SYSTEM_PROGRAM_ID) {
-                                    otherPartyAddress = address
-                                    break
-                                }
+                    for (i in 0 until accountKeys.length()) {
+                        if (i != walletIndex && i < preBalances.length() && i < postBalances.length()) {
+                            val account = accountKeys.getJSONObject(i)
+                            val address = account.getString("pubkey")
+                            val accPreBal = preBalances.getLong(i)
+                            val accPostBal = postBalances.getLong(i)
+                            if (accPreBal != accPostBal && address != SYSTEM_PROGRAM_ID) {
+                                otherPartyAddress = address
+                                break
                             }
                         }
                     }
                 }
-
-                val status = if (meta?.isNull("err") == false) "failed" else "success"
-
-                return Result.success(
-                    TransactionInfo(
-                        signature = signature,
-                        timestamp = blockTime * 1000, // Convert to milliseconds
-                        amount = amount,
-                        type = type,
-                        status = status,
-                        otherPartyAddress = otherPartyAddress
-                    )
-                )
             }
+
+            val status = if (meta?.isNull("err") == false) "failed" else "success"
+
+            return Result.success(
+                TransactionInfo(
+                    signature = signature,
+                    timestamp = blockTime * 1000,
+                    amount = amount,
+                    type = type,
+                    status = status,
+                    otherPartyAddress = otherPartyAddress
+                )
+            )
 
         } catch (e: Exception) {
             Log.e(TAG, "Failed to parse transaction $signature", e)
@@ -367,88 +331,66 @@ class SolanaService(private val context: Context) {
                 })
             }
 
-            val requestBody = rpcRequest.toString()
-                .toRequestBody("application/json".toMediaType())
+            val responseBody = rpcPost(getRpcUrl(), rpcRequest.toString())
+            val jsonResponse = JSONObject(responseBody)
 
-            val request = Request.Builder()
-                .url(getRpcUrl())
-                .post(requestBody)
-                .build()
-
-            client.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) {
-                    Log.e(TAG, "RPC request failed: ${response.code}")
-                    return@withContext Result.failure(IOException("HTTP ${response.code}"))
-                }
-
-                val responseBody = response.body?.string()
-                    ?: return@withContext Result.failure(IOException("Empty response body"))
-
-                val jsonResponse = JSONObject(responseBody)
-
-                // Check for RPC error
-                if (jsonResponse.has("error")) {
-                    val error = jsonResponse.getJSONObject("error")
-                    val errorCode = error.optInt("code", -1)
-                    val errorMessage = error.optString("message", "Unknown RPC error")
-                    Log.e(TAG, "getTokenAccounts RPC error $errorCode: $errorMessage")
-                    return@withContext Result.failure(IOException("RPC error $errorCode: $errorMessage"))
-                }
-
-                // Parse token accounts
-                val result = jsonResponse.getJSONObject("result")
-                val value = result.getJSONArray("value")
-                val tokenAccounts = mutableListOf<TokenAccount>()
-
-                for (i in 0 until value.length()) {
-                    try {
-                        val accountObj = value.getJSONObject(i)
-                        val account = accountObj.getJSONObject("account")
-                        val data = account.getJSONObject("data")
-                        val parsed = data.getJSONObject("parsed")
-                        val info = parsed.getJSONObject("info")
-
-                        val mint = info.getString("mint")
-                        val tokenAmount = info.getJSONObject("tokenAmount")
-                        val uiAmount = if (tokenAmount.isNull("uiAmount")) {
-                            // Fallback to parsing uiAmountString if uiAmount is null
-                            tokenAmount.optString("uiAmountString", "0.0").toDoubleOrNull() ?: 0.0
-                        } else {
-                            tokenAmount.getDouble("uiAmount")
-                        }
-                        val decimals = tokenAmount.getInt("decimals")
-
-                        // Get token symbol from known mints
-                        val symbol = when (mint) {
-                            "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v" -> "USDC"
-                            "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB" -> "USDT"
-                            "So11111111111111111111111111111111111111112" -> "SOL"
-                            "A7bdiYdS5GjqGFtxf17ppRHtDKPkkRqbKtR27dxvQXaS" -> "ZEC"
-                            "USD1ttGY1N17NEEHLmELoaybftRBUSErhqYiQzvEmuB" -> "USD1"
-                            "GFJbQ7WDQry73iTaGkJcXKjvi1ViFTFmHSENgz92jFPP" -> "SECURE"
-                            else -> "Unknown"
-                        }
-
-                        // Only add tokens with non-zero balance
-                        if (uiAmount > 0) {
-                            tokenAccounts.add(
-                                TokenAccount(
-                                    mint = mint,
-                                    balance = uiAmount,
-                                    decimals = decimals,
-                                    symbol = symbol
-                                )
-                            )
-                        }
-                    } catch (e: Exception) {
-                        Log.w(TAG, "Failed to parse token account: ${e.message}")
-                        continue
-                    }
-                }
-
-                Log.i(TAG, "Found ${tokenAccounts.size} token accounts")
-                Result.success(tokenAccounts)
+            if (jsonResponse.has("error")) {
+                val error = jsonResponse.getJSONObject("error")
+                val errorCode = error.optInt("code", -1)
+                val errorMessage = error.optString("message", "Unknown RPC error")
+                Log.e(TAG, "getTokenAccounts RPC error $errorCode: $errorMessage")
+                return@withContext Result.failure(IOException("RPC error $errorCode: $errorMessage"))
             }
+
+            val result = jsonResponse.getJSONObject("result")
+            val value = result.getJSONArray("value")
+            val tokenAccounts = mutableListOf<TokenAccount>()
+
+            for (i in 0 until value.length()) {
+                try {
+                    val accountObj = value.getJSONObject(i)
+                    val account = accountObj.getJSONObject("account")
+                    val data = account.getJSONObject("data")
+                    val parsed = data.getJSONObject("parsed")
+                    val info = parsed.getJSONObject("info")
+
+                    val mint = info.getString("mint")
+                    val tokenAmount = info.getJSONObject("tokenAmount")
+                    val uiAmount = if (tokenAmount.isNull("uiAmount")) {
+                        tokenAmount.optString("uiAmountString", "0.0").toDoubleOrNull() ?: 0.0
+                    } else {
+                        tokenAmount.getDouble("uiAmount")
+                    }
+                    val decimals = tokenAmount.getInt("decimals")
+
+                    val symbol = when (mint) {
+                        "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v" -> "USDC"
+                        "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB" -> "USDT"
+                        "So11111111111111111111111111111111111111112" -> "SOL"
+                        "A7bdiYdS5GjqGFtxf17ppRHtDKPkkRqbKtR27dxvQXaS" -> "ZEC"
+                        "USD1ttGY1N17NEEHLmELoaybftRBUSErhqYiQzvEmuB" -> "USD1"
+                        "GFJbQ7WDQry73iTaGkJcXKjvi1ViFTFmHSENgz92jFPP" -> "SECURE"
+                        else -> "Unknown"
+                    }
+
+                    if (uiAmount > 0) {
+                        tokenAccounts.add(
+                            TokenAccount(
+                                mint = mint,
+                                balance = uiAmount,
+                                decimals = decimals,
+                                symbol = symbol
+                            )
+                        )
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "Failed to parse token account: ${e.message}")
+                    continue
+                }
+            }
+
+            Log.i(TAG, "Found ${tokenAccounts.size} token accounts")
+            Result.success(tokenAccounts)
 
         } catch (e: Exception) {
             Log.e(TAG, "Failed to fetch token accounts", e)
@@ -482,47 +424,28 @@ class SolanaService(private val context: Context) {
                 })
             }
 
-            val requestBody = rpcRequest.toString()
-                .toRequestBody("application/json".toMediaType())
+            val responseBody = rpcPost(getRpcUrl(), rpcRequest.toString())
+            val jsonResponse = JSONObject(responseBody)
 
-            val request = Request.Builder()
-                .url(getRpcUrl())
-                .post(requestBody)
-                .build()
-
-            client.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) {
-                    Log.e(TAG, "RPC request failed: ${response.code}")
-                    return@withContext Result.failure(IOException("HTTP ${response.code}"))
-                }
-
-                val responseBody = response.body?.string()
-                    ?: return@withContext Result.failure(IOException("Empty response body"))
-
-                val jsonResponse = JSONObject(responseBody)
-
-                // Check for RPC error
-                if (jsonResponse.has("error")) {
-                    val error = jsonResponse.getJSONObject("error")
-                    val errorCode = error.optInt("code", -1)
-                    val errorMessage = error.optString("message", "Unknown RPC error")
-                    Log.e(TAG, "getSignaturesForAddress RPC error $errorCode: $errorMessage")
-                    return@withContext Result.failure(IOException("RPC error $errorCode: $errorMessage"))
-                }
-
-                // Extract signatures
-                val result = jsonResponse.getJSONArray("result")
-                val signatures = mutableListOf<String>()
-
-                for (i in 0 until result.length()) {
-                    val item = result.getJSONObject(i)
-                    val signature = item.getString("signature")
-                    signatures.add(signature)
-                }
-
-                Log.i(TAG, "Found ${signatures.size} transaction signatures")
-                Result.success(signatures)
+            if (jsonResponse.has("error")) {
+                val error = jsonResponse.getJSONObject("error")
+                val errorCode = error.optInt("code", -1)
+                val errorMessage = error.optString("message", "Unknown RPC error")
+                Log.e(TAG, "getSignaturesForAddress RPC error $errorCode: $errorMessage")
+                return@withContext Result.failure(IOException("RPC error $errorCode: $errorMessage"))
             }
+
+            val result = jsonResponse.getJSONArray("result")
+            val signatures = mutableListOf<String>()
+
+            for (i in 0 until result.length()) {
+                val item = result.getJSONObject(i)
+                val signature = item.getString("signature")
+                signatures.add(signature)
+            }
+
+            Log.i(TAG, "Found ${signatures.size} transaction signatures")
+            Result.success(signatures)
 
         } catch (e: Exception) {
             Log.e(TAG, "Failed to fetch transaction signatures", e)
@@ -790,43 +713,26 @@ class SolanaService(private val context: Context) {
                 })
             }
 
-            val requestBody = rpcRequest.toString()
-                .toRequestBody("application/json".toMediaType())
+            val responseBody = rpcPost(getRpcUrl(), rpcRequest.toString())
+            val jsonResponse = JSONObject(responseBody)
 
-            val request = Request.Builder()
-                .url(getRpcUrl())
-                .post(requestBody)
-                .build()
-
-            client.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) {
-                    return Result.failure(IOException("HTTP ${response.code}"))
-                }
-
-                val responseBody = response.body?.string()
-                    ?: return Result.failure(IOException("Empty response"))
-
-                val jsonResponse = JSONObject(responseBody)
-
-                if (jsonResponse.has("error")) {
-                    val error = jsonResponse.getJSONObject("error")
-                    val errorMessage = error.optString("message", "Unknown error")
-                    Log.e(TAG, "Broadcast error: $errorMessage")
-                    // Extract simulation logs if available
-                    val data = error.optJSONObject("data")
-                    val logs = data?.optJSONArray("logs")
-                    if (logs != null) {
-                        for (i in 0 until logs.length()) {
-                            Log.e(TAG, "TX log[$i]: ${logs.optString(i)}")
-                        }
+            if (jsonResponse.has("error")) {
+                val error = jsonResponse.getJSONObject("error")
+                val errorMessage = error.optString("message", "Unknown error")
+                Log.e(TAG, "Broadcast error: $errorMessage")
+                val data = error.optJSONObject("data")
+                val logs = data?.optJSONArray("logs")
+                if (logs != null) {
+                    for (i in 0 until logs.length()) {
+                        Log.e(TAG, "TX log[$i]: ${logs.optString(i)}")
                     }
-                    return Result.failure(IOException("Transaction failed: $errorMessage"))
                 }
-
-                val result = jsonResponse.getString("result")
-                Log.i(TAG, "Transaction broadcast successful: $result")
-                return Result.success(result)
+                return Result.failure(IOException("Transaction failed: $errorMessage"))
             }
+
+            val result = jsonResponse.getString("result")
+            Log.i(TAG, "Transaction broadcast successful: $result")
+            return Result.success(result)
 
         } catch (e: Exception) {
             Log.e(TAG, "Failed to broadcast transaction", e)
@@ -850,39 +756,23 @@ class SolanaService(private val context: Context) {
                 })
             }
 
-            val requestBody = rpcRequest.toString()
-                .toRequestBody("application/json".toMediaType())
+            val responseBody = rpcPost(getRpcUrl(), rpcRequest.toString())
+            val jsonResponse = JSONObject(responseBody)
 
-            val request = Request.Builder()
-                .url(getRpcUrl())
-                .post(requestBody)
-                .build()
-
-            client.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) {
-                    return Result.failure(IOException("HTTP ${response.code}"))
-                }
-
-                val responseBody = response.body?.string()
-                    ?: return Result.failure(IOException("Empty response"))
-
-                val jsonResponse = JSONObject(responseBody)
-
-                if (jsonResponse.has("error")) {
-                    val error = jsonResponse.getJSONObject("error")
-                    val errorCode = error.optInt("code", -1)
-                    val errorMessage = error.optString("message", "Unknown RPC error")
-                    Log.e(TAG, "getRecentBlockhash RPC error $errorCode: $errorMessage")
-                    return Result.failure(IOException("RPC error $errorCode: $errorMessage"))
-                }
-
-                val result = jsonResponse.getJSONObject("result")
-                val value = result.getJSONObject("value")
-                val blockhash = value.getString("blockhash")
-
-                Log.i(TAG, "Got recent blockhash: $blockhash")
-                return Result.success(blockhash)
+            if (jsonResponse.has("error")) {
+                val error = jsonResponse.getJSONObject("error")
+                val errorCode = error.optInt("code", -1)
+                val errorMessage = error.optString("message", "Unknown RPC error")
+                Log.e(TAG, "getRecentBlockhash RPC error $errorCode: $errorMessage")
+                return Result.failure(IOException("RPC error $errorCode: $errorMessage"))
             }
+
+            val result = jsonResponse.getJSONObject("result")
+            val value = result.getJSONObject("value")
+            val blockhash = value.getString("blockhash")
+
+            Log.i(TAG, "Got recent blockhash: $blockhash")
+            return Result.success(blockhash)
 
         } catch (e: Exception) {
             Log.e(TAG, "Failed to get recent blockhash", e)
@@ -899,30 +789,17 @@ class SolanaService(private val context: Context) {
         try {
             Log.d(TAG, "Fetching SOL price from CoinGecko")
 
-            val request = Request.Builder()
-                .url(COINGECKO_API)
-                .get()
-                .build()
+            val responseBody = torGet(COINGECKO_API)
+            val json = JSONObject(responseBody)
+            val solana = json.getJSONObject("solana")
+            val priceUSD = solana.getDouble("usd")
 
-            client.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) {
-                    return@withContext Result.failure(IOException("HTTP ${response.code}"))
-                }
-
-                val responseBody = response.body?.string()
-                    ?: return@withContext Result.failure(IOException("Empty response"))
-
-                val json = JSONObject(responseBody)
-                val solana = json.getJSONObject("solana")
-                val priceUSD = solana.getDouble("usd")
-
-                Log.i(TAG, "SOL price: $$priceUSD")
-                return@withContext Result.success(priceUSD)
-            }
+            Log.i(TAG, "SOL price: $$priceUSD")
+            Result.success(priceUSD)
 
         } catch (e: Exception) {
             Log.e(TAG, "Failed to fetch SOL price", e)
-            return@withContext Result.failure(e)
+            Result.failure(e)
         }
     }
 
@@ -937,70 +814,43 @@ class SolanaService(private val context: Context) {
         try {
             Log.d(TAG, "Fetching recent prioritization fees from network")
 
-            // Base fee is always 5000 lamports per signature
             val baseFee = 5000L
 
-            // Fetch recent prioritization fees to estimate congestion
-            val requestBody = """
-                {
-                    "jsonrpc": "2.0",
-                    "id": 1,
-                    "method": "getRecentPrioritizationFees",
-                    "params": [[]]
-                }
-            """.trimIndent()
+            val rpcBody = """{"jsonrpc":"2.0","id":1,"method":"getRecentPrioritizationFees","params":[[]]}"""
+            val responseBody = rpcPost(HELIUS_RPC_URL, rpcBody)
+            val json = JSONObject(responseBody)
+            val result = json.optJSONArray("result")
 
-            val request = Request.Builder()
-                .url(HELIUS_RPC_URL)
-                .post(requestBody.toRequestBody("application/json".toMediaType()))
-                .build()
-
-            client.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) {
-                    Log.w(TAG, "Failed to fetch priority fees, using base fee")
-                    val feeSOL = baseFee.toDouble() / LAMPORTS_PER_SOL
-                    return@withContext Result.success(feeSOL)
-                }
-
-                val responseBody = response.body?.string()
-                val json = JSONObject(responseBody ?: "{}")
-                val result = json.optJSONArray("result")
-
-                // Calculate median priority fee from recent slots
-                var priorityFee = 0L
-                if (result != null && result.length() > 0) {
-                    val fees = mutableListOf<Long>()
-                    for (i in 0 until result.length()) {
-                        val feeObj = result.getJSONObject(i)
-                        val fee = feeObj.getLong("prioritizationFee")
-                        if (fee > 0) {
-                            fees.add(fee)
-                        }
-                    }
-
-                    if (fees.isNotEmpty()) {
-                        // Use 75th percentile for better estimate during congestion
-                        fees.sort()
-                        val percentile75Index = (fees.size * 0.75).toInt().coerceAtMost(fees.size - 1)
-                        priorityFee = fees[percentile75Index]
-                        Log.d(TAG, "75th percentile priority fee: $priorityFee lamports")
+            var priorityFee = 0L
+            if (result != null && result.length() > 0) {
+                val fees = mutableListOf<Long>()
+                for (i in 0 until result.length()) {
+                    val feeObj = result.getJSONObject(i)
+                    val fee = feeObj.getLong("prioritizationFee")
+                    if (fee > 0) {
+                        fees.add(fee)
                     }
                 }
 
-                // Total fee = base fee + priority fee
-                val totalFeeLamports = baseFee + priorityFee
-                val feeSOL = totalFeeLamports.toDouble() / LAMPORTS_PER_SOL
-
-                Log.i(TAG, "Transaction fee: $feeSOL SOL (base: $baseFee, priority: $priorityFee lamports)")
-                return@withContext Result.success(feeSOL)
+                if (fees.isNotEmpty()) {
+                    fees.sort()
+                    val percentile75Index = (fees.size * 0.75).toInt().coerceAtMost(fees.size - 1)
+                    priorityFee = fees[percentile75Index]
+                    Log.d(TAG, "75th percentile priority fee: $priorityFee lamports")
+                }
             }
+
+            val totalFeeLamports = baseFee + priorityFee
+            val feeSOL = totalFeeLamports.toDouble() / LAMPORTS_PER_SOL
+
+            Log.i(TAG, "Transaction fee: $feeSOL SOL (base: $baseFee, priority: $priorityFee lamports)")
+            Result.success(feeSOL)
 
         } catch (e: Exception) {
             Log.e(TAG, "Failed to fetch transaction fee, using base fee", e)
-            // Fallback to base fee
             val baseFee = 5000L
             val feeSOL = baseFee.toDouble() / LAMPORTS_PER_SOL
-            return@withContext Result.success(feeSOL)
+            Result.success(feeSOL)
         }
     }
 

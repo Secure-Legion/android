@@ -120,6 +120,38 @@
 
     </LinearLayout>
 
+    <!-- Wallet Nav Item -->
+    <LinearLayout
+        android:id="@+id/navWallet"
+        android:layout_gravity="center_vertical"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="1"
+        android:orientation="vertical"
+        android:gravity="center"
+        android:background="@drawable/nav_item_ripple"
+        android:clickable="true"
+        android:focusable="true"
+        android:visibility="gone">
+
+        <ImageView
+            android:layout_width="22dp"
+            android:layout_height="22dp"
+            android:src="@drawable/ic_wallet"
+            app:tint="?attr/colorOnSurfaceVariant"
+            android:layout_marginBottom="2dp"
+            android:contentDescription="Wallet" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Wallet"
+            android:textSize="10sp"
+            android:textColor="?attr/colorOnSurfaceVariant"
+            android:fontFamily="@font/poppins_medium" />
+
+    </LinearLayout>
+
     <!-- Profile Nav Item -->
     <LinearLayout
         android:id="@+id/navProfile"

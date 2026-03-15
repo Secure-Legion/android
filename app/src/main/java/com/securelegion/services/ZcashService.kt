@@ -25,12 +25,11 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
-import okhttp3.Request
 import org.json.JSONObject
 import org.bouncycastle.crypto.digests.RIPEMD160Digest
 import org.web3j.crypto.Bip32ECKeyPair
 import org.web3j.crypto.MnemonicUtils
-import com.securelegion.network.OkHttpProvider
+import com.securelegion.crypto.RustBridge
 import java.io.IOException
 import java.security.MessageDigest
 
@@ -52,8 +51,6 @@ class ZcashService(private val context: Context) {
 
     private val keyManager = KeyManager.getInstance(context)
 
-    // Get OkHttpClient from centralized provider (supports connection reset on network changes)
-    private val client get() = OkHttpProvider.getZcashClient()
 
     companion object {
         private const val TAG = "ZcashService"
@@ -1012,33 +1009,21 @@ class ZcashService(private val context: Context) {
      */
     suspend fun getZecPrice(): Result<Double> = withContext(Dispatchers.IO) {
         try {
-            Log.d(TAG, "Fetching ZEC price from CoinGecko (over Tor)")
+            Log.d(TAG, "Fetching ZEC price from CoinGecko (over Arti Tor)")
 
-            val request = Request.Builder()
-                .url(COINGECKO_API)
-                .get()
-                .build()
+            val responseBody = RustBridge.httpGetViaTor(COINGECKO_API)
+                ?: throw IOException("Tor GET request failed (null response)")
 
-            client.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) {
-                    Log.e(TAG, "Failed to fetch ZEC price: HTTP ${response.code}")
-                    return@withContext Result.failure(IOException("HTTP ${response.code}"))
-                }
+            val json = JSONObject(responseBody)
+            val zcash = json.getJSONObject("zcash")
+            val priceUSD = zcash.getDouble("usd")
 
-                val responseBody = response.body?.string()
-                    ?: return@withContext Result.failure(IOException("Empty response"))
-
-                val json = JSONObject(responseBody)
-                val zcash = json.getJSONObject("zcash")
-                val priceUSD = zcash.getDouble("usd")
-
-                Log.i(TAG, "ZEC price: $$priceUSD")
-                return@withContext Result.success(priceUSD)
-            }
+            Log.i(TAG, "ZEC price: $$priceUSD")
+            Result.success(priceUSD)
 
         } catch (e: Exception) {
             Log.e(TAG, "Failed to fetch ZEC price", e)
-            return@withContext Result.failure(e)
+            Result.failure(e)
         }
     }
 

@@ -308,8 +308,9 @@ class AddFriendActivity : BaseActivity() {
                 val dialog = GlassDialog.builder(this)
                     .setTitle("QR Code Expired")
                     .setMessage("This QR code has expired. Ask the contact to share a new one.")
-                    .setPositiveButton("OK", null)
+                    .setPositiveButton("OK") { _, _ -> finish() }
                     .create()
+                dialog.setOnCancelListener { finish() }
                 GlassDialog.show(dialog)
                 return
             }

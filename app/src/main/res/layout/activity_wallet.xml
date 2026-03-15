@@ -48,7 +48,7 @@
             <ImageView
                 android:layout_width="22dp"
                 android:layout_height="22dp"
-                android:src="@android:drawable/sym_action_chat"
+                android:src="@drawable/ic_nav_chat"
                 app:tint="?attr/colorOnSurfaceVariant"
                 android:layout_marginBottom="2dp"
                 android:contentDescription="Messages" />
@@ -76,9 +76,9 @@
             android:focusable="true">
 
             <ImageView
-                android:layout_width="28dp"
-                android:layout_height="28dp"
-                android:src="@drawable/ic_money"
+                android:layout_width="22dp"
+                android:layout_height="22dp"
+                android:src="@drawable/ic_coin_dollar"
                 android:layout_marginBottom="2dp"
                 app:tint="?attr/colorOnSurfaceVariant"
                 android:contentDescription="Accounts" />
@@ -136,9 +136,10 @@
             android:focusable="true">
 
             <ImageView
-                android:layout_width="28dp"
-                android:layout_height="28dp"
+                android:layout_width="22dp"
+                android:layout_height="22dp"
                 android:src="@drawable/ic_clock"
+                app:tint="?attr/colorOnSurfaceVariant"
                 android:layout_marginBottom="2dp"
                 android:contentDescription="Recent" />
 

@@ -2,15 +2,14 @@ package com.securelegion.network
 
 import android.util.Log
 import okhttp3.OkHttpClient
-import java.net.InetSocketAddress
-import java.net.Proxy
 import java.util.concurrent.TimeUnit
 
 /**
- * Centralized OkHttpClient provider for Tor-proxied HTTP requests
+ * Centralized OkHttpClient provider for HTTP requests
  *
- * All HTTP clients route through Tor SOCKS5 proxy at 127.0.0.1:9050
- * Call reset() when network changes to clear stale connections
+ * Most services (Solana, Zcash) now route through Arti (Rust Tor) via JNI.
+ * Remaining OkHttp clients (Crust, Jupiter) connect directly to clearnet APIs.
+ * Call reset() when network changes to clear stale connections.
  */
 object OkHttpProvider {
     private const val TAG = "OkHttpProvider"
@@ -177,7 +176,10 @@ object OkHttpProvider {
     }
 
     /**
-     * Build OkHttpClient with Tor SOCKS5 proxy
+     * Build OkHttpClient (direct connection)
+     *
+     * Solana/Zcash now route through Arti Tor via RustBridge JNI.
+     * Remaining OkHttp consumers (Crust, Jupiter) hit clearnet APIs directly.
      */
     private fun buildClient(
         connectTimeout: Long,
@@ -185,7 +187,6 @@ object OkHttpProvider {
         writeTimeout: Long
     ): OkHttpClient {
         return OkHttpClient.Builder()
-            .proxy(Proxy(Proxy.Type.SOCKS, InetSocketAddress("127.0.0.1", 9050)))
             .connectTimeout(connectTimeout, TimeUnit.SECONDS)
             .readTimeout(readTimeout, TimeUnit.SECONDS)
             .writeTimeout(writeTimeout, TimeUnit.SECONDS)

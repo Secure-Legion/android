@@ -937,7 +937,7 @@ class ChatActivity : BaseActivity() {
         attachmentPanel.findViewById<View>(R.id.actionSecurePay).setOnClickListener {
             flashAttachmentIcon(it)
             hideAttachmentPanel()
-            ThemedToast.show(this, "SecurePay coming soon")
+            showSecurePaySheet()
         }
 
         // Location action
@@ -1140,6 +1140,51 @@ class ChatActivity : BaseActivity() {
                 ThemedToast.show(this@ChatActivity, "Failed to send sticker")
             }
         }
+    }
+
+    // ==================== SECURE PAY ====================
+
+    private fun showSecurePaySheet() {
+        val bottomSheet = GlassBottomSheetDialog(this)
+        val view = layoutInflater.inflate(R.layout.bottom_sheet_secure_pay, null)
+        bottomSheet.setContentView(view)
+        bottomSheet.window?.setBackgroundDrawableResource(android.R.color.transparent)
+
+        // Pay
+        view.findViewById<View>(R.id.payOption).setOnClickListener {
+            bottomSheet.dismiss()
+            lifecycleScope.launch {
+                val keyManager = com.securelegion.crypto.KeyManager.getInstance(this@ChatActivity)
+                val database = com.securelegion.database.SecureLegionDatabase.getInstance(
+                    this@ChatActivity, keyManager.getDatabasePassphrase()
+                )
+                val contact = database.contactDao().getContactById(contactId)
+                startActivity(Intent(this@ChatActivity, SendMoneyActivity::class.java).apply {
+                    putExtra(SendMoneyActivity.EXTRA_RECIPIENT_NAME, contactName)
+                    putExtra(SendMoneyActivity.EXTRA_RECIPIENT_ADDRESS, contact?.solanaAddress ?: "")
+                    putExtra(SendMoneyActivity.EXTRA_CONTACT_ID, contactId)
+                })
+            }
+        }
+
+        // Request
+        view.findViewById<View>(R.id.requestOption).setOnClickListener {
+            bottomSheet.dismiss()
+            lifecycleScope.launch {
+                val keyManager = com.securelegion.crypto.KeyManager.getInstance(this@ChatActivity)
+                val database = com.securelegion.database.SecureLegionDatabase.getInstance(
+                    this@ChatActivity, keyManager.getDatabasePassphrase()
+                )
+                val contact = database.contactDao().getContactById(contactId)
+                startActivity(Intent(this@ChatActivity, RequestMoneyActivity::class.java).apply {
+                    putExtra(RequestMoneyActivity.EXTRA_RECIPIENT_NAME, contactName)
+                    putExtra(RequestMoneyActivity.EXTRA_RECIPIENT_ADDRESS, contact?.solanaAddress ?: "")
+                    putExtra(RequestMoneyActivity.EXTRA_CONTACT_ID, contactId)
+                })
+            }
+        }
+
+        bottomSheet.show()
     }
 
     // ==================== IMAGE SENDING ====================
