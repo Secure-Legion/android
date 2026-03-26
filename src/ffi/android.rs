@@ -211,21 +211,24 @@ fn normalize_wire_bytes(expected_type: u8, wire_bytes: &[u8]) -> Vec<u8> {
 
 // ==================== GLOBAL TOR MANAGER ====================
 
-/// Global TorManager instance
-/// Using tokio::sync::Mutex instead of std::sync::Mutex to prevent deadlocks when holding locks across .await
-static GLOBAL_TOR_MANAGER: OnceCell<Arc<Mutex<TorManager>>> = OnceCell::new();
-// Channel receivers: ArcSwapOption allows atomic replacement on listener restart.
-// OnceCell was write-once, causing silent message drops after restartListeners() (the root cause of send-works-receive-dead).
-static GLOBAL_PING_RECEIVER: ArcSwapOption<Mutex<mpsc::UnboundedReceiver<(u64, Vec<u8>)>>> = ArcSwapOption::const_empty();
-static GLOBAL_TAP_RECEIVER: ArcSwapOption<Mutex<mpsc::UnboundedReceiver<Vec<u8>>>> = ArcSwapOption::const_empty();
-static GLOBAL_PONG_RECEIVER: ArcSwapOption<Mutex<mpsc::UnboundedReceiver<(u64, Vec<u8>)>>> = ArcSwapOption::const_empty();
-static GLOBAL_ACK_RECEIVER: ArcSwapOption<Mutex<mpsc::UnboundedReceiver<(u64, Vec<u8>)>>> = ArcSwapOption::const_empty();
-static GLOBAL_MESSAGE_RECEIVER: ArcSwapOption<Mutex<mpsc::UnboundedReceiver<(u64, Vec<u8>)>>> = ArcSwapOption::const_empty();
-static GLOBAL_VOICE_RECEIVER: ArcSwapOption<Mutex<mpsc::UnboundedReceiver<(u64, Vec<u8>)>>> = ArcSwapOption::const_empty();
-static GLOBAL_FRIEND_REQUEST_RECEIVER: ArcSwapOption<Mutex<mpsc::UnboundedReceiver<Vec<u8>>>> = ArcSwapOption::const_empty();
+/// Global TorManager instance — resettable for Android service restart.
+/// Uses Mutex<Option<>> instead of OnceCell so shutdown can clear it.
+static GLOBAL_TOR_MANAGER: Mutex<Option<Arc<Mutex<TorManager>>>> = Mutex::new(None);
+// Channel receivers: sync std::sync::mpsc receivers at the JNI boundary.
+// Async tokio channels stay internal; forwarder tasks bridge async→sync.
+// This avoids GLOBAL_RUNTIME.block_on(rx.recv()) which starves the tokio
+// runtime when the producer (Arti acceptor) also runs on that runtime.
+// ArcSwapOption allows atomic replacement on listener restart.
+static GLOBAL_PING_RECEIVER: ArcSwapOption<Mutex<std::sync::mpsc::Receiver<(u64, Vec<u8>)>>> = ArcSwapOption::const_empty();
+static GLOBAL_TAP_RECEIVER: ArcSwapOption<Mutex<std::sync::mpsc::Receiver<Vec<u8>>>> = ArcSwapOption::const_empty();
+static GLOBAL_PONG_RECEIVER: ArcSwapOption<Mutex<std::sync::mpsc::Receiver<(u64, Vec<u8>)>>> = ArcSwapOption::const_empty();
+static GLOBAL_ACK_RECEIVER: ArcSwapOption<Mutex<std::sync::mpsc::Receiver<(u64, Vec<u8>)>>> = ArcSwapOption::const_empty();
+static GLOBAL_MESSAGE_RECEIVER: ArcSwapOption<Mutex<std::sync::mpsc::Receiver<(u64, Vec<u8>)>>> = ArcSwapOption::const_empty();
+static GLOBAL_VOICE_RECEIVER: ArcSwapOption<Mutex<std::sync::mpsc::Receiver<(u64, Vec<u8>)>>> = ArcSwapOption::const_empty();
+static GLOBAL_FRIEND_REQUEST_RECEIVER: ArcSwapOption<Mutex<std::sync::mpsc::Receiver<Vec<u8>>>> = ArcSwapOption::const_empty();
 
-/// Global Voice Streaming Listener (v2.0)
-static GLOBAL_VOICE_LISTENER: OnceCell<Arc<tokio::sync::Mutex<VoiceStreamingListener>>> = OnceCell::new();
+/// Global Voice Streaming Listener (v2.0) — resettable for Android service restart.
+static GLOBAL_VOICE_LISTENER: Mutex<Option<Arc<tokio::sync::Mutex<VoiceStreamingListener>>>> = Mutex::new(None);
 
 /// Global Voice Packet Callback (v2.0)
 /// Stores a global reference to the Kotlin callback object
@@ -268,65 +271,192 @@ fn get_pong_senders() -> Arc<Mutex<std::collections::HashMap<String, tokio::sync
 
 /// Get or initialize the global TorManager
 fn get_tor_manager() -> Arc<Mutex<TorManager>> {
-    GLOBAL_TOR_MANAGER
-        .get_or_init(|| {
-            let tor_manager = TorManager::new().expect("Failed to create TorManager");
-            Arc::new(Mutex::new(tor_manager))
-        })
-        .clone()
+    let mut guard = GLOBAL_TOR_MANAGER.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(ref mgr) = *guard {
+        return mgr.clone();
+    }
+    let tor_manager = TorManager::new().expect("Failed to create TorManager");
+    let arc = Arc::new(Mutex::new(tor_manager));
+    *guard = Some(arc.clone());
+    arc
 }
 
 /// Get or initialize the global Voice Streaming Listener
 fn get_voice_listener() -> Arc<tokio::sync::Mutex<VoiceStreamingListener>> {
-    GLOBAL_VOICE_LISTENER
-        .get_or_init(|| {
-            let voice_listener = VoiceStreamingListener::new();
-            Arc::new(tokio::sync::Mutex::new(voice_listener))
-        })
-        .clone()
+    let mut guard = GLOBAL_VOICE_LISTENER.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(ref listener) = *guard {
+        return listener.clone();
+    }
+    let voice_listener = VoiceStreamingListener::new();
+    let arc = Arc::new(tokio::sync::Mutex::new(voice_listener));
+    *guard = Some(arc.clone());
+    arc
 }
 
 // ==================== BLOCKING POLL HELPERS ====================
 
-/// Blocking recv on a (u64, Vec<u8>) channel with timeout.
-/// Parks the calling thread until data arrives or timeout elapses.
+/// Blocking recv on a (u64, Vec<u8>) sync channel with timeout.
+/// Parks the calling thread using OS primitives (no tokio runtime involvement).
 /// Returns None on timeout, channel closure, or if receiver not initialized.
-/// SAFETY: Must be called from a non-tokio thread (JVM Dispatchers.IO is safe).
 fn blocking_recv_pair(
-    receiver: &ArcSwapOption<Mutex<mpsc::UnboundedReceiver<(u64, Vec<u8>)>>>,
+    receiver: &ArcSwapOption<Mutex<std::sync::mpsc::Receiver<(u64, Vec<u8>)>>>,
     timeout_secs: u64,
 ) -> Option<(u64, Vec<u8>)> {
     let rx_arc = receiver.load_full()?;
-    let mut rx = rx_arc.lock().unwrap();
-
-    GLOBAL_RUNTIME.block_on(async {
-        match tokio::time::timeout(
-            std::time::Duration::from_secs(timeout_secs),
-            rx.recv()
-        ).await {
-            Ok(data) => data,
-            Err(_) => None, // Timeout
-        }
-    })
+    let rx = rx_arc.lock().unwrap();
+    rx.recv_timeout(std::time::Duration::from_secs(timeout_secs)).ok()
 }
 
-/// Blocking recv on a Vec<u8> channel with timeout.
+/// Blocking recv on a Vec<u8> sync channel with timeout.
 fn blocking_recv_vec(
-    receiver: &ArcSwapOption<Mutex<mpsc::UnboundedReceiver<Vec<u8>>>>,
+    receiver: &ArcSwapOption<Mutex<std::sync::mpsc::Receiver<Vec<u8>>>>,
     timeout_secs: u64,
 ) -> Option<Vec<u8>> {
     let rx_arc = receiver.load_full()?;
-    let mut rx = rx_arc.lock().unwrap();
+    let rx = rx_arc.lock().unwrap();
+    rx.recv_timeout(std::time::Duration::from_secs(timeout_secs)).ok()
+}
 
-    GLOBAL_RUNTIME.block_on(async {
-        match tokio::time::timeout(
-            std::time::Duration::from_secs(timeout_secs),
-            rx.recv()
-        ).await {
-            Ok(data) => data,
-            Err(_) => None,
+/// Spawn an async→sync forwarder: reads from a tokio channel and sends to a std::sync::mpsc channel.
+/// Returns the sync receiver for JNI polling.
+fn bridge_async_to_sync_pair(
+    name: &'static str,
+    mut async_rx: mpsc::UnboundedReceiver<(u64, Vec<u8>)>,
+) -> std::sync::mpsc::Receiver<(u64, Vec<u8>)> {
+    let (sync_tx, sync_rx) = std::sync::mpsc::channel();
+    GLOBAL_RUNTIME.spawn(async move {
+        log::info!("async→sync bridge [{}]: forwarder task started", name);
+        let mut count: u64 = 0;
+        while let Some(msg) = async_rx.recv().await {
+            count += 1;
+            if sync_tx.send(msg).is_err() {
+                log::warn!("async→sync bridge [{}]: sync receiver dropped after {} msgs, stopping", name, count);
+                break;
+            }
         }
-    })
+        log::warn!("async→sync bridge [{}]: async channel closed after {} msgs (all senders dropped)", name, count);
+    });
+    sync_rx
+}
+
+/// Spawn an async→sync forwarder for Vec<u8> channels.
+fn bridge_async_to_sync_vec(
+    name: &'static str,
+    mut async_rx: mpsc::UnboundedReceiver<Vec<u8>>,
+) -> std::sync::mpsc::Receiver<Vec<u8>> {
+    let (sync_tx, sync_rx) = std::sync::mpsc::channel();
+    GLOBAL_RUNTIME.spawn(async move {
+        log::info!("async→sync bridge [{}]: forwarder task started", name);
+        let mut count: u64 = 0;
+        while let Some(msg) = async_rx.recv().await {
+            count += 1;
+            if sync_tx.send(msg).is_err() {
+                log::warn!("async→sync bridge [{}]: sync receiver dropped after {} msgs, stopping", name, count);
+                break;
+            }
+        }
+        log::warn!("async→sync bridge [{}]: async channel closed after {} msgs (all senders dropped)", name, count);
+    });
+    sync_rx
+}
+
+/// Ensure the shared ACK routing channel exists exactly once.
+/// ACK frames are delivered on the main messaging hidden-service path; this
+/// only initializes the async→sync bridge used by JNI pollers.
+fn ensure_ack_channel_ready(source: &'static str) -> bool {
+    let rx_ready = GLOBAL_ACK_RECEIVER.load_full().is_some();
+    let tx_ready = crate::network::tor::ACK_TX.load_full().is_some();
+
+    if rx_ready && tx_ready {
+        log::info!("ACK channel already ready ({})", source);
+        return false;
+    }
+
+    if rx_ready != tx_ready {
+        log::warn!(
+            "ACK channel half-initialized (rx_ready={}, tx_ready={}) - rebuilding ({})",
+            rx_ready, tx_ready, source
+        );
+    }
+
+    let (ack_tx, ack_async_rx) = mpsc::unbounded_channel::<(u64, Vec<u8>)>();
+    let ack_sync_rx = bridge_async_to_sync_pair("ACK", ack_async_rx);
+    GLOBAL_ACK_RECEIVER.store(Some(Arc::new(Mutex::new(ack_sync_rx))));
+    let ack_tx_arc = Arc::new(std::sync::Mutex::new(ack_tx));
+    crate::network::tor::ACK_TX.store(Some(ack_tx_arc));
+    log::info!("ACK channel initialized ({})", source);
+    true
+}
+
+/// Build an encrypted delivery ACK body for transport.
+/// Returned bytes are the non-type portion of the wire:
+/// [sender_x25519_pubkey (32)][encrypted_ack]
+fn build_delivery_ack_body(
+    env: &mut JNIEnv,
+    item_id: &str,
+    ack_type: &str,
+    recipient_x25519_bytes: &[u8],
+) -> Result<Vec<u8>, String> {
+    if recipient_x25519_bytes.len() != 32 {
+        return Err(format!(
+            "Invalid recipient X25519 pubkey length: {}",
+            recipient_x25519_bytes.len()
+        ));
+    }
+
+    let context = env.call_static_method(
+        "android/app/ActivityThread",
+        "currentApplication",
+        "()Landroid/app/Application;",
+        &[],
+    ).map_err(|e| format!("Failed to get context: {}", e))?
+     .l().map_err(|e| format!("Context is null: {}", e))?;
+
+    let key_manager = crate::ffi::keystore::get_key_manager(env, &context)
+        .map_err(|e| format!("Failed to get KeyManager: {}", e))?;
+
+    let our_signing_private = crate::ffi::keystore::get_signing_private_key(env, &key_manager)
+        .map_err(|e| format!("Failed to get signing key: {}", e))?;
+    if our_signing_private.len() != 32 {
+        return Err(format!(
+            "Invalid Ed25519 private key length: {}",
+            our_signing_private.len()
+        ));
+    }
+
+    let sender_keypair = ed25519_dalek::SigningKey::from_bytes(
+        &our_signing_private.as_slice().try_into().unwrap()
+    );
+
+    let ack_token = crate::network::pingpong::DeliveryAck::new(item_id, ack_type, &sender_keypair)
+        .map_err(|e| format!("Failed to create ACK: {}", e))?;
+    let ack_bytes = ack_token.to_bytes()
+        .map_err(|e| format!("Failed to serialize ACK: {}", e))?;
+
+    let our_x25519_public = crate::ffi::keystore::get_encryption_public_key(env, &key_manager)
+        .map_err(|e| format!("Failed to get our X25519 pubkey: {}", e))?;
+    if our_x25519_public.len() != 32 {
+        return Err(format!(
+            "Invalid sender X25519 pubkey size: {}",
+            our_x25519_public.len()
+        ));
+    }
+
+    let our_x25519_private = crate::ffi::keystore::get_encryption_private_key(env, &key_manager)
+        .map_err(|e| format!("Failed to get encryption key: {}", e))?;
+
+    let shared_secret = crate::crypto::key_exchange::derive_shared_secret(
+        &our_x25519_private,
+        &recipient_x25519_bytes.to_vec(),
+    ).map_err(|e| format!("ECDH failed: {}", e))?;
+
+    let encrypted_ack = crate::crypto::encryption::encrypt_message(&ack_bytes, &shared_secret)
+        .map_err(|e| format!("Encryption failed: {}", e))?;
+
+    let mut wire_body = Vec::with_capacity(32 + encrypted_ack.len());
+    wire_body.extend_from_slice(&our_x25519_public);
+    wire_body.extend_from_slice(&encrypted_ack);
+    Ok(wire_body)
 }
 
 // ==================== CRYPTOGRAPHY ====================
@@ -760,6 +890,36 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_initializeTor(
     }, std::ptr::null_mut())
 }
 
+/// Shut down Arti completely — drop TorClient, all onion services, cancel all listeners.
+/// Also clears global TorManager and VoiceListener so they are re-created on restart.
+/// Called from Kotlin's onDestroy() so that the next initialize_arti() creates a fresh client
+/// instead of reusing a zombie with dead circuits.
+#[no_mangle]
+pub extern "C" fn Java_com_securelegion_crypto_RustBridge_shutdownArti(
+    _env: JNIEnv,
+    _class: JClass,
+) {
+    log::info!("JNI: shutdownArti() called");
+    crate::network::arti::shutdown_arti();
+
+    // Clear global TorManager (holds stale TorManager pointing at dead Arti client)
+    {
+        let mut guard = GLOBAL_TOR_MANAGER.lock().unwrap_or_else(|e| e.into_inner());
+        if guard.take().is_some() {
+            log::info!("JNI: dropped GLOBAL_TOR_MANAGER");
+        }
+    }
+    // Clear global VoiceListener (holds stale voice state)
+    {
+        let mut guard = GLOBAL_VOICE_LISTENER.lock().unwrap_or_else(|e| e.into_inner());
+        if guard.take().is_some() {
+            log::info!("JNI: dropped GLOBAL_VOICE_LISTENER");
+        }
+    }
+
+    log::info!("JNI: shutdownArti() complete — all globals cleared");
+}
+
 /// Initialize VOICE Tor control connection
 /// With Arti, voice uses the same in-process client — just verify readiness
 /// cookie_path: Ignored (kept for JNI signature compatibility)
@@ -1077,30 +1237,30 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_startHiddenServiceList
             }
         };
 
-        GLOBAL_PING_RECEIVER.store(Some(Arc::new(Mutex::new(ping_receiver))));
-        GLOBAL_PONG_RECEIVER.store(Some(Arc::new(Mutex::new(pong_receiver))));
-        log::info!("Arti: PING/PONG receivers stored");
+        // Bridge async PING/PONG receivers to sync for JNI polling
+        let ping_sync_rx = bridge_async_to_sync_pair("PING", ping_receiver);
+        let pong_sync_rx = bridge_async_to_sync_pair("PONG", pong_receiver);
+        GLOBAL_PING_RECEIVER.store(Some(Arc::new(Mutex::new(ping_sync_rx))));
+        GLOBAL_PONG_RECEIVER.store(Some(Arc::new(Mutex::new(pong_sync_rx))));
+        log::info!("Arti: PING/PONG async→sync bridges started");
 
-        // Initialize MESSAGE channel for TEXT/VOICE/IMAGE/PAYMENT routing
-        let (message_tx, message_rx) = mpsc::unbounded_channel::<(u64, Vec<u8>)>();
-        GLOBAL_MESSAGE_RECEIVER.store(Some(Arc::new(Mutex::new(message_rx))));
+        // Initialize MESSAGE channel: async TX for Arti acceptor, sync RX for JNI poller
+        let (message_tx, message_async_rx) = mpsc::unbounded_channel::<(u64, Vec<u8>)>();
+        let message_sync_rx = bridge_async_to_sync_pair("MESSAGE", message_async_rx);
+        GLOBAL_MESSAGE_RECEIVER.store(Some(Arc::new(Mutex::new(message_sync_rx))));
         let tx_arc = Arc::new(std::sync::Mutex::new(message_tx));
         crate::network::tor::MESSAGE_TX.store(Some(tx_arc));
-        log::info!("Arti: MESSAGE channel initialized");
+        log::info!("Arti: MESSAGE async→sync bridge started");
 
-        // Initialize VOICE channel for CALL_SIGNALING routing
-        let (voice_tx, voice_rx) = mpsc::unbounded_channel::<(u64, Vec<u8>)>();
-        GLOBAL_VOICE_RECEIVER.store(Some(Arc::new(Mutex::new(voice_rx))));
+        // Initialize VOICE channel: async TX for Arti acceptor, sync RX for JNI poller
+        let (voice_tx, voice_async_rx) = mpsc::unbounded_channel::<(u64, Vec<u8>)>();
+        let voice_sync_rx = bridge_async_to_sync_pair("VOICE", voice_async_rx);
+        GLOBAL_VOICE_RECEIVER.store(Some(Arc::new(Mutex::new(voice_sync_rx))));
         let voice_tx_arc = Arc::new(std::sync::Mutex::new(voice_tx));
         crate::network::tor::VOICE_TX.store(Some(voice_tx_arc));
-        log::info!("Arti: VOICE channel initialized");
+        log::info!("Arti: VOICE async→sync bridge started");
 
-        // Initialize ACK channel
-        let (ack_tx, ack_rx) = mpsc::unbounded_channel::<(u64, Vec<u8>)>();
-        GLOBAL_ACK_RECEIVER.store(Some(Arc::new(Mutex::new(ack_rx))));
-        let ack_tx_arc = Arc::new(std::sync::Mutex::new(ack_tx));
-        crate::network::tor::ACK_TX.store(Some(ack_tx_arc));
-        log::info!("Arti: ACK channel initialized");
+        ensure_ack_channel_ready("startHiddenServiceListener");
 
         // NOTE: FRIEND_REQUEST channel is initialized by startFriendRequestListener(),
         // which also starts the FR HS acceptor. Do NOT initialize here to avoid channel mismatch.
@@ -1891,7 +2051,7 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendPing(
         let runtime = tokio::runtime::Runtime::new().expect("Failed to create Tokio runtime");
 
         const PING_PONG_PORT: u16 = 9150;
-        const INSTANT_PONG_TIMEOUT_MS: u64 = 30000; // 30s — give Tor round-trip time to complete
+        const INSTANT_PONG_TIMEOUT_MS: u64 = 30000; // Keep the fast path open long enough for real-world PONG latency on mobile/Tor
 
         // Returns true = instant mode (MESSAGE already sent), false = delayed mode (PONG pending)
         let result: Result<bool, Box<dyn std::error::Error>> = runtime.block_on(async {
@@ -2197,7 +2357,7 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_resendPingWithWireByte
         let runtime = tokio::runtime::Runtime::new().expect("Failed to create Tokio runtime");
 
         const PING_PONG_PORT: u16 = 9150;
-        const INSTANT_PONG_TIMEOUT_MS: u64 = 30000; // 30s — give Tor round-trip time to complete
+        const INSTANT_PONG_TIMEOUT_MS: u64 = 30000; // Retries should also preserve the fast path instead of forcing delayed fallback too early
 
         let result: Result<(), Box<dyn std::error::Error>> = runtime.block_on(async {
             // Connect and send Ping (lock only during operations)
@@ -2674,12 +2834,12 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_resetTorManager(
     }, ())
 }
 
-/// Send ACK on an existing connection (fire-and-forget)
+/// Send ACK on an existing connection (fire-and-forget).
 /// Args:
 /// connection_id - Connection ID from pollIncomingPing
 /// item_id - Item ID (ping_id or message_id)
 /// ack_type - "PING_ACK" or "MESSAGE_ACK"
-/// encrypted_ack - Encrypted ACK bytes
+/// recipient_x25519_pubkey - Recipient's X25519 encryption pubkey (32 bytes)
 /// Returns: true if sent successfully, false otherwise
 #[no_mangle]
 pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendAckOnConnection(
@@ -2688,10 +2848,9 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendAckOnConnection(
     connection_id: jlong,
     item_id: JString,
     ack_type: JString,
-    encrypted_ack: JByteArray,
+    recipient_x25519_pubkey: JByteArray,
 ) -> jboolean {
     catch_panic!(env, {
-        // Convert parameters
         let item_id_str = match jstring_to_string(&mut env, item_id) {
             Ok(s) => s,
             Err(e) => {
@@ -2708,26 +2867,32 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendAckOnConnection(
             }
         };
 
-        let ack_bytes = match jbytearray_to_vec(&mut env, encrypted_ack) {
+        let recipient_x25519_bytes = match jbytearray_to_vec(&mut env, recipient_x25519_pubkey) {
             Ok(v) => v,
             Err(e) => {
-                log::error!("Failed to convert ACK bytes: {}", e);
+                log::error!("Failed to convert recipient X25519 pubkey: {}", e);
                 return 0;
             }
         };
 
-        log::info!("Sending {} on connection {}: {} bytes (item_id={})", ack_type_str, connection_id, ack_bytes.len(), item_id_str);
-
-        // Map ACK type string to message type byte
-        let msg_type = match ack_type_str.as_str() {
-            "PING_ACK" => crate::network::tor::MSG_TYPE_DELIVERY_CONFIRMATION,
-            "MESSAGE_ACK" => crate::network::tor::MSG_TYPE_DELIVERY_CONFIRMATION,
-            "TAP_ACK" => crate::network::tor::MSG_TYPE_DELIVERY_CONFIRMATION,
-            _ => {
-                log::error!("Unknown ACK type: {}", ack_type_str);
+        let ack_body = match build_delivery_ack_body(
+            &mut env,
+            &item_id_str,
+            &ack_type_str,
+            &recipient_x25519_bytes,
+        ) {
+            Ok(bytes) => bytes,
+            Err(e) => {
+                log::error!("Failed to build {} body for connection {}: {}", ack_type_str, connection_id, e);
                 return 0;
             }
         };
+
+        let msg_type = crate::network::tor::MSG_TYPE_DELIVERY_CONFIRMATION;
+        log::info!(
+            "[ACK:CONN][DELIVERY_ACK] sending ack_type={} item_id={} conn_id={} body_len={}",
+            ack_type_str, item_id_str, connection_id, ack_body.len()
+        );
 
         // Send ACK on connection
         let runtime = match tokio::runtime::Runtime::new() {
@@ -2739,16 +2904,22 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendAckOnConnection(
         };
 
         let result = runtime.block_on(async {
-            crate::network::TorManager::send_ack_on_connection(connection_id as u64, msg_type, &ack_bytes).await
+            crate::network::TorManager::send_ack_on_connection(connection_id as u64, msg_type, &ack_body).await
         });
 
         match result {
             Ok(_) => {
-                log::info!("{} sent successfully on connection {} (item_id={})", ack_type_str, connection_id, item_id_str);
+                log::info!(
+                    "[ACK:CONN][DELIVERY_ACK] success ack_type={} item_id={} conn_id={}",
+                    ack_type_str, item_id_str, connection_id
+                );
                 1 // success
             }
             Err(e) => {
-                log::error!("Failed to send {} on connection {}: {}", ack_type_str, connection_id, e);
+                log::error!(
+                    "[ACK:CONN][DELIVERY_ACK] failed ack_type={} item_id={} conn_id={} error={}",
+                    ack_type_str, item_id_str, connection_id, e
+                );
                 0 // failure
             }
         }
@@ -2767,12 +2938,12 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_startTapListener(
         // (accept_and_handle in arti.rs). We just need to ensure the TAP channel exists.
         log::info!("startTapListener(port={}): Arti routes TAP+FRIEND_REQUEST via main HS listener", port);
 
-        // Initialize TAP channel if not already set up
-        let (tap_tx, tap_rx) = mpsc::unbounded_channel::<Vec<u8>>();
-        GLOBAL_TAP_RECEIVER.store(Some(Arc::new(Mutex::new(tap_rx))));
-        // TAP_TX is used by arti.rs accept_and_handle — store it
+        // Initialize TAP channel: async TX for Arti acceptor, sync RX for JNI poller
+        let (tap_tx, tap_async_rx) = mpsc::unbounded_channel::<Vec<u8>>();
+        let tap_sync_rx = bridge_async_to_sync_vec("TAP", tap_async_rx);
+        GLOBAL_TAP_RECEIVER.store(Some(Arc::new(Mutex::new(tap_sync_rx))));
         crate::network::tor::TAP_TX.store(Some(Arc::new(std::sync::Mutex::new(tap_tx))));
-        log::info!("TAP channel initialized (Arti handles routing)");
+        log::info!("TAP async→sync bridge started (Arti handles routing)");
 
         1 // success — Arti already accepts TAP/FRIEND_REQUEST on main listener
     }, 0)
@@ -2838,11 +3009,12 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_startFriendRequestList
     catch_panic!(env, {
         log::info!("Initializing friend request listener channel + FR HS acceptor");
 
-        // Create channel for friend requests
-        let (tx, rx) = mpsc::unbounded_channel::<Vec<u8>>();
+        // Create channel for friend requests: async TX for acceptor, sync RX for JNI
+        let (tx, async_rx) = mpsc::unbounded_channel::<Vec<u8>>();
+        let sync_rx = bridge_async_to_sync_vec("FRIEND_REQUEST", async_rx);
 
-        // Store receiver globally for polling (ArcSwap: atomically replaceable on restart)
-        GLOBAL_FRIEND_REQUEST_RECEIVER.store(Some(Arc::new(Mutex::new(rx))));
+        // Store sync receiver globally for polling (ArcSwap: atomically replaceable on restart)
+        GLOBAL_FRIEND_REQUEST_RECEIVER.store(Some(Arc::new(Mutex::new(sync_rx))));
 
         // Store sender in global FRIEND_REQUEST_TX for routing in both messaging and FR HS
         let tx_arc = Arc::new(std::sync::Mutex::new(tx));
@@ -3307,6 +3479,7 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendMessageBlob(
     recipient_onion: JString,
     encrypted_message: JByteArray,
     message_type_byte: jbyte,
+    ping_id_hex: JString,
 ) -> jboolean {
     catch_panic!(env, {
         // Convert parameters
@@ -3326,7 +3499,61 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendMessageBlob(
             }
         };
 
-        log::info!("Sending message blob to {} ({} bytes encrypted message)", onion_address, message_bytes.len());
+        // Parse pingId hex → 24 raw bytes (48 hex chars = 24 bytes)
+        let ping_id_str = match jstring_to_string(&mut env, ping_id_hex) {
+            Ok(s) => s,
+            Err(e) => {
+                log::error!("Failed to convert pingId: {}", e);
+                return 0;
+            }
+        };
+        let tracked_ping_id = if ping_id_str.trim().is_empty() {
+            None
+        } else {
+            if ping_id_str.len() != 48 {
+                log::error!(
+                    "Invalid pingId length: expected 48 hex chars, got {} from '{}'",
+                    ping_id_str.len(),
+                    &ping_id_str[..ping_id_str.len().min(16)]
+                );
+                return 0;
+            }
+            let ping_id_bytes = match hex::decode(&ping_id_str) {
+                Ok(bytes) => bytes,
+                Err(e) => {
+                    log::error!(
+                        "Invalid pingId hex '{}': {}",
+                        &ping_id_str[..ping_id_str.len().min(16)],
+                        e
+                    );
+                    return 0;
+                }
+            };
+            if ping_id_bytes.len() != 24 {
+                log::error!(
+                    "Invalid pingId bytes: expected 24, got {} from '{}'",
+                    ping_id_bytes.len(),
+                    &ping_id_str[..ping_id_str.len().min(16)]
+                );
+                return 0;
+            }
+            Some(ping_id_bytes)
+        };
+
+        if tracked_ping_id.is_some() {
+            log::info!(
+                "Sending tracked message blob to {} ({} bytes encrypted, pingId={}...)",
+                onion_address,
+                message_bytes.len(),
+                &ping_id_str[..8.min(ping_id_str.len())]
+            );
+        } else {
+            log::info!(
+                "Sending legacy/untracked message blob to {} ({} bytes encrypted)",
+                onion_address,
+                message_bytes.len()
+            );
+        }
 
         // Get KeyManager to access our X25519 public key
         let context = match env.call_static_method(
@@ -3389,6 +3616,8 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendMessageBlob(
             crate::network::tor::MSG_TYPE_FRIEND_REQUEST_ACCEPTED
         );
 
+        // Tracked blobs sign pubkey + pingId + payload; legacy blobs preserve the
+        // older signature over ciphertext only so direct callers remain compatible.
         let signature_bytes = if sign_payload {
             let our_signing_private = match crate::ffi::keystore::get_signing_private_key(&mut env, &key_manager) {
                 Ok(k) => k,
@@ -3403,27 +3632,48 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendMessageBlob(
             }
             let sk_bytes: [u8; 32] = our_signing_private.as_slice().try_into().unwrap();
             let signer = ed25519_dalek::SigningKey::from_bytes(&sk_bytes);
-            let signature = signer.sign(&message_bytes);
+            let signature = if let Some(ping_id_bytes) = tracked_ping_id.as_ref() {
+                let mut sign_data = Vec::with_capacity(32 + 24 + message_bytes.len());
+                sign_data.extend_from_slice(&our_x25519_public);
+                sign_data.extend_from_slice(ping_id_bytes);
+                sign_data.extend_from_slice(&message_bytes);
+                signer.sign(&sign_data)
+            } else {
+                signer.sign(&message_bytes)
+            };
             signature.to_bytes().to_vec()
         } else {
             Vec::new()
         };
 
-        // Create wire message: [Type Byte][Sender X25519 Public Key - 32 bytes][Encrypted Message][Signature?]
-        let mut wire_message = Vec::with_capacity(1 + 32 + message_bytes.len() + signature_bytes.len());
+        let tracked_wire = tracked_ping_id.is_some();
+        let mut wire_message = Vec::with_capacity(
+            1 + 32 + if tracked_wire { 24 } else { 0 } + message_bytes.len() + signature_bytes.len()
+        );
         wire_message.push(msg_type);
         wire_message.extend_from_slice(&our_x25519_public);
+        if let Some(ping_id_bytes) = tracked_ping_id.as_ref() {
+            wire_message.extend_from_slice(ping_id_bytes);
+        }
         wire_message.extend_from_slice(&message_bytes);
         if sign_payload {
             wire_message.extend_from_slice(&signature_bytes);
         }
 
-        if sign_payload {
-            log::info!("Wire message: {} bytes (1 type + 32 x25519 + {} encrypted + 64 sig)",
-                wire_message.len(), message_bytes.len());
+        if tracked_wire {
+            log::info!(
+                "Wire message tracked: {} bytes (1 type + 32 x25519 + 24 pingId + {} encrypted{})",
+                wire_message.len(),
+                message_bytes.len(),
+                if sign_payload { " + 64 sig" } else { "" }
+            );
         } else {
-            log::info!("Wire message: {} bytes (1 type + 32 x25519 + {} encrypted)",
-                wire_message.len(), message_bytes.len());
+            log::info!(
+                "Wire message legacy: {} bytes (1 type + 32 x25519 + {} encrypted{})",
+                wire_message.len(),
+                message_bytes.len(),
+                if sign_payload { " + 64 sig" } else { "" }
+            );
         }
 
         // Send message blob via Tor using global runtime.
@@ -6869,125 +7119,46 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendDeliveryAck(
             }
         };
 
+        if recipient_ed25519_bytes.len() != 32 {
+            log::error!(
+                "Invalid recipient Ed25519 pubkey size: {}",
+                recipient_ed25519_bytes.len()
+            );
+            return 0;
+        }
+        if recipient_x25519_bytes.len() != 32 {
+            log::error!(
+                "Invalid recipient X25519 pubkey size: {}",
+                recipient_x25519_bytes.len()
+            );
+            return 0;
+        }
+
         log::info!(
             "[ACK:9150][DELIVERY_ACK] start target={} ack_type={} item_id={}",
             recipient_onion_str, ack_type_str, item_id_str
         );
 
-        // Get KeyManager for our keys
-        let context = match env.call_static_method(
-            "android/app/ActivityThread",
-            "currentApplication",
-            "()Landroid/app/Application;",
-            &[],
-        ) {
-            Ok(ctx) => ctx.l().unwrap(),
-            Err(e) => {
-                log::error!("Failed to get context: {}", e);
-                return 0;
-            }
-        };
-
-        let key_manager = match crate::ffi::keystore::get_key_manager(&mut env, &context) {
-            Ok(km) => km,
-            Err(e) => {
-                log::error!("Failed to get KeyManager: {}", e);
-                return 0;
-            }
-        };
-
-        // Get our signing private key (Ed25519)
-        let our_signing_private = match crate::ffi::keystore::get_signing_private_key(&mut env, &key_manager) {
-            Ok(k) => k,
-            Err(e) => {
-                log::error!("Failed to get signing key: {}", e);
-                return 0;
-            }
-        };
-
-        // Create Ed25519 signing keypair
-        let sender_keypair = ed25519_dalek::SigningKey::from_bytes(&our_signing_private.as_slice().try_into().unwrap());
-
-        // Create DeliveryAck token (signed)
-        let ack_token = match crate::network::pingpong::DeliveryAck::new(
+        let ack_body = match build_delivery_ack_body(
+            &mut env,
             &item_id_str,
             &ack_type_str,
-            &sender_keypair,
-        ) {
-            Ok(token) => token,
-            Err(e) => {
-                log::error!("Failed to create ACK: {}", e);
-                return 0;
-            }
-        };
-
-        // Serialize ACK token
-        let ack_bytes = match ack_token.to_bytes() {
-            Ok(bytes) => bytes,
-            Err(e) => {
-                log::error!("Failed to serialize ACK: {}", e);
-                return 0;
-            }
-        };
-
-        // Get our X25519 encryption keys
-        let our_x25519_public = match crate::ffi::keystore::get_encryption_public_key(&mut env, &key_manager) {
-            Ok(k) => k,
-            Err(e) => {
-                log::error!("Failed to get our X25519 pubkey: {}", e);
-                return 0;
-            }
-        };
-
-        let our_x25519_private = match crate::ffi::keystore::get_encryption_private_key(&mut env, &key_manager) {
-            Ok(k) => k,
-            Err(e) => {
-                log::error!("Failed to get encryption key: {}", e);
-                return 0;
-            }
-        };
-
-        // Derive shared secret using X25519 ECDH
-        let shared_secret = match crate::crypto::key_exchange::derive_shared_secret(
-            &our_x25519_private,
             &recipient_x25519_bytes,
         ) {
-            Ok(secret) => secret,
+            Ok(bytes) => bytes,
             Err(e) => {
-                log::error!("ECDH failed: {}", e);
+                log::error!("Failed to build ACK wire body: {}", e);
                 return 0;
             }
         };
 
-        // Encrypt ACK with shared secret
-        let encrypted_ack = match crate::crypto::encryption::encrypt_message(&ack_bytes, &shared_secret) {
-            Ok(enc) => enc,
-            Err(e) => {
-                log::error!("Encryption failed: {}", e);
-                return 0;
-            }
-        };
-
-        // Wire format: [Type Byte 0x06][Our X25519 Public Key - 32 bytes][Encrypted ACK]
-        let mut wire_message = Vec::new();
+        let mut wire_message = Vec::with_capacity(1 + ack_body.len());
         wire_message.push(crate::network::tor::MSG_TYPE_DELIVERY_CONFIRMATION);
+        wire_message.extend_from_slice(&ack_body);
 
-        let sender_x25519_pubkey: [u8; 32] = match our_x25519_public.as_slice().try_into() {
-            Ok(arr) => arr,
-            Err(_) => {
-                log::error!("Invalid sender X25519 pubkey size");
-                return 0;
-            }
-        };
-        wire_message.extend_from_slice(&sender_x25519_pubkey);
-        wire_message.extend_from_slice(&encrypted_ack);
-
-        // Send encrypted ACK via Tor to recipient's port 9153 (ACK listener)
         let tor_manager = get_tor_manager();
         let runtime = tokio::runtime::Runtime::new().expect("Failed to create Tokio runtime");
-
         const ACK_PORT: u16 = 9150;
-        const ACK_FALLBACK_PORT: u16 = 9153;
 
         let result: Result<(), Box<dyn std::error::Error>> = runtime.block_on(async {
             let manager = tor_manager.lock().unwrap();
@@ -7025,36 +7196,7 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendDeliveryAck(
                     recipient_onion_str, ack_type_str, item_id_str, retryable, error_text
                 );
 
-                if retryable {
-                    log::warn!(
-                        "[ACK:9150->9153][DELIVERY_ACK] fallback_start target={} ack_type={} item_id={} fallback_port={}",
-                        recipient_onion_str, ack_type_str, item_id_str, ACK_FALLBACK_PORT
-                    );
-
-                    let fallback_result: Result<(), Box<dyn std::error::Error>> = runtime.block_on(async {
-                        let manager = tor_manager.lock().unwrap();
-                        log::info!("[ACK:9153][DELIVERY_ACK] connecting target={}", recipient_onion_str);
-                        let mut conn = manager.connect(&recipient_onion_str, ACK_FALLBACK_PORT).await?;
-                        manager.send(&mut conn, &wire_message).await?;
-                        Ok(())
-                    });
-
-                    match fallback_result {
-                        Ok(_) => {
-                            log::info!(
-                                "[ACK:9153][DELIVERY_ACK] fallback_success target={} ack_type={} item_id={}",
-                                recipient_onion_str, ack_type_str, item_id_str
-                            );
-                            return 1;
-                        }
-                        Err(fallback_err) => {
-                            log::error!(
-                                "[ACK:9153][DELIVERY_ACK] fallback_failed target={} ack_type={} item_id={} error={}",
-                                recipient_onion_str, ack_type_str, item_id_str, fallback_err
-                            );
-                        }
-                    }
-                } else {
+                if !retryable {
                     log::error!(
                         "[ACK:9150][DELIVERY_ACK] non_retryable target={} ack_type={} item_id={} error={}",
                         recipient_onion_str, ack_type_str, item_id_str, error_text
@@ -7075,12 +7217,9 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_startAckListener(
     port: jint,
 ) -> jboolean {
     catch_panic!(env, {
-        // Compatibility mode: ACKs are routed through main listener (8080/9150 path).
-        // We only initialize the shared ACK channel here.
-        let (tx, rx) = mpsc::unbounded_channel::<(u64, Vec<u8>)>();
-        GLOBAL_ACK_RECEIVER.store(Some(Arc::new(Mutex::new(rx))));
-        crate::network::tor::ACK_TX.store(Some(Arc::new(std::sync::Mutex::new(tx))));
-
+        // Compatibility mode: ACKs are routed through the main messaging listener.
+        // This call only ensures the internal ACK bridge exists and is safe to poll.
+        ensure_ack_channel_ready("startAckListener");
         log::info!(
             "ACK channel initialized (requested_port={}, routed_via_main_listener=true)",
             port
