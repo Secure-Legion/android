@@ -36,18 +36,19 @@ use crate::network::tor::{
 };
 use crate::util::lock_recover;
 
-use once_cell::sync::OnceCell;
-
 // ───── Global Arti State ─────
 
 /// The in-process Arti TorClient — replaces C Tor subprocess entirely.
-/// Set once by `initialize_arti()`, read by all connect/HS operations.
-static ARTI_CLIENT: OnceCell<Arc<TorClient<PreferredRuntime>>> = OnceCell::new();
+/// Uses Mutex<Option<>> instead of OnceCell so it can be reset on Android service restart.
+/// Android may kill the service while the process survives — ARTI_CLIENT must be clearable
+/// so initialize_arti() can create a fresh client with live circuits.
+static ARTI_CLIENT: StdMutex<Option<Arc<TorClient<PreferredRuntime>>>> = StdMutex::new(None);
 
 /// Stored tokio runtime handle — captured during initialize_arti() (which runs inside
 /// GLOBAL_RUNTIME.block_on()). Used by sync JNI functions that need to spawn async tasks
 /// without being inside a tokio runtime context.
-static RUNTIME_HANDLE: OnceCell<tokio::runtime::Handle> = OnceCell::new();
+/// Resettable for the same reason as ARTI_CLIENT.
+static RUNTIME_HANDLE: StdMutex<Option<tokio::runtime::Handle>> = StdMutex::new(None);
 
 /// CancellationToken for the onion service acceptor task.
 static HS_ACCEPTOR_CANCEL: StdMutex<Option<CancellationToken>> = StdMutex::new(None);
@@ -99,8 +100,8 @@ where
         return handle.spawn(future);
     }
     // Fall back to stored handle (for JNI calls from non-tokio threads)
-    RUNTIME_HANDLE
-        .get()
+    let guard = lock_recover(&RUNTIME_HANDLE);
+    guard.as_ref()
         .expect("Runtime not initialized — call initialize_arti first")
         .spawn(future)
 }
@@ -115,9 +116,15 @@ where
 ///
 /// After this returns, the client is fully bootstrapped and ready for connections.
 pub async fn initialize_arti(data_dir: &str) -> Result<(), Box<dyn Error + Send + Sync>> {
-    if ARTI_CLIENT.get().is_some() {
-        log::info!("Arti already initialized, skipping");
-        return Ok(());
+    {
+        let guard = lock_recover(&ARTI_CLIENT);
+        if guard.is_some() {
+            log::warn!("Arti already initialized — forcing shutdown + re-init");
+            drop(guard);
+            shutdown_arti();
+        } else {
+            drop(guard);
+        }
     }
 
     log::info!("Initializing Arti (in-process Tor)...");
@@ -125,8 +132,12 @@ pub async fn initialize_arti(data_dir: &str) -> Result<(), Box<dyn Error + Send 
 
     // Capture the tokio runtime handle for later use by sync JNI functions.
     // This runs inside GLOBAL_RUNTIME.block_on(), so Handle::current() is valid.
-    if RUNTIME_HANDLE.get().is_none() {
-        let _ = RUNTIME_HANDLE.set(tokio::runtime::Handle::current());
+    // Only set if None — overwriting could panic tasks still using the old handle.
+    {
+        let mut guard = lock_recover(&RUNTIME_HANDLE);
+        if guard.is_none() {
+            *guard = Some(tokio::runtime::Handle::current());
+        }
     }
 
     let state_dir = format!("{}/arti/state", data_dir);
@@ -171,7 +182,10 @@ pub async fn initialize_arti(data_dir: &str) -> Result<(), Box<dyn Error + Send 
     let client_arc = Arc::new(client);
 
     // Store client early so is_arti_ready() can check BOOTSTRAP_STATUS separately
-    let _ = ARTI_CLIENT.set(client_arc.clone());
+    {
+        let mut guard = lock_recover(&ARTI_CLIENT);
+        *guard = Some(client_arc.clone());
+    }
 
     // Spawn progress poller — ramps up smoothly while bootstrap runs
     let progress_done = Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -221,12 +235,14 @@ pub async fn initialize_arti(data_dir: &str) -> Result<(), Box<dyn Error + Send 
 
 /// Get the Arti client, if initialized.
 pub fn get_arti_client() -> Option<Arc<TorClient<PreferredRuntime>>> {
-    ARTI_CLIENT.get().cloned()
+    let guard = lock_recover(&ARTI_CLIENT);
+    guard.clone()
 }
 
 /// Check if Arti is initialized and bootstrapped.
 pub fn is_arti_ready() -> bool {
-    ARTI_CLIENT.get().is_some() && BOOTSTRAP_STATUS.load(Ordering::SeqCst) >= 100
+    let guard = lock_recover(&ARTI_CLIENT);
+    guard.is_some() && BOOTSTRAP_STATUS.load(Ordering::SeqCst) >= 100
 }
 
 // ───── Bootstrap Event Listener ─────
@@ -239,11 +255,15 @@ pub fn is_arti_ready() -> bool {
 ///
 /// Replaces: `start_bootstrap_event_listener()` which connected to C Tor's control port,
 /// sent `SETEVENTS STATUS_CLIENT`, and parsed 650 event lines.
-pub fn start_bootstrap_listener() {
-    use std::sync::atomic::AtomicBool;
-    static RUNNING: AtomicBool = AtomicBool::new(false);
+/// Guard for bootstrap listener — module-level so shutdown_arti() can reset it.
+static BOOTSTRAP_LISTENER_RUNNING: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
 
-    if RUNNING.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst).is_err() {
+pub fn start_bootstrap_listener() {
+    if BOOTSTRAP_LISTENER_RUNNING
+        .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+        .is_err()
+    {
         log::info!("Bootstrap listener already running");
         return;
     }
@@ -264,7 +284,7 @@ pub fn start_bootstrap_listener() {
             }
 
             // If Arti client exists, we're bootstrapped
-            if ARTI_CLIENT.get().is_some() {
+            if lock_recover(&ARTI_CLIENT).is_some() {
                 BOOTSTRAP_STATUS.store(100, Ordering::SeqCst);
                 CIRCUIT_ESTABLISHED.store(1, Ordering::SeqCst);
 
@@ -279,7 +299,7 @@ pub fn start_bootstrap_listener() {
             std::thread::sleep(std::time::Duration::from_secs(2));
         }
 
-        RUNNING.store(false, Ordering::SeqCst);
+        BOOTSTRAP_LISTENER_RUNNING.store(false, Ordering::SeqCst);
         log::info!("Arti bootstrap listener thread exited");
     });
 }
@@ -311,7 +331,7 @@ pub async fn arti_connect_to_onion(
     onion_address: &str,
     port: u16,
 ) -> Result<ArtiStream, Box<dyn Error + Send + Sync>> {
-    let client = ARTI_CLIENT.get().ok_or("Arti not initialized")?;
+    let client = lock_recover(&ARTI_CLIENT).clone().ok_or("Arti not initialized")?;
 
     const MAX_RETRIES: u32 = 3;
     const BACKOFF_SECS: [u64; 3] = [5, 10, 20];
@@ -413,7 +433,7 @@ impl ArtiStream {
 pub async fn create_onion_service(
     ed25519_seed: &[u8; 32],
 ) -> Result<String, Box<dyn Error + Send + Sync>> {
-    let client = ARTI_CLIENT.get().ok_or("Arti not initialized")?;
+    let client = lock_recover(&ARTI_CLIENT).clone().ok_or("Arti not initialized")?;
 
     // Compute expected .onion address from seed (for verification)
     let expected_addr = super::tor::compute_onion_address_from_ed25519_seed(ed25519_seed);
@@ -802,7 +822,7 @@ async fn handle_arti_incoming(
 pub async fn http_get_via_arti(url: &str) -> Result<String, Box<dyn Error + Send + Sync>> {
     use futures::io::{AsyncReadExt as FuturesReadExt, AsyncWriteExt as FuturesWriteExt};
 
-    let client = ARTI_CLIENT.get().ok_or("Arti not initialized")?;
+    let client = lock_recover(&ARTI_CLIENT).clone().ok_or("Arti not initialized")?;
 
     // Parse URL to extract host and path
     let (host, port, path, is_https) = parse_url(url)?;
@@ -839,7 +859,7 @@ pub async fn http_get_via_arti(url: &str) -> Result<String, Box<dyn Error + Send
 pub async fn http_post_via_arti(url: &str, body: &str) -> Result<String, Box<dyn Error + Send + Sync>> {
     use futures::io::{AsyncReadExt as FuturesReadExt, AsyncWriteExt as FuturesWriteExt};
 
-    let client = ARTI_CLIENT.get().ok_or("Arti not initialized")?;
+    let client = lock_recover(&ARTI_CLIENT).clone().ok_or("Arti not initialized")?;
 
     let (host, port, path, is_https) = parse_url(url)?;
     let connect_port = if is_https { port.unwrap_or(443) } else { port.unwrap_or(80) };
@@ -867,32 +887,52 @@ pub async fn http_post_via_arti(url: &str, body: &str) -> Result<String, Box<dyn
     }
 }
 
-/// Send NEWNYM equivalent — create an isolated client for fresh circuits.
+/// Tier 1 NEWNYM — lightweight identity rotation for new connections.
 ///
-/// Replaces: `SIGNAL NEWNYM` via control port.
-/// Arti doesn't have a direct NEWNYM equivalent, but `isolated_client()` creates
-/// a new circuit isolation context, which achieves the same effect.
+/// Swaps the global ARTI_CLIENT to an isolated clone. All NEW outbound connections
+/// get fresh circuits that never share paths with the old client. Existing streams
+/// on old circuits continue undisturbed (they hold their own Arc<TorClient>).
+///
+/// This is the correct Arti equivalent of C Tor's `SIGNAL NEWNYM`:
+/// - isolated_client() creates a new IsolationToken (unique u64)
+/// - Circuit manager won't reuse circuits across different isolation tokens
+/// - No bootstrap cost, no teardown, no interruption to active streams
+///
+/// Use for: circuit suspicion, SOCKS failures, health monitor rotation, privacy rotation.
+/// Do NOT use for: network changes (dead transport) — use notify_network_changed() instead.
 pub fn send_newnym() {
-    if let Some(client) = ARTI_CLIENT.get() {
-        // Cycle dormant mode to force Arti to drop existing circuits and rebuild fresh ones.
-        // This is the Arti equivalent of C Tor's SIGNAL NEWNYM.
-        log::info!("Arti: NEWNYM — cycling dormant mode to retire circuits");
-        client.set_dormant(arti_client::DormantMode::Soft);
-        client.set_dormant(arti_client::DormantMode::Normal);
-        log::info!("Arti: NEWNYM complete — circuits will rebuild, HS will re-establish IPTs");
+    let mut guard = lock_recover(&ARTI_CLIENT);
+    if let Some(ref client) = *guard {
+        let isolated = Arc::new(client.isolated_client());
+        *guard = Some(isolated);
+        log::info!("Arti: NEWNYM — swapped to isolated client (fresh circuits for new connections)");
     } else {
         log::warn!("Arti: NEWNYM requested but client not initialized");
     }
 }
 
-/// Notify Arti that the network changed (e.g., WiFi → mobile, offline → online).
-/// Cycles dormant mode to force dead circuit teardown and HS descriptor re-publication.
+/// Tier 2 network change — full teardown + reinit.
+///
+/// When the network transport changes (WiFi → LTE, offline → online), the underlying
+/// TCP sockets and TLS channels are dead. isolated_client() won't help because even
+/// new circuits would try to reuse dead channels. The only reliable recovery is to
+/// drop the entire TorClient and bootstrap fresh.
+///
+/// This tears down all onion services, listeners, and circuits, then reinitializes.
+/// Callers must re-create onion services after this returns.
+///
+/// Use for: WiFi/LTE switch, offline→online recovery, persistent failure escalation.
 pub fn notify_network_changed() {
-    if let Some(client) = ARTI_CLIENT.get() {
-        log::info!("Arti: network change detected — cycling dormant mode to rebuild circuits + HS");
-        client.set_dormant(arti_client::DormantMode::Soft);
-        client.set_dormant(arti_client::DormantMode::Normal);
-        log::info!("Arti: dormant cycle complete — Arti will rebuild circuits and re-publish HS descriptors");
+    let has_client = lock_recover(&ARTI_CLIENT).is_some();
+    if has_client {
+        log::info!("Arti: network change detected — full teardown + reinit required");
+        // Signal to Kotlin that a full restart is needed.
+        // We don't call shutdown_arti() + initialize_arti() here because
+        // initialize_arti() is async and needs the data_dir from Kotlin.
+        // Instead, reset bootstrap status so Kotlin's health monitor triggers restart.
+        BOOTSTRAP_STATUS.store(0, Ordering::SeqCst);
+        CIRCUIT_ESTABLISHED.store(0, Ordering::SeqCst);
+        log::info!("Arti: bootstrap status reset to 0 — Kotlin health monitor will trigger full restart");
     } else {
         log::warn!("Arti: network change notified but client not initialized");
     }
@@ -917,6 +957,88 @@ pub fn stop_arti_listener() {
     }
 }
 
+// ───── Full Shutdown (Android lifecycle) ─────
+
+/// Fully shut down Arti: cancel all listeners, drop onion services, and clear the client.
+///
+/// MUST be called from Kotlin's onDestroy() / service teardown. Without this, Android can
+/// kill the service while the process survives — leaving ARTI_CLIENT pointing at a zombie
+/// TorClient with dead circuits. Since we now use Mutex<Option<>> instead of OnceCell,
+/// this clears the slot so initialize_arti() can create a fresh client on restart.
+pub fn shutdown_arti() {
+    log::info!("Arti: shutdown_arti() — tearing down all state");
+
+    // 1. Cancel all acceptor tasks
+    stop_arti_listener();
+    stop_fr_listener();
+    stop_bootstrap_listener();
+
+    // 2. Drop running onion services (stops descriptor publishing)
+    {
+        let mut guard = lock_recover(&RUNNING_HS);
+        if guard.take().is_some() {
+            log::info!("Arti: dropped messaging HS");
+        }
+    }
+    {
+        let mut guard = lock_recover(&RUNNING_VOICE_HS);
+        if guard.take().is_some() {
+            log::info!("Arti: dropped voice HS");
+        }
+    }
+    {
+        let mut guard = lock_recover(&RUNNING_FR_HS);
+        if guard.take().is_some() {
+            log::info!("Arti: dropped FR HS");
+        }
+    }
+
+    // 3. Clear RendRequest streams
+    {
+        let mut guard = lock_recover(&REND_REQUEST_STREAM);
+        *guard = None;
+    }
+    {
+        let mut guard = lock_recover(&FR_REND_REQUEST_STREAM);
+        *guard = None;
+    }
+
+    // 4. Clear onion addresses
+    {
+        let mut guard = lock_recover(&ONION_ADDRESS);
+        *guard = None;
+    }
+    {
+        let mut guard = lock_recover(&VOICE_ONION_ADDRESS);
+        *guard = None;
+    }
+    {
+        let mut guard = lock_recover(&FR_ONION_ADDRESS);
+        *guard = None;
+    }
+
+    // 5. Drop the TorClient (closes all circuits, releases relay connections)
+    {
+        let mut guard = lock_recover(&ARTI_CLIENT);
+        if guard.take().is_some() {
+            log::info!("Arti: dropped TorClient");
+        }
+    }
+
+    // 6. Clear runtime handle (will be re-captured on next initialize_arti)
+    {
+        let mut guard = lock_recover(&RUNTIME_HANDLE);
+        *guard = None;
+    }
+
+    // 7. Reset bootstrap status and listener guard so the next init starts clean
+    BOOTSTRAP_STATUS.store(0, Ordering::SeqCst);
+    CIRCUIT_ESTABLISHED.store(0, Ordering::SeqCst);
+    BOOTSTRAP_LISTENER_RUNNING.store(false, Ordering::SeqCst);
+
+    log::info!("Arti: shutdown complete — ready for re-initialization");
+}
+
 // ───── Voice Onion Service ─────
 
 /// Create a voice onion service using the same Arti client but a different Ed25519 seed.
@@ -926,7 +1048,7 @@ pub fn stop_arti_listener() {
 pub async fn create_voice_onion_service(
     ed25519_seed: &[u8; 32],
 ) -> Result<String, Box<dyn Error + Send + Sync>> {
-    let client = ARTI_CLIENT.get().ok_or("Arti not initialized")?;
+    let client = lock_recover(&ARTI_CLIENT).clone().ok_or("Arti not initialized")?;
 
     let expected_addr = super::tor::compute_onion_address_from_ed25519_seed(ed25519_seed);
     log::info!("Arti: creating voice onion service, expected address: {}", expected_addr);
@@ -990,7 +1112,7 @@ pub async fn create_voice_onion_service(
 pub async fn create_friend_request_onion_service(
     ed25519_seed: &[u8; 32],
 ) -> Result<String, Box<dyn Error + Send + Sync>> {
-    let client = ARTI_CLIENT.get().ok_or("Arti not initialized")?;
+    let client = lock_recover(&ARTI_CLIENT).clone().ok_or("Arti not initialized")?;
 
     let expected_addr = super::tor::compute_onion_address_from_ed25519_seed(ed25519_seed);
     log::info!("Arti: creating friend-request onion service, expected address: {}", expected_addr);
