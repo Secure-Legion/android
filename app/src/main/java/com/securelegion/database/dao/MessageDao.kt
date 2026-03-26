@@ -212,6 +212,22 @@ interface MessageDao {
     suspend fun updateLastError(messageId: Long, error: String?)
 
     /**
+     * Reset retry backoffs for all undelivered sent-by-me messages.
+     * Called when Tor restarts with fresh circuits — stale backoff timers from
+     * dead-circuit retries are meaningless and would delay delivery.
+     */
+    @Query("UPDATE messages SET nextRetryAtMs = NULL WHERE isSentByMe = 1 AND status NOT IN (2, 3) AND messageDelivered = 0")
+    suspend fun resetAllRetryBackoffs(): Int
+
+    /**
+     * Transition STATUS_SENT messages back to STATUS_PONG_RECEIVED if MESSAGE_ACK
+     * hasn't arrived within the timeout. This allows the retry worker to re-send
+     * the blob, since "sent" over Tor doesn't guarantee "received".
+     */
+    @Query("UPDATE messages SET status = ${Message.STATUS_PONG_RECEIVED} WHERE isSentByMe = 1 AND status = ${Message.STATUS_SENT} AND messageDelivered = 0 AND (lastRetryTimestamp IS NULL OR lastRetryTimestamp < :cutoffMs)")
+    suspend fun revertStaleSentMessages(cutoffMs: Long): Int
+
+    /**
      * Update pingWireBytes only (prevents race condition with delivery status updates)
      * CRITICAL: Use this instead of updateMessage() when only storing wire bytes for retry
      */
@@ -286,11 +302,12 @@ interface MessageDao {
     suspend fun getMessagesAwaitingPong(): List<Message>
 
     /**
-     * Get messages ready for blob send (STATUS_PONG_RECEIVED, sent by us)
+     * Get messages ready for blob send (STATUS_PONG_RECEIVED or STATUS_FAILED, sent by us)
      * Protocol v2: PONG handler transitions STATUS_PING_SENT → STATUS_PONG_RECEIVED,
-     * then sendPendingMessagesForContact() picks these up and sends the blob
+     * then sendPendingMessagesForContact() picks these up and sends the blob.
+     * Also includes STATUS_FAILED so blob-send failures get retried without full PING cycle.
      */
-    @Query("SELECT $LITE_COLS FROM messages WHERE contactId = :contactId AND isSentByMe = 1 AND status = ${Message.STATUS_PONG_RECEIVED} AND pingId IS NOT NULL ORDER BY timestamp ASC")
+    @Query("SELECT $LITE_COLS FROM messages WHERE contactId = :contactId AND isSentByMe = 1 AND status IN (${Message.STATUS_PONG_RECEIVED}, ${Message.STATUS_FAILED}) AND pingId IS NOT NULL ORDER BY timestamp ASC")
     suspend fun getMessagesPendingBlobSend(contactId: Long): List<Message>
 
     /**

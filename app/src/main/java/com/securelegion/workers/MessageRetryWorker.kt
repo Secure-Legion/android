@@ -7,7 +7,6 @@ import com.securelegion.crypto.KeyManager
 import com.securelegion.database.SecureLegionDatabase
 import com.securelegion.services.MessageService
 import com.securelegion.services.TorService
-import com.securelegion.models.AckState
 import com.securelegion.utils.TorHealthHelper
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -172,7 +171,6 @@ class MessageRetryWorker(
         val dbPassphrase = keyManager.getDatabasePassphrase()
         val database = SecureLegionDatabase.getInstance(applicationContext, dbPassphrase)
         val messageService = MessageService(applicationContext)
-        val ackTracker = MessageService.getAckTracker()
 
         val now = System.currentTimeMillis()
 
@@ -189,10 +187,18 @@ class MessageRetryWorker(
         }
 
         if (circuitsEstablished < 1) {
-            Log.w(TAG, "Tor bootstrap ${bootstrapPercent}% but NO CIRCUITS ESTABLISHED - skipping retry (SOCKS would fail with status 1)")
-            Log.w(TAG, "This is why you see 'SOCKS5 status 1 (general SOCKS server failure)'")
-            Log.w(TAG, "Waiting for circuits... (will retry in ${REPEAT_INTERVAL_MINUTES} minutes)")
-            return@withContext 0 // Exit early, circuits not ready yet
+            Log.w(TAG, "Tor bootstrap ${bootstrapPercent}% but NO CIRCUITS ESTABLISHED - scheduling fast retry in 30s")
+            // Don't wait the full 3 minutes — circuits may come up any second.
+            // Schedule a 30s one-shot so we retry as soon as circuits are likely ready.
+            val fastRetry = OneTimeWorkRequestBuilder<MessageRetryWorker>()
+                .setInitialDelay(30, TimeUnit.SECONDS)
+                .build()
+            WorkManager.getInstance(applicationContext).enqueueUniqueWork(
+                "message_retry_circuits_wait",
+                ExistingWorkPolicy.REPLACE,
+                fastRetry
+            )
+            return@withContext 0
         }
 
         if (torUnavailable) {
@@ -200,6 +206,16 @@ class MessageRetryWorker(
             Log.w(TAG, "Tor health snapshot unavailable ($status) but live checks OK; proceeding with retries")
         } else {
             Log.i(TAG, "Tor healthy: bootstrap=${bootstrapPercent}%, circuits=${circuitsEstablished}, proceeding with retries")
+        }
+
+        // Revert STATUS_SENT messages that never received MESSAGE_ACK after 2 minutes.
+        // Over Tor, a successful write_all() doesn't guarantee delivery — the circuit can
+        // drop after send but before the receiver processes the data.
+        val ackTimeoutMs = 2 * 60 * 1000L
+        val cutoff = now - ackTimeoutMs
+        val reverted = database.messageDao().revertStaleSentMessages(cutoff)
+        if (reverted > 0) {
+            Log.i(TAG, "Reverted $reverted stale SENT messages to PONG_RECEIVED for re-send")
         }
 
         // HARD GATE:
@@ -224,49 +240,59 @@ class MessageRetryWorker(
         for (message in messages) {
             val contact = contactMap[message.contactId] ?: continue
 
-            // Check current ACK state to determine what phase needs retry
-            val ackState = ackTracker.getState(message.messageId)
+            // Use DB status as source of truth — NOT in-memory AckStateTracker.
+            // AckStateTracker is ephemeral (lost on restart) and not hydrated from DB,
+            // so after restart it returns NONE for everything, causing re-PINGs for
+            // messages that are already PONG_RECEIVED → ghost typing on receiver.
+            val dbStatus = message.status
 
-            Log.d(TAG, "Retrying message ${message.messageId} (phase: $ackState, retryCount=${message.retryCount})")
+            Log.d(TAG, "Retrying message ${message.messageId} (dbStatus=$dbStatus, retryCount=${message.retryCount})")
 
             val success = try {
-                when (ackState) {
-                    AckState.NONE, AckState.PING_ACKED -> {
-                        // Phase 1: PING not received or not acknowledged - retry PING
-                        // ALWAYS use sendPingForMessage (never resendPingWithWireBytes)
-                        // because resendPingWithWireBytes doesn't re-register the signer
-                        // in OUTGOING_PING_SIGNERS, causing PONG_SIG_REJECT on the response
-                        Log.d(TAG, "→ Retrying PING for ${message.messageId}")
-                        messageService.sendPingForMessage(message).isSuccess
-                    }
-                    AckState.PONG_RECEIVED -> {
-                        // Phase 2: PONG received — send blob for this contact
-                        Log.d(TAG, "→ PONG received, sending blob for ${message.messageId}")
+                when (dbStatus) {
+                    com.securelegion.database.entities.Message.STATUS_PONG_RECEIVED,
+                    com.securelegion.database.entities.Message.STATUS_FAILED -> {
+                        // PONG received or previous blob send failed — send blob
+                        Log.d(TAG, "→ Sending blob for ${message.messageId} (status=$dbStatus)")
                         messageService.sendPendingMessagesForContact(message.contactId)
                         true
                     }
-                    AckState.DELIVERED -> {
-                        // Phase 3: Message fully delivered - skip retry
-                        Log.d(TAG, "→ Message already delivered, skipping ${message.messageId}")
-                        true // Skip, don't count as retry
+                    com.securelegion.database.entities.Message.STATUS_SENT -> {
+                        // Blob was sent but no MESSAGE_ACK yet — revertStaleSentMessages
+                        // handles transitioning these back to PONG_RECEIVED after timeout.
+                        // Skip here — don't re-PING a message that was already sent.
+                        Log.d(TAG, "→ STATUS_SENT, waiting for ACK (skipping) ${message.messageId}")
+                        true
+                    }
+                    com.securelegion.database.entities.Message.STATUS_DELIVERED -> {
+                        Log.d(TAG, "→ Already delivered, skipping ${message.messageId}")
+                        true
+                    }
+                    else -> {
+                        // STATUS_PENDING, STATUS_PING_SENT, or unknown — retry PING
+                        Log.d(TAG, "→ Retrying PING for ${message.messageId} (status=$dbStatus)")
+                        messageService.sendPingForMessage(message).isSuccess
                     }
                 }
             } catch (e: Exception) {
                 val errorMsg = e.message?.take(256) ?: "Unknown error"
-                Log.e(TAG, "Failed to retry message ${message.messageId} in phase $ackState: $errorMsg", e)
+                Log.e(TAG, "Failed to retry message ${message.messageId} (status=$dbStatus): $errorMsg", e)
                 false
             }
 
             if (success) {
                 retriedCount++
-                Log.d(TAG, "Retry sent for ${message.messageId} (phase: $ackState)")
-                if (ackState != AckState.DELIVERED) {
+                Log.d(TAG, "Retry handled for ${message.messageId} (status=$dbStatus)")
+                if (dbStatus != com.securelegion.database.entities.Message.STATUS_DELIVERED &&
+                    dbStatus != com.securelegion.database.entities.Message.STATUS_PONG_RECEIVED &&
+                    dbStatus != com.securelegion.database.entities.Message.STATUS_FAILED &&
+                    dbStatus != com.securelegion.database.entities.Message.STATUS_SENT) {
                     MessageService.scheduleRetry(database, message)
                 }
             } else {
                 // On failure: update message with error and schedule next retry with exponential backoff
                 val nextRetryMs = calculateNextRetryTime(message.retryCount, now)
-                val errorMsg = "Retry attempt ${message.retryCount + 1} failed (phase: $ackState)"
+                val errorMsg = "Retry attempt ${message.retryCount + 1} failed (status: $dbStatus)"
                 updateMessageRetryState(database, message, errorMsg, nextRetryMs)
             }
         }
@@ -290,7 +316,6 @@ class MessageRetryWorker(
             val dbPassphrase = keyManager.getDatabasePassphrase()
             val database = SecureLegionDatabase.getInstance(applicationContext, dbPassphrase)
             val messageService = MessageService(applicationContext)
-            val ackTracker = MessageService.getAckTracker()
 
             val now = System.currentTimeMillis()
 
@@ -304,7 +329,16 @@ class MessageRetryWorker(
                 return@withContext 0
             }
             if (circuitsEstablished < 1) {
-                Log.w(TAG, "Contact retry skipped: bootstrap=${bootstrapPercent}%, circuits=${circuitsEstablished}")
+                Log.w(TAG, "Contact retry for $contactId: no circuits yet, scheduling fast retry in 30s")
+                val fastRetry = OneTimeWorkRequestBuilder<MessageRetryWorker>()
+                    .setInputData(workDataOf("CONTACT_ID" to contactId))
+                    .setInitialDelay(30, TimeUnit.SECONDS)
+                    .build()
+                WorkManager.getInstance(applicationContext).enqueueUniqueWork(
+                    "message_retry_contact_${contactId}",
+                    ExistingWorkPolicy.REPLACE,
+                    fastRetry
+                )
                 return@withContext 0
             }
 
@@ -326,49 +360,51 @@ class MessageRetryWorker(
             var retriedCount = 0
 
             for (message in messages) {
-                // Check current ACK state to determine what phase needs retry
-                val ackState = ackTracker.getState(message.messageId)
+                // Use DB status as source of truth (same as periodic path)
+                val dbStatus = message.status
 
-                Log.d(TAG, "Retrying message ${message.messageId} for contact $contactId (phase: $ackState, retryCount=${message.retryCount})")
+                Log.d(TAG, "Retrying message ${message.messageId} for contact $contactId (dbStatus=$dbStatus, retryCount=${message.retryCount})")
 
                 val success = try {
-                    when (ackState) {
-                        AckState.NONE, AckState.PING_ACKED -> {
-                            // Phase 1: PING not received - retry PING
-                            // ALWAYS use sendPingForMessage (never resendPingWithWireBytes)
-                            // because resendPingWithWireBytes doesn't re-register the signer
-                            // in OUTGOING_PING_SIGNERS, causing PONG_SIG_REJECT on the response
-                            Log.d(TAG, "→ Retrying PING for ${message.messageId}")
-                            messageService.sendPingForMessage(message).isSuccess
-                        }
-                        AckState.PONG_RECEIVED -> {
-                            // Phase 2: PONG received — send blob for this contact
-                            Log.d(TAG, "→ TAP triggered, sending blob for ${message.messageId}")
+                    when (dbStatus) {
+                        com.securelegion.database.entities.Message.STATUS_PONG_RECEIVED,
+                        com.securelegion.database.entities.Message.STATUS_FAILED -> {
+                            Log.d(TAG, "→ TAP triggered, sending blob for ${message.messageId} (status=$dbStatus)")
                             messageService.sendPendingMessagesForContact(message.contactId)
                             true
                         }
-                        AckState.DELIVERED -> {
-                            // Phase 3: Message fully delivered - skip retry
-                            Log.d(TAG, "→ Message already delivered, skipping ${message.messageId}")
+                        com.securelegion.database.entities.Message.STATUS_SENT -> {
+                            Log.d(TAG, "→ STATUS_SENT, waiting for ACK (skipping) ${message.messageId}")
                             true
+                        }
+                        com.securelegion.database.entities.Message.STATUS_DELIVERED -> {
+                            Log.d(TAG, "→ Already delivered, skipping ${message.messageId}")
+                            true
+                        }
+                        else -> {
+                            Log.d(TAG, "→ Retrying PING for ${message.messageId} (status=$dbStatus)")
+                            messageService.sendPingForMessage(message).isSuccess
                         }
                     }
                 } catch (e: Exception) {
                     val errorMsg = e.message?.take(256) ?: "Unknown error"
-                    Log.e(TAG, "Failed to retry message ${message.messageId} in phase $ackState: $errorMsg", e)
+                    Log.e(TAG, "Failed to retry message ${message.messageId} (status=$dbStatus): $errorMsg", e)
                     false
                 }
 
                 if (success) {
                     retriedCount++
-                    Log.d(TAG, "Retry sent for ${message.messageId} (phase: $ackState)")
-                    if (ackState != AckState.DELIVERED) {
+                    Log.d(TAG, "Retry handled for ${message.messageId} (status=$dbStatus)")
+                    if (dbStatus != com.securelegion.database.entities.Message.STATUS_DELIVERED &&
+                        dbStatus != com.securelegion.database.entities.Message.STATUS_PONG_RECEIVED &&
+                        dbStatus != com.securelegion.database.entities.Message.STATUS_FAILED &&
+                        dbStatus != com.securelegion.database.entities.Message.STATUS_SENT) {
                         MessageService.scheduleRetry(database, message)
                     }
                 } else {
                     // On failure: update message with error and schedule next retry with exponential backoff
                     val nextRetryMs = calculateNextRetryTime(message.retryCount, now)
-                    val errorMsg = "Contact retry attempt ${message.retryCount + 1} failed (phase: $ackState)"
+                    val errorMsg = "Contact retry attempt ${message.retryCount + 1} failed (status: $dbStatus)"
                     updateMessageRetryState(database, message, errorMsg, nextRetryMs)
                 }
             }

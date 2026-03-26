@@ -902,11 +902,17 @@ class MessageService(private val context: Context) {
 
             try {
                 sendPingForMessage(savedMessage)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                Log.d(TAG, "Sticker Ping send coroutine cancelled after queueing; retry worker will handle delivery")
+                throw e
             } catch (e: Exception) {
                 Log.w(TAG, "Sticker Ping send failed, retry worker will handle: ${e.message}")
             }
 
             Result.success(savedMessage)
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            Log.d(TAG, "Sticker send coroutine cancelled after local queueing")
+            throw e
         } catch (e: Exception) {
             Log.e(TAG, "Failed to send sticker message", e)
             Result.failure(e)
@@ -3500,10 +3506,16 @@ class MessageService(private val context: Context) {
             for (message in pendingMessages) {
                 val pingId = message.pingId ?: continue
 
-                // Fresh DB check: skip if already delivered or already sent via instant mode
+                // Fresh DB check: skip if already delivered, or already sent and within ACK timeout
                 val fresh = database.messageDao().getMessageById(message.id)
-                if (fresh == null || fresh.messageDelivered || fresh.status == Message.STATUS_SENT) {
-                    Log.d(TAG, "${message.messageId}: already delivered/sent (status=${fresh?.status}) — skipping")
+                if (fresh == null || fresh.messageDelivered) {
+                    Log.d(TAG, "${message.messageId}: already delivered (status=${fresh?.status}) — skipping")
+                    continue
+                }
+                // Skip STATUS_SENT only if it's recent (within 2-min ACK timeout) —
+                // stale SENT messages get reverted to PONG_RECEIVED by the worker
+                if (fresh.status == Message.STATUS_SENT) {
+                    Log.d(TAG, "${message.messageId}: status=SENT, waiting for ACK — skipping")
                     continue
                 }
 
@@ -3593,12 +3605,13 @@ class MessageService(private val context: Context) {
                 else -> 0x03.toByte() // TEXT (default)
             }
 
-            // Send message blob
+            // Send message blob with pingId in wire format for exact ping-to-blob matching
             val success = try {
                 com.securelegion.crypto.RustBridge.sendMessageBlob(
                     contact.messagingOnion ?: "",
                     encryptedBytes,
-                    messageTypeByte
+                    messageTypeByte,
+                    pingId
                 )
             } catch (e: Exception) {
                 Log.e(TAG, "sendMessageBlob threw exception", e)
@@ -3619,16 +3632,24 @@ class MessageService(private val context: Context) {
                 database.messageDao().updateMessageStatus(message.id, com.securelegion.database.entities.Message.STATUS_SENT)
                 Log.i(TAG, "Message blob sent successfully: ${message.messageId}")
             } else {
-                Log.e(TAG, "Failed to send message blob for ${message.messageId}")
+                val newRetryCount = message.retryCount + 1
+                Log.e(TAG, "Failed to send message blob for ${message.messageId} (attempt $newRetryCount)")
 
-                // IMPORTANT: Mark as FAILED so UI shows accurate state and resend can work
-                database.messageDao().updateMessageStatus(message.id, com.securelegion.database.entities.Message.STATUS_FAILED)
+                if (newRetryCount >= 3 && message.status == com.securelegion.database.entities.Message.STATUS_FAILED) {
+                    // 3+ consecutive blob failures — downgrade to PING_SENT to force full handshake.
+                    // The old circuit/connection path is clearly broken; start fresh.
+                    database.messageDao().updateMessageStatus(message.id, com.securelegion.database.entities.Message.STATUS_PING_SENT)
+                    Log.w(TAG, "${message.messageId}: 3 blob failures — downgraded to PING_SENT for full re-handshake")
+                } else {
+                    // Normal failure: mark FAILED so retry worker picks it up for blob re-send
+                    database.messageDao().updateMessageStatus(message.id, com.securelegion.database.entities.Message.STATUS_FAILED)
+                }
 
                 // CRITICAL: Use partial update to avoid overwriting delivery status
                 // (fixes race where MESSAGE_ACK sets delivered=true between read and write)
                 database.messageDao().updateRetryState(
                     message.id,
-                    message.retryCount + 1,
+                    newRetryCount,
                     System.currentTimeMillis()
                 )
             }

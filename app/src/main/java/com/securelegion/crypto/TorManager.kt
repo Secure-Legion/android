@@ -595,6 +595,7 @@ class TorManager(private val context: Context) {
         synchronized(this) {
             isInitializing = false
             isInitialized = false
+            listenerStarted = false
             prefs.edit().putBoolean(KEY_TOR_INITIALIZED, false).apply()
             Log.i(TAG, "Tor initialization state reset - will re-initialize on next start")
         }

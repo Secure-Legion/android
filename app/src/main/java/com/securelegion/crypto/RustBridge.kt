@@ -444,6 +444,12 @@ object RustBridge {
     external fun initializeTor(): String
 
     /**
+     * Shut down Arti completely — drops TorClient, all onion services, cancels listeners.
+     * MUST be called from onDestroy() so the next initializeTor() creates a fresh client.
+     */
+    external fun shutdownArti()
+
+    /**
      * Initialize VOICE Tor control connection (port 9052)
      * Must be called AFTER voice Tor daemon is started by TorManager
      * Voice Tor runs with Single Onion Service configuration for reduced latency
@@ -1142,14 +1148,22 @@ object RustBridge {
     external fun cleanupExpiredSessions()
 
     /**
-     * Send encrypted message blob after Pong is received
-     * Used for persistent messaging - after Pong arrives, send the actual message
+     * Send encrypted message blob after Pong is received.
+     * When pingIdHex is non-empty, Rust prepends the pingId to the wire so the
+     * receiver can correlate the blob to the exact pending ping. Legacy callers
+     * may pass an empty pingIdHex and keep the older wire layout.
      * @param recipientOnion The recipient's .onion address
      * @param encryptedMessage The encrypted message bytes
      * @param messageTypeByte The message type (0x03 = TEXT, 0x04 = VOICE)
+     * @param pingIdHex The related pingId in hex, or empty string for legacy/untracked blobs
      * @return True if message sent successfully
      */
-    external fun sendMessageBlob(recipientOnion: String, encryptedMessage: ByteArray, messageTypeByte: Byte): Boolean
+    external fun sendMessageBlob(
+        recipientOnion: String,
+        encryptedMessage: ByteArray,
+        messageTypeByte: Byte,
+        pingIdHex: String = ""
+    ): Boolean
 
     /**
      * Send call signaling message via HTTP POST to voice .onion
@@ -1302,9 +1316,11 @@ object RustBridge {
     ): Boolean
 
     /**
-     * Start ACK listener on port 9153
-     * @param port Port number
-     * @return True if listener started successfully
+     * Initialize the ACK routing channel used by the main messaging listener.
+     * ACK frames are delivered on the messaging hidden service path; this call
+     * just ensures the internal channel exists and is safe to poll.
+     * @param port Requested port (kept for compatibility; routed via main listener)
+     * @return True if the ACK channel is ready
      */
     external fun startAckListener(port: Int): Boolean
 
