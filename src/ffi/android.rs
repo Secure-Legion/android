@@ -92,6 +92,32 @@ fn string_to_jstring<'a>(env: &mut JNIEnv<'a>, string: &str) -> Result<JString<'
         .map_err(|e| format!("Failed to create string: {}", e))
 }
 
+/// Convert a Java/Kotlin String into raw bytes by treating each scalar value
+/// U+0000..U+00FF as a single byte (Latin-1 identity mapping).
+///
+/// This preserves binary payloads that are tunneled through Kotlin strings
+/// via `String(bytes, ISO_8859_1)`.
+fn string_to_latin1_bytes(s: &str) -> Result<Vec<u8>, String> {
+    let mut out = Vec::with_capacity(s.len());
+    for ch in s.chars() {
+        let code = ch as u32;
+        if code > 0xFF {
+            return Err(format!(
+                "String contains non-Latin1 scalar U+{:04X}; binary-safe mapping requires U+0000..U+00FF",
+                code
+            ));
+        }
+        out.push(code as u8);
+    }
+    Ok(out)
+}
+
+/// Convert raw bytes into a Java-compatible String using a Latin-1 identity
+/// mapping (byte 0xNN -> scalar U+00NN).
+fn latin1_bytes_to_string(bytes: &[u8]) -> String {
+    bytes.iter().map(|&b| char::from(b)).collect()
+}
+
 /// Get the Android app's internal data directory (e.g. /data/data/com.securelegion/files).
 /// Used for Arti state/cache storage.
 fn get_android_data_dir(env: &mut JNIEnv) -> Result<String, String> {
@@ -6607,6 +6633,13 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_encryptMessageWithEvol
                 return std::ptr::null_mut();
             }
         };
+        let plaintext_bytes = match string_to_latin1_bytes(&plaintext_str) {
+            Ok(v) => v,
+            Err(e) => {
+                let _ = env.throw_new("java/lang/IllegalArgumentException", e);
+                return std::ptr::null_mut();
+            }
+        };
 
         let chain_key_vec = match jbytearray_to_vec(&mut env, chain_key) {
             Ok(v) => v,
@@ -6623,7 +6656,7 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_encryptMessageWithEvol
 
         let mut chain_key_array: [u8; 32] = chain_key_vec.try_into().unwrap();
 
-        match encrypt_message_with_evolution(plaintext_str.as_bytes(), &mut chain_key_array, sequence as u64) {
+        match encrypt_message_with_evolution(&plaintext_bytes, &mut chain_key_array, sequence as u64) {
             Ok(result) => {
                 // Build result: [evolved_key:32][ciphertext]
                 let mut output = Vec::with_capacity(32 + result.ciphertext.len());
@@ -6650,12 +6683,12 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_encryptMessageWithEvol
 /// ATOMIC OPERATION: Returns both decrypted message and evolved key
 ///
 /// Wire format: [version:1][sequence:8][nonce:24][ciphertext][tag:16]
-/// Return format: [evolved_key:32][plaintext_utf8]
+/// Return format: [evolved_key:32][plaintext_raw_bytes]
 ///
 /// @param encryptedData Encrypted message with wire format header
 /// @param chainKey Current chain key (will be evolved)
 /// @param expectedSequence Expected sequence number (for replay protection)
-/// @return [evolved_chain_key:32][plaintext_utf8] - split first 32 bytes on Kotlin side, or null if decryption fails
+/// @return [evolved_chain_key:32][plaintext_raw_bytes] - split first 32 bytes on Kotlin side, or null if decryption fails
 #[no_mangle]
 pub extern "C" fn Java_com_securelegion_crypto_RustBridge_decryptMessageWithEvolutionJNI(
     mut env: JNIEnv,
@@ -6690,25 +6723,15 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_decryptMessageWithEvol
 
         match decrypt_message_with_evolution(&encrypted_vec, &mut chain_key_array, expected_sequence as u64) {
             Ok(result) => {
-                // Convert plaintext bytes to UTF-8 string first
-                match String::from_utf8(result.plaintext.clone()) {
-                    Ok(plaintext_str) => {
-                        // Build result: [evolved_key:32][plaintext_utf8]
-                        let plaintext_bytes = plaintext_str.as_bytes();
-                        let mut output = Vec::with_capacity(32 + plaintext_bytes.len());
-                        output.extend_from_slice(&result.evolved_chain_key);
-                        output.extend_from_slice(plaintext_bytes);
+                // Build result: [evolved_key:32][plaintext_raw_bytes]
+                let mut output = Vec::with_capacity(32 + result.plaintext.len());
+                output.extend_from_slice(&result.evolved_chain_key);
+                output.extend_from_slice(&result.plaintext);
 
-                        match vec_to_jbytearray(&mut env, &output) {
-                            Ok(arr) => arr.into_raw(),
-                            Err(e) => {
-                                let _ = env.throw_new("java/lang/RuntimeException", e);
-                                std::ptr::null_mut()
-                            }
-                        }
-                    },
+                match vec_to_jbytearray(&mut env, &output) {
+                    Ok(arr) => arr.into_raw(),
                     Err(e) => {
-                        let _ = env.throw_new("java/lang/RuntimeException", format!("Invalid UTF-8: {}", e));
+                        let _ = env.throw_new("java/lang/RuntimeException", e);
                         std::ptr::null_mut()
                     }
                 }
@@ -6785,18 +6808,11 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_decryptWithMessageKey(
 
         match cipher.decrypt(nonce_obj, encrypted_payload) {
             Ok(plaintext_bytes) => {
-                match String::from_utf8(plaintext_bytes) {
-                    Ok(plaintext_str) => {
-                        match env.new_string(&plaintext_str) {
-                            Ok(jstr) => jstr.into_raw(),
-                            Err(e) => {
-                                let _ = env.throw_new("java/lang/RuntimeException", format!("Failed to create Java string: {}", e));
-                                std::ptr::null_mut()
-                            }
-                        }
-                    },
+                let plaintext_str = latin1_bytes_to_string(&plaintext_bytes);
+                match env.new_string(&plaintext_str) {
+                    Ok(jstr) => jstr.into_raw(),
                     Err(e) => {
-                        let _ = env.throw_new("java/lang/RuntimeException", format!("Invalid UTF-8: {}", e));
+                        let _ = env.throw_new("java/lang/RuntimeException", format!("Failed to create Java string: {}", e));
                         std::ptr::null_mut()
                     }
                 }
@@ -6833,6 +6849,13 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_encryptMessageDeferred
                 return std::ptr::null_mut();
             }
         };
+        let plaintext_bytes = match string_to_latin1_bytes(&plaintext_str) {
+            Ok(v) => v,
+            Err(e) => {
+                let _ = env.throw_new("java/lang/IllegalArgumentException", e);
+                return std::ptr::null_mut();
+            }
+        };
 
         let chain_key_vec = match jbytearray_to_vec(&mut env, chain_key_bytes) {
             Ok(v) => v,
@@ -6850,7 +6873,7 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_encryptMessageDeferred
         let mut chain_key_array = [0u8; 32];
         chain_key_array.copy_from_slice(&chain_key_vec);
 
-        match encrypt_message_deferred(plaintext_str.as_bytes(), &chain_key_array, sequence as u64) {
+        match encrypt_message_deferred(&plaintext_bytes, &chain_key_array, sequence as u64) {
             Ok(result) => {
                 let json = serde_json::json!({
                     "ciphertext": base64::encode(&result.ciphertext),
