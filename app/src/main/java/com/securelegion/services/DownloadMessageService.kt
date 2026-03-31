@@ -18,6 +18,7 @@ import com.securelegion.crypto.KeyManager
 import com.securelegion.database.SecureLegionDatabase
 import kotlinx.coroutines.*
 import androidx.room.withTransaction
+import java.util.concurrent.atomic.AtomicBoolean
 
 class DownloadMessageService : Service() {
 
@@ -55,6 +56,7 @@ class DownloadMessageService : Service() {
     private val downloadQueue = mutableListOf<DownloadRequest>()
     private val queuedPingIds = mutableSetOf<String>() // Dedup: tracks queued + in-flight pingIds
     private var isProcessingQueue = false
+    @Volatile private var currentPingId: String? = null
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var notificationManager: NotificationManager? = null
@@ -82,11 +84,23 @@ class DownloadMessageService : Service() {
 
         // Queue the download (will process sequentially, dedup by pingId)
         synchronized(downloadQueue) {
-            if (pingId in queuedPingIds) {
+            val alreadyReserved = pingId in queuedPingIds
+            val retryAfterTimedOutActiveAttempt = alreadyReserved &&
+                currentPingId == pingId &&
+                downloadCompleted &&
+                downloadQueue.none { it.pingId == pingId }
+
+            if (alreadyReserved && !retryAfterTimedOutActiveAttempt) {
                 Log.d(TAG, "Dedup: pingId=${pingId.take(8)} already queued/in-flight, skipping")
                 return START_NOT_STICKY
             }
-            queuedPingIds.add(pingId)
+
+            if (!alreadyReserved) {
+                queuedPingIds.add(pingId)
+            } else {
+                Log.i(TAG, "Re-queueing timed-out pingId=${pingId.take(8)} while prior attempt unwinds")
+            }
+
             downloadQueue.add(DownloadRequest(contactId, contactName, pingId, connectionId))
             Log.d(TAG, "Queued download: $contactName (pingId=${pingId.take(8)}...) connId=$connectionId - Queue size: ${downloadQueue.size}")
 
@@ -110,6 +124,7 @@ class DownloadMessageService : Service() {
                     if (downloadQueue.isEmpty()) {
                         isProcessingQueue = false
                         queuedPingIds.clear()
+                        currentPingId = null
                         Log.d(TAG, "Download queue empty - stopping service")
                         stopSelf()
                         return@launch
@@ -130,23 +145,20 @@ class DownloadMessageService : Service() {
                 } catch (e: Exception) {
                     Log.e(TAG, "Download failed", e)
                     showFailureNotification(request.contactName, e.message ?: "Unknown error", request.pingId, request.contactId)
-
-                    // Broadcast download failure to ChatActivity
-                    val failureIntent = Intent("com.securelegion.DOWNLOAD_FAILED")
-                    failureIntent.setPackage(packageName)
-                    failureIntent.putExtra("CONTACT_ID", request.contactId)
-                    sendBroadcast(failureIntent)
-                    Log.d(TAG, "Sent DOWNLOAD_FAILED broadcast")
                 } finally {
                     // Clear download-in-progress flag
                     downloadStatusPrefs.edit()
                         .putBoolean("downloading_${request.contactId}", false)
                         .remove("download_start_time_${request.contactId}")
                         .apply()
-                    // Release dedup lock so this pingId can be re-queued if needed
+
+                    // Keep the reservation if the same ping was re-queued while this timed-out attempt unwound.
                     synchronized(downloadQueue) {
-                        queuedPingIds.remove(request.pingId)
+                        if (downloadQueue.none { it.pingId == request.pingId }) {
+                            queuedPingIds.remove(request.pingId)
+                        }
                     }
+                    currentPingId = null
                     Log.d(TAG, "Cleared download-in-progress flag for contact ${request.contactId}")
                 }
             }
@@ -193,6 +205,7 @@ class DownloadMessageService : Service() {
     private suspend fun downloadMessage(contactId: Long, contactName: String, pingId: String, connectionId: Long = -1L) {
         currentContactId = contactId
         currentContactName = contactName
+        currentPingId = pingId
         downloadCompleted = false
         lastReceivedWireType = -1
         val startTime = System.currentTimeMillis()
@@ -209,9 +222,13 @@ class DownloadMessageService : Service() {
         val ctx = loadAndValidatePing(contactId, contactName, pingId, database, startTime, connectionId) ?: return
 
         // Start watchdog (single timeout owner — sets flag to stop poll loop)
+        val failureStateHandled = AtomicBoolean(false)
         watchdogJob = serviceScope.launch {
             delay(DOWNLOAD_TIMEOUT_MS)
             if (!downloadCompleted) {
+                if (failureStateHandled.compareAndSet(false, true)) {
+                    DownloadStateManager.onDownloadFailed(contactId)
+                }
                 onWatchdogTimeout(ctx)
             }
         }
@@ -244,7 +261,7 @@ class DownloadMessageService : Service() {
         } finally {
             downloadCompleted = true
             watchdogJob?.cancel()
-            if (networkStarted) {
+            if (networkStarted && failureStateHandled.compareAndSet(false, true)) {
                 // Network started but didn't complete — failure path
                 // (timeout, PONG failed, poll failed, exception)
                 DownloadStateManager.onDownloadFailed(contactId)
@@ -771,7 +788,14 @@ class DownloadMessageService : Service() {
         failIntent.putExtra("CONTACT_ID", ctx.contactId)
         sendBroadcast(failIntent)
 
-        showFailureNotification(ctx.contactName, "Download timed out (${DOWNLOAD_TIMEOUT_MS / 1000}s). Check connection.", ctx.pingId, ctx.contactId)
+        showFailureNotification(
+            ctx.contactName,
+            "Download timed out (${DOWNLOAD_TIMEOUT_MS / 1000}s). Check connection.",
+            ctx.pingId,
+            ctx.contactId,
+            transitionState = false,
+            sendFailureBroadcast = false
+        )
     }
 
 
@@ -889,7 +913,14 @@ class DownloadMessageService : Service() {
         notificationManager?.notify(successId, notification)
     }
 
-    private fun showFailureNotification(contactName: String, error: String, pingId: String? = null, contactId: Long = -1L) {
+    private fun showFailureNotification(
+        contactName: String,
+        error: String,
+        pingId: String? = null,
+        contactId: Long = -1L,
+        transitionState: Boolean = true,
+        sendFailureBroadcast: Boolean = true
+    ) {
         val notification = NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("Download failed")
             .setContentText("Failed to download message from $contactName: $error")
@@ -900,7 +931,7 @@ class DownloadMessageService : Service() {
         notificationManager?.notify(NOTIFICATION_ID, notification)
 
         // Transition DB state so lock icon reappears for retry (idempotent — safe to call multiple times)
-        if (pingId != null && contactId > 0) {
+        if (transitionState && pingId != null && contactId > 0) {
             serviceScope.launch(NonCancellable + Dispatchers.IO) {
                 try {
                     val keyManager = KeyManager.getInstance(this@DownloadMessageService)
@@ -916,12 +947,13 @@ class DownloadMessageService : Service() {
                     )
                     Log.d(TAG, "showFailureNotification → failAutoDownload result=$failed for pingId=${pingId.take(8)}")
 
-                    // Broadcast DOWNLOAD_FAILED so ChatActivity clears downloadingPingIds
-                    val failIntent = Intent("com.securelegion.DOWNLOAD_FAILED")
-                    failIntent.setPackage(packageName)
-                    failIntent.putExtra("CONTACT_ID", contactId)
-                    sendBroadcast(failIntent)
-                    Log.d(TAG, "DOWNLOAD_FAILED broadcast sent for pingId=${pingId.take(8)}")
+                    if (sendFailureBroadcast) {
+                        val failIntent = Intent("com.securelegion.DOWNLOAD_FAILED")
+                        failIntent.setPackage(packageName)
+                        failIntent.putExtra("CONTACT_ID", contactId)
+                        sendBroadcast(failIntent)
+                        Log.d(TAG, "DOWNLOAD_FAILED broadcast sent for pingId=${pingId.take(8)}")
+                    }
                 } catch (e: Exception) {
                     Log.w(TAG, "Failed to transition ping state on download failure: ${e.message}")
                 }

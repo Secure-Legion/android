@@ -1135,6 +1135,9 @@ class ChatActivity : BaseActivity() {
                 } else {
                     ThemedToast.show(this@ChatActivity, "Failed to send sticker")
                 }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                // Message is already queued locally; background retry will finish delivery.
+                Log.d(TAG, "Sticker message coroutine cancelled, but retry worker will handle delivery")
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to send sticker", e)
                 ThemedToast.show(this@ChatActivity, "Failed to send sticker")
