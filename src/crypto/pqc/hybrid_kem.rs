@@ -6,7 +6,8 @@
 
 use super::types::*;
 use hkdf::Hkdf;
-use pqc_kyber::*;
+use ml_kem::{EncodedSizeUser, KemCore, MlKem1024};
+use ml_kem::kem::{Decapsulate, Encapsulate};
 use rand::SeedableRng;
 use rand_chacha::ChaCha20Rng;
 use rand_core::OsRng;
@@ -19,12 +20,12 @@ use zeroize::Zeroize;
 pub enum HybridKEMError {
     #[error("Invalid seed length (expected 32 bytes)")]
     InvalidSeedLength,
-    #[error("Kyber key generation failed")]
-    KyberKeyGenFailed,
-    #[error("Kyber encapsulation failed")]
-    KyberEncapsFailed,
-    #[error("Kyber decapsulation failed")]
-    KyberDecapsFailed,
+    #[error("ML-KEM key generation failed")]
+    MlKemKeyGenFailed,
+    #[error("ML-KEM encapsulation failed")]
+    MlKemEncapsFailed,
+    #[error("ML-KEM decapsulation failed")]
+    MlKemDecapsFailed,
     #[error("HKDF expansion failed")]
     HKDFExpansionFailed,
     #[error("Invalid keypair size")]
@@ -34,61 +35,45 @@ pub enum HybridKEMError {
 pub type Result<T> = std::result::Result<T, HybridKEMError>;
 
 /// Generate hybrid KEM keypair from seed (deterministic)
-///
-/// # Arguments
-/// * `seed` - 32-byte seed for key derivation
-///
-/// # Returns
-/// Hybrid keypair containing X25519 and Kyber-1024 keys
-///
-/// # Security
-/// Uses domain separation to derive independent X25519 and Kyber seeds
 pub fn generate_hybrid_keypair_from_seed(seed: &[u8; 32]) -> Result<HybridKEMKeypair> {
     // 1. Use seed directly for X25519 (matches existing KeyManager behavior)
     let x25519_secret = StaticSecret::from(*seed);
     let x25519_public = PublicKey::from(&x25519_secret);
 
-    // 2. Derive Kyber seed using domain separation
-    let kyber_seed = derive_kyber_seed(seed);
+    // 2. Derive ML-KEM seed using domain separation
+    let mlkem_seed = derive_mlkem_seed(seed);
 
-    // 3. Generate Kyber-1024 keypair from deterministic RNG
-    let mut rng = ChaCha20Rng::from_seed(kyber_seed);
-    let kyber_keys =
-        keypair(&mut rng).map_err(|_| HybridKEMError::KyberKeyGenFailed)?;
+    // 3. Generate ML-KEM-1024 keypair from deterministic RNG
+    let mut rng = ChaCha20Rng::from_seed(mlkem_seed);
+    let (dk, ek) = MlKem1024::generate(&mut rng);
+
+    // Extract raw bytes
+    let ek_encoded = ek.as_bytes();
+    let dk_encoded = dk.as_bytes();
+
+    let mut kyber_public = [0u8; KYBER_PUBLIC_KEY_BYTES];
+    let mut kyber_secret = [0u8; KYBER_SECRET_KEY_BYTES];
+    kyber_public.copy_from_slice(ek_encoded.as_slice());
+    kyber_secret.copy_from_slice(dk_encoded.as_slice());
 
     Ok(HybridKEMKeypair {
         x25519_public: x25519_public.to_bytes(),
         x25519_secret: x25519_secret.to_bytes(),
-        kyber_public: kyber_keys.public,
-        kyber_secret: kyber_keys.secret,
+        kyber_public,
+        kyber_secret,
     })
 }
 
-/// Derive Kyber seed from X25519 seed using domain separation
-///
-/// Uses SHA-256(seed || "kyber1024") to ensure Kyber and X25519 keys are independent
-fn derive_kyber_seed(x25519_seed: &[u8; 32]) -> [u8; 32] {
+/// Derive ML-KEM seed from X25519 seed using domain separation
+fn derive_mlkem_seed(x25519_seed: &[u8; 32]) -> [u8; 32] {
     let mut hasher = Sha256::new();
     hasher.update(x25519_seed);
-    hasher.update(b"kyber1024"); // Domain separation constant
+    hasher.update(b"mlkem1024");
     let hash = hasher.finalize();
     hash.into()
 }
 
 /// Hybrid encapsulation - generate shared secret for recipient
-///
-/// # Arguments
-/// * `their_x25519_public` - Recipient's X25519 public key (32 bytes)
-/// * `their_kyber_public` - Recipient's Kyber public key (1568 bytes)
-///
-/// # Returns
-/// Tuple of (combined_secret, ciphertext) where:
-/// - combined_secret: 64-byte hybrid shared secret
-/// - ciphertext: Encapsulated data to send to recipient
-///
-/// # Security
-/// Combines X25519 and Kyber secrets using HKDF-SHA256
-/// Secret is secure if EITHER algorithm remains unbroken
 pub fn hybrid_encapsulate(
     their_x25519_public: &[u8; X25519_PUBLIC_KEY_BYTES],
     their_kyber_public: &[u8; KYBER_PUBLIC_KEY_BYTES],
@@ -97,22 +82,22 @@ pub fn hybrid_encapsulate(
     let our_ephemeral_secret = StaticSecret::random_from_rng(OsRng);
     let our_ephemeral_public = PublicKey::from(&our_ephemeral_secret);
 
-    let mut their_x25519_pk_array = [0u8; X25519_PUBLIC_KEY_BYTES];
-    their_x25519_pk_array.copy_from_slice(their_x25519_public);
-    let their_x25519_pk = PublicKey::from(their_x25519_pk_array);
-
+    let their_x25519_pk = PublicKey::from(*their_x25519_public);
     let x25519_shared_secret = our_ephemeral_secret.diffie_hellman(&their_x25519_pk);
 
-    // 2. Kyber-1024 encapsulation
-    let (kyber_ciphertext, kyber_shared_secret) =
-        encapsulate(their_kyber_public, &mut OsRng)
-            .map_err(|_| HybridKEMError::KyberEncapsFailed)?;
+    // 2. ML-KEM-1024 encapsulation
+    let ek = <MlKem1024 as KemCore>::EncapsulationKey::from_bytes(
+        ml_kem::array::Array::from_slice(their_kyber_public)
+    );
+    let (ct, mlkem_ss) = ek.encapsulate(&mut OsRng).unwrap();
+
+    let mut kyber_ciphertext = [0u8; KYBER_CIPHERTEXT_BYTES];
+    kyber_ciphertext.copy_from_slice(ct.as_slice());
 
     // 3. Combine both shared secrets using HKDF
     let combined_secret =
-        combine_secrets(x25519_shared_secret.as_bytes(), &kyber_shared_secret)?;
+        combine_secrets(x25519_shared_secret.as_bytes(), mlkem_ss.as_slice())?;
 
-    // 4. Build ciphertext
     let ciphertext = HybridCiphertext {
         x25519_ephemeral: our_ephemeral_public.to_bytes(),
         kyber_ciphertext,
@@ -122,65 +107,47 @@ pub fn hybrid_encapsulate(
 }
 
 /// Hybrid decapsulation - recover shared secret from ciphertext
-///
-/// # Arguments
-/// * `our_x25519_secret` - Our X25519 secret key (32 bytes)
-/// * `our_kyber_secret` - Our Kyber secret key (3168 bytes)
-/// * `ciphertext` - Hybrid ciphertext received from sender
-///
-/// # Returns
-/// 64-byte combined shared secret (identical to encapsulation result)
-///
-/// # Security
-/// Both X25519 and Kyber secrets must be kept confidential
 pub fn hybrid_decapsulate(
     our_x25519_secret: &[u8; X25519_SECRET_KEY_BYTES],
     our_kyber_secret: &[u8; KYBER_SECRET_KEY_BYTES],
     ciphertext: &HybridCiphertext,
 ) -> Result<[u8; HYBRID_SHARED_SECRET_BYTES]> {
-    // 1. X25519 key exchange (use their ephemeral public key)
+    // 1. X25519 key exchange
     let our_static_secret = StaticSecret::from(*our_x25519_secret);
     let their_ephemeral_public = PublicKey::from(ciphertext.x25519_ephemeral);
     let x25519_shared_secret = our_static_secret.diffie_hellman(&their_ephemeral_public);
 
-    // 2. Kyber-1024 decapsulation
-    let kyber_shared_secret = decapsulate(&ciphertext.kyber_ciphertext, our_kyber_secret)
-        .map_err(|_| HybridKEMError::KyberDecapsFailed)?;
+    // 2. ML-KEM-1024 decapsulation (timing-safe, unlike pqc_kyber)
+    let dk = <MlKem1024 as KemCore>::DecapsulationKey::from_bytes(
+        ml_kem::array::Array::from_slice(our_kyber_secret)
+    );
+    let ct = ml_kem::array::Array::from_slice(&ciphertext.kyber_ciphertext);
+    let mlkem_ss = dk.decapsulate(ct)
+        .map_err(|_| HybridKEMError::MlKemDecapsFailed)?;
 
-    // 3. Combine both shared secrets (must match encapsulation)
+    // 3. Combine both shared secrets
     let combined_secret =
-        combine_secrets(x25519_shared_secret.as_bytes(), &kyber_shared_secret)?;
+        combine_secrets(x25519_shared_secret.as_bytes(), mlkem_ss.as_slice())?;
 
     Ok(combined_secret)
 }
 
-/// Combine X25519 and Kyber shared secrets using HKDF-SHA256
-///
-/// # Security Properties
-/// - Uses HKDF-Expand with domain-separated info string
-/// - Produces 64-byte output for enhanced security margin
-/// - Compromising one algorithm doesn't reveal the combined secret
-///
-/// Formula: HKDF-Expand(x25519_secret || kyber_secret, "SecureLegion-Hybrid-KEM-v2")
+/// Combine X25519 and ML-KEM shared secrets using HKDF-SHA256
 fn combine_secrets(
     x25519_secret: &[u8],
-    kyber_secret: &[u8],
+    mlkem_secret: &[u8],
 ) -> Result<[u8; HYBRID_SHARED_SECRET_BYTES]> {
-    // Concatenate both secrets as HKDF input key material
-    let mut ikm = Vec::with_capacity(x25519_secret.len() + kyber_secret.len());
+    let mut ikm = Vec::with_capacity(x25519_secret.len() + mlkem_secret.len());
     ikm.extend_from_slice(x25519_secret);
-    ikm.extend_from_slice(kyber_secret);
+    ikm.extend_from_slice(mlkem_secret);
 
-    // Use HKDF to combine secrets
     let hkdf = Hkdf::<Sha256>::new(None, &ikm);
     let mut output = [0u8; HYBRID_SHARED_SECRET_BYTES];
 
     hkdf.expand(b"SecureLegion-Hybrid-KEM-v2", &mut output)
         .map_err(|_| HybridKEMError::HKDFExpansionFailed)?;
 
-    // Zeroize intermediate key material
     ikm.zeroize();
-
     Ok(output)
 }
 
@@ -194,7 +161,6 @@ mod tests {
         let keypair1 = generate_hybrid_keypair_from_seed(&seed).unwrap();
         let keypair2 = generate_hybrid_keypair_from_seed(&seed).unwrap();
 
-        // Same seed produces same keys (deterministic)
         assert_eq!(keypair1.x25519_public, keypair2.x25519_public);
         assert_eq!(keypair1.x25519_secret, keypair2.x25519_secret);
         assert_eq!(keypair1.kyber_public, keypair2.kyber_public);
@@ -219,7 +185,6 @@ mod tests {
         )
         .unwrap();
 
-        // Both parties derive same secret
         assert_eq!(secret1, secret2);
     }
 
@@ -231,7 +196,6 @@ mod tests {
         let keypair1 = generate_hybrid_keypair_from_seed(&seed1).unwrap();
         let keypair2 = generate_hybrid_keypair_from_seed(&seed2).unwrap();
 
-        // Different seeds produce different keys
         assert_ne!(keypair1.x25519_public, keypair2.x25519_public);
         assert_ne!(keypair1.kyber_public, keypair2.kyber_public);
     }
@@ -250,7 +214,6 @@ mod tests {
         )
         .unwrap();
 
-        // Try to decapsulate with wrong key
         let secret2 = hybrid_decapsulate(
             &keypair2.x25519_secret,
             &keypair2.kyber_secret,
@@ -258,7 +221,6 @@ mod tests {
         )
         .unwrap();
 
-        // Secrets should NOT match (different keys)
         assert_ne!(secret1, secret2);
     }
 
@@ -267,7 +229,6 @@ mod tests {
         let seed = [42u8; 32];
         let keypair = generate_hybrid_keypair_from_seed(&seed).unwrap();
 
-        // Serialize and deserialize
         let bytes = keypair.to_bytes();
         let restored = HybridKEMKeypair::from_bytes(&bytes).unwrap();
 
@@ -288,7 +249,6 @@ mod tests {
         )
         .unwrap();
 
-        // Combined secret should be 64 bytes
         assert_eq!(combined_secret.len(), HYBRID_SHARED_SECRET_BYTES);
     }
 }

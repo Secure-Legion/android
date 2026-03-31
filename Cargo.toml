@@ -31,7 +31,7 @@ curve25519-dalek = { version = "4", features = ["rand_core"] }
 merlin = "3"
 
 # Post-Quantum Cryptography
-pqc_kyber = { version = "0.7", features = ["kyber1024"] }
+ml-kem = { version = "0.2", features = ["deterministic", "zeroize"] }
 rand_chacha = "0.3"
 
 # Serialization
