@@ -153,6 +153,7 @@
         <activity
             android:name=".LockActivity"
             android:exported="false"
+            android:screenOrientation="portrait"
             android:windowSoftInputMode="adjustNothing" />
 
         <activity
@@ -213,20 +214,24 @@
         <activity
             android:name=".WelcomeActivity"
             android:exported="false"
+            android:screenOrientation="portrait"
             android:theme="@style/Theme.SecureLegion.NoStartingWindow" />
 
         <activity
             android:name=".CreateAccountActivity"
             android:exported="false"
+            android:screenOrientation="portrait"
             android:windowSoftInputMode="adjustResize" />
 
         <activity
             android:name=".AccountCreatedActivity"
-            android:exported="false" />
+            android:exported="false"
+            android:screenOrientation="portrait" />
 
         <activity
             android:name=".RestoreAccountActivity"
             android:exported="false"
+            android:screenOrientation="portrait"
             android:windowSoftInputMode="adjustResize" />
 
         <activity
