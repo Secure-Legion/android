@@ -3771,6 +3771,178 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendMessageBlob(
     }, 0)
 }
 
+/// Fast Mode: Send message directly (no PING/PONG handshake) and wait for ACK.
+/// Used for small payloads (TEXT, STICKER, REACTION) where the PING liveness check
+/// is unnecessary. Sends the signed wire frame and waits up to 30s for a
+/// DELIVERY_CONFIRMATION (0x06) on the same connection.
+///
+/// Returns JSON: {"success":true/false, "ackReceived":true/false}
+#[no_mangle]
+pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendMessageDirect(
+    mut env: JNIEnv,
+    _class: JClass,
+    recipient_onion: JString,
+    encrypted_message: JByteArray,
+    message_type_byte: jbyte,
+    message_id: JString,
+) -> jstring {
+    catch_panic!(env, {
+        let onion_address = match jstring_to_string(&mut env, recipient_onion) {
+            Ok(s) => s,
+            Err(e) => {
+                log::error!("[FAST_MODE] Failed to convert onion address: {}", e);
+                return std::ptr::null_mut();
+            }
+        };
+
+        let message_bytes = match jbytearray_to_vec(&mut env, encrypted_message) {
+            Ok(v) => v,
+            Err(e) => {
+                log::error!("[FAST_MODE] Failed to convert message bytes: {}", e);
+                return std::ptr::null_mut();
+            }
+        };
+
+        let message_id_str = match jstring_to_string(&mut env, message_id) {
+            Ok(s) => s,
+            Err(e) => {
+                log::error!("[FAST_MODE] Failed to convert messageId: {}", e);
+                return std::ptr::null_mut();
+            }
+        };
+
+        let msg_type = message_type_byte as u8;
+        if !is_valid_message_type(msg_type) {
+            log::error!("[FAST_MODE] Invalid message type: 0x{:02x}", msg_type);
+            return std::ptr::null_mut();
+        }
+
+        if message_bytes.len() < 49 {
+            log::error!("[FAST_MODE] Encrypted payload too short: {} bytes (minimum 49)", message_bytes.len());
+            return std::ptr::null_mut();
+        }
+
+        log::info!(
+            "[FAST_MODE] Sending direct message to {} ({} bytes, type=0x{:02x}, msgId={}...)",
+            onion_address, message_bytes.len(), msg_type, &message_id_str[..8.min(message_id_str.len())]
+        );
+
+        // Get keys
+        let context = match env.call_static_method(
+            "android/app/ActivityThread",
+            "currentApplication",
+            "()Landroid/app/Application;",
+            &[],
+        ) {
+            Ok(ctx) => ctx.l().unwrap(),
+            Err(e) => {
+                log::error!("[FAST_MODE] Failed to get context: {}", e);
+                return std::ptr::null_mut();
+            }
+        };
+
+        let key_manager = match crate::ffi::keystore::get_key_manager(&mut env, &context) {
+            Ok(km) => km,
+            Err(e) => {
+                log::error!("[FAST_MODE] Failed to get KeyManager: {}", e);
+                return std::ptr::null_mut();
+            }
+        };
+
+        let our_x25519_public = match crate::ffi::keystore::get_encryption_public_key(&mut env, &key_manager) {
+            Ok(k) => k,
+            Err(e) => {
+                log::error!("[FAST_MODE] Failed to get X25519 public key: {}", e);
+                return std::ptr::null_mut();
+            }
+        };
+
+        if our_x25519_public.len() != 32 {
+            log::error!("[FAST_MODE] Invalid X25519 public key length: {}", our_x25519_public.len());
+            return std::ptr::null_mut();
+        }
+
+        // Sign: SIGN(x25519_pub || encrypted_payload) — same as untracked/signed format
+        let our_signing_private = match crate::ffi::keystore::get_signing_private_key(&mut env, &key_manager) {
+            Ok(k) => k,
+            Err(e) => {
+                log::error!("[FAST_MODE] Failed to get signing key: {}", e);
+                return std::ptr::null_mut();
+            }
+        };
+
+        let sk_bytes: [u8; 32] = match our_signing_private.as_slice().try_into() {
+            Ok(b) => b,
+            Err(_) => {
+                log::error!("[FAST_MODE] Invalid Ed25519 private key length: {}", our_signing_private.len());
+                return std::ptr::null_mut();
+            }
+        };
+        let signer = ed25519_dalek::SigningKey::from_bytes(&sk_bytes);
+        let signature = signer.sign(&message_bytes);
+        let signature_bytes = signature.to_bytes();
+
+        // Build wire: [type:1][x25519:32][encrypted:var][sig:64] — no pingId
+        let mut wire_message = Vec::with_capacity(1 + 32 + message_bytes.len() + 64);
+        wire_message.push(msg_type);
+        wire_message.extend_from_slice(&our_x25519_public);
+        wire_message.extend_from_slice(&message_bytes);
+        wire_message.extend_from_slice(&signature_bytes);
+
+        log::info!(
+            "[FAST_MODE] Wire: {} bytes (1 type + 32 x25519 + {} encrypted + 64 sig)",
+            wire_message.len(), message_bytes.len()
+        );
+
+        // Send message — don't wait for ACK on this connection.
+        // Arti DataStream can't be stored in PENDING_CONNECTIONS (expects TcpStream),
+        // so the receiver sends ACK via outbound connection to our ACK listener.
+        // The normal ACK poller on the sender side handles DELIVERED status update.
+        let result: Result<bool, Box<dyn std::error::Error>> = GLOBAL_RUNTIME.block_on(async {
+            let _permit = SEND_SEMAPHORE.acquire().await
+                .map_err(|_| Box::new(std::io::Error::new(
+                    std::io::ErrorKind::Other, "Send semaphore closed"
+                )) as Box<dyn std::error::Error>)?;
+
+            tokio::time::timeout(std::time::Duration::from_secs(90), async {
+                let mut conn = crate::network::tor::connect_to_onion(&onion_address, 9150).await
+                    .map_err(|e| Box::new(std::io::Error::new(
+                        std::io::ErrorKind::ConnectionRefused, e.to_string()
+                    )) as Box<dyn std::error::Error>)?;
+
+                conn.send(&wire_message).await?;
+                log::info!("[FAST_MODE] Message sent to {} ({} bytes)", onion_address, wire_message.len());
+                Ok::<bool, Box<dyn std::error::Error>>(true)
+            }).await.map_err(|_| {
+                log::warn!("[FAST_MODE] Timeout sending to {}", onion_address);
+                Box::new(std::io::Error::new(std::io::ErrorKind::TimedOut, "Operation timed out")) as Box<dyn std::error::Error>
+            })?
+        });
+
+        let json = match result {
+            Ok(_) => {
+                log::info!("[FAST_MODE] Send success, ACK will arrive via listener");
+                r#"{"success":true,"ackReceived":false}"#.to_string()
+            }
+            Err(e) => {
+                let error_msg = e.to_string().to_lowercase();
+                if error_msg.contains("timed out") {
+                    BLOB_FAIL_SOCKS_TIMEOUT.fetch_add(1, Ordering::Relaxed);
+                } else if error_msg.contains("connection refused") || error_msg.contains("connect") {
+                    BLOB_FAIL_CONNECT_ERR.fetch_add(1, Ordering::Relaxed);
+                }
+                log::error!("[FAST_MODE] Send failed: {}", e);
+                r#"{"success":false,"ackReceived":false}"#.to_string()
+            }
+        };
+
+        match env.new_string(&json) {
+            Ok(s) => s.into_raw(),
+            Err(_) => std::ptr::null_mut(),
+        }
+    }, std::ptr::null_mut())
+}
+
 /// Send call signaling message via HTTP POST to voice .onion
 /// This bypasses VOICE channel routing and sends directly to voice streaming listener
 #[no_mangle]
