@@ -387,14 +387,16 @@ object RustBridge {
         chainKey: ByteArray,
         expectedSequence: Long
     ): DecryptionResult? {
-        // Call JNI function that returns [evolved_key:32][plaintext_utf8]
+        // Call JNI function that returns [evolved_key:32][plaintext_raw_bytes]
         val result = decryptMessageWithEvolutionJNI(encryptedData, chainKey, expectedSequence)
             ?: return null
 
-        // Split result: first 32 bytes = evolved key, rest = plaintext
+        // Split result: first 32 bytes = evolved key, rest = plaintext (raw bytes)
         val evolvedKey = result.copyOfRange(0, 32)
         val plaintextBytes = result.copyOfRange(32, result.size)
-        val plaintext = String(plaintextBytes, Charsets.UTF_8)
+        // Use ISO_8859_1 (Latin-1) to preserve binary data (images, voice, etc.)
+        // Rust now returns raw bytes, not UTF-8 — Latin-1 is a lossless byte↔char mapping
+        val plaintext = String(plaintextBytes, Charsets.ISO_8859_1)
 
         return DecryptionResult(plaintext, evolvedKey)
     }
@@ -1164,6 +1166,20 @@ object RustBridge {
         messageTypeByte: Byte,
         pingIdHex: String = ""
     ): Boolean
+
+    /**
+     * Fast Mode: Send message directly without PING/PONG handshake.
+     * Sends the encrypted message and waits up to 30s for ACK on the same connection.
+     * Used for small payloads (TEXT, STICKER, REACTION).
+     *
+     * @return JSON string: {"success":true/false, "ackReceived":true/false}
+     */
+    external fun sendMessageDirect(
+        recipientOnion: String,
+        encryptedMessage: ByteArray,
+        messageTypeByte: Byte,
+        messageId: String
+    ): String?
 
     /**
      * Send call signaling message via HTTP POST to voice .onion

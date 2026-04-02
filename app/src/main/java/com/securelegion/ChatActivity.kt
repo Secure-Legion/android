@@ -937,7 +937,7 @@ class ChatActivity : BaseActivity() {
         attachmentPanel.findViewById<View>(R.id.actionSecurePay).setOnClickListener {
             flashAttachmentIcon(it)
             hideAttachmentPanel()
-            showSecurePaySheet()
+            ThemedToast.show(this, "SecurePay coming soon")
         }
 
         // Location action
@@ -2558,7 +2558,9 @@ class ChatActivity : BaseActivity() {
      * 1. Request Money: They put their wallet as recipient -> I pay to their wallet -> SendMoneyActivity
      * 2. Send Money: Recipient is empty -> They want to send to me -> AcceptPaymentActivity
      */
-    private fun handlePaymentRequestClick(message: Message) {
+    private fun handlePaymentRequestClick(@Suppress("UNUSED_PARAMETER") message: Message) {
+        ThemedToast.show(this, "SecurePay coming soon")
+        /*
         Log.d(TAG, "Payment request clicked: ${message.messageId}")
 
         // Extract quote JSON and parse it
@@ -2606,6 +2608,7 @@ class ChatActivity : BaseActivity() {
             }
             startActivity(intent)
         }
+        */
     }
 
     /**

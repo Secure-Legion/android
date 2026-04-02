@@ -53,6 +53,15 @@ class MessageService(private val context: Context) {
         @Volatile private var lastTtlReportMs: Long = 0L
         private const val TTL_REPORT_COOLDOWN_MS = 2_000L
         private const val PING_HANDSHAKE_PORT = 9150
+
+        /** Fast Mode: skip PING/PONG for small payload types (2 hops instead of 4) */
+        fun isFastModeEligible(messageType: String): Boolean {
+            return messageType in listOf(
+                com.securelegion.database.entities.Message.MESSAGE_TYPE_TEXT,
+                com.securelegion.database.entities.Message.MESSAGE_TYPE_STICKER,
+                com.securelegion.database.entities.Message.MESSAGE_TYPE_REACTION
+            )
+        }
         private const val PRECHECK_TIMEOUT_MS = 3500
         private const val RETRYABLE_BACKOFF_BASE_MS = 200L
         private const val RETRYABLE_BACKOFF_MAX_MS = 500L
@@ -871,7 +880,8 @@ class MessageService(private val context: Context) {
                 attachmentData = assetPath,
                 isSentByMe = true,
                 timestamp = currentTime,
-                status = Message.STATUS_PING_SENT,
+                status = Message.STATUS_SENT, // Fast mode: skip PING_SENT
+                pingDelivered = true, // Fast mode: show sent checkmark immediately
                 signatureBase64 = signatureBase64,
                 nonceBase64 = nonceBase64,
                 messageNonce = messageNonce,
@@ -900,13 +910,31 @@ class MessageService(private val context: Context) {
             intent.putExtra("CONTACT_ID", contactId)
             context.sendBroadcast(intent)
 
+            // FAST MODE: Send sticker directly (no PING/PONG)
             try {
-                sendPingForMessage(savedMessage)
+                val resultJson = com.securelegion.crypto.RustBridge.sendMessageDirect(
+                    contact.messagingOnion ?: "",
+                    encryptedBytes,
+                    0x0E.toByte(), // STICKER
+                    messageId
+                )
+                if (resultJson != null) {
+                    val json = org.json.JSONObject(resultJson)
+                    if (json.optBoolean("success")) {
+                        Log.i(TAG, "[FAST_MODE] Sticker sent, ACK via listener: $messageId")
+                        database.messageDao().updatePingDeliveredStatus(savedMessage.id, pingDelivered = true, status = Message.STATUS_SENT)
+                    } else {
+                        database.messageDao().updateMessageStatus(savedMessage.id, Message.STATUS_PING_SENT)
+                    }
+                } else {
+                    database.messageDao().updateMessageStatus(savedMessage.id, Message.STATUS_PING_SENT)
+                }
             } catch (e: kotlinx.coroutines.CancellationException) {
-                Log.d(TAG, "Sticker Ping send coroutine cancelled after queueing; retry worker will handle delivery")
+                Log.d(TAG, "Sticker fast mode coroutine cancelled; retry worker will handle delivery")
                 throw e
             } catch (e: Exception) {
-                Log.w(TAG, "Sticker Ping send failed, retry worker will handle: ${e.message}")
+                Log.w(TAG, "[FAST_MODE] Sticker send failed, falling back: ${e.message}")
+                database.messageDao().updatePingDeliveredStatus(savedMessage.id, pingDelivered = false, status = Message.STATUS_PING_SENT)
             }
 
             Result.success(savedMessage)
@@ -985,7 +1013,7 @@ class MessageService(private val context: Context) {
                 )
             )
 
-            // Send directly via Tor (no ping/pong, no typing indicator)
+            // Send directly via Tor (fire-and-forget, no ping/pong, no ACK tracking)
             val onionAddress = contact.messagingOnion ?: ""
             if (onionAddress.isBlank()) {
                 return@withContext Result.failure(Exception("Contact has no messaging onion"))
@@ -1239,19 +1267,32 @@ class MessageService(private val context: Context) {
             val currentTime = System.currentTimeMillis()
             val selfDestructAt = selfDestructDurationMs?.let { currentTime + it }
 
+            // Determine if this message is eligible for Fast Mode (2-hop, no PING/PONG)
+            val isFastMode = isFastModeEligible(Message.MESSAGE_TYPE_TEXT)
+
+            // Compute blob-style messageId that the receiver will generate from encrypted payload.
+            // Used to match the receiver's outbound MESSAGE_ACK (which uses blob_ prefix).
+            val blobMessageId = if (isFastMode) {
+                val hash = java.security.MessageDigest.getInstance("SHA-256").digest(encryptedBytes)
+                "blob_" + android.util.Base64.encodeToString(hash, android.util.Base64.NO_WRAP).take(28)
+            } else null
+
             // Generate Ping ID and timestamp ONCE (never changes, prevents ghost pings)
+            // Fast mode still generates pingId for DB compatibility, but doesn't use it on wire
             val pingId = generatePingId() // 24-byte nonce as hex string
             val pingTimestamp = currentTime
-            Log.d(TAG, "Generated Ping ID: ${pingId.take(16)}... (timestamp: $pingTimestamp)")
+            Log.d(TAG, "Generated Ping ID: ${pingId.take(16)}... (timestamp: $pingTimestamp, fastMode: $isFastMode)")
 
-            // Create message entity with PING_SENT status for persistent queue
+            // Create message entity — Fast mode starts as SENT, Advanced mode starts as PING_SENT
+            val initialStatus = if (isFastMode) Message.STATUS_SENT else Message.STATUS_PING_SENT
             val message = Message(
                 contactId = contactId,
                 messageId = messageId,
                 encryptedContent = keyManager.encryptMessageContent(plaintext),
                 isSentByMe = true,
                 timestamp = currentTime,
-                status = Message.STATUS_PING_SENT, // Start as PING_SENT so pollForPongsAndSendMessages() can find it
+                status = initialStatus,
+                pingDelivered = isFastMode, // Fast mode: show sent checkmark immediately
                 signatureBase64 = signatureBase64,
                 nonceBase64 = nonceBase64,
                 messageNonce = messageNonce, // CRITICAL: Stored once, reused on all retries
@@ -1262,7 +1303,7 @@ class MessageService(private val context: Context) {
                 encryptedPayload = encryptedBase64, // Store encrypted payload to send after Pong
                 retryCount = 0, // Initialize retry counter
                 lastRetryTimestamp = currentTime, // Track when we last attempted
-                correlationId = correlationId // For stress test tracing (null for normal messages)
+                correlationId = blobMessageId ?: correlationId // Fast mode: blob hash for ACK matching; else stress test tracing
             )
 
             val durationText = selfDestructDurationMs?.let { duration ->
@@ -1274,7 +1315,7 @@ class MessageService(private val context: Context) {
             } ?: "disabled"
             Log.d(TAG, "Self-destruct: $durationText")
             Log.d(TAG, "Read receipt: ${if (enableReadReceipt) "enabled" else "disabled"}")
-            Log.d(TAG, "Message queued for persistent delivery (PING_SENT)")
+            Log.d(TAG, "Message queued for delivery (${if (isFastMode) "FAST_MODE" else "PING_SENT"})")
 
             // ATOMIC: Chain key update + message insert in one transaction (prevents CW2 crash window)
             Log.d(TAG, "Saving message to database (atomic with key update)...")
@@ -1299,44 +1340,73 @@ class MessageService(private val context: Context) {
             context.sendBroadcast(intent)
             Log.d(TAG, "Sent explicit NEW_PING broadcast to refresh MainActivity chat list")
 
-            // Immediately attempt to send Ping (but don't wait for Pong)
-            // This provides instant send attempt for online recipients
-            // Retry worker will handle retries and Pong polling
-            Log.i(TAG, "Message queued successfully: $messageId (Ping ID: $pingId)")
-            Log.d(TAG, "Attempting immediate Ping send...")
+            if (isFastMode) {
+                // FAST MODE: Send message directly, no PING/PONG handshake
+                Log.i(TAG, "[FAST_MODE] Sending directly: $messageId")
+                try {
+                    val resultJson = com.securelegion.crypto.RustBridge.sendMessageDirect(
+                        contact.messagingOnion ?: "",
+                        encryptedBytes,
+                        0x03.toByte(), // TEXT
+                        messageId
+                    )
+                    if (resultJson != null) {
+                        val json = org.json.JSONObject(resultJson)
+                        val success = json.optBoolean("success", false)
+                        if (success) {
+                            Log.i(TAG, "[FAST_MODE] Sent successfully, ACK will arrive via listener: $messageId")
+                            // Mark as SENT with pingDelivered=true (shows single checkmark)
+                            // ACK listener will upgrade to DELIVERED when receiver's outbound ACK arrives
+                            database.messageDao().updatePingDeliveredStatus(savedMessage.id, pingDelivered = true, status = Message.STATUS_SENT)
+                        } else {
+                            Log.w(TAG, "[FAST_MODE] Send failed, retry worker will handle: $messageId")
+                            database.messageDao().updateMessageStatus(savedMessage.id, Message.STATUS_PING_SENT)
+                        }
+                    } else {
+                        Log.w(TAG, "[FAST_MODE] Null result, falling back to retry: $messageId")
+                        database.messageDao().updateMessageStatus(savedMessage.id, Message.STATUS_PING_SENT)
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "[FAST_MODE] Exception, retry worker will handle: ${e.message}")
+                    database.messageDao().updateMessageStatus(savedMessage.id, Message.STATUS_PING_SENT)
+                }
+            } else {
+                // ADVANCED MODE: Full PING/PONG handshake (voice, images, etc.)
+                Log.i(TAG, "Message queued successfully: $messageId (Ping ID: $pingId)")
+                Log.d(TAG, "Attempting immediate Ping send...")
 
-            try {
-                val sendResult = sendPingForMessage(savedMessage)
-                if (sendResult.isSuccess) {
-                    Log.i(TAG, "Ping sent successfully, will poll for Pong later")
-                } else {
-                    val errorMsg = sendResult.exceptionOrNull()?.message ?: "Unknown error"
-                    Log.w(TAG, "Ping send failed: $errorMsg")
+                try {
+                    val sendResult = sendPingForMessage(savedMessage)
+                    if (sendResult.isSuccess) {
+                        Log.i(TAG, "Ping sent successfully, will poll for Pong later")
+                    } else {
+                        val errorMsg = sendResult.exceptionOrNull()?.message ?: "Unknown error"
+                        Log.w(TAG, "Ping send failed: $errorMsg")
 
-                    // Immediate retry with delay if Tor is warming up (don't wait for 15-min worker)
-                    if (errorMsg.contains("warming up")) {
-                        val delayMs = Regex("retry in (\\d+)ms").find(errorMsg)?.groupValues?.get(1)?.toLongOrNull() ?: 2000L
-                        Log.i(TAG, "Scheduling immediate retry in ${delayMs}ms...")
-                        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
-                            kotlinx.coroutines.delay(delayMs + 500) // Add 500ms buffer
-                            try {
-                                val retryResult = sendPingForMessage(savedMessage)
-                                if (retryResult.isSuccess) {
-                                    Log.i(TAG, "Retry Ping sent successfully after warm-up delay")
-                                } else {
-                                    Log.w(TAG, "Retry after warm-up still failed: ${retryResult.exceptionOrNull()?.message}")
+                        // Immediate retry with delay if Tor is warming up (don't wait for 15-min worker)
+                        if (errorMsg.contains("warming up")) {
+                            val delayMs = Regex("retry in (\\d+)ms").find(errorMsg)?.groupValues?.get(1)?.toLongOrNull() ?: 2000L
+                            Log.i(TAG, "Scheduling immediate retry in ${delayMs}ms...")
+                            kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+                                kotlinx.coroutines.delay(delayMs + 500) // Add 500ms buffer
+                                try {
+                                    val retryResult = sendPingForMessage(savedMessage)
+                                    if (retryResult.isSuccess) {
+                                        Log.i(TAG, "Retry Ping sent successfully after warm-up delay")
+                                    } else {
+                                        Log.w(TAG, "Retry after warm-up still failed: ${retryResult.exceptionOrNull()?.message}")
+                                    }
+                                } catch (e: Exception) {
+                                    Log.w(TAG, "Retry after warm-up threw exception: ${e.message}")
                                 }
-                            } catch (e: Exception) {
-                                Log.w(TAG, "Retry after warm-up threw exception: ${e.message}")
                             }
                         }
                     }
+                } catch (e: Exception) {
+                    // Silent failure - retry worker will handle it
+                    Log.w(TAG, "Immediate Ping send failed, retry worker will retry: ${e.message}")
                 }
-            } catch (e: Exception) {
-                // Silent failure - retry worker will handle it
-                Log.w(TAG, "Immediate Ping send failed, retry worker will retry: ${e.message}")
             }
-
 
             Result.success(savedMessage)
 
@@ -3430,6 +3500,40 @@ class MessageService(private val context: Context) {
         try {
             val dbPassphrase = keyManager.getDatabasePassphrase()
             val database = SecureLegionDatabase.getInstance(context, dbPassphrase)
+
+            // Phase 0: Re-send fast-mode messages that haven't received ACK after 30s.
+            // These are STATUS_SENT with correlationId starting with "blob_" (fast mode marker).
+            // The receiver may have stored the message but the outbound ACK was lost over Tor.
+            val cutoff = System.currentTimeMillis() - 30_000L
+            val fastModePending = database.messageDao().getFastModePendingAck(cutoff)
+            if (fastModePending.isNotEmpty()) {
+                Log.i(TAG, "[FAST_MODE_RETRY] Phase 0: ${fastModePending.size} messages pending ACK")
+            }
+            for (msg in fastModePending) {
+                try {
+                    val contact = database.contactDao().getContactById(msg.contactId) ?: continue
+                    val onion = contact.messagingOnion ?: continue
+                    val encryptedBase64 = msg.encryptedPayload ?: continue
+                    val encryptedBytes = android.util.Base64.decode(encryptedBase64, android.util.Base64.NO_WRAP)
+
+                    val messageTypeByte: Byte = when (msg.messageType) {
+                        Message.MESSAGE_TYPE_STICKER -> 0x0E.toByte()
+                        else -> 0x03.toByte()
+                    }
+
+                    Log.i(TAG, "[FAST_MODE_RETRY] Re-sending ${msg.messageId} (age=${(System.currentTimeMillis() - msg.timestamp) / 1000}s)")
+                    val resultJson = com.securelegion.crypto.RustBridge.sendMessageDirect(
+                        onion, encryptedBytes, messageTypeByte, msg.messageId
+                    )
+                    if (resultJson != null && org.json.JSONObject(resultJson).optBoolean("success")) {
+                        Log.i(TAG, "[FAST_MODE_RETRY] Re-sent, ACK will arrive via listener: ${msg.messageId}")
+                    } else {
+                        Log.w(TAG, "[FAST_MODE_RETRY] Failed, will try again next cycle: ${msg.messageId}")
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "[FAST_MODE_RETRY] Error: ${e.message}")
+                }
+            }
 
             // Phase 1: Discover PONGs for STATUS_PING_SENT messages
             val awaiting = database.messageDao().getMessagesAwaitingPong()

@@ -4051,7 +4051,18 @@ class TorService : Service() {
                 // Handle blob_ transport ACKs (listener path has no pingId)
                 if (ackType == "MESSAGE_ACK" && itemId.startsWith("blob_")) {
                     try {
-                        val blobMsg = database.messageDao().getMessageByMessageId(itemId)
+                        // Try direct messageId match first (receiver-originated messages)
+                        var blobMsg = database.messageDao().getMessageByMessageId(itemId)
+
+                        // Fast mode fallback: sender stores blob hash in correlationId
+                        // because the sender's messageId is a deterministic hash, not blob_
+                        if (blobMsg == null) {
+                            blobMsg = database.messageDao().getMessageByCorrelationId(itemId)
+                            if (blobMsg != null) {
+                                Log.d(TAG, "[FAST_MODE] Matched ACK via correlationId: $itemId → ${blobMsg.messageId}")
+                            }
+                        }
+
                         if (blobMsg != null) {
                             if (!blobMsg.messageDelivered || blobMsg.status != com.securelegion.database.entities.Message.STATUS_DELIVERED) {
                                 database.messageDao().updateMessageDeliveredStatus(
@@ -4294,7 +4305,7 @@ class TorService : Service() {
             Log.i(TAG, "Received MESSAGE on connection $connectionId via direct routing: ${encryptedMessageBlob.size} bytes")
 
             // Process message blob directly (no trial decryption needed!)
-            handleIncomingMessageBlob(encryptedMessageBlob)
+            handleIncomingMessageBlob(encryptedMessageBlob, connectionId)
         } catch (e: Exception) {
             Log.e(TAG, "Error handling incoming MESSAGE", e)
         }
@@ -4954,7 +4965,7 @@ class TorService : Service() {
      * Handle incoming message blob
      * Wire format: [Sender X25519 Public Key - 32 bytes][Encrypted Message]
      */
-    private fun handleIncomingMessageBlob(encryptedMessageWire: ByteArray) {
+    private fun handleIncomingMessageBlob(encryptedMessageWire: ByteArray, incomingConnectionId: Long = -1L) {
         try {
             // Wire format: [Type byte][Sender X25519 - 32 bytes][Encrypted Message]
             // Type byte is kept by Rust listener (not stripped) to prevent offset mismatch
@@ -5173,6 +5184,40 @@ class TorService : Service() {
             Log.d(TAG, "Message wire layout: ${if (trackedWire) "tracked" else "legacy"} type=0x${"%02x".format(msgTypeInt)}")
             Log.d(TAG, "Sender X25519 pubkey: ${android.util.Base64.encodeToString(senderX25519PublicKey, android.util.Base64.NO_WRAP).take(16)}...")
             Log.d(TAG, "Encrypted payload: ${encryptedPayload.size} bytes")
+
+            // DEVICE PROTECTION GUARD: Reject fast-mode messages when DP is enabled.
+            // DP guarantees messages never exist on disk until the recipient proves physical presence
+            // via biometric. Fast-mode messages (no pingId) bypass the PING/PONG gate, so we must
+            // reject them here and let the sender fall back to the full PING/PONG flow.
+            // Tracked messages (with pingId) already went through the DP-gated PING handler.
+            //
+            // TODO: Per-contact Device Protection + auto-negotiation
+            //  - Add per-contact DP toggle in contact settings UI
+            //  - When DP is enabled for a contact, send a capability payload so the sender's
+            //    device knows to use PING/PONG mode for that contact automatically
+            //  - Store per-contact DP preference in ContactDao
+            //  - Check per-contact DP here instead of global preference
+            //  - This enables mixed mode: fast mode for casual contacts, DP for sensitive ones
+            val isFastModeMessage = !trackedWire && incomingConnectionId >= 0
+            if (isFastModeMessage) {
+                val securityPrefs = getSharedPreferences("security", MODE_PRIVATE)
+                val deviceProtectionEnabled = securityPrefs.getBoolean(
+                    com.securelegion.SecurityModeActivity.PREF_DEVICE_PROTECTION_ENABLED, false
+                )
+                if (deviceProtectionEnabled) {
+                    Log.w(TAG, "[FAST_MODE] REJECTED: Device Protection is ON — sender must use PING/PONG flow")
+                    // Send rejection (0x00 byte) on the connection so sender knows to fall back
+                    serviceScope.launch {
+                        try {
+                            // Build a minimal NACK: [0x06 DELIVERY_CONFIRMATION type][rejection marker]
+                            // The sender is waiting for 0x06 — sending nothing causes a timeout,
+                            // which also triggers fallback. But explicitly closing is faster.
+                            // Just drop the connection — sender will timeout and retry via PING/PONG.
+                        } catch (_: Exception) { }
+                    }
+                    return
+                }
+            }
             if (signatureBytes != null) {
                 Log.d(TAG, "Signature: ${signatureBytes.size} bytes")
             }
@@ -6023,6 +6068,24 @@ class TorService : Service() {
                             )
                         }
                         Log.d(TAG, "MESSAGE SAVE: Sent blob MESSAGE_ACK (pingId=${downloadPingId.take(8)})")
+                    } else if (incomingConnectionId >= 0) {
+                        // FAST MODE: No pingId in wire — send ACK via outbound connection.
+                        // Arti DataStream can't be stored in PENDING_CONNECTIONS, so we
+                        // can't reply on the incoming connection. The sender's ACK listener
+                        // will receive this and update to DELIVERED status.
+                        // Use more retries than normal (6 vs 3) because this is the only
+                        // way the sender learns about delivery — Tor is flaky.
+                        serviceScope.launch {
+                            sendAckWithRetry(
+                                connectionId = null,
+                                itemId = messageId,
+                                ackType = "MESSAGE_ACK",
+                                contactId = contact.id,
+                                maxRetries = 6,
+                                initialDelayMs = 2000L
+                            )
+                            Log.i(TAG, "[FAST_MODE] ACK sent outbound for $messageId")
+                        }
                     } else {
                         Log.d(TAG, "MESSAGE SAVE: No pingId for blob ACK (DMS will ACK later)")
                     }

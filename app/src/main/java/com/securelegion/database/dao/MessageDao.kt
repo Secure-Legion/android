@@ -124,6 +124,12 @@ interface MessageDao {
     suspend fun getMessageByMessageId(messageId: String): Message?
 
     /**
+     * Get message by correlationId (used for fast-mode ACK matching: sender stores blob hash here)
+     */
+    @Query("SELECT $LITE_COLS FROM messages WHERE correlationId = :correlationId LIMIT 1")
+    suspend fun getMessageByCorrelationId(correlationId: String): Message?
+
+    /**
      * Get all messages for a contact (ordered by timestamp)
      * Returns Flow for reactive updates
      */
@@ -300,6 +306,14 @@ interface MessageDao {
      */
     @Query("SELECT $LITE_COLS FROM messages WHERE isSentByMe = 1 AND status = ${Message.STATUS_PING_SENT} AND pingId IS NOT NULL ORDER BY timestamp ASC")
     suspend fun getMessagesAwaitingPong(): List<Message>
+
+    /**
+     * Get fast-mode messages that were sent but haven't received delivery ACK yet.
+     * Used by retryAllPendingMessages() to re-send via fast mode.
+     * Only returns messages older than 30s to avoid re-sending during normal ACK latency.
+     */
+    @Query("SELECT $LITE_COLS FROM messages WHERE isSentByMe = 1 AND status = ${Message.STATUS_SENT} AND messageDelivered = 0 AND correlationId LIKE 'blob_%' AND timestamp < :cutoffMs ORDER BY timestamp ASC")
+    suspend fun getFastModePendingAck(cutoffMs: Long): List<Message>
 
     /**
      * Get messages ready for blob send (STATUS_PONG_RECEIVED or STATUS_FAILED, sent by us)

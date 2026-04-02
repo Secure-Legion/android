@@ -437,12 +437,12 @@ class GroupChatActivity : BaseActivity() {
                 withContext(Dispatchers.Main) {
                     // Update invite banner visibility
                     isPendingInvite = pendingInvite
+                    // Invite banner removed — the chat thread "click to accept" handles it
+                    inviteBanner.visibility = View.GONE
                     if (pendingInvite) {
-                        inviteBanner.visibility = View.VISIBLE
                         messageInput.isEnabled = false
                         messageInput.hint = "Accept invite to send messages"
                     } else {
-                        inviteBanner.visibility = View.GONE
                         messageInput.isEnabled = true
                         messageInput.hint = "Message"
                     }
