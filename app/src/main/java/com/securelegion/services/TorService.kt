@@ -3794,6 +3794,9 @@ class TorService : Service() {
 
             Log.i(TAG, "Removed pending request for ${request.displayName}")
 
+            // Broadcast so MainActivity refreshes badges and list
+            sendBroadcast(Intent(ACTION_FRIEND_REQUEST_STATUS_CHANGED))
+
         } catch (e: Exception) {
             Log.e(TAG, "Failed to remove pending request", e)
         }
@@ -6666,6 +6669,25 @@ class TorService : Service() {
 
                 Log.i(TAG, "Updated ${contact.displayName} to CONFIRMED status - you are now mutual friends!")
 
+                // Remove the outgoing pending request matching this contact
+                try {
+                    val prefs = getSharedPreferences("friend_requests", MODE_PRIVATE)
+                    val pendingRequestsSet = prefs.getStringSet("pending_requests_v2", mutableSetOf()) ?: mutableSetOf()
+                    val newSet = pendingRequestsSet.filter { json ->
+                        try {
+                            val req = com.securelegion.models.PendingFriendRequest.fromJson(json)
+                            // Keep requests that aren't for this contact
+                            req.displayName != contact.displayName
+                        } catch (e: Exception) { true }
+                    }.toMutableSet()
+                    prefs.edit().putStringSet("pending_requests_v2", newSet).apply()
+                    Log.d(TAG, "Removed outgoing pending request for ${contact.displayName}")
+                    // Broadcast status change so UI refreshes badge/list
+                    sendBroadcast(Intent(ACTION_FRIEND_REQUEST_STATUS_CHANGED))
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to remove pending request", e)
+                }
+
                 // Show notification
                 Log.d(TAG, "Showing acceptance notification...")
                 showFriendRequestAcceptedNotification(contact.displayName)
@@ -6798,14 +6820,16 @@ class TorService : Service() {
             val isUnlocked = com.securelegion.utils.SessionManager.isUnlocked(this)
 
             val intent = if (isUnlocked) {
-                // User is already logged in - go directly to MainActivity
+                // User is already logged in - go directly to MainActivity (Contacts tab)
                 android.content.Intent(this, com.securelegion.MainActivity::class.java).apply {
+                    putExtra("SHOW_CONTACTS", true)
                     flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
                 }
             } else {
                 // User is locked - go through LockActivity
                 android.content.Intent(this, com.securelegion.LockActivity::class.java).apply {
                     putExtra("TARGET_ACTIVITY", "MainActivity")
+                    putExtra("SHOW_CONTACTS", true)
                     flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
                 }
             }

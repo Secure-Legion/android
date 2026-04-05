@@ -25,6 +25,7 @@
             android:id="@+id/backButton"
             android:layout_width="42dp"
             android:layout_height="42dp"
+            android:layout_marginStart="8dp"
             android:background="@drawable/top_icon_bg"
             android:clickable="true"
             android:focusable="true">
@@ -43,23 +44,25 @@
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
-            android:text="Security"
+            android:text="Help"
             android:textSize="24sp"
             android:textColor="#FFFFFF"
             android:fontFamily="@font/space_grotesk_bold"
+            android:textStyle="bold"
             android:gravity="center" />
 
-        <View
+        <FrameLayout
             android:layout_width="42dp"
-            android:layout_height="42dp" />
+            android:layout_height="42dp"
+            android:layout_marginEnd="8dp"
+            android:visibility="invisible" />
 
     </LinearLayout>
 
     <ScrollView
         android:layout_width="match_parent"
         android:layout_height="0dp"
-        android:fillViewport="false"
-        android:scrollbars="none"
+        android:fillViewport="true"
         app:layout_constraintTop_toBottomOf="@id/header"
         app:layout_constraintBottom_toBottomOf="parent">
 
@@ -67,14 +70,14 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="vertical"
-            android:paddingStart="20dp"
-            android:paddingEnd="20dp"
-            android:paddingTop="16dp"
+            android:paddingStart="24dp"
+            android:paddingEnd="24dp"
+            android:paddingTop="24dp"
             android:paddingBottom="24dp">
 
-            <!-- Set Password / Change Password -->
+            <!-- Chat Support -->
             <LinearLayout
-                android:id="@+id/devicePasswordItem"
+                android:id="@+id/chatSupportItem"
                 android:layout_width="match_parent"
                 android:layout_height="80dp"
                 android:orientation="horizontal"
@@ -97,17 +100,16 @@
                         android:layout_width="24dp"
                         android:layout_height="24dp"
                         android:layout_gravity="center"
-                        android:src="@android:drawable/ic_lock_idle_lock"
+                        android:src="@drawable/ic_nav_chat"
                         app:tint="@color/settings_icon_tint" />
 
                 </FrameLayout>
 
                 <TextView
-                    android:id="@+id/devicePasswordLabel"
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:layout_weight="1"
-                    android:text="Set Password"
+                    android:text="Chat Support"
                     android:textSize="16sp"
                     android:textColor="@color/text_settings"
                     android:fontFamily="@font/poppins_medium" />
@@ -129,105 +131,9 @@
 
             </LinearLayout>
 
-            <!-- Biometric Unlock -->
+            <!-- Help Center -->
             <LinearLayout
-                android:id="@+id/biometricItem"
-                android:layout_width="match_parent"
-                android:layout_height="80dp"
-                android:orientation="horizontal"
-                android:background="@drawable/settings_box_bg"
-                android:paddingStart="10dp"
-                android:paddingEnd="10dp"
-                android:layout_marginBottom="12dp"
-                android:gravity="center_vertical">
-
-                <FrameLayout
-                    android:layout_width="50dp"
-                    android:layout_height="50dp"
-                    android:background="@drawable/settings_icon_bg"
-                    android:layout_marginStart="8dp"
-                    android:layout_marginEnd="16dp">
-
-                    <ImageView
-                        android:layout_width="24dp"
-                        android:layout_height="24dp"
-                        android:layout_gravity="center"
-                        android:src="@drawable/ic_fingerprint"
-                        app:tint="@color/settings_icon_tint" />
-
-                </FrameLayout>
-
-                <TextView
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:text="Biometric Unlock"
-                    android:textSize="16sp"
-                    android:textColor="@color/text_settings"
-                    android:fontFamily="@font/poppins_medium" />
-
-                <androidx.appcompat.widget.SwitchCompat
-                    android:id="@+id/biometricSwitch"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_marginEnd="8dp"
-                    android:checked="false"
-                    app:thumbTint="#FFFFFF"
-                    app:trackTint="#888888" />
-
-            </LinearLayout>
-
-            <!-- Wipe on 10 failed logins -->
-            <LinearLayout
-                android:id="@+id/autoWipeItem"
-                android:layout_width="match_parent"
-                android:layout_height="80dp"
-                android:orientation="horizontal"
-                android:background="@drawable/settings_box_bg"
-                android:paddingStart="10dp"
-                android:paddingEnd="10dp"
-                android:layout_marginBottom="12dp"
-                android:gravity="center_vertical">
-
-                <FrameLayout
-                    android:layout_width="50dp"
-                    android:layout_height="50dp"
-                    android:background="@drawable/settings_icon_bg"
-                    android:layout_marginStart="8dp"
-                    android:layout_marginEnd="16dp">
-
-                    <ImageView
-                        android:layout_width="24dp"
-                        android:layout_height="24dp"
-                        android:layout_gravity="center"
-                        android:src="@drawable/ic_wipe_data"
-                        app:tint="@color/settings_icon_tint" />
-
-                </FrameLayout>
-
-                <TextView
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:text="Wipe on 10 failed logins"
-                    android:textSize="16sp"
-                    android:textColor="@color/text_settings"
-                    android:fontFamily="@font/poppins_medium" />
-
-                <androidx.appcompat.widget.SwitchCompat
-                    android:id="@+id/autoWipeSwitch"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_marginEnd="8dp"
-                    android:checked="false"
-                    app:thumbTint="#FFFFFF"
-                    app:trackTint="#888888" />
-
-            </LinearLayout>
-
-            <!-- Auto-Lock -->
-            <LinearLayout
-                android:id="@+id/autoLockItem"
+                android:id="@+id/helpCenterItem"
                 android:layout_width="match_parent"
                 android:layout_height="80dp"
                 android:orientation="horizontal"
@@ -250,79 +156,7 @@
                         android:layout_width="24dp"
                         android:layout_height="24dp"
                         android:layout_gravity="center"
-                        android:src="@android:drawable/ic_menu_recent_history"
-                        app:tint="@color/settings_icon_tint" />
-
-                </FrameLayout>
-
-                <LinearLayout
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:orientation="vertical">
-
-                    <TextView
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="Auto-Lock"
-                        android:textSize="16sp"
-                        android:textColor="@color/text_settings"
-                        android:fontFamily="@font/poppins_medium" />
-
-                    <TextView
-                        android:id="@+id/autoLockStatus"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="5 minutes"
-                        android:textSize="13sp"
-                        android:textColor="@color/text_muted"
-                        android:fontFamily="@font/poppins_regular" />
-
-                </LinearLayout>
-
-                <FrameLayout
-                    android:layout_width="36dp"
-                    android:layout_height="36dp"
-                    android:layout_marginEnd="8dp"
-                    android:background="@drawable/arrow_bg">
-
-                    <ImageView
-                        android:layout_width="18dp"
-                        android:layout_height="18dp"
-                        android:layout_gravity="center"
-                        android:src="@drawable/ic_arrow_forward"
-                        app:tint="@color/arrow_icon_tint" />
-
-                </FrameLayout>
-
-            </LinearLayout>
-
-            <!-- Duress PIN -->
-            <LinearLayout
-                android:id="@+id/duressPinItem"
-                android:layout_width="match_parent"
-                android:layout_height="80dp"
-                android:orientation="horizontal"
-                android:background="@drawable/settings_box_bg"
-                android:paddingStart="10dp"
-                android:paddingEnd="10dp"
-                android:layout_marginBottom="12dp"
-                android:gravity="center_vertical"
-                android:clickable="true"
-                android:focusable="true">
-
-                <FrameLayout
-                    android:layout_width="50dp"
-                    android:layout_height="50dp"
-                    android:background="@drawable/settings_icon_bg"
-                    android:layout_marginStart="8dp"
-                    android:layout_marginEnd="16dp">
-
-                    <ImageView
-                        android:layout_width="24dp"
-                        android:layout_height="24dp"
-                        android:layout_gravity="center"
-                        android:src="@drawable/ic_duress_pin"
+                        android:src="@drawable/ic_about_info"
                         app:tint="@color/settings_icon_tint" />
 
                 </FrameLayout>
@@ -331,7 +165,7 @@
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:layout_weight="1"
-                    android:text="Duress PIN"
+                    android:text="Help Center"
                     android:textSize="16sp"
                     android:textColor="@color/text_settings"
                     android:fontFamily="@font/poppins_medium" />
@@ -353,9 +187,9 @@
 
             </LinearLayout>
 
-            <!-- QR Code Settings -->
+            <!-- Export Debug Logs -->
             <LinearLayout
-                android:id="@+id/qrSettingsItem"
+                android:id="@+id/exportLogsItem"
                 android:layout_width="match_parent"
                 android:layout_height="80dp"
                 android:orientation="horizontal"
@@ -378,7 +212,7 @@
                         android:layout_width="24dp"
                         android:layout_height="24dp"
                         android:layout_gravity="center"
-                        android:src="@drawable/ic_qr_code"
+                        android:src="@drawable/ic_paper_plane"
                         app:tint="@color/settings_icon_tint" />
 
                 </FrameLayout>
@@ -387,7 +221,7 @@
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:layout_weight="1"
-                    android:text="QR Code Settings"
+                    android:text="Export Debug Logs"
                     android:textSize="16sp"
                     android:textColor="@color/text_settings"
                     android:fontFamily="@font/poppins_medium" />

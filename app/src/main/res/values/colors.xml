@@ -40,6 +40,11 @@
     <color name="settings_icon_tint">#FFFFFF</color>
     <color name="arrow_icon_tint">#000000</color>
 
+    <!-- Device Page (Light Mode) -->
+    <color name="device_circle_bg">#E5E7EB</color>
+    <color name="device_card_bg">#F0F0F3</color>
+    <color name="device_icon_bg">#000000</color>
+
     <!-- Glass (Light Mode) -->
     <color name="glass_bg">#F0F0F0</color>
     <color name="glass_border">#0F000000</color>

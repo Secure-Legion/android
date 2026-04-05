@@ -76,6 +76,14 @@ class WipeAccountActivity : AppCompatActivity() {
         lifecycleScope.launch {
             try {
                 withContext(Dispatchers.IO) {
+                    // Stop TorService first to release old onion keys
+                    try {
+                        val stopIntent = Intent(this@WipeAccountActivity, com.securelegion.services.TorService::class.java)
+                        stopService(stopIntent)
+                    } catch (e: Exception) {
+                        android.util.Log.w("WipeAccount", "Failed to stop TorService", e)
+                    }
+
                     // Clear database instance first
                     SecureLegionDatabase.clearInstance()
 
@@ -89,19 +97,25 @@ class WipeAccountActivity : AppCompatActivity() {
 
                 // Restart app to show account creation screen
                 withContext(Dispatchers.Main) {
-                    val intent = Intent(this@WipeAccountActivity, LockActivity::class.java)
+                    // Go to WelcomeActivity — no keys exist, need to create new account
+                    val intent = Intent(this@WipeAccountActivity, WelcomeActivity::class.java)
                     intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
                     startActivity(intent)
                     finish()
+                    // Kill the process to ensure clean restart of TorService with new keys
+                    android.os.Process.killProcess(android.os.Process.myPid())
                 }
 
             } catch (e: Exception) {
                 // Silent failure - wipe completed but restart failed
                 withContext(Dispatchers.Main) {
-                    val intent = Intent(this@WipeAccountActivity, LockActivity::class.java)
+                    // Go to WelcomeActivity — no keys exist, need to create new account
+                    val intent = Intent(this@WipeAccountActivity, WelcomeActivity::class.java)
                     intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
                     startActivity(intent)
                     finish()
+                    // Kill the process to ensure clean restart of TorService with new keys
+                    android.os.Process.killProcess(android.os.Process.myPid())
                 }
             }
         }

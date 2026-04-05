@@ -496,6 +496,7 @@ class CreateAccountActivity : AppCompatActivity() {
                     )
                     // Store contact card info in encrypted storage
                     keyManager.storeContactPin(contactCardPin)
+                    keyManager.storePinRotationTimestamp(System.currentTimeMillis())
                     keyManager.storeIPFSCID(ipfsCid)
                     // Note: friendRequestOnion already stored by createFriendRequestOnion()
                     keyManager.storeMessagingOnion(onionAddress)

@@ -52,12 +52,10 @@ object BadgeUtils {
         return pendingRequestsSet.count { json ->
             try {
                 val req = com.securelegion.models.PendingFriendRequest.fromJson(json)
-                // Only count requests that are actually visible in the UI
-                when (req.direction) {
-                    com.securelegion.models.PendingFriendRequest.DIRECTION_INCOMING ->
-                        req.status == com.securelegion.models.PendingFriendRequest.STATUS_PENDING
-                    else -> true // All outgoing requests count
-                }
+                // Only count INCOMING pending requests (waiting for user action)
+                // Outgoing requests don't need user action - they're just in flight
+                req.direction == com.securelegion.models.PendingFriendRequest.DIRECTION_INCOMING &&
+                    req.status == com.securelegion.models.PendingFriendRequest.STATUS_PENDING
             } catch (e: Exception) { false }
         }
     }

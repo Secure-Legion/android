@@ -395,7 +395,7 @@ class ContactOptionsActivity : BaseActivity() {
             tabs.forEachIndexed { i, tab ->
                 if (i == index) {
                     tab.setBackgroundResource(R.drawable.contact_tab_active)
-                    tab.setTextColor(ContextCompat.getColor(this, R.color.text_primary))
+                    tab.setTextColor(ContextCompat.getColor(this, R.color.tab_pill_active_text))
                 } else {
                     tab.setBackgroundResource(R.drawable.contact_tab_inactive)
                     tab.setTextColor(ContextCompat.getColor(this, R.color.text_muted))

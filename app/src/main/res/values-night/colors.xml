@@ -40,6 +40,11 @@
     <color name="settings_icon_tint">#A0AEC0</color>
     <color name="arrow_icon_tint">#FFFFFF</color>
 
+    <!-- Device Page (Dark Mode) -->
+    <color name="device_circle_bg">#1F2937</color>
+    <color name="device_card_bg">#141414</color>
+    <color name="device_icon_bg">#2A2A2A</color>
+
     <!-- Glass (Dark Mode) -->
     <color name="glass_bg">#D9080808</color>
     <color name="glass_border">#18FFFFFF</color>

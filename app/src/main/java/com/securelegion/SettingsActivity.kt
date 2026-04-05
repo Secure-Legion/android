@@ -46,15 +46,24 @@ class SettingsActivity : BaseActivity() {
 
         setupBottomNavigation()
         setupClickListeners()
-        setupAutoWipeToggle()
-        setupBiometricToggle()
         setupTorModeToggle()
+        // setupAutoWipeToggle() and setupBiometricToggle() moved to SecurityModeActivity
     }
 
     private fun setupClickListeners() {
         // Back Button
         findViewById<View>(R.id.backButton).setOnClickListener {
             finish()
+        }
+
+        // Premium Features
+        findViewById<View>(R.id.premiumFeaturesItem)?.setOnClickListener {
+            ThemedToast.show(this, "Premium features coming soon")
+        }
+
+        // Help
+        findViewById<View>(R.id.helpItem)?.setOnClickListener {
+            startActivity(Intent(this, HelpActivity::class.java))
         }
 
         // Duress PIN
@@ -110,6 +119,11 @@ class SettingsActivity : BaseActivity() {
         // Appearance
         findViewById<View>(R.id.appearanceItem).setOnClickListener {
             startActivity(Intent(this, AppearanceActivity::class.java))
+        }
+
+        // Devices
+        findViewById<View>(R.id.devicesItem).setOnClickListener {
+            startActivity(Intent(this, DevicesActivity::class.java))
         }
     }
 

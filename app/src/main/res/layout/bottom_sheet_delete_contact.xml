@@ -23,7 +23,7 @@
             android:layout_height="28dp"
             android:layout_gravity="center"
             android:src="@drawable/ic_delete"
-            app:tint="?attr/colorOnSurfaceVariant" />
+            app:tint="#FFFFFF" />
 
     </FrameLayout>
 
@@ -33,7 +33,7 @@
         android:layout_height="wrap_content"
         android:text="Delete Contact"
         android:textSize="22sp"
-        android:textColor="?attr/colorOnSurface"
+        android:textColor="@color/text_primary"
         android:fontFamily="@font/space_grotesk_bold"
         android:gravity="center"
         android:layout_marginBottom="8dp" />
@@ -55,11 +55,11 @@
         android:id="@+id/confirmDeleteButton"
         android:layout_width="match_parent"
         android:layout_height="56dp"
-        android:background="@drawable/swap_button_bg"
+        android:background="@drawable/action_button_bg"
         android:gravity="center"
         android:text="Delete"
         android:textSize="18sp"
-        android:textColor="?attr/colorOnSurface"
+        android:textColor="#FFFFFF"
         android:fontFamily="@font/poppins_semibold"
         android:clickable="true"
         android:focusable="true"
@@ -74,7 +74,7 @@
         android:gravity="center"
         android:text="Cancel"
         android:textSize="18sp"
-        android:textColor="?attr/colorOnSurface"
+        android:textColor="@color/text_primary"
         android:fontFamily="@font/poppins_semibold"
         android:clickable="true"
         android:focusable="true" />

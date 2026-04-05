@@ -2,8 +2,13 @@ package com.securelegion
 
 import android.content.Intent
 import android.os.Bundle
+import android.util.Log
 import android.view.View
+import android.widget.LinearLayout
 import androidx.appcompat.widget.SwitchCompat
+import com.securelegion.crypto.KeyManager
+import com.securelegion.utils.BiometricAuthHelper
+import com.securelegion.utils.ThemedToast
 
 class SecurityModeActivity : BaseActivity() {
 
@@ -12,27 +17,60 @@ class SecurityModeActivity : BaseActivity() {
         const val PREF_DEVICE_PROTECTION_ENABLED = "device_protection_enabled"
     }
 
+    private lateinit var biometricHelper: BiometricAuthHelper
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_security_mode)
 
+        biometricHelper = BiometricAuthHelper(this)
+
         setupClickListeners()
-        // setupBottomNavigation() // REMOVED: This layout doesn't have bottom nav
         setupAutoLock()
-        setupIncomingCallsToggle()
-        setupDeviceProtectionToggle()
+        setupBiometricToggle()
+        setupAutoWipeToggle()
+        updatePasswordLabel()
     }
 
     private fun setupClickListeners() {
-        // Back Button
-        findViewById<View>(R.id.backButton).setOnClickListener {
-            finish()
+        findViewById<View>(R.id.backButton).setOnClickListener { finish() }
+
+        findViewById<View>(R.id.devicePasswordItem).setOnClickListener {
+            startActivity(Intent(this, DevicePasswordActivity::class.java))
+        }
+
+        findViewById<View>(R.id.duressPinItem).setOnClickListener {
+            startActivity(Intent(this, DuressPinActivity::class.java))
+        }
+
+        findViewById<View>(R.id.qrSettingsItem).setOnClickListener {
+            startActivity(Intent(this, QrSettingsActivity::class.java))
+        }
+    }
+
+    private fun updatePasswordLabel() {
+        val keyManager = KeyManager.getInstance(this)
+        val label = findViewById<android.widget.TextView>(R.id.devicePasswordLabel)
+        label?.text = if (keyManager.hasUserDefinedPassword()) "Change Password" else "Set Password"
+    }
+
+    private fun setupAutoWipeToggle() {
+        val switch = findViewById<SwitchCompat>(R.id.autoWipeSwitch) ?: return
+        val prefs = getSharedPreferences("security_prefs", MODE_PRIVATE)
+        switch.isChecked = prefs.getBoolean("auto_wipe_enabled", false)
+        switch.setOnCheckedChangeListener { _, isChecked ->
+            prefs.edit().putBoolean("auto_wipe_enabled", isChecked).apply()
+            if (!isChecked) {
+                prefs.edit().putInt("failed_password_attempts", 0).apply()
+            }
         }
     }
 
     override fun onResume() {
         super.onResume()
         updateAutoLockStatus()
+        refreshBiometricToggle()
+        updatePasswordLabel()
     }
 
     private fun setupAutoLock() {
@@ -59,32 +97,101 @@ class SecurityModeActivity : BaseActivity() {
         findViewById<android.widget.TextView>(R.id.autoLockStatus).text = timeoutText
     }
 
-    private fun setupIncomingCallsToggle() {
-        val switch = findViewById<SwitchCompat>(R.id.allowIncomingCallsSwitch)
-        val prefs = getSharedPreferences("security", MODE_PRIVATE)
+    // setupIncomingCallsToggle and setupDeviceProtectionToggle removed — views not in new layout
 
-        // Load saved state (default true - allow calls when app closed)
-        switch.isChecked = prefs.getBoolean(PREF_ALLOW_INCOMING_CALLS_WHEN_CLOSED, true)
+    private fun setupBiometricToggle() {
+        val biometricItem = findViewById<LinearLayout>(R.id.biometricItem)
+        val biometricSwitch = findViewById<SwitchCompat>(R.id.biometricSwitch)
 
-        // Save state when toggled
-        switch.setOnCheckedChangeListener { _, isChecked ->
-            prefs.edit().putBoolean(PREF_ALLOW_INCOMING_CALLS_WHEN_CLOSED, isChecked).apply()
+        when (biometricHelper.isBiometricAvailable()) {
+            BiometricAuthHelper.BiometricStatus.AVAILABLE -> {
+                biometricItem.visibility = View.VISIBLE
+
+                val isCurrentlyEnabled = biometricHelper.isBiometricEnabled()
+                biometricSwitch.isChecked = isCurrentlyEnabled
+
+                biometricSwitch.setOnCheckedChangeListener { _, isChecked ->
+                    if (isChecked) {
+                        enableBiometric()
+                    } else {
+                        disableBiometric()
+                    }
+                }
+            }
+            BiometricAuthHelper.BiometricStatus.NONE_ENROLLED -> {
+                biometricItem.visibility = View.VISIBLE
+                biometricSwitch.isEnabled = false
+                Log.d("SecurityModeActivity", "Biometric not enrolled - showing disabled toggle")
+            }
+            else -> {
+                biometricItem.visibility = View.GONE
+                Log.d("SecurityModeActivity", "No biometric hardware - hiding toggle")
+            }
         }
     }
 
-    private fun setupDeviceProtectionToggle() {
-        val switch = findViewById<SwitchCompat>(R.id.deviceProtectionSwitch)
-        val prefs = getSharedPreferences("security", MODE_PRIVATE)
+    private fun refreshBiometricToggle() {
+        val biometricSwitch = findViewById<SwitchCompat>(R.id.biometricSwitch) ?: return
+        val isEnabled = biometricHelper.isBiometricEnabled()
 
-        // Load saved state (default false - auto-download enabled by default)
-        switch.isChecked = prefs.getBoolean(PREF_DEVICE_PROTECTION_ENABLED, false)
+        biometricSwitch.setOnCheckedChangeListener(null)
+        biometricSwitch.isChecked = isEnabled
 
-        // Save state when toggled
-        switch.setOnCheckedChangeListener { _, isChecked ->
-            prefs.edit().putBoolean(PREF_DEVICE_PROTECTION_ENABLED, isChecked).apply()
+        biometricSwitch.setOnCheckedChangeListener { _, isChecked ->
+            if (isChecked) {
+                enableBiometric()
+            } else {
+                disableBiometric()
+            }
         }
     }
 
+    private fun enableBiometric() {
+        val biometricSwitch = findViewById<SwitchCompat>(R.id.biometricSwitch)
+
+        try {
+            val keyManager = KeyManager.getInstance(this)
+            val password = keyManager.getSystemPassword()
+
+            if (password == null) {
+                ThemedToast.show(this, "Please re-enter your password to enable biometric")
+                biometricSwitch.isChecked = false
+                return
+            }
+
+            biometricHelper.enableBiometric(
+                password = password,
+                activity = this,
+                onSuccess = {
+                    Log.i("SecurityModeActivity", "Biometric enabled successfully")
+                    ThemedToast.show(this, "Biometric unlock enabled")
+                },
+                onError = { error ->
+                    Log.e("SecurityModeActivity", "Failed to enable biometric: $error")
+                    ThemedToast.showLong(this, "Failed to enable: $error")
+                    biometricSwitch.isChecked = false
+                }
+            )
+        } catch (e: Exception) {
+            Log.e("SecurityModeActivity", "Error enabling biometric", e)
+            ThemedToast.show(this, "Error: ${e.message}")
+            biometricSwitch.isChecked = false
+        }
+    }
+
+    private fun disableBiometric() {
+        val biometricSwitch = findViewById<SwitchCompat>(R.id.biometricSwitch)
+
+        try {
+            biometricHelper.disableBiometric()
+            Log.i("SecurityModeActivity", "Biometric disabled")
+            ThemedToast.show(this, "Biometric unlock disabled")
+        } catch (e: Exception) {
+            Log.e("SecurityModeActivity", "Error disabling biometric", e)
+            ThemedToast.show(this, "Error: ${e.message}")
+            biometricSwitch.isChecked = true
+        }
+    }
 
     private fun setupBottomNavigation() {
         BottomNavigationHelper.setupBottomNavigation(this)

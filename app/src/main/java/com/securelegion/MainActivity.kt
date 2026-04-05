@@ -115,14 +115,16 @@ class MainActivity : BaseActivity() {
     // BroadcastReceiver to listen for friend requests and update badge
     private val friendRequestReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
-            if (intent?.action == "com.securelegion.FRIEND_REQUEST_RECEIVED") {
-                Log.d("MainActivity", "Received FRIEND_REQUEST_RECEIVED broadcast - updating badges")
+            if (intent?.action == "com.securelegion.FRIEND_REQUEST_RECEIVED" ||
+                intent?.action == "com.securelegion.FRIEND_REQUEST_STATUS_CHANGED") {
+                Log.d("MainActivity", "Received ${intent.action} broadcast - updating badges and lists")
                 runOnUiThread {
                     updateFriendRequestBadge()
-                    // Also refresh the add friend page if on contacts tab
-                    if (currentTab == "contacts") {
-                        setupContactsList()
-                    }
+                    updateRequestsPillBadge()
+                    // Refresh both lists regardless of current tab
+                    // so when user navigates to contacts tab, fresh data is ready
+                    setupContactsList()
+                    setupRequestsList()
                 }
             }
         }
@@ -287,7 +289,10 @@ class MainActivity : BaseActivity() {
         Log.d("MainActivity", "Registered NEW_PING and MESSAGE_RECEIVED broadcast receiver in onCreate")
 
         // Register broadcast receiver for friend requests
-        val friendRequestFilter = IntentFilter("com.securelegion.FRIEND_REQUEST_RECEIVED")
+        val friendRequestFilter = IntentFilter().apply {
+            addAction("com.securelegion.FRIEND_REQUEST_RECEIVED")
+            addAction("com.securelegion.FRIEND_REQUEST_STATUS_CHANGED")
+        }
         registerReceiver(friendRequestReceiver, friendRequestFilter, Context.RECEIVER_NOT_EXPORTED)
         Log.d("MainActivity", "Registered FRIEND_REQUEST_RECEIVED broadcast receiver in onCreate")
 
@@ -672,6 +677,9 @@ class MainActivity : BaseActivity() {
         } else if (currentTab == "contacts") {
             // Reload contacts list to show updates (e.g., after deleting a contact)
             setupContactsList()
+            // Also reload requests list to show new/updated friend requests
+            setupRequestsList()
+            updateRequestsPillBadge()
         }
 
         // Update badge counts

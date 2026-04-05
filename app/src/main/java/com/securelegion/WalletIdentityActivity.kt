@@ -207,8 +207,12 @@ class WalletIdentityActivity : AppCompatActivity() {
                     } else "Rotation pending"
                 } else null
 
-                // Build QR content with optional expiry timestamp
+                // Build QR content with optional expiry timestamp.
+                // Prefix `sl1:` tags this as SecureLegion QR format v1 — lets future
+                // formats (sl2:, sl3:) be rejected cleanly by older parsers instead
+                // of being misread. Unprefixed QRs are still accepted for back-compat.
                 val qrContent = buildString {
+                    append("sl1:")
                     if (username.isNotEmpty()) append("$username@")
                     append(friendRequestOnion)
                     if (pin.isNotEmpty()) append("@$pin")

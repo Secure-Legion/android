@@ -75,6 +75,56 @@
             android:paddingTop="16dp"
             android:paddingBottom="24dp">
 
+            <!-- Premium Features -->
+            <LinearLayout
+                android:id="@+id/premiumFeaturesItem"
+                android:layout_width="match_parent"
+                android:layout_height="80dp"
+                android:orientation="horizontal"
+                android:background="@drawable/premium_card_bg"
+                android:paddingStart="18dp"
+                android:paddingEnd="10dp"
+                android:layout_marginBottom="12dp"
+                android:gravity="center_vertical"
+                android:clickable="true"
+                android:focusable="true">
+
+                <ImageView
+                    android:layout_width="28dp"
+                    android:layout_height="28dp"
+                    android:src="@drawable/ic_crown"
+                    app:tint="#F59E0B"
+                    android:layout_marginEnd="16dp" />
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:orientation="vertical">
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Premium Features"
+                        android:textSize="16sp"
+                        android:textColor="#F59E0B"
+                        android:fontFamily="@font/poppins_medium" />
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Coming Soon"
+                        android:textSize="13sp"
+                        android:textColor="@color/text_muted"
+                        android:fontFamily="@font/poppins_regular" />
+                </LinearLayout>
+
+                <ImageView
+                    android:layout_width="16dp"
+                    android:layout_height="16dp"
+                    android:src="@drawable/ic_arrow_forward"
+                    app:tint="#F59E0B" />
+
+            </LinearLayout>
+
             <!-- Duress PIN -->
             <LinearLayout
                 android:id="@+id/duressPinItem"
@@ -87,7 +137,8 @@
                 android:layout_marginBottom="12dp"
                 android:gravity="center_vertical"
                 android:clickable="true"
-                android:focusable="true">
+                android:focusable="true"
+                android:visibility="gone">
 
                 <FrameLayout
                     android:layout_width="50dp"
@@ -141,7 +192,8 @@
                 android:paddingStart="10dp"
                 android:paddingEnd="10dp"
                 android:layout_marginBottom="12dp"
-                android:gravity="center_vertical">
+                android:gravity="center_vertical"
+                android:visibility="gone">
 
                 <FrameLayout
                     android:layout_width="50dp"
@@ -190,7 +242,8 @@
                 android:layout_marginBottom="12dp"
                 android:gravity="center_vertical"
                 android:clickable="true"
-                android:focusable="true">
+                android:focusable="true"
+                android:visibility="gone">
 
                 <FrameLayout
                     android:layout_width="50dp"
@@ -317,7 +370,7 @@
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:layout_weight="1"
-                    android:text="Advanced Security"
+                    android:text="Security"
                     android:textSize="16sp"
                     android:textColor="@color/text_settings"
                     android:fontFamily="@font/poppins_medium" />
@@ -351,7 +404,8 @@
                 android:layout_marginBottom="12dp"
                 android:gravity="center_vertical"
                 android:clickable="true"
-                android:focusable="true">
+                android:focusable="true"
+                android:visibility="gone">
 
                 <FrameLayout
                     android:layout_width="50dp"
@@ -395,9 +449,9 @@
 
             </LinearLayout>
 
-            <!-- Appearance -->
+            <!-- Devices -->
             <LinearLayout
-                android:id="@+id/appearanceItem"
+                android:id="@+id/devicesItem"
                 android:layout_width="match_parent"
                 android:layout_height="80dp"
                 android:orientation="horizontal"
@@ -420,7 +474,7 @@
                         android:layout_width="24dp"
                         android:layout_height="24dp"
                         android:layout_gravity="center"
-                        android:src="@android:drawable/ic_menu_manage"
+                        android:src="@drawable/ic_laptop"
                         app:tint="@color/settings_icon_tint" />
 
                 </FrameLayout>
@@ -429,7 +483,7 @@
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:layout_weight="1"
-                    android:text="Appearance"
+                    android:text="Devices"
                     android:textSize="16sp"
                     android:textColor="@color/text_settings"
                     android:fontFamily="@font/poppins_medium" />
@@ -507,6 +561,109 @@
 
             </LinearLayout>
 
+            <!-- Appearance -->
+            <LinearLayout
+                android:id="@+id/appearanceItem"
+                android:layout_width="match_parent"
+                android:layout_height="80dp"
+                android:orientation="horizontal"
+                android:background="@drawable/settings_box_bg"
+                android:paddingStart="10dp"
+                android:paddingEnd="10dp"
+                android:layout_marginBottom="12dp"
+                android:gravity="center_vertical"
+                android:clickable="true"
+                android:focusable="true">
+
+                <FrameLayout
+                    android:layout_width="50dp"
+                    android:layout_height="50dp"
+                    android:background="@drawable/settings_icon_bg"
+                    android:layout_marginStart="8dp"
+                    android:layout_marginEnd="16dp">
+
+                    <ImageView
+                        android:layout_width="24dp"
+                        android:layout_height="24dp"
+                        android:layout_gravity="center"
+                        android:src="@android:drawable/ic_menu_manage"
+                        app:tint="@color/settings_icon_tint" />
+
+                </FrameLayout>
+
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="Appearance"
+                    android:textSize="16sp"
+                    android:textColor="@color/text_settings"
+                    android:fontFamily="@font/poppins_medium" />
+
+                <FrameLayout
+                    android:layout_width="36dp"
+                    android:layout_height="36dp"
+                    android:layout_marginEnd="8dp"
+                    android:background="@drawable/arrow_bg">
+
+                    <ImageView
+                        android:layout_width="18dp"
+                        android:layout_height="18dp"
+                        android:layout_gravity="center"
+                        android:src="@drawable/ic_arrow_forward"
+                        app:tint="@color/arrow_icon_tint" />
+
+                </FrameLayout>
+
+            </LinearLayout>
+
+            <!-- Tor Mode (VPN) -->
+            <LinearLayout
+                android:id="@+id/torModeItem"
+                android:layout_width="match_parent"
+                android:layout_height="80dp"
+                android:orientation="horizontal"
+                android:background="@drawable/settings_box_bg"
+                android:paddingStart="10dp"
+                android:paddingEnd="10dp"
+                android:layout_marginBottom="12dp"
+                android:gravity="center_vertical">
+
+                <FrameLayout
+                    android:layout_width="50dp"
+                    android:layout_height="50dp"
+                    android:background="@drawable/settings_icon_bg"
+                    android:layout_marginStart="8dp"
+                    android:layout_marginEnd="16dp">
+
+                    <ImageView
+                        android:layout_width="24dp"
+                        android:layout_height="24dp"
+                        android:layout_gravity="center"
+                        android:src="@drawable/ic_onion"
+                        app:tint="@color/settings_icon_tint" />
+
+                </FrameLayout>
+
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="Tor VPN Settings"
+                    android:textSize="16sp"
+                    android:textColor="@color/text_settings"
+                    android:fontFamily="@font/poppins_medium" />
+
+                <androidx.appcompat.widget.SwitchCompat
+                    android:id="@+id/torModeSwitch"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:checked="false"
+                    app:thumbTint="@color/input_border"
+                    app:trackTint="@color/lock_icon_gray" />
+
+            </LinearLayout>
+
             <!-- About -->
             <LinearLayout
                 android:id="@+id/aboutItem"
@@ -542,6 +699,62 @@
                     android:layout_height="wrap_content"
                     android:layout_weight="1"
                     android:text="About"
+                    android:textSize="16sp"
+                    android:textColor="@color/text_settings"
+                    android:fontFamily="@font/poppins_medium" />
+
+                <FrameLayout
+                    android:layout_width="36dp"
+                    android:layout_height="36dp"
+                    android:layout_marginEnd="8dp"
+                    android:background="@drawable/arrow_bg">
+
+                    <ImageView
+                        android:layout_width="18dp"
+                        android:layout_height="18dp"
+                        android:layout_gravity="center"
+                        android:src="@drawable/ic_arrow_forward"
+                        app:tint="@color/arrow_icon_tint" />
+
+                </FrameLayout>
+
+            </LinearLayout>
+
+            <!-- Help -->
+            <LinearLayout
+                android:id="@+id/helpItem"
+                android:layout_width="match_parent"
+                android:layout_height="80dp"
+                android:orientation="horizontal"
+                android:background="@drawable/settings_box_bg"
+                android:paddingStart="10dp"
+                android:paddingEnd="10dp"
+                android:layout_marginBottom="12dp"
+                android:gravity="center_vertical"
+                android:clickable="true"
+                android:focusable="true">
+
+                <FrameLayout
+                    android:layout_width="50dp"
+                    android:layout_height="50dp"
+                    android:background="@drawable/settings_icon_bg"
+                    android:layout_marginStart="8dp"
+                    android:layout_marginEnd="16dp">
+
+                    <ImageView
+                        android:layout_width="24dp"
+                        android:layout_height="24dp"
+                        android:layout_gravity="center"
+                        android:src="@android:drawable/ic_menu_help"
+                        app:tint="@color/settings_icon_tint" />
+
+                </FrameLayout>
+
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="Help"
                     android:textSize="16sp"
                     android:textColor="@color/text_settings"
                     android:fontFamily="@font/poppins_medium" />
@@ -730,53 +943,6 @@
                         app:tint="@color/arrow_icon_tint" />
 
                 </FrameLayout>
-
-            </LinearLayout>
-
-            <!-- Tor Mode (VPN) -->
-            <LinearLayout
-                android:id="@+id/torModeItem"
-                android:layout_width="match_parent"
-                android:layout_height="80dp"
-                android:orientation="horizontal"
-                android:background="@drawable/settings_box_bg"
-                android:paddingStart="10dp"
-                android:paddingEnd="10dp"
-                android:layout_marginBottom="12dp"
-                android:gravity="center_vertical">
-
-                <FrameLayout
-                    android:layout_width="50dp"
-                    android:layout_height="50dp"
-                    android:background="@drawable/settings_icon_bg"
-                    android:layout_marginStart="8dp"
-                    android:layout_marginEnd="16dp">
-
-                    <ImageView
-                        android:layout_width="24dp"
-                        android:layout_height="24dp"
-                        android:layout_gravity="center"
-                        android:src="@drawable/ic_onion"
-                        app:tint="@color/settings_icon_tint" />
-
-                </FrameLayout>
-
-                <TextView
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:text="Tor VPN Mode"
-                    android:textSize="16sp"
-                    android:textColor="@color/text_settings"
-                    android:fontFamily="@font/poppins_medium" />
-
-                <androidx.appcompat.widget.SwitchCompat
-                    android:id="@+id/torModeSwitch"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:checked="false"
-                    app:thumbTint="@color/input_border"
-                    app:trackTint="@color/lock_icon_gray" />
 
             </LinearLayout>
 

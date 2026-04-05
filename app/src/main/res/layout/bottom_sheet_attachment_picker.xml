@@ -4,7 +4,7 @@
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
     android:orientation="vertical"
-    android:background="@color/surface_black"
+    android:background="#000000"
     android:paddingTop="12dp">
 
     <!-- Drag Handle — thin line across full width -->

@@ -302,7 +302,7 @@
                     android:text="Media"
                     android:textSize="12sp"
                     android:fontFamily="@font/poppins_medium"
-                    android:textColor="@color/text_primary"
+                    android:textColor="@color/tab_pill_active_text"
                     android:background="@drawable/contact_tab_active"
                     android:paddingStart="12dp"
                     android:paddingEnd="12dp"

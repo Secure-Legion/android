@@ -45,6 +45,14 @@ data class ContactCard(
     fun toJson(): String {
         val json = JSONObject()
 
+        // Schema version — increment on breaking changes.
+        // Parsers should ignore unknown fields and accept missing version (legacy cards).
+        // v1: single onion_address field
+        // v2: friend_request_onion + messaging_onion + voice_onion
+        // v2.1: added profile_picture
+        // v3: explicit schema_version field (this card and forward)
+        json.put("schema_version", 3)
+
         // Convert Ed25519 public key to array
         val pubKeyArray = JSONArray()
         solanaPublicKey.forEach { pubKeyArray.put(it.toInt() and 0xFF) }

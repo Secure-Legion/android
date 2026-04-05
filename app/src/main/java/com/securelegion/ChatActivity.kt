@@ -451,7 +451,9 @@ class ChatActivity : BaseActivity() {
         // Setup UI
         val chatNameView = findViewById<TextView>(R.id.chatName)
         chatNameView.text = contactName
-        com.securelegion.utils.TextGradient.apply(chatNameView)
+        // Header is always black - force white text (no gradient)
+        chatNameView.paint.shader = null
+        chatNameView.setTextColor(android.graphics.Color.WHITE)
 
         // Tap contact name to open contact profile
         chatNameView.setOnClickListener {

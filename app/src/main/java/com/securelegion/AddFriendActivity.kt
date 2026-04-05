@@ -288,7 +288,20 @@ class AddFriendActivity : BaseActivity() {
      * Parsing from the right: last segment = PIN (if 10 digits), .onion segment = address, rest = username
      */
     private fun handleScannedQrData(data: String) {
-        val parts = data.split("@")
+        // Version prefix handling:
+        //   sl1:...  → current format, strip prefix and parse
+        //   sl2:...  → future format we don't support yet, reject cleanly
+        //   (none)   → legacy unversioned format, parse as-is
+        val payload = when {
+            data.startsWith("sl1:") -> data.removePrefix("sl1:")
+            data.startsWith("sl2:") || data.startsWith("sl3:") || data.startsWith("sl4:") -> {
+                ThemedToast.show(this, "QR code format is newer than this app — please update")
+                if (isAutoMode) finish()
+                return
+            }
+            else -> data // legacy unversioned
+        }
+        val parts = payload.split("@")
 
         var pin: String? = null
         var onionAddress: String? = null
@@ -1793,6 +1806,9 @@ class AddFriendActivity : BaseActivity() {
                 .apply()
 
             Log.d(TAG, "Saved pending friend request for ${request.displayName}")
+
+            // Broadcast so MainActivity's requests list refreshes
+            sendBroadcast(Intent("com.securelegion.FRIEND_REQUEST_STATUS_CHANGED").setPackage(packageName))
 
         } catch (e: Exception) {
             Log.e(TAG, "Failed to save pending friend request", e)
