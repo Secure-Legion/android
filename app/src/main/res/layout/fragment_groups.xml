@@ -4,7 +4,27 @@
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:orientation="vertical"
-    android:background="?attr/colorSurface">
+    android:background="@color/surface_black">
+
+    <!-- Onboarding Carousel for Groups -->
+    <HorizontalScrollView
+        android:id="@+id/groupsOnboardingCarousel"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:scrollbars="none"
+        android:clipToPadding="false"
+        android:paddingStart="20dp"
+        android:paddingEnd="20dp"
+        android:paddingTop="4dp"
+        android:paddingBottom="12dp">
+
+        <LinearLayout
+            android:id="@+id/groupsOnboardingCardsContainer"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal" />
+
+    </HorizontalScrollView>
 
     <!-- Pending Invites Section Header (only shows if there are invites) -->
     <LinearLayout
@@ -93,7 +113,7 @@
             android:layout_width="80dp"
             android:layout_height="80dp"
             android:src="@drawable/ic_contacts"
-            app:tint="#333333"
+            app:tint="@color/text_muted"
             android:contentDescription="No Groups" />
 
         <TextView
@@ -110,7 +130,7 @@
             android:layout_height="wrap_content"
             android:layout_marginTop="8dp"
             android:text="Create a group to get started"
-            android:textColor="#666666"
+            android:textColor="@color/text_muted"
             android:textSize="13sp"
             android:fontFamily="@font/poppins_regular" />
 

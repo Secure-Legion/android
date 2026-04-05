@@ -38,7 +38,7 @@
                 android:layout_height="wrap_content"
                 android:text="Contact"
                 android:textSize="16sp"
-                android:textColor="@color/lock_title_gray"
+                android:textColor="@color/text_primary"
                 android:fontFamily="@font/space_grotesk_bold"
                 android:maxLines="1"
                 android:ellipsize="end" />
@@ -49,7 +49,7 @@
                 android:layout_height="wrap_content"
                 android:text="@username"
                 android:textSize="13sp"
-                android:textColor="#666666"
+                android:textColor="@color/text_muted"
                 android:fontFamily="@font/poppins_regular"
                 android:layout_marginTop="1dp"
                 android:maxLines="1"
@@ -63,7 +63,7 @@
             android:layout_width="36dp"
             android:layout_height="36dp"
             android:src="@drawable/ic_add_friend"
-            app:tint="#FFFFFF"
+            app:tint="@color/text_primary"
             android:padding="6dp"
             android:clickable="true"
             android:focusable="true"
@@ -76,6 +76,6 @@
         android:layout_width="match_parent"
         android:layout_height="0.5dp"
         android:layout_marginStart="62dp"
-        android:background="#1AFFFFFF" />
+        android:background="@color/divider_color" />
 
 </LinearLayout>

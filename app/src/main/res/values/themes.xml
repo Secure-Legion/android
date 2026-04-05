@@ -16,34 +16,36 @@
         <item name="colorTertiaryContainer">#666666</item>
         <item name="colorOnTertiary">@color/text_white</item>
         <item name="colorOnTertiaryContainer">@color/text_white</item>
-        <!-- Surface colors -->
-        <item name="colorSurface">#000000</item>
-        <item name="colorOnSurface">@color/text_white</item>
-        <item name="colorSurfaceVariant">#1A1A1A</item>
+        <!-- Surface colors - use color resources -->
+        <item name="colorSurface">@color/surface_black</item>
+        <item name="colorOnSurface">@color/text_primary</item>
+        <item name="colorSurfaceVariant">@color/surface_variant</item>
         <item name="colorOnSurfaceVariant">@color/text_gray</item>
-        <item name="colorSurfaceContainerLowest">#000000</item>
-        <item name="colorSurfaceContainerLow">#0A0A0A</item>
-        <item name="colorSurfaceContainer">#141414</item>
-        <item name="colorSurfaceContainerHigh">#1A1A1A</item>
-        <item name="colorSurfaceContainerHighest">#222222</item>
+        <item name="colorSurfaceContainerLowest">@color/surface_black</item>
+        <item name="colorSurfaceContainerLow">@color/dark_bg</item>
+        <item name="colorSurfaceContainer">@color/card_bg</item>
+        <item name="colorSurfaceContainerHigh">@color/surface_variant</item>
+        <item name="colorSurfaceContainerHighest">@color/surface_variant</item>
         <!-- Outline -->
-        <item name="colorOutline">#444444</item>
-        <item name="colorOutlineVariant">#333333</item>
-        <!-- Status bar color. -->
+        <item name="colorOutline">@color/input_border</item>
+        <item name="colorOutlineVariant">@color/border_color</item>
+        <!-- Status bar - black header even in light mode (matches iOS) -->
         <item name="android:statusBarColor">#000000</item>
         <item name="android:navigationBarColor">#000000</item>
-        <!-- Background colors -->
-        <item name="android:windowBackground">#000000</item>
-        <item name="android:colorBackground">#000000</item>
-        <!-- Text colors -->
-        <item name="android:textColorPrimary">@color/text_white</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightNavigationBar">false</item>
+        <!-- Background -->
+        <item name="android:windowBackground">@color/surface_black</item>
+        <item name="android:colorBackground">@color/surface_black</item>
+        <!-- Text -->
+        <item name="android:textColorPrimary">@color/text_primary</item>
         <item name="android:textColorSecondary">@color/text_gray</item>
-        <item name="android:textColorHighlight">#444444</item>
+        <item name="android:textColorHighlight">@color/surface_variant</item>
         <item name="android:textColorLink">#888888</item>
         <item name="colorControlHighlight">#444444</item>
-        <!-- Checkbox colors - prevent blue override -->
-        <item name="colorControlActivated">#FFFFFF</item>
-        <item name="colorControlNormal">#666666</item>
+        <!-- Controls -->
+        <item name="colorControlActivated">@color/text_primary</item>
+        <item name="colorControlNormal">@color/text_muted</item>
         <!-- AlertDialog styling -->
         <item name="alertDialogTheme">@style/CustomAlertDialog</item>
         <item name="materialAlertDialogTheme">@style/CustomAlertDialog</item>
@@ -54,15 +56,15 @@
     <style name="CustomAlertDialog" parent="ThemeOverlay.Material3.MaterialAlertDialog">
         <item name="android:windowBackground">@android:color/transparent</item>
         <item name="android:background">@drawable/glass_dialog_bg</item>
-        <item name="backgroundColor">#101010</item>
+        <item name="backgroundColor">@color/card_bg</item>
         <!-- Force ALL surface colors to same value so no internal panel stands out -->
-        <item name="colorSurface">#101010</item>
-        <item name="colorSurfaceVariant">#101010</item>
-        <item name="colorSurfaceContainerLowest">#101010</item>
-        <item name="colorSurfaceContainerLow">#101010</item>
-        <item name="colorSurfaceContainer">#101010</item>
-        <item name="colorSurfaceContainerHigh">#101010</item>
-        <item name="colorSurfaceContainerHighest">#101010</item>
+        <item name="colorSurface">@color/card_bg</item>
+        <item name="colorSurfaceVariant">@color/card_bg</item>
+        <item name="colorSurfaceContainerLowest">@color/card_bg</item>
+        <item name="colorSurfaceContainerLow">@color/card_bg</item>
+        <item name="colorSurfaceContainer">@color/card_bg</item>
+        <item name="colorSurfaceContainerHigh">@color/card_bg</item>
+        <item name="colorSurfaceContainerHighest">@color/card_bg</item>
         <!-- Disable elevation overlay that tints surfaces at different elevations -->
         <item name="elevationOverlayEnabled">false</item>
         <!-- Kill Material3 outlines everywhere inside dialog -->
@@ -71,8 +73,8 @@
         <item name="shapeAppearanceOverlay">@style/DialogRoundedCorners</item>
         <item name="buttonBarPositiveButtonStyle">@style/PositiveButtonStyle</item>
         <item name="buttonBarNegativeButtonStyle">@style/NegativeButtonStyle</item>
-        <item name="android:textColorPrimary">@color/text_white</item>
-        <item name="android:textColorSecondary">@color/text_white</item>
+        <item name="android:textColorPrimary">@color/text_primary</item>
+        <item name="android:textColorSecondary">@color/text_primary</item>
         <item name="materialAlertDialogTitleTextStyle">@style/DialogTitleTextStyle</item>
         <item name="materialAlertDialogBodyTextStyle">@style/DialogBodyTextStyle</item>
         <!-- Kill internal panel backgrounds that draw outlines -->
@@ -97,11 +99,11 @@
     </style>
 
     <style name="DialogTitleTextStyle" parent="MaterialAlertDialog.Material3.Title.Text">
-        <item name="android:textColor">@color/text_white</item>
+        <item name="android:textColor">@color/text_primary</item>
     </style>
 
     <style name="DialogBodyTextStyle" parent="MaterialAlertDialog.Material3.Body.Text">
-        <item name="android:textColor">@color/text_white</item>
+        <item name="android:textColor">@color/text_primary</item>
     </style>
 
     <!-- Secure Legion Custom Progress Bar Style -->
@@ -157,22 +159,14 @@
         <item name="android:textAllCaps">false</item>
     </style>
 
-    <!-- Splash Screen Theme - Android 12+ system splash screen -->
+    <!-- Splash Screen Theme - Android 12+ system splash screen (Light Mode) -->
     <style name="Theme.SecureLegion.Splash" parent="Theme.SplashScreen">
-        <!-- Full gray background (like Session) -->
-        <item name="windowSplashScreenBackground">#1C1C1C</item>
-
-        <!-- Centered logo (no white circle) -->
-        <item name="windowSplashScreenAnimatedIcon">@drawable/secure_logo_new</item>
-
-        <!-- Make logo bigger (default is too small) -->
-        <item name="windowSplashScreenIconBackgroundColor">#1C1C1C</item>
-
-        <!-- Status bar color -->
-        <item name="android:statusBarColor">#1C1C1C</item>
+        <item name="windowSplashScreenBackground">#000000</item>
+        <item name="windowSplashScreenAnimatedIcon">@mipmap/ic_launcher</item>
+        <item name="windowSplashScreenIconBackgroundColor">#000000</item>
+        <item name="android:statusBarColor">#000000</item>
         <item name="android:navigationBarColor">#000000</item>
-
-        <!-- Post-splash theme (your regular theme) -->
+        <item name="android:windowLightStatusBar">false</item>
         <item name="postSplashScreenTheme">@style/Theme.SecureLegion</item>
     </style>
 </resources>

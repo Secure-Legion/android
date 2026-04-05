@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="130dp"
+    android:layout_height="110dp"
+    android:layout_marginEnd="10dp"
+    android:background="@drawable/onboarding_card_bg"
+    android:clickable="true"
+    android:focusable="true"
+    android:padding="12dp">
+
+    <!-- Number (top-left) -->
+    <TextView
+        android:id="@+id/cardNumber"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="top|start"
+        android:text="1."
+        android:textSize="12sp"
+        android:textColor="@color/text_muted"
+        android:fontFamily="@font/poppins_medium" />
+
+    <!-- Dismiss X (top-right) -->
+    <ImageView
+        android:id="@+id/cardDismiss"
+        android:layout_width="16dp"
+        android:layout_height="16dp"
+        android:layout_gravity="top|end"
+        android:src="@drawable/ic_close_x"
+        app:tint="@color/text_muted"
+        android:contentDescription="Dismiss"
+        android:clickable="true"
+        android:focusable="true" />
+
+    <!-- Icon (center) -->
+    <ImageView
+        android:id="@+id/cardIcon"
+        android:layout_width="28dp"
+        android:layout_height="28dp"
+        android:layout_gravity="center"
+        android:layout_marginTop="-8dp"
+        app:tint="@color/text_primary" />
+
+    <!-- Label (bottom) -->
+    <TextView
+        android:id="@+id/cardLabel"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom|center_horizontal"
+        android:textSize="13sp"
+        android:textColor="@color/text_primary"
+        android:fontFamily="@font/poppins_medium"
+        android:gravity="center" />
+
+</FrameLayout>

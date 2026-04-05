@@ -36,10 +36,8 @@ class SplashActivity : AppCompatActivity() {
         // WindowManager.LayoutParams.FLAG_SECURE
         // )
 
-        // Keep status bar dark gray (matches splash screen theme)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            window.statusBarColor = android.graphics.Color.parseColor("#1C1C1C")
-        }
+        // Black status bar (matches splash screen)
+        window.statusBarColor = android.graphics.Color.BLACK
 
         // Request notification permission on Android 13+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -84,8 +82,35 @@ class SplashActivity : AppCompatActivity() {
                 intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
                 startActivity(intent)
             } else {
-                // Account exists - go to LockActivity (Tor bootstraps in background via TorService)
-                Log.i("SplashActivity", "Account found, navigating to LockActivity")
+                // Account exists - check if we can skip the lock screen
+                val hasUserPassword = keyManager.hasUserDefinedPassword()
+                val biometricHelper = com.securelegion.utils.BiometricAuthHelper(this)
+                val hasBiometric = biometricHelper.isBiometricEnabled()
+
+                if (!hasUserPassword && !hasBiometric) {
+                    // Passwordless account — auto-unlock with system password
+                    val systemPassword = keyManager.getSystemPassword()
+                    if (systemPassword != null && keyManager.unlockSeed(systemPassword)) {
+                        Log.i("SplashActivity", "Auto-unlocked passwordless account")
+                        com.securelegion.utils.SessionManager.setUnlocked(this)
+                        val intent = Intent(this, MainActivity::class.java)
+                        intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+                        startActivity(intent)
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                            overrideActivityTransition(OVERRIDE_TRANSITION_OPEN, android.R.anim.fade_in, android.R.anim.fade_out)
+                        } else {
+                            @Suppress("DEPRECATION")
+                            overridePendingTransition(android.R.anim.fade_in, android.R.anim.fade_out)
+                        }
+                        finish()
+                        return
+                    } else {
+                        Log.e("SplashActivity", "Failed to auto-unlock — falling through to lock screen")
+                    }
+                }
+
+                // Has password or biometric or auto-unlock failed — show lock screen
+                Log.i("SplashActivity", "Navigating to LockActivity")
                 val intent = Intent(this, LockActivity::class.java)
                 startActivity(intent)
             }

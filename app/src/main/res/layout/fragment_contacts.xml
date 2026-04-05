@@ -3,7 +3,7 @@
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="?attr/colorSurface">
+    android:background="@color/surface_black">
 
     <androidx.recyclerview.widget.RecyclerView
         android:id="@+id/contactsList"
@@ -14,7 +14,7 @@
         android:paddingTop="8dp"
         android:paddingBottom="130dp"
         android:clipToPadding="false"
-        android:background="#000000" />
+        android:background="@color/surface_black" />
 
     <androidx.recyclerview.widget.RecyclerView
         android:id="@+id/requestsList"
@@ -25,7 +25,7 @@
         android:paddingTop="8dp"
         android:paddingBottom="130dp"
         android:clipToPadding="false"
-        android:background="#000000"
+        android:background="@color/surface_black"
         android:visibility="gone" />
 
     <LinearLayout
@@ -34,14 +34,14 @@
         android:layout_height="match_parent"
         android:orientation="vertical"
         android:gravity="center"
-        android:background="#000000"
+        android:background="@color/surface_black"
         android:visibility="gone">
 
         <ImageView
             android:layout_width="80dp"
             android:layout_height="80dp"
             android:src="@drawable/ic_nav_contacts"
-            app:tint="#333333"
+            app:tint="@color/text_muted"
             android:contentDescription="No Contacts" />
 
         <TextView
@@ -58,7 +58,7 @@
             android:layout_height="wrap_content"
             android:layout_marginTop="8dp"
             android:text="Add a contact to get started"
-            android:textColor="#666666"
+            android:textColor="@color/text_muted"
             android:textSize="13sp"
             android:fontFamily="@font/poppins_regular" />
 
@@ -70,14 +70,14 @@
         android:layout_height="match_parent"
         android:orientation="vertical"
         android:gravity="center"
-        android:background="#000000"
+        android:background="@color/surface_black"
         android:visibility="gone">
 
         <ImageView
             android:layout_width="80dp"
             android:layout_height="80dp"
             android:src="@drawable/ic_add_friend"
-            app:tint="#333333"
+            app:tint="@color/text_muted"
             android:contentDescription="No Requests" />
 
         <TextView
@@ -94,7 +94,7 @@
             android:layout_height="wrap_content"
             android:layout_marginTop="8dp"
             android:text="Tap + to add a friend"
-            android:textColor="#666666"
+            android:textColor="@color/text_muted"
             android:textSize="13sp"
             android:fontFamily="@font/poppins_regular" />
 

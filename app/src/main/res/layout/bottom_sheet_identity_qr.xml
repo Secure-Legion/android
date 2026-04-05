@@ -92,7 +92,7 @@
             android:text="Friend Request Address"
             android:textSize="14sp"
             android:fontFamily="@font/poppins_medium"
-            android:textColor="#8C8C8C"
+            android:textColor="@color/text_action"
             android:layout_marginBottom="8dp" />
 
         <LinearLayout
@@ -112,7 +112,7 @@
                 android:layout_weight="1"
                 android:text=""
                 android:textSize="12sp"
-                android:textColor="#8C8C8C"
+                android:textColor="@color/text_action"
                 android:fontFamily="@font/poppins_regular"
                 android:gravity="start|center_vertical"
                 android:ellipsize="middle"
@@ -144,7 +144,7 @@
             android:text="Contact PIN"
             android:textSize="14sp"
             android:fontFamily="@font/poppins_medium"
-            android:textColor="#8C8C8C"
+            android:textColor="@color/text_action"
             android:layout_marginBottom="8dp" />
 
         <LinearLayout
@@ -164,7 +164,7 @@
                 android:layout_weight="1"
                 android:text=""
                 android:textSize="16sp"
-                android:textColor="#8C8C8C"
+                android:textColor="@color/text_action"
                 android:fontFamily="@font/poppins_medium"
                 android:gravity="start|center_vertical"
                 android:letterSpacing="0.15"
@@ -198,7 +198,7 @@
         android:layout_height="wrap_content"
         android:text="PIN uses: 0/5"
         android:textSize="12sp"
-        android:textColor="#8C8C8C"
+        android:textColor="@color/text_action"
         android:fontFamily="@font/poppins_regular"
         android:gravity="center"
         android:layout_marginBottom="4dp" />
@@ -209,7 +209,7 @@
         android:layout_height="wrap_content"
         android:text=""
         android:textSize="12sp"
-        android:textColor="#8C8C8C"
+        android:textColor="@color/text_action"
         android:fontFamily="@font/poppins_regular"
         android:gravity="center"
         android:layout_marginBottom="16dp" />

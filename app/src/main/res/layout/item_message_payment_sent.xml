@@ -85,7 +85,7 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="0.005 SOL"
-                    android:textColor="#666666"
+                    android:textColor="@color/text_muted"
                     android:textSize="13sp"
                     android:clickable="true"
                     android:focusable="true" />
@@ -97,7 +97,7 @@
                     android:layout_height="wrap_content"
                     android:layout_marginTop="8dp"
                     android:text="Tap for details"
-                    android:textColor="#555555"
+                    android:textColor="@color/lock_subtitle_gray"
                     android:textSize="11sp" />
 
             </LinearLayout>

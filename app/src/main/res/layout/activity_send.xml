@@ -4,7 +4,7 @@
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="?attr/colorSurface">
+    android:background="@color/surface_black">
 
     <!-- Header -->
     <LinearLayout
@@ -193,7 +193,7 @@
                             android:layout_height="wrap_content"
                             android:text="Recipient Address"
                             android:textSize="11sp"
-                            android:textColor="#666666"
+                            android:textColor="@color/text_muted"
                             android:fontFamily="@font/poppins_regular"
                             android:layout_marginBottom="4dp" />
 
@@ -203,7 +203,7 @@
                             android:layout_height="wrap_content"
                             android:background="@android:color/transparent"
                             android:hint="Enter or scan address"
-                            android:textColorHint="#666666"
+                            android:textColorHint="@color/lock_password_hint"
                             android:textColor="?attr/colorOnSurface"
                             android:textSize="13sp"
                             android:fontFamily="@font/poppins_medium"

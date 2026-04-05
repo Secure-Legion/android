@@ -4,7 +4,7 @@
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="?attr/colorSurface">
+    android:background="@color/surface_black">
 
     <!-- Header -->
     <LinearLayout
@@ -17,6 +17,7 @@
         android:paddingEnd="20dp"
         android:paddingTop="16dp"
         android:paddingBottom="16dp"
+        android:background="@color/header_bg"
         android:fitsSystemWindows="true"
         app:layout_constraintTop_toTopOf="parent">
 
@@ -35,6 +36,7 @@
                 android:layout_height="20dp"
                 android:layout_gravity="center"
                 android:src="@drawable/ic_back_arrow"
+                app:tint="#FFFFFF"
                 android:contentDescription="Back" />
 
         </FrameLayout>
@@ -46,7 +48,7 @@
             android:layout_weight="1"
             android:text="Delete Account"
             android:textSize="24sp"
-            android:textColor="?attr/colorOnSurfaceVariant"
+            android:textColor="#FFFFFF"
             android:fontFamily="@font/space_grotesk_bold"
             android:textStyle="bold"
             android:gravity="center" />
@@ -65,7 +67,7 @@
     android:layout_height="0dp"
     android:fillViewport="true"
     app:layout_constraintTop_toBottomOf="@id/header"
-    app:layout_constraintBottom_toTopOf="@id/bottomNav">
+    app:layout_constraintBottom_toBottomOf="parent">
 
     <LinearLayout
         android:layout_width="match_parent"
@@ -82,7 +84,7 @@
                 android:layout_height="wrap_content"
                 android:text="Confirm Account Wipe"
                 android:textSize="13sp"
-                android:textColor="?attr/colorOnSurfaceVariant"
+                android:textColor="@color/text_primary"
                 android:fontFamily="@font/poppins_medium"
                 android:layout_marginBottom="8dp" />
 
@@ -93,8 +95,8 @@
                 android:background="@drawable/lock_password_input_bg"
                 android:hint="Enter your password to confirm"
                 android:inputType="textPassword"
-                android:textColorHint="#666666"
-                android:textColor="?attr/colorOnSurface"
+                android:textColorHint="@color/lock_password_hint"
+                android:textColor="@color/text_primary"
                 android:textSize="15sp"
                 android:fontFamily="@font/poppins_regular"
                 android:paddingStart="19dp"
@@ -107,7 +109,7 @@
                 android:layout_height="wrap_content"
                 android:text="Type &quot;DELETE&quot; to confirm"
                 android:textSize="13sp"
-                android:textColor="?attr/colorOnSurfaceVariant"
+                android:textColor="@color/text_primary"
                 android:fontFamily="@font/poppins_medium"
                 android:layout_marginBottom="8dp" />
 
@@ -117,8 +119,8 @@
                 android:layout_height="60dp"
                 android:background="@drawable/lock_password_input_bg"
                 android:hint="Type DELETE in capital letters"
-                android:textColorHint="#666666"
-                android:textColor="?attr/colorOnSurface"
+                android:textColorHint="@color/lock_password_hint"
+                android:textColor="@color/text_primary"
                 android:textSize="15sp"
                 android:fontFamily="@font/poppins_regular"
                 android:paddingStart="19dp"
@@ -129,7 +131,7 @@
                 android:id="@+id/wipeAccountButton"
                 android:layout_width="match_parent"
                 android:layout_height="60dp"
-                android:background="@drawable/settings_box_bg"
+                android:background="@drawable/action_button_bg"
                 android:clickable="true"
                 android:focusable="true"
                 android:layout_marginBottom="24dp">
@@ -140,7 +142,7 @@
                     android:layout_gravity="center"
                     android:text="Wipe Account"
                     android:textSize="16sp"
-                    android:textColor="?attr/colorOnSurface"
+                    android:textColor="#FFFFFF"
                     android:fontFamily="@font/space_grotesk_bold"
                     android:textStyle="bold" />
 
@@ -159,7 +161,7 @@
                     android:layout_height="wrap_content"
                     android:text="Before You Proceed"
                     android:textSize="16sp"
-                    android:textColor="?attr/colorOnSurface"
+                    android:textColor="#FFFFFF"
                     android:fontFamily="@font/poppins_medium"
                     android:layout_marginBottom="8dp" />
 
@@ -168,7 +170,7 @@
                     android:layout_height="wrap_content"
                     android:text="Make sure you have backed up your seed phrase to access funds or transfer out. You will lose your contacts and will need to readd them as you will have to create a new identity."
                     android:textSize="13sp"
-                    android:textColor="?attr/colorOnSurfaceVariant"
+                    android:textColor="#AAAAAA"
                     android:fontFamily="@font/poppins_regular"
                     android:lineSpacingMultiplier="1.4" />
 
@@ -178,17 +180,5 @@
 
 </ScrollView>
 
-<!-- Bottom Navigation -->
-<include
-        android:id="@+id/bottomNav"
-        layout="@layout/bottom_navigation"
-        android:layout_width="0dp"
-        android:layout_height="80dp"
-        android:layout_marginStart="50dp"
-        android:layout_marginEnd="50dp"
-        android:layout_marginBottom="20dp"
-        app:layout_constraintBottom_toBottomOf="parent"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintEnd_toEndOf="parent" />
 
 </androidx.constraintlayout.widget.ConstraintLayout>

@@ -333,6 +333,12 @@ class GroupMembersActivity : BaseActivity() {
         groupId: String,
         contacts: List<com.securelegion.database.entities.Contact>
     ) {
+        // Enforce 20-member group limit
+        val existing = allMembers.size
+        if (existing + contacts.size > AddGroupMembersActivity.MAX_GROUP_MEMBERS) {
+            ThemedToast.show(this, "Groups are limited to ${AddGroupMembersActivity.MAX_GROUP_MEMBERS} members")
+            return
+        }
         val mgr = CrdtGroupManager.getInstance(this@GroupMembersActivity)
         val contactPairs = contacts.map { contact ->
             val pubkeyHex = contact.ed25519PublicKeyBytes

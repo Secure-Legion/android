@@ -10,7 +10,7 @@
         android:layout_width="match_parent"
         android:layout_height="0.5dp"
         android:layout_marginStart="62dp"
-        android:background="#1AFFFFFF"
+        android:background="@color/contact_item_bg"
         android:visibility="gone" />
 
     <LinearLayout
@@ -54,7 +54,7 @@
                 android:layout_height="wrap_content"
                 android:text="@wizard"
                 android:textSize="13sp"
-                android:textColor="#666666"
+                android:textColor="@color/text_muted"
                 android:fontFamily="@font/poppins_regular"
                 android:layout_marginTop="1dp"
                 android:maxLines="1"
@@ -69,7 +69,7 @@
         android:layout_width="match_parent"
         android:layout_height="0.5dp"
         android:layout_marginStart="62dp"
-        android:background="#1AFFFFFF" />
+        android:background="@color/divider_color" />
 
     <!-- Hidden fields for backward compatibility -->
     <TextView android:id="@+id/contactInitial" android:layout_width="0dp" android:layout_height="0dp" android:visibility="gone" />

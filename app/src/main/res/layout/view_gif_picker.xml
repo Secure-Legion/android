@@ -3,7 +3,7 @@
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:orientation="vertical"
-    android:background="?attr/colorSurface">
+    android:background="@color/surface_black">
 
     <!-- Placeholder message until GIFs are bundled -->
     <TextView
@@ -12,7 +12,7 @@
         android:layout_height="match_parent"
         android:gravity="center"
         android:text="GIFs will be available in the next update"
-        android:textColor="#666666"
+        android:textColor="@color/text_muted"
         android:textSize="14sp"
         android:fontFamily="@font/poppins_regular"
         android:visibility="gone" />

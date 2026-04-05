@@ -44,7 +44,7 @@
         android:layout_height="wrap_content"
         android:text="Enter a new 6-digit PIN"
         android:textSize="14sp"
-        android:textColor="#8C8C8C"
+        android:textColor="@color/text_action"
         android:fontFamily="@font/poppins_regular"
         android:gravity="center"
         android:layout_marginBottom="24dp" />

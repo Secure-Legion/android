@@ -9,6 +9,7 @@ import android.view.View
 import android.view.WindowManager
 import android.view.inputmethod.InputMethodManager
 import androidx.appcompat.app.AppCompatActivity
+import androidx.appcompat.app.AppCompatDelegate
 import com.securelegion.utils.BadgeUtils
 
 /**
@@ -33,6 +34,7 @@ abstract class BaseActivity : AppCompatActivity() {
     private var isLaunchingActivity = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        applyThemeMode()
         super.onCreate(savedInstanceState)
 
         // Security: Prevent screenshots and screen recording app-wide
@@ -41,6 +43,19 @@ abstract class BaseActivity : AppCompatActivity() {
         // WindowManager.LayoutParams.FLAG_SECURE,
         // WindowManager.LayoutParams.FLAG_SECURE
         // )
+    }
+
+    private fun applyThemeMode() {
+        val prefs = getSharedPreferences("app_settings", MODE_PRIVATE)
+        val mode = prefs.getString("app_theme_mode", "light") ?: "light"
+        val target = when (mode) {
+            "light" -> AppCompatDelegate.MODE_NIGHT_NO
+            "system" -> AppCompatDelegate.MODE_NIGHT_FOLLOW_SYSTEM
+            else -> AppCompatDelegate.MODE_NIGHT_YES
+        }
+        if (AppCompatDelegate.getDefaultNightMode() != target) {
+            AppCompatDelegate.setDefaultNightMode(target)
+        }
     }
 
     override fun onResume() {
@@ -197,7 +212,24 @@ abstract class BaseActivity : AppCompatActivity() {
      * Lock the app by navigating to LockActivity
      */
     private fun lockApp() {
-        // Mark app as locked
+        val keyManager = com.securelegion.crypto.KeyManager.getInstance(this)
+
+        // If passwordless (no user password, no biometrics), just re-unlock silently
+        if (!keyManager.hasUserDefinedPassword() &&
+            !com.securelegion.utils.BiometricAuthHelper(this).isBiometricEnabled()) {
+            val systemPassword = keyManager.getSystemPassword()
+            if (systemPassword != null) {
+                // Clear and immediately re-unlock
+                keyManager.clearSeedCache()
+                if (keyManager.unlockSeed(systemPassword)) {
+                    Log.i(TAG, "Auto-lock: passwordless account re-unlocked silently")
+                    return  // Stay on current screen, no lock
+                }
+            }
+        }
+
+        // Has password or biometrics — go to lock screen
+        keyManager.clearSeedCache()
         com.securelegion.utils.SessionManager.setLocked(this)
         Log.i(TAG, "App locked - session ended")
 

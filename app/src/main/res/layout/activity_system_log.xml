@@ -4,44 +4,60 @@
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="?attr/colorSurface">
+    android:background="@color/surface_black">
 
-    <!-- Back Button -->
-    <FrameLayout
-        android:id="@+id/backButton"
-        android:layout_width="42dp"
-        android:layout_height="42dp"
-        android:layout_marginStart="20dp"
-        android:layout_marginTop="60dp"
-        android:background="@drawable/top_icon_bg"
-        android:clickable="true"
-        android:focusable="true"
-        app:layout_constraintStart_toStartOf="parent"
+    <!-- Header -->
+    <LinearLayout
+        android:id="@+id/header"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:background="@color/header_bg"
+        android:gravity="center_vertical"
+        android:paddingStart="20dp"
+        android:paddingEnd="20dp"
+        android:paddingTop="60dp"
+        android:paddingBottom="16dp"
         app:layout_constraintTop_toTopOf="parent">
 
-        <ImageView
-            android:layout_width="20dp"
-            android:layout_height="20dp"
-            android:layout_gravity="center"
-            android:src="@drawable/ic_back_arrow"
-            android:contentDescription="Back" />
+        <!-- Back Button -->
+        <FrameLayout
+            android:id="@+id/backButton"
+            android:layout_width="42dp"
+            android:layout_height="42dp"
+            android:background="@drawable/top_icon_bg"
+            android:clickable="true"
+            android:focusable="true">
 
-    </FrameLayout>
+            <ImageView
+                android:layout_width="20dp"
+                android:layout_height="20dp"
+                android:layout_gravity="center"
+                android:src="@drawable/ic_back_arrow"
+                app:tint="#FFFFFF"
+                android:contentDescription="Back" />
 
-    <!-- Title -->
-    <TextView
-        android:id="@+id/titleText"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="System Log"
-        android:textSize="24sp"
-        android:textColor="?attr/colorOnSurface"
-        android:fontFamily="@font/space_grotesk_bold"
-        android:textStyle="bold"
-        app:layout_constraintTop_toTopOf="@id/backButton"
-        app:layout_constraintBottom_toBottomOf="@id/backButton"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintEnd_toEndOf="parent" />
+        </FrameLayout>
+
+        <!-- Title -->
+        <TextView
+            android:id="@+id/titleText"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="System Log"
+            android:textSize="24sp"
+            android:textColor="#FFFFFF"
+            android:fontFamily="@font/space_grotesk_bold"
+            android:textStyle="bold"
+            android:gravity="center" />
+
+        <!-- Spacer for alignment -->
+        <View
+            android:layout_width="42dp"
+            android:layout_height="42dp" />
+
+    </LinearLayout>
 
     <!-- Filter chips -->
     <LinearLayout
@@ -54,7 +70,7 @@
         android:paddingEnd="20dp"
         android:paddingTop="16dp"
         android:paddingBottom="8dp"
-        app:layout_constraintTop_toBottomOf="@id/backButton">
+        app:layout_constraintTop_toBottomOf="@id/header">
 
         <TextView
             android:id="@+id/filterAll"
@@ -65,7 +81,7 @@
             android:paddingEnd="14dp"
             android:text="All"
             android:textSize="13sp"
-            android:textColor="#FFFFFF"
+            android:textColor="@color/text_primary"
             android:fontFamily="@font/poppins_medium"
             android:background="@drawable/settings_icon_bg"
             android:layout_marginEnd="8dp"
@@ -156,7 +172,7 @@
         android:layout_height="wrap_content"
         android:text=""
         android:textSize="12sp"
-        android:textColor="#666666"
+        android:textColor="@color/text_muted"
         android:fontFamily="@font/poppins_regular"
         android:layout_marginStart="20dp"
         android:layout_marginBottom="4dp"
@@ -182,7 +198,7 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:textSize="11sp"
-            android:textColor="#CCCCCC"
+            android:textColor="@color/text_settings"
             android:fontFamily="monospace"
             android:lineSpacingExtra="3dp"
             android:padding="12dp"
@@ -199,7 +215,7 @@
         android:layout_height="wrap_content"
         android:text="No log entries found"
         android:textSize="16sp"
-        android:textColor="#666666"
+        android:textColor="@color/text_muted"
         android:fontFamily="@font/poppins_regular"
         android:gravity="center"
         android:visibility="gone"

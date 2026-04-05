@@ -33,5 +33,6 @@ data class GroupPeer(
     val x25519PubkeyHex: String,   // X25519 public key, 64-char hex
     val messagingOnion: String,    // .onion address (normalized: lowercase, trimmed)
     val displayName: String,       // SecureLegion username
-    val addedAt: Long = System.currentTimeMillis()
+    val addedAt: Long = System.currentTimeMillis(),
+    val profilePictureBase64: String? = null
 )

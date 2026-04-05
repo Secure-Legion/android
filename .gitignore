@@ -72,3 +72,9 @@ pixel6a.png
 *.db
 *_backup.db
 secure_legion_backup.db
+
+# Local gradle/android caches
+.gradle-cache/
+.android-home/
+tongo-hackathon-bridge/
+

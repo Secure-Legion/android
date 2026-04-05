@@ -16,7 +16,7 @@
             android:id="@+id/actionMute"
             android:layout_width="80dp"
             android:layout_height="match_parent"
-            android:background="#3A3A3C"
+            android:background="@color/swipe_mute"
             android:clickable="true"
             android:focusable="true">
 
@@ -40,7 +40,7 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="Mute"
-                    android:textColor="#FFFFFF"
+                    android:textColor="@color/text_primary"
                     android:textSize="11sp"
                     android:fontFamily="@font/poppins_medium" />
             </LinearLayout>
@@ -75,7 +75,7 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="Delete"
-                    android:textColor="#FFFFFF"
+                    android:textColor="@color/text_primary"
                     android:textSize="11sp"
                     android:fontFamily="@font/poppins_medium" />
             </LinearLayout>
@@ -110,7 +110,7 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="Pin"
-                    android:textColor="#FFFFFF"
+                    android:textColor="@color/text_primary"
                     android:textSize="11sp"
                     android:fontFamily="@font/poppins_medium" />
             </LinearLayout>
@@ -126,7 +126,7 @@
         android:orientation="vertical"
         android:clickable="true"
         android:focusable="true"
-        android:background="#000000">
+        android:background="@color/surface_black">
 
         <!-- Top border line -->
         <View
@@ -183,7 +183,7 @@
                     android:layout_weight="1"
                     android:text="@Wizard"
                     android:textSize="16sp"
-                    android:textColor="@color/lock_title_gray"
+                    android:textColor="@color/text_primary"
                     android:fontFamily="@font/space_grotesk_bold" />
 
                 <!-- Time and Status Column -->

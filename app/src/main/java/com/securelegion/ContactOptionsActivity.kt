@@ -10,6 +10,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.ImageView
 import android.widget.TextView
+import androidx.core.content.ContextCompat
 import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
@@ -34,7 +35,7 @@ class ContactOptionsActivity : BaseActivity() {
     private lateinit var contactName: TextView
     private lateinit var contactNickname: TextView
     private lateinit var editNicknameButton: TextView
-    private lateinit var profilePicture: ImageView
+    private lateinit var profilePicture: com.securelegion.views.AvatarView
     private lateinit var blockContactSwitch: androidx.appcompat.widget.SwitchCompat
     private lateinit var trustedContactSwitch: androidx.appcompat.widget.SwitchCompat
     private lateinit var trustedStarIcon: ImageView
@@ -127,18 +128,10 @@ class ContactOptionsActivity : BaseActivity() {
                     updateBlockUI()
                     loadMuteStatus()
 
-                    // Load contact's profile photo
+                    // Load contact's profile photo or show initial
+                    profilePicture.setName(contact.displayName)
                     if (!contact.profilePictureBase64.isNullOrEmpty()) {
-                        try {
-                            val photoBytes = android.util.Base64.decode(contact.profilePictureBase64, android.util.Base64.NO_WRAP)
-                            val bitmap = android.graphics.BitmapFactory.decodeByteArray(photoBytes, 0, photoBytes.size)
-                            if (bitmap != null) {
-                                profilePicture.setImageBitmap(bitmap)
-                                Log.d(TAG, "Loaded contact profile photo (${photoBytes.size} bytes)")
-                            }
-                        } catch (e: Exception) {
-                            Log.e(TAG, "Failed to decode contact profile photo", e)
-                        }
+                        profilePicture.setPhotoBase64(contact.profilePictureBase64)
                     }
                 }
             } catch (e: Exception) {
@@ -184,10 +177,10 @@ class ContactOptionsActivity : BaseActivity() {
         val muteIcon = findViewById<ImageView>(R.id.muteIcon)
         val muteLabel = findViewById<TextView>(R.id.muteLabel)
         if (isMuted) {
-            muteIcon?.setImageResource(R.drawable.ic_bell_muted)
+            muteIcon?.setImageResource(R.drawable.ic_speaker_off)
             muteLabel?.text = "unmute"
         } else {
-            muteIcon?.setImageResource(R.drawable.ic_bell)
+            muteIcon?.setImageResource(R.drawable.ic_speaker)
             muteLabel?.text = "mute"
         }
     }
@@ -272,7 +265,7 @@ class ContactOptionsActivity : BaseActivity() {
 
             contactName.textSize = 14f
             contactName.text = username
-            contactName.setTextColor(android.graphics.Color.parseColor("#6C6C6C"))
+            contactName.setTextColor(ContextCompat.getColor(this, R.color.text_muted))
 
             editNicknameButton.text = "Edit Nickname"
         } else {
@@ -402,10 +395,10 @@ class ContactOptionsActivity : BaseActivity() {
             tabs.forEachIndexed { i, tab ->
                 if (i == index) {
                     tab.setBackgroundResource(R.drawable.contact_tab_active)
-                    tab.setTextColor(0xFFFFFFFF.toInt())
+                    tab.setTextColor(ContextCompat.getColor(this, R.color.text_primary))
                 } else {
                     tab.setBackgroundResource(R.drawable.contact_tab_inactive)
-                    tab.setTextColor(0xFF666666.toInt())
+                    tab.setTextColor(ContextCompat.getColor(this, R.color.text_muted))
                 }
             }
             contents.forEachIndexed { i, content ->

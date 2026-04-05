@@ -33,7 +33,7 @@
         android:paddingTop="6dp"
         android:paddingBottom="6dp"
         android:text="Remove reaction"
-        android:textColor="#FFFFFF"
+        android:textColor="@color/text_primary"
         android:textSize="12sp"
         android:fontFamily="@font/poppins_medium"
         android:background="@drawable/reaction_picker_pill_bg"

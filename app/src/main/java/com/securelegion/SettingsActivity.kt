@@ -7,10 +7,13 @@ import android.os.Bundle
 import android.util.Log
 import android.view.View
 import android.widget.LinearLayout
+import android.widget.RadioButton
 import android.widget.TextView
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
+import androidx.appcompat.app.AppCompatDelegate
 import androidx.appcompat.widget.SwitchCompat
+import com.google.android.material.bottomsheet.BottomSheetDialog
 import com.securelegion.crypto.KeyManager
 import com.securelegion.services.TorVpnService
 import com.securelegion.utils.BiometricAuthHelper
@@ -103,6 +106,11 @@ class SettingsActivity : BaseActivity() {
         findViewById<View>(R.id.qrSettingsItem).setOnClickListener {
             startActivity(Intent(this, QrSettingsActivity::class.java))
         }
+
+        // Appearance
+        findViewById<View>(R.id.appearanceItem).setOnClickListener {
+            startActivity(Intent(this, AppearanceActivity::class.java))
+        }
     }
 
     private fun setupAutoWipeToggle() {
@@ -169,6 +177,17 @@ class SettingsActivity : BaseActivity() {
         super.onResume()
         // Refresh biometric toggle state when returning to settings
         refreshBiometricToggle()
+        updatePasswordLabel()
+    }
+
+    private fun updatePasswordLabel() {
+        val keyManager = KeyManager.getInstance(this)
+        val label = findViewById<TextView>(R.id.devicePasswordLabel)
+        if (keyManager.hasUserDefinedPassword()) {
+            label?.text = "Change Password"
+        } else {
+            label?.text = "Set Password"
+        }
     }
 
     private fun refreshBiometricToggle() {
@@ -194,16 +213,19 @@ class SettingsActivity : BaseActivity() {
 
         try {
             val keyManager = KeyManager.getInstance(this)
-            val passwordHash = keyManager.getPasswordHash()
+            // Need the actual password (not hash) to derive the seed-wrapping key on unlock.
+            // For system-generated passwords we can retrieve it; for user-defined passwords
+            // the user must re-enter it (handled by Task 8 settings flow).
+            val password = keyManager.getSystemPassword()
 
-            if (passwordHash == null) {
-                ThemedToast.show(this, "Password not set")
+            if (password == null) {
+                ThemedToast.show(this, "Please re-enter your password to enable biometric")
                 biometricSwitch.isChecked = false
                 return
             }
 
             biometricHelper.enableBiometric(
-                passwordHash = passwordHash,
+                password = password,
                 activity = this,
                 onSuccess = {
                     Log.i("SettingsActivity", "Biometric enabled successfully")
@@ -303,6 +325,50 @@ class SettingsActivity : BaseActivity() {
             Log.e("SettingsActivity", "Failed to stop Tor VPN", e)
             ThemedToast.show(this, "Failed to stop Tor Mode: ${e.message}")
         }
+    }
+
+    private fun showAppearanceSheet() {
+        val sheetView = layoutInflater.inflate(R.layout.bottom_sheet_appearance, null)
+        val dialog = BottomSheetDialog(this)
+        dialog.setContentView(sheetView)
+
+        val prefs = getSharedPreferences("app_settings", MODE_PRIVATE)
+        val currentMode = prefs.getString("app_theme_mode", "dark") ?: "dark"
+
+        val radioDark = sheetView.findViewById<RadioButton>(R.id.radioDark)
+        val radioLight = sheetView.findViewById<RadioButton>(R.id.radioLight)
+        val radioSystem = sheetView.findViewById<RadioButton>(R.id.radioSystem)
+
+        when (currentMode) {
+            "dark" -> radioDark.isChecked = true
+            "light" -> radioLight.isChecked = true
+            "system" -> radioSystem.isChecked = true
+        }
+
+        fun applyTheme(mode: String) {
+            prefs.edit().putString("app_theme_mode", mode).apply()
+            when (mode) {
+                "dark" -> AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_YES)
+                "light" -> AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_NO)
+                "system" -> AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_FOLLOW_SYSTEM)
+            }
+            dialog.dismiss()
+        }
+
+        sheetView.findViewById<View>(R.id.optionDark).setOnClickListener {
+            radioDark.isChecked = true
+            applyTheme("dark")
+        }
+        sheetView.findViewById<View>(R.id.optionLight).setOnClickListener {
+            radioLight.isChecked = true
+            applyTheme("light")
+        }
+        sheetView.findViewById<View>(R.id.optionSystem).setOnClickListener {
+            radioSystem.isChecked = true
+            applyTheme("system")
+        }
+
+        dialog.show()
     }
 
 }

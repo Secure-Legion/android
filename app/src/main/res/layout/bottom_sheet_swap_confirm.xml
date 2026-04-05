@@ -25,7 +25,7 @@
             android:layout_height="wrap_content"
             android:fontFamily="@font/space_grotesk_medium"
             android:text="$60"
-            android:textColor="#C0C0C0"
+            android:textColor="@color/text_settings"
             android:textSize="48sp" />
 
         <!-- Swap Icon -->
@@ -35,7 +35,7 @@
             android:layout_marginVertical="8dp"
             android:src="@drawable/ic_arrow_up"
             android:rotation="180"
-            app:tint="#666666" />
+            app:tint="@color/text_muted" />
 
         <!-- To Amount -->
         <TextView
@@ -44,7 +44,7 @@
             android:layout_height="wrap_content"
             android:fontFamily="@font/space_grotesk_medium"
             android:text="$56.08"
-            android:textColor="#C0C0C0"
+            android:textColor="@color/text_settings"
             android:textSize="48sp" />
     </LinearLayout>
 

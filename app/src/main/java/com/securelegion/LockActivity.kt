@@ -93,6 +93,17 @@ class LockActivity : AppCompatActivity() {
         setupBiometricUI()
         setupClickListeners()
         setupForgotPasswordText()
+
+        // If user has no custom password (passwordless account with biometric only),
+        // hide password input and auto-prompt biometric
+        if (!keyManager.hasUserDefinedPassword()) {
+            passwordSection.visibility = View.GONE
+            findViewById<View>(R.id.unlockButton)?.visibility = View.GONE
+            // Auto-prompt biometric if available
+            if (biometricHelper.isBiometricEnabled()) {
+                authenticateWithBiometric()
+            }
+        }
     }
 
     private fun setupBiometricUI() {
@@ -139,25 +150,24 @@ class LockActivity : AppCompatActivity() {
     private fun authenticateWithBiometric() {
         biometricHelper.authenticateWithBiometric(
             activity = this,
-            onSuccess = { passwordHash ->
+            onSuccess = { password ->
                 Log.i("LockActivity", "Biometric authentication successful")
-
-                // Verify the decrypted password hash matches stored hash
                 val keyManager = KeyManager.getInstance(this)
-                if (keyManager.verifyPasswordHash(passwordHash)) {
-                    Log.i("LockActivity", "Password hash verified from biometric")
 
-                    // Reset failed attempts
+                // Verify password still matches
+                if (keyManager.verifyDevicePassword(password)) {
+                    // Migrate if needed, then unlock seed
+                    if (!keyManager.isSeedWrapped()) {
+                        keyManager.migrateToWrappedSeed(password)
+                    } else {
+                        keyManager.unlockSeed(password)
+                    }
                     resetFailedAttempts()
-
-                    // Mark as authenticated to prevent onStop from restarting lock screen
                     hasAuthenticated = true
-
-                    // Unlock app
                     unlockApp()
                 } else {
-                    Log.e("LockActivity", "Biometric decrypted hash does not match stored hash")
-                    ThemedToast.show(this, "Biometric authentication failed")
+                    Log.e("LockActivity", "Biometric-decrypted password doesn't match")
+                    ThemedToast.show(this, "Biometric authentication failed — try password")
                 }
             },
             onError = { errorMsg ->
@@ -224,6 +234,21 @@ class LockActivity : AppCompatActivity() {
             if (keyManager.verifyDevicePassword(password)) {
                 Log.i("LockActivity", "Password verified")
 
+                // Migrate plaintext seed to wrapped format (one-time after app update)
+                if (!keyManager.isSeedWrapped()) {
+                    Log.i("LockActivity", "Migrating seed to wrapped format...")
+                    if (!keyManager.migrateToWrappedSeed(password)) {
+                        Log.e("LockActivity", "Seed migration failed — continuing with plaintext")
+                    }
+                } else {
+                    // Normal path: unlock the wrapped seed
+                    if (!keyManager.unlockSeed(password)) {
+                        Log.e("LockActivity", "Failed to unlock seed after password verified")
+                        ThemedToast.show(this@LockActivity, "Failed to unlock — please try again")
+                        return@setOnClickListener
+                    }
+                }
+
                 // Reset failed attempts counter on successful login
                 resetFailedAttempts()
 
@@ -246,7 +271,7 @@ class LockActivity : AppCompatActivity() {
                     // Offer biometric enrollment first, then unlock app
                     // If biometric dialog is shown, unlockApp() is called after user responds
                     // If no dialog shown, unlockApp() is called immediately
-                    offerBiometricEnrollment(keyManager) {
+                    offerBiometricEnrollment(keyManager, password) {
                         unlockApp()
                     }
                 }
@@ -266,7 +291,7 @@ class LockActivity : AppCompatActivity() {
         val forgotPasswordTextView = findViewById<TextView>(R.id.forgotPasswordText)
         val fullText = "Import Recovery"
         forgotPasswordTextView.text = fullText
-        forgotPasswordTextView.setTextColor(0xFFFFFFFF.toInt())
+        forgotPasswordTextView.setTextColor(ContextCompat.getColor(this, R.color.text_primary))
 
         // Make it clickable and open RestoreAccountActivity
         forgotPasswordTextView.setOnClickListener {
@@ -282,7 +307,7 @@ class LockActivity : AppCompatActivity() {
      * Offer biometric enrollment on first successful password login
      * @param onComplete Callback to execute after biometric dialog is handled (or immediately if not shown)
      */
-    private fun offerBiometricEnrollment(keyManager: KeyManager, onComplete: () -> Unit) {
+    private fun offerBiometricEnrollment(keyManager: KeyManager, password: String, onComplete: () -> Unit) {
         // Only offer if biometric is available but not enabled yet
         if (biometricHelper.isBiometricAvailable() == BiometricAuthHelper.BiometricStatus.AVAILABLE &&
             !biometricHelper.isBiometricEnabled()) {
@@ -300,11 +325,9 @@ class LockActivity : AppCompatActivity() {
                     .setTitle("Enable Biometric Unlock?")
                     .setMessage("Use fingerprint or face unlock instead of typing your password every time.")
                     .setPositiveButton("Enable") { _, _ ->
-                        // Get password hash for encryption
-                        val passwordHash = keyManager.getPasswordHash()
-                        if (passwordHash != null) {
-                            biometricHelper.enableBiometric(
-                                passwordHash = passwordHash,
+                        // Encrypt the actual password with biometric-protected key
+                        biometricHelper.enableBiometric(
+                                password = password,
                                 activity = this,
                                 onSuccess = {
                                     Log.i("LockActivity", "Biometric enrollment successful")
@@ -328,10 +351,6 @@ class LockActivity : AppCompatActivity() {
                                     onComplete()
                                 }
                             )
-                        } else {
-                            // No password hash - proceed anyway
-                            onComplete()
-                        }
                     }
                     .setNegativeButton("Not Now") { _, _ ->
                         // Mark as asked when user explicitly declines

@@ -140,6 +140,10 @@
             android:exported="false" />
 
         <activity
+            android:name=".AppearanceActivity"
+            android:exported="false" />
+
+        <activity
             android:name=".SplashActivity"
             android:exported="true"
             android:launchMode="singleTask"

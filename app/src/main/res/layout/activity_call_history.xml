@@ -4,7 +4,7 @@
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="?attr/colorSurface">
+    android:background="@color/surface_black">
 
     <!-- Header -->
     <LinearLayout
@@ -17,6 +17,7 @@
         android:paddingEnd="20dp"
         android:paddingTop="16dp"
         android:paddingBottom="16dp"
+        android:background="@color/header_bg"
         android:fitsSystemWindows="true"
         app:layout_constraintTop_toTopOf="parent">
 
@@ -35,6 +36,7 @@
                 android:layout_height="20dp"
                 android:layout_gravity="center"
                 android:src="@drawable/ic_back_arrow"
+                app:tint="#FFFFFF"
                 android:contentDescription="Back" />
 
         </FrameLayout>
@@ -46,7 +48,7 @@
             android:layout_weight="1"
             android:text="Call History"
             android:textSize="24sp"
-            android:textColor="?attr/colorOnSurfaceVariant"
+            android:textColor="#FFFFFF"
             android:fontFamily="@font/space_grotesk_bold"
             android:layout_marginStart="16dp" />
 
@@ -87,7 +89,7 @@
         android:layout_height="wrap_content"
         android:text="No call history yet"
         android:textSize="16sp"
-        android:textColor="#666666"
+        android:textColor="@color/text_muted"
         android:fontFamily="@font/poppins_regular"
         android:visibility="gone"
         app:layout_constraintTop_toTopOf="@id/historyRecyclerView"

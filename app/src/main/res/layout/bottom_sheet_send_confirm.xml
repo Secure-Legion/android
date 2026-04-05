@@ -43,7 +43,7 @@
             android:layout_height="wrap_content"
             android:fontFamily="@font/space_grotesk_bold"
             android:text="0.5 SOL"
-            android:textColor="#C0C0C0"
+            android:textColor="@color/text_settings"
             android:textSize="42sp"
             android:gravity="center" />
 
@@ -53,7 +53,7 @@
             android:layout_height="wrap_content"
             android:fontFamily="@font/poppins_regular"
             android:text="≈ $75.00 USD"
-            android:textColor="#666666"
+            android:textColor="@color/text_muted"
             android:textSize="16sp"
             android:gravity="center"
             android:layout_marginTop="4dp" />
@@ -206,7 +206,7 @@
         android:layout_height="wrap_content"
         android:text="This transaction cannot be reversed. Please verify all details before sending."
         android:textSize="12sp"
-        android:textColor="#666666"
+        android:textColor="@color/text_muted"
         android:fontFamily="@font/poppins_regular"
         android:gravity="center"
         android:layout_marginBottom="24dp" />

@@ -28,7 +28,7 @@
         android:layout_height="wrap_content"
         android:text="Only you will see this nickname"
         android:textSize="14sp"
-        android:textColor="#8C8C8C"
+        android:textColor="@color/text_action"
         android:fontFamily="@font/poppins_regular"
         android:gravity="center"
         android:layout_marginBottom="24dp" />
@@ -75,7 +75,7 @@
         android:gravity="center"
         android:text="Clear Nickname"
         android:textSize="18sp"
-        android:textColor="#8C8C8C"
+        android:textColor="@color/text_action"
         android:fontFamily="@font/poppins_semibold"
         android:clickable="true"
         android:focusable="true" />

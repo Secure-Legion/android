@@ -38,6 +38,7 @@ class GroupMemberAdapter(
         val memberAvatar: AvatarView = view.findViewById(R.id.memberAvatar)
         val memberName: TextView = view.findViewById(R.id.memberName)
         val memberRole: TextView = view.findViewById(R.id.memberRole)
+        val ownerBadge: TextView = view.findViewById(R.id.ownerBadge)
         val foreground: View = view.findViewById(R.id.memberForeground)
         val actionMute: View = view.findViewById(R.id.actionMute)
         val actionMuteLabel: TextView = view.findViewById(R.id.actionMuteLabel)
@@ -65,6 +66,7 @@ class GroupMemberAdapter(
         // Name + role
         holder.memberName.text = member.displayName
         holder.memberRole.text = member.role
+        holder.ownerBadge.visibility = if (member.role.equals("Owner", ignoreCase = true)) View.VISIBLE else View.GONE
 
         // Reset foreground position
         holder.foreground.translationX = if (position == openPosition) ACTION_WIDTH else 0f

@@ -42,6 +42,19 @@ class SecureLegionApplication : Application() {
     }
 
     override fun onCreate() {
+        // Apply saved theme mode BEFORE super.onCreate() so the system splash
+        // and all activities use the correct DayNight mode from the very start
+        val themePrefs = getSharedPreferences("app_settings", MODE_PRIVATE)
+        val mode = themePrefs.getString("app_theme_mode", "light") ?: "light"
+        when (mode) {
+            "dark" -> androidx.appcompat.app.AppCompatDelegate.setDefaultNightMode(
+                androidx.appcompat.app.AppCompatDelegate.MODE_NIGHT_YES)
+            "light" -> androidx.appcompat.app.AppCompatDelegate.setDefaultNightMode(
+                androidx.appcompat.app.AppCompatDelegate.MODE_NIGHT_NO)
+            "system" -> androidx.appcompat.app.AppCompatDelegate.setDefaultNightMode(
+                androidx.appcompat.app.AppCompatDelegate.MODE_NIGHT_FOLLOW_SYSTEM)
+        }
+
         super.onCreate()
 
         // CRITICAL: Check if we're in the main process

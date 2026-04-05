@@ -10,7 +10,7 @@ class AboutActivity : BaseActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_about)
 
-        BottomNavigationHelper.setupBottomNavigation(this)
+        // setupBottomNavigation() // REMOVED: This layout doesn't have bottom nav
         setupClickListeners()
     }
 

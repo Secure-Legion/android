@@ -45,7 +45,7 @@
         android:layout_height="wrap_content"
         android:text="Are you sure you want to delete this contact? This action cannot be undone."
         android:textSize="14sp"
-        android:textColor="#8C8C8C"
+        android:textColor="@color/text_action"
         android:fontFamily="@font/poppins_regular"
         android:gravity="center"
         android:layout_marginBottom="24dp" />

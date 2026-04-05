@@ -17,7 +17,7 @@
             android:id="@+id/actionMute"
             android:layout_width="80dp"
             android:layout_height="match_parent"
-            android:background="#3A3A3C"
+            android:background="@color/swipe_mute"
             android:clickable="true"
             android:focusable="true">
 
@@ -41,7 +41,7 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="Mute"
-                    android:textColor="#FFFFFF"
+                    android:textColor="@color/text_primary"
                     android:textSize="11sp"
                     android:fontFamily="@font/poppins_medium" />
             </LinearLayout>
@@ -75,7 +75,7 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="Remove"
-                    android:textColor="#FFFFFF"
+                    android:textColor="@color/text_primary"
                     android:textSize="11sp"
                     android:fontFamily="@font/poppins_medium" />
             </LinearLayout>
@@ -109,7 +109,7 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="Promote"
-                    android:textColor="#FFFFFF"
+                    android:textColor="@color/text_primary"
                     android:textSize="11sp"
                     android:fontFamily="@font/poppins_medium" />
             </LinearLayout>
@@ -125,7 +125,7 @@
         android:orientation="vertical"
         android:clickable="true"
         android:focusable="true"
-        android:background="#000000">
+        android:background="@color/surface_black">
 
         <!-- Top border line -->
         <View
@@ -158,22 +158,46 @@
                 android:orientation="vertical"
                 android:layout_marginStart="14dp">
 
-                <TextView
-                    android:id="@+id/memberName"
+                <LinearLayout
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:textSize="16sp"
-                    android:textColor="?attr/colorOnSurface"
-                    android:fontFamily="@font/poppins_medium"
-                    android:maxLines="1"
-                    android:ellipsize="end" />
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical">
+
+                    <TextView
+                        android:id="@+id/memberName"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:textSize="16sp"
+                        android:textColor="@color/text_primary"
+                        android:fontFamily="@font/poppins_medium"
+                        android:maxLines="1"
+                        android:ellipsize="end" />
+
+                    <TextView
+                        android:id="@+id/ownerBadge"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="8dp"
+                        android:paddingStart="8dp"
+                        android:paddingEnd="8dp"
+                        android:paddingTop="2dp"
+                        android:paddingBottom="2dp"
+                        android:text="Owner"
+                        android:textSize="10sp"
+                        android:textColor="#FFFFFF"
+                        android:fontFamily="@font/poppins_medium"
+                        android:background="@drawable/owner_badge_bg"
+                        android:visibility="gone" />
+
+                </LinearLayout>
 
                 <TextView
                     android:id="@+id/memberRole"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:textSize="13sp"
-                    android:textColor="#888888"
+                    android:textColor="@color/text_muted"
                     android:fontFamily="@font/poppins_regular"
                     android:maxLines="1" />
 

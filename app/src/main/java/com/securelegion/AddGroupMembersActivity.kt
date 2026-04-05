@@ -41,6 +41,9 @@ class AddGroupMembersActivity : BaseActivity() {
 
         /** Result: comma-separated selected contact IDs */
         const val RESULT_SELECTED_IDS = "selected_ids"
+
+        /** Maximum members allowed in a group */
+        const val MAX_GROUP_MEMBERS = 20
     }
 
     private lateinit var contactsList: RecyclerView
@@ -49,6 +52,7 @@ class AddGroupMembersActivity : BaseActivity() {
     private lateinit var adapter: AddToGroupAdapter
 
     private var allContacts = listOf<Contact>()
+    private var remainingSlots: Int = MAX_GROUP_MEMBERS
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -84,7 +88,13 @@ class AddGroupMembersActivity : BaseActivity() {
             .mapNotNull { it.trim().toLongOrNull() }
             .toMutableSet()
 
-        adapter = AddToGroupAdapter(preselectedIds)
+        adapter = AddToGroupAdapter(
+            selectedIds = preselectedIds,
+            maxSelection = MAX_GROUP_MEMBERS,
+            onLimitReached = {
+                ThemedToast.show(this, "Groups are limited to $MAX_GROUP_MEMBERS members")
+            }
+        )
         contactsList.layoutManager = LinearLayoutManager(this)
         contactsList.adapter = adapter
 
@@ -142,7 +152,7 @@ class AddGroupMembersActivity : BaseActivity() {
 
         lifecycleScope.launch {
             try {
-                val contacts = withContext(Dispatchers.IO) {
+                val loadResult = withContext(Dispatchers.IO) {
                     val keyManager = KeyManager.getInstance(this@AddGroupMembersActivity)
                     val dbPassphrase = keyManager.getDatabasePassphrase()
                     val database = SecureLegionDatabase.getInstance(this@AddGroupMembersActivity, dbPassphrase)
@@ -151,20 +161,22 @@ class AddGroupMembersActivity : BaseActivity() {
                     // If a group ID was provided, filter out contacts already in the group
                     if (!groupId.isNullOrEmpty()) {
                         val mgr = CrdtGroupManager.getInstance(this@AddGroupMembersActivity)
-                        val memberPubkeys = mgr.queryMembers(groupId)
-                            .filter { !it.removed }
-                            .map { it.pubkeyHex }
-                            .toSet()
-
-                        allDbContacts.filter { contact ->
+                        val allGroupMembers = mgr.queryMembers(groupId).filter { !it.removed }
+                        val memberPubkeys = allGroupMembers.map { it.pubkeyHex }.toSet()
+                        val existingCount = allGroupMembers.size
+                        val filtered = allDbContacts.filter { contact ->
                             val pubkeyHex = contact.ed25519PublicKeyBytes
                                 .joinToString("") { "%02x".format(it) }
                             pubkeyHex !in memberPubkeys
                         }
+                        Pair(filtered, (MAX_GROUP_MEMBERS - existingCount).coerceAtLeast(0))
                     } else {
-                        allDbContacts
+                        Pair(allDbContacts, MAX_GROUP_MEMBERS)
                     }
                 }
+                val contacts = loadResult.first
+                remainingSlots = loadResult.second
+                adapter.maxSelection = remainingSlots
 
                 withContext(Dispatchers.Main) {
                     allContacts = contacts.sortedBy { it.displayName.uppercase() }

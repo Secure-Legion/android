@@ -41,7 +41,7 @@
             android:layout_height="wrap_content"
             android:text="0:12"
             android:textSize="14sp"
-            android:textColor="#CCCCCC"
+            android:textColor="@color/text_settings"
             android:fontFamily="@font/poppins_medium" />
 
         <TextView
@@ -50,7 +50,7 @@
             android:layout_height="wrap_content"
             android:text="Jan 15, 2026"
             android:textSize="11sp"
-            android:textColor="#555555"
+            android:textColor="@color/lock_subtitle_gray"
             android:fontFamily="@font/poppins_regular" />
 
     </LinearLayout>
@@ -62,7 +62,7 @@
         android:layout_height="wrap_content"
         android:text="Sent"
         android:textSize="11sp"
-        android:textColor="#555555"
+        android:textColor="@color/lock_subtitle_gray"
         android:fontFamily="@font/poppins_regular" />
 
 </LinearLayout>

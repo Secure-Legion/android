@@ -21,13 +21,15 @@ import com.securelegion.R
  */
 object BrandedQrGenerator {
 
-    private const val QR_BG_COLOR = 0xFF1A1A1A.toInt()      // Dark background
-    private const val QR_MODULE_COLOR = 0xFFFFFFFF.toInt()   // White modules
-    private const val BADGE_BG_COLOR = 0xFF2A2A2A.toInt()    // Badge background
-    private const val BADGE_TEXT_COLOR = 0xFFCCCCCC.toInt()   // Badge text
     private const val ACCENT_COLOR = 0xFF4A90E2.toInt()       // Blue accent
     private const val SUBTLE_TEXT_COLOR = 0xFF666666.toInt()   // Subtle gray text
     private const val WEBSITE_URL = "securelegion.org"
+
+    /** Resolve theme-aware QR colors from resources */
+    private fun qrBgColor(context: Context) = ContextCompat.getColor(context, R.color.qr_bg)
+    private fun qrModuleColor(context: Context) = ContextCompat.getColor(context, R.color.qr_module)
+    private fun badgeBgColor(context: Context) = ContextCompat.getColor(context, R.color.qr_badge_bg)
+    private fun badgeTextColor(context: Context) = ContextCompat.getColor(context, R.color.qr_badge_text)
 
     data class QrOptions(
         val content: String,
@@ -63,12 +65,15 @@ object BrandedQrGenerator {
             val bitmap = Bitmap.createBitmap(matrixWidth, totalHeight, Bitmap.Config.ARGB_8888)
             val canvas = Canvas(bitmap)
 
-            // --- 3. Fill dark background ---
-            canvas.drawColor(QR_BG_COLOR)
+            val bgColor = qrBgColor(context)
+            val moduleColor = qrModuleColor(context)
+
+            // --- 3. Fill background ---
+            canvas.drawColor(bgColor)
 
             // --- 4. Draw rounded QR modules ---
             val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                color = QR_MODULE_COLOR
+                color = moduleColor
                 style = Paint.Style.FILL
             }
             val moduleWidth = matrixWidth.toFloat() / bitMatrix.width
@@ -87,16 +92,16 @@ object BrandedQrGenerator {
             }
 
             // --- 5. Draw finder pattern accents (the three corner squares) ---
-            drawFinderPatterns(canvas, bitMatrix, matrixWidth, matrixHeight, moduleWidth, moduleHeight)
+            drawFinderPatterns(canvas, bitMatrix, matrixWidth, matrixHeight, moduleWidth, moduleHeight, bgColor, moduleColor)
 
             // --- 6. Overlay center logo ---
             if (options.showLogo) {
-                drawCenterLogo(context, canvas, matrixWidth, matrixHeight)
+                drawCenterLogo(context, canvas, matrixWidth, matrixHeight, bgColor, moduleColor)
             }
 
             // --- 7. Draw mint badge (top-right) ---
             if (options.mintText != null) {
-                drawMintBadge(canvas, matrixWidth, options.mintText)
+                drawMintBadge(context, canvas, matrixWidth, options.mintText)
             }
 
             // --- 8. Draw footer (website + expiry) ---
@@ -119,7 +124,8 @@ object BrandedQrGenerator {
     private fun drawFinderPatterns(
         canvas: Canvas, bitMatrix: com.google.zxing.common.BitMatrix,
         canvasWidth: Int, canvasHeight: Int,
-        moduleW: Float, moduleH: Float
+        moduleW: Float, moduleH: Float,
+        bgColor: Int, moduleColor: Int
     ) {
         // Finder patterns are 7x7 modules at three corners
         val finderSize = 7
@@ -131,16 +137,16 @@ object BrandedQrGenerator {
 
         for ((fx, fy) in positions) {
             // Clear the finder area first (redraw background)
-            val clearPaint = Paint().apply { color = QR_BG_COLOR; style = Paint.Style.FILL }
+            val clearPaint = Paint().apply { color = bgColor; style = Paint.Style.FILL }
             canvas.drawRect(
                 fx * moduleW, fy * moduleH,
                 (fx + finderSize) * moduleW, (fy + finderSize) * moduleH,
                 clearPaint
             )
 
-            // Outer ring (7x7) — white, high contrast for scanner detection
+            // Outer ring (7x7) — high contrast for scanner detection
             val outerPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                color = QR_MODULE_COLOR
+                color = moduleColor
                 style = Paint.Style.STROKE
                 strokeWidth = moduleW * 1.0f
             }
@@ -152,9 +158,9 @@ object BrandedQrGenerator {
             )
             canvas.drawRoundRect(outerRect, moduleW * 2f, moduleH * 2f, outerPaint)
 
-            // Inner square (3x3 centered) — solid white
+            // Inner square (3x3 centered) — solid module color
             val innerPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                color = QR_MODULE_COLOR
+                color = moduleColor
                 style = Paint.Style.FILL
             }
             val innerRect = RectF(
@@ -171,24 +177,24 @@ object BrandedQrGenerator {
      * Draw the app shield logo in the center of the QR code.
      * Clears QR modules behind it so the shield stands out directly on the dark background.
      */
-    private fun drawCenterLogo(context: Context, canvas: Canvas, canvasWidth: Int, canvasHeight: Int) {
+    private fun drawCenterLogo(context: Context, canvas: Canvas, canvasWidth: Int, canvasHeight: Int, bgColor: Int, moduleColor: Int) {
         val logoSize = (canvasWidth * 0.20f).toInt() // 20% of QR width — visible but scanner-safe
         val clearRadius = logoSize * 0.58f
 
         val cx = canvasWidth / 2f
         val cy = canvasHeight / 2f
 
-        // Clear QR modules behind the logo area (dark square, no circle border)
+        // Clear QR modules behind the logo area
         val clearPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = QR_BG_COLOR
+            color = bgColor
             style = Paint.Style.FILL
         }
         canvas.drawCircle(cx, cy, clearRadius, clearPaint)
 
-        // Draw the shield drawable in white
+        // Draw the shield drawable in module color
         val drawable: Drawable? = ContextCompat.getDrawable(context, R.drawable.ic_shield)
         if (drawable != null) {
-            drawable.setTint(QR_MODULE_COLOR)
+            drawable.setTint(moduleColor)
             val left = (cx - logoSize / 2f).toInt()
             val top = (cy - logoSize / 2f).toInt()
             drawable.setBounds(left, top, left + logoSize, top + logoSize)
@@ -197,7 +203,7 @@ object BrandedQrGenerator {
             // Draw diagonal cut through the shield (matches app launcher icon)
             // Line runs from bottom-left to top-right of the shield bounds
             val cutPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                color = QR_BG_COLOR
+                color = bgColor
                 style = Paint.Style.STROKE
                 strokeWidth = logoSize * 0.07f // Proportional cut width
                 strokeCap = Paint.Cap.BUTT
@@ -213,9 +219,9 @@ object BrandedQrGenerator {
     /**
      * Draw a "mint" badge in the top-right corner showing use count like "1/5".
      */
-    private fun drawMintBadge(canvas: Canvas, canvasWidth: Int, mintText: String) {
+    private fun drawMintBadge(context: Context, canvas: Canvas, canvasWidth: Int, mintText: String) {
         val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = BADGE_TEXT_COLOR
+            color = badgeTextColor(context)
             textSize = canvasWidth * 0.045f
             typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
             textAlign = Paint.Align.CENTER
@@ -234,18 +240,10 @@ object BrandedQrGenerator {
 
         // Badge background
         val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = BADGE_BG_COLOR
+            color = badgeBgColor(context)
             style = Paint.Style.FILL
         }
         canvas.drawRoundRect(badgeRect, badgeHeight / 2f, badgeHeight / 2f, bgPaint)
-
-        // Badge border
-        val borderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = ACCENT_COLOR
-            style = Paint.Style.STROKE
-            strokeWidth = 1.5f
-        }
-        canvas.drawRoundRect(badgeRect, badgeHeight / 2f, badgeHeight / 2f, borderPaint)
 
         // Badge text
         val textY = badgeRect.centerY() - (textPaint.descent() + textPaint.ascent()) / 2f

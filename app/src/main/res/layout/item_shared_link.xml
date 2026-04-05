@@ -39,7 +39,7 @@
             android:layout_height="wrap_content"
             android:text="https://example.com"
             android:textSize="13sp"
-            android:textColor="#CCCCCC"
+            android:textColor="@color/text_settings"
             android:fontFamily="@font/poppins_medium"
             android:maxLines="2"
             android:ellipsize="end" />
@@ -50,7 +50,7 @@
             android:layout_height="wrap_content"
             android:text="Jan 15, 2026"
             android:textSize="11sp"
-            android:textColor="#555555"
+            android:textColor="@color/lock_subtitle_gray"
             android:fontFamily="@font/poppins_regular" />
 
     </LinearLayout>

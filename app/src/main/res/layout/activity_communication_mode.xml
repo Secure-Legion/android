@@ -4,7 +4,7 @@
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="?attr/colorSurface">
+    android:background="@color/surface_black">
 
     <!-- Header -->
     <LinearLayout
@@ -17,6 +17,7 @@
         android:paddingEnd="20dp"
         android:paddingTop="16dp"
         android:paddingBottom="16dp"
+        android:background="@color/header_bg"
         android:fitsSystemWindows="true"
         app:layout_constraintTop_toTopOf="parent">
 
@@ -34,6 +35,7 @@
                 android:layout_height="20dp"
                 android:layout_gravity="center"
                 android:src="@drawable/ic_back_arrow"
+                app:tint="#FFFFFF"
                 android:contentDescription="Back" />
 
         </FrameLayout>
@@ -45,7 +47,7 @@
             android:layout_weight="1"
             android:text="Communication"
             android:textSize="24sp"
-            android:textColor="?attr/colorOnSurfaceVariant"
+            android:textColor="#FFFFFF"
             android:fontFamily="@font/space_grotesk_bold"
             android:gravity="center" />
 
@@ -89,7 +91,7 @@
                 android:layout_height="wrap_content"
                 android:text="LoRa mesh network for off-grid encrypted communication"
                 android:textSize="13sp"
-                android:textColor="#666666"
+                android:textColor="@color/text_muted"
                 android:fontFamily="@font/poppins_regular"
                 android:layout_marginBottom="20dp" />
 
@@ -131,7 +133,7 @@
                         android:layout_height="wrap_content"
                         android:text="Enable SecureMesh"
                         android:textSize="16sp"
-                        android:textColor="#CCCCCC"
+                        android:textColor="@color/text_settings"
                         android:fontFamily="@font/poppins_medium" />
 
                     <TextView
@@ -140,7 +142,7 @@
                         android:layout_height="wrap_content"
                         android:text="Disconnected"
                         android:textSize="12sp"
-                        android:textColor="#666666"
+                        android:textColor="@color/text_muted"
                         android:fontFamily="@font/poppins_regular" />
 
                 </LinearLayout>
@@ -150,8 +152,8 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:checked="false"
-                    app:thumbTint="#333333"
-                    app:trackTint="#888888" />
+                    app:thumbTint="@color/input_border"
+                    app:trackTint="@color/lock_icon_gray" />
 
             </LinearLayout>
 
@@ -188,7 +190,7 @@
                         android:layout_weight="1"
                         android:text="Nodes Connected"
                         android:textSize="14sp"
-                        android:textColor="#666666"
+                        android:textColor="@color/text_muted"
                         android:fontFamily="@font/poppins_regular" />
 
                     <TextView
@@ -197,7 +199,7 @@
                         android:layout_height="wrap_content"
                         android:text="0"
                         android:textSize="14sp"
-                        android:textColor="#CCCCCC"
+                        android:textColor="@color/text_settings"
                         android:fontFamily="@font/poppins_medium" />
 
                 </LinearLayout>
@@ -215,7 +217,7 @@
                         android:layout_weight="1"
                         android:text="Signal Strength"
                         android:textSize="14sp"
-                        android:textColor="#666666"
+                        android:textColor="@color/text_muted"
                         android:fontFamily="@font/poppins_regular" />
 
                     <TextView
@@ -224,7 +226,7 @@
                         android:layout_height="wrap_content"
                         android:text="--"
                         android:textSize="14sp"
-                        android:textColor="#CCCCCC"
+                        android:textColor="@color/text_settings"
                         android:fontFamily="@font/poppins_medium" />
 
                 </LinearLayout>
@@ -241,7 +243,7 @@
                         android:layout_weight="1"
                         android:text="Channel"
                         android:textSize="14sp"
-                        android:textColor="#666666"
+                        android:textColor="@color/text_muted"
                         android:fontFamily="@font/poppins_regular" />
 
                     <TextView
@@ -250,7 +252,7 @@
                         android:layout_height="wrap_content"
                         android:text="Default"
                         android:textSize="14sp"
-                        android:textColor="#CCCCCC"
+                        android:textColor="@color/text_settings"
                         android:fontFamily="@font/poppins_medium" />
 
                 </LinearLayout>
@@ -280,7 +282,7 @@
                     android:layout_height="wrap_content"
                     android:text="SecureMesh uses LoRa radio technology to create a decentralized mesh network for secure communication without cellular or internet connectivity.\n\nRequirements:\n\u2022 Meshtastic-compatible LoRa device\n\u2022 Bluetooth enabled\n\u2022 Device paired via Bluetooth"
                     android:textSize="13sp"
-                    android:textColor="#666666"
+                    android:textColor="@color/text_muted"
                     android:fontFamily="@font/poppins_regular"
                     android:lineSpacingExtra="4dp" />
 
@@ -340,7 +342,7 @@
                         android:layout_weight="1"
                         android:text="Pair LoRa Device"
                         android:textSize="16sp"
-                        android:textColor="#CCCCCC"
+                        android:textColor="@color/text_settings"
                         android:fontFamily="@font/poppins_medium" />
 
                     <FrameLayout
@@ -394,7 +396,7 @@
                         android:layout_weight="1"
                         android:text="Channel Settings"
                         android:textSize="16sp"
-                        android:textColor="#CCCCCC"
+                        android:textColor="@color/text_settings"
                         android:fontFamily="@font/poppins_medium" />
 
                     <FrameLayout

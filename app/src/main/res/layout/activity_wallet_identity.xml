@@ -4,7 +4,7 @@
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="?attr/colorSurface">
+    android:background="@color/surface_black">
 
     <!-- Header -->
     <LinearLayout
@@ -17,15 +17,15 @@
         android:paddingEnd="20dp"
         android:paddingTop="16dp"
         android:paddingBottom="16dp"
+        android:background="@color/header_bg"
         android:fitsSystemWindows="true"
         app:layout_constraintTop_toTopOf="parent">
 
-        <!-- Back Button -->
+        <!-- Back Button (black box, white arrow) -->
         <FrameLayout
             android:id="@+id/backButton"
             android:layout_width="42dp"
             android:layout_height="42dp"
-            android:layout_marginStart="8dp"
             android:background="@drawable/top_icon_bg"
             android:clickable="true"
             android:focusable="true">
@@ -35,6 +35,7 @@
                 android:layout_height="20dp"
                 android:layout_gravity="center"
                 android:src="@drawable/ic_back_arrow"
+                app:tint="#FFFFFF"
                 android:contentDescription="Back" />
 
         </FrameLayout>
@@ -46,15 +47,16 @@
             android:layout_weight="1"
             android:text="Profile"
             android:textSize="34sp"
-            android:textColor="@color/lock_title_gray"
+            android:textColor="#FFFFFF"
             android:fontFamily="@font/space_grotesk_bold"
             android:gravity="center" />
 
-        <!-- Settings Icon (top-right) -->
+        <!-- Settings Icon (matches back button) -->
         <FrameLayout
             android:id="@+id/settingsButton"
             android:layout_width="42dp"
             android:layout_height="42dp"
+            android:layout_marginEnd="8dp"
             android:background="@drawable/top_icon_bg"
             android:clickable="true"
             android:focusable="true">
@@ -64,7 +66,7 @@
                 android:layout_height="20dp"
                 android:layout_gravity="center"
                 android:src="@drawable/ic_settings_cog"
-                app:tint="?attr/colorOnSurfaceVariant"
+                app:tint="#FFFFFF"
                 android:contentDescription="Settings" />
 
         </FrameLayout>
@@ -118,7 +120,7 @@
                         android:layout_height="18dp"
                         android:layout_gravity="center"
                         android:src="@drawable/ic_edit"
-                        app:tint="?attr/colorOnSurfaceVariant" />
+                        app:tint="#FFFFFF" />
 
                 </FrameLayout>
 
@@ -131,7 +133,7 @@
                 android:layout_height="wrap_content"
                 android:text="@WIZARD"
                 android:textSize="18sp"
-                android:textColor="?attr/colorOnSurface"
+                android:textColor="@color/text_primary"
                 android:fontFamily="@font/space_grotesk_bold"
                 android:layout_marginBottom="24dp" />
 
@@ -160,22 +162,6 @@
                         android:scaleType="fitCenter"
                         android:contentDescription="Contact Card QR Code" />
 
-                    <!-- Live countdown overlay (covers static expiry in bitmap) -->
-                    <TextView
-                        android:id="@+id/expiryCountdownText"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:layout_gravity="bottom|start"
-                        android:layout_marginStart="10dp"
-                        android:layout_marginBottom="9dp"
-                        android:paddingStart="4dp"
-                        android:paddingEnd="4dp"
-                        android:background="#1A1A1A"
-                        android:textSize="9sp"
-                        android:textColor="#666666"
-                        android:fontFamily="sans-serif"
-                        android:visibility="gone" />
-
                 </FrameLayout>
 
             </androidx.cardview.widget.CardView>
@@ -186,7 +172,7 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:textSize="13sp"
-                android:textColor="#999999"
+                android:textColor="@color/lock_title_gray"
                 android:fontFamily="@font/space_grotesk_bold"
                 android:letterSpacing="0.05"
                 android:layout_marginBottom="12dp"
@@ -202,7 +188,7 @@
                 android:gravity="center"
                 android:text="Share"
                 android:textSize="16sp"
-                android:textColor="?attr/colorOnSurface"
+                android:textColor="#FFFFFF"
                 android:fontFamily="@font/poppins_semibold"
                 android:paddingStart="32dp"
                 android:paddingEnd="32dp"

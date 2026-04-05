@@ -5,7 +5,7 @@
     xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="#000000"
+    android:background="@color/surface_black"
     tools:context=".MainActivity">
 
     <!-- Header -->
@@ -14,7 +14,7 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="vertical"
-        android:background="#000000"
+        android:background="@color/header_bg"
         app:layout_constraintTop_toTopOf="parent">
 
         <!-- Status bar spacer -->
@@ -42,22 +42,46 @@
                 android:layout_weight="1"
                 android:text="Chats"
                 android:textSize="34sp"
-                android:textColor="@color/lock_title_gray"
+                android:textColor="#FFFFFF"
                 android:fontFamily="@font/space_grotesk_bold" />
 
+            <!-- Tor Status Pill -->
+            <LinearLayout
+                android:id="@+id/torStatusPill"
+                android:layout_width="wrap_content"
+                android:layout_height="32dp"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:background="@drawable/status_pill_bg"
+                android:paddingStart="10dp"
+                android:paddingEnd="12dp"
+                android:clickable="true"
+                android:focusable="true">
+
+                <View
+                    android:id="@+id/torStatusDot"
+                    android:layout_width="8dp"
+                    android:layout_height="8dp"
+                    android:background="@drawable/status_dot_red" />
+
+                <TextView
+                    android:id="@+id/torStatusText"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="6dp"
+                    android:text="Disconnected"
+                    android:textSize="12sp"
+                    android:textColor="@color/status_pill_text"
+                    android:fontFamily="@font/poppins_medium" />
+
+            </LinearLayout>
+
+            <!-- Keep hidden ImageView for backward compatibility -->
             <ImageView
                 android:id="@+id/torStatusIcon"
-                android:layout_width="16dp"
-                android:layout_height="16dp"
-                android:layout_marginStart="8dp"
-                android:layout_marginTop="4dp"
-                android:padding="0dp"
-                android:minWidth="40dp"
-                android:minHeight="40dp"
-                android:src="@drawable/ic_tor_signal_off"
-                android:clickable="true"
-                android:focusable="true"
-                android:contentDescription="Tor connection status" />
+                android:layout_width="0dp"
+                android:layout_height="0dp"
+                android:visibility="gone" />
 
         </LinearLayout>
 
@@ -70,7 +94,8 @@
             android:gravity="center_vertical"
             android:paddingStart="20dp"
             android:paddingEnd="20dp"
-            android:paddingTop="4dp">
+            android:paddingTop="4dp"
+            android:paddingBottom="12dp">
 
             <!-- Search Bar -->
             <LinearLayout
@@ -91,7 +116,7 @@
                     android:layout_width="20dp"
                     android:layout_height="20dp"
                     android:src="@android:drawable/ic_menu_search"
-                    app:tint="#666666"
+                    app:tint="@color/text_muted"
                     android:contentDescription="Search" />
 
                 <EditText
@@ -102,7 +127,7 @@
                     android:layout_marginStart="10dp"
                     android:background="@android:color/transparent"
                     android:hint="Search"
-                    android:textColorHint="#666666"
+                    android:textColorHint="@color/lock_password_hint"
                     android:textColor="?attr/colorOnSurface"
                     android:textSize="16sp"
                     android:fontFamily="@font/poppins_regular"
@@ -111,49 +136,20 @@
 
             </LinearLayout>
 
-            <!-- Compose New Message Circle -->
-            <FrameLayout
-                android:id="@+id/newMessageBtn"
-                android:layout_width="42dp"
-                android:layout_height="42dp"
-                android:layout_marginStart="10dp"
-                android:background="@drawable/compose_circle_bg"
-                android:clickable="true"
-                android:focusable="true">
-
-                <ImageView
-                    android:layout_width="18dp"
-                    android:layout_height="18dp"
-                    android:layout_gravity="center"
-                    android:src="@drawable/ic_compose"
-                    app:tint="?attr/colorOnSurfaceVariant"
-                    android:contentDescription="New Message" />
-
-                <!-- Badge for pending friend requests (shown on contacts tab) -->
-                <TextView
-                    android:id="@+id/composeBadge"
-                    android:layout_width="16dp"
-                    android:layout_height="16dp"
-                    android:layout_gravity="top|end"
-                    android:layout_marginTop="-2dp"
-                    android:layout_marginEnd="-2dp"
-                    android:background="@drawable/badge_bg"
-                    android:gravity="center"
-                    android:textSize="9sp"
-                    android:textStyle="bold"
-                    android:textColor="?attr/colorOnSurface"
-                    android:visibility="gone" />
-
-            </FrameLayout>
+            <!-- Spacer where compose button used to be (moved to floating FAB) -->
+            <View
+                android:layout_width="0dp"
+                android:layout_height="0dp" />
 
         </LinearLayout>
 
-        <!-- Tab Pills: Messages / Groups -->
+        <!-- Tab Pills: Messages / Groups (white bg in light mode) -->
         <LinearLayout
             android:id="@+id/tabsContainer"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="horizontal"
+            android:background="@color/surface_black"
             android:paddingStart="20dp"
             android:paddingEnd="20dp"
             android:paddingTop="14dp"
@@ -165,7 +161,7 @@
                 android:layout_height="wrap_content"
                 android:text="Messages"
                 android:textSize="13sp"
-                android:textColor="?attr/colorOnSurface"
+                android:textColor="@color/tab_pill_active_text"
                 android:fontFamily="@font/poppins_medium"
                 android:clickable="true"
                 android:focusable="true"
@@ -208,7 +204,7 @@
                     android:gravity="center"
                     android:textSize="10sp"
                     android:textStyle="bold"
-                    android:textColor="#FFFFFF"
+                    android:textColor="@color/text_primary"
                     android:visibility="gone" />
 
             </FrameLayout>
@@ -222,6 +218,7 @@
         android:id="@+id/contentContainer"
         android:layout_width="match_parent"
         android:layout_height="0dp"
+        android:background="@color/surface_black"
         app:layout_constraintTop_toBottomOf="@id/headerContainer"
         app:layout_constraintBottom_toBottomOf="parent">
 
@@ -230,7 +227,7 @@
             android:id="@+id/torStatusBanner"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:background="#1A1A1A"
+            android:background="@color/surface_variant"
             android:paddingStart="20dp"
             android:paddingEnd="20dp"
             android:paddingTop="10dp"
@@ -247,19 +244,25 @@
             android:layout_width="match_parent"
             android:layout_height="match_parent"
             android:orientation="vertical"
-            android:background="#000000">
+            android:background="@color/surface_black">
+
+            <!-- Onboarding Carousel -->
+            <include
+                android:id="@+id/onboardingCarousel"
+                layout="@layout/include_onboarding_carousel" />
 
             <!-- Messages List -->
             <androidx.recyclerview.widget.RecyclerView
                 android:id="@+id/chatList"
                 android:layout_width="match_parent"
-                android:layout_height="match_parent"
+                android:layout_height="0dp"
+                android:layout_weight="1"
                 android:paddingStart="20dp"
                 android:paddingEnd="20dp"
                 android:paddingTop="8dp"
                 android:paddingBottom="130dp"
                 android:clipToPadding="false"
-                android:background="#000000" />
+                android:background="@color/surface_black" />
 
             <!-- Messages Empty State -->
             <LinearLayout
@@ -274,7 +277,7 @@
                     android:layout_width="80dp"
                     android:layout_height="80dp"
                     android:src="@drawable/ic_compose"
-                    app:tint="#333333"
+                    app:tint="@color/text_muted"
                     android:contentDescription="No Messages" />
 
                 <TextView
@@ -291,7 +294,7 @@
                     android:layout_height="wrap_content"
                     android:layout_marginTop="8dp"
                     android:text="Start a conversation to get started"
-                    android:textColor="#666666"
+                    android:textColor="@color/text_muted"
                     android:textSize="13sp"
                     android:fontFamily="@font/poppins_regular" />
 
@@ -366,7 +369,7 @@
                     android:layout_width="22dp"
                     android:layout_height="22dp"
                     android:src="@drawable/ic_nav_chat"
-                    app:tint="?attr/colorOnSurfaceVariant"
+                    app:tint="#FFFFFF"
                     android:contentDescription="Chats" />
 
                 <!-- Badge for unread messages -->
@@ -392,8 +395,8 @@
                 android:layout_height="wrap_content"
                 android:text="Chats"
                 android:textSize="10sp"
-                android:textColor="@color/lock_title_gray"
-                android:fontFamily="@font/space_grotesk_bold" />
+                android:textColor="#FFFFFF"
+                android:fontFamily="@font/poppins_medium" />
 
         </LinearLayout>
 
@@ -419,7 +422,7 @@
                     android:layout_width="22dp"
                     android:layout_height="22dp"
                     android:src="@drawable/ic_nav_contacts"
-                    app:tint="?attr/colorOnSurfaceVariant"
+                    app:tint="#FFFFFF"
                     android:contentDescription="Contacts" />
 
                 <!-- Badge for pending friend requests -->
@@ -444,8 +447,8 @@
                 android:layout_height="wrap_content"
                 android:text="Contacts"
                 android:textSize="10sp"
-                android:textColor="@color/lock_title_gray"
-                android:fontFamily="@font/space_grotesk_bold" />
+                android:textColor="#FFFFFF"
+                android:fontFamily="@font/poppins_medium" />
 
         </LinearLayout>
 
@@ -466,7 +469,7 @@
                 android:layout_width="22dp"
                 android:layout_height="22dp"
                 android:src="@drawable/ic_nav_profile"
-                app:tint="?attr/colorOnSurfaceVariant"
+                app:tint="#FFFFFF"
                 android:layout_marginBottom="2dp"
                 android:contentDescription="Profile" />
 
@@ -475,11 +478,50 @@
                 android:layout_height="wrap_content"
                 android:text="Profile"
                 android:textSize="10sp"
-                android:textColor="@color/lock_title_gray"
-                android:fontFamily="@font/space_grotesk_bold" />
+                android:textColor="#FFFFFF"
+                android:fontFamily="@font/poppins_medium" />
 
         </LinearLayout>
 
     </LinearLayout>
+
+    <!-- Floating Compose FAB (bottom right, above nav bar) -->
+    <FrameLayout
+        android:id="@+id/newMessageBtn"
+        android:layout_width="56dp"
+        android:layout_height="56dp"
+        android:layout_marginEnd="20dp"
+        android:layout_marginBottom="140dp"
+        android:background="@drawable/compose_circle_bg"
+        android:elevation="6dp"
+        android:clickable="true"
+        android:focusable="true"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintBottom_toBottomOf="parent">
+
+        <ImageView
+            android:id="@+id/composeIcon"
+            android:layout_width="22dp"
+            android:layout_height="22dp"
+            android:layout_gravity="center"
+            android:src="@drawable/ic_compose"
+            app:tint="#FFFFFF"
+            android:contentDescription="New Message" />
+
+        <TextView
+            android:id="@+id/composeBadge"
+            android:layout_width="16dp"
+            android:layout_height="16dp"
+            android:layout_gravity="top|end"
+            android:layout_marginTop="-2dp"
+            android:layout_marginEnd="-2dp"
+            android:background="@drawable/badge_bg"
+            android:gravity="center"
+            android:textSize="9sp"
+            android:textStyle="bold"
+            android:textColor="#FFFFFF"
+            android:visibility="gone" />
+
+    </FrameLayout>
 
 </androidx.constraintlayout.widget.ConstraintLayout>

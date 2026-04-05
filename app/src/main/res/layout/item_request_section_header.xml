@@ -7,6 +7,6 @@
     android:paddingBottom="8dp"
     android:text="RECEIVED REQUESTS"
     android:textSize="12sp"
-    android:textColor="#666666"
+    android:textColor="@color/text_muted"
     android:fontFamily="@font/poppins_medium"
     android:letterSpacing="0.05" />

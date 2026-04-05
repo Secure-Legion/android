@@ -8,6 +8,7 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.ContextCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
@@ -138,7 +139,7 @@ class WalletActivity : AppCompatActivity() {
         }
         // Set refresh indicator colors to match app theme
         swipeRefreshLayout.setColorSchemeColors(0xFF6BA4FF.toInt(), 0xFF4CAF50.toInt())
-        swipeRefreshLayout.setProgressBackgroundColorSchemeColor(0xFF1A1A1A.toInt())
+        swipeRefreshLayout.setProgressBackgroundColorSchemeColor(ContextCompat.getColor(this, R.color.surface_variant))
 
         // Back button
         findViewById<View>(R.id.backButton).setOnClickListener {

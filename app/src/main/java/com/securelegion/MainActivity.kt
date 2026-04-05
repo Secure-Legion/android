@@ -17,6 +17,7 @@ import android.provider.Settings
 import android.util.Log
 import android.view.View
 import android.widget.ImageView
+import android.widget.LinearLayout
 import android.widget.Spinner
 import android.widget.AdapterView
 import android.widget.TextView
@@ -210,6 +211,10 @@ class MainActivity : BaseActivity() {
 
         Log.d("MainActivity", "onCreate - initializing views")
 
+        // Setup onboarding carousel cards
+        setupOnboardingCarousel()
+        setupGroupsOnboardingCarousel()
+
         // Ensure messages tab is shown by default
         findViewById<View>(R.id.chatListContainer).visibility = View.VISIBLE
         findViewById<View>(R.id.groupsView).visibility = View.GONE
@@ -231,8 +236,8 @@ class MainActivity : BaseActivity() {
         // Observe Tor state and update status dot next to "Chats"
         observeTorStatus()
 
-        // Tap signal icon → Tor Health page
-        findViewById<View>(R.id.torStatusIcon)?.setOnClickListener {
+        // Tap status pill → Tor Health page
+        findViewById<View>(R.id.torStatusPill)?.setOnClickListener {
             startActivity(Intent(this, TorHealthActivity::class.java))
         }
 
@@ -454,14 +459,13 @@ class MainActivity : BaseActivity() {
     private fun observeTorStatus() {
         lifecycleScope.launch {
             while (isActive) {
-                val icon = findViewById<ImageView>(R.id.torStatusIcon)
+                val statusDot = findViewById<View>(R.id.torStatusDot)
+                val statusText = findViewById<android.widget.TextView>(R.id.torStatusText)
                 val state = TorService.getCurrentTorState()
                 val bootstrapPercent = TorService.getBootstrapPercent()
-                val drawableRes = when (state) {
+
+                when (state) {
                     TorService.TorState.RUNNING -> {
-                        // Proof-based signal: "receivable via onion" = HS self-test passed
-                        // since last network change. Don't trust Tor's circuit-established
-                        // (zombie circuits via local control socket).
                         val cm = getSystemService(android.content.Context.CONNECTIVITY_SERVICE) as? android.net.ConnectivityManager
                         val caps = cm?.getNetworkCapabilities(cm.activeNetwork)
                         val hasValidatedInternet = caps?.hasCapability(
@@ -475,22 +479,33 @@ class MainActivity : BaseActivity() {
                         val hasTransportReady = bootstrapPercent >= 100 && circuitsEstablished == 1
 
                         when {
-                            !hasValidatedInternet -> R.drawable.ic_tor_signal_off  // offline
-                            hasFreshProof -> R.drawable.ic_tor_signal_full         // receivable
-                            hasTransportReady -> R.drawable.ic_tor_signal_4        // connected (outbound ready)
-                            else -> R.drawable.ic_tor_signal_2                     // connecting
+                            !hasValidatedInternet -> {
+                                statusDot?.setBackgroundResource(R.drawable.status_dot_red)
+                                statusText?.text = "Offline"
+                            }
+                            hasFreshProof || hasTransportReady -> {
+                                statusDot?.setBackgroundResource(R.drawable.status_dot_green)
+                                statusText?.text = "Connected"
+                            }
+                            else -> {
+                                statusDot?.setBackgroundResource(R.drawable.status_dot_yellow)
+                                statusText?.text = "Connecting"
+                            }
                         }
                     }
-                    TorService.TorState.BOOTSTRAPPING -> when {
-                        bootstrapPercent >= 67 -> R.drawable.ic_tor_signal_4
-                        bootstrapPercent >= 34 -> R.drawable.ic_tor_signal_3
-                        bootstrapPercent >= 1  -> R.drawable.ic_tor_signal_2
-                        else -> R.drawable.ic_tor_signal_1
+                    TorService.TorState.BOOTSTRAPPING -> {
+                        statusDot?.setBackgroundResource(R.drawable.status_dot_yellow)
+                        statusText?.text = "Connecting"
                     }
-                    TorService.TorState.STARTING -> R.drawable.ic_tor_signal_1
-                    else -> R.drawable.ic_tor_signal_off
+                    TorService.TorState.STARTING -> {
+                        statusDot?.setBackgroundResource(R.drawable.status_dot_yellow)
+                        statusText?.text = "Starting"
+                    }
+                    else -> {
+                        statusDot?.setBackgroundResource(R.drawable.status_dot_red)
+                        statusText?.text = "Disconnected"
+                    }
                 }
-                icon?.setImageResource(drawableRes)
                 delay(2000)
             }
         }
@@ -755,6 +770,97 @@ class MainActivity : BaseActivity() {
         } catch (e: IllegalArgumentException) {
             Log.w("MainActivity", "Group receiver was not registered during onDestroy")
         }
+    }
+
+    private fun setupOnboardingCarousel() {
+        val container = findViewById<LinearLayout>(R.id.onboardingCardsContainer) ?: return
+        val prefs = getSharedPreferences("onboarding", MODE_PRIVATE)
+        container.removeAllViews()
+
+        data class OnboardingCard(val num: String, val label: String, val icon: Int, val action: () -> Unit)
+        val cards = listOf(
+            OnboardingCard("1.", "Invite friends", R.drawable.ic_paper_plane) {
+                // Open profile page to get QR code to share
+                val i = Intent(this, WalletIdentityActivity::class.java)
+                startActivity(i)
+            },
+            OnboardingCard("2.", "Add profile photo", R.drawable.ic_camera) {
+                val i = Intent(this, WalletIdentityActivity::class.java)
+                startActivity(i)
+            },
+            OnboardingCard("3.", "Set up security", R.drawable.ic_shield) {
+                val i = Intent(this, SettingsActivity::class.java)
+                startActivity(i)
+            },
+            OnboardingCard("4.", "Add a contact", R.drawable.ic_add_friend) {
+                val i = Intent(this, AddFriendActivity::class.java)
+                startActivity(i)
+            }
+        )
+
+        val inflater = layoutInflater
+        var visibleCount = 0
+        for ((idx, card) in cards.withIndex()) {
+            val key = "card_${idx}_dismissed"
+            if (prefs.getBoolean(key, false)) continue
+            visibleCount++
+            val view = inflater.inflate(R.layout.item_onboarding_card, container, false)
+            view.findViewById<TextView>(R.id.cardNumber).text = card.num
+            view.findViewById<TextView>(R.id.cardLabel).text = card.label
+            view.findViewById<ImageView>(R.id.cardIcon).setImageResource(card.icon)
+            view.setOnClickListener { card.action() }
+            view.findViewById<View>(R.id.cardDismiss).setOnClickListener {
+                prefs.edit().putBoolean(key, true).apply()
+                setupOnboardingCarousel()
+            }
+            container.addView(view)
+        }
+
+        // Hide carousel if all cards dismissed
+        val carousel = findViewById<View>(R.id.onboardingCarousel)
+        carousel?.visibility = if (visibleCount == 0) View.GONE else View.VISIBLE
+    }
+
+    private fun setupGroupsOnboardingCarousel() {
+        val container = findViewById<LinearLayout>(R.id.groupsOnboardingCardsContainer) ?: return
+        val prefs = getSharedPreferences("onboarding", MODE_PRIVATE)
+        container.removeAllViews()
+
+        data class OnboardingCard(val num: String, val label: String, val icon: Int, val action: () -> Unit)
+        val cards = listOf(
+            OnboardingCard("1.", "Create a group", R.drawable.ic_contacts) {
+                val i = Intent(this, CreateGroupActivity::class.java)
+                startActivity(i)
+            },
+            OnboardingCard("2.", "Invite members", R.drawable.ic_add_friend) {
+                val i = Intent(this, CreateGroupActivity::class.java)
+                startActivity(i)
+            },
+            OnboardingCard("3.", "Group settings", R.drawable.ic_shield) {
+                com.securelegion.utils.ThemedToast.show(this, "Create a group first")
+            }
+        )
+
+        val inflater = layoutInflater
+        var visibleCount = 0
+        for ((idx, card) in cards.withIndex()) {
+            val key = "groups_card_${idx}_dismissed"
+            if (prefs.getBoolean(key, false)) continue
+            visibleCount++
+            val view = inflater.inflate(R.layout.item_onboarding_card, container, false)
+            view.findViewById<TextView>(R.id.cardNumber).text = card.num
+            view.findViewById<TextView>(R.id.cardLabel).text = card.label
+            view.findViewById<ImageView>(R.id.cardIcon).setImageResource(card.icon)
+            view.setOnClickListener { card.action() }
+            view.findViewById<View>(R.id.cardDismiss).setOnClickListener {
+                prefs.edit().putBoolean(key, true).apply()
+                setupGroupsOnboardingCarousel()
+            }
+            container.addView(view)
+        }
+
+        val carousel = findViewById<View>(R.id.groupsOnboardingCarousel)
+        carousel?.visibility = if (visibleCount == 0) View.GONE else View.VISIBLE
     }
 
     private fun setupChatList() {
@@ -1415,7 +1521,9 @@ class MainActivity : BaseActivity() {
         findViewById<View>(R.id.navProfile)?.setOnClickListener {
             Log.d("MainActivity", "Profile nav clicked")
             val intent = android.content.Intent(this, WalletIdentityActivity::class.java)
-            startActivityWithSlideAnimation(intent)
+            startActivity(intent)
+            @Suppress("DEPRECATION")
+            overridePendingTransition(0, 0)
         }
 
         // Tabs
@@ -1526,7 +1634,7 @@ class MainActivity : BaseActivity() {
 
         // Update tab pill styling - Messages active, Groups inactive
         findViewById<android.widget.TextView>(R.id.tabMessages).apply {
-            setTextColor(ContextCompat.getColor(context, R.color.text_white))
+            setTextColor(ContextCompat.getColor(context, R.color.tab_pill_active_text))
             setBackgroundResource(R.drawable.tab_pill_active_bg)
         }
 
@@ -1567,7 +1675,7 @@ class MainActivity : BaseActivity() {
         }
 
         findViewById<android.widget.TextView>(R.id.tabGroups).apply {
-            setTextColor(ContextCompat.getColor(context, R.color.text_white))
+            setTextColor(ContextCompat.getColor(context, R.color.tab_pill_active_text))
             setBackgroundResource(R.drawable.tab_pill_active_bg)
         }
     }
@@ -1615,7 +1723,7 @@ class MainActivity : BaseActivity() {
 
         // Update pill styling — Contacts active
         findViewById<android.widget.TextView>(R.id.tabMessages).apply {
-            setTextColor(androidx.core.content.ContextCompat.getColor(context, R.color.text_white))
+            setTextColor(androidx.core.content.ContextCompat.getColor(context, R.color.tab_pill_active_text))
             setBackgroundResource(R.drawable.tab_pill_active_bg)
         }
         findViewById<android.widget.TextView>(R.id.tabGroups).apply {
@@ -1643,7 +1751,7 @@ class MainActivity : BaseActivity() {
             setBackgroundResource(R.drawable.tab_pill_bg)
         }
         findViewById<android.widget.TextView>(R.id.tabGroups).apply {
-            setTextColor(androidx.core.content.ContextCompat.getColor(context, R.color.text_white))
+            setTextColor(androidx.core.content.ContextCompat.getColor(context, R.color.tab_pill_active_text))
             setBackgroundResource(R.drawable.tab_pill_active_bg)
         }
 
@@ -1811,11 +1919,15 @@ class MainActivity : BaseActivity() {
                 com.securelegion.utils.ThemedToast.show(this@MainActivity, "Accepting request from $senderUsername...")
                 setupRequestsList()
                 updateRequestsPillBadge()
+                updateFriendRequestBadge()
 
                 // Fire Phase 2 send via TorService background
                 com.securelegion.services.TorService.acceptFriendRequestInBackground(
                     requestId, senderFriendRequestOnion, encryptedPhase2, applicationContext
                 )
+
+                // Switch to Contacts tab so user sees the new contact being added
+                showContactsTab()
 
             } catch (e: Exception) {
                 Log.e("MainActivity", "Phase 2 accept failed", e)
@@ -1829,6 +1941,7 @@ class MainActivity : BaseActivity() {
         com.securelegion.utils.ThemedToast.show(this, "Request declined")
         setupRequestsList()
         updateRequestsPillBadge()
+        updateFriendRequestBadge()
     }
 
     private fun handleCancelSentRequest(request: com.securelegion.models.PendingFriendRequest) {

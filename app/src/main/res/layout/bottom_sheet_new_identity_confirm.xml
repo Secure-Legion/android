@@ -79,7 +79,7 @@
                     android:layout_weight="1"
                     android:text="New Contact Card (CID/PIN)"
                     android:textSize="14sp"
-                    android:textColor="#CCCCCC"
+                    android:textColor="@color/text_settings"
                     android:fontFamily="@font/poppins_regular" />
             </LinearLayout>
 
@@ -104,7 +104,7 @@
                     android:layout_weight="1"
                     android:text="New Tor Onion Address"
                     android:textSize="14sp"
-                    android:textColor="#CCCCCC"
+                    android:textColor="@color/text_settings"
                     android:fontFamily="@font/poppins_regular" />
             </LinearLayout>
 
@@ -129,7 +129,7 @@
                     android:layout_weight="1"
                     android:text="You will need to send new friend requests to your contacts"
                     android:textSize="14sp"
-                    android:textColor="#CCCCCC"
+                    android:textColor="@color/text_settings"
                     android:fontFamily="@font/poppins_regular" />
             </LinearLayout>
 
@@ -153,7 +153,7 @@
                     android:layout_weight="1"
                     android:text="Your crypto wallet will remain untouched"
                     android:textSize="14sp"
-                    android:textColor="#CCCCCC"
+                    android:textColor="@color/text_settings"
                     android:fontFamily="@font/poppins_regular" />
             </LinearLayout>
         </LinearLayout>

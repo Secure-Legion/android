@@ -1,32 +1,101 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="primary_blue">#1E90FF</color>
-    <color name="dark_bg">#0A0E14</color>
-    <color name="darker_bg">#050810</color>
+    <!-- Text Colors (Light Mode) -->
+    <color name="text_primary">#000000</color>
+    <color name="text_white">#000000</color>
+    <color name="text_gray">#6B7280</color>
+    <color name="text_muted">#9CA3AF</color>
+    <color name="text_dark">#6B7280</color>
+    <color name="text_settings">#1F2937</color>
+    <color name="text_action">#8C8C8C</color>
+
+    <!-- Surface Colors (Light Mode) -->
+    <color name="surface_black">#FFFFFF</color>
+    <color name="dark_bg">#F5F5F7</color>
+    <color name="darker_bg">#EFEFF2</color>
     <color name="header_bg">#000000</color>
-    <color name="card_bg">#141414</color>
-    <color name="text_white">#FFFFFF</color>
-    <color name="text_gray">#A0AEC0</color>
+    <color name="card_bg">#F0F0F3</color>
+    <color name="surface_variant">#E8E8ED</color>
+
+    <!-- Lock / Auth (Light Mode) -->
+    <color name="lock_title_gray">#1F2937</color>
+    <color name="lock_subtitle_gray">#6B7280</color>
+    <color name="lock_input_border">#D1D5DB</color>
+    <color name="lock_icon_gray">#9CA3AF</color>
+    <color name="lock_password_hint">#9CA3AF</color>
+    <color name="lock_button_bg">#141414</color>
+
+    <!-- Borders / Dividers (Light Mode) -->
+    <color name="border_color">#D1D5DB</color>
+    <color name="input_border">#D1D5DB</color>
+    <color name="divider_color">#B0B7C0</color>
+
+    <!-- Components (Light Mode) -->
+    <color name="settings_box_inner">#F0F0F3</color>
+    <color name="settings_icon_inner">#E8E8ED</color>
+    <color name="arrow_bg_color">#D1D5DB</color>
+    <color name="profile_circle">#E5E7EB</color>
+
+    <!-- Icon Tints (Light Mode) -->
+    <color name="settings_icon_tint">#FFFFFF</color>
+    <color name="arrow_icon_tint">#000000</color>
+
+    <!-- Glass (Light Mode) -->
+    <color name="glass_bg">#F0F0F0</color>
+    <color name="glass_border">#0F000000</color>
+    <color name="glass_circle">#F0F0F0</color>
+
+    <!-- Bottom Nav (Light Mode) -->
+    <color name="bottom_nav_bg">#000000</color>
+    <color name="bottom_nav_border">#0F000000</color>
+    <color name="nav_icon_tint">#FFFFFF</color>
+    <color name="nav_label_color">#FFFFFF</color>
+
+    <!-- Top Icon / Back Button (Light Mode) -->
+    <color name="top_icon_bg">#F0F0F0</color>
+    <color name="top_icon_border">#0F000000</color>
+
+    <!-- Action Button (Light Mode) -->
+    <color name="action_button_bg_color">#000000</color>
+
+    <!-- Accent Colors (same in both modes) -->
+    <color name="primary_blue">#1E90FF</color>
     <color name="accent_blue">#2196F3</color>
-    <color name="border_color">#1F2937</color>
     <color name="success_green">#10B981</color>
     <color name="warning_red">#EF4444</color>
     <color name="warning_yellow">#F59E0B</color>
     <color name="danger_red">#DC2626</color>
-
-    <!-- Lock Screen Design Colors -->
-    <color name="lock_title_gray">#999999</color>
-    <color name="lock_subtitle_gray">#5C5C5C</color>
-    <color name="lock_input_border">#454545</color>
-    <color name="lock_icon_gray">#888888</color>
-    <color name="lock_password_hint">#5C5C5C</color>
-    <color name="lock_button_bg">#141414</color>
+    <color name="call_blue">#4A9EFF</color>
+    <color name="call_end_red">#FF6B6B</color>
+    <color name="answer_green">#00CC66</color>
 
     <!-- Silver Gradient for Crypto Amounts -->
     <color name="silver_gradient_start">#E8E8E8</color>
     <color name="silver_gradient_end">#B8B8B8</color>
 
-    <!-- Legacy colors -->
+    <!-- Active Tab Pill Text (on solid pill background) -->
+    <color name="tab_pill_active_text">#FFFFFF</color>
+
+    <!-- Swipe Actions -->
+    <color name="swipe_mute">#D1D5DB</color>
+
+    <!-- Contact Item -->
+    <color name="contact_item_bg">#0A000000</color>
+
+    <!-- Pinned Banner Icons -->
+    <color name="pinned_icon_tint">#000000</color>
+
+    <!-- Status Pill -->
+    <color name="status_pill_bg">#FFFFFF</color>
+    <color name="status_pill_text">#000000</color>
+
+    <!-- QR Code Colors -->
+    <color name="qr_bg">#FFFFFF</color>
+    <color name="qr_module">#000000</color>
+    <color name="qr_badge_bg">#F0F0F3</color>
+    <color name="qr_badge_text">#1F2937</color>
+
+    <!-- Legacy (keep for compatibility) -->
     <color name="purple_200">#FFBB86FC</color>
     <color name="purple_500">#FF6200EE</color>
     <color name="purple_700">#FF3700B3</color>

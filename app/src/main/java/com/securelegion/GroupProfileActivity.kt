@@ -10,6 +10,7 @@ import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.TextView
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
@@ -18,6 +19,7 @@ import com.securelegion.crypto.KeyManager
 import com.securelegion.database.SecureLegionDatabase
 import com.securelegion.services.CrdtGroupManager
 import com.securelegion.utils.GlassBottomSheetDialog
+import com.securelegion.utils.GlassDialog
 import com.securelegion.utils.ImagePicker
 import com.securelegion.utils.ThemedToast
 import kotlinx.coroutines.Dispatchers
@@ -35,12 +37,16 @@ class GroupProfileActivity : BaseActivity() {
     // Views
     private lateinit var backButton: View
     private lateinit var groupNameTitle: TextView
+    private lateinit var memberCountText: TextView
     private lateinit var groupIconContainer: FrameLayout
     private lateinit var groupIconImage: ImageView
+    private lateinit var inviteMemberButton: View
+    private lateinit var leaveGroupButton: View
     private lateinit var changePinButton: View
     private lateinit var membersButton: View
     private lateinit var advanceButton: View
     private lateinit var permissionsButton: View
+    private lateinit var syncPhotoButton: View
 
     // Group data
     private var groupId: String? = null
@@ -96,13 +102,17 @@ class GroupProfileActivity : BaseActivity() {
     private fun initializeViews() {
         backButton = findViewById(R.id.backButton)
         groupNameTitle = findViewById(R.id.groupNameTitle)
+        memberCountText = findViewById(R.id.memberCountText)
         groupIconContainer = findViewById(R.id.groupIconContainer)
         groupIconImage = findViewById(R.id.groupIconImage)
+        inviteMemberButton = findViewById(R.id.inviteMemberButton)
+        leaveGroupButton = findViewById(R.id.leaveGroupButton)
         changePinButton = findViewById(R.id.changePinButton)
         changePinButton.visibility = View.GONE // CRDT groups use cryptographic membership, not PINs
         membersButton = findViewById(R.id.membersButton)
         advanceButton = findViewById(R.id.advanceButton)
         permissionsButton = findViewById(R.id.permissionsButton)
+        syncPhotoButton = findViewById(R.id.syncPhotoButton)
     }
 
     private fun setupClickListeners() {
@@ -124,6 +134,24 @@ class GroupProfileActivity : BaseActivity() {
             showMembersScreen()
         }
 
+        // Invite Member — opens AddGroupMembersActivity
+        inviteMemberButton.setOnClickListener {
+            val currentGroupId = groupId
+            if (currentGroupId == null) {
+                ThemedToast.show(this, "Invalid group")
+                return@setOnClickListener
+            }
+            val intent = Intent(this, AddGroupMembersActivity::class.java).apply {
+                putExtra(AddGroupMembersActivity.EXTRA_GROUP_ID, currentGroupId)
+            }
+            startActivity(intent)
+        }
+
+        // Leave Group — confirmation + remove self
+        leaveGroupButton.setOnClickListener {
+            showLeaveGroupConfirmation()
+        }
+
         // Advance
         advanceButton.setOnClickListener {
             showAdvancedSettings()
@@ -134,10 +162,16 @@ class GroupProfileActivity : BaseActivity() {
             showPermissionsSettings()
         }
 
+        // Sync profile photo to group
+        syncPhotoButton.setOnClickListener {
+            syncProfilePhoto()
+        }
+
     }
 
     private fun loadGroupData() {
         groupNameTitle.text = groupName
+        findViewById<com.securelegion.views.AvatarView>(R.id.groupAvatarView)?.setName(groupName)
 
         val currentGroupId = groupId ?: return
 
@@ -166,6 +200,8 @@ class GroupProfileActivity : BaseActivity() {
                     if (!groupIcon.isNullOrEmpty()) {
                         val bitmap = ImagePicker.decodeBase64ToBitmap(groupIcon)
                         if (bitmap != null) {
+                            findViewById<com.securelegion.views.AvatarView>(R.id.groupAvatarView)?.visibility = View.GONE
+                            groupIconImage.visibility = View.VISIBLE
                             groupIconImage.imageTintList = null
                             groupIconImage.setImageBitmap(bitmap)
                             groupIconImage.scaleType = ImageView.ScaleType.CENTER_CROP
@@ -182,6 +218,83 @@ class GroupProfileActivity : BaseActivity() {
 
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to load group data", e)
+            }
+        }
+        refreshMemberCount()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        refreshMemberCount()
+    }
+
+    private fun refreshMemberCount() {
+        val gid = groupId ?: return
+        lifecycleScope.launch {
+            try {
+                val count = withContext(Dispatchers.IO) {
+                    CrdtGroupManager.getInstance(this@GroupProfileActivity)
+                        .queryMembers(gid)
+                        .count { it.accepted && !it.removed }
+                }
+                if (!isFinishing && !isDestroyed) {
+                    memberCountText.text = if (count == 1) "1 member" else "$count members"
+                }
+            } catch (_: Exception) { }
+        }
+    }
+
+    private fun showLeaveGroupConfirmation() {
+        val currentGroupId = groupId ?: return
+        val dialog = GlassDialog.builder(this)
+            .setTitle("Leave Group")
+            .setMessage("Are you sure you want to leave this group?")
+            .setPositiveButton("Leave") { d, _ ->
+                d.dismiss()
+                leaveGroup(currentGroupId)
+            }
+            .setNegativeButton("Cancel", null)
+            .create()
+        GlassDialog.show(dialog)
+    }
+
+    private fun leaveGroup(currentGroupId: String) {
+        lifecycleScope.launch {
+            try {
+                withContext(Dispatchers.IO) {
+                    val mgr = CrdtGroupManager.getInstance(this@GroupProfileActivity)
+                    val km = KeyManager.getInstance(this@GroupProfileActivity)
+                    val myPubkeyHex = km.getSigningPublicKey()
+                        .joinToString("") { "%02x".format(it) }
+                    val opBytes = mgr.removeMember(currentGroupId, myPubkeyHex)
+                    mgr.broadcastOpToGroup(currentGroupId, opBytes)
+                    val authorName = km.getUsername() ?: "Someone"
+                    mgr.sendSystemMessage(currentGroupId, "$authorName left the group")
+                }
+                ThemedToast.show(this@GroupProfileActivity, "You left the group")
+                finish()
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to leave group", e)
+                ThemedToast.show(this@GroupProfileActivity, "Failed to leave: ${e.message}")
+            }
+        }
+    }
+
+    private fun syncProfilePhoto() {
+        val currentGroupId = groupId ?: return
+
+        ThemedToast.show(this, "Syncing profile photo...")
+
+        lifecycleScope.launch {
+            try {
+                withContext(Dispatchers.IO) {
+                    val mgr = CrdtGroupManager.getInstance(this@GroupProfileActivity)
+                    mgr.sendGroupProfilePhoto(currentGroupId)
+                }
+                ThemedToast.show(this@GroupProfileActivity, "Profile photo synced")
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to sync profile photo", e)
+                ThemedToast.show(this@GroupProfileActivity, "Failed to sync photo")
             }
         }
     }
@@ -271,7 +384,7 @@ class GroupProfileActivity : BaseActivity() {
         groupIconImage.setImageResource(R.drawable.ic_contacts)
         groupIconImage.scaleType = ImageView.ScaleType.CENTER_INSIDE
         groupIconImage.imageTintList = android.content.res.ColorStateList.valueOf(
-            android.graphics.Color.parseColor("#999999")
+            ContextCompat.getColor(this, R.color.lock_title_gray)
         )
         saveGroupIcon(null)
         ThemedToast.show(this, "Group icon removed")

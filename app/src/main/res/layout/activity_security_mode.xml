@@ -4,7 +4,7 @@
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="?attr/colorSurface">
+    android:background="@color/surface_black">
 
     <!-- Header -->
     <LinearLayout
@@ -17,6 +17,7 @@
         android:paddingEnd="20dp"
         android:paddingTop="16dp"
         android:paddingBottom="16dp"
+        android:background="@color/header_bg"
         android:fitsSystemWindows="true"
         app:layout_constraintTop_toTopOf="parent">
 
@@ -34,6 +35,7 @@
                 android:layout_height="20dp"
                 android:layout_gravity="center"
                 android:src="@drawable/ic_back_arrow"
+                app:tint="#FFFFFF"
                 android:contentDescription="Back" />
 
         </FrameLayout>
@@ -45,7 +47,7 @@
             android:layout_weight="1"
             android:text="Advanced Settings"
             android:textSize="24sp"
-            android:textColor="?attr/colorOnSurfaceVariant"
+            android:textColor="#FFFFFF"
             android:fontFamily="@font/space_grotesk_bold"
             android:gravity="center" />
 
@@ -61,7 +63,7 @@
     android:layout_height="0dp"
     android:fillViewport="true"
     app:layout_constraintTop_toBottomOf="@id/header"
-    app:layout_constraintBottom_toTopOf="@id/bottomNav">
+    app:layout_constraintBottom_toBottomOf="parent">
 
     <LinearLayout
         android:layout_width="match_parent"
@@ -78,7 +80,7 @@
                 android:text="App Security"
                 android:textSize="13sp"
                 android:fontFamily="@font/poppins_medium"
-                android:textColor="#666666"
+                android:textColor="@color/text_primary"
                 android:layout_marginTop="8dp"
                 android:layout_marginBottom="8dp" />
 
@@ -88,7 +90,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:orientation="horizontal"
-                android:background="@drawable/settings_box_bg"
+                android:background="@drawable/wallet_token_bg"
                 android:padding="16dp"
                 android:layout_marginBottom="16dp"
                 android:gravity="center_vertical"
@@ -107,7 +109,7 @@
                         android:text="Auto-Lock Timer"
                         android:textSize="16sp"
                         android:fontFamily="@font/poppins_medium"
-                        android:textColor="#5C5C5C" />
+                        android:textColor="#FFFFFF" />
 
                     <TextView
                         android:id="@+id/autoLockStatus"
@@ -115,7 +117,7 @@
                         android:layout_height="wrap_content"
                         android:text="5 minutes"
                         android:textSize="13sp"
-                        android:textColor="#666666"
+                        android:textColor="@color/text_muted"
                         android:fontFamily="@font/poppins_regular" />
 
                 </LinearLayout>
@@ -125,7 +127,7 @@
                     android:layout_height="wrap_content"
                     android:text="›"
                     android:textSize="24sp"
-                    android:textColor="?attr/colorOnSurfaceVariant" />
+                    android:textColor="#FFFFFF" />
 
             </LinearLayout>
 
@@ -136,7 +138,7 @@
                 android:text="Call Privacy"
                 android:textSize="13sp"
                 android:fontFamily="@font/poppins_medium"
-                android:textColor="#666666"
+                android:textColor="@color/text_primary"
                 android:layout_marginTop="16dp"
                 android:layout_marginBottom="8dp"
                 android:visibility="gone" />
@@ -165,14 +167,14 @@
                         android:text="Answer calls when app closed"
                         android:textSize="16sp"
                         android:fontFamily="@font/poppins_medium"
-                        android:textColor="#5C5C5C" />
+                        android:textColor="@color/lock_subtitle_gray" />
 
                     <TextView
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:text="Show missed call log if disabled"
                         android:textSize="13sp"
-                        android:textColor="#666666"
+                        android:textColor="@color/text_muted"
                         android:fontFamily="@font/poppins_regular" />
 
                 </LinearLayout>
@@ -182,8 +184,8 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:checked="true"
-                    app:thumbTint="#333333"
-                    app:trackTint="#888888" />
+                    app:thumbTint="@color/input_border"
+                    app:trackTint="@color/lock_icon_gray" />
 
             </LinearLayout>
 
@@ -194,7 +196,7 @@
                 android:text="Advanced Ping Pong"
                 android:textSize="13sp"
                 android:fontFamily="@font/poppins_medium"
-                android:textColor="#666666"
+                android:textColor="@color/text_primary"
                 android:layout_marginTop="16dp"
                 android:layout_marginBottom="8dp" />
 
@@ -204,7 +206,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:orientation="horizontal"
-                android:background="@drawable/settings_box_bg"
+                android:background="@drawable/wallet_token_bg"
                 android:padding="16dp"
                 android:layout_marginBottom="16dp"
                 android:gravity="center_vertical">
@@ -221,14 +223,14 @@
                         android:text="Advanced Ping Pong"
                         android:textSize="16sp"
                         android:fontFamily="@font/poppins_medium"
-                        android:textColor="#5C5C5C" />
+                        android:textColor="#FFFFFF" />
 
                     <TextView
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:text="Require manual approval to download messages"
                         android:textSize="13sp"
-                        android:textColor="#666666"
+                        android:textColor="@color/text_muted"
                         android:fontFamily="@font/poppins_regular" />
 
                 </LinearLayout>
@@ -238,8 +240,8 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:checked="false"
-                    app:thumbTint="#333333"
-                    app:trackTint="#888888" />
+                    app:thumbTint="@color/input_border"
+                    app:trackTint="@color/lock_icon_gray" />
 
             </LinearLayout>
 
@@ -248,17 +250,5 @@
 
 </ScrollView>
 
-<!-- Bottom Navigation -->
-<include
-        android:id="@+id/bottomNav"
-        layout="@layout/bottom_navigation"
-        android:layout_width="0dp"
-        android:layout_height="80dp"
-        android:layout_marginStart="50dp"
-        android:layout_marginEnd="50dp"
-        android:layout_marginBottom="20dp"
-        app:layout_constraintBottom_toBottomOf="parent"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintEnd_toEndOf="parent" />
 
 </androidx.constraintlayout.widget.ConstraintLayout>

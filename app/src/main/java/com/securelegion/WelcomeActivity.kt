@@ -14,6 +14,7 @@ import android.view.View
 import android.view.WindowManager
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.ContextCompat
 
 /**
  * Welcome screen for new users (no wallet exists)
@@ -34,13 +35,8 @@ class WelcomeActivity : AppCompatActivity() {
         // WindowManager.LayoutParams.FLAG_SECURE
         // )
 
-        // Make status bar white with dark icons
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            @Suppress("DEPRECATION")
-            window.statusBarColor = Color.WHITE
-            @Suppress("DEPRECATION")
-            window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR
-        }
+        // Black status bar with light icons (matches iOS)
+        window.statusBarColor = Color.BLACK
 
         setContentView(R.layout.activity_welcome)
 
@@ -73,7 +69,7 @@ class WelcomeActivity : AppCompatActivity() {
 
                 override fun updateDrawState(ds: TextPaint) {
                     super.updateDrawState(ds)
-                    ds.color = Color.parseColor("#FFFFFF") // White color for "Import"
+                    ds.color = ContextCompat.getColor(this@WelcomeActivity, R.color.text_primary)
                     ds.isUnderlineText = false
                 }
             }
@@ -88,7 +84,7 @@ class WelcomeActivity : AppCompatActivity() {
 
         // Set the color for the first part
         importTextView.text = spannableString
-        importTextView.setTextColor(Color.parseColor("#666666")) // Gray for main text
+        importTextView.setTextColor(ContextCompat.getColor(this, R.color.text_muted))
         importTextView.movementMethod = LinkMovementMethod.getInstance()
         importTextView.highlightColor = Color.TRANSPARENT // Remove highlight on click
     }

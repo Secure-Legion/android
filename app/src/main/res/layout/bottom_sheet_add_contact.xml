@@ -26,7 +26,7 @@
         android:layout_height="56dp"
         android:orientation="horizontal"
         android:gravity="center_vertical"
-        android:background="@drawable/settings_box_bg"
+        android:background="@drawable/action_button_bg"
         android:paddingStart="16dp"
         android:paddingEnd="16dp"
         android:layout_marginBottom="10dp"
@@ -37,7 +37,7 @@
             android:layout_width="22dp"
             android:layout_height="22dp"
             android:src="@drawable/ic_qr_code"
-            app:tint="?attr/colorOnSurface"
+            app:tint="#FFFFFF"
             android:layout_marginEnd="14dp"
             android:contentDescription="QR" />
 
@@ -47,14 +47,14 @@
             android:layout_weight="1"
             android:text="Add by QR Code"
             android:textSize="16sp"
-            android:textColor="?attr/colorOnSurface"
+            android:textColor="#FFFFFF"
             android:fontFamily="@font/poppins_medium" />
 
         <ImageView
             android:layout_width="16dp"
             android:layout_height="16dp"
             android:src="@drawable/ic_chevron_right"
-            app:tint="#666666"
+            app:tint="#FFFFFF"
             android:contentDescription="Go" />
 
     </LinearLayout>
@@ -65,7 +65,7 @@
         android:layout_height="56dp"
         android:orientation="horizontal"
         android:gravity="center_vertical"
-        android:background="@drawable/settings_box_bg"
+        android:background="@drawable/action_button_bg"
         android:paddingStart="16dp"
         android:paddingEnd="16dp"
         android:layout_marginBottom="10dp"
@@ -76,7 +76,7 @@
             android:layout_width="22dp"
             android:layout_height="22dp"
             android:src="@drawable/ic_image"
-            app:tint="?attr/colorOnSurface"
+            app:tint="#FFFFFF"
             android:layout_marginEnd="14dp"
             android:contentDescription="Gallery" />
 
@@ -86,14 +86,14 @@
             android:layout_weight="1"
             android:text="Add QR from Gallery"
             android:textSize="16sp"
-            android:textColor="?attr/colorOnSurface"
+            android:textColor="#FFFFFF"
             android:fontFamily="@font/poppins_medium" />
 
         <ImageView
             android:layout_width="16dp"
             android:layout_height="16dp"
             android:src="@drawable/ic_chevron_right"
-            app:tint="#666666"
+            app:tint="#FFFFFF"
             android:contentDescription="Go" />
 
     </LinearLayout>
@@ -104,7 +104,7 @@
         android:layout_height="56dp"
         android:orientation="horizontal"
         android:gravity="center_vertical"
-        android:background="@drawable/settings_box_bg"
+        android:background="@drawable/action_button_bg"
         android:paddingStart="16dp"
         android:paddingEnd="16dp"
         android:clickable="true"
@@ -114,7 +114,7 @@
             android:layout_width="22dp"
             android:layout_height="22dp"
             android:src="@drawable/ic_keyboard"
-            app:tint="?attr/colorOnSurface"
+            app:tint="#FFFFFF"
             android:layout_marginEnd="14dp"
             android:contentDescription="Manual" />
 
@@ -124,14 +124,14 @@
             android:layout_weight="1"
             android:text="Add Manually"
             android:textSize="16sp"
-            android:textColor="?attr/colorOnSurface"
+            android:textColor="#FFFFFF"
             android:fontFamily="@font/poppins_medium" />
 
         <ImageView
             android:layout_width="16dp"
             android:layout_height="16dp"
             android:src="@drawable/ic_chevron_right"
-            app:tint="#666666"
+            app:tint="#FFFFFF"
             android:contentDescription="Go" />
 
     </LinearLayout>
@@ -150,7 +150,7 @@
         android:layout_height="56dp"
         android:orientation="horizontal"
         android:gravity="center_vertical"
-        android:background="@drawable/settings_box_bg"
+        android:background="@drawable/action_button_bg"
         android:paddingStart="16dp"
         android:paddingEnd="16dp"
         android:clickable="true"
@@ -160,7 +160,7 @@
             android:layout_width="22dp"
             android:layout_height="22dp"
             android:src="@drawable/ic_send"
-            app:tint="?attr/colorOnSurface"
+            app:tint="#FFFFFF"
             android:layout_marginEnd="14dp"
             android:contentDescription="Share" />
 
@@ -170,14 +170,14 @@
             android:layout_weight="1"
             android:text="Share Invite"
             android:textSize="16sp"
-            android:textColor="?attr/colorOnSurface"
+            android:textColor="#FFFFFF"
             android:fontFamily="@font/poppins_medium" />
 
         <ImageView
             android:layout_width="16dp"
             android:layout_height="16dp"
             android:src="@drawable/ic_chevron_right"
-            app:tint="#666666"
+            app:tint="#FFFFFF"
             android:contentDescription="Go" />
 
     </LinearLayout>

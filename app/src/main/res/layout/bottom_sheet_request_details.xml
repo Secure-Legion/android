@@ -75,7 +75,7 @@
         android:layout_height="wrap_content"
         android:text="$0.00"
         android:textSize="42sp"
-        android:textColor="#C0C0C0"
+        android:textColor="@color/text_settings"
         android:fontFamily="@font/space_grotesk_bold"
         android:gravity="center"
         android:layout_marginBottom="24dp" />

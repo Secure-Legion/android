@@ -35,7 +35,7 @@
         android:layout_height="wrap_content"
         android:text="Wallet Name"
         android:textSize="12sp"
-        android:textColor="#666666"
+        android:textColor="@color/text_muted"
         android:fontFamily="@font/poppins_medium"
         android:layout_marginBottom="4dp" />
 
@@ -55,7 +55,7 @@
         android:layout_height="wrap_content"
         android:text="Wallet Address"
         android:textSize="12sp"
-        android:textColor="#666666"
+        android:textColor="@color/text_muted"
         android:fontFamily="@font/poppins_medium"
         android:layout_marginBottom="4dp" />
 

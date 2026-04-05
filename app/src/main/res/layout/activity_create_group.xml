@@ -4,14 +4,14 @@
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="?attr/colorSurface">
+    android:background="@color/surface_black">
 
     <ScrollView
         android:layout_width="match_parent"
         android:layout_height="0dp"
         android:fillViewport="true"
         app:layout_constraintTop_toTopOf="parent"
-        app:layout_constraintBottom_toTopOf="@id/bottomNav">
+        app:layout_constraintBottom_toBottomOf="parent">
 
         <androidx.constraintlayout.widget.ConstraintLayout
             android:layout_width="match_parent"
@@ -29,6 +29,7 @@
                 android:paddingEnd="20dp"
                 android:paddingTop="16dp"
                 android:paddingBottom="16dp"
+                android:background="@color/header_bg"
                 android:fitsSystemWindows="true"
                 app:layout_constraintTop_toTopOf="parent">
 
@@ -46,6 +47,7 @@
                         android:layout_height="20dp"
                         android:layout_gravity="center"
                         android:src="@drawable/ic_back_arrow"
+                        app:tint="#FFFFFF"
                         android:contentDescription="Back" />
 
                 </FrameLayout>
@@ -59,37 +61,23 @@
                     android:text="New Group"
                     android:fontFamily="@font/space_grotesk_bold"
                     android:textSize="20sp"
-                    android:textColor="?attr/colorOnSurfaceVariant"
+                    android:textColor="#FFFFFF"
                     android:gravity="center" />
 
-                <!-- Settings Icon -->
-                <FrameLayout
-                    android:id="@+id/settingsIcon"
+                <!-- Spacer for alignment -->
+                <View
                     android:layout_width="42dp"
-                    android:layout_height="42dp"
-                    android:background="@drawable/top_icon_bg"
-                    android:clickable="true"
-                    android:focusable="true">
-
-                <ImageView
-                    android:layout_width="24dp"
-                    android:layout_height="24dp"
-                    android:layout_gravity="center"
-                    android:src="@drawable/ic_settings_cog"
-                    app:tint="?attr/colorOnSurfaceVariant"
-                    android:contentDescription="Settings" />
-
-            </FrameLayout>
+                    android:layout_height="42dp" />
 
             </LinearLayout>
 
-            <!-- Group Icon Placeholder -->
+            <!-- Group Icon Placeholder (black circle) -->
             <FrameLayout
                 android:id="@+id/groupIconContainer"
                 android:layout_width="120dp"
                 android:layout_height="120dp"
                 android:layout_marginTop="40dp"
-                android:background="@drawable/profile_circle_bg"
+                android:background="@drawable/settings_icon_bg"
                 android:clickable="true"
                 android:focusable="true"
                 app:layout_constraintTop_toBottomOf="@id/header"
@@ -103,7 +91,7 @@
                     android:layout_gravity="center"
                     android:scaleType="centerInside"
                     android:src="@drawable/ic_contacts"
-                    app:tint="#999999"
+                    app:tint="#FFFFFF"
                     android:contentDescription="Group Icon" />
 
                 <!-- Edit Icon -->
@@ -121,7 +109,7 @@
                         android:layout_height="16dp"
                         android:layout_gravity="center"
                         android:src="@drawable/ic_edit"
-                        app:tint="?attr/colorOnSurfaceVariant" />
+                        app:tint="#FFFFFF" />
 
                 </FrameLayout>
 
@@ -161,7 +149,7 @@
                     android:layout_height="wrap_content"
                     android:hint="Enter group name"
                     android:inputType="text"
-                    android:textColorHint="#666666"
+                    android:textColorHint="@color/lock_password_hint"
                     android:textColor="?attr/colorOnSurface"
                     android:fontFamily="@font/poppins_medium"
                     android:textSize="16sp"
@@ -252,7 +240,7 @@
                 android:layout_marginTop="48dp"
                 android:text="Create Group"
                 android:textSize="16sp"
-                android:textColor="?attr/colorOnSurface"
+                android:textColor="#FFFFFF"
                 android:fontFamily="@font/space_grotesk_bold"
                 android:background="@drawable/lock_button_bg"
                 android:gravity="center"
@@ -266,17 +254,6 @@
 
     </ScrollView>
 
-    <!-- Bottom Navigation -->
-    <include
-        android:id="@+id/bottomNav"
-        layout="@layout/bottom_navigation"
-        android:layout_width="0dp"
-        android:layout_height="80dp"
-        android:layout_marginStart="50dp"
-        android:layout_marginEnd="50dp"
-        android:layout_marginBottom="20dp"
-        app:layout_constraintBottom_toBottomOf="parent"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintEnd_toEndOf="parent" />
+    <!-- Bottom Navigation removed -->
 
 </androidx.constraintlayout.widget.ConstraintLayout>

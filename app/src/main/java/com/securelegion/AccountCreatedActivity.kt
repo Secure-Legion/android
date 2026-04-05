@@ -16,6 +16,7 @@ import android.widget.ImageView
 import android.widget.TextView
 import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.ContextCompat
 import com.google.zxing.BarcodeFormat
 import com.google.zxing.qrcode.QRCodeWriter
 import com.securelegion.crypto.KeyManager
@@ -28,9 +29,9 @@ import com.securelegion.utils.ThemedToast
  */
 class AccountCreatedActivity : AppCompatActivity() {
 
-    private lateinit var seedPhraseBox: TextView
     private lateinit var confirmCheckbox: CheckBox
     private lateinit var continueButton: TextView
+    private lateinit var wordViews: Array<TextView>
     private var seedPhrase: String? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -82,9 +83,17 @@ class AccountCreatedActivity : AppCompatActivity() {
     }
 
     private fun initializeViews() {
-        seedPhraseBox = findViewById(R.id.seedPhraseBox)
         confirmCheckbox = findViewById(R.id.confirmCheckbox)
         continueButton = findViewById(R.id.continueButton)
+
+        wordViews = arrayOf(
+            findViewById(R.id.word1), findViewById(R.id.word2),
+            findViewById(R.id.word3), findViewById(R.id.word4),
+            findViewById(R.id.word5), findViewById(R.id.word6),
+            findViewById(R.id.word7), findViewById(R.id.word8),
+            findViewById(R.id.word9), findViewById(R.id.word10),
+            findViewById(R.id.word11), findViewById(R.id.word12)
+        )
 
         // Enable button only when checkbox is checked
         confirmCheckbox.setOnCheckedChangeListener { _, isChecked ->
@@ -101,9 +110,21 @@ class AccountCreatedActivity : AppCompatActivity() {
             if (seedPhrase != null) {
                 val words = seedPhrase!!.split(" ")
                 if (words.size == 12) {
-                    // Display all words in the single box, centered
-                    seedPhraseBox.text = words.joinToString("  ")
-                    Log.i("AccountCreated", "Loaded 12-word seed phrase")
+                    // Layout order matches iOS: rows are (1,7), (2,8), (3,9), (4,10), (5,11), (6,12)
+                    // wordViews[0]=word1, [1]=word2, ..., [5]=word6, [6]=word7, ..., [11]=word12
+                    for (i in 0 until 12) {
+                        val number = i + 1
+                        // Gray number prefix + bold black word
+                        val text = SpannableString("$number.  ${words[i]}")
+                        val numEnd = text.indexOf(".") + 1
+                        text.setSpan(
+                            ForegroundColorSpan(0xFF999999.toInt()),
+                            0, numEnd,
+                            Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+                        )
+                        wordViews[i].text = text
+                    }
+                    Log.i("AccountCreated", "Loaded 12-word seed phrase into grid")
                 } else {
                     Log.e("AccountCreated", "Invalid seed phrase word count: ${words.size}")
                 }
@@ -143,6 +164,8 @@ class AccountCreatedActivity : AppCompatActivity() {
             intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
             startActivity(intent)
             finish()
+            @Suppress("DEPRECATION")
+            overridePendingTransition(0, 0)
         }
     }
 
@@ -161,7 +184,7 @@ class AccountCreatedActivity : AppCompatActivity() {
             val imageView = ImageView(this).apply {
                 setImageBitmap(bitmap)
                 setPadding(48, 48, 48, 48)
-                setBackgroundColor(0xFF1C1C1C.toInt())
+                setBackgroundColor(ContextCompat.getColor(this@AccountCreatedActivity, R.color.surface_variant))
             }
 
             val qrDialog = GlassDialog.builder(this)

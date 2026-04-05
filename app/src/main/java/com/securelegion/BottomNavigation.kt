@@ -39,9 +39,11 @@ object BottomNavigationHelper {
         activity.findViewById<View>(R.id.navMessages)?.setOnClickListener {
             if (activity !is MainActivity) {
                 val intent = Intent(activity, MainActivity::class.java)
-                intent.flags = Intent.FLAG_ACTIVITY_CLEAR_TOP
+                intent.flags = Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
                 activity.startActivity(intent)
                 activity.finish()
+                @Suppress("DEPRECATION")
+                activity.overridePendingTransition(0, 0)
             }
         }
 
@@ -51,9 +53,11 @@ object BottomNavigationHelper {
             } else {
                 val intent = Intent(activity, MainActivity::class.java)
                 intent.putExtra("SHOW_CONTACTS", true)
-                intent.flags = Intent.FLAG_ACTIVITY_CLEAR_TOP
+                intent.flags = Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
                 activity.startActivity(intent)
                 activity.finish()
+                @Suppress("DEPRECATION")
+                activity.overridePendingTransition(0, 0)
             }
         }
 
@@ -61,6 +65,8 @@ object BottomNavigationHelper {
             if (activity !is WalletIdentityActivity) {
                 val intent = Intent(activity, WalletIdentityActivity::class.java)
                 activity.startActivity(intent)
+                @Suppress("DEPRECATION")
+                activity.overridePendingTransition(0, 0)
             }
         }
     }

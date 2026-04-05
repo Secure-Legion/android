@@ -3014,10 +3014,14 @@ class ChatActivity : BaseActivity() {
                         contactAvatar.setPhotoBase64(contact.profilePictureBase64)
                     }
                     contactAvatar.setName(contact.displayName)
+                    contactAvatar.setBgColor(android.graphics.Color.parseColor("#2A2A2A"))
+                    contactAvatar.setTextColor(android.graphics.Color.WHITE)
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Error loading contact photo", e)
                 contactAvatar.setName(contactName)
+                contactAvatar.setBgColor(android.graphics.Color.parseColor("#2A2A2A"))
+                contactAvatar.setTextColor(android.graphics.Color.WHITE)
             }
         }
 

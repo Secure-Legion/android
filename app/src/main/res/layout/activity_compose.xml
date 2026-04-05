@@ -4,7 +4,7 @@
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="?attr/colorSurface">
+    android:background="@color/surface_black">
 
     <!-- Header -->
     <LinearLayout
@@ -17,6 +17,7 @@
         android:paddingEnd="20dp"
         android:paddingTop="16dp"
         android:paddingBottom="16dp"
+        android:background="@color/header_bg"
         android:fitsSystemWindows="true"
         app:layout_constraintTop_toTopOf="parent">
 
@@ -35,6 +36,7 @@
                 android:layout_height="20dp"
                 android:layout_gravity="center"
                 android:src="@drawable/ic_back_arrow"
+                app:tint="#FFFFFF"
                 android:contentDescription="Back" />
 
         </FrameLayout>
@@ -46,7 +48,7 @@
             android:layout_weight="1"
             android:text="Compose"
             android:textSize="22sp"
-            android:textColor="#CCCCCC"
+            android:textColor="#FFFFFF"
             android:fontFamily="@font/space_grotesk_bold"
             android:textStyle="bold"
             android:gravity="center" />
@@ -61,6 +63,14 @@
 
     <!-- Search Bar -->
     <LinearLayout
+        android:id="@+id/searchBarWrapper"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="@color/header_bg"
+        android:paddingBottom="16dp"
+        app:layout_constraintTop_toBottomOf="@id/header">
+
+    <LinearLayout
         android:id="@+id/searchContainer"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
@@ -73,15 +83,13 @@
         android:layout_marginStart="24dp"
         android:layout_marginEnd="24dp"
         android:layout_marginTop="8dp"
-        android:layout_marginBottom="16dp"
-        android:gravity="center_vertical"
-        app:layout_constraintTop_toBottomOf="@id/header">
+        android:gravity="center_vertical">
 
         <ImageView
             android:layout_width="20dp"
             android:layout_height="20dp"
             android:src="@android:drawable/ic_menu_search"
-            app:tint="#666666"
+            app:tint="#888888"
             android:layout_marginEnd="12dp"
             android:contentDescription="Search" />
 
@@ -92,12 +100,14 @@
             android:layout_weight="1"
             android:background="@android:color/transparent"
             android:hint="Search..."
-            android:textColorHint="#666666"
-            android:textColor="?attr/colorOnSurface"
+            android:textColorHint="#888888"
+            android:textColor="#FFFFFF"
             android:textSize="15sp"
             android:fontFamily="@font/poppins_regular"
             android:inputType="text"
             android:maxLines="1" />
+
+    </LinearLayout>
 
     </LinearLayout>
 
@@ -109,7 +119,7 @@
         android:paddingStart="24dp"
         android:paddingEnd="50dp"
         android:clipToPadding="false"
-        app:layout_constraintTop_toBottomOf="@id/searchContainer"
+        app:layout_constraintTop_toBottomOf="@id/searchBarWrapper"
         app:layout_constraintBottom_toTopOf="@id/bottomNav" />
 
     <!-- Alphabetical Index Sidebar -->
@@ -123,7 +133,7 @@
         android:layout_marginEnd="12dp"
         android:gravity="center_vertical"
         app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintTop_toBottomOf="@id/searchContainer"
+        app:layout_constraintTop_toBottomOf="@id/searchBarWrapper"
         app:layout_constraintBottom_toTopOf="@id/bottomNav">
 
         <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="A" android:textSize="10sp" android:textColor="?attr/colorOnSurfaceVariant" android:fontFamily="@font/space_grotesk_bold" android:padding="2dp" android:clickable="true" android:focusable="true" />
@@ -163,7 +173,7 @@
         android:orientation="vertical"
         android:gravity="center"
         android:visibility="gone"
-        app:layout_constraintTop_toBottomOf="@id/searchContainer"
+        app:layout_constraintTop_toBottomOf="@id/searchBarWrapper"
         app:layout_constraintBottom_toTopOf="@id/bottomNav">
 
         <TextView
@@ -171,7 +181,7 @@
             android:layout_height="wrap_content"
             android:text="No Contacts"
             android:textSize="18sp"
-            android:textColor="#CCCCCC"
+            android:textColor="@color/text_settings"
             android:fontFamily="@font/space_grotesk_bold"
             android:textStyle="bold"
             android:layout_marginBottom="8dp" />

@@ -4,7 +4,7 @@
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="#000000">
+    android:background="@color/surface_black">
 
     <!-- Header -->
     <LinearLayout
@@ -17,6 +17,7 @@
         android:paddingEnd="20dp"
         android:paddingTop="16dp"
         android:paddingBottom="8dp"
+        android:background="@color/header_bg"
         android:fitsSystemWindows="true"
         app:layout_constraintTop_toTopOf="parent">
 
@@ -34,6 +35,7 @@
                 android:layout_height="20dp"
                 android:layout_gravity="center"
                 android:src="@drawable/ic_back_arrow"
+                app:tint="#FFFFFF"
                 android:contentDescription="Back" />
 
         </FrameLayout>
@@ -54,13 +56,11 @@
             android:orientation="vertical"
             android:gravity="center_horizontal">
 
-            <!-- Profile Picture -->
-            <ImageView
+            <!-- Profile Picture (uses AvatarView to show initial) -->
+            <com.securelegion.views.AvatarView
                 android:id="@+id/profilePicture"
                 android:layout_width="120dp"
                 android:layout_height="120dp"
-                android:src="@drawable/default_avatar"
-                android:background="@drawable/profile_circle_bg"
                 android:layout_marginTop="16dp"
                 android:layout_marginBottom="12dp"
                 android:contentDescription="Profile Picture" />
@@ -71,7 +71,7 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:textSize="26sp"
-                android:textColor="@color/lock_title_gray"
+                android:textColor="@color/text_primary"
                 android:fontFamily="@font/space_grotesk_bold"
                 android:visibility="gone" />
 
@@ -82,7 +82,7 @@
                 android:layout_height="wrap_content"
                 android:text="@WIZARD"
                 android:textSize="26sp"
-                android:textColor="@color/lock_title_gray"
+                android:textColor="@color/text_primary"
                 android:fontFamily="@font/space_grotesk_bold" />
 
             <!-- Set/Edit Nickname button -->
@@ -92,7 +92,7 @@
                 android:layout_height="wrap_content"
                 android:text="Set Nickname"
                 android:textSize="11sp"
-                android:textColor="#6C6C6C"
+                android:textColor="@color/text_muted"
                 android:fontFamily="@font/poppins_medium"
                 android:paddingStart="14dp"
                 android:paddingEnd="14dp"
@@ -100,7 +100,7 @@
                 android:paddingBottom="5dp"
                 android:layout_marginTop="4dp"
                 android:layout_marginBottom="20dp"
-                android:background="@drawable/top_icon_bg"
+                android:background="@drawable/set_nickname_bg"
                 android:clickable="true"
                 android:focusable="true" />
 
@@ -122,7 +122,7 @@
                     android:layout_marginEnd="6dp"
                     android:orientation="vertical"
                     android:gravity="center"
-                    android:background="@drawable/settings_icon_bg"
+                    android:background="@drawable/action_button_bg"
                     android:paddingTop="12dp"
                     android:paddingBottom="8dp"
                     android:clickable="true"
@@ -132,7 +132,7 @@
                         android:layout_width="22dp"
                         android:layout_height="22dp"
                         android:src="@drawable/ic_nav_chat"
-                        app:tint="?attr/colorOnSurfaceVariant"
+                        app:tint="#FFFFFF"
                         android:contentDescription="Message" />
 
                     <TextView
@@ -140,7 +140,7 @@
                         android:layout_height="wrap_content"
                         android:text="message"
                         android:textSize="9sp"
-                        android:textColor="#8C8C8C"
+                        android:textColor="#FFFFFF"
                         android:fontFamily="@font/poppins_medium"
                         android:layout_marginTop="4dp" />
 
@@ -155,7 +155,7 @@
                     android:layout_marginEnd="6dp"
                     android:orientation="vertical"
                     android:gravity="center"
-                    android:background="@drawable/settings_icon_bg"
+                    android:background="@drawable/action_button_bg"
                     android:paddingTop="12dp"
                     android:paddingBottom="8dp"
                     android:clickable="true"
@@ -165,8 +165,8 @@
                         android:id="@+id/muteIcon"
                         android:layout_width="22dp"
                         android:layout_height="22dp"
-                        android:src="@drawable/ic_bell"
-                        app:tint="?attr/colorOnSurfaceVariant"
+                        android:src="@drawable/ic_speaker_off"
+                        app:tint="#FFFFFF"
                         android:contentDescription="Mute" />
 
                     <TextView
@@ -175,7 +175,7 @@
                         android:layout_height="wrap_content"
                         android:text="mute"
                         android:textSize="9sp"
-                        android:textColor="#8C8C8C"
+                        android:textColor="#FFFFFF"
                         android:fontFamily="@font/poppins_medium"
                         android:layout_marginTop="4dp" />
 
@@ -190,7 +190,7 @@
                     android:layout_marginEnd="6dp"
                     android:orientation="vertical"
                     android:gravity="center"
-                    android:background="@drawable/settings_icon_bg"
+                    android:background="@drawable/action_button_bg"
                     android:paddingTop="12dp"
                     android:paddingBottom="8dp"
                     android:clickable="true"
@@ -201,7 +201,7 @@
                         android:layout_width="22dp"
                         android:layout_height="22dp"
                         android:src="@drawable/ic_star_outline"
-                        app:tint="?attr/colorOnSurfaceVariant"
+                        app:tint="#FFFFFF"
                         android:contentDescription="Favorite" />
 
                     <TextView
@@ -210,7 +210,7 @@
                         android:layout_height="wrap_content"
                         android:text="circle"
                         android:textSize="9sp"
-                        android:textColor="#8C8C8C"
+                        android:textColor="#FFFFFF"
                         android:fontFamily="@font/poppins_medium"
                         android:layout_marginTop="4dp" />
 
@@ -225,7 +225,7 @@
                     android:layout_marginEnd="6dp"
                     android:orientation="vertical"
                     android:gravity="center"
-                    android:background="@drawable/settings_icon_bg"
+                    android:background="@drawable/action_button_bg"
                     android:paddingTop="12dp"
                     android:paddingBottom="8dp"
                     android:clickable="true"
@@ -235,7 +235,7 @@
                         android:layout_width="22dp"
                         android:layout_height="22dp"
                         android:src="@drawable/ic_delete"
-                        app:tint="?attr/colorOnSurfaceVariant"
+                        app:tint="#FFFFFF"
                         android:contentDescription="Delete" />
 
                     <TextView
@@ -243,7 +243,7 @@
                         android:layout_height="wrap_content"
                         android:text="delete"
                         android:textSize="9sp"
-                        android:textColor="#8C8C8C"
+                        android:textColor="#FFFFFF"
                         android:fontFamily="@font/poppins_medium"
                         android:layout_marginTop="4dp" />
 
@@ -257,7 +257,7 @@
                     android:layout_weight="1"
                     android:orientation="vertical"
                     android:gravity="center"
-                    android:background="@drawable/settings_icon_bg"
+                    android:background="@drawable/action_button_bg"
                     android:paddingTop="12dp"
                     android:paddingBottom="8dp"
                     android:clickable="true"
@@ -267,8 +267,8 @@
                         android:id="@+id/blockIcon"
                         android:layout_width="22dp"
                         android:layout_height="22dp"
-                        android:src="@drawable/ic_close_x"
-                        app:tint="?attr/colorOnSurfaceVariant"
+                        android:src="@drawable/ic_hand_stop"
+                        app:tint="#FFFFFF"
                         android:contentDescription="Block" />
 
                     <TextView
@@ -277,7 +277,7 @@
                         android:layout_height="wrap_content"
                         android:text="block"
                         android:textSize="9sp"
-                        android:textColor="#8C8C8C"
+                        android:textColor="#FFFFFF"
                         android:fontFamily="@font/poppins_medium"
                         android:layout_marginTop="4dp" />
 
@@ -302,7 +302,7 @@
                     android:text="Media"
                     android:textSize="12sp"
                     android:fontFamily="@font/poppins_medium"
-                    android:textColor="#FFFFFF"
+                    android:textColor="@color/text_primary"
                     android:background="@drawable/contact_tab_active"
                     android:paddingStart="12dp"
                     android:paddingEnd="12dp"
@@ -319,7 +319,7 @@
                     android:text="Voice"
                     android:textSize="12sp"
                     android:fontFamily="@font/poppins_medium"
-                    android:textColor="#666666"
+                    android:textColor="@color/text_muted"
                     android:background="@drawable/contact_tab_inactive"
                     android:paddingStart="12dp"
                     android:paddingEnd="12dp"
@@ -336,7 +336,7 @@
                     android:text="Files"
                     android:textSize="12sp"
                     android:fontFamily="@font/poppins_medium"
-                    android:textColor="#666666"
+                    android:textColor="@color/text_muted"
                     android:background="@drawable/contact_tab_inactive"
                     android:paddingStart="12dp"
                     android:paddingEnd="12dp"
@@ -353,7 +353,7 @@
                     android:text="Links"
                     android:textSize="12sp"
                     android:fontFamily="@font/poppins_medium"
-                    android:textColor="#666666"
+                    android:textColor="@color/text_muted"
                     android:background="@drawable/contact_tab_inactive"
                     android:paddingStart="12dp"
                     android:paddingEnd="12dp"
@@ -370,7 +370,7 @@
                     android:text="Groups"
                     android:textSize="12sp"
                     android:fontFamily="@font/poppins_medium"
-                    android:textColor="#666666"
+                    android:textColor="@color/text_muted"
                     android:background="@drawable/contact_tab_inactive"
                     android:paddingStart="12dp"
                     android:paddingEnd="12dp"
@@ -411,7 +411,7 @@
                         android:layout_height="wrap_content"
                         android:text="No shared media"
                         android:textSize="14sp"
-                        android:textColor="#444444"
+                        android:textColor="@color/text_muted"
                         android:fontFamily="@font/poppins_regular"
                         android:gravity="center"
                         android:paddingTop="48dp"
@@ -443,7 +443,7 @@
                         android:layout_height="wrap_content"
                         android:text="No voice messages"
                         android:textSize="14sp"
-                        android:textColor="#444444"
+                        android:textColor="@color/text_muted"
                         android:fontFamily="@font/poppins_regular"
                         android:gravity="center"
                         android:paddingTop="48dp"
@@ -465,7 +465,7 @@
                         android:layout_height="wrap_content"
                         android:text="No shared files"
                         android:textSize="14sp"
-                        android:textColor="#444444"
+                        android:textColor="@color/text_muted"
                         android:fontFamily="@font/poppins_regular"
                         android:gravity="center"
                         android:paddingTop="48dp"
@@ -497,7 +497,7 @@
                         android:layout_height="wrap_content"
                         android:text="No shared links"
                         android:textSize="14sp"
-                        android:textColor="#444444"
+                        android:textColor="@color/text_muted"
                         android:fontFamily="@font/poppins_regular"
                         android:gravity="center"
                         android:paddingTop="48dp"
@@ -529,7 +529,7 @@
                         android:layout_height="wrap_content"
                         android:text="No shared groups"
                         android:textSize="14sp"
-                        android:textColor="#444444"
+                        android:textColor="@color/text_muted"
                         android:fontFamily="@font/poppins_regular"
                         android:gravity="center"
                         android:paddingTop="48dp"

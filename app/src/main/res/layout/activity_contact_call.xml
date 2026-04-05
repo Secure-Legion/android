@@ -4,7 +4,7 @@
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="#000000">
+    android:background="@color/surface_black">
 
     <!-- Header -->
     <LinearLayout
@@ -142,7 +142,7 @@
                         android:layout_height="wrap_content"
                         android:text="Call"
                         android:textSize="11sp"
-                        android:textColor="#8C8C8C"
+                        android:textColor="@color/text_action"
                         android:fontFamily="@font/poppins_medium"
                         android:layout_marginTop="6dp" />
 
@@ -178,7 +178,7 @@
                         android:layout_height="wrap_content"
                         android:text="Message"
                         android:textSize="11sp"
-                        android:textColor="#8C8C8C"
+                        android:textColor="@color/text_action"
                         android:fontFamily="@font/poppins_medium"
                         android:layout_marginTop="6dp" />
 
@@ -192,7 +192,7 @@
                 android:layout_height="wrap_content"
                 android:text="Recent Calls"
                 android:textSize="16sp"
-                android:textColor="#8C8C8C"
+                android:textColor="@color/text_action"
                 android:fontFamily="@font/poppins_medium"
                 android:paddingStart="28dp"
                 android:paddingEnd="28dp"
@@ -216,7 +216,7 @@
                 android:layout_height="wrap_content"
                 android:text="No calls yet"
                 android:textSize="14sp"
-                android:textColor="#666666"
+                android:textColor="@color/text_muted"
                 android:fontFamily="@font/poppins_regular"
                 android:visibility="gone"
                 android:layout_marginTop="24dp"

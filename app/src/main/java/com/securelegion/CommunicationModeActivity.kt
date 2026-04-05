@@ -6,6 +6,7 @@ import android.view.View
 import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.appcompat.widget.SwitchCompat
+import androidx.core.content.ContextCompat
 import com.securelegion.utils.ThemedToast
 
 /**
@@ -108,7 +109,7 @@ class CommunicationModeActivity : BaseActivity() {
             deviceSettingsSection.visibility = View.VISIBLE
         } else {
             secureMeshStatus.text = "Disconnected"
-            secureMeshStatus.setTextColor(0xFF666666.toInt()) // Gray for disconnected
+            secureMeshStatus.setTextColor(ContextCompat.getColor(this, R.color.text_muted)) // Gray for disconnected
             connectionStatusCard.visibility = View.GONE
             deviceSettingsSection.visibility = View.GONE
         }

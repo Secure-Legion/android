@@ -4,7 +4,7 @@
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="?attr/colorSurface">
+    android:background="@color/surface_black">
 
     <!-- Camera Preview -->
     <androidx.camera.view.PreviewView
@@ -145,7 +145,7 @@
             android:layout_height="wrap_content"
             android:text="Position the QR code within the frame"
             android:textSize="14sp"
-            android:textColor="#CCCCCC"
+            android:textColor="@color/text_settings"
             android:fontFamily="@font/poppins_regular"
             android:gravity="center"
             android:layout_marginTop="16dp" />

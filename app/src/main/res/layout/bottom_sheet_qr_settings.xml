@@ -60,14 +60,14 @@
                 android:text="Identity Rotator"
                 android:textSize="16sp"
                 android:fontFamily="@font/poppins_medium"
-                android:textColor="#8C8C8C" />
+                android:textColor="@color/text_action" />
 
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:text="Rotate your .onion address if compromised"
                 android:textSize="12sp"
-                android:textColor="#666666"
+                android:textColor="@color/text_muted"
                 android:fontFamily="@font/poppins_regular" />
 
         </LinearLayout>
@@ -78,7 +78,7 @@
             android:layout_height="wrap_content"
             android:text="Coming Soon"
             android:textSize="11sp"
-            android:textColor="#999999"
+            android:textColor="@color/lock_title_gray"
             android:fontFamily="@font/poppins_medium"
             android:background="@drawable/settings_icon_bg"
             android:paddingStart="10dp"
@@ -111,7 +111,7 @@
                 android:text="QR Code Expiry Time"
                 android:textSize="16sp"
                 android:fontFamily="@font/poppins_medium"
-                android:textColor="#8C8C8C" />
+                android:textColor="@color/text_action" />
 
             <TextView
                 android:id="@+id/expiryValueText"
@@ -129,7 +129,7 @@
             android:layout_height="wrap_content"
             android:text="How long your QR code stays valid before auto-rotating"
             android:textSize="12sp"
-            android:textColor="#666666"
+            android:textColor="@color/text_muted"
             android:fontFamily="@font/poppins_regular"
             android:layout_marginBottom="12dp" />
 
@@ -159,7 +159,7 @@
                 android:layout_weight="1"
                 android:text="15 min"
                 android:textSize="11sp"
-                android:textColor="#555555"
+                android:textColor="@color/lock_subtitle_gray"
                 android:fontFamily="@font/poppins_regular" />
 
             <TextView
@@ -168,7 +168,7 @@
                 android:layout_weight="1"
                 android:text="7 days"
                 android:textSize="11sp"
-                android:textColor="#555555"
+                android:textColor="@color/lock_subtitle_gray"
                 android:fontFamily="@font/poppins_regular"
                 android:gravity="end" />
 
@@ -199,7 +199,7 @@
                 android:text="Max QR Uses"
                 android:textSize="16sp"
                 android:fontFamily="@font/poppins_medium"
-                android:textColor="#8C8C8C" />
+                android:textColor="@color/text_action" />
 
             <TextView
                 android:id="@+id/maxUsesValueText"
@@ -217,7 +217,7 @@
             android:layout_height="wrap_content"
             android:text="How many times your QR code can be scanned before rotating"
             android:textSize="12sp"
-            android:textColor="#666666"
+            android:textColor="@color/text_muted"
             android:fontFamily="@font/poppins_regular"
             android:layout_marginBottom="12dp" />
 
@@ -247,7 +247,7 @@
                 android:layout_weight="1"
                 android:text="1 use"
                 android:textSize="11sp"
-                android:textColor="#555555"
+                android:textColor="@color/lock_subtitle_gray"
                 android:fontFamily="@font/poppins_regular" />
 
             <TextView
@@ -256,7 +256,7 @@
                 android:layout_weight="1"
                 android:text="Unlimited"
                 android:textSize="11sp"
-                android:textColor="#555555"
+                android:textColor="@color/lock_subtitle_gray"
                 android:fontFamily="@font/poppins_regular"
                 android:gravity="end" />
 

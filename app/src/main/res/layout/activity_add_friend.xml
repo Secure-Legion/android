@@ -4,7 +4,7 @@
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="#000000">
+    android:background="@color/surface_black">
 
     <!-- Header -->
     <LinearLayout
@@ -17,6 +17,7 @@
         android:paddingEnd="20dp"
         android:paddingTop="16dp"
         android:paddingBottom="16dp"
+        android:background="@color/header_bg"
         android:fitsSystemWindows="true"
         app:layout_constraintTop_toTopOf="parent">
 
@@ -35,6 +36,7 @@
                 android:layout_height="20dp"
                 android:layout_gravity="center"
                 android:src="@drawable/ic_back_arrow"
+                app:tint="#FFFFFF"
                 android:contentDescription="Back" />
 
         </FrameLayout>
@@ -46,7 +48,7 @@
             android:layout_weight="1"
             android:text="Add Friend"
             android:textSize="24sp"
-            android:textColor="?attr/colorOnSurfaceVariant"
+            android:textColor="#FFFFFF"
             android:fontFamily="@font/space_grotesk_bold"
             android:textStyle="bold"
             android:gravity="center" />
@@ -125,7 +127,7 @@
                         android:text="Scan QR"
                         android:textSize="14sp"
                         android:fontFamily="@font/space_grotesk_bold"
-                        android:textColor="?attr/colorOnSurface" />
+                        android:textColor="@color/text_primary" />
 
                 </LinearLayout>
 
@@ -154,7 +156,7 @@
                         android:text="Gallery"
                         android:textSize="14sp"
                         android:fontFamily="@font/space_grotesk_bold"
-                        android:textColor="?attr/colorOnSurface" />
+                        android:textColor="@color/text_primary" />
 
                 </LinearLayout>
 
@@ -174,7 +176,7 @@
                     android:text="Username"
                     android:textSize="14sp"
                     android:fontFamily="@font/poppins_medium"
-                    android:textColor="#8C8C8C"
+                    android:textColor="@color/text_primary"
                     android:layout_marginBottom="8dp" />
 
                 <FrameLayout
@@ -189,8 +191,8 @@
                         android:background="@drawable/lock_password_input_bg"
                         android:hint="Enter friend\u0027s username"
                         android:inputType="text"
-                        android:textColorHint="#666666"
-                        android:textColor="#8C8C8C"
+                        android:textColorHint="@color/lock_password_hint"
+                        android:textColor="@color/text_primary"
                         android:fontFamily="@font/poppins_regular"
                         android:textSize="16sp"
                         android:paddingStart="16dp"
@@ -204,7 +206,7 @@
                     android:text="Friends Address"
                     android:textSize="14sp"
                     android:fontFamily="@font/poppins_medium"
-                    android:textColor="#8C8C8C"
+                    android:textColor="@color/text_primary"
                     android:layout_marginBottom="8dp" />
 
                 <FrameLayout
@@ -219,8 +221,8 @@
                         android:background="@drawable/lock_password_input_bg"
                         android:hint="Enter friend\u0027s .onion address"
                         android:inputType="text"
-                        android:textColorHint="#666666"
-                        android:textColor="#8C8C8C"
+                        android:textColorHint="@color/lock_password_hint"
+                        android:textColor="@color/text_primary"
                         android:fontFamily="@font/poppins_regular"
                         android:textSize="16sp"
                         android:paddingStart="16dp"
@@ -235,7 +237,7 @@
                     android:text="Contact PIN"
                     android:textSize="14sp"
                     android:fontFamily="@font/poppins_medium"
-                    android:textColor="#8C8C8C"
+                    android:textColor="@color/text_primary"
                     android:layout_marginBottom="8dp" />
 
                 <!-- PIN Input Boxes in phone format: XXX-XXX-XXXX -->
@@ -258,7 +260,7 @@
                         android:gravity="center"
                         android:inputType="number"
                         android:maxLength="1"
-                        android:textColor="#8C8C8C"
+                        android:textColor="@color/text_primary"
                         android:textSize="16sp"
                         android:fontFamily="@font/poppins_medium" />
 
@@ -272,7 +274,7 @@
                         android:gravity="center"
                         android:inputType="number"
                         android:maxLength="1"
-                        android:textColor="#8C8C8C"
+                        android:textColor="@color/text_primary"
                         android:textSize="16sp"
                         android:fontFamily="@font/poppins_medium" />
 
@@ -286,7 +288,7 @@
                         android:gravity="center"
                         android:inputType="number"
                         android:maxLength="1"
-                        android:textColor="#8C8C8C"
+                        android:textColor="@color/text_primary"
                         android:textSize="16sp"
                         android:fontFamily="@font/poppins_medium" />
 
@@ -295,7 +297,7 @@
                         android:layout_width="wrap_content"
                         android:layout_height="36dp"
                         android:text="-"
-                        android:textColor="#666666"
+                        android:textColor="@color/text_muted"
                         android:textSize="20sp"
                         android:gravity="center"
                         android:layout_marginEnd="8dp" />
@@ -311,7 +313,7 @@
                         android:gravity="center"
                         android:inputType="number"
                         android:maxLength="1"
-                        android:textColor="#8C8C8C"
+                        android:textColor="@color/text_primary"
                         android:textSize="16sp"
                         android:fontFamily="@font/poppins_medium" />
 
@@ -325,7 +327,7 @@
                         android:gravity="center"
                         android:inputType="number"
                         android:maxLength="1"
-                        android:textColor="#8C8C8C"
+                        android:textColor="@color/text_primary"
                         android:textSize="16sp"
                         android:fontFamily="@font/poppins_medium" />
 
@@ -339,7 +341,7 @@
                         android:gravity="center"
                         android:inputType="number"
                         android:maxLength="1"
-                        android:textColor="#8C8C8C"
+                        android:textColor="@color/text_primary"
                         android:textSize="16sp"
                         android:fontFamily="@font/poppins_medium" />
 
@@ -348,7 +350,7 @@
                         android:layout_width="wrap_content"
                         android:layout_height="36dp"
                         android:text="-"
-                        android:textColor="#666666"
+                        android:textColor="@color/text_muted"
                         android:textSize="20sp"
                         android:gravity="center"
                         android:layout_marginEnd="8dp" />
@@ -364,7 +366,7 @@
                         android:gravity="center"
                         android:inputType="number"
                         android:maxLength="1"
-                        android:textColor="#8C8C8C"
+                        android:textColor="@color/text_primary"
                         android:textSize="16sp"
                         android:fontFamily="@font/poppins_medium" />
 
@@ -378,7 +380,7 @@
                         android:gravity="center"
                         android:inputType="number"
                         android:maxLength="1"
-                        android:textColor="#8C8C8C"
+                        android:textColor="@color/text_primary"
                         android:textSize="16sp"
                         android:fontFamily="@font/poppins_medium" />
 
@@ -392,7 +394,7 @@
                         android:gravity="center"
                         android:inputType="number"
                         android:maxLength="1"
-                        android:textColor="#8C8C8C"
+                        android:textColor="@color/text_primary"
                         android:textSize="16sp"
                         android:fontFamily="@font/poppins_medium" />
 
@@ -405,7 +407,7 @@
                         android:gravity="center"
                         android:inputType="number"
                         android:maxLength="1"
-                        android:textColor="#8C8C8C"
+                        android:textColor="@color/text_primary"
                         android:textSize="16sp"
                         android:fontFamily="@font/poppins_medium" />
 
@@ -433,7 +435,7 @@
                 android:text="Friend Requests"
                 android:textSize="16sp"
                 android:fontFamily="@font/poppins_medium"
-                android:textColor="#8C8C8C"
+                android:textColor="@color/text_primary"
                 android:layout_marginBottom="12dp" />
 
 
@@ -462,8 +464,8 @@
                 android:text="Send Friend Request"
                 android:textSize="16sp"
                 android:fontFamily="@font/space_grotesk_bold"
-                android:textColor="?attr/colorOnSurface"
-                android:background="@drawable/settings_box_bg"
+                android:textColor="#FFFFFF"
+                android:background="@drawable/action_button_bg"
                 android:gravity="center"
                 android:clickable="true"
                 android:focusable="true"
@@ -526,7 +528,7 @@
                 android:layout_height="wrap_content"
                 android:text="Please wait"
                 android:textSize="14sp"
-                android:textColor="#CCCCCC"
+                android:textColor="@color/text_settings"
                 android:fontFamily="@font/poppins_regular"
                 android:layout_marginTop="8dp" />
 

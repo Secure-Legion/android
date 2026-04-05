@@ -13,6 +13,7 @@ import android.widget.TextView
 import android.content.Intent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.lifecycle.lifecycleScope
+import androidx.core.content.ContextCompat
 import com.securelegion.utils.GlassBottomSheetDialog
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
@@ -39,7 +40,7 @@ class CreateGroupActivity : BaseActivity() {
 
     // Views
     private lateinit var backButton: View
-    private lateinit var settingsIcon: FrameLayout
+    // settingsIcon removed from layout
     private lateinit var groupIconContainer: FrameLayout
     private lateinit var groupIconImage: ImageView
     private lateinit var groupNameInput: EditText
@@ -135,7 +136,6 @@ class CreateGroupActivity : BaseActivity() {
 
     private fun initializeViews() {
         backButton = findViewById(R.id.backButton)
-        settingsIcon = findViewById(R.id.settingsIcon)
         groupIconContainer = findViewById(R.id.groupIconContainer)
         groupIconImage = findViewById(R.id.groupIconImage)
         groupNameInput = findViewById(R.id.groupNameInput)
@@ -161,11 +161,6 @@ class CreateGroupActivity : BaseActivity() {
         // Back button
         backButton.setOnClickListener {
             finish()
-        }
-
-        // Settings icon (future: group settings/options)
-        settingsIcon.setOnClickListener {
-            ThemedToast.show(this, "Group settings - Coming soon")
         }
 
         // Group icon container - image picker
@@ -218,6 +213,12 @@ class CreateGroupActivity : BaseActivity() {
         if (groupName.length < 3) {
             ThemedToast.show(this, "Group name must be at least 3 characters")
             groupNameInput.requestFocus()
+            return
+        }
+
+        // Enforce 20-member group limit (creator + selected invitees)
+        if (selectedMembers.size >= AddGroupMembersActivity.MAX_GROUP_MEMBERS) {
+            ThemedToast.show(this, "Groups are limited to ${AddGroupMembersActivity.MAX_GROUP_MEMBERS} members")
             return
         }
 
@@ -328,7 +329,7 @@ class CreateGroupActivity : BaseActivity() {
         groupIconImage.setImageResource(R.drawable.ic_contacts)
         groupIconImage.scaleType = ImageView.ScaleType.CENTER_INSIDE
         groupIconImage.imageTintList = android.content.res.ColorStateList.valueOf(
-            android.graphics.Color.parseColor("#999999")
+            ContextCompat.getColor(this, R.color.lock_title_gray)
         )
         ThemedToast.show(this, "Group icon removed")
     }

@@ -17,7 +17,9 @@ import com.securelegion.views.AvatarView
  * Shows contacts in the same style as the contacts page with an add/check icon on the right.
  */
 class AddToGroupAdapter(
-    private val selectedIds: MutableSet<Long> = mutableSetOf()
+    private val selectedIds: MutableSet<Long> = mutableSetOf(),
+    var maxSelection: Int = Int.MAX_VALUE,
+    private val onLimitReached: (() -> Unit)? = null
 ) : ListAdapter<Contact, AddToGroupAdapter.ContactViewHolder>(ContactDiffCallback()) {
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): ContactViewHolder {
@@ -30,10 +32,15 @@ class AddToGroupAdapter(
         holder.bind(getItem(position), selectedIds) { contact ->
             if (selectedIds.contains(contact.id)) {
                 selectedIds.remove(contact.id)
+                notifyItemChanged(position)
             } else {
-                selectedIds.add(contact.id)
+                if (selectedIds.size >= maxSelection) {
+                    onLimitReached?.invoke()
+                } else {
+                    selectedIds.add(contact.id)
+                    notifyItemChanged(position)
+                }
             }
-            notifyItemChanged(position)
         }
     }
 

@@ -22,31 +22,38 @@ class WipeAccountActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_wipe_account)
 
-        // Setup bottom navigation
-        BottomNavigationHelper.setupBottomNavigation(this)
+        // setupBottomNavigation() // REMOVED: This layout doesn't have bottom nav
 
         // Setup back button
         findViewById<View>(R.id.backButton).setOnClickListener {
             finish()
         }
 
+        // Hide password input for passwordless accounts
+        val keyManager = KeyManager.getInstance(this)
+        val isPasswordless = !keyManager.hasUserDefinedPassword()
+        val passwordInput = findViewById<EditText>(R.id.wipePasswordInput)
+        if (isPasswordless) {
+            passwordInput.visibility = View.GONE
+        }
+
         // Wipe Account button
         findViewById<View>(R.id.wipeAccountButton).setOnClickListener {
-            val password = findViewById<EditText>(R.id.wipePasswordInput).text.toString()
             val confirmText = findViewById<EditText>(R.id.wipeConfirmInput).text.toString()
-
-            if (password.isEmpty()) {
-                return@setOnClickListener
-            }
 
             if (confirmText != "DELETE") {
                 return@setOnClickListener
             }
 
-            // Verify password
-            val keyManager = KeyManager.getInstance(this)
-            if (!keyManager.verifyDevicePassword(password)) {
-                return@setOnClickListener
+            // For accounts with passwords, verify it
+            if (!isPasswordless) {
+                val password = passwordInput.text.toString()
+                if (password.isEmpty()) {
+                    return@setOnClickListener
+                }
+                if (!keyManager.verifyDevicePassword(password)) {
+                    return@setOnClickListener
+                }
             }
 
             // Final confirmation dialog with dark theme

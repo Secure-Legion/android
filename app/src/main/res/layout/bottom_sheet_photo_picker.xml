@@ -27,7 +27,7 @@
         android:layout_width="match_parent"
         android:layout_height="64dp"
         android:orientation="horizontal"
-        android:background="@drawable/settings_box_bg"
+        android:background="@drawable/action_button_bg"
         android:paddingStart="16dp"
         android:paddingEnd="16dp"
         android:gravity="center_vertical"
@@ -46,7 +46,7 @@
                 android:layout_height="20dp"
                 android:layout_gravity="center"
                 android:src="@drawable/ic_camera"
-                app:tint="?attr/colorOnSurfaceVariant" />
+                app:tint="#FFFFFF" />
 
         </FrameLayout>
 
@@ -56,7 +56,7 @@
             android:layout_weight="1"
             android:text="Take Photo"
             android:textSize="16sp"
-            android:textColor="#8C8C8C"
+            android:textColor="#FFFFFF"
             android:fontFamily="@font/poppins_medium" />
 
         <FrameLayout
@@ -80,7 +80,7 @@
         android:layout_width="match_parent"
         android:layout_height="64dp"
         android:orientation="horizontal"
-        android:background="@drawable/settings_box_bg"
+        android:background="@drawable/action_button_bg"
         android:paddingStart="16dp"
         android:paddingEnd="16dp"
         android:gravity="center_vertical"
@@ -99,7 +99,7 @@
                 android:layout_height="20dp"
                 android:layout_gravity="center"
                 android:src="@drawable/ic_image"
-                app:tint="?attr/colorOnSurfaceVariant" />
+                app:tint="#FFFFFF" />
 
         </FrameLayout>
 
@@ -109,7 +109,7 @@
             android:layout_weight="1"
             android:text="Choose from Gallery"
             android:textSize="16sp"
-            android:textColor="#8C8C8C"
+            android:textColor="#FFFFFF"
             android:fontFamily="@font/poppins_medium" />
 
         <FrameLayout
@@ -133,7 +133,7 @@
         android:layout_width="match_parent"
         android:layout_height="64dp"
         android:orientation="horizontal"
-        android:background="@drawable/settings_box_bg"
+        android:background="@drawable/action_button_bg"
         android:paddingStart="16dp"
         android:paddingEnd="16dp"
         android:gravity="center_vertical"
@@ -151,7 +151,7 @@
                 android:layout_height="20dp"
                 android:layout_gravity="center"
                 android:src="@drawable/ic_delete"
-                app:tint="?attr/colorOnSurfaceVariant" />
+                app:tint="#FFFFFF" />
 
         </FrameLayout>
 
@@ -161,7 +161,7 @@
             android:layout_weight="1"
             android:text="Remove Photo"
             android:textSize="16sp"
-            android:textColor="#8C8C8C"
+            android:textColor="#FFFFFF"
             android:fontFamily="@font/poppins_medium" />
 
         <FrameLayout

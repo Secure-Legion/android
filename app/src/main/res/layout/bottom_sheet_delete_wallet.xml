@@ -66,7 +66,7 @@
             android:layout_height="wrap_content"
             android:text="This will permanently delete this wallet from your device."
             android:textSize="14sp"
-            android:textColor="#CCCCCC"
+            android:textColor="@color/text_settings"
             android:fontFamily="@font/poppins_regular"
             android:lineSpacingMultiplier="1.3" />
 

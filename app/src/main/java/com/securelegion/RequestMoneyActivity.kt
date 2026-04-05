@@ -9,6 +9,7 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import com.google.android.material.bottomsheet.BottomSheetDialog
 import com.securelegion.utils.GlassBottomSheetDialog
@@ -360,7 +361,7 @@ class RequestMoneyActivity : AppCompatActivity() {
                         if (wallets.isEmpty()) {
                             val emptyText = TextView(this@RequestMoneyActivity).apply {
                                 text = "No $chain wallets found"
-                                setTextColor(0xFF888888.toInt())
+                                setTextColor(ContextCompat.getColor(this@RequestMoneyActivity, R.color.lock_icon_gray))
                                 textSize = 14f
                                 setPadding(0, 32, 0, 32)
                             }

@@ -111,15 +111,17 @@ class BiometricAuthHelper(private val context: Context) {
     }
 
     /**
-     * Enable biometric authentication by encrypting the password hash
+     * Enable biometric authentication by encrypting the actual password.
+     * The password is needed (not just the hash) because we derive the Argon2id
+     * seed-wrapping key from it on unlock.
      *
-     * @param passwordHash The Argon2id hash of the user's password
+     * @param password The user's plaintext password
      * @param activity The activity to show biometric prompt
      * @param onSuccess Callback when encryption succeeds
      * @param onError Callback when encryption fails
      */
     fun enableBiometric(
-        passwordHash: ByteArray,
+        password: String,
         activity: FragmentActivity,
         onSuccess: () -> Unit,
         onError: (String) -> Unit
@@ -130,23 +132,27 @@ class BiometricAuthHelper(private val context: Context) {
             val biometricPrompt = createBiometricPrompt(activity,
                 onAuthSuccess = {
                     try {
-                        // Encrypt password hash after biometric gate passes
+                        // Encrypt actual password after biometric gate passes
+                        val passwordBytes = password.toByteArray(Charsets.UTF_8)
                         val cipher = getCipher()
                         cipher.init(Cipher.ENCRYPT_MODE, secretKey)
-                        val encryptedData = cipher.doFinal(passwordHash)
+                        val encryptedData = cipher.doFinal(passwordBytes)
                         val iv = cipher.iv
 
-                        // Store encrypted password hash and IV
+                        // Zeroize plaintext bytes
+                        passwordBytes.fill(0)
+
+                        // Store encrypted password and IV
                         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
                         prefs.edit()
                             .putString(PREF_ENCRYPTED_PASSWORD_HASH, Base64.encodeToString(encryptedData, Base64.NO_WRAP))
                             .putString(PREF_IV, Base64.encodeToString(iv, Base64.NO_WRAP))
                             .apply()
 
-                        Log.i(TAG, "Biometric authentication enabled - password hash encrypted")
+                        Log.i(TAG, "Biometric authentication enabled - password encrypted")
                         onSuccess()
                     } catch (e: Exception) {
-                        Log.e(TAG, "Failed to encrypt password hash", e)
+                        Log.e(TAG, "Failed to encrypt password", e)
                         onError("Failed to encrypt password: ${e.message}")
                     }
                 },
@@ -175,15 +181,15 @@ class BiometricAuthHelper(private val context: Context) {
     }
 
     /**
-     * Authenticate with biometric and decrypt the password hash
+     * Authenticate with biometric and decrypt the stored password
      *
      * @param activity The activity to show biometric prompt
-     * @param onSuccess Callback with decrypted password hash
+     * @param onSuccess Callback with decrypted password string
      * @param onError Callback when authentication fails
      */
     fun authenticateWithBiometric(
         activity: FragmentActivity,
-        onSuccess: (ByteArray) -> Unit,
+        onSuccess: (String) -> Unit,
         onError: (String) -> Unit
     ) {
         if (!isBiometricEnabled()) {
@@ -215,9 +221,11 @@ class BiometricAuthHelper(private val context: Context) {
                             return@createBiometricPrompt
                         }
                         cipher.init(Cipher.DECRYPT_MODE, secretKey, GCMParameterSpec(128, iv))
-                        val decryptedPasswordHash = cipher.doFinal(encryptedData)
-                        Log.i(TAG, "Biometric authentication successful - password hash decrypted")
-                        onSuccess(decryptedPasswordHash)
+                        val decryptedBytes = cipher.doFinal(encryptedData)
+                        val password = String(decryptedBytes, Charsets.UTF_8)
+                        decryptedBytes.fill(0) // Zeroize plaintext bytes
+                        Log.i(TAG, "Biometric authentication successful - password decrypted")
+                        onSuccess(password)
                     } catch (e: UserNotAuthenticatedException) {
                         // Old key was created with setUserAuthenticationRequired(true)
                         // It can't be used without CryptoObject binding — force re-enrollment
@@ -225,7 +233,7 @@ class BiometricAuthHelper(private val context: Context) {
                         disableBiometric()
                         onError("Biometric setup needs to be refreshed. Please use your password and re-enable biometrics in settings.")
                     } catch (e: Exception) {
-                        Log.e(TAG, "Failed to decrypt password hash", e)
+                        Log.e(TAG, "Failed to decrypt password", e)
                         onError("Failed to decrypt password: ${e.message}")
                     }
                 },

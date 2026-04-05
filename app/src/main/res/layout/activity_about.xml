@@ -4,7 +4,7 @@
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="?attr/colorSurface">
+    android:background="@color/surface_black">
 
     <!-- Header -->
     <LinearLayout
@@ -17,6 +17,7 @@
         android:paddingEnd="20dp"
         android:paddingTop="16dp"
         android:paddingBottom="16dp"
+        android:background="@color/header_bg"
         android:fitsSystemWindows="true"
         app:layout_constraintTop_toTopOf="parent">
 
@@ -35,6 +36,7 @@
                 android:layout_height="20dp"
                 android:layout_gravity="center"
                 android:src="@drawable/ic_back_arrow"
+                app:tint="#FFFFFF"
                 android:contentDescription="Back" />
 
         </FrameLayout>
@@ -46,7 +48,7 @@
             android:layout_weight="1"
             android:text="About"
             android:textSize="24sp"
-            android:textColor="?attr/colorOnSurfaceVariant"
+            android:textColor="#FFFFFF"
             android:fontFamily="@font/space_grotesk_bold"
             android:textStyle="bold"
             android:gravity="center" />
@@ -66,7 +68,7 @@
         android:layout_height="0dp"
         android:fillViewport="true"
         app:layout_constraintTop_toBottomOf="@id/header"
-        app:layout_constraintBottom_toTopOf="@id/bottomNav">
+        app:layout_constraintBottom_toBottomOf="parent">
 
         <LinearLayout
             android:layout_width="match_parent"
@@ -103,7 +105,7 @@
                     android:text="Terms of Service"
                     android:textSize="18sp"
                     android:fontFamily="@font/space_grotesk_bold"
-                    android:textColor="?attr/colorOnSurface"
+                    android:textColor="#FFFFFF"
                     android:layout_marginBottom="16dp" />
 
                 <TextView
@@ -111,7 +113,7 @@
                     android:layout_height="wrap_content"
                     android:text="LICENSE AGREEMENT\n\nSecure is licensed under the PolyForm Noncommercial License 1.0.0\n\n1. PURPOSE\n\nThis license allows you to use and share this software for noncommercial purposes only. Commercial use requires a separate commercial license.\n\n2. ACCEPTANCE\n\nBy using this software, you agree to all terms and conditions of this license.\n\n3. PERMITTED USE\n\nYou may use, modify, and distribute this software for any noncommercial purpose. Noncommercial purposes include personal use, education, academic research, and evaluation.\n\n4. RESTRICTIONS\n\nYou may NOT use this software:\n• To generate revenue or other commercial benefit\n• For any business operation or commercial advantage\n• As part of any commercial service or product\n• In any way that is primarily intended for commercial advantage\n\n5. DISCLAIMER OF WARRANTY\n\nThis software is provided AS-IS without warranty of any kind, either express or implied, including but not limited to:\n• Merchantability\n• Fitness for a particular purpose\n• Non-infringement\n• Security or absence of vulnerabilities\n\n6. LIMITATION OF LIABILITY\n\nThe developers shall not be liable for any damages arising from the use of this software, including but not limited to:\n• Loss of data or encrypted messages\n• Loss of cryptocurrency or digital assets\n• Privacy breaches or security incidents\n• Direct, indirect, or consequential damages\n\n7. CRYPTOGRAPHIC NOTICE\n\nThis software uses strong cryptography. You are responsible for:\n• Securely storing your seed phrase and private keys\n• Maintaining backups of your recovery information\n• Understanding that lost keys cannot be recovered\n• Complying with export and import regulations\n\n8. PRIVACY AND DATA\n\n• No data is collected or transmitted to developers\n• All communications are end-to-end encrypted\n• Messages are routed through Tor for anonymity\n• You are solely responsible for your data security\n\n9. BETA SOFTWARE NOTICE\n\nThis is BETA SOFTWARE. Expected issues:\n• Bugs and unexpected behavior\n• Potential data loss\n• Breaking changes in future updates\n• No guarantee of backwards compatibility\n\n10. NO SUPPORT\n\nThis software is provided without support, maintenance, or service commitments.\n\n11. TERMINATION\n\nThis license automatically terminates if you violate any terms. Upon termination, you must cease all use and destroy all copies.\n\n12. COMMERCIAL LICENSING\n\nFor commercial use, contact the developers for licensing terms.\n\nBy using Secure, you acknowledge that you have read, understood, and agree to be bound by these terms.\n\nLast updated: 2/27/2026"
                     android:textSize="13sp"
-                    android:textColor="?attr/colorOnSurfaceVariant"
+                    android:textColor="#CCCCCC"
                     android:fontFamily="@font/poppins_regular"
                     android:lineSpacingMultiplier="1.4" />
 
@@ -121,17 +123,5 @@
 
     </ScrollView>
 
-    <!-- Bottom Navigation -->
-    <include
-        android:id="@+id/bottomNav"
-        layout="@layout/bottom_navigation"
-        android:layout_width="0dp"
-        android:layout_height="80dp"
-        android:layout_marginStart="50dp"
-        android:layout_marginEnd="50dp"
-        android:layout_marginBottom="20dp"
-        app:layout_constraintBottom_toBottomOf="parent"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintEnd_toEndOf="parent" />
 
 </androidx.constraintlayout.widget.ConstraintLayout>

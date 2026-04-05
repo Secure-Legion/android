@@ -4,7 +4,7 @@
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="?attr/colorSurface">
+    android:background="#000000">
 
     <ScrollView
         android:id="@+id/scrollView"
@@ -30,7 +30,7 @@
             android:text="Create account"
             android:fontFamily="@font/space_grotesk_bold"
             android:textSize="34sp"
-            android:textColor="@color/lock_title_gray"
+            android:textColor="#FFFFFF"
             app:layout_constraintTop_toTopOf="parent"
             app:layout_constraintStart_toStartOf="parent" />
 
@@ -51,8 +51,8 @@
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:hint="Username"
-                android:textColorHint="#666666"
-                android:textColor="?attr/colorOnSurface"
+                android:textColorHint="@color/lock_password_hint"
+                android:textColor="#FFFFFF"
                 android:fontFamily="@font/poppins_medium"
                 android:textSize="16sp"
                 android:background="@android:color/transparent"
@@ -67,123 +67,205 @@
                 android:layout_width="24dp"
                 android:layout_height="24dp"
                 android:src="@android:drawable/ic_menu_myplaces"
-                app:tint="#999999"
+                app:tint="@color/lock_title_gray"
                 app:layout_constraintTop_toTopOf="parent"
                 app:layout_constraintBottom_toBottomOf="parent"
                 app:layout_constraintEnd_toEndOf="parent" />
 
         </androidx.constraintlayout.widget.ConstraintLayout>
 
-        <!-- Password Input -->
-        <androidx.constraintlayout.widget.ConstraintLayout
-            android:id="@+id/passwordContainer"
+        <!-- Use custom password toggle -->
+        <LinearLayout
+            android:id="@+id/customPasswordToggleContainer"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_marginTop="16dp"
-            android:background="@drawable/lock_password_input_bg"
-            android:padding="16dp"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
             app:layout_constraintTop_toBottomOf="@id/usernameContainer"
             app:layout_constraintStart_toStartOf="parent"
             app:layout_constraintEnd_toEndOf="parent">
 
-            <EditText
-                android:id="@+id/passwordInput"
+            <TextView
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
-                android:hint="Password"
-                android:inputType="textPassword"
-                android:textColorHint="#666666"
-                android:textColor="?attr/colorOnSurface"
+                android:layout_weight="1"
+                android:text="Use custom password"
                 android:fontFamily="@font/poppins_medium"
-                android:textSize="16sp"
-                android:background="@android:color/transparent"
-                app:layout_constraintTop_toTopOf="parent"
-                app:layout_constraintBottom_toBottomOf="parent"
-                app:layout_constraintStart_toStartOf="parent"
-                app:layout_constraintEnd_toStartOf="@id/togglePassword" />
+                android:textSize="15sp"
+                android:textColor="@color/text_gray" />
 
-            <ImageView
-                android:id="@+id/togglePassword"
-                android:layout_width="24dp"
-                android:layout_height="24dp"
-                android:src="@android:drawable/ic_menu_view"
-                app:tint="#999999"
-                android:clickable="true"
-                android:focusable="true"
-                app:layout_constraintTop_toTopOf="parent"
-                app:layout_constraintBottom_toBottomOf="parent"
-                app:layout_constraintEnd_toEndOf="parent" />
+            <androidx.appcompat.widget.SwitchCompat
+                android:id="@+id/customPasswordSwitch"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:checked="false" />
 
-        </androidx.constraintlayout.widget.ConstraintLayout>
+        </LinearLayout>
 
-        <!-- Confirm Password Input -->
-        <androidx.constraintlayout.widget.ConstraintLayout
-            android:id="@+id/confirmPasswordContainer"
+        <!-- Use biometric unlock toggle -->
+        <LinearLayout
+            android:id="@+id/biometricToggleContainer"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
-            android:layout_marginTop="16dp"
-            android:background="@drawable/lock_password_input_bg"
-            android:padding="16dp"
-            app:layout_constraintTop_toBottomOf="@id/passwordContainer"
+            android:layout_marginTop="12dp"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:visibility="gone"
+            app:layout_constraintTop_toBottomOf="@id/customPasswordToggleContainer"
             app:layout_constraintStart_toStartOf="parent"
             app:layout_constraintEnd_toEndOf="parent">
 
-            <EditText
-                android:id="@+id/confirmPasswordInput"
+            <TextView
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
-                android:hint="Confirm Password"
-                android:inputType="textPassword"
-                android:textColorHint="#666666"
-                android:textColor="?attr/colorOnSurface"
+                android:layout_weight="1"
+                android:text="Use biometric unlock"
                 android:fontFamily="@font/poppins_medium"
-                android:textSize="16sp"
-                android:background="@android:color/transparent"
-                app:layout_constraintTop_toTopOf="parent"
-                app:layout_constraintBottom_toBottomOf="parent"
-                app:layout_constraintStart_toStartOf="parent"
-                app:layout_constraintEnd_toStartOf="@id/toggleConfirmPassword" />
+                android:textSize="15sp"
+                android:textColor="@color/text_gray" />
 
-            <ImageView
-                android:id="@+id/toggleConfirmPassword"
-                android:layout_width="24dp"
-                android:layout_height="24dp"
-                android:src="@android:drawable/ic_menu_view"
-                app:tint="#999999"
-                android:clickable="true"
-                android:focusable="true"
-                app:layout_constraintTop_toTopOf="parent"
-                app:layout_constraintBottom_toBottomOf="parent"
-                app:layout_constraintEnd_toEndOf="parent" />
+            <androidx.appcompat.widget.SwitchCompat
+                android:id="@+id/biometricSwitch"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:checked="false" />
 
-        </androidx.constraintlayout.widget.ConstraintLayout>
+        </LinearLayout>
 
-        <!-- Password Match Indicator -->
+        <!-- No password helper text -->
         <TextView
-            android:id="@+id/passwordMatchText"
+            android:id="@+id/noPasswordHelperText"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_marginTop="8dp"
-            android:fontFamily="@font/poppins_medium"
-            android:textSize="13sp"
-            android:visibility="gone"
-            app:layout_constraintTop_toBottomOf="@id/confirmPasswordContainer"
-            app:layout_constraintStart_toStartOf="parent"
-            app:layout_constraintEnd_toEndOf="parent" />
-
-        <!-- Password Helper Text -->
-        <TextView
-            android:id="@+id/passwordHelperText"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
-            android:text="Min 9 characters. Must include at least 1 uppercase, 1 lowercase, 1 number, and 1 special character (!@#$%^&amp;*). No sequential numbers (123) or repeated characters (aaaa)."
+            android:text="No password required. You can set one later in Settings."
             android:fontFamily="@font/poppins_regular"
             android:textSize="13sp"
-            android:textColor="#5C5C5C"
-            app:layout_constraintTop_toBottomOf="@id/passwordMatchText"
+            android:textColor="@color/lock_subtitle_gray"
+            app:layout_constraintTop_toBottomOf="@id/biometricToggleContainer"
             app:layout_constraintStart_toStartOf="parent"
             app:layout_constraintEnd_toEndOf="parent" />
+
+        <!-- Password fields container (hidden by default) -->
+        <LinearLayout
+            android:id="@+id/passwordFieldsContainer"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:visibility="gone"
+            app:layout_constraintTop_toBottomOf="@id/biometricToggleContainer"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintEnd_toEndOf="parent">
+
+            <!-- Password Input -->
+            <androidx.constraintlayout.widget.ConstraintLayout
+                android:id="@+id/passwordContainer"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="16dp"
+                android:background="@drawable/lock_password_input_bg"
+                android:padding="16dp">
+
+                <EditText
+                    android:id="@+id/passwordInput"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:hint="Password"
+                    android:inputType="textPassword"
+                    android:textColorHint="@color/lock_password_hint"
+                    android:textColor="#FFFFFF"
+                    android:fontFamily="@font/poppins_medium"
+                    android:textSize="16sp"
+                    android:background="@android:color/transparent"
+                    app:layout_constraintTop_toTopOf="parent"
+                    app:layout_constraintBottom_toBottomOf="parent"
+                    app:layout_constraintStart_toStartOf="parent"
+                    app:layout_constraintEnd_toStartOf="@id/togglePassword" />
+
+                <ImageView
+                    android:id="@+id/togglePassword"
+                    android:layout_width="24dp"
+                    android:layout_height="24dp"
+                    android:src="@android:drawable/ic_menu_view"
+                    app:tint="@color/lock_title_gray"
+                    android:clickable="true"
+                    android:focusable="true"
+                    app:layout_constraintTop_toTopOf="parent"
+                    app:layout_constraintBottom_toBottomOf="parent"
+                    app:layout_constraintEnd_toEndOf="parent" />
+
+            </androidx.constraintlayout.widget.ConstraintLayout>
+
+            <!-- Confirm Password Input -->
+            <androidx.constraintlayout.widget.ConstraintLayout
+                android:id="@+id/confirmPasswordContainer"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="16dp"
+                android:background="@drawable/lock_password_input_bg"
+                android:padding="16dp">
+
+                <EditText
+                    android:id="@+id/confirmPasswordInput"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:hint="Confirm Password"
+                    android:inputType="textPassword"
+                    android:textColorHint="@color/lock_password_hint"
+                    android:textColor="#FFFFFF"
+                    android:fontFamily="@font/poppins_medium"
+                    android:textSize="16sp"
+                    android:background="@android:color/transparent"
+                    app:layout_constraintTop_toTopOf="parent"
+                    app:layout_constraintBottom_toBottomOf="parent"
+                    app:layout_constraintStart_toStartOf="parent"
+                    app:layout_constraintEnd_toStartOf="@id/toggleConfirmPassword" />
+
+                <ImageView
+                    android:id="@+id/toggleConfirmPassword"
+                    android:layout_width="24dp"
+                    android:layout_height="24dp"
+                    android:src="@android:drawable/ic_menu_view"
+                    app:tint="@color/lock_title_gray"
+                    android:clickable="true"
+                    android:focusable="true"
+                    app:layout_constraintTop_toTopOf="parent"
+                    app:layout_constraintBottom_toBottomOf="parent"
+                    app:layout_constraintEnd_toEndOf="parent" />
+
+            </androidx.constraintlayout.widget.ConstraintLayout>
+
+            <!-- Password Match Indicator -->
+            <TextView
+                android:id="@+id/passwordMatchText"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:fontFamily="@font/poppins_medium"
+                android:textSize="13sp"
+                android:visibility="gone" />
+
+            <!-- Password Helper Text -->
+            <TextView
+                android:id="@+id/passwordHelperText"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:text="Min 9 characters. Must include at least 1 uppercase, 1 lowercase, 1 number, and 1 special character (!@#$%^&amp;*). No sequential numbers (123) or repeated characters (aaaa)."
+                android:fontFamily="@font/poppins_regular"
+                android:textSize="13sp"
+                android:textColor="@color/lock_subtitle_gray" />
+
+        </LinearLayout>
+
+        <!-- Barrier below whichever password section is visible -->
+        <androidx.constraintlayout.widget.Barrier
+            android:id="@+id/passwordBarrier"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            app:barrierDirection="bottom"
+            app:constraint_referenced_ids="noPasswordHelperText,passwordFieldsContainer" />
 
         <!-- Create Button with inline M3 loading indicator -->
         <FrameLayout
@@ -191,9 +273,9 @@
             android:layout_width="0dp"
             android:layout_height="60dp"
             android:layout_marginTop="16dp"
-            android:background="@drawable/lock_button_bg"
+            android:background="@drawable/create_button_bg"
             android:clipToOutline="true"
-            app:layout_constraintTop_toBottomOf="@id/passwordHelperText"
+            app:layout_constraintTop_toBottomOf="@id/passwordBarrier"
             app:layout_constraintStart_toStartOf="parent"
             app:layout_constraintEnd_toEndOf="parent">
 
@@ -203,7 +285,7 @@
                 android:layout_height="match_parent"
                 android:text="Create"
                 android:textSize="16sp"
-                android:textColor="?attr/colorOnSurface"
+                android:textColor="#000000"
                 android:fontFamily="@font/space_grotesk_bold"
                 android:gravity="center"
                 android:clickable="true"

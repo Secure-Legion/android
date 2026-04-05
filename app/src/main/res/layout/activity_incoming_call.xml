@@ -4,7 +4,7 @@
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="?attr/colorSurface">
+    android:background="@color/surface_black">
 
     <!-- Title: Secure Call -->
     <TextView
@@ -62,7 +62,7 @@
         android:layout_marginTop="32dp"
         android:text="Incoming Call"
         android:textSize="18sp"
-        android:textColor="#CCCCCC"
+        android:textColor="@color/text_settings"
         android:fontFamily="@font/poppins_regular"
         app:layout_constraintTop_toBottomOf="@id/callIconContainer"
         app:layout_constraintStart_toStartOf="parent"
@@ -93,7 +93,7 @@
         app:fabSize="normal"
         app:fabCustomSize="72dp"
         app:maxImageSize="32dp"
-        app:tint="#666666"
+        app:tint="@color/text_muted"
         app:backgroundTint="#FFFFFF"
         app:elevation="6dp"
         app:borderWidth="0dp"
@@ -206,7 +206,7 @@
                 android:layout_marginTop="12dp"
                 android:text="Unlock to answer this call"
                 android:textSize="16sp"
-                android:textColor="#CCCCCC"
+                android:textColor="@color/text_settings"
                 android:fontFamily="@font/poppins_regular"
                 android:textAlignment="center" />
 
@@ -218,7 +218,7 @@
                 android:layout_marginTop="8dp"
                 android:text="Call will be missed in 30s"
                 android:textSize="14sp"
-                android:textColor="#FF6B6B"
+                android:textColor="@color/call_end_red"
                 android:fontFamily="@font/poppins_medium" />
 
             <!-- Password Entry (hidden by default, shown if biometric fails/not available) -->

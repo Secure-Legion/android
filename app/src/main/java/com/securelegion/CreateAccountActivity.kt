@@ -17,8 +17,10 @@ import android.view.WindowManager
 import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.ImageView
+import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
+import androidx.appcompat.widget.SwitchCompat
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.CircularProgressIndicator
@@ -28,6 +30,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.colorResource
+import androidx.core.content.ContextCompat
 import androidx.compose.ui.platform.ComposeView
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
@@ -37,6 +41,7 @@ import com.securelegion.database.SecureLegionDatabase
 import com.securelegion.database.entities.Wallet
 import com.securelegion.models.ContactCard
 import com.securelegion.services.ContactCardManager
+import com.securelegion.utils.BiometricAuthHelper
 import com.securelegion.utils.PasswordValidator
 import com.securelegion.utils.ThemedToast
 import kotlinx.coroutines.CoroutineScope
@@ -58,6 +63,12 @@ class CreateAccountActivity : AppCompatActivity() {
     private lateinit var createAccountButton: TextView
     private lateinit var loadingIndicatorView: ComposeView
     private lateinit var passwordMatchText: TextView
+    private lateinit var customPasswordSwitch: SwitchCompat
+    private lateinit var biometricSwitch: SwitchCompat
+    private lateinit var passwordFieldsContainer: LinearLayout
+    private lateinit var noPasswordHelperText: TextView
+    private lateinit var biometricToggleContainer: LinearLayout
+    private lateinit var biometricHelper: BiometricAuthHelper
 
     private var isPasswordVisible = false
     private var isConfirmPasswordVisible = false
@@ -74,7 +85,7 @@ class CreateAccountActivity : AppCompatActivity() {
         // )
 
         // Make status bar transparent with light icons (matches dark theme)
-        window.statusBarColor = android.graphics.Color.TRANSPARENT
+        window.statusBarColor = android.graphics.Color.BLACK
 
         setContentView(R.layout.activity_create_account)
 
@@ -124,6 +135,32 @@ class CreateAccountActivity : AppCompatActivity() {
         createAccountButton = findViewById(R.id.createAccountButton)
         loadingIndicatorView = findViewById(R.id.loadingIndicatorView)
         passwordMatchText = findViewById(R.id.passwordMatchText)
+        customPasswordSwitch = findViewById(R.id.customPasswordSwitch)
+        biometricSwitch = findViewById(R.id.biometricSwitch)
+        passwordFieldsContainer = findViewById(R.id.passwordFieldsContainer)
+        noPasswordHelperText = findViewById(R.id.noPasswordHelperText)
+        biometricToggleContainer = findViewById(R.id.biometricToggleContainer)
+        biometricHelper = BiometricAuthHelper(this)
+
+        // Show biometric toggle only if hardware available
+        val biometricStatus = biometricHelper.isBiometricAvailable()
+        if (biometricStatus == BiometricAuthHelper.BiometricStatus.AVAILABLE) {
+            biometricToggleContainer.visibility = View.VISIBLE
+        }
+
+        // Toggle password fields visibility
+        customPasswordSwitch.setOnCheckedChangeListener { _, isChecked ->
+            if (isChecked) {
+                passwordFieldsContainer.visibility = View.VISIBLE
+                noPasswordHelperText.visibility = View.GONE
+            } else {
+                passwordFieldsContainer.visibility = View.GONE
+                noPasswordHelperText.visibility = View.VISIBLE
+                passwordInput.text.clear()
+                confirmPasswordInput.text.clear()
+                passwordMatchText.visibility = View.GONE
+            }
+        }
 
         // Set up the Compose content for the M3 LoadingIndicator
         loadingIndicatorView.setContent {
@@ -141,7 +178,7 @@ class CreateAccountActivity : AppCompatActivity() {
         val importEnd = importStart + "Import".length
 
         // Set base text color to gray
-        spannable.setSpan(ForegroundColorSpan(0xFF999999.toInt()), 0, fullText.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+        spannable.setSpan(ForegroundColorSpan(ContextCompat.getColor(this, R.color.lock_title_gray)), 0, fullText.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
 
         // Make "Import" clickable and white
         val clickableSpan = object : ClickableSpan() {
@@ -153,7 +190,7 @@ class CreateAccountActivity : AppCompatActivity() {
         }
 
         spannable.setSpan(clickableSpan, importStart, importEnd, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
-        spannable.setSpan(ForegroundColorSpan(0xFFFFFFFF.toInt()), importStart, importEnd, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+        spannable.setSpan(ForegroundColorSpan(ContextCompat.getColor(this, R.color.text_primary)), importStart, importEnd, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
 
         alreadyHaveAccountText.text = spannable
         alreadyHaveAccountText.movementMethod = LinkMovementMethod.getInstance()
@@ -182,10 +219,10 @@ class CreateAccountActivity : AppCompatActivity() {
         passwordMatchText.visibility = View.VISIBLE
         if (password == confirm) {
             passwordMatchText.text = "Passwords match"
-            passwordMatchText.setTextColor(0xFFFFFFFF.toInt())
+            passwordMatchText.setTextColor(ContextCompat.getColor(this, R.color.text_primary))
         } else {
             passwordMatchText.text = "Passwords do not match"
-            passwordMatchText.setTextColor(0xFF666666.toInt())
+            passwordMatchText.setTextColor(ContextCompat.getColor(this, R.color.text_muted))
         }
     }
 
@@ -206,7 +243,7 @@ class CreateAccountActivity : AppCompatActivity() {
             contentAlignment = Alignment.Center
         ) {
             CircularProgressIndicator(
-                color = Color(0xFF999999)
+                color = colorResource(R.color.lock_title_gray)
             )
         }
     }
@@ -235,33 +272,43 @@ class CreateAccountActivity : AppCompatActivity() {
 
         // Create Account button
         createAccountButton.setOnClickListener {
-            val username = usernameInput.text.toString()
-            val password = passwordInput.text.toString()
-            val confirmPassword = confirmPasswordInput.text.toString()
+            val username = usernameInput.text.toString().trim()
 
             if (username.isEmpty()) {
                 ThemedToast.show(this, "Please enter a username")
                 return@setOnClickListener
             }
 
-            if (password.isEmpty()) {
-                ThemedToast.show(this, "Please enter a password")
+            // Check reserved usernames
+            val reserved = setOf("support", "secure", "securelegion")
+            val normalized = username.lowercase().replace(Regex("[^a-z0-9]"), "")
+            if (reserved.contains(normalized)) {
+                ThemedToast.show(this, "This username is reserved")
                 return@setOnClickListener
             }
 
-            if (password != confirmPassword) {
-                ThemedToast.show(this, "Passwords do not match")
-                return@setOnClickListener
+            val useCustomPassword = customPasswordSwitch.isChecked
+
+            if (useCustomPassword) {
+                val password = passwordInput.text.toString()
+                val confirmPassword = confirmPasswordInput.text.toString()
+
+                if (password.isEmpty()) {
+                    ThemedToast.show(this, "Please enter a password")
+                    return@setOnClickListener
+                }
+                if (password != confirmPassword) {
+                    ThemedToast.show(this, "Passwords do not match")
+                    return@setOnClickListener
+                }
+                val validation = PasswordValidator.validate(password)
+                if (!validation.isValid) {
+                    ThemedToast.showLong(this, validation.errorMessage ?: "Invalid password")
+                    return@setOnClickListener
+                }
             }
 
-            // Validate password complexity using PasswordValidator
-            val validation = PasswordValidator.validate(password)
-            if (!validation.isValid) {
-                ThemedToast.showLong(this, validation.errorMessage ?: "Invalid password")
-                return@setOnClickListener
-            }
-
-            // Hide passwords if they were visible
+            // Hide passwords if visible
             if (isPasswordVisible) {
                 passwordInput.inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
                 isPasswordVisible = false
@@ -271,14 +318,10 @@ class CreateAccountActivity : AppCompatActivity() {
                 isConfirmPasswordVisible = false
             }
 
-            // Hide keyboard
             val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager
             imm.hideSoftInputFromWindow(currentFocus?.windowToken, 0)
-
-            // Show loading indicator on button to prevent double-tap
             showLoading()
             createAccountButton.isEnabled = false
-
             createAccount()
         }
     }
@@ -314,9 +357,24 @@ class CreateAccountActivity : AppCompatActivity() {
                     keyManager.initializeFromSeed(mnemonic)
                     Log.i("CreateAccount", "KeyManager initialized from seed")
 
-                    // Set device password
-                    keyManager.setDevicePassword(password)
-                    Log.i("CreateAccount", "Device password set")
+                    // Determine password
+                    val useCustomPassword = customPasswordSwitch.isChecked
+                    val accountPassword = if (useCustomPassword) {
+                        password  // already captured from UI
+                    } else {
+                        keyManager.generateSystemPasswordPublic()
+                    }
+
+                    // Set up account password (wraps seed + stores hash + manages system password)
+                    keyManager.setupAccountPassword(accountPassword, isUserDefined = useCustomPassword)
+
+                    // If biometric enabled during signup and custom password used
+                    if (biometricSwitch.isChecked) {
+                        val biometricHelperAccount = BiometricAuthHelper(this@CreateAccountActivity)
+                        // Note: biometric enrollment requires activity context - will be prompted later
+                    }
+
+                    Log.i("CreateAccount", "Account password set (custom=$useCustomPassword)")
 
                     // Store username
                     keyManager.storeUsername(username)

@@ -9,6 +9,7 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import com.google.android.material.bottomsheet.BottomSheetDialog
 import com.securelegion.utils.GlassBottomSheetDialog
@@ -416,7 +417,7 @@ class SendMoneyActivity : AppCompatActivity() {
                         if (wallets.isEmpty()) {
                             val emptyText = TextView(this@SendMoneyActivity).apply {
                                 text = "No $chain wallets found"
-                                setTextColor(0xFF888888.toInt())
+                                setTextColor(ContextCompat.getColor(this@SendMoneyActivity, R.color.lock_icon_gray))
                                 textSize = 14f
                                 setPadding(0, 32, 0, 32)
                             }
@@ -856,7 +857,7 @@ class SendMoneyActivity : AppCompatActivity() {
         view.findViewById<TextView>(R.id.confirmSendAmount).text = "Cancel Payment?"
         view.findViewById<TextView>(R.id.confirmSendAmount).textSize = 24f
         view.findViewById<TextView>(R.id.confirmSendAmountUSD).text = "Are you sure you want to cancel this payment?"
-        view.findViewById<TextView>(R.id.confirmSendAmountUSD).setTextColor(0xFF888888.toInt())
+        view.findViewById<TextView>(R.id.confirmSendAmountUSD).setTextColor(ContextCompat.getColor(this, R.color.lock_icon_gray))
         view.findViewById<TextView>(R.id.confirmSendAmountUSD).visibility = View.VISIBLE
 
         // Hide details card

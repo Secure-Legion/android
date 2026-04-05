@@ -57,7 +57,7 @@
             android:layout_height="wrap_content"
             android:text="Last call: 2 hours ago"
             android:textSize="12sp"
-            android:textColor="#666666"
+            android:textColor="@color/text_muted"
             android:fontFamily="@font/poppins_regular"
             android:layout_marginTop="2dp" />
 

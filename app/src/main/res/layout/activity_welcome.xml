@@ -4,7 +4,7 @@
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="?attr/colorSurface">
+    android:background="#000000">
 
     <!-- Decorative Gradient Shape - Top Left -->
     <View
@@ -50,9 +50,9 @@
         android:layout_marginTop="80dp"
         android:text="Create New Account"
         android:textSize="16sp"
-        android:textColor="?attr/colorOnSurface"
+        android:textColor="#000000"
         android:fontFamily="@font/space_grotesk_bold"
-        android:background="@drawable/lock_button_bg"
+        android:background="@drawable/create_button_bg"
         android:gravity="center"
         android:clickable="true"
         android:focusable="true"

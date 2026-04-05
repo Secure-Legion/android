@@ -48,6 +48,10 @@ class KeyManager private constructor(context: Context) {
         private const val HIDDEN_SERVICE_KEY_ALIAS = "${KEYSTORE_ALIAS_PREFIX}hidden_service_key"
         private const val DEVICE_PASSWORD_HASH_ALIAS = "${KEYSTORE_ALIAS_PREFIX}device_password_hash"
         private const val DEVICE_PASSWORD_SALT_ALIAS = "${KEYSTORE_ALIAS_PREFIX}device_password_salt"
+        private const val SEED_WRAP_SALT_ALIAS = "${KEYSTORE_ALIAS_PREFIX}seed_wrap_salt"
+        private const val SEED_WRAP_NONCE_ALIAS = "${KEYSTORE_ALIAS_PREFIX}seed_wrap_nonce"
+        private const val SYSTEM_PASSWORD_ALIAS = "${KEYSTORE_ALIAS_PREFIX}system_password"
+        private const val USER_DEFINED_PASSWORD_FLAG = "${KEYSTORE_ALIAS_PREFIX}user_defined_password"
         private const val ZCASH_ADDRESS_ALIAS = "${KEYSTORE_ALIAS_PREFIX}zcash_address"
         private const val ZCASH_TRANSPARENT_ADDRESS_ALIAS = "${KEYSTORE_ALIAS_PREFIX}zcash_transparent_address"
 
@@ -79,6 +83,10 @@ class KeyManager private constructor(context: Context) {
             }
         }
     }
+
+    /** Decrypted seed hex cached in memory. Zeroized on lock. */
+    @Volatile
+    private var cachedSeedHex: String? = null
 
     private val masterKey: MasterKey = MasterKey.Builder(appContext)
         .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
@@ -1372,14 +1380,316 @@ class KeyManager private constructor(context: Context) {
         return encryptedPrefs.contains(DEVICE_PASSWORD_HASH_ALIAS)
     }
 
+    // ==================== SEED WRAPPING ====================
+
+    /**
+     * Check if the seed is currently wrapped (encrypted) with a password
+     */
+    fun isSeedWrapped(): Boolean {
+        return encryptedPrefs.contains(SEED_WRAP_SALT_ALIAS)
+    }
+
+    // ==================== SYSTEM PASSWORD & PASSWORD FLAG ====================
+
+    /**
+     * Generate a cryptographically secure system password.
+     * Creates 32 random bytes and returns a base64-encoded string.
+     * Raw bytes are zeroized after encoding.
+     */
+    private fun generateSystemPassword(): String {
+        val rawBytes = ByteArray(32)
+        try {
+            java.security.SecureRandom().nextBytes(rawBytes)
+            return android.util.Base64.encodeToString(rawBytes, android.util.Base64.NO_WRAP)
+        } finally {
+            java.util.Arrays.fill(rawBytes, 0.toByte())
+        }
+    }
+
+    /**
+     * Public wrapper to generate a system password.
+     * @return A base64-encoded 32-byte random password
+     */
+    fun generateSystemPasswordPublic(): String {
+        return generateSystemPassword()
+    }
+
+    /**
+     * Store the system-generated password in encrypted preferences.
+     * Only used when the user has NOT set a custom password.
+     */
+    private fun storeSystemPassword(password: String) {
+        encryptedPrefs.edit {
+            putString(SYSTEM_PASSWORD_ALIAS, password)
+        }
+        Log.i(TAG, "System password stored")
+    }
+
+    /**
+     * Retrieve the stored system password, if any.
+     * @return The system password, or null if not stored (user-defined password in use)
+     */
+    fun getSystemPassword(): String? {
+        return encryptedPrefs.getString(SYSTEM_PASSWORD_ALIAS, null)
+    }
+
+    /**
+     * Clear the stored system password from encrypted preferences.
+     */
+    private fun clearSystemPassword() {
+        encryptedPrefs.edit {
+            remove(SYSTEM_PASSWORD_ALIAS)
+        }
+        Log.i(TAG, "System password cleared")
+    }
+
+    /**
+     * Set whether the account password was user-defined or system-generated.
+     * @param isUserDefined true if the user chose their own password
+     */
+    fun setUserDefinedPasswordFlag(isUserDefined: Boolean) {
+        encryptedPrefs.edit {
+            putBoolean(USER_DEFINED_PASSWORD_FLAG, isUserDefined)
+        }
+        Log.i(TAG, "User-defined password flag set to: $isUserDefined")
+    }
+
+    /**
+     * Check whether the account password was user-defined.
+     * @return true if user chose their own password, false if system-generated (default)
+     */
+    fun hasUserDefinedPassword(): Boolean {
+        return encryptedPrefs.getBoolean(USER_DEFINED_PASSWORD_FLAG, false)
+    }
+
+    /**
+     * Set up the account password during account creation.
+     * Reads the current plaintext seed, wraps it with the password,
+     * stores the Argon2id hash for lock screen, and tracks whether
+     * the password is user-defined or system-generated.
+     *
+     * @param password The password to use (either user-chosen or system-generated)
+     * @param isUserDefined true if the user chose this password, false if system-generated
+     */
+    fun setupAccountPassword(password: String, isUserDefined: Boolean) {
+        // Read the current plaintext seed (still unencrypted during account creation)
+        val seedHex = encryptedPrefs.getString(WALLET_SEED_ALIAS, null)
+            ?: throw IllegalStateException("Wallet seed not found — cannot set up account password")
+
+        // Wrap (encrypt) the seed with the password
+        wrapSeed(seedHex, password)
+
+        // Store Argon2id hash for lock screen verification
+        setDevicePassword(password)
+
+        // Track whether this is a user-defined or system-generated password
+        setUserDefinedPasswordFlag(isUserDefined)
+
+        // If system-generated, store the password so the app can auto-unlock
+        if (!isUserDefined) {
+            storeSystemPassword(password)
+        }
+
+        // Cache the seed in memory so getSeedBytes() works immediately
+        cachedSeedHex = seedHex
+
+        Log.i(TAG, "Account password setup complete (userDefined=$isUserDefined)")
+    }
+
+    /**
+     * Decrypt and cache the seed using the provided password.
+     * Called on successful lock screen authentication or auto-unlock.
+     */
+    fun unlockSeed(password: String): Boolean {
+        val seedHex = unwrapSeed(password)
+        if (seedHex != null) {
+            cachedSeedHex = seedHex
+            Log.i(TAG, "Seed unlocked and cached in memory")
+            return true
+        }
+        Log.e(TAG, "Failed to unlock seed — wrong password or corrupted data")
+        return false
+    }
+
+    /**
+     * Zeroize the cached seed from memory. Called on app lock / background timeout.
+     */
+    fun clearSeedCache() {
+        cachedSeedHex = null
+        Log.i(TAG, "Seed cache cleared from memory")
+    }
+
+    /**
+     * Migrate existing plaintext seed to password-wrapped format.
+     * Called once after update, when user unlocks with their existing password.
+     *
+     * @param password The user's existing password (just verified on lock screen)
+     * @return true if migration succeeded
+     */
+    fun migrateToWrappedSeed(password: String): Boolean {
+        if (isSeedWrapped()) {
+            Log.d(TAG, "Seed already wrapped — skipping migration")
+            return true
+        }
+
+        val seedHex = encryptedPrefs.getString(WALLET_SEED_ALIAS, null)
+        if (seedHex == null) {
+            Log.e(TAG, "No seed found — cannot migrate")
+            return false
+        }
+
+        try {
+            wrapSeed(seedHex, password)
+            setUserDefinedPasswordFlag(true)
+            cachedSeedHex = seedHex
+            Log.i(TAG, "Successfully migrated seed to wrapped format")
+            return true
+        } catch (e: Exception) {
+            Log.e(TAG, "Seed migration failed", e)
+            return false
+        }
+    }
+
+    /**
+     * Re-wrap seed with a new password. Used when changing, setting, or removing password.
+     */
+    fun rewrapSeed(oldPassword: String, newPassword: String, isNewUserDefined: Boolean): Boolean {
+        val seedHex = unwrapSeed(oldPassword) ?: return false
+
+        wrapSeed(seedHex, newPassword)
+        setDevicePassword(newPassword)
+        setUserDefinedPasswordFlag(isNewUserDefined)
+
+        if (isNewUserDefined) {
+            clearSystemPassword()
+        } else {
+            storeSystemPassword(newPassword)
+        }
+
+        cachedSeedHex = seedHex
+        Log.i(TAG, "Seed re-wrapped with new password (userDefined=$isNewUserDefined)")
+        return true
+    }
+
+    /**
+     * Wrap (encrypt) the seed hex string with AES-256-GCM using a password-derived key.
+     * The wrapping key is derived via Argon2id from the password + random salt.
+     *
+     * @param seedHex The hex-encoded seed to wrap
+     * @param password The password to derive the wrapping key from
+     */
+    private fun wrapSeed(seedHex: String, password: String) {
+        var wrappingKey: ByteArray? = null
+        try {
+            // Generate random 32-byte salt for Argon2id key derivation
+            val salt = ByteArray(32)
+            java.security.SecureRandom().nextBytes(salt)
+
+            // Derive 32-byte wrapping key via Argon2id
+            wrappingKey = RustBridge.hashPassword(password, salt)
+
+            // Generate random 12-byte nonce for AES-GCM
+            val nonce = ByteArray(12)
+            java.security.SecureRandom().nextBytes(nonce)
+
+            // Encrypt seed with AES-256-GCM
+            val cipher = javax.crypto.Cipher.getInstance("AES/GCM/NoPadding")
+            val secretKey = javax.crypto.spec.SecretKeySpec(wrappingKey, "AES")
+            val gcmSpec = javax.crypto.spec.GCMParameterSpec(128, nonce) // 128-bit auth tag
+            cipher.init(javax.crypto.Cipher.ENCRYPT_MODE, secretKey, gcmSpec)
+
+            val plaintext = seedHex.toByteArray(Charsets.UTF_8)
+            val encryptedBlob = cipher.doFinal(plaintext)
+
+            // Store encrypted blob, salt, and nonce in encrypted preferences
+            encryptedPrefs.edit {
+                putString(WALLET_SEED_ALIAS, bytesToHex(encryptedBlob))
+                putString(SEED_WRAP_SALT_ALIAS, bytesToHex(salt))
+                putString(SEED_WRAP_NONCE_ALIAS, bytesToHex(nonce))
+            }
+
+            // Zeroize plaintext copy
+            java.util.Arrays.fill(plaintext, 0.toByte())
+
+            Log.i(TAG, "Seed wrapped successfully with AES-256-GCM")
+        } finally {
+            // SECURITY: Zeroize wrapping key from memory
+            wrappingKey?.let { java.util.Arrays.fill(it, 0.toByte()) }
+        }
+    }
+
+    /**
+     * Unwrap (decrypt) the seed hex string using a password-derived key.
+     * Re-derives the wrapping key from password + stored salt via Argon2id,
+     * then decrypts with AES-256-GCM.
+     *
+     * @param password The password to derive the wrapping key from
+     * @return The decrypted seed hex string, or null if decryption fails
+     */
+    private fun unwrapSeed(password: String): String? {
+        var wrappingKey: ByteArray? = null
+        try {
+            // Read encrypted seed, salt, and nonce from preferences
+            val encryptedHex = encryptedPrefs.getString(WALLET_SEED_ALIAS, null)
+                ?: return null
+            val saltHex = encryptedPrefs.getString(SEED_WRAP_SALT_ALIAS, null)
+                ?: return null
+            val nonceHex = encryptedPrefs.getString(SEED_WRAP_NONCE_ALIAS, null)
+                ?: return null
+
+            val encryptedBlob = hexToBytes(encryptedHex)
+            val salt = hexToBytes(saltHex)
+            val nonce = hexToBytes(nonceHex)
+
+            // Re-derive wrapping key from password + stored salt
+            wrappingKey = RustBridge.hashPassword(password, salt)
+
+            // Decrypt seed with AES-256-GCM
+            val cipher = javax.crypto.Cipher.getInstance("AES/GCM/NoPadding")
+            val secretKey = javax.crypto.spec.SecretKeySpec(wrappingKey, "AES")
+            val gcmSpec = javax.crypto.spec.GCMParameterSpec(128, nonce) // 128-bit auth tag
+            cipher.init(javax.crypto.Cipher.DECRYPT_MODE, secretKey, gcmSpec)
+
+            val decrypted = cipher.doFinal(encryptedBlob)
+            val seedHex = String(decrypted, Charsets.UTF_8)
+
+            // Zeroize decrypted bytes
+            java.util.Arrays.fill(decrypted, 0.toByte())
+
+            Log.i(TAG, "Seed unwrapped successfully")
+            return seedHex
+        } catch (e: javax.crypto.AEADBadTagException) {
+            Log.w(TAG, "Seed unwrap failed: wrong password or corrupted data")
+            return null
+        } catch (e: Exception) {
+            Log.e(TAG, "Error unwrapping seed", e)
+            return null
+        } finally {
+            // SECURITY: Zeroize wrapping key from memory
+            wrappingKey?.let { java.util.Arrays.fill(it, 0.toByte()) }
+        }
+    }
+
     // ==================== DATABASE ENCRYPTION ====================
 
     /**
      * Get the raw seed bytes from encrypted storage
      */
     private fun getSeedBytes(): ByteArray {
+        // Use cached seed if available (normal path after unlock)
+        val cached = cachedSeedHex
+        if (cached != null) {
+            return hexToBytes(cached)
+        }
+
+        // Fallback: read from prefs (only works if seed is NOT wrapped)
         val hexSeed = encryptedPrefs.getString(WALLET_SEED_ALIAS, null)
             ?: throw IllegalStateException("Wallet seed not found")
+
+        if (isSeedWrapped()) {
+            throw IllegalStateException("Seed is wrapped — call unlockSeed() first")
+        }
+
         return hexToBytes(hexSeed)
     }
 

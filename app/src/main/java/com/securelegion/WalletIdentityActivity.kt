@@ -224,7 +224,7 @@ class WalletIdentityActivity : AppCompatActivity() {
                         size = 512,
                         showLogo = true,
                         mintText = mintText,
-                        expiryText = expiryText,
+                        expiryText = null,
                         showWebsite = true
                     )
                 )
@@ -257,7 +257,7 @@ class WalletIdentityActivity : AppCompatActivity() {
      */
     private fun startExpiryCountdown(expiryMs: Long) {
         countdownTimer?.cancel()
-        val countdownText = findViewById<TextView>(R.id.expiryCountdownText)
+        val countdownText = findViewById<TextView>(R.id.expiryCountdownTextStandalone)
 
         if (expiryMs <= 0) {
             countdownText.visibility = View.GONE
@@ -633,10 +633,7 @@ class WalletIdentityActivity : AppCompatActivity() {
                 Log.d("WalletIdentity", "No username stored yet")
             }
 
-            // Apply gradient text effect
-            usernameTextView.post {
-                applyGradientToText(usernameTextView)
-            }
+            // Removed gradient effect - using solid color from XML for consistent display
         } catch (e: Exception) {
             Log.e("WalletIdentity", "Failed to load username", e)
             usernameTextView.text = "@USER"
@@ -646,13 +643,26 @@ class WalletIdentityActivity : AppCompatActivity() {
     private fun applyGradientToText(textView: TextView) {
         val width = textView.paint.measureText(textView.text.toString())
         if (width > 0) {
+            // Detect current theme mode to pick visible gradient colors
+            val isNightMode = (resources.configuration.uiMode and
+                android.content.res.Configuration.UI_MODE_NIGHT_MASK) ==
+                android.content.res.Configuration.UI_MODE_NIGHT_YES
+            val colors = if (isNightMode) {
+                intArrayOf(
+                    0x4DFFFFFF.toInt(), // 30% white
+                    0xE6FFFFFF.toInt(), // 90% white
+                    0x4DFFFFFF.toInt()  // 30% white
+                )
+            } else {
+                intArrayOf(
+                    0x4D000000.toInt(), // 30% black
+                    0xE6000000.toInt(), // 90% black
+                    0x4D000000.toInt()  // 30% black
+                )
+            }
             val shader = android.graphics.LinearGradient(
                 0f, 0f, width, 0f,
-                intArrayOf(
-                    0x4DFFFFFF.toInt(), // 30% white at start
-                    0xE6FFFFFF.toInt(), // 90% white at center
-                    0x4DFFFFFF.toInt() // 30% white at end
-                ),
+                colors,
                 floatArrayOf(0f, 0.49f, 1f),
                 android.graphics.Shader.TileMode.CLAMP
             )
@@ -687,6 +697,8 @@ class WalletIdentityActivity : AppCompatActivity() {
             profilePhotoAvatar.setPhotoBase64(photoBase64)
         }
         profilePhotoAvatar.setName(username)
+        profilePhotoAvatar.setBgColor(android.graphics.Color.parseColor("#2A2A2A"))
+        profilePhotoAvatar.setTextColor(android.graphics.Color.WHITE)
 
         // Edit photo button
         findViewById<View>(R.id.editProfilePhotoButton).setOnClickListener {
@@ -740,6 +752,17 @@ class WalletIdentityActivity : AppCompatActivity() {
                 Log.i("WalletIdentity", "Profile photo broadcasted to contacts")
             } catch (e: Exception) {
                 Log.e("WalletIdentity", "Failed to broadcast profile update", e)
+            }
+        }
+
+        // Also broadcast to all joined groups
+        kotlinx.coroutines.CoroutineScope(Dispatchers.IO + kotlinx.coroutines.SupervisorJob()).launch {
+            try {
+                val mgr = com.securelegion.services.CrdtGroupManager.getInstance(this@WalletIdentityActivity)
+                mgr.sendProfilePhotoToAllGroups()
+                Log.i("WalletIdentity", "Profile photo broadcasted to all groups")
+            } catch (e: Exception) {
+                Log.e("WalletIdentity", "Failed to broadcast group profile photo", e)
             }
         }
     }

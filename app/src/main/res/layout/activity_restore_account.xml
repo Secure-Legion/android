@@ -4,7 +4,7 @@
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="?attr/colorSurface"
+    android:background="#000000"
     android:fillViewport="true">
 
     <androidx.constraintlayout.widget.ConstraintLayout
@@ -64,7 +64,7 @@
             android:layout_marginTop="16dp"
             android:padding="16dp"
             android:hint="Enter or paste your 12-word seed phrase"
-            android:textColorHint="#666666"
+            android:textColorHint="@color/lock_password_hint"
             android:textColor="?attr/colorOnSurface"
             android:fontFamily="@font/poppins_medium"
             android:textSize="16sp"
@@ -87,7 +87,7 @@
             android:text="Enter your 12-word seed phrase to import your account. This will import your messaging identity and attempt to recover your contacts."
             android:fontFamily="@font/poppins_regular"
             android:textSize="13sp"
-            android:textColor="#5C5C5C"
+            android:textColor="@color/lock_subtitle_gray"
             app:layout_constraintTop_toBottomOf="@id/seedPhraseInput"
             app:layout_constraintStart_toStartOf="parent"
             app:layout_constraintEnd_toEndOf="parent" />

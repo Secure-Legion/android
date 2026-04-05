@@ -789,6 +789,123 @@ class CrdtGroupManager private constructor(private val context: Context) {
     }
 
     /**
+     * Send own profile photo to all active members of a group via 0x37 GROUP_PROFILE_PHOTO.
+     * Wire body: [groupId:32][senderEd25519:32][ed25519Sig:64][jpegData:variable]
+     * Signature covers jpegData only.
+     */
+    suspend fun sendGroupProfilePhoto(groupId: String) {
+        // Load own profile photo
+        val prefs = context.getSharedPreferences("secure_legion_settings", android.content.Context.MODE_PRIVATE)
+        val photoBase64 = prefs.getString("profile_photo_base64", null)
+        if (photoBase64.isNullOrEmpty()) {
+            Log.i(TAG, "sendGroupProfilePhoto: no profile photo set — skipping")
+            return
+        }
+
+        val jpegData = try {
+            Base64.decode(photoBase64, Base64.NO_WRAP)
+        } catch (e: Exception) {
+            Log.e(TAG, "sendGroupProfilePhoto: failed to decode base64", e)
+            return
+        }
+
+        if (jpegData.size > 32_768) {
+            Log.w(TAG, "sendGroupProfilePhoto: photo too large (${jpegData.size} bytes > 32KB) — skipping")
+            return
+        }
+
+        // Sign jpeg data with Ed25519
+        val senderPubkey = keyManager.getSigningPublicKey()   // 32 bytes
+        val privKey = keyManager.getSigningKeyBytes()
+        val signature = RustBridge.signData(jpegData, privKey) // 64 bytes
+
+        // Build payload: [groupId:32][senderEd25519:32][sig:64][jpegData]
+        val groupIdBytes = hexToBytes(groupId)
+        val payload = java.io.ByteArrayOutputStream()
+        payload.write(groupIdBytes)    // 32 bytes
+        payload.write(senderPubkey)    // 32 bytes
+        payload.write(signature)       // 64 bytes
+        payload.write(jpegData)        // variable
+
+        broadcastRaw(groupId, 0x37.toByte(), payload.toByteArray())
+        Log.i(TAG, "sendGroupProfilePhoto: sent ${jpegData.size} bytes to group ${groupId.take(16)}")
+    }
+
+    /**
+     * Send own profile photo to ALL joined groups.
+     * Called when user changes their profile photo.
+     */
+    suspend fun sendProfilePhotoToAllGroups() {
+        val db = getDatabase()
+        val groups = db.groupDao().getAllGroups()
+        for (group in groups) {
+            if (group.isPendingInvite == true) continue
+            try {
+                sendGroupProfilePhoto(group.groupId)
+            } catch (e: Exception) {
+                Log.w(TAG, "sendProfilePhotoToAllGroups: failed for ${group.groupId.take(16)}", e)
+            }
+        }
+    }
+
+    /**
+     * Handle incoming 0x37 GROUP_PROFILE_PHOTO.
+     * Called from TorService when wire type 0x37 is received.
+     *
+     * @param groupIdHex group ID (64-char hex, already extracted by TorService)
+     * @param data payload AFTER groupId — starts at senderEd25519 pubkey
+     */
+    suspend fun handleGroupProfilePhoto(groupIdHex: String, data: ByteArray) {
+        // data = [senderEd25519:32][sig:64][jpegData:variable]
+        if (data.size < 32 + 64 + 1) {
+            Log.w(TAG, "GROUP_PROFILE_PHOTO too short: ${data.size} bytes")
+            return
+        }
+
+        val senderPubkey = data.copyOfRange(0, 32)
+        val signature = data.copyOfRange(32, 96)
+        val jpegData = data.copyOfRange(96, data.size)
+
+        // Size check
+        if (jpegData.size > 32_768) {
+            Log.w(TAG, "GROUP_PROFILE_PHOTO: jpeg too large (${jpegData.size} bytes) — dropping")
+            return
+        }
+
+        // Verify Ed25519 signature over jpegData
+        if (!RustBridge.verifySignature(jpegData, signature, senderPubkey)) {
+            Log.e(TAG, "GROUP_PROFILE_PHOTO: INVALID SIGNATURE — dropping")
+            return
+        }
+
+        // Verify sender is active group member
+        val senderHex = bytesToHex(senderPubkey)
+        try {
+            ensureLoaded(groupIdHex)
+            val members = queryMembers(groupIdHex)
+            val senderMember = members.find { it.pubkeyHex == senderHex }
+            if (senderMember == null || !senderMember.accepted || senderMember.removed) {
+                Log.e(TAG, "GROUP_PROFILE_PHOTO: sender ${senderHex.take(8)} not active member — dropping")
+                return
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "GROUP_PROFILE_PHOTO: membership check failed — accepting on trust", e)
+        }
+
+        // Store in group_peers
+        val photoBase64 = Base64.encodeToString(jpegData, Base64.NO_WRAP)
+        val db = getDatabase()
+        db.groupPeerDao().updateProfilePhoto(groupIdHex, senderHex, photoBase64)
+        Log.i(TAG, "GROUP_PROFILE_PHOTO: stored ${jpegData.size} bytes for ${senderHex.take(8)} in group ${groupIdHex.take(16)}")
+
+        // Notify UI to refresh
+        context.sendBroadcast(android.content.Intent("com.securelegion.NEW_GROUP_MESSAGE").apply {
+            setPackage(context.packageName)
+            putExtra("GROUP_ID", groupIdHex)
+        })
+    }
+
+    /**
      * Handle incoming 0x35 ROUTING_UPDATE — store entries and flush pending deliveries.
      * Called from TorService when a routing update is received.
      *
@@ -1509,6 +1626,17 @@ class CrdtGroupManager private constructor(private val context: Context) {
             }
         } catch (e: Exception) {
             Log.w(TAG, "acceptInvite: routing directory request failed (non-fatal)", e)
+        }
+
+        // Auto-send profile photo to group after 2s delay (let routing settle)
+        kotlinx.coroutines.CoroutineScope(Dispatchers.IO + kotlinx.coroutines.SupervisorJob()).launch {
+            try {
+                delay(2000)
+                sendGroupProfilePhoto(groupId)
+                Log.i(TAG, "acceptInvite: auto-sent profile photo to group ${groupId.take(16)}")
+            } catch (e: Exception) {
+                Log.w(TAG, "acceptInvite: auto-send profile photo failed (non-fatal)", e)
+            }
         }
 
         return opBytes

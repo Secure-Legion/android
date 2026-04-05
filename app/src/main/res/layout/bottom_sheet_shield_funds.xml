@@ -137,7 +137,7 @@
             android:layout_weight="1"
             android:background="@android:color/transparent"
             android:hint="Enter amount..."
-            android:textColorHint="#666666"
+            android:textColorHint="@color/lock_password_hint"
             android:textColor="?attr/colorOnSurface"
             android:textSize="16sp"
             android:inputType="numberDecimal"

@@ -4,7 +4,7 @@
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="?attr/colorSurface">
+    android:background="@color/surface_black">
 
     <!-- Back Button -->
     <FrameLayout
@@ -62,7 +62,7 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:textSize="12sp"
-            android:textColor="#CCCCCC"
+            android:textColor="@color/text_settings"
             android:fontFamily="monospace"
             android:lineSpacingExtra="4dp"
             android:padding="16dp"
@@ -78,7 +78,7 @@
         android:layout_height="wrap_content"
         android:text="No call data available\n\nMake a voice call to see\nquality metrics here"
         android:textSize="16sp"
-        android:textColor="#666666"
+        android:textColor="@color/text_muted"
         android:fontFamily="@font/poppins_regular"
         android:gravity="center"
         android:visibility="gone"

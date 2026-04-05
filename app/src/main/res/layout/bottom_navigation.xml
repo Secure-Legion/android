@@ -37,7 +37,7 @@
                 android:layout_width="22dp"
                 android:layout_height="22dp"
                 android:src="@drawable/ic_nav_chat"
-                app:tint="?attr/colorOnSurfaceVariant"
+                app:tint="#FFFFFF"
                 android:contentDescription="Chats" />
 
             <!-- Badge for unread messages -->
@@ -63,7 +63,7 @@
             android:layout_height="wrap_content"
             android:text="Chats"
             android:textSize="10sp"
-            android:textColor="?attr/colorOnSurfaceVariant"
+            android:textColor="#FFFFFF"
             android:fontFamily="@font/poppins_medium" />
 
     </LinearLayout>
@@ -90,7 +90,7 @@
                 android:layout_width="22dp"
                 android:layout_height="22dp"
                 android:src="@drawable/ic_nav_contacts"
-                app:tint="?attr/colorOnSurfaceVariant"
+                app:tint="#FFFFFF"
                 android:contentDescription="Contacts" />
 
             <!-- Badge for pending friend requests -->
@@ -115,7 +115,7 @@
             android:layout_height="wrap_content"
             android:text="Contacts"
             android:textSize="10sp"
-            android:textColor="?attr/colorOnSurfaceVariant"
+            android:textColor="#FFFFFF"
             android:fontFamily="@font/poppins_medium" />
 
     </LinearLayout>
@@ -138,7 +138,7 @@
             android:layout_width="22dp"
             android:layout_height="22dp"
             android:src="@drawable/ic_wallet"
-            app:tint="?attr/colorOnSurfaceVariant"
+            app:tint="#FFFFFF"
             android:layout_marginBottom="2dp"
             android:contentDescription="Wallet" />
 
@@ -147,7 +147,7 @@
             android:layout_height="wrap_content"
             android:text="Wallet"
             android:textSize="10sp"
-            android:textColor="?attr/colorOnSurfaceVariant"
+            android:textColor="#FFFFFF"
             android:fontFamily="@font/poppins_medium" />
 
     </LinearLayout>
@@ -169,7 +169,7 @@
             android:layout_width="22dp"
             android:layout_height="22dp"
             android:src="@drawable/ic_nav_profile"
-            app:tint="?attr/colorOnSurfaceVariant"
+            app:tint="#FFFFFF"
             android:layout_marginBottom="2dp"
             android:contentDescription="Profile" />
 
@@ -178,7 +178,7 @@
             android:layout_height="wrap_content"
             android:text="Profile"
             android:textSize="10sp"
-            android:textColor="?attr/colorOnSurfaceVariant"
+            android:textColor="#FFFFFF"
             android:fontFamily="@font/poppins_medium" />
 
     </LinearLayout>

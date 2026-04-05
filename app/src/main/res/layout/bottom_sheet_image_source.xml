@@ -16,7 +16,7 @@
         android:layout_height="wrap_content"
         android:text="Send Image"
         android:textSize="18sp"
-        android:textColor="#CCCCCC"
+        android:textColor="@color/text_settings"
         android:fontFamily="@font/space_grotesk_bold"
         android:textStyle="bold"
         android:layout_marginBottom="20dp" />
@@ -66,7 +66,7 @@
             android:layout_width="20dp"
             android:layout_height="20dp"
             android:src="@drawable/ic_arrow_forward"
-            app:tint="#666666"
+            app:tint="@color/text_muted"
             android:contentDescription="Arrow" />
 
     </LinearLayout>
@@ -115,7 +115,7 @@
             android:layout_width="20dp"
             android:layout_height="20dp"
             android:src="@drawable/ic_arrow_forward"
-            app:tint="#666666"
+            app:tint="@color/text_muted"
             android:contentDescription="Arrow" />
 
     </LinearLayout>

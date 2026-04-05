@@ -22,6 +22,7 @@ class AvatarView @JvmOverloads constructor(
     private var bitmap: Bitmap? = null
     private var initials: String = "?"
     private var backgroundColor: Int = 0
+    private var customTextColor: Int? = null
 
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -62,10 +63,10 @@ class AvatarView @JvmOverloads constructor(
     fun setName(name: String?) {
         if (name.isNullOrEmpty()) {
             initials = "?"
-            backgroundColor = MaterialColors.getColor(this, com.google.android.material.R.attr.colorOutlineVariant, Color.GRAY)
+            backgroundColor = androidx.core.content.ContextCompat.getColor(context, R.color.profile_circle)
         } else {
             initials = generateInitials(name)
-            backgroundColor = generateColor(name)
+            backgroundColor = androidx.core.content.ContextCompat.getColor(context, R.color.profile_circle)
         }
         invalidate()
     }
@@ -75,6 +76,24 @@ class AvatarView @JvmOverloads constructor(
      */
     fun clearPhoto() {
         bitmap = null
+        invalidate()
+    }
+
+    /**
+     * Override the text color for the initials.
+     * Call after setName() to force a specific color (e.g. white on dark avatars).
+     */
+    fun setTextColor(color: Int) {
+        customTextColor = color
+        invalidate()
+    }
+
+    /**
+     * Override the background circle color.
+     * Call after setName() to force a specific bg color.
+     */
+    fun setBgColor(color: Int) {
+        backgroundColor = color
         invalidate()
     }
 
@@ -95,9 +114,15 @@ class AvatarView @JvmOverloads constructor(
             bitmapPaint.shader = shader
             canvas.drawRect(rectF, bitmapPaint)
         } else {
-            // Draw initials only (transparent background - shows parent background)
+            // Draw background circle (light gray in light mode, dark in dark mode)
+            paint.color = if (backgroundColor != 0) backgroundColor
+                else androidx.core.content.ContextCompat.getColor(context, R.color.profile_circle)
+            canvas.drawCircle(size / 2f, size / 2f, size / 2f, paint)
+
+            // Draw initials on top
             textPaint.textSize = size * 0.4f
-            textPaint.color = MaterialColors.getColor(this, com.google.android.material.R.attr.colorOnSurfaceVariant, Color.GRAY)
+            textPaint.color = customTextColor
+                ?: androidx.core.content.ContextCompat.getColor(context, R.color.text_primary)
             val yPos = (height / 2f) - ((textPaint.descent() + textPaint.ascent()) / 2f)
             canvas.drawText(initials, width / 2f, yPos, textPaint)
         }

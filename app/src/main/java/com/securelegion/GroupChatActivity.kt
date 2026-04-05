@@ -52,6 +52,8 @@ class GroupChatActivity : BaseActivity() {
     private lateinit var backButton: View
     private lateinit var groupAvatar: com.securelegion.views.AvatarView
     private lateinit var groupNameTitle: TextView
+    private lateinit var memberCountText: TextView
+    private lateinit var syncIcon: FrameLayout
     private lateinit var settingsIcon: FrameLayout
     private lateinit var messagesRecyclerView: RecyclerView
     private lateinit var messageInput: EditText
@@ -116,6 +118,8 @@ class GroupChatActivity : BaseActivity() {
         backButton = findViewById(R.id.backButton)
         groupAvatar = findViewById(R.id.groupAvatar)
         groupNameTitle = findViewById(R.id.groupNameTitle)
+        memberCountText = findViewById(R.id.memberCountText)
+        syncIcon = findViewById(R.id.syncIcon)
         settingsIcon = findViewById(R.id.settingsIcon)
         messagesRecyclerView = findViewById(R.id.messagesRecyclerView)
         messageInput = findViewById(R.id.messageInput)
@@ -132,8 +136,9 @@ class GroupChatActivity : BaseActivity() {
         cancelButton = findViewById(R.id.cancelButton)
 
         groupNameTitle.text = groupName
+        memberCountText.text = "0 members"
 
-        // Load group avatar
+        // Load group avatar + member count
         groupAvatar.setName(groupName)
         val gid = groupId
         if (gid != null) {
@@ -149,6 +154,23 @@ class GroupChatActivity : BaseActivity() {
                     }
                 } catch (_: Exception) { }
             }
+            refreshMemberCount()
+        }
+    }
+
+    private fun refreshMemberCount() {
+        val gid = groupId ?: return
+        lifecycleScope.launch {
+            try {
+                val count = withContext(Dispatchers.IO) {
+                    CrdtGroupManager.getInstance(this@GroupChatActivity)
+                        .queryMembers(gid)
+                        .count { it.accepted && !it.removed }
+                }
+                if (!isFinishing && !isDestroyed) {
+                    memberCountText.text = if (count == 1) "1 member" else "$count members"
+                }
+            } catch (_: Exception) { }
         }
     }
 
@@ -161,6 +183,24 @@ class GroupChatActivity : BaseActivity() {
             intent.putExtra(GroupProfileActivity.EXTRA_GROUP_NAME, groupName)
             startActivity(intent)
             overridePendingTransition(R.anim.slide_in_right, R.anim.slide_out_left)
+        }
+
+        syncIcon.setOnClickListener {
+            val currentGroupId = groupId
+            if (currentGroupId == null) return@setOnClickListener
+            ThemedToast.show(this, "Syncing...")
+            lifecycleScope.launch {
+                try {
+                    withContext(Dispatchers.IO) {
+                        CrdtGroupManager.getInstance(this@GroupChatActivity)
+                            .requestSyncToAllPeers(currentGroupId)
+                    }
+                    loadMessages()
+                    refreshMemberCount()
+                } catch (e: Exception) {
+                    Log.w(TAG, "Sync failed", e)
+                }
+            }
         }
 
         plusButton.setOnClickListener { showBottomSheet() }
@@ -340,11 +380,14 @@ class GroupChatActivity : BaseActivity() {
                                 pubkeyBytes, android.util.Base64.NO_WRAP
                             )
                             val contact = db.contactDao().getContactByPublicKey(pubkeyB64)
+                            val groupPeer = db.groupPeerDao().getByGroupAndPubkey(currentGroupId, member.pubkeyHex)
                             val displayName = contact?.displayName
-                                ?: db.groupPeerDao().getByGroupAndPubkey(currentGroupId, member.pubkeyHex)?.displayName
+                                ?: groupPeer?.displayName
                                 ?: member.deviceIdHex.take(8)
                             nameMap[member.deviceIdHex] = displayName
-                            photoMap[member.deviceIdHex] = contact?.profilePictureBase64
+                            // Photo priority: group peer photo > contact photo > null
+                            photoMap[member.deviceIdHex] = groupPeer?.profilePictureBase64
+                                ?: contact?.profilePictureBase64
                         } catch (_: Exception) {
                             nameMap[member.deviceIdHex] = member.deviceIdHex.take(8)
                         }
@@ -359,9 +402,24 @@ class GroupChatActivity : BaseActivity() {
                         return@withContext Pair(emptyList<GroupChatMessage>(), true)
                     }
 
-                    // UI-level pending: protocol auto-accepts immediately so we can decrypt,
-                    // but UI stays pending until user explicitly taps Accept.
-                    val pending = group.isPendingInvite == true
+                    // Auto-accept invite when user opens the group chat
+                    var pending = group.isPendingInvite == true
+                    if (pending) {
+                        try {
+                            val myEntryForAccept = members.find { it.pubkeyHex == myPubkeyHex }
+                            if (myEntryForAccept != null && !myEntryForAccept.accepted && myEntryForAccept.invitedByOpId.isNotEmpty()) {
+                                Log.i(TAG, "Auto-accepting invite on open: opId=${myEntryForAccept.invitedByOpId}")
+                                mgr.acceptInvite(currentGroupId, myEntryForAccept.invitedByOpId)
+                            } else {
+                                // Protocol already accepted — just clear the UI flag
+                                db.groupDao().updatePendingInvite(currentGroupId, false)
+                            }
+                            pending = false
+                            Log.i(TAG, "Auto-accepted invite for group $currentGroupId")
+                        } catch (e: Exception) {
+                            Log.w(TAG, "Auto-accept failed, user can re-open chat to retry", e)
+                        }
+                    }
 
                     // Query and decrypt messages
                     val messages = try {
@@ -435,17 +493,10 @@ class GroupChatActivity : BaseActivity() {
                 }
 
                 withContext(Dispatchers.Main) {
-                    // Update invite banner visibility
                     isPendingInvite = pendingInvite
-                    // Invite banner removed — the chat thread "click to accept" handles it
                     inviteBanner.visibility = View.GONE
-                    if (pendingInvite) {
-                        messageInput.isEnabled = false
-                        messageInput.hint = "Accept invite to send messages"
-                    } else {
-                        messageInput.isEnabled = true
-                        messageInput.hint = "Message"
-                    }
+                    messageInput.isEnabled = !pendingInvite
+                    messageInput.hint = if (pendingInvite) "Accept invite to send messages" else "Message"
 
                     messageAdapter.submitList(chatMessages)
                     Log.i(TAG, "Loaded ${chatMessages.size} messages for group: $groupName (pending=$pendingInvite)")
@@ -687,6 +738,23 @@ class GroupChatActivity : BaseActivity() {
             return
         }
 
+        // Enforce 20-member group limit
+        lifecycleScope.launch {
+            val existing = withContext(Dispatchers.IO) {
+                CrdtGroupManager.getInstance(this@GroupChatActivity)
+                    .queryMembers(currentGroupId)
+                    .count { !it.removed }
+            }
+            if (existing + contacts.size > AddGroupMembersActivity.MAX_GROUP_MEMBERS) {
+                ThemedToast.show(this@GroupChatActivity, "Groups are limited to ${AddGroupMembersActivity.MAX_GROUP_MEMBERS} members")
+                return@launch
+            }
+            addMembersToGroupInternal(currentGroupId, contacts)
+        }
+    }
+
+    private fun addMembersToGroupInternal(currentGroupId: String, contacts: List<Contact>) {
+
         lifecycleScope.launch {
             try {
                 withContext(Dispatchers.IO) {
@@ -735,6 +803,8 @@ class GroupChatActivity : BaseActivity() {
             @Suppress("UnspecifiedRegisterReceiverFlag")
             registerReceiver(groupMessageReceiver, filter)
         }
+
+        refreshMemberCount()
 
         // Clear unread badge when user opens this group chat
         val currentGroupId = groupId ?: return

@@ -1,11 +1,10 @@
 package com.securelegion
 
-import android.content.Intent
 import android.os.Bundle
 import android.util.Log
 import android.view.View
-import android.widget.Button
 import android.widget.EditText
+import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
 import com.securelegion.crypto.KeyManager
@@ -16,20 +15,56 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 class DevicePasswordActivity : AppCompatActivity() {
+
+    private lateinit var keyManager: KeyManager
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_device_password)
 
-        // setupBottomNavigation() // REMOVED: This layout doesn't have bottom nav
-        setupBackButton()
+        keyManager = KeyManager.getInstance(this)
 
-        // Change Password button
+        setupBackButton()
+        setupUI()
+        setupChangePasswordButton()
+        setupRemovePasswordButton()
+    }
+
+    private fun setupUI() {
+        val hasUserPassword = keyManager.hasUserDefinedPassword()
+
+        // Update header title and button label based on password state
+        val headerTitle = findViewById<TextView>(R.id.headerTitle)
+        val changeButtonLabel = findViewById<TextView>(R.id.changePasswordButtonLabel)
+        val currentPasswordLabel = findViewById<View>(R.id.currentPasswordInput)
+
+        if (hasUserPassword) {
+            headerTitle.text = "Change Password"
+            changeButtonLabel.text = "Change Password"
+        } else {
+            headerTitle.text = "Set Password"
+            changeButtonLabel.text = "Set Password"
+        }
+
+        // Show/hide remove password button
+        val removeButton = findViewById<View>(R.id.removePasswordButton)
+        removeButton.visibility = if (hasUserPassword) View.VISIBLE else View.GONE
+    }
+
+    private fun setupChangePasswordButton() {
         findViewById<View>(R.id.changePasswordButton).setOnClickListener {
             val currentPassword = findViewById<EditText>(R.id.currentPasswordInput).text.toString()
             val newPassword = findViewById<EditText>(R.id.newPasswordInput).text.toString()
             val confirmPassword = findViewById<EditText>(R.id.confirmPasswordInput).text.toString()
 
-            if (currentPassword.isEmpty() || newPassword.isEmpty() || confirmPassword.isEmpty()) {
+            val hasUserPassword = keyManager.hasUserDefinedPassword()
+
+            if (hasUserPassword && currentPassword.isEmpty()) {
+                ThemedToast.show(this, "Please enter your current password")
+                return@setOnClickListener
+            }
+
+            if (newPassword.isEmpty() || confirmPassword.isEmpty()) {
                 ThemedToast.show(this, "Please fill in all fields")
                 return@setOnClickListener
             }
@@ -53,24 +88,32 @@ class DevicePasswordActivity : AppCompatActivity() {
                 try {
                     Log.i("DevicePassword", "Attempting to change device password")
 
-                    val keyManager = KeyManager.getInstance(this@DevicePasswordActivity)
-
-                    // Verify current password is correct
-                    val isCurrentPasswordValid = withContext(Dispatchers.IO) {
-                        keyManager.verifyDevicePassword(currentPassword)
-                    }
-
-                    if (!isCurrentPasswordValid) {
-                        withContext(Dispatchers.Main) {
-                            ThemedToast.show(this@DevicePasswordActivity, "Current password is incorrect")
-                            findViewById<View>(R.id.changePasswordButton).isEnabled = true
+                    // Determine old password: if user has no user-defined password, get the system password
+                    val oldPassword = if (hasUserPassword) {
+                        // Verify current password is correct
+                        val isCurrentPasswordValid = withContext(Dispatchers.IO) {
+                            keyManager.verifyDevicePassword(currentPassword)
                         }
-                        return@launch
+                        if (!isCurrentPasswordValid) {
+                            withContext(Dispatchers.Main) {
+                                ThemedToast.show(this@DevicePasswordActivity, "Current password is incorrect")
+                                findViewById<View>(R.id.changePasswordButton).isEnabled = true
+                            }
+                            return@launch
+                        }
+                        currentPassword
+                    } else {
+                        // No user-defined password — use system password as old password
+                        withContext(Dispatchers.IO) {
+                            keyManager.getSystemPassword()
+                        } ?: throw Exception("Cannot retrieve system password")
                     }
 
-                    // Change to new password
+                    // Re-wrap seed with new password
                     withContext(Dispatchers.IO) {
-                        keyManager.setDevicePassword(newPassword)
+                        if (!keyManager.rewrapSeed(oldPassword, newPassword, isNewUserDefined = true)) {
+                            throw Exception("Failed to re-wrap seed with new password")
+                        }
                     }
 
                     Log.i("DevicePassword", "Password changed successfully")
@@ -98,13 +141,45 @@ class DevicePasswordActivity : AppCompatActivity() {
         }
     }
 
+    private fun setupRemovePasswordButton() {
+        findViewById<View>(R.id.removePasswordButton).setOnClickListener {
+            val currentPassword = findViewById<EditText>(R.id.currentPasswordInput).text.toString()
+            if (currentPassword.isEmpty()) {
+                ThemedToast.show(this, "Enter current password to confirm")
+                return@setOnClickListener
+            }
+            if (!keyManager.verifyDevicePassword(currentPassword)) {
+                ThemedToast.show(this, "Incorrect password")
+                return@setOnClickListener
+            }
+
+            // Disable button while removing password
+            findViewById<View>(R.id.removePasswordButton).isEnabled = false
+
+            lifecycleScope.launch {
+                try {
+                    withContext(Dispatchers.IO) {
+                        val newSystemPassword = keyManager.generateSystemPasswordPublic()
+                        if (!keyManager.rewrapSeed(currentPassword, newSystemPassword, isNewUserDefined = false)) {
+                            throw Exception("Failed to remove password")
+                        }
+                    }
+                    ThemedToast.show(this@DevicePasswordActivity, "Password removed")
+                    finish()
+                } catch (e: Exception) {
+                    Log.e("DevicePassword", "Failed to remove password", e)
+                    withContext(Dispatchers.Main) {
+                        ThemedToast.show(this@DevicePasswordActivity, "Failed: ${e.message}")
+                        findViewById<View>(R.id.removePasswordButton).isEnabled = true
+                    }
+                }
+            }
+        }
+    }
+
     private fun setupBackButton() {
         findViewById<View>(R.id.backButton).setOnClickListener {
             finish()
         }
-    }
-
-    private fun setupBottomNavigation() {
-        BottomNavigationHelper.setupBottomNavigation(this)
     }
 }

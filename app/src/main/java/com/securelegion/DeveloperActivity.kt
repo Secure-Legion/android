@@ -67,6 +67,6 @@ class DeveloperActivity : AppCompatActivity() {
             stressTestItem.visibility = View.GONE
         }
 
-        BottomNavigationHelper.setupBottomNavigation(this)
+        // BottomNavigationHelper.setupBottomNavigation(this)  // removed - no bottom nav on developer page
     }
 }

@@ -4990,7 +4990,7 @@ class TorService : Service() {
             //   0x32 SYNC_REQUEST:  payload = [groupId:32][afterLamport:u64 BE][limit:u32 BE]
             //   0x33 SYNC_CHUNK:    payload = [groupId:32][packedOps]
             val wireType = encryptedMessageWire[0].toInt() and 0xFF
-            if (wireType == 0x30 || wireType == 0x32 || wireType == 0x33 || wireType == 0x35 || wireType == 0x36) {
+            if (wireType == 0x30 || wireType == 0x32 || wireType == 0x33 || wireType == 0x35 || wireType == 0x36 || wireType == 0x37) {
                 val minSize = 1 + 32 + CRDT_GROUP_ID_LEN + 64 // type + X25519 + groupId + signature
                 if (encryptedMessageWire.size < minSize) {
                     Log.e(TAG, "CRDT wire 0x${"%02x".format(wireType)} too short: ${encryptedMessageWire.size} bytes (need >= $minSize)")
@@ -5092,6 +5092,18 @@ class TorService : Service() {
                                 }
                             } catch (e: Exception) {
                                 Log.e(TAG, "Error processing ROUTING_REQUEST", e)
+                            }
+                        }
+                    }
+                    0x37 -> {
+                        // GROUP_PROFILE_PHOTO: member profile photo sync
+                        Log.i(TAG, "GROUP_PROFILE_PHOTO: group=${groupIdHex.take(16)}... payload=${rest.size} bytes")
+                        serviceScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                            try {
+                                val mgr = CrdtGroupManager.getInstance(this@TorService)
+                                mgr.handleGroupProfilePhoto(groupIdHex, rest)
+                            } catch (e: Exception) {
+                                Log.e(TAG, "Error processing GROUP_PROFILE_PHOTO", e)
                             }
                         }
                     }

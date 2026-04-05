@@ -38,4 +38,7 @@ interface GroupPeerDao {
 
     @Query("SELECT DISTINCT groupId FROM group_peers WHERE messagingOnion = :onionAddress")
     suspend fun getGroupIdsForPeer(onionAddress: String): List<String>
+
+    @Query("UPDATE group_peers SET profilePictureBase64 = :photoBase64 WHERE groupId = :groupId AND pubkeyHex = :pubkeyHex")
+    suspend fun updateProfilePhoto(groupId: String, pubkeyHex: String, photoBase64: String?)
 }
