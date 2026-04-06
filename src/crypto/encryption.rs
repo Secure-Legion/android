@@ -139,7 +139,7 @@ pub fn derive_root_key(shared_secret: &[u8], info: &[u8]) -> Result<[u8; 32]> {
         return Err(EncryptionError::InvalidKeyLength);
     }
 
-    let hkdf = Hkdf::<Sha256>::new(None, shared_secret);
+    let hkdf = Hkdf::<Sha256>::new(Some(b"SecureLegion-HKDF-v1"), shared_secret);
     let mut root_key = [0u8; 32];
     hkdf.expand(info, &mut root_key)
         .map_err(|_| EncryptionError::EncryptionFailed)?;

@@ -1,12 +1,15 @@
 pub mod crypto;
 pub mod protocol;
+#[cfg(not(target_os = "windows"))]
 pub mod network;
 pub mod ffi;
 
 // Re-export public crate modules
 pub use securelegion_crypto;
 pub use securelegion_crypto::crdt;
+#[cfg(not(target_os = "windows"))]
 pub use securelegion_crypto::audio;
+#[cfg(not(target_os = "windows"))]
 pub use securelegion_crypto::nlx402;
 pub use securelegion_crypto::util;
 
@@ -18,7 +21,9 @@ pub use crypto::{
 };
 
 pub use protocol::{Message, ContactCard, SecurityMode, MessageType};
+#[cfg(not(target_os = "windows"))]
 pub use network::{PingToken, PongToken, PingPongManager, TorManager};
+#[cfg(not(target_os = "windows"))]
 pub use nlx402::{PaymentQuote, create_quote, verify_payment, verify_payment_simple, extract_quote_hash_from_memo, VerificationResult};
 
 // Library version

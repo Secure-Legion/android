@@ -25,9 +25,9 @@ use base64::{Engine as _, engine::general_purpose::STANDARD as B64};
 
 use crate::crdt::ids::{DeviceID, GroupID, OpID};
 use crate::crdt::ops::{
-    OpEnvelope, OpType, Role, RemoveReason, MetadataKey,
+    AdminRights, OpEnvelope, OpType, Role, RemoveReason, MetadataKey,
     GroupCreatePayload, MemberInvitePayload, MemberAcceptPayload,
-    MemberRemovePayload, RoleSetPayload, MsgAddPayload, MsgEditPayload,
+    MemberRemovePayload, MemberUnbanPayload, RoleSetPayload, GroupDeletePayload, MsgAddPayload, MsgEditPayload,
     MsgDeletePayload, ReactionSetPayload, MetadataSetPayload,
     generate_msg_id,
 };
@@ -110,12 +110,14 @@ fn parse_op_type(s: &str) -> Result<OpType, String> {
         "MemberInvite" => Ok(OpType::MemberInvite),
         "MemberAccept" => Ok(OpType::MemberAccept),
         "MemberRemove" => Ok(OpType::MemberRemove),
+        "MemberUnban" => Ok(OpType::MemberUnban),
         "RoleSet" => Ok(OpType::RoleSet),
         "MsgAdd" => Ok(OpType::MsgAdd),
         "MsgEdit" => Ok(OpType::MsgEdit),
         "MsgDelete" => Ok(OpType::MsgDelete),
         "ReactionSet" => Ok(OpType::ReactionSet),
         "MetadataSet" => Ok(OpType::MetadataSet),
+        "GroupDelete" => Ok(OpType::GroupDelete),
         other => Err(format!("Unknown op type: {}", other)),
     }
 }
@@ -143,6 +145,10 @@ fn parse_metadata_key(s: &str) -> Result<MetadataKey, String> {
         "Name" => Ok(MetadataKey::Name),
         "Avatar" => Ok(MetadataKey::Avatar),
         "Topic" => Ok(MetadataKey::Topic),
+        "AllowMemberSendMessages" => Ok(MetadataKey::AllowMemberSendMessages),
+        "AllowMemberInvites" => Ok(MetadataKey::AllowMemberInvites),
+        "AllowMemberPin" => Ok(MetadataKey::AllowMemberPin),
+        "AllowMemberChangeInfo" => Ok(MetadataKey::AllowMemberChangeInfo),
         other => Err(format!("Unknown metadata key: {}", other)),
     }
 }
@@ -593,7 +599,21 @@ fn build_op_envelope(
                 }
             };
             let target_device_id = DeviceID::from_pubkey(&target_pk);
-            let payload = MemberRemovePayload { target_device_id, reason };
+            let ban = params["ban"].as_bool().unwrap_or(false);
+            let payload = MemberRemovePayload { target_device_id, reason, ban };
+            OpEnvelope::create_signed(gid, otype, &payload, lamport, op_nonce, pub_key, priv_key)
+        }
+        OpType::MemberUnban => {
+            let pk_hex = params["target_pubkey_hex"].as_str().unwrap_or("");
+            let target_pk = match hex_to_32(pk_hex, "target_pubkey") {
+                Ok(a) => a,
+                Err(e) => {
+                    let _ = env.throw_new("java/lang/IllegalArgumentException", &*e);
+                    return None;
+                }
+            };
+            let target_device_id = DeviceID::from_pubkey(&target_pk);
+            let payload = MemberUnbanPayload { target_device_id };
             OpEnvelope::create_signed(gid, otype, &payload, lamport, op_nonce, pub_key, priv_key)
         }
         OpType::RoleSet => {
@@ -613,7 +633,29 @@ fn build_op_envelope(
                 }
             };
             let target_device_id = DeviceID::from_pubkey(&target_pk);
-            let payload = RoleSetPayload { target_device_id, new_role };
+
+            // Parse admin_rights (optional; only meaningful when new_role == Admin)
+            let admin_rights = params.get("admin_rights").and_then(|ar| {
+                if ar.is_null() || !ar.is_object() { return None; }
+                Some(AdminRights {
+                    can_invite: ar["can_invite"].as_bool().unwrap_or(false),
+                    can_remove: ar["can_remove"].as_bool().unwrap_or(false),
+                    can_change_info: ar["can_change_info"].as_bool().unwrap_or(false),
+                    can_delete_messages: ar["can_delete_messages"].as_bool().unwrap_or(false),
+                    can_pin_messages: ar["can_pin_messages"].as_bool().unwrap_or(false),
+                    can_add_admins: ar["can_add_admins"].as_bool().unwrap_or(false),
+                })
+            });
+
+            // Parse custom_title (optional; Rust apply layer rejects > 32 bytes)
+            let custom_title = params["custom_title"].as_str().map(|s| s.to_string());
+
+            let payload = RoleSetPayload {
+                target_device_id,
+                new_role,
+                admin_rights,
+                custom_title,
+            };
             OpEnvelope::create_signed(gid, otype, &payload, lamport, op_nonce, pub_key, priv_key)
         }
         OpType::MsgAdd => {
@@ -687,6 +729,11 @@ fn build_op_envelope(
             let payload = MetadataSetPayload { key, value };
             OpEnvelope::create_signed(gid, otype, &payload, lamport, op_nonce, pub_key, priv_key)
         }
+        OpType::GroupDelete => {
+            let reason = params["reason"].as_str().map(|s| s.to_string());
+            let payload = GroupDeletePayload { reason };
+            OpEnvelope::create_signed(gid, otype, &payload, lamport, op_nonce, pub_key, priv_key)
+        }
     };
 
     match result {
@@ -749,6 +796,10 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_crdtQuery(
             "heads" => query_heads(state),
             "state_hash" => query_state_hash(state),
             "limit_status" => query_limit_status(state),
+            "group_status" => serde_json::json!({
+                "deleted": state.group_deleted,
+                "delete_reason": state.delete_reason,
+            }),
             other => throw_arg!(env, format!("Unknown query type: {}", other)),
         };
 
@@ -772,9 +823,20 @@ fn query_members(state: &GroupState) -> serde_json::Value {
                 "role": format!("{:?}", entry.role),
                 "accepted": entry.accepted,
                 "removed": entry.removed,
+                "banned": entry.banned,
                 "rekey_required": entry.rekey_required,
                 "invited_by_op_id": entry.invited_by.to_hex(),
                 "encrypted_group_secret_b64": B64.encode(&entry.encrypted_group_secret),
+                "admin_rights": entry.admin_rights.map(|ar| serde_json::json!({
+                    "can_invite": ar.can_invite,
+                    "can_remove": ar.can_remove,
+                    "can_change_info": ar.can_change_info,
+                    "can_delete_messages": ar.can_delete_messages,
+                    "can_pin_messages": ar.can_pin_messages,
+                    "can_add_admins": ar.can_add_admins,
+                })),
+                "custom_title": entry.custom_title,
+                "promoted_by_device_id": entry.promoted_by.map(|d| d.to_hex()),
             })
         })
         .collect();
@@ -814,6 +876,18 @@ fn query_metadata(state: &GroupState) -> serde_json::Value {
     }
     if let Some(avatar) = state.metadata.get(&MetadataKey::Avatar) {
         obj.insert("avatar_b64".into(), serde_json::Value::String(B64.encode(&avatar.value)));
+    }
+    // Member-tier permission toggles (Phase 3). Emit only if set; Kotlin
+    // falls back to documented defaults when keys are absent.
+    for (key, name) in [
+        (MetadataKey::AllowMemberSendMessages, "allow_member_send_messages"),
+        (MetadataKey::AllowMemberInvites, "allow_member_invites"),
+        (MetadataKey::AllowMemberPin, "allow_member_pin"),
+        (MetadataKey::AllowMemberChangeInfo, "allow_member_change_info"),
+    ] {
+        if let Some(v) = state.metadata.get_bool(key) {
+            obj.insert(name.into(), serde_json::Value::Bool(v));
+        }
     }
     serde_json::Value::Object(obj)
 }

@@ -2936,15 +2936,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "pqc_kyber"
-version = "0.7.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1b23e1823e8a78ad67990c5cb843d5eba75ab3b8a44d041f3814fde89463dc6f"
-dependencies = [
- "rand_core 0.6.4",
-]
-
-[[package]]
 name = "prettyplease"
 version = "0.2.37"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3572,8 +3563,8 @@ dependencies = [
  "log",
  "lru",
  "merlin",
+ "ml-kem",
  "once_cell",
- "pqc_kyber",
  "rand 0.8.5",
  "rand_chacha 0.3.1",
  "rand_core 0.6.4",

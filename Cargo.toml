@@ -33,8 +33,8 @@ curve25519-dalek = { version = "4", features = ["rand_core"] }  # Required by bu
 merlin = "3"  # Transcript protocol for bulletproofs
 
 # Post-Quantum Cryptography (NIST FIPS 203)
-pqc_kyber = { version = "0.7", features = ["kyber1024"] }  # ML-KEM-1024 implementation
-rand_chacha = "0.3"  # For deterministic RNG from seed
+ml-kem = { version = "0.2", features = ["deterministic", "zeroize"] }
+rand_chacha = "0.3"
 
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
@@ -49,16 +49,12 @@ base64 = "0.21"
 hex = "0.4"
 base32 = "0.5"
 
-# JNI (Android)
-jni = "0.21"
-
 # Error handling
 thiserror = "1.0"
 anyhow = "1.0"
 
 # Logging
 log = "0.4"
-android_logger = "0.14"
 
 # Time
 chrono = "0.4"
@@ -68,15 +64,20 @@ uuid = { version = "1.6", features = ["v4"] }
 
 # Sync primitives
 once_cell = "1.19"
-arc-swap = "1"  # Atomic swap for restartable channel lifecycle (replaces OnceCell for TX/RX channels)
-lru = "0.12"  # For replay cache (LRU eviction policy)
+arc-swap = "1"
+lru = "0.12"
 
-# Async runtime (for Ping-Pong protocol and Tor control)
+# Android-only dependencies
+[target.'cfg(target_os = "android")'.dependencies]
+jni = "0.21"
+android_logger = "0.14"
+
+# Mobile-only: async runtime, Tor, networking
+[target.'cfg(not(target_os = "windows"))'.dependencies]
 tokio = { version = "1.35", features = ["sync", "time", "macros", "rt-multi-thread", "net", "io-util", "process", "io-std"] }
 tokio-util = { version = "0.7", features = ["codec"] }
 bytes = "1.5"
-
-# Tor integration (Arti — in-process Rust Tor)
+futures = "0.3"
 arti-client = { version = "0.40", default-features = false, features = [
     "tokio",
     "rustls",
@@ -92,9 +93,6 @@ tor-cell = "0.40"
 tor-config-path = "0.40"
 tor-llcrypto = "0.40"
 tor-hscrypto = "0.40"
-futures = "0.3"
-
-# Networking (optional - for future Tor/P2P implementation)
 reqwest = { version = "0.11", default-features = false, features = ["blocking", "rustls-tls"], optional = true }
 
 [dev-dependencies]

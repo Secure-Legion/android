@@ -189,7 +189,10 @@ fn is_valid_message_type(msg_type: u8) -> bool {
         crate::network::tor::MSG_TYPE_SYNC_REQUEST |
         crate::network::tor::MSG_TYPE_SYNC_CHUNK |
         crate::network::tor::MSG_TYPE_ROUTING_UPDATE |
-        crate::network::tor::MSG_TYPE_ROUTING_REQUEST
+        crate::network::tor::MSG_TYPE_ROUTING_REQUEST |
+        crate::network::tor::MSG_TYPE_CONTACT_LIST_REQUEST |
+        crate::network::tor::MSG_TYPE_CONTACT_LIST_RESPONSE |
+        crate::network::tor::MSG_TYPE_CONTACT_LIST_PUSH
     )
 }
 
@@ -3785,6 +3788,7 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendMessageDirect(
     encrypted_message: JByteArray,
     message_type_byte: jbyte,
     message_id: JString,
+    ping_id_hex: JString,
 ) -> jstring {
     catch_panic!(env, {
         let onion_address = match jstring_to_string(&mut env, recipient_onion) {
@@ -3879,18 +3883,41 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendMessageDirect(
             }
         };
         let signer = ed25519_dalek::SigningKey::from_bytes(&sk_bytes);
-        let signature = signer.sign(&message_bytes);
+
+        // Parse pingId hex → 24 raw bytes. Always tracked wire now (pingId required).
+        let ping_id_str = match jstring_to_string(&mut env, ping_id_hex) {
+            Ok(s) => s,
+            Err(e) => {
+                log::error!("[FAST_MODE] Failed to convert pingIdHex: {}", e);
+                return std::ptr::null_mut();
+            }
+        };
+        let ping_id_bytes: Vec<u8> = (0..ping_id_str.len()).step_by(2)
+            .map(|i| u8::from_str_radix(&ping_id_str[i..i+2], 16).unwrap_or(0))
+            .collect();
+        if ping_id_bytes.len() != 24 {
+            log::error!("[FAST_MODE] Invalid pingId length: {} (expected 24)", ping_id_bytes.len());
+            return std::ptr::null_mut();
+        }
+
+        // Sign: x25519_pub || pingId || encrypted_payload (tracked wire sign-over)
+        let mut sign_data = Vec::with_capacity(32 + 24 + message_bytes.len());
+        sign_data.extend_from_slice(&our_x25519_public);
+        sign_data.extend_from_slice(&ping_id_bytes);
+        sign_data.extend_from_slice(&message_bytes);
+        let signature = signer.sign(&sign_data);
         let signature_bytes = signature.to_bytes();
 
-        // Build wire: [type:1][x25519:32][encrypted:var][sig:64] — no pingId
-        let mut wire_message = Vec::with_capacity(1 + 32 + message_bytes.len() + 64);
+        // Build tracked wire: [type:1][x25519:32][pingId:24][encrypted:var][sig:64]
+        let mut wire_message = Vec::with_capacity(1 + 32 + 24 + message_bytes.len() + 64);
         wire_message.push(msg_type);
         wire_message.extend_from_slice(&our_x25519_public);
+        wire_message.extend_from_slice(&ping_id_bytes);
         wire_message.extend_from_slice(&message_bytes);
         wire_message.extend_from_slice(&signature_bytes);
 
         log::info!(
-            "[FAST_MODE] Wire: {} bytes (1 type + 32 x25519 + {} encrypted + 64 sig)",
+            "[FAST_MODE] Wire (tracked): {} bytes (1 type + 32 x25519 + 24 pingId + {} encrypted + 64 sig)",
             wire_message.len(), message_bytes.len()
         );
 
@@ -3912,7 +3939,29 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendMessageDirect(
 
                 conn.send(&wire_message).await?;
                 log::info!("[FAST_MODE] Message sent to {} ({} bytes)", onion_address, wire_message.len());
-                Ok::<bool, Box<dyn std::error::Error>>(true)
+
+                // Wait up to 15s for ACK on the SAME connection.
+                // Receiver saves message, builds ACK, writes it back on the stored stream.
+                // If no ACK within timeout, Kotlin falls back to outbound ACK retry.
+                let ack_received = match tokio::time::timeout(
+                    std::time::Duration::from_secs(15),
+                    conn.receive()
+                ).await {
+                    Ok(Ok(ack_data)) => {
+                        log::info!("[FAST_MODE] ACK received on SAME connection ({} bytes)", ack_data.len());
+                        true
+                    }
+                    Ok(Err(e)) => {
+                        log::debug!("[FAST_MODE] ACK read error (will use outbound): {}", e);
+                        false
+                    }
+                    Err(_) => {
+                        log::debug!("[FAST_MODE] ACK read timeout 15s (will use outbound)");
+                        false
+                    }
+                };
+
+                Ok::<bool, Box<dyn std::error::Error>>(ack_received)
             }).await.map_err(|_| {
                 log::warn!("[FAST_MODE] Timeout sending to {}", onion_address);
                 Box::new(std::io::Error::new(std::io::ErrorKind::TimedOut, "Operation timed out")) as Box<dyn std::error::Error>
@@ -3920,9 +3969,14 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendMessageDirect(
         });
 
         let json = match result {
-            Ok(_) => {
-                log::info!("[FAST_MODE] Send success, ACK will arrive via listener");
-                r#"{"success":true,"ackReceived":false}"#.to_string()
+            Ok(ack_received) => {
+                if ack_received {
+                    log::info!("[FAST_MODE] Send + ACK success (same connection)");
+                    r#"{"success":true,"ackReceived":true}"#.to_string()
+                } else {
+                    log::info!("[FAST_MODE] Send success, ACK will arrive via listener");
+                    r#"{"success":true,"ackReceived":false}"#.to_string()
+                }
             }
             Err(e) => {
                 let error_msg = e.to_string().to_lowercase();
@@ -7259,7 +7313,56 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_resetAckState(
 
 // ==================== DELIVERY ACK (CONFIRMATION) ====================
 
-/// Send a delivery ACK (confirmation) to recipient
+/// Send ACK on the SAME Arti stream the message arrived on (instant, no circuit setup).
+/// Returns true on success, false if stream was already dropped/stale.
+/// Kotlin should fall back to sendDeliveryAck (outbound connection) on failure.
+#[no_mangle]
+pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendAckOnArtiStream(
+    mut env: JNIEnv,
+    _class: JClass,
+    conn_id: jlong,
+    item_id: JString,
+    ack_type: JString,
+    recipient_x25519_pubkey: JByteArray,
+) -> jboolean {
+    catch_panic!(env, {
+        let item_id_str = match jstring_to_string(&mut env, item_id) {
+            Ok(s) => s, Err(e) => { log::error!("[ACK_SAME_CONN] bad item_id: {}", e); return 0; }
+        };
+        let ack_type_str = match jstring_to_string(&mut env, ack_type) {
+            Ok(s) => s, Err(e) => { log::error!("[ACK_SAME_CONN] bad ack_type: {}", e); return 0; }
+        };
+        let recipient_x25519_bytes = match jbytearray_to_vec(&mut env, recipient_x25519_pubkey) {
+            Ok(v) => v, Err(e) => { log::error!("[ACK_SAME_CONN] bad x25519: {}", e); return 0; }
+        };
+        if recipient_x25519_bytes.len() != 32 {
+            log::error!("[ACK_SAME_CONN] x25519 key wrong length: {}", recipient_x25519_bytes.len());
+            return 0;
+        }
+
+        let ack_body = match build_delivery_ack_body(&mut env, &item_id_str, &ack_type_str, &recipient_x25519_bytes) {
+            Ok(b) => b, Err(e) => { log::error!("[ACK_SAME_CONN] build failed: {}", e); return 0; }
+        };
+
+        let mut wire = Vec::with_capacity(1 + ack_body.len());
+        wire.push(crate::network::tor::MSG_TYPE_DELIVERY_CONFIRMATION);
+        wire.extend_from_slice(&ack_body);
+
+        let cid = conn_id as u64;
+        log::info!("[ACK_SAME_CONN] writing {} bytes on conn_id={} item={}", wire.len(), cid, item_id_str);
+
+        let result = GLOBAL_RUNTIME.block_on(async {
+            crate::network::arti::write_ack_on_stored_stream(cid, &wire).await
+        });
+
+        match result {
+            Ok(_) => { log::info!("[ACK_SAME_CONN] success conn_id={} item={}", cid, item_id_str); 1 }
+            Err(e) => { log::warn!("[ACK_SAME_CONN] failed conn_id={}: {} — will fall back to outbound", cid, e); 0 }
+        }
+    }, 0)
+}
+
+/// Send a delivery ACK (confirmation) to recipient via new outbound connection
 /// ack_type: "PING_ACK" or "MESSAGE_ACK"
 /// item_id: ping_id or message_id being acknowledged
 #[no_mangle]
@@ -9476,4 +9579,218 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_pollFriendRequestBlock
             None => std::ptr::null_mut(),
         }
     }, std::ptr::null_mut())
+}
+
+// ==================== CONTACT LIST SYNC (0x80/0x81/0x82) ====================
+// See CONTACT_LIST_SYNC_PROTOCOL.md at repo root for the wire format.
+// These functions expose the binary backup-mesh protocol to Kotlin via JNI.
+
+/// Internal helper: retrieve our Ed25519 signing key from KeyStore.
+fn get_signing_key_from_keystore(env: &mut JNIEnv) -> Result<ed25519_dalek::SigningKey, String> {
+    let context = env
+        .call_static_method(
+            "android/app/ActivityThread",
+            "currentApplication",
+            "()Landroid/app/Application;",
+            &[],
+        )
+        .map_err(|e| format!("currentApplication failed: {}", e))?
+        .l()
+        .map_err(|e| format!("currentApplication null: {}", e))?;
+
+    let key_manager = crate::ffi::keystore::get_key_manager(env, &context)
+        .map_err(|e| format!("get_key_manager failed: {}", e))?;
+
+    let signing_priv = crate::ffi::keystore::get_signing_private_key(env, &key_manager)
+        .map_err(|e| format!("get_signing_private_key failed: {}", e))?;
+
+    if signing_priv.len() != 32 {
+        return Err(format!("signing key wrong length: {}", signing_priv.len()));
+    }
+    let mut sk_bytes = [0u8; 32];
+    sk_bytes.copy_from_slice(&signing_priv);
+    Ok(ed25519_dalek::SigningKey::from_bytes(&sk_bytes))
+}
+
+/// Send a CONTACT_LIST_PUSH (0x82) frame to `recipient_onion`.
+/// Returns 1 on success, 0 on failure.
+#[no_mangle]
+pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendContactListPush(
+    mut env: JNIEnv,
+    _class: JClass,
+    recipient_onion: JString,
+    cid: JString,
+    blob: JByteArray,
+) -> jint {
+    catch_panic!(env, {
+        let onion = match jstring_to_string(&mut env, recipient_onion) {
+            Ok(s) => s,
+            Err(e) => { log::error!("[CL_SYNC][PUSH] bad onion: {}", e); return 0; }
+        };
+        let cid_str = match jstring_to_string(&mut env, cid) {
+            Ok(s) => s,
+            Err(e) => { log::error!("[CL_SYNC][PUSH] bad cid: {}", e); return 0; }
+        };
+        let blob_vec = match jbytearray_to_vec(&mut env, blob) {
+            Ok(v) => v,
+            Err(e) => { log::error!("[CL_SYNC][PUSH] bad blob: {}", e); return 0; }
+        };
+
+        let signing_key = match get_signing_key_from_keystore(&mut env) {
+            Ok(k) => k,
+            Err(e) => { log::error!("[CL_SYNC][PUSH] key fetch failed: {}", e); return 0; }
+        };
+
+        let frame = match crate::network::contact_list_sync::build_push_frame(
+            &signing_key, &cid_str, &blob_vec,
+        ) {
+            Ok(f) => f,
+            Err(e) => { log::error!("[CL_SYNC][PUSH] build frame failed: {}", e); return 0; }
+        };
+
+        log::info!("[CL_SYNC][PUSH] sending to={} cid={} blob_len={}", onion, cid_str, blob_vec.len());
+
+        let result = GLOBAL_RUNTIME.block_on(async {
+            crate::network::contact_list_sync::send_frame_to_onion(&onion, frame).await
+        });
+
+        match result {
+            Ok(_) => { log::info!("[CL_SYNC][PUSH] success to={}", onion); 1 }
+            Err(e) => { log::error!("[CL_SYNC][PUSH] send failed to={}: {}", onion, e); 0 }
+        }
+    }, 0)
+}
+
+/// Send a CONTACT_LIST_REQUEST (0x80) frame.
+#[no_mangle]
+pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendContactListRequest(
+    mut env: JNIEnv,
+    _class: JClass,
+    recipient_onion: JString,
+    cid: JString,
+) -> jint {
+    catch_panic!(env, {
+        let onion = match jstring_to_string(&mut env, recipient_onion) {
+            Ok(s) => s,
+            Err(e) => { log::error!("[CL_SYNC][REQ] bad onion: {}", e); return 0; }
+        };
+        let cid_str = match jstring_to_string(&mut env, cid) {
+            Ok(s) => s,
+            Err(e) => { log::error!("[CL_SYNC][REQ] bad cid: {}", e); return 0; }
+        };
+
+        let signing_key = match get_signing_key_from_keystore(&mut env) {
+            Ok(k) => k,
+            Err(e) => { log::error!("[CL_SYNC][REQ] key fetch failed: {}", e); return 0; }
+        };
+
+        let frame = match crate::network::contact_list_sync::build_request_frame(&signing_key, &cid_str) {
+            Ok(f) => f,
+            Err(e) => { log::error!("[CL_SYNC][REQ] build frame failed: {}", e); return 0; }
+        };
+
+        log::info!("[CL_SYNC][REQ] sending to={} cid={}", onion, cid_str);
+
+        let result = GLOBAL_RUNTIME.block_on(async {
+            crate::network::contact_list_sync::send_frame_to_onion(&onion, frame).await
+        });
+
+        match result {
+            Ok(_) => { log::info!("[CL_SYNC][REQ] success to={}", onion); 1 }
+            Err(e) => { log::error!("[CL_SYNC][REQ] send failed to={}: {}", onion, e); 0 }
+        }
+    }, 0)
+}
+
+/// Send a CONTACT_LIST_RESPONSE (0x81) frame. Empty blob = NACK.
+#[no_mangle]
+pub extern "C" fn Java_com_securelegion_crypto_RustBridge_sendContactListResponse(
+    mut env: JNIEnv,
+    _class: JClass,
+    recipient_onion: JString,
+    cid: JString,
+    blob: JByteArray,
+) -> jint {
+    catch_panic!(env, {
+        let onion = match jstring_to_string(&mut env, recipient_onion) {
+            Ok(s) => s,
+            Err(e) => { log::error!("[CL_SYNC][RESP] bad onion: {}", e); return 0; }
+        };
+        let cid_str = match jstring_to_string(&mut env, cid) {
+            Ok(s) => s,
+            Err(e) => { log::error!("[CL_SYNC][RESP] bad cid: {}", e); return 0; }
+        };
+        let blob_vec = match jbytearray_to_vec(&mut env, blob) {
+            Ok(v) => v,
+            Err(e) => { log::error!("[CL_SYNC][RESP] bad blob: {}", e); return 0; }
+        };
+
+        let signing_key = match get_signing_key_from_keystore(&mut env) {
+            Ok(k) => k,
+            Err(e) => { log::error!("[CL_SYNC][RESP] key fetch failed: {}", e); return 0; }
+        };
+
+        let frame = match crate::network::contact_list_sync::build_response_frame(
+            &signing_key, &cid_str, &blob_vec,
+        ) {
+            Ok(f) => f,
+            Err(e) => { log::error!("[CL_SYNC][RESP] build frame failed: {}", e); return 0; }
+        };
+
+        log::info!(
+            "[CL_SYNC][RESP] sending to={} cid={} blob_len={}",
+            onion, cid_str, blob_vec.len()
+        );
+
+        let result = GLOBAL_RUNTIME.block_on(async {
+            crate::network::contact_list_sync::send_frame_to_onion(&onion, frame).await
+        });
+
+        match result {
+            Ok(_) => { log::info!("[CL_SYNC][RESP] success to={}", onion); 1 }
+            Err(e) => { log::error!("[CL_SYNC][RESP] send failed to={}: {}", onion, e); 0 }
+        }
+    }, 0)
+}
+
+/// Poll the inbound contact-list queue. Returns null if empty, else a byte array with layout:
+///   [type:1][sender_pk:32][timestamp:8 BE][cid_len:2 BE][cid:N][blob_len:4 BE][blob:M]
+/// Total = 47 + N + M. No signature (already verified by Rust).
+#[no_mangle]
+pub extern "C" fn Java_com_securelegion_crypto_RustBridge_pollContactListFrame(
+    mut env: JNIEnv,
+    _class: JClass,
+) -> jbyteArray {
+    catch_panic!(env, {
+        let frame = match crate::network::contact_list_sync::poll_inbound_frame() {
+            Some(f) => f,
+            None => return std::ptr::null_mut(),
+        };
+
+        let cid_bytes = frame.cid.as_bytes();
+        let mut out = Vec::with_capacity(47 + cid_bytes.len() + frame.blob.len());
+        out.push(frame.msg_type);
+        out.extend_from_slice(&frame.sender_pk);
+        out.extend_from_slice(&frame.timestamp.to_be_bytes());
+        out.extend_from_slice(&(cid_bytes.len() as u16).to_be_bytes());
+        out.extend_from_slice(cid_bytes);
+        out.extend_from_slice(&(frame.blob.len() as u32).to_be_bytes());
+        out.extend_from_slice(&frame.blob);
+
+        match vec_to_jbytearray(&mut env, &out) {
+            Ok(arr) => arr.into_raw(),
+            Err(_) => std::ptr::null_mut(),
+        }
+    }, std::ptr::null_mut())
+}
+
+/// Return the current depth of the inbound contact-list queue (diagnostic).
+#[no_mangle]
+pub extern "C" fn Java_com_securelegion_crypto_RustBridge_contactListInboundQueueLen(
+    mut env: JNIEnv,
+    _class: JClass,
+) -> jint {
+    catch_panic!(env, {
+        crate::network::contact_list_sync::inbound_queue_len() as jint
+    }, 0)
 }
