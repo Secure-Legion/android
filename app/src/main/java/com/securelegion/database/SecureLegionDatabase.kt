@@ -93,10 +93,10 @@ abstract class SecureLegionDatabase : RoomDatabase() {
          * Migration from version 1 to 2: Add isDistressContact field
          */
         private val MIGRATION_1_2 = object : Migration(1, 2) {
-            override fun migrate(database: SupportSQLiteDatabase) {
+            override fun migrate(db: SupportSQLiteDatabase) {
                 Log.i(TAG, "Migrating database from version 1 to 2")
                 // Add isDistressContact column with default value false
-                database.execSQL("ALTER TABLE contacts ADD COLUMN isDistressContact INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE contacts ADD COLUMN isDistressContact INTEGER NOT NULL DEFAULT 0")
                 Log.i(TAG, "Migration completed: Added isDistressContact column")
             }
         }
@@ -105,12 +105,12 @@ abstract class SecureLegionDatabase : RoomDatabase() {
          * Migration from version 2 to 3: Add self-destruct and read receipt fields
          */
         private val MIGRATION_2_3 = object : Migration(2, 3) {
-            override fun migrate(database: SupportSQLiteDatabase) {
+            override fun migrate(db: SupportSQLiteDatabase) {
                 Log.i(TAG, "Migrating database from version 2 to 3")
                 // Add selfDestructAt column (nullable)
-                database.execSQL("ALTER TABLE messages ADD COLUMN selfDestructAt INTEGER")
+                db.execSQL("ALTER TABLE messages ADD COLUMN selfDestructAt INTEGER")
                 // Add requiresReadReceipt column with default value true
-                database.execSQL("ALTER TABLE messages ADD COLUMN requiresReadReceipt INTEGER NOT NULL DEFAULT 1")
+                db.execSQL("ALTER TABLE messages ADD COLUMN requiresReadReceipt INTEGER NOT NULL DEFAULT 1")
                 Log.i(TAG, "Migration completed: Added selfDestructAt and requiresReadReceipt columns")
             }
         }
@@ -119,11 +119,11 @@ abstract class SecureLegionDatabase : RoomDatabase() {
          * Migration from version 3 to 4: Add X25519 public key for ECDH encryption
          */
         private val MIGRATION_3_4 = object : Migration(3, 4) {
-            override fun migrate(database: SupportSQLiteDatabase) {
+            override fun migrate(db: SupportSQLiteDatabase) {
                 Log.i(TAG, "Migrating database from version 3 to 4")
                 // Add x25519PublicKeyBase64 column with empty default
                 // Note: Existing contacts will need to be updated with their X25519 keys
-                database.execSQL("ALTER TABLE contacts ADD COLUMN x25519PublicKeyBase64 TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE contacts ADD COLUMN x25519PublicKeyBase64 TEXT NOT NULL DEFAULT ''")
                 Log.i(TAG, "Migration completed: Added x25519PublicKeyBase64 column")
             }
         }
@@ -132,10 +132,10 @@ abstract class SecureLegionDatabase : RoomDatabase() {
          * Migration from version 4 to 5: Add wallets table for multi-wallet support
          */
         private val MIGRATION_4_5 = object : Migration(4, 5) {
-            override fun migrate(database: SupportSQLiteDatabase) {
+            override fun migrate(db: SupportSQLiteDatabase) {
                 Log.i(TAG, "Migrating database from version 4 to 5")
                 // Create wallets table
-                database.execSQL("""
+                db.execSQL("""
                     CREATE TABLE IF NOT EXISTS wallets (
                         walletId TEXT PRIMARY KEY NOT NULL,
                         name TEXT NOT NULL,
@@ -153,16 +153,16 @@ abstract class SecureLegionDatabase : RoomDatabase() {
          * Migration from version 5 to 6: Add persistent messaging fields for Ping-Pong protocol
          */
         private val MIGRATION_5_6 = object : Migration(5, 6) {
-            override fun migrate(database: SupportSQLiteDatabase) {
+            override fun migrate(db: SupportSQLiteDatabase) {
                 Log.i(TAG, "Migrating database from version 5 to 6")
                 // Add pingId column (nullable)
-                database.execSQL("ALTER TABLE messages ADD COLUMN pingId TEXT")
+                db.execSQL("ALTER TABLE messages ADD COLUMN pingId TEXT")
                 // Add encryptedPayload column (nullable)
-                database.execSQL("ALTER TABLE messages ADD COLUMN encryptedPayload TEXT")
+                db.execSQL("ALTER TABLE messages ADD COLUMN encryptedPayload TEXT")
                 // Add retryCount column with default value 0
-                database.execSQL("ALTER TABLE messages ADD COLUMN retryCount INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE messages ADD COLUMN retryCount INTEGER NOT NULL DEFAULT 0")
                 // Add lastRetryTimestamp column (nullable)
-                database.execSQL("ALTER TABLE messages ADD COLUMN lastRetryTimestamp INTEGER")
+                db.execSQL("ALTER TABLE messages ADD COLUMN lastRetryTimestamp INTEGER")
                 Log.i(TAG, "Migration completed: Added pingId, encryptedPayload, retryCount, lastRetryTimestamp columns")
             }
         }
@@ -171,14 +171,14 @@ abstract class SecureLegionDatabase : RoomDatabase() {
          * Migration from version 6 to 7: Add voice message support
          */
         private val MIGRATION_6_7 = object : Migration(6, 7) {
-            override fun migrate(database: SupportSQLiteDatabase) {
+            override fun migrate(db: SupportSQLiteDatabase) {
                 Log.i(TAG, "Migrating database from version 6 to 7")
                 // Add messageType column with default value 'TEXT'
-                database.execSQL("ALTER TABLE messages ADD COLUMN messageType TEXT NOT NULL DEFAULT 'TEXT'")
+                db.execSQL("ALTER TABLE messages ADD COLUMN messageType TEXT NOT NULL DEFAULT 'TEXT'")
                 // Add voiceDuration column (nullable)
-                database.execSQL("ALTER TABLE messages ADD COLUMN voiceDuration INTEGER")
+                db.execSQL("ALTER TABLE messages ADD COLUMN voiceDuration INTEGER")
                 // Add voiceFilePath column (nullable)
-                database.execSQL("ALTER TABLE messages ADD COLUMN voiceFilePath TEXT")
+                db.execSQL("ALTER TABLE messages ADD COLUMN voiceFilePath TEXT")
                 Log.i(TAG, "Migration completed: Added messageType, voiceDuration, voiceFilePath columns for voice messages")
             }
         }
@@ -187,10 +187,10 @@ abstract class SecureLegionDatabase : RoomDatabase() {
          * Migration from version 7 to 8: Add isBlocked field to contacts
          */
         private val MIGRATION_7_8 = object : Migration(7, 8) {
-            override fun migrate(database: SupportSQLiteDatabase) {
+            override fun migrate(db: SupportSQLiteDatabase) {
                 Log.i(TAG, "Migrating database from version 7 to 8")
                 // Add isBlocked column with default value false
-                database.execSQL("ALTER TABLE contacts ADD COLUMN isBlocked INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE contacts ADD COLUMN isBlocked INTEGER NOT NULL DEFAULT 0")
                 Log.i(TAG, "Migration completed: Added isBlocked column")
             }
         }
@@ -199,10 +199,10 @@ abstract class SecureLegionDatabase : RoomDatabase() {
          * Migration from version 8 to 9: Add pingDelivered field for ACK tracking
          */
         private val MIGRATION_8_9 = object : Migration(8, 9) {
-            override fun migrate(database: SupportSQLiteDatabase) {
+            override fun migrate(db: SupportSQLiteDatabase) {
                 Log.i(TAG, "Migrating database from version 8 to 9")
                 // Add pingDelivered column with default value false
-                database.execSQL("ALTER TABLE messages ADD COLUMN pingDelivered INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE messages ADD COLUMN pingDelivered INTEGER NOT NULL DEFAULT 0")
                 Log.i(TAG, "Migration completed: Added pingDelivered column for ACK tracking")
             }
         }
@@ -211,10 +211,10 @@ abstract class SecureLegionDatabase : RoomDatabase() {
          * Migration from version 9 to 10: Add messageDelivered field for ACK tracking
          */
         private val MIGRATION_9_10 = object : Migration(9, 10) {
-            override fun migrate(database: SupportSQLiteDatabase) {
+            override fun migrate(db: SupportSQLiteDatabase) {
                 Log.i(TAG, "Migrating database from version 9 to 10")
                 // Add messageDelivered column with default value false
-                database.execSQL("ALTER TABLE messages ADD COLUMN messageDelivered INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE messages ADD COLUMN messageDelivered INTEGER NOT NULL DEFAULT 0")
                 Log.i(TAG, "Migration completed: Added messageDelivered column for ACK tracking")
             }
         }
@@ -223,10 +223,10 @@ abstract class SecureLegionDatabase : RoomDatabase() {
          * Migration from version 10 to 11: Add received_ids table for deduplication
          */
         private val MIGRATION_10_11 = object : Migration(10, 11) {
-            override fun migrate(database: SupportSQLiteDatabase) {
+            override fun migrate(db: SupportSQLiteDatabase) {
                 Log.i(TAG, "Migrating database from version 10 to 11")
                 // Create received_ids table for tracking all received ping/pong/message IDs
-                database.execSQL("""
+                db.execSQL("""
                     CREATE TABLE IF NOT EXISTS received_ids (
                         id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
                         receivedId TEXT NOT NULL,
@@ -236,7 +236,7 @@ abstract class SecureLegionDatabase : RoomDatabase() {
                     )
                 """.trimIndent())
                 // Create unique index to prevent duplicate IDs
-                database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_received_ids_receivedId ON received_ids(receivedId)")
+                db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_received_ids_receivedId ON received_ids(receivedId)")
                 Log.i(TAG, "Migration completed: Added received_ids table for deduplication")
             }
         }
@@ -245,10 +245,10 @@ abstract class SecureLegionDatabase : RoomDatabase() {
          * Migration from version 11 to 12: Add friendshipStatus field
          */
         private val MIGRATION_11_12 = object : Migration(11, 12) {
-            override fun migrate(database: SupportSQLiteDatabase) {
+            override fun migrate(db: SupportSQLiteDatabase) {
                 Log.i(TAG, "Migrating database from version 11 to 12")
                 // Add friendshipStatus column with default value PENDING_SENT
-                database.execSQL("ALTER TABLE contacts ADD COLUMN friendshipStatus TEXT NOT NULL DEFAULT 'PENDING_SENT'")
+                db.execSQL("ALTER TABLE contacts ADD COLUMN friendshipStatus TEXT NOT NULL DEFAULT 'PENDING_SENT'")
                 Log.i(TAG, "Migration completed: Added friendshipStatus column")
             }
         }
@@ -257,10 +257,10 @@ abstract class SecureLegionDatabase : RoomDatabase() {
          * Migration from version 12 to 13: Add pingWireBytes field to prevent ghost pings
          */
         private val MIGRATION_12_13 = object : Migration(12, 13) {
-            override fun migrate(database: SupportSQLiteDatabase) {
+            override fun migrate(db: SupportSQLiteDatabase) {
                 Log.i(TAG, "Migrating database from version 12 to 13")
                 // Add pingWireBytes column (nullable) to store encrypted Ping token for retry
-                database.execSQL("ALTER TABLE messages ADD COLUMN pingWireBytes TEXT")
+                db.execSQL("ALTER TABLE messages ADD COLUMN pingWireBytes TEXT")
                 Log.i(TAG, "Migration completed: Added pingWireBytes column to prevent ghost pings on retry")
             }
         }
@@ -269,12 +269,12 @@ abstract class SecureLegionDatabase : RoomDatabase() {
          * Migration from version 13 to 14: Add tapDelivered and pongDelivered for complete ACK tracking
          */
         private val MIGRATION_13_14 = object : Migration(13, 14) {
-            override fun migrate(database: SupportSQLiteDatabase) {
+            override fun migrate(db: SupportSQLiteDatabase) {
                 Log.i(TAG, "Migrating database from version 13 to 14")
                 // Add tapDelivered column with default value false
-                database.execSQL("ALTER TABLE messages ADD COLUMN tapDelivered INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE messages ADD COLUMN tapDelivered INTEGER NOT NULL DEFAULT 0")
                 // Add pongDelivered column with default value false
-                database.execSQL("ALTER TABLE messages ADD COLUMN pongDelivered INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE messages ADD COLUMN pongDelivered INTEGER NOT NULL DEFAULT 0")
                 Log.i(TAG, "Migration completed: Added tapDelivered and pongDelivered columns for complete ACK tracking")
             }
         }
@@ -283,10 +283,10 @@ abstract class SecureLegionDatabase : RoomDatabase() {
          * Migration from version 14 to 15: Add Zcash address support
          */
         private val MIGRATION_14_15 = object : Migration(14, 15) {
-            override fun migrate(database: SupportSQLiteDatabase) {
+            override fun migrate(db: SupportSQLiteDatabase) {
                 Log.i(TAG, "Migrating database from version 14 to 15")
                 // Add zcashAddress column (nullable for backward compatibility)
-                database.execSQL("ALTER TABLE wallets ADD COLUMN zcashAddress TEXT")
+                db.execSQL("ALTER TABLE wallets ADD COLUMN zcashAddress TEXT")
                 Log.i(TAG, "Migration completed: Added zcashAddress column for multi-chain wallet support")
             }
         }
@@ -295,14 +295,14 @@ abstract class SecureLegionDatabase : RoomDatabase() {
          * Migration from version 15 to 16: Add NLx402 payment fields
          */
         private val MIGRATION_15_16 = object : Migration(15, 16) {
-            override fun migrate(database: SupportSQLiteDatabase) {
+            override fun migrate(db: SupportSQLiteDatabase) {
                 Log.i(TAG, "Migrating database from version 15 to 16")
                 // Add NLx402 payment fields to messages table
-                database.execSQL("ALTER TABLE messages ADD COLUMN paymentQuoteJson TEXT")
-                database.execSQL("ALTER TABLE messages ADD COLUMN paymentStatus TEXT")
-                database.execSQL("ALTER TABLE messages ADD COLUMN txSignature TEXT")
-                database.execSQL("ALTER TABLE messages ADD COLUMN paymentToken TEXT")
-                database.execSQL("ALTER TABLE messages ADD COLUMN paymentAmount INTEGER")
+                db.execSQL("ALTER TABLE messages ADD COLUMN paymentQuoteJson TEXT")
+                db.execSQL("ALTER TABLE messages ADD COLUMN paymentStatus TEXT")
+                db.execSQL("ALTER TABLE messages ADD COLUMN txSignature TEXT")
+                db.execSQL("ALTER TABLE messages ADD COLUMN paymentToken TEXT")
+                db.execSQL("ALTER TABLE messages ADD COLUMN paymentAmount INTEGER")
                 Log.i(TAG, "Migration completed: Added NLx402 payment fields")
             }
         }
@@ -311,10 +311,10 @@ abstract class SecureLegionDatabase : RoomDatabase() {
          * Migration from version 16 to 17: Add used_signatures table for replay protection
          */
         private val MIGRATION_16_17 = object : Migration(16, 17) {
-            override fun migrate(database: SupportSQLiteDatabase) {
+            override fun migrate(db: SupportSQLiteDatabase) {
                 Log.i(TAG, "Migrating database from version 16 to 17")
                 // Create used_signatures table for NLx402 replay protection
-                database.execSQL("""
+                db.execSQL("""
                     CREATE TABLE IF NOT EXISTS used_signatures (
                         id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
                         signature TEXT NOT NULL,
@@ -325,7 +325,7 @@ abstract class SecureLegionDatabase : RoomDatabase() {
                     )
                 """.trimIndent())
                 // Create unique index on signature
-                database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_used_signatures_signature ON used_signatures(signature)")
+                db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_used_signatures_signature ON used_signatures(signature)")
                 Log.i(TAG, "Migration completed: Added used_signatures table for replay protection")
             }
         }
@@ -334,21 +334,21 @@ abstract class SecureLegionDatabase : RoomDatabase() {
          * Migration from version 17 to 18: Add two .onion system fields for v2.0 contact system
          */
         private val MIGRATION_17_18 = object : Migration(17, 18) {
-            override fun migrate(database: SupportSQLiteDatabase) {
+            override fun migrate(db: SupportSQLiteDatabase) {
                 Log.i(TAG, "Migrating database from version 17 to 18")
 
                 // Add new fields for two .onion system
-                database.execSQL("ALTER TABLE contacts ADD COLUMN friendRequestOnion TEXT NOT NULL DEFAULT ''")
-                database.execSQL("ALTER TABLE contacts ADD COLUMN messagingOnion TEXT")
-                database.execSQL("ALTER TABLE contacts ADD COLUMN ipfsCid TEXT")
-                database.execSQL("ALTER TABLE contacts ADD COLUMN contactPin TEXT")
+                db.execSQL("ALTER TABLE contacts ADD COLUMN friendRequestOnion TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE contacts ADD COLUMN messagingOnion TEXT")
+                db.execSQL("ALTER TABLE contacts ADD COLUMN ipfsCid TEXT")
+                db.execSQL("ALTER TABLE contacts ADD COLUMN contactPin TEXT")
 
                 // Migrate existing data: torOnionAddress → messagingOnion
-                database.execSQL("UPDATE contacts SET messagingOnion = torOnionAddress WHERE torOnionAddress IS NOT NULL")
+                db.execSQL("UPDATE contacts SET messagingOnion = torOnionAddress WHERE torOnionAddress IS NOT NULL")
 
                 // Create new indices
-                database.execSQL("CREATE INDEX IF NOT EXISTS index_contacts_friendRequestOnion ON contacts(friendRequestOnion)")
-                database.execSQL("CREATE INDEX IF NOT EXISTS index_contacts_messagingOnion ON contacts(messagingOnion)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_contacts_friendRequestOnion ON contacts(friendRequestOnion)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_contacts_messagingOnion ON contacts(messagingOnion)")
 
                 Log.i(TAG, "Migration completed: Added two .onion system (friendRequestOnion, messagingOnion, ipfsCid, contactPin)")
             }
@@ -359,7 +359,7 @@ abstract class SecureLegionDatabase : RoomDatabase() {
          * Fills gap that would otherwise crash upgrades from v18.
          */
         private val MIGRATION_18_19 = object : Migration(18, 19) {
-            override fun migrate(database: SupportSQLiteDatabase) {
+            override fun migrate(db: SupportSQLiteDatabase) {
                 Log.i(TAG, "Migrating database from version 18 to 19 (no-op gap fill)")
             }
         }
@@ -368,9 +368,9 @@ abstract class SecureLegionDatabase : RoomDatabase() {
          * Migration from version 19 to 20: Add voiceOnion field for voice calling
          */
         private val MIGRATION_19_20 = object : Migration(19, 20) {
-            override fun migrate(database: SupportSQLiteDatabase) {
+            override fun migrate(db: SupportSQLiteDatabase) {
                 Log.i(TAG, "Migrating database from version 19 to 20")
-                database.execSQL("ALTER TABLE contacts ADD COLUMN voiceOnion TEXT")
+                db.execSQL("ALTER TABLE contacts ADD COLUMN voiceOnion TEXT")
                 Log.i(TAG, "Migration completed: Added voiceOnion column for voice calling")
             }
         }
@@ -379,11 +379,11 @@ abstract class SecureLegionDatabase : RoomDatabase() {
          * Migration from version 20 to 21: Add group messaging tables (legacy — kept for migration chain)
          */
         private val MIGRATION_20_21 = object : Migration(20, 21) {
-            override fun migrate(database: SupportSQLiteDatabase) {
+            override fun migrate(db: SupportSQLiteDatabase) {
                 Log.i(TAG, "Migrating database from version 20 to 21")
 
                 // Create groups table
-                database.execSQL("""
+                db.execSQL("""
                     CREATE TABLE IF NOT EXISTS groups (
                         groupId TEXT PRIMARY KEY NOT NULL,
                         name TEXT NOT NULL,
@@ -397,10 +397,10 @@ abstract class SecureLegionDatabase : RoomDatabase() {
                         description TEXT
                     )
                 """.trimIndent())
-                database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_groups_groupId ON groups(groupId)")
+                db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_groups_groupId ON groups(groupId)")
 
                 // Create group_members table
-                database.execSQL("""
+                db.execSQL("""
                     CREATE TABLE IF NOT EXISTS group_members (
                         id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
                         groupId TEXT NOT NULL,
@@ -412,12 +412,12 @@ abstract class SecureLegionDatabase : RoomDatabase() {
                         FOREIGN KEY(contactId) REFERENCES contacts(id) ON DELETE CASCADE
                     )
                 """.trimIndent())
-                database.execSQL("CREATE INDEX IF NOT EXISTS index_group_members_groupId ON group_members(groupId)")
-                database.execSQL("CREATE INDEX IF NOT EXISTS index_group_members_contactId ON group_members(contactId)")
-                database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_group_members_groupId_contactId ON group_members(groupId, contactId)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_group_members_groupId ON group_members(groupId)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_group_members_contactId ON group_members(contactId)")
+                db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_group_members_groupId_contactId ON group_members(groupId, contactId)")
 
                 // Create group_messages table
-                database.execSQL("""
+                db.execSQL("""
                     CREATE TABLE IF NOT EXISTS group_messages (
                         id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
                         groupId TEXT NOT NULL,
@@ -440,10 +440,10 @@ abstract class SecureLegionDatabase : RoomDatabase() {
                         FOREIGN KEY(senderContactId) REFERENCES contacts(id) ON DELETE CASCADE
                     )
                 """.trimIndent())
-                database.execSQL("CREATE INDEX IF NOT EXISTS index_group_messages_groupId ON group_messages(groupId)")
-                database.execSQL("CREATE INDEX IF NOT EXISTS index_group_messages_senderContactId ON group_messages(senderContactId)")
-                database.execSQL("CREATE INDEX IF NOT EXISTS index_group_messages_timestamp ON group_messages(timestamp)")
-                database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_group_messages_messageId ON group_messages(messageId)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_group_messages_groupId ON group_messages(groupId)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_group_messages_senderContactId ON group_messages(senderContactId)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_group_messages_timestamp ON group_messages(timestamp)")
+                db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_group_messages_messageId ON group_messages(messageId)")
 
                 Log.i(TAG, "Migration completed: Added groups, group_members, and group_messages tables for group messaging")
             }
@@ -453,11 +453,11 @@ abstract class SecureLegionDatabase : RoomDatabase() {
          * Migration from version 21 to 22: Add call history table
          */
         private val MIGRATION_21_22 = object : Migration(21, 22) {
-            override fun migrate(database: SupportSQLiteDatabase) {
+            override fun migrate(db: SupportSQLiteDatabase) {
                 Log.i(TAG, "Migrating database from version 21 to 22")
 
                 // Create call_history table
-                database.execSQL("""
+                db.execSQL("""
                     CREATE TABLE IF NOT EXISTS call_history (
                         id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
                         contactId INTEGER NOT NULL,
@@ -471,10 +471,10 @@ abstract class SecureLegionDatabase : RoomDatabase() {
                 """.trimIndent())
 
                 // Create index on timestamp for fast recent call queries
-                database.execSQL("CREATE INDEX IF NOT EXISTS index_call_history_timestamp ON call_history(timestamp)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_call_history_timestamp ON call_history(timestamp)")
 
                 // Create index on contactId for fast contact-specific queries
-                database.execSQL("CREATE INDEX IF NOT EXISTS index_call_history_contactId ON call_history(contactId)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_call_history_contactId ON call_history(contactId)")
 
                 Log.i(TAG, "Migration completed: Added call_history table")
             }
@@ -484,10 +484,10 @@ abstract class SecureLegionDatabase : RoomDatabase() {
          * Migration from version 22 to 23: Add profile picture support
          */
         private val MIGRATION_22_23 = object : Migration(22, 23) {
-            override fun migrate(database: SupportSQLiteDatabase) {
+            override fun migrate(db: SupportSQLiteDatabase) {
                 Log.i(TAG, "Migrating database from version 22 to 23")
                 // Add profilePictureBase64 column (nullable for contacts without pictures)
-                database.execSQL("ALTER TABLE contacts ADD COLUMN profilePictureBase64 TEXT")
+                db.execSQL("ALTER TABLE contacts ADD COLUMN profilePictureBase64 TEXT")
                 Log.i(TAG, "Migration completed: Added profilePictureBase64 column for profile pictures")
             }
         }
@@ -496,11 +496,11 @@ abstract class SecureLegionDatabase : RoomDatabase() {
          * Migration from version 23 to 24: Add call quality logs table
          */
         private val MIGRATION_23_24 = object : Migration(23, 24) {
-            override fun migrate(database: SupportSQLiteDatabase) {
+            override fun migrate(db: SupportSQLiteDatabase) {
                 Log.i(TAG, "Migrating database from version 23 to 24")
 
                 // Create call_quality_logs table
-                database.execSQL("""
+                db.execSQL("""
                     CREATE TABLE IF NOT EXISTS call_quality_logs (
                         id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
                         callId TEXT NOT NULL,
@@ -520,7 +520,7 @@ abstract class SecureLegionDatabase : RoomDatabase() {
                 """.trimIndent())
 
                 // Create index on timestamp for fast queries
-                database.execSQL("CREATE INDEX IF NOT EXISTS index_call_quality_logs_timestamp ON call_quality_logs(timestamp)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_call_quality_logs_timestamp ON call_quality_logs(timestamp)")
 
                 Log.i(TAG, "Migration completed: Added call_quality_logs table")
             }
@@ -530,11 +530,11 @@ abstract class SecureLegionDatabase : RoomDatabase() {
          * Migration from version 24 to 25: Add ping_inbox table for idempotent message delivery
          */
         private val MIGRATION_24_25 = object : Migration(24, 25) {
-            override fun migrate(database: SupportSQLiteDatabase) {
+            override fun migrate(db: SupportSQLiteDatabase) {
                 Log.i(TAG, "Migrating database from version 24 to 25")
 
                 // Create ping_inbox table
-                database.execSQL("""
+                db.execSQL("""
                     CREATE TABLE IF NOT EXISTS ping_inbox (
                         pingId TEXT PRIMARY KEY NOT NULL,
                         contactId INTEGER NOT NULL,
@@ -550,8 +550,8 @@ abstract class SecureLegionDatabase : RoomDatabase() {
                 """.trimIndent())
 
                 // Create indices for common queries
-                database.execSQL("CREATE INDEX IF NOT EXISTS index_ping_inbox_contactId_state ON ping_inbox(contactId, state)")
-                database.execSQL("CREATE INDEX IF NOT EXISTS index_ping_inbox_state ON ping_inbox(state)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_ping_inbox_contactId_state ON ping_inbox(contactId, state)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_ping_inbox_state ON ping_inbox(state)")
 
                 Log.i(TAG, "Migration completed: Added ping_inbox table for idempotent message delivery over Tor")
             }
@@ -561,12 +561,12 @@ abstract class SecureLegionDatabase : RoomDatabase() {
          * Migration from version 25 to 26: Add unique index on pingId for ultimate deduplication
          */
         private val MIGRATION_25_26 = object : Migration(25, 26) {
-            override fun migrate(database: SupportSQLiteDatabase) {
+            override fun migrate(db: SupportSQLiteDatabase) {
                 Log.i(TAG, "Migrating database from version 25 to 26")
 
                 // Add unique index on pingId (ultimate dedup authority)
                 // Note: Unique index on nullable column allows multiple NULLs (for sent messages)
-                database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_messages_pingId ON messages(pingId)")
+                db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_messages_pingId ON messages(pingId)")
 
                 Log.i(TAG, "Migration completed: Added unique index on pingId for deduplication")
             }
@@ -576,11 +576,11 @@ abstract class SecureLegionDatabase : RoomDatabase() {
          * Migration from version 26 to 27: Add contact_key_chains table for progressive ephemeral key evolution
          */
         private val MIGRATION_26_27 = object : Migration(26, 27) {
-            override fun migrate(database: SupportSQLiteDatabase) {
+            override fun migrate(db: SupportSQLiteDatabase) {
                 Log.i(TAG, "Migrating database from version 26 to 27")
 
                 // Create contact_key_chains table for per-message forward secrecy
-                database.execSQL("""
+                db.execSQL("""
                     CREATE TABLE IF NOT EXISTS contact_key_chains (
                         id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
                         contactId INTEGER NOT NULL,
@@ -596,7 +596,7 @@ abstract class SecureLegionDatabase : RoomDatabase() {
                 """.trimIndent())
 
                 // Create unique index on contactId (one key chain per contact)
-                database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_contact_key_chains_contactId ON contact_key_chains(contactId)")
+                db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_contact_key_chains_contactId ON contact_key_chains(contactId)")
 
                 Log.i(TAG, "Migration completed: Added contact_key_chains table for progressive ephemeral key evolution")
             }
@@ -606,10 +606,10 @@ abstract class SecureLegionDatabase : RoomDatabase() {
          * Migration from version 27 to 28: Add Kyber-1024 public key for post-quantum cryptography
          */
         private val MIGRATION_27_28 = object : Migration(27, 28) {
-            override fun migrate(database: SupportSQLiteDatabase) {
+            override fun migrate(db: SupportSQLiteDatabase) {
                 Log.i(TAG, "Migrating database from version 27 to 28")
                 // Add kyberPublicKeyBase64 column (nullable for backward compatibility)
-                database.execSQL("ALTER TABLE contacts ADD COLUMN kyberPublicKeyBase64 TEXT")
+                db.execSQL("ALTER TABLE contacts ADD COLUMN kyberPublicKeyBase64 TEXT")
                 Log.i(TAG, "Migration completed: Added kyberPublicKeyBase64 column for post-quantum cryptography (ML-KEM-1024)")
             }
         }
@@ -618,13 +618,13 @@ abstract class SecureLegionDatabase : RoomDatabase() {
          * Migration from version 28 to 29: Add per-wallet Zcash support and active wallet tracking
          */
         private val MIGRATION_28_29 = object : Migration(28, 29) {
-            override fun migrate(database: SupportSQLiteDatabase) {
+            override fun migrate(db: SupportSQLiteDatabase) {
                 Log.i(TAG, "Migrating database from version 28 to 29")
                 // Add Zcash per-wallet fields
-                database.execSQL("ALTER TABLE wallets ADD COLUMN zcashUnifiedAddress TEXT")
-                database.execSQL("ALTER TABLE wallets ADD COLUMN zcashAccountIndex INTEGER NOT NULL DEFAULT 0")
-                database.execSQL("ALTER TABLE wallets ADD COLUMN zcashBirthdayHeight INTEGER")
-                database.execSQL("ALTER TABLE wallets ADD COLUMN isActiveZcash INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE wallets ADD COLUMN zcashUnifiedAddress TEXT")
+                db.execSQL("ALTER TABLE wallets ADD COLUMN zcashAccountIndex INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE wallets ADD COLUMN zcashBirthdayHeight INTEGER")
+                db.execSQL("ALTER TABLE wallets ADD COLUMN isActiveZcash INTEGER NOT NULL DEFAULT 0")
                 Log.i(TAG, "Migration completed: Added per-wallet Zcash support (zcashUnifiedAddress, zcashAccountIndex, zcashBirthdayHeight, isActiveZcash)")
             }
         }
@@ -633,11 +633,11 @@ abstract class SecureLegionDatabase : RoomDatabase() {
          * Migration from version 29 to 30: Add skipped message keys table for out-of-order message handling
          */
         private val MIGRATION_29_30 = object : Migration(29, 30) {
-            override fun migrate(database: SupportSQLiteDatabase) {
+            override fun migrate(db: SupportSQLiteDatabase) {
                 Log.i(TAG, "Migrating database from version 29 to 30")
 
                 // Create skipped_message_keys table
-                database.execSQL("""
+                db.execSQL("""
                     CREATE TABLE IF NOT EXISTS skipped_message_keys (
                         id TEXT PRIMARY KEY NOT NULL,
                         contactId INTEGER NOT NULL,
@@ -648,12 +648,12 @@ abstract class SecureLegionDatabase : RoomDatabase() {
                 """.trimIndent())
 
                 // Create indices for efficient lookup and cleanup
-                database.execSQL("""
+                db.execSQL("""
                     CREATE INDEX IF NOT EXISTS index_skipped_message_keys_contactId_sequence
                     ON skipped_message_keys(contactId, sequence)
                 """.trimIndent())
 
-                database.execSQL("""
+                db.execSQL("""
                     CREATE INDEX IF NOT EXISTS index_skipped_message_keys_timestamp
                     ON skipped_message_keys(timestamp)
                 """.trimIndent())
@@ -673,13 +673,13 @@ abstract class SecureLegionDatabase : RoomDatabase() {
          * - Enables crash recovery with deterministic ID reconstruction
          */
         private val MIGRATION_30_31 = object : Migration(30, 31) {
-            override fun migrate(database: SupportSQLiteDatabase) {
+            override fun migrate(db: SupportSQLiteDatabase) {
                 Log.i(TAG, "Migrating database from version 30 to 31")
                 Log.i(TAG, "PHASE 1.1: Adding messageNonce field for stable message identity")
 
                 // Add messageNonce column (64-bit random nonce, required field)
                 // Default to random value for existing messages to maintain DB integrity
-                database.execSQL("ALTER TABLE messages ADD COLUMN messageNonce INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE messages ADD COLUMN messageNonce INTEGER NOT NULL DEFAULT 0")
 
                 Log.i(TAG, "Migration completed: Added messageNonce column")
                 Log.i(TAG, "Note: Existing messages have messageNonce=0 (default). New messages will use SecureRandom nonces.")
@@ -690,11 +690,11 @@ abstract class SecureLegionDatabase : RoomDatabase() {
          * Migration from version 31 to 32: Add pending_friend_requests table for friend request retry infrastructure
          */
         private val MIGRATION_31_32 = object : Migration(31, 32) {
-            override fun migrate(database: SupportSQLiteDatabase) {
+            override fun migrate(db: SupportSQLiteDatabase) {
                 Log.i(TAG, "Migrating database from version 31 to 32")
 
                 // Create pending_friend_requests table for tracking friend request state
-                database.execSQL("""
+                db.execSQL("""
                     CREATE TABLE IF NOT EXISTS pending_friend_requests (
                         id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
                         recipientOnion TEXT NOT NULL,
@@ -718,9 +718,9 @@ abstract class SecureLegionDatabase : RoomDatabase() {
                 """.trimIndent())
 
                 // Create indices for common queries
-                database.execSQL("CREATE INDEX IF NOT EXISTS index_pending_friend_requests_recipientOnion ON pending_friend_requests(recipientOnion)")
-                database.execSQL("CREATE INDEX IF NOT EXISTS index_pending_friend_requests_phase ON pending_friend_requests(phase)")
-                database.execSQL("CREATE INDEX IF NOT EXISTS index_pending_friend_requests_needsRetry ON pending_friend_requests(needsRetry)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_pending_friend_requests_recipientOnion ON pending_friend_requests(recipientOnion)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_pending_friend_requests_phase ON pending_friend_requests(phase)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_pending_friend_requests_needsRetry ON pending_friend_requests(needsRetry)")
 
                 Log.i(TAG, "Migration completed: Added pending_friend_requests table for friend request retry infrastructure")
             }
@@ -730,14 +730,14 @@ abstract class SecureLegionDatabase : RoomDatabase() {
          * Migration from version 32 to 33: Add message retry tracking fields
          */
         private val MIGRATION_32_33 = object : Migration(32, 33) {
-            override fun migrate(database: SupportSQLiteDatabase) {
+            override fun migrate(db: SupportSQLiteDatabase) {
                 Log.i(TAG, "Migrating database from version 32 to 33")
 
                 // Add nextRetryAtMs column for scheduling retries with exponential backoff
-                database.execSQL("ALTER TABLE messages ADD COLUMN nextRetryAtMs INTEGER")
+                db.execSQL("ALTER TABLE messages ADD COLUMN nextRetryAtMs INTEGER")
 
                 // Add lastError column for diagnostic information
-                database.execSQL("ALTER TABLE messages ADD COLUMN lastError TEXT")
+                db.execSQL("ALTER TABLE messages ADD COLUMN lastError TEXT")
 
                 Log.i(TAG, "Migration completed: Added nextRetryAtMs and lastError columns to messages table")
             }
@@ -747,12 +747,12 @@ abstract class SecureLegionDatabase : RoomDatabase() {
          * Migration from version 33 to 34: Add correlationId for stress test tracing
          */
         private val MIGRATION_33_34 = object : Migration(33, 34) {
-            override fun migrate(database: SupportSQLiteDatabase) {
+            override fun migrate(db: SupportSQLiteDatabase) {
                 Log.i(TAG, "Migrating database from version 33 to 34")
 
                 // Add correlationId column for stress test tracing and debugging
                 // Tracks message through entire lifecycle to diagnose SOCKS timeout + MESSAGE_TX race
-                database.execSQL("ALTER TABLE messages ADD COLUMN correlationId TEXT")
+                db.execSQL("ALTER TABLE messages ADD COLUMN correlationId TEXT")
 
                 Log.i(TAG, "Migration completed: Added correlationId column for stress test tracing")
             }
@@ -763,12 +763,12 @@ abstract class SecureLegionDatabase : RoomDatabase() {
          * Store encrypted ping wire bytes in DB instead of SharedPreferences for reliability
          */
         private val MIGRATION_34_35 = object : Migration(34, 35) {
-            override fun migrate(database: SupportSQLiteDatabase) {
+            override fun migrate(db: SupportSQLiteDatabase) {
                 Log.i(TAG, "Migrating database from version 34 to 35")
 
                 // Add pingWireBytesBase64 column to store encrypted ping payload
                 // Format: [type_byte][sender_x25519_pubkey (32 bytes)][encrypted_payload]
-                database.execSQL("ALTER TABLE ping_inbox ADD COLUMN pingWireBytesBase64 TEXT")
+                db.execSQL("ALTER TABLE ping_inbox ADD COLUMN pingWireBytesBase64 TEXT")
 
                 Log.i(TAG, "Migration completed: Added pingWireBytesBase64 to ping_inbox (DB source of truth)")
             }
@@ -780,11 +780,11 @@ abstract class SecureLegionDatabase : RoomDatabase() {
          * New states (10, 11, 12) use existing Int column — no schema change needed for those.
          */
         private val MIGRATION_35_36 = object : Migration(35, 36) {
-            override fun migrate(database: SupportSQLiteDatabase) {
+            override fun migrate(db: SupportSQLiteDatabase) {
                 Log.i(TAG, "Migrating database from version 35 to 36")
 
                 // Add downloadQueuedAt column for watchdog timeout on auto-download claims
-                database.execSQL("ALTER TABLE ping_inbox ADD COLUMN downloadQueuedAt INTEGER")
+                db.execSQL("ALTER TABLE ping_inbox ADD COLUMN downloadQueuedAt INTEGER")
 
                 Log.i(TAG, "Migration completed: Added downloadQueuedAt to ping_inbox (auto-download watchdog)")
             }
@@ -794,9 +794,9 @@ abstract class SecureLegionDatabase : RoomDatabase() {
          * Migration from version 36 to 37: Add isPinned column to contacts
          */
         private val MIGRATION_36_37 = object : Migration(36, 37) {
-            override fun migrate(database: SupportSQLiteDatabase) {
+            override fun migrate(db: SupportSQLiteDatabase) {
                 Log.i(TAG, "Migrating database from version 36 to 37")
-                database.execSQL("ALTER TABLE contacts ADD COLUMN isPinned INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE contacts ADD COLUMN isPinned INTEGER NOT NULL DEFAULT 0")
                 Log.i(TAG, "Migration completed: Added isPinned column to contacts")
             }
         }
@@ -805,16 +805,16 @@ abstract class SecureLegionDatabase : RoomDatabase() {
          * Migration from version 37 to 38: CRDT groups — drop legacy tables, create CRDT schema
          */
         private val MIGRATION_37_38 = object : Migration(37, 38) {
-            override fun migrate(database: SupportSQLiteDatabase) {
+            override fun migrate(db: SupportSQLiteDatabase) {
                 Log.i(TAG, "Migrating database from version 37 to 38 — CRDT groups")
 
                 // Drop legacy group tables (zero users, no data to preserve)
-                database.execSQL("DROP TABLE IF EXISTS group_messages")
-                database.execSQL("DROP TABLE IF EXISTS group_members")
-                database.execSQL("DROP TABLE IF EXISTS groups")
+                db.execSQL("DROP TABLE IF EXISTS group_messages")
+                db.execSQL("DROP TABLE IF EXISTS group_members")
+                db.execSQL("DROP TABLE IF EXISTS groups")
 
                 // Recreate groups table for CRDT
-                database.execSQL("""
+                db.execSQL("""
                     CREATE TABLE IF NOT EXISTS groups (
                         groupId TEXT NOT NULL PRIMARY KEY,
                         name TEXT NOT NULL,
@@ -826,10 +826,10 @@ abstract class SecureLegionDatabase : RoomDatabase() {
                         description TEXT
                     )
                 """.trimIndent())
-                database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_groups_groupId ON groups(groupId)")
+                db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_groups_groupId ON groups(groupId)")
 
                 // Create CRDT op log table
-                database.execSQL("""
+                db.execSQL("""
                     CREATE TABLE IF NOT EXISTS crdt_op_log (
                         opId TEXT NOT NULL PRIMARY KEY,
                         groupId TEXT NOT NULL,
@@ -839,35 +839,35 @@ abstract class SecureLegionDatabase : RoomDatabase() {
                         createdAt INTEGER NOT NULL
                     )
                 """.trimIndent())
-                database.execSQL("CREATE INDEX IF NOT EXISTS index_crdt_op_log_groupId ON crdt_op_log(groupId)")
-                database.execSQL("CREATE INDEX IF NOT EXISTS index_crdt_op_log_groupId_lamport ON crdt_op_log(groupId, lamport)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_crdt_op_log_groupId ON crdt_op_log(groupId)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_crdt_op_log_groupId_lamport ON crdt_op_log(groupId, lamport)")
 
                 Log.i(TAG, "Migration 37→38 complete: legacy group tables dropped, CRDT tables created")
             }
         }
 
         private val MIGRATION_38_39 = object : Migration(38, 39) {
-            override fun migrate(database: SupportSQLiteDatabase) {
+            override fun migrate(db: SupportSQLiteDatabase) {
                 Log.i(TAG, "Migrating database from version 38 to 39 — group cache fields")
-                database.execSQL("ALTER TABLE groups ADD COLUMN memberCount INTEGER NOT NULL DEFAULT 0")
-                database.execSQL("ALTER TABLE groups ADD COLUMN lastMessagePreview TEXT")
-                database.execSQL("ALTER TABLE groups ADD COLUMN isPendingInvite INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE groups ADD COLUMN memberCount INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE groups ADD COLUMN lastMessagePreview TEXT")
+                db.execSQL("ALTER TABLE groups ADD COLUMN isPendingInvite INTEGER NOT NULL DEFAULT 0")
                 Log.i(TAG, "Migration 38→39 complete")
             }
         }
 
         private val MIGRATION_39_40 = object : Migration(39, 40) {
-            override fun migrate(database: SupportSQLiteDatabase) {
+            override fun migrate(db: SupportSQLiteDatabase) {
                 Log.i(TAG, "Migrating database from version 39 to 40 — group isPinned")
-                database.execSQL("ALTER TABLE groups ADD COLUMN isPinned INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE groups ADD COLUMN isPinned INTEGER NOT NULL DEFAULT 0")
                 Log.i(TAG, "Migration 39→40 complete")
             }
         }
 
         private val MIGRATION_40_41 = object : Migration(40, 41) {
-            override fun migrate(database: SupportSQLiteDatabase) {
+            override fun migrate(db: SupportSQLiteDatabase) {
                 Log.i(TAG, "Migrating database from version 40 to 41 — pending_pings table")
-                database.execSQL("""
+                db.execSQL("""
                     CREATE TABLE IF NOT EXISTS pending_pings (
                         pingId TEXT NOT NULL PRIMARY KEY,
                         signerPubKey BLOB NOT NULL,
@@ -884,9 +884,9 @@ abstract class SecureLegionDatabase : RoomDatabase() {
          * Eliminates full table scans during message verification and contact lookup.
          */
         private val MIGRATION_41_42 = object : Migration(41, 42) {
-            override fun migrate(database: SupportSQLiteDatabase) {
+            override fun migrate(db: SupportSQLiteDatabase) {
                 Log.i(TAG, "Migrating database from version 41 to 42")
-                database.execSQL("CREATE INDEX IF NOT EXISTS index_contacts_publicKeyBase64 ON contacts(publicKeyBase64)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_contacts_publicKeyBase64 ON contacts(publicKeyBase64)")
                 Log.i(TAG, "Migration 41→42 complete: added index on contacts.publicKeyBase64")
             }
         }
@@ -896,10 +896,10 @@ abstract class SecureLegionDatabase : RoomDatabase() {
          * Enables group message routing for non-friend members (admin chain support).
          */
         private val MIGRATION_42_43 = object : Migration(42, 43) {
-            override fun migrate(database: SupportSQLiteDatabase) {
+            override fun migrate(db: SupportSQLiteDatabase) {
                 Log.i(TAG, "Migrating database from version 42 to 43")
                 // GroupPeer: routing-only storage for group members (separate from Contact/friends)
-                database.execSQL("""
+                db.execSQL("""
                     CREATE TABLE IF NOT EXISTS group_peers (
                         id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
                         groupId TEXT NOT NULL,
@@ -910,12 +910,12 @@ abstract class SecureLegionDatabase : RoomDatabase() {
                         addedAt INTEGER NOT NULL
                     )
                 """.trimIndent())
-                database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_group_peers_groupId_pubkeyHex ON group_peers(groupId, pubkeyHex)")
-                database.execSQL("CREATE INDEX IF NOT EXISTS index_group_peers_groupId ON group_peers(groupId)")
-                database.execSQL("CREATE INDEX IF NOT EXISTS index_group_peers_groupId_x25519PubkeyHex ON group_peers(groupId, x25519PubkeyHex)")
+                db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_group_peers_groupId_pubkeyHex ON group_peers(groupId, pubkeyHex)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_group_peers_groupId ON group_peers(groupId)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_group_peers_groupId_x25519PubkeyHex ON group_peers(groupId, x25519PubkeyHex)")
 
                 // PendingGroupDelivery: queue for ops that couldn't be delivered (missing routing)
-                database.execSQL("""
+                db.execSQL("""
                     CREATE TABLE IF NOT EXISTS pending_group_delivery (
                         id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
                         groupId TEXT NOT NULL,
@@ -927,7 +927,7 @@ abstract class SecureLegionDatabase : RoomDatabase() {
                         createdAt INTEGER NOT NULL
                     )
                 """.trimIndent())
-                database.execSQL("CREATE INDEX IF NOT EXISTS index_pending_group_delivery_groupId_targetPubkeyHex ON pending_group_delivery(groupId, targetPubkeyHex)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_pending_group_delivery_groupId_targetPubkeyHex ON pending_group_delivery(groupId, targetPubkeyHex)")
 
                 Log.i(TAG, "Migration 42→43 complete: added group_peers + pending_group_delivery tables")
             }
@@ -939,9 +939,9 @@ abstract class SecureLegionDatabase : RoomDatabase() {
          * Not synced — only visible to the local user.
          */
         private val MIGRATION_43_44 = object : Migration(43, 44) {
-            override fun migrate(database: SupportSQLiteDatabase) {
+            override fun migrate(db: SupportSQLiteDatabase) {
                 Log.i(TAG, "Migrating database from version 43 to 44")
-                database.execSQL("ALTER TABLE contacts ADD COLUMN nickname TEXT")
+                db.execSQL("ALTER TABLE contacts ADD COLUMN nickname TEXT")
                 Log.i(TAG, "Migration 43→44 complete: added nickname column to contacts")
             }
         }
@@ -950,9 +950,9 @@ abstract class SecureLegionDatabase : RoomDatabase() {
          * Migration from version 44 to 45: Add isPinned column to messages (local-only pin)
          */
         private val MIGRATION_44_45 = object : Migration(44, 45) {
-            override fun migrate(database: SupportSQLiteDatabase) {
+            override fun migrate(db: SupportSQLiteDatabase) {
                 Log.i(TAG, "Migrating database from version 44 to 45")
-                database.execSQL("ALTER TABLE messages ADD COLUMN isPinned INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE messages ADD COLUMN isPinned INTEGER NOT NULL DEFAULT 0")
                 Log.i(TAG, "Migration 44→45 complete: added isPinned column to messages")
             }
         }
@@ -962,12 +962,12 @@ abstract class SecureLegionDatabase : RoomDatabase() {
          * SQLite can't ALTER a column to nullable, so we rebuild the table.
          */
         private val MIGRATION_45_46 = object : Migration(45, 46) {
-            override fun migrate(database: SupportSQLiteDatabase) {
+            override fun migrate(db: SupportSQLiteDatabase) {
                 Log.i(TAG, "Migrating database from version 45 to 46")
 
-                database.execSQL("PRAGMA foreign_keys=OFF")
+                db.execSQL("PRAGMA foreign_keys=OFF")
 
-                database.execSQL("""
+                db.execSQL("""
                     CREATE TABLE IF NOT EXISTS `messages_new` (
                         `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
                         `contactId` INTEGER NOT NULL,
@@ -1010,7 +1010,7 @@ abstract class SecureLegionDatabase : RoomDatabase() {
                     )
                 """.trimIndent())
 
-                database.execSQL("""
+                db.execSQL("""
                     INSERT INTO `messages_new` (
                         `id`, `contactId`, `messageId`, `encryptedContent`, `isSentByMe`,
                         `timestamp`, `status`, `signatureBase64`, `nonceBase64`, `messageNonce`,
@@ -1033,15 +1033,15 @@ abstract class SecureLegionDatabase : RoomDatabase() {
                     FROM `messages`
                 """.trimIndent())
 
-                database.execSQL("DROP TABLE `messages`")
-                database.execSQL("ALTER TABLE `messages_new` RENAME TO `messages`")
+                db.execSQL("DROP TABLE `messages`")
+                db.execSQL("ALTER TABLE `messages_new` RENAME TO `messages`")
 
-                database.execSQL("CREATE INDEX IF NOT EXISTS `index_messages_contactId` ON `messages` (`contactId`)")
-                database.execSQL("CREATE INDEX IF NOT EXISTS `index_messages_timestamp` ON `messages` (`timestamp`)")
-                database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS `index_messages_messageId` ON `messages` (`messageId`)")
-                database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS `index_messages_pingId` ON `messages` (`pingId`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_messages_contactId` ON `messages` (`contactId`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_messages_timestamp` ON `messages` (`timestamp`)")
+                db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS `index_messages_messageId` ON `messages` (`messageId`)")
+                db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS `index_messages_pingId` ON `messages` (`pingId`)")
 
-                database.execSQL("PRAGMA foreign_keys=ON")
+                db.execSQL("PRAGMA foreign_keys=ON")
 
                 Log.i(TAG, "Migration 45→46 complete: pongDelivered now nullable (protocol v2)")
             }
@@ -1052,9 +1052,9 @@ abstract class SecureLegionDatabase : RoomDatabase() {
          * Nullable column — simple ALTER TABLE (no table rebuild needed).
          */
         private val MIGRATION_46_47 = object : Migration(46, 47) {
-            override fun migrate(database: SupportSQLiteDatabase) {
+            override fun migrate(db: SupportSQLiteDatabase) {
                 Log.i(TAG, "Migrating database from version 46 to 47")
-                database.execSQL("ALTER TABLE `ping_inbox` ADD COLUMN `lastPongSentAt` INTEGER")
+                db.execSQL("ALTER TABLE `ping_inbox` ADD COLUMN `lastPongSentAt` INTEGER")
                 Log.i(TAG, "Migration 46→47 complete: added lastPongSentAt to ping_inbox")
             }
         }
@@ -1063,9 +1063,9 @@ abstract class SecureLegionDatabase : RoomDatabase() {
          * Migration 47→48: Add message_reactions table for 1:1 emoji reactions.
          */
         private val MIGRATION_47_48 = object : Migration(47, 48) {
-            override fun migrate(database: SupportSQLiteDatabase) {
+            override fun migrate(db: SupportSQLiteDatabase) {
                 Log.i(TAG, "Migrating database from version 47 to 48")
-                database.execSQL(
+                db.execSQL(
                     """
                     CREATE TABLE IF NOT EXISTS `message_reactions` (
                         `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
@@ -1080,24 +1080,24 @@ abstract class SecureLegionDatabase : RoomDatabase() {
                     )
                     """.trimIndent()
                 )
-                database.execSQL("CREATE INDEX IF NOT EXISTS `index_message_reactions_contactId` ON `message_reactions` (`contactId`)")
-                database.execSQL("CREATE INDEX IF NOT EXISTS `index_message_reactions_targetMessageId` ON `message_reactions` (`targetMessageId`)")
-                database.execSQL("CREATE INDEX IF NOT EXISTS `index_message_reactions_contactId_targetMessageId` ON `message_reactions` (`contactId`, `targetMessageId`)")
-                database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS `index_message_reactions_contactId_targetMessageId_reactorPubKey` ON `message_reactions` (`contactId`, `targetMessageId`, `reactorPubKey`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_message_reactions_contactId` ON `message_reactions` (`contactId`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_message_reactions_targetMessageId` ON `message_reactions` (`targetMessageId`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_message_reactions_contactId_targetMessageId` ON `message_reactions` (`contactId`, `targetMessageId`)")
+                db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS `index_message_reactions_contactId_targetMessageId_reactorPubKey` ON `message_reactions` (`contactId`, `targetMessageId`, `reactorPubKey`)")
                 Log.i(TAG, "Migration 47→48 complete: added message_reactions table")
             }
         }
 
         private val MIGRATION_48_49 = object : Migration(48, 49) {
-            override fun migrate(database: SupportSQLiteDatabase) {
-                database.execSQL("ALTER TABLE groups ADD COLUMN unreadCount INTEGER NOT NULL DEFAULT 0")
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE groups ADD COLUMN unreadCount INTEGER NOT NULL DEFAULT 0")
                 Log.i(TAG, "Migration 48→49 complete: added unreadCount to groups")
             }
         }
 
         private val MIGRATION_49_50 = object : Migration(49, 50) {
-            override fun migrate(database: SupportSQLiteDatabase) {
-                database.execSQL("ALTER TABLE group_peers ADD COLUMN profilePictureBase64 TEXT")
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE group_peers ADD COLUMN profilePictureBase64 TEXT")
                 Log.i(TAG, "Migration 49→50 complete: added profilePictureBase64 to group_peers")
             }
         }

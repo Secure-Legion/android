@@ -220,6 +220,7 @@ class SendActivity : BaseActivity() {
 
     private fun startQRScanner() {
         val intent = Intent(this, QRScannerActivity::class.java)
+        @Suppress("DEPRECATION") // TODO: migrate to ActivityResultLauncher
         startActivityForResult(intent, QR_SCANNER_REQUEST_CODE)
     }
 

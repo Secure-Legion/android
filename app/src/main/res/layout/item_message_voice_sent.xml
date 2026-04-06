@@ -75,6 +75,7 @@
                 android:layout_width="24dp"
                 android:layout_height="24dp"
                 android:src="@drawable/ic_play_blue"
+                app:tint="@color/voice_play_icon_tint"
                 android:padding="5dp"
                 android:contentDescription="Play voice message" />
         </FrameLayout>
@@ -102,6 +103,7 @@
                     android:src="@drawable/waveform_bars"
                     android:scaleType="fitXY"
                     android:alpha="0.3"
+                    app:tint="#FFFFFF"
                     android:contentDescription="Voice waveform" />
 
                 <!-- Progress overlay -->
@@ -115,6 +117,7 @@
                         android:layout_height="24dp"
                         android:src="@drawable/waveform_bars"
                         android:scaleType="fitXY"
+                        app:tint="#FFFFFF"
                         android:contentDescription="Waveform progress" />
 
                     <!-- Progress bar for clipping -->

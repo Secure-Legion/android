@@ -72,6 +72,7 @@ class FriendRequestService(private val context: Context) {
                     messagingOnion = keyManager.getMessagingOnion() ?: "",
                     voiceOnion = keyManager.getVoiceOnion() ?: "",
                     contactPin = pin,
+                    inviteToken = keyManager.getInviteToken() ?: keyManager.generateAndStoreInviteToken(),
                     ipfsCid = cid,
                     timestamp = System.currentTimeMillis()
                 )

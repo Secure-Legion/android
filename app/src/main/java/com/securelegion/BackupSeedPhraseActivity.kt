@@ -6,6 +6,7 @@ import android.view.View
 import android.widget.TextView
 import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.app.AppCompatActivity
+import com.securelegion.crypto.KeyManager
 import com.securelegion.utils.ThemedToast
 
 class BackupSeedPhraseActivity : AppCompatActivity() {
@@ -27,8 +28,8 @@ class BackupSeedPhraseActivity : AppCompatActivity() {
             }
         })
 
-        // Get seed phrase from intent
-        seedPhrase = intent.getStringExtra(EXTRA_SEED_PHRASE) ?: ""
+        // Read seed phrase directly from KeyManager (avoid IPC/Intent exposure)
+        seedPhrase = KeyManager.getInstance(this).getSeedPhrase() ?: ""
         if (seedPhrase.isEmpty()) {
             Log.e(TAG, "No seed phrase provided")
             finish()

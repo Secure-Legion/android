@@ -63,7 +63,7 @@ class TorHealthMonitorWorker(
         private const val HS_LOOP_STALE_THRESHOLD_MS = 90_000L  // 90s: accept loop ticks every 30s, 3x margin
         private const val HS_SELF_TEST_FAILURE_THRESHOLD = 3    // Restart listeners after 3 consecutive failures (~3min)
         private const val HS_RESTART_COOLDOWN_MS = 3 * 60_000L  // 3 minutes between listener restarts
-        private const val HS_ACCEPT_RECENT_MS = 5 * 60_000L     // If accept heartbeat <5min old, skip self-test
+        private const val HS_ACCEPT_RECENT_MS = 120_000L        // If accept heartbeat <2min old, skip self-test (was 5min — too slow to recover wedged Arti acceptor)
 
         // DEGRADED escalation: circuits=0 recovery ladder
         private const val DEGRADED_GRACE_MS = 180_000L         // 3 minutes before escalating

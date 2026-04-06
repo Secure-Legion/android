@@ -27,6 +27,7 @@ import com.securelegion.database.entities.PendingFriendRequest as PendingFriendR
 import com.securelegion.models.ContactCard
 import com.securelegion.models.FriendRequest
 import com.securelegion.services.ContactCardManager
+import com.securelegion.services.FriendRequestEnvelope
 import com.securelegion.services.FriendRequestRetryMigration
 import com.securelegion.crypto.RustBridge
 import com.securelegion.workers.FriendRequestWorker
@@ -49,6 +50,7 @@ class AddFriendActivity : BaseActivity() {
     private var isDeleteMode = false
     private val selectedRequests = mutableSetOf<String>()
     private var scannedUsername: String? = null // Username from QR code scan
+    private var scannedInviteToken: String? = null // Recipient's invite_token from QR (32 hex chars)
     @Volatile private var qrAutoSent = false   // Prevents double-fire from barcode scanner
     private var isAutoMode = false // When true, activity is invisible (launched from bottom sheet QR/gallery)
 
@@ -137,6 +139,7 @@ class AddFriendActivity : BaseActivity() {
         // Auto-launch QR scanner if requested from bottom sheet
         if (intent.getBooleanExtra("AUTO_SCAN", false)) {
             val scanIntent = Intent(this, QRScannerActivity::class.java)
+            @Suppress("DEPRECATION") // TODO: migrate to ActivityResultLauncher
             startActivityForResult(scanIntent, QR_SCAN_REQUEST_CODE)
         }
 
@@ -194,7 +197,7 @@ class AddFriendActivity : BaseActivity() {
                 acceptPhase2FriendRequest(friendOnion, friendPin)
             } else {
                 // PHASE 1: Initiate friend request
-                initiateFriendRequest(friendOnion, friendPin)
+                initiateFriendRequest(friendOnion, friendPin, scannedInviteToken)
             }
         }
 
@@ -306,9 +309,20 @@ class AddFriendActivity : BaseActivity() {
         var pin: String? = null
         var onionAddress: String? = null
         var username: String? = null
+        var inviteToken: String? = null
 
         // Parse from the right
         val remaining = parts.toMutableList()
+
+        // Check for invite token (format: tokXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX — 32 lowercase hex chars)
+        val tokIndex = remaining.indexOfLast { it.startsWith("tok") && it.length == 35 }
+        if (tokIndex >= 0) {
+            val tokValue = remaining[tokIndex].removePrefix("tok")
+            if (tokValue.length == 32 && tokValue.all { it.isLetterOrDigit() }) {
+                inviteToken = tokValue
+            }
+            remaining.removeAt(tokIndex)
+        }
 
         // Check for expiry timestamp (format: exp1234567890000)
         val expiryIndex = remaining.indexOfLast { it.startsWith("exp") }
@@ -359,16 +373,17 @@ class AddFriendActivity : BaseActivity() {
         }
 
         scannedUsername = username
-        Log.i(TAG, "QR parsed: username=$username, onion=$onionAddress, pin=${if (pin != null) "***" else "none"}")
+        scannedInviteToken = inviteToken
+        Log.i(TAG, "QR parsed: username=$username, onion=$onionAddress, pin=${if (pin != null) "***" else "none"}, hasToken=${inviteToken != null}")
 
-        if (!qrAutoSent && onionAddress != null && pin != null) {
+        if (!qrAutoSent && pin != null) {
             // Complete QR (onion + PIN) — auto-send immediately, no fields shown
             qrAutoSent = true
             findViewById<View>(R.id.manualInputSection).visibility = View.GONE
             findViewById<View>(R.id.searchButton).visibility = View.GONE
             val displayName = username ?: "friend"
             ThemedToast.show(this, "Adding $displayName...")
-            initiateFriendRequest(onionAddress, pin)
+            initiateFriendRequest(onionAddress, pin, inviteToken)
         } else if (!qrAutoSent) {
             // Incomplete QR (missing PIN) — show manual entry for PIN only
             if (isAutoMode) {
@@ -1015,36 +1030,22 @@ class AddFriendActivity : BaseActivity() {
         loadingOverlay.visibility = View.GONE
     }
 
-    private fun downloadContactCard(cidOrOnion: String, pin: String, isAccepting: Boolean = false) {
+    private fun downloadContactCard(cid: String, pin: String, isAccepting: Boolean = false) {
         CoroutineScope(Dispatchers.Main).launch {
             try {
-                // Detect if input is .onion address (v2.0) or IPFS CID (v1.0)
-                val isOnion = cidOrOnion.endsWith(".onion")
-
-                if (isOnion) {
-                    Log.d(TAG, "Downloading contact card via Tor from .onion address...")
-                } else {
-                    Log.d(TAG, "Downloading contact card from IPFS...")
-                }
+                Log.d(TAG, "Downloading contact card from IPFS...")
 
                 val loadingText = if (isAccepting) "Accepting friend request..." else "Downloading contact card..."
-                val loadingSubtext = if (isOnion) "Connecting via Tor..." else "Downloading from IPFS..."
-                showLoading(loadingText, loadingSubtext)
+                showLoading(loadingText, "Downloading from IPFS...")
 
                 val cardManager = ContactCardManager(this@AddFriendActivity)
                 val result = withContext(Dispatchers.IO) {
-                    if (isOnion) {
-                        // v2.0: Download via Tor .onion address
-                        cardManager.downloadContactCardViaTor(cidOrOnion, pin)
-                    } else {
-                        // v1.0: Download via IPFS CID
-                        cardManager.downloadContactCard(cidOrOnion, pin)
-                    }
+                    cardManager.downloadContactCard(cid, pin)
                 }
 
                 if (result.isSuccess) {
                     val contactCard = result.getOrThrow()
-                    handleContactCardDownloaded(contactCard, cidOrOnion, pin)
+                    handleContactCardDownloaded(contactCard, cid, pin)
                 } else {
                     throw result.exceptionOrNull()!!
                 }
@@ -1079,9 +1080,7 @@ class AddFriendActivity : BaseActivity() {
                 Log.d(TAG, "Step 1: Getting KeyManager instance...")
                 val keyManager = KeyManager.getInstance(this@AddFriendActivity)
 
-                Log.d(TAG, "Step 2: Getting database passphrase...")
                 val dbPassphrase = keyManager.getDatabasePassphrase()
-                Log.d(TAG, "Database passphrase obtained (${dbPassphrase.size} bytes)")
 
                 Log.d(TAG, "Step 3: Getting database instance...")
                 val database = SecureLegionDatabase.getInstance(this@AddFriendActivity, dbPassphrase)
@@ -1106,42 +1105,37 @@ class AddFriendActivity : BaseActivity() {
                     return@launch
                 }
 
-                // Step 4.5: IPFS Contact List Backup (v5 architecture)
-                // After adding a friend, backup our updated contact list to IPFS mesh
-                Log.d(TAG, "Step 4.5: Backing up contact list to IPFS mesh...")
+                // Step 4.5: Contact List Backup Mesh (wire types 0x80/0x81/0x82)
+                // See CONTACT_LIST_SYNC_PROTOCOL.md for wire details.
+                Log.d(TAG, "Step 4.5: Running contact-list backup mesh sync...")
                 try {
                     val contactListManager = com.securelegion.services.ContactListManager.getInstance(this@AddFriendActivity)
 
-                    // Backup our own contact list (now includes this new friend)
-                    Log.d(TAG, "Starting OUR contact list backup...")
+                    // (1) Re-export + store OUR list locally (now includes this new friend)
                     val backupResult = contactListManager.backupToIPFS()
-                    if (backupResult.isSuccess) {
-                        val ourCID = backupResult.getOrThrow()
-                        Log.i(TAG, "SUCCESS: OUR contact list backed up to IPFS")
-                    } else {
-                        Log.e(TAG, "FAILED to backup OUR contact list: ${backupResult.exceptionOrNull()?.message}")
-                        backupResult.exceptionOrNull()?.printStackTrace()
+                    if (backupResult.isFailure) {
+                        Log.e(TAG, "Local backup failed: ${backupResult.exceptionOrNull()?.message}")
                     }
 
-                    // Pin friend's contact list for redundancy (v5 architecture)
-                    // Fetch friend's contact list via their .onion HTTP and pin it locally
-                    if (contactCard.ipfsCid != null) {
-                        Log.d(TAG, "Starting contact list pinning for ${contactCard.displayName}")
+                    // (2) PUSH our updated list to the new friend over their messaging .onion (0x82)
+                    val syncService = com.securelegion.services.ContactListSyncService.getInstance(this@AddFriendActivity)
+                    val friendMsgOnion = contactCard.messagingOnion
+                    if (friendMsgOnion.isNotEmpty()) {
+                        val pushOk = syncService.pushToFriend(friendMsgOnion)
+                        Log.i(TAG, "CL_SYNC push to new friend ${contactCard.displayName} rc=$pushOk")
 
-                        val ipfsManager = com.securelegion.services.IPFSManager.getInstance(this@AddFriendActivity)
-                        val pinResult = ipfsManager.pinFriendContactList(
-                            friendCID = contactCard.ipfsCid,
-                            displayName = contactCard.displayName,
-                            friendOnion = contactCard.friendRequestOnion // Fetch via friend's .onion
-                        )
-                        if (pinResult.isSuccess) {
-                            Log.i(TAG, "SUCCESS: Pinned ${contactCard.displayName}'s contact list")
-                        } else {
-                            Log.e(TAG, "FAILED to pin ${contactCard.displayName}'s contact list: ${pinResult.exceptionOrNull()?.message}")
+                        // (3) REQUEST the friend's list so we back them up too (0x80)
+                        // Response (0x81 or empty NACK) arrives via sync poller.
+                        if (contactCard.ipfsCid != null) {
+                            val reqOk = com.securelegion.crypto.RustBridge.sendContactListRequest(
+                                friendMsgOnion, contactCard.ipfsCid
+                            )
+                            Log.i(TAG, "CL_SYNC request friend's list ${contactCard.displayName} rc=$reqOk")
                         }
                     } else {
-                        Log.w(TAG, "Friend's contact list CID is NULL - cannot pin (they may be using old version)")
+                        Log.w(TAG, "Friend has no messaging onion — cannot push/request list")
                     }
+
                 } catch (e: Exception) {
                     Log.w(TAG, "Non-critical error during contact list backup", e)
                     // Don't fail the entire friend add process if backup fails
@@ -1419,6 +1413,7 @@ class AddFriendActivity : BaseActivity() {
                     messagingOnion = keyManager.getMessagingOnion() ?: throw Exception("Messaging .onion not set"),
                     voiceOnion = keyManager.getVoiceOnion().takeUnless { it.isNullOrBlank() } ?: "",
                     contactPin = keyManager.getContactPin() ?: throw Exception("Contact PIN not set"),
+                    inviteToken = keyManager.getInviteToken() ?: keyManager.generateAndStoreInviteToken(),
                     ipfsCid = keyManager.deriveContactListCID(), // v5: Send contact LIST CID for backup mesh
                     timestamp = System.currentTimeMillis() / 1000
                 )
@@ -1565,9 +1560,11 @@ class AddFriendActivity : BaseActivity() {
 
     /**
      * PHASE 1: Initiate friend request with key exchange
-     * Sends minimal info encrypted with PIN: username + friend-request.onion + X25519 public key
+     * Sends sender's ContactCard wrapped in a v2 FriendRequestEnvelope (carrying the recipient's
+     * invite_token) and PIN-encrypted. recipientInviteToken comes from the scanned QR; if absent
+     * (manual entry without a new QR) a placeholder is used so the format is always v2.
      */
-    private fun initiateFriendRequest(friendOnion: String, friendPin: String) {
+    private fun initiateFriendRequest(friendOnion: String, friendPin: String, recipientInviteToken: String? = null) {
         CoroutineScope(Dispatchers.Main).launch {
             try {
                 // Sanitize .onion address - remove https://, http://, and trailing slashes
@@ -1616,10 +1613,44 @@ class AddFriendActivity : BaseActivity() {
 
                 Log.d(TAG, "Phase 1 payload signed with Ed25519")
 
-                // Encrypt Phase 1 with PIN
+                // Build sender's full ContactCard JSON for the v2 envelope
+                val ownContactPin = keyManager.getContactPin() ?: ""
+                val ownMessagingOnion = keyManager.getMessagingOnion() ?: ""
+                val ownVoiceOnion = keyManager.getVoiceOnion().takeUnless { it.isNullOrBlank() } ?: ""
+                val ownInviteToken = keyManager.getInviteToken() ?: keyManager.generateAndStoreInviteToken()
+                val ownSolanaPublicKey = keyManager.getSolanaPublicKey()
+                val ownSolanaAddress = keyManager.getSolanaAddress()
+                val ownIpfsCid = keyManager.getIPFSCID() ?: ""
+                val senderCard = com.securelegion.models.ContactCard(
+                    displayName = ownDisplayName,
+                    solanaPublicKey = ownSolanaPublicKey,
+                    x25519PublicKey = ownX25519PublicKey,
+                    kyberPublicKey = ownKyberPublicKey,
+                    solanaAddress = ownSolanaAddress,
+                    friendRequestOnion = ownFriendRequestOnion,
+                    messagingOnion = ownMessagingOnion,
+                    voiceOnion = ownVoiceOnion,
+                    contactPin = ownContactPin,
+                    inviteToken = ownInviteToken,
+                    ipfsCid = ownIpfsCid,
+                    timestamp = System.currentTimeMillis() / 1000
+                )
+                val senderCardJson = senderCard.toJson()
+
+                // Wrap sender's ContactCard in v2 envelope carrying recipient's invite_token.
+                // If the recipient's token was not present in the QR (legacy/manual entry), use a
+                // zeroed placeholder so the wire format is always v2.
+                val effectiveRecipientToken = recipientInviteToken?.takeIf { it.length == 32 }
+                    ?: "0".repeat(32)
+                val envelopeJson = FriendRequestEnvelope.build(
+                    recipientInviteToken = effectiveRecipientToken,
+                    senderCardJson = senderCardJson
+                )
+
+                // Encrypt the v2 envelope with PIN
                 val cardManager = com.securelegion.services.ContactCardManager(this@AddFriendActivity)
                 val encryptedPhase1 = withContext(Dispatchers.IO) {
-                    cardManager.encryptWithPin(phase1Payload, friendPin)
+                    cardManager.encryptWithPin(envelopeJson, friendPin)
                 }
 
                 Log.d(TAG, "Encrypted Phase 1 payload: ${encryptedPhase1.size} bytes")
@@ -1642,7 +1673,7 @@ class AddFriendActivity : BaseActivity() {
                     uiRequestId = requestId,
                     recipientOnion = sanitizedOnion,
                     recipientPin = friendPin,
-                    phase1Payload = phase1Payload
+                    phase1Payload = envelopeJson
                 )
 
                 // Immediate feedback — no blocking overlay

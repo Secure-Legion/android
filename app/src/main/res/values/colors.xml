@@ -28,6 +28,7 @@
     <!-- Borders / Dividers (Light Mode) -->
     <color name="border_color">#D1D5DB</color>
     <color name="input_border">#D1D5DB</color>
+    <color name="list_item_divider">#EEEEEE</color>
     <color name="divider_color">#B0B7C0</color>
 
     <!-- Components (Light Mode) -->
@@ -39,6 +40,9 @@
     <!-- Icon Tints (Light Mode) -->
     <color name="settings_icon_tint">#FFFFFF</color>
     <color name="arrow_icon_tint">#000000</color>
+
+    <!-- Voice Play Icon (Light Mode) -->
+    <color name="voice_play_icon_tint">#FFFFFF</color>
 
     <!-- Device Page (Light Mode) -->
     <color name="device_circle_bg">#E5E7EB</color>
@@ -99,6 +103,10 @@
     <color name="qr_module">#000000</color>
     <color name="qr_badge_bg">#F0F0F3</color>
     <color name="qr_badge_text">#1F2937</color>
+
+    <!-- Unread message count badge (light mode: black on white text) -->
+    <color name="unread_badge_bg">#000000</color>
+    <color name="unread_badge_text">#FFFFFF</color>
 
     <!-- Legacy (keep for compatibility) -->
     <color name="purple_200">#FFBB86FC</color>

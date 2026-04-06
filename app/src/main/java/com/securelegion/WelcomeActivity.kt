@@ -29,14 +29,14 @@ class WelcomeActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
 
         // Security: Prevent screenshots and screen recording
-        // TODO: Re-enable FLAG_SECURE after demo recording
-        // window.setFlags(
-        // WindowManager.LayoutParams.FLAG_SECURE,
-        // WindowManager.LayoutParams.FLAG_SECURE
-        // )
+        window.setFlags(
+            WindowManager.LayoutParams.FLAG_SECURE,
+            WindowManager.LayoutParams.FLAG_SECURE
+        )
 
         // Black status bar with light icons (matches iOS)
-        window.statusBarColor = Color.BLACK
+        @Suppress("DEPRECATION") // edge-to-edge refactor pending
+        run { window.statusBarColor = Color.BLACK }
 
         setContentView(R.layout.activity_welcome)
 

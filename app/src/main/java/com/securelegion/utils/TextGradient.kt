@@ -7,31 +7,32 @@ import android.widget.TextView
 
 /**
  * Applies the silver/metallic gradient to a TextView.
- * Uses white gradient in dark mode, black gradient in light mode.
+ * Dark mode: white metallic gradient.
+ * Light mode: solid black (no gradient — user preference).
  */
 object TextGradient {
     fun apply(textView: TextView) {
         textView.post {
+            val isNightMode = (textView.resources.configuration.uiMode and
+                Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
+
+            if (!isNightMode) {
+                // Light mode: solid black, no gradient
+                textView.paint.shader = null
+                textView.setTextColor(0xFF000000.toInt())
+                textView.invalidate()
+                return@post
+            }
+
             val width = textView.paint.measureText(textView.text.toString())
             if (width > 0) {
-                val isNightMode = (textView.resources.configuration.uiMode and
-                    Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
-                val colors = if (isNightMode) {
+                val shader = LinearGradient(
+                    0f, 0f, width, 0f,
                     intArrayOf(
                         0x4DFFFFFF.toInt(), // 30% white
                         0xE6FFFFFF.toInt(), // 90% white
                         0x4DFFFFFF.toInt()
-                    )
-                } else {
-                    intArrayOf(
-                        0x4D000000.toInt(), // 30% black
-                        0xE6000000.toInt(), // 90% black
-                        0x4D000000.toInt()
-                    )
-                }
-                val shader = LinearGradient(
-                    0f, 0f, width, 0f,
-                    colors,
+                    ),
                     floatArrayOf(0f, 0.49f, 1f),
                     Shader.TileMode.CLAMP
                 )

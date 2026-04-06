@@ -78,7 +78,7 @@ class GroupAdapter(
         if (!item.lastMessagePreview.isNullOrEmpty()) {
             holder.lastMessagePreview.text = item.lastMessagePreview
         } else {
-            val memberText = if (item.memberCount == 1) "1 member" else "${item.memberCount} members"
+            val memberText = "${item.memberCount}/${com.securelegion.AddGroupMembersActivity.MAX_GROUP_MEMBERS} members"
             holder.lastMessagePreview.text = memberText
         }
 
@@ -143,7 +143,7 @@ class GroupAdapter(
                     isSwiping = false
 
                     // If another item is open, close it
-                    if (openPosition != -1 && openPosition != holder.adapterPosition) {
+                    if (openPosition != -1 && openPosition != holder.bindingAdapterPosition) {
                         notifyItemChanged(openPosition)
                         openPosition = -1
                     }
@@ -187,7 +187,7 @@ class GroupAdapter(
                                 .translationX(ACTION_WIDTH)
                                 .setDuration(200)
                                 .start()
-                            openPosition = holder.adapterPosition
+                            openPosition = holder.bindingAdapterPosition
                         } else {
                             // Snap closed
                             closeItem(holder)

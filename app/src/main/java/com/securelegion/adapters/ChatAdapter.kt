@@ -150,7 +150,7 @@ class ChatAdapter(
                     isScrolling = false
 
                     // If another item is open, close it
-                    if (openPosition != -1 && openPosition != holder.adapterPosition) {
+                    if (openPosition != -1 && openPosition != holder.bindingAdapterPosition) {
                         notifyItemChanged(openPosition)
                         openPosition = -1
                     }
@@ -203,7 +203,7 @@ class ChatAdapter(
                                 .translationX(ACTION_WIDTH)
                                 .setDuration(200)
                                 .start()
-                            openPosition = holder.adapterPosition
+                            openPosition = holder.bindingAdapterPosition
                         } else {
                             // Snap closed
                             closeItem(holder)

@@ -74,7 +74,7 @@ class CreateGroupActivity : BaseActivity() {
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
         if (result.resultCode == Activity.RESULT_OK) {
-            val bitmap = result.data?.extras?.get("data") as? Bitmap
+            val bitmap = result.data?.extras?.let { androidx.core.os.BundleCompat.getParcelable(it, "data", Bitmap::class.java) }
             val base64 = ImagePicker.processImageBitmap(bitmap)
             if (base64 != null) {
                 selectedGroupIcon = base64

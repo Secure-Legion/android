@@ -68,7 +68,7 @@ class WalletIdentityActivity : AppCompatActivity() {
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
         if (result.resultCode == Activity.RESULT_OK) {
-            val bitmap = result.data?.extras?.get("data") as? Bitmap
+            val bitmap = result.data?.extras?.let { androidx.core.os.BundleCompat.getParcelable(it, "data", Bitmap::class.java) }
             val base64 = ImagePicker.processImageBitmap(bitmap)
             if (base64 != null) {
                 saveProfilePhoto(base64)
@@ -211,12 +211,14 @@ class WalletIdentityActivity : AppCompatActivity() {
                 // Prefix `sl1:` tags this as SecureLegion QR format v1 — lets future
                 // formats (sl2:, sl3:) be rejected cleanly by older parsers instead
                 // of being misread. Unprefixed QRs are still accepted for back-compat.
+                val inviteToken = keyManager.getInviteToken() ?: keyManager.generateAndStoreInviteToken()
                 val qrContent = buildString {
                     append("sl1:")
                     if (username.isNotEmpty()) append("$username@")
                     append(friendRequestOnion)
                     if (pin.isNotEmpty()) append("@$pin")
                     if (expiryMs > 0) append("@exp$expiryMs")
+                    append("@tok$inviteToken")
                 }
 
                 // Generate branded QR code (static expiry baked in for shares,
@@ -346,6 +348,7 @@ class WalletIdentityActivity : AppCompatActivity() {
                 // Generate a new PIN and reset rotation state
                 val newPin = cardManager.generateRandomPin()
                 keyManager.storeContactPin(newPin)
+                keyManager.generateAndStoreInviteToken()
                 keyManager.storePinRotationTimestamp(System.currentTimeMillis())
                 keyManager.resetPinDecryptCount()
                 keyManager.clearPreviousPin()
@@ -586,12 +589,14 @@ class WalletIdentityActivity : AppCompatActivity() {
                     messagingOnion = newOnionAddress,
                     voiceOnion = voiceOnion,
                     contactPin = newPin,
+                    inviteToken = keyManager.getInviteToken() ?: keyManager.generateAndStoreInviteToken(),
                     ipfsCid = ipfsCid,
                     timestamp = System.currentTimeMillis()
                 )
 
                 // Store contact card info (CID is deterministic, not uploaded)
                 keyManager.storeContactPin(newPin)
+                keyManager.generateAndStoreInviteToken()
                 keyManager.storeIPFSCID(ipfsCid)
                 // Note: friendRequestOnion already stored by createFriendRequestOnion()
                 keyManager.storeMessagingOnion(newOnionAddress)
@@ -609,7 +614,6 @@ class WalletIdentityActivity : AppCompatActivity() {
                 ThemedToast.showLong(this@WalletIdentityActivity, "New identity created! Backup your seed phrase!")
 
                 val intent = Intent(this@WalletIdentityActivity, BackupSeedPhraseActivity::class.java)
-                intent.putExtra(BackupSeedPhraseActivity.EXTRA_SEED_PHRASE, mnemonic)
                 startActivity(intent)
 
                 // findViewById<View>(R.id.updateUsernameButton).isEnabled = true

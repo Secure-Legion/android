@@ -64,11 +64,10 @@ class LockActivity : AppCompatActivity() {
         Log.d("LockActivity", "App locked - user on lock screen")
 
         // Security: Prevent screenshots and screen recording on lock screen
-        // TODO: Re-enable FLAG_SECURE after demo recording
-        // window.setFlags(
-        // WindowManager.LayoutParams.FLAG_SECURE,
-        // WindowManager.LayoutParams.FLAG_SECURE
-        // )
+        window.setFlags(
+            WindowManager.LayoutParams.FLAG_SECURE,
+            WindowManager.LayoutParams.FLAG_SECURE
+        )
 
         // Wallet exists - show lock screen UI
         Log.d("LockActivity", "Wallet exists, showing password unlock")
@@ -384,6 +383,19 @@ class LockActivity : AppCompatActivity() {
      * Unlock the app and navigate to MainActivity
      */
     private fun unlockApp() {
+        // Start TorService now that the seed is unlocked. BootReceiver skips starting
+        // it when the seed is wrapped, so this is the first chance for inbound message
+        // handlers to safely derive the DB passphrase. Idempotent — if TorService is
+        // already running this is a no-op (KEEP_ALIVE-style start).
+        try {
+            val torIntent = Intent(this, com.securelegion.services.TorService::class.java)
+            torIntent.action = com.securelegion.services.TorService.ACTION_START_TOR
+            startForegroundService(torIntent)
+            Log.i("LockActivity", "TorService started after unlock")
+        } catch (e: Exception) {
+            Log.e("LockActivity", "Failed to start TorService after unlock", e)
+        }
+
         // Check if user has confirmed their seed phrase backup
         val setupPrefs = getSharedPreferences("account_setup", MODE_PRIVATE)
         val seedPhraseConfirmed = setupPrefs.getBoolean("seed_phrase_confirmed", true) // Default true for existing users

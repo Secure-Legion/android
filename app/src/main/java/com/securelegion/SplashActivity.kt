@@ -10,6 +10,7 @@ import android.os.Handler
 import android.os.Looper
 import android.os.PowerManager
 import android.provider.Settings
+import android.view.WindowManager
 import android.util.Log
 import android.view.View
 import androidx.appcompat.app.AppCompatActivity
@@ -30,14 +31,14 @@ class SplashActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
 
         // Security: Prevent screenshots and screen recording
-        // TODO: Re-enable FLAG_SECURE after demo recording
-        // window.setFlags(
-        // WindowManager.LayoutParams.FLAG_SECURE,
-        // WindowManager.LayoutParams.FLAG_SECURE
-        // )
+        window.setFlags(
+            WindowManager.LayoutParams.FLAG_SECURE,
+            WindowManager.LayoutParams.FLAG_SECURE
+        )
 
         // Black status bar (matches splash screen)
-        window.statusBarColor = android.graphics.Color.BLACK
+        @Suppress("DEPRECATION") // edge-to-edge refactor pending
+        run { window.statusBarColor = android.graphics.Color.BLACK }
 
         // Request notification permission on Android 13+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {

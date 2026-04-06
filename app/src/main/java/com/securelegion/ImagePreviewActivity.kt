@@ -95,8 +95,10 @@ class ImagePreviewActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
 
         WindowCompat.setDecorFitsSystemWindows(window, false)
-        window.statusBarColor = Color.TRANSPARENT
-        window.navigationBarColor = Color.BLACK
+        @Suppress("DEPRECATION") run {
+            window.statusBarColor = Color.TRANSPARENT
+            window.navigationBarColor = Color.BLACK
+        }
 
         setContentView(R.layout.activity_image_preview)
 
@@ -209,8 +211,11 @@ class ImagePreviewActivity : AppCompatActivity() {
 
         if (isDrawMode) {
             photoEditor.setBrushDrawingMode(true)
-            photoEditor.brushColor = currentBrushColor
-            photoEditor.brushSize = 8f
+            @Suppress("DEPRECATION") // photoeditor's ShapeBuilder API still unstable
+            run {
+                photoEditor.brushColor = currentBrushColor
+                photoEditor.brushSize = 8f
+            }
             btnDraw.setBackgroundResource(R.drawable.bg_tool_button_active)
             colorStrip.visibility = View.VISIBLE
         } else {
@@ -243,7 +248,8 @@ class ImagePreviewActivity : AppCompatActivity() {
                 }
                 setOnClickListener {
                     currentBrushColor = color
-                    photoEditor.brushColor = color
+                    @Suppress("DEPRECATION")
+                    run { photoEditor.brushColor = color }
                     updateColorSelection(container, this)
                 }
             }

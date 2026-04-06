@@ -25,7 +25,7 @@ data class FriendRequest(
             return FriendRequest(
                 displayName = obj.getString("display_name"),
                 ipfsCid = obj.getString("ipfs_cid"),
-                kyberCiphertextBase64 = obj.optString("kyber_ciphertext", null),
+                kyberCiphertextBase64 = obj.let { if (it.isNull("kyber_ciphertext")) null else it.optString("kyber_ciphertext") },
                 timestamp = obj.optLong("timestamp", System.currentTimeMillis())
             )
         }

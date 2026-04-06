@@ -214,7 +214,7 @@
         <activity
             android:name=".SupportComposerActivity"
             android:exported="false"
-            android:windowSoftInputMode="adjustResize" />
+            android:windowSoftInputMode="adjustPan" />
 
         <activity
             android:name=".DevicesActivity"
@@ -307,6 +307,31 @@
 
         <activity
             android:name=".AddGroupMembersActivity"
+            android:exported="false" />
+
+        <activity
+            android:name=".EditAdminRightsActivity"
+            android:exported="false"
+            android:windowSoftInputMode="adjustPan" />
+
+        <activity
+            android:name=".GroupPermissionsActivity"
+            android:exported="false" />
+
+        <activity
+            android:name=".BannedUsersActivity"
+            android:exported="false" />
+
+        <activity
+            android:name=".RecentActionsActivity"
+            android:exported="false" />
+
+        <activity
+            android:name=".GroupAdminsActivity"
+            android:exported="false" />
+
+        <activity
+            android:name=".AddAdminPickerActivity"
             android:exported="false" />
 
         <activity

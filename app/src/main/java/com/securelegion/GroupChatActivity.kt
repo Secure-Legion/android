@@ -30,6 +30,7 @@ import com.securelegion.ui.adapters.GroupMessageAdapter
 import com.securelegion.ui.adapters.GroupChatMessage
 import com.securelegion.views.MediaKeyboardView
 import com.securelegion.utils.GlassBottomSheetDialog
+import com.securelegion.utils.applySlideInTransition
 import com.securelegion.utils.GlassDialog
 import com.securelegion.utils.ThemedToast
 import androidx.core.view.ViewCompat
@@ -168,7 +169,7 @@ class GroupChatActivity : BaseActivity() {
                         .count { it.accepted && !it.removed }
                 }
                 if (!isFinishing && !isDestroyed) {
-                    memberCountText.text = if (count == 1) "1 member" else "$count members"
+                    memberCountText.text = "$count/${AddGroupMembersActivity.MAX_GROUP_MEMBERS} members"
                 }
             } catch (_: Exception) { }
         }
@@ -182,7 +183,7 @@ class GroupChatActivity : BaseActivity() {
             intent.putExtra(GroupProfileActivity.EXTRA_GROUP_ID, groupId)
             intent.putExtra(GroupProfileActivity.EXTRA_GROUP_NAME, groupName)
             startActivity(intent)
-            overridePendingTransition(R.anim.slide_in_right, R.anim.slide_out_left)
+            applySlideInTransition(R.anim.slide_in_right, R.anim.slide_out_left)
         }
 
         syncIcon.setOnClickListener {
@@ -433,10 +434,12 @@ class GroupChatActivity : BaseActivity() {
                     val mapped = messages.map { msg ->
                         val isMe = msg.authorDeviceHex == myDeviceIdHex
                         val decrypted = msg.decryptedText ?: "[Encrypted]"
-                        val isSystem = decrypted.startsWith("[SYSTEM] ")
+                        // System messages: new format uses an invisible U+0002 sentinel;
+                        // legacy "[SYSTEM] " prefix kept for backward compat with older ops.
+                        val isSystem = decrypted.startsWith("\u0002") || decrypted.startsWith("[SYSTEM] ")
                         val isSticker = !isSystem && decrypted.startsWith(STICKER_PREFIX)
                         val text = when {
-                            isSystem -> decrypted.removePrefix("[SYSTEM] ")
+                            isSystem -> decrypted.removePrefix("\u0002").removePrefix("[SYSTEM] ")
                             isSticker -> decrypted.removePrefix(STICKER_PREFIX).trimStart()
                             else -> decrypted
                         }
@@ -785,7 +788,8 @@ class GroupChatActivity : BaseActivity() {
         }
     }
 
-    @Suppress("GestureBackNavigation")
+    @Deprecated("Use OnBackPressedDispatcher")
+    @Suppress("GestureBackNavigation", "DEPRECATION")
     override fun onBackPressed() {
         if (isBottomSheetVisible) {
             hideBottomSheet()

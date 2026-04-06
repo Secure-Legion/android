@@ -117,7 +117,8 @@ object KeyChainManager {
                     // PRECOMPUTED MODE: Use shared secret we generated during encapsulation
                     Log.d(TAG, "Using precomputed shared secret (${precomputedSharedSecret.size} bytes) from encapsulation")
                     sharedSecret = precomputedSharedSecret
-                } else if (isHybridMode && theirKyberPublicKey != null) {
+                } else if (isHybridMode) {
+                    // isHybridMode already implies theirKyberPublicKey != null (via hasValidKyberKey)
                     // HYBRID MODE: Use X25519 + Kyber-1024
                     val ourKyberSecretKey = keyManager.tryGetKyberSecretKey()
 
@@ -169,7 +170,7 @@ object KeyChainManager {
                     Pair(incomingKey, outgoingKey)
                 }
 
-                Log.d(TAG, "Key direction mapping: ourOnion(${ourMessagingOnion.take(10)}...) ${if (ourMessagingOnion < theirMessagingOnion) "<" else ">"} theirOnion(${theirMessagingOnion.take(10)}...)")
+                Log.d(TAG, "Key direction mapping: ${if (ourMessagingOnion < theirMessagingOnion) "us < them" else "us > them"}")
 
                 // Create key chain entity
                 val keyChain = ContactKeyChain(

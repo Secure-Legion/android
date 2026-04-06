@@ -139,12 +139,21 @@ class AccountCreatedActivity : AppCompatActivity() {
     }
 
     private fun setupClickListeners() {
-        // Copy button
+        // Copy button — auto-clears after 30s, sensitive flag on Android 13+
         findViewById<View>(R.id.copyButton).setOnClickListener {
             seedPhrase?.let { phrase ->
                 val clipboard = getSystemService(CLIPBOARD_SERVICE) as ClipboardManager
-                clipboard.setPrimaryClip(ClipData.newPlainText("Recovery Seed", phrase))
-                ThemedToast.show(this, "Seed phrase copied")
+                val clip = ClipData.newPlainText("", phrase) // neutral label
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+                    clip.description.extras = android.os.PersistableBundle().apply {
+                        putBoolean("android.content.extra.IS_SENSITIVE", true)
+                    }
+                }
+                clipboard.setPrimaryClip(clip)
+                ThemedToast.show(this, "Copied — auto-clears in 30s")
+                android.os.Handler(mainLooper).postDelayed({
+                    try { clipboard.clearPrimaryClip() } catch (_: Exception) {}
+                }, 30_000L)
             }
         }
 

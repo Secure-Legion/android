@@ -362,10 +362,15 @@ class NetworkWatcher(
         // and retry storms when ConnectivityManager threw SecurityException.
         isIpv6Only = false
 
-        // Try to detect WiFi connection — only claim internet if WiFi is active
+        // Try to detect WiFi connection — only claim internet if WiFi is active.
+        // WifiManager.connectionInfo + WifiInfo.ipAddress are deprecated on API 31+;
+        // the replacement (ConnectivityManager NetworkCapabilities) requires a
+        // broader refactor. Kept for now with explicit suppression.
         isWifiConnected = try {
+            @Suppress("DEPRECATION")
             val wifiInfo = wifiManager?.connectionInfo
-            wifiInfo != null && wifiInfo.ipAddress != 0
+            @Suppress("DEPRECATION")
+            (wifiInfo != null && wifiInfo.ipAddress != 0)
         } catch (e: Exception) {
             Log.w(TAG, "Error checking WiFi state", e)
             false

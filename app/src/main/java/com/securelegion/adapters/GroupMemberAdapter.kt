@@ -109,7 +109,7 @@ class GroupMemberAdapter(
                     startTranslationX = holder.foreground.translationX
                     isSwiping = false
 
-                    if (openPosition != -1 && openPosition != holder.adapterPosition) {
+                    if (openPosition != -1 && openPosition != holder.bindingAdapterPosition) {
                         notifyItemChanged(openPosition)
                         openPosition = -1
                     }
@@ -150,7 +150,7 @@ class GroupMemberAdapter(
                                 .translationX(ACTION_WIDTH)
                                 .setDuration(200)
                                 .start()
-                            openPosition = holder.adapterPosition
+                            openPosition = holder.bindingAdapterPosition
                         } else {
                             closeItem(holder)
                             openPosition = -1

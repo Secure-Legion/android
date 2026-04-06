@@ -59,11 +59,11 @@ object NLx402Manager {
                         recipient = obj.getString("recipient"),
                         amount = obj.getLong("amount"),
                         token = obj.getString("token"),
-                        description = obj.optString("description", null),
+                        description = obj.let { if (it.isNull("description")) null else it.optString("description") },
                         createdAt = obj.getLong("created_at"),
                         expiresAt = obj.getLong("expires_at"),
-                        senderHandle = obj.optString("sender_handle", null),
-                        recipientHandle = obj.optString("recipient_handle", null),
+                        senderHandle = obj.let { if (it.isNull("sender_handle")) null else it.optString("sender_handle") },
+                        recipientHandle = obj.let { if (it.isNull("recipient_handle")) null else it.optString("recipient_handle") },
                         rawJson = json
                     )
                 } catch (e: Exception) {

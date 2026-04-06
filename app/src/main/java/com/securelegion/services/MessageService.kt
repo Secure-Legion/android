@@ -916,7 +916,8 @@ class MessageService(private val context: Context) {
                     contact.messagingOnion ?: "",
                     encryptedBytes,
                     0x0E.toByte(), // STICKER
-                    messageId
+                    messageId,
+                    pingId
                 )
                 if (resultJson != null) {
                     val json = org.json.JSONObject(resultJson)
@@ -1348,15 +1349,25 @@ class MessageService(private val context: Context) {
                         contact.messagingOnion ?: "",
                         encryptedBytes,
                         0x03.toByte(), // TEXT
-                        messageId
+                        messageId,
+                        pingId
                     )
                     if (resultJson != null) {
                         val json = org.json.JSONObject(resultJson)
                         val success = json.optBoolean("success", false)
-                        if (success) {
+                        val ackReceived = json.optBoolean("ackReceived", false)
+                        if (success && ackReceived) {
+                            // ACK arrived on same connection — instant delivery confirmation
+                            Log.i(TAG, "[FAST_MODE] Sent + ACK received (same connection): $messageId")
+                            database.messageDao().updateMessageDeliveredStatus(savedMessage.id, true, Message.STATUS_DELIVERED)
+                            // Broadcast so UI updates to double-checkmark
+                            val intent = android.content.Intent("com.securelegion.MESSAGE_RECEIVED").apply {
+                                setPackage(context.packageName)
+                                putExtra("CONTACT_ID", contactId)
+                            }
+                            context.sendBroadcast(intent)
+                        } else if (success) {
                             Log.i(TAG, "[FAST_MODE] Sent successfully, ACK will arrive via listener: $messageId")
-                            // Mark as SENT with pingDelivered=true (shows single checkmark)
-                            // ACK listener will upgrade to DELIVERED when receiver's outbound ACK arrives
                             database.messageDao().updatePingDeliveredStatus(savedMessage.id, pingDelivered = true, status = Message.STATUS_SENT)
                         } else {
                             Log.w(TAG, "[FAST_MODE] Send failed, retry worker will handle: $messageId")
@@ -3214,9 +3225,9 @@ class MessageService(private val context: Context) {
                 }
             }
 
-            // Validate message has pingId and timestamp (should be generated when message created)
-            if (message.pingId == null || message.pingTimestamp == null) {
-                return@withContext Result.failure(Exception("Message missing pingId or pingTimestamp - should be set at creation"))
+            // Validate timestamp — pingId is already guaranteed non-null by the guard at line 3102
+            if (message.pingTimestamp == null) {
+                return@withContext Result.failure(Exception("Message missing pingTimestamp - should be set at creation"))
             }
 
             Log.i(TAG, "Sending Ping with ID: ${message.pingId.take(8)}... (timestamp: ${message.pingTimestamp}, retries use SAME ID)")
@@ -3523,7 +3534,7 @@ class MessageService(private val context: Context) {
 
                     Log.i(TAG, "[FAST_MODE_RETRY] Re-sending ${msg.messageId} (age=${(System.currentTimeMillis() - msg.timestamp) / 1000}s)")
                     val resultJson = com.securelegion.crypto.RustBridge.sendMessageDirect(
-                        onion, encryptedBytes, messageTypeByte, msg.messageId
+                        onion, encryptedBytes, messageTypeByte, msg.messageId, msg.pingId ?: ""
                     )
                     if (resultJson != null && org.json.JSONObject(resultJson).optBoolean("success")) {
                         Log.i(TAG, "[FAST_MODE_RETRY] Re-sent, ACK will arrive via listener: ${msg.messageId}")

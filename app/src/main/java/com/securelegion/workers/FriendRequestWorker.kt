@@ -368,6 +368,7 @@ class FriendRequestWorker(
                 ?: "",
             voiceOnion = keyManager.getVoiceOnion() ?: "",
             contactPin = keyManager.getContactPin() ?: "",
+            inviteToken = keyManager.getInviteToken() ?: keyManager.generateAndStoreInviteToken(),
             timestamp = System.currentTimeMillis() / 1000
         )
 
@@ -376,6 +377,12 @@ class FriendRequestWorker(
             com.securelegion.models.ContactCard.fromJson(request.contactCardJson)
         } catch (e: Exception) {
             Log.e(TAG, "Failed to parse recipient contact card", e)
+            database.pendingFriendRequestDao().markFailed(request.id)
+            return false
+        }
+
+        if (recipientCard == null) {
+            Log.e(TAG, "Recipient contact card missing invite_token (schema v4 required)")
             database.pendingFriendRequestDao().markFailed(request.id)
             return false
         }
@@ -460,7 +467,7 @@ class FriendRequestWorker(
             ContactCard.fromJson(contactCardJson)
         } catch (_: Exception) {
             return false
-        }
+        } ?: return false
 
         val publicKeyBase64 = Base64.encodeToString(card.solanaPublicKey, Base64.NO_WRAP)
         if (contactDao.getContactByPublicKey(publicKeyBase64) != null) {

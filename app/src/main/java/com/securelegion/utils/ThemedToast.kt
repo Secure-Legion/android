@@ -18,7 +18,8 @@ object ThemedToast {
 
         val toast = Toast(context)
         toast.duration = duration
-        toast.view = layout
+        @Suppress("DEPRECATION") // Toast.view removed in API 30+; Snackbar migration pending
+        run { toast.view = layout }
         toast.setGravity(Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL, 0, 150)
 
         toast.show()

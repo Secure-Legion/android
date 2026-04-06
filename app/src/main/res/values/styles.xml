@@ -19,4 +19,19 @@
         <item name="cornerFamily">rounded</item>
         <item name="cornerSize">12dp</item>
     </style>
+
+    <!-- Dark rounded popup menu (message long-press actions) -->
+    <style name="MessagePopupMenu" parent="Widget.AppCompat.PopupMenu">
+        <item name="android:popupBackground">@drawable/message_popup_menu_bg</item>
+        <item name="android:popupElevation">12dp</item>
+        <item name="android:overlapAnchor">false</item>
+    </style>
+
+    <!-- ThemeOverlay applied via ContextThemeWrapper so PopupMenu picks up text color -->
+    <style name="ThemeOverlay.MessagePopup" parent="ThemeOverlay.AppCompat.Dark">
+        <item name="popupMenuStyle">@style/MessagePopupMenu</item>
+        <item name="android:popupMenuStyle">@style/MessagePopupMenu</item>
+        <item name="android:textColorPrimary">#FFFFFF</item>
+        <item name="android:colorBackground">#000000</item>
+    </style>
 </resources>

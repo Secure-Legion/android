@@ -2,6 +2,7 @@ package com.securelegion
 
 import android.Manifest
 import android.annotation.SuppressLint
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.media.AudioAttributes
@@ -89,13 +90,12 @@ class IncomingCallActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // Show over lock screen
-        window.addFlags(
-            WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
-            WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD or
-            WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON or
-            WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
-        )
+        // Show over lock screen (use API 27+ replacements for the deprecated FLAG_* flags)
+        setShowWhenLocked(true)
+        setTurnScreenOn(true)
+        (getSystemService(Context.KEYGUARD_SERVICE) as? android.app.KeyguardManager)
+            ?.requestDismissKeyguard(this, null)
+        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
 
         setContentView(R.layout.activity_incoming_call)
 
@@ -379,7 +379,8 @@ class IncomingCallActivity : AppCompatActivity() {
         finish() // Close incoming call screen immediately
     }
 
-    @Suppress("GestureBackNavigation") // Handled via declineCall()
+    @Deprecated("Use OnBackPressedDispatcher")
+    @Suppress("GestureBackNavigation", "DEPRECATION")
     override fun onBackPressed() {
         // Decline call on back press
         declineCall()

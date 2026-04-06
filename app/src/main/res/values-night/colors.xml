@@ -29,6 +29,7 @@
     <color name="border_color">#1F2937</color>
     <color name="input_border">#333333</color>
     <color name="divider_color">#1A1A1A</color>
+    <color name="list_item_divider">#1A1A1A</color>
 
     <!-- Components (Dark Mode) -->
     <color name="settings_box_inner">#0A0A0A</color>
@@ -39,6 +40,9 @@
     <!-- Icon Tints (Dark Mode) -->
     <color name="settings_icon_tint">#A0AEC0</color>
     <color name="arrow_icon_tint">#FFFFFF</color>
+
+    <!-- Voice Play Icon (Dark Mode) -->
+    <color name="voice_play_icon_tint">#2298FF</color>
 
     <!-- Device Page (Dark Mode) -->
     <color name="device_circle_bg">#1F2937</color>
@@ -99,6 +103,10 @@
     <color name="qr_module">#FFFFFF</color>
     <color name="qr_badge_bg">#2A2A2A</color>
     <color name="qr_badge_text">#CCCCCC</color>
+
+    <!-- Unread message count badge (dark mode: white on black text) -->
+    <color name="unread_badge_bg">#FFFFFF</color>
+    <color name="unread_badge_text">#000000</color>
 
     <!-- Legacy (keep for compatibility) -->
     <color name="purple_200">#FFBB86FC</color>

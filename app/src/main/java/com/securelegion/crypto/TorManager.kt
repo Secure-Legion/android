@@ -392,14 +392,14 @@ class TorManager(private val context: Context) {
                     val address = keyManager.getMessagingOnion()
                     if (address != null) {
                         saveOnionAddress(address)
-                        Log.i(TAG, "Messaging onion address (from KeyManager): $address")
+                        Log.i(TAG, "Messaging onion address loaded (${address.take(8)}...)")
                     } else {
                         Log.w(TAG, "No messaging onion address in KeyManager")
                     }
 
                     val friendRequestOnion = keyManager.getFriendRequestOnion()
                     if (friendRequestOnion != null) {
-                        Log.i(TAG, "Friend-request onion address (from KeyManager): $friendRequestOnion")
+                        Log.i(TAG, "Friend-request onion address loaded (${friendRequestOnion.take(8)}...)")
                     } else {
                         Log.w(TAG, "No friend-request onion address in KeyManager")
                     }

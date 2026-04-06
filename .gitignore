@@ -78,3 +78,10 @@ secure_legion_backup.db
 .android-home/
 tongo-hackathon-bridge/
 
+# Work-in-progress test scaffolding (opaque-invite-token plan, local-only)
+app/src/test/java/com/securelegion/crypto/InviteTokenHelpersTest.kt
+app/src/test/java/com/securelegion/models/ContactCardV4Test.kt
+app/src/test/java/com/securelegion/services/ReplayCacheTest.kt
+app/src/test/java/com/securelegion/services/FriendRequestValidatorTest.kt
+app/src/androidTest/java/com/securelegion/services/FriendRequestEnvelopeTest.kt
+

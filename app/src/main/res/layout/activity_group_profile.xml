@@ -80,7 +80,7 @@
         android:scrollbars="none"
         android:fillViewport="false"
         app:layout_constraintTop_toBottomOf="@id/header"
-        app:layout_constraintBottom_toTopOf="@id/bottomNav"
+        app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent">
 
@@ -134,8 +134,8 @@
 
             </FrameLayout>
 
-            <!-- Group Name -->
-            <TextView
+            <!-- Group Name (inline editable for owner/admin) -->
+            <EditText
                 android:id="@+id/groupNameTitle"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
@@ -144,7 +144,16 @@
                 android:text="Group"
                 android:fontFamily="@font/space_grotesk_bold"
                 android:textSize="24sp"
-                android:textColor="@color/text_primary" />
+                android:textColor="@color/text_primary"
+                android:background="@android:color/transparent"
+                android:gravity="center"
+                android:inputType="text"
+                android:maxLines="1"
+                android:imeOptions="actionDone"
+                android:enabled="false"
+                android:focusable="false"
+                android:focusableInTouchMode="false"
+                android:textCursorDrawable="@null" />
 
             <!-- Member Count -->
             <TextView
@@ -203,11 +212,12 @@
                 android:fontFamily="@font/poppins_medium"
                 android:letterSpacing="0.05" />
 
-            <!-- See all members -->
+            <!-- Permissions (Owner-only write; read-only for others) -->
             <LinearLayout
-                android:id="@+id/membersButton"
+                android:id="@+id/permissionsButton"
                 android:layout_width="match_parent"
                 android:layout_height="52dp"
+                android:layout_marginTop="8dp"
                 android:layout_marginStart="20dp"
                 android:layout_marginEnd="20dp"
                 android:orientation="horizontal"
@@ -218,14 +228,31 @@
                 android:clickable="true"
                 android:focusable="true">
 
+                <ImageView
+                    android:layout_width="20dp"
+                    android:layout_height="20dp"
+                    android:src="@drawable/ic_lock"
+                    app:tint="@color/text_settings"
+                    android:layout_marginEnd="14dp"
+                    android:contentDescription="Permissions" />
+
                 <TextView
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:layout_weight="1"
-                    android:text="See All Members"
+                    android:text="Permissions"
                     android:textSize="16sp"
                     android:textColor="@color/text_settings"
                     android:fontFamily="@font/poppins_medium" />
+
+                <TextView
+                    android:id="@+id/permissionsCount"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginEnd="8dp"
+                    android:textSize="14sp"
+                    android:textColor="@color/text_muted"
+                    android:fontFamily="@font/poppins_regular" />
 
                 <ImageView
                     android:layout_width="16dp"
@@ -235,9 +262,211 @@
 
             </LinearLayout>
 
-            <!-- Leave Group Button -->
+            <!-- Administrators -->
             <LinearLayout
-                android:id="@+id/leaveGroupButton"
+                android:id="@+id/administratorsButton"
+                android:layout_width="match_parent"
+                android:layout_height="52dp"
+                android:layout_marginTop="8dp"
+                android:layout_marginStart="20dp"
+                android:layout_marginEnd="20dp"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:paddingStart="16dp"
+                android:paddingEnd="16dp"
+                android:background="@drawable/settings_box_bg"
+                android:clickable="true"
+                android:focusable="true">
+
+                <ImageView
+                    android:layout_width="20dp"
+                    android:layout_height="20dp"
+                    android:src="@drawable/ic_crown"
+                    app:tint="@color/text_settings"
+                    android:layout_marginEnd="14dp"
+                    android:contentDescription="Administrators" />
+
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="Administrators"
+                    android:textSize="16sp"
+                    android:textColor="@color/text_settings"
+                    android:fontFamily="@font/poppins_medium" />
+
+                <TextView
+                    android:id="@+id/administratorsCount"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginEnd="8dp"
+                    android:textSize="14sp"
+                    android:textColor="@color/text_muted"
+                    android:fontFamily="@font/poppins_regular" />
+
+                <ImageView
+                    android:layout_width="16dp"
+                    android:layout_height="16dp"
+                    android:src="@drawable/ic_arrow_forward"
+                    app:tint="@color/text_muted" />
+
+            </LinearLayout>
+
+            <!-- Recent Actions (Owner/Admin only — visibility gated in code) -->
+            <LinearLayout
+                android:id="@+id/recentActionsButton"
+                android:layout_width="match_parent"
+                android:layout_height="52dp"
+                android:layout_marginTop="8dp"
+                android:layout_marginStart="20dp"
+                android:layout_marginEnd="20dp"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:paddingStart="16dp"
+                android:paddingEnd="16dp"
+                android:background="@drawable/settings_box_bg"
+                android:clickable="true"
+                android:focusable="true"
+                android:visibility="gone">
+
+                <ImageView
+                    android:layout_width="20dp"
+                    android:layout_height="20dp"
+                    android:src="@drawable/ic_clock"
+                    app:tint="@color/text_settings"
+                    android:layout_marginEnd="14dp"
+                    android:contentDescription="Recent Actions" />
+
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="Recent Actions"
+                    android:textSize="16sp"
+                    android:textColor="@color/text_settings"
+                    android:fontFamily="@font/poppins_medium" />
+
+                <TextView
+                    android:id="@+id/recentActionsCount"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginEnd="8dp"
+                    android:textSize="14sp"
+                    android:textColor="@color/text_muted"
+                    android:fontFamily="@font/poppins_regular" />
+
+                <ImageView
+                    android:layout_width="16dp"
+                    android:layout_height="16dp"
+                    android:src="@drawable/ic_arrow_forward"
+                    app:tint="@color/text_muted" />
+
+            </LinearLayout>
+
+            <!-- Banned Users (Owner/Admin only — visibility gated in code) -->
+            <LinearLayout
+                android:id="@+id/bannedUsersButton"
+                android:layout_width="match_parent"
+                android:layout_height="52dp"
+                android:layout_marginTop="8dp"
+                android:layout_marginStart="20dp"
+                android:layout_marginEnd="20dp"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:paddingStart="16dp"
+                android:paddingEnd="16dp"
+                android:background="@drawable/settings_box_bg"
+                android:clickable="true"
+                android:focusable="true"
+                android:visibility="gone">
+
+                <ImageView
+                    android:layout_width="20dp"
+                    android:layout_height="20dp"
+                    android:src="@drawable/ic_hand_stop"
+                    app:tint="@color/text_settings"
+                    android:layout_marginEnd="14dp"
+                    android:contentDescription="Banned Users" />
+
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="Banned Users"
+                    android:textSize="16sp"
+                    android:textColor="@color/text_settings"
+                    android:fontFamily="@font/poppins_medium" />
+
+                <TextView
+                    android:id="@+id/bannedUsersCount"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginEnd="8dp"
+                    android:textSize="14sp"
+                    android:textColor="@color/text_muted"
+                    android:fontFamily="@font/poppins_regular" />
+
+                <ImageView
+                    android:layout_width="16dp"
+                    android:layout_height="16dp"
+                    android:src="@drawable/ic_arrow_forward"
+                    app:tint="@color/text_muted" />
+
+            </LinearLayout>
+
+            <!-- See all members -->
+            <LinearLayout
+                android:id="@+id/membersButton"
+                android:layout_width="match_parent"
+                android:layout_height="52dp"
+                android:layout_marginTop="8dp"
+                android:layout_marginStart="20dp"
+                android:layout_marginEnd="20dp"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:paddingStart="16dp"
+                android:paddingEnd="16dp"
+                android:background="@drawable/settings_box_bg"
+                android:clickable="true"
+                android:focusable="true">
+
+                <ImageView
+                    android:layout_width="20dp"
+                    android:layout_height="20dp"
+                    android:src="@drawable/ic_contacts"
+                    app:tint="@color/text_settings"
+                    android:layout_marginEnd="14dp"
+                    android:contentDescription="Members" />
+
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="See All Members"
+                    android:textSize="16sp"
+                    android:textColor="@color/text_settings"
+                    android:fontFamily="@font/poppins_medium" />
+
+                <TextView
+                    android:id="@+id/seeAllMembersCount"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginEnd="8dp"
+                    android:textSize="14sp"
+                    android:textColor="@color/text_muted"
+                    android:fontFamily="@font/poppins_regular" />
+
+                <ImageView
+                    android:layout_width="16dp"
+                    android:layout_height="16dp"
+                    android:src="@drawable/ic_arrow_forward"
+                    app:tint="@color/text_muted" />
+
+            </LinearLayout>
+
+            <!-- Delete Group Button (Owner-only — visibility set in code) -->
+            <LinearLayout
+                android:id="@+id/deleteGroupButton"
                 android:layout_width="match_parent"
                 android:layout_height="52dp"
                 android:layout_marginTop="24dp"
@@ -247,25 +476,33 @@
                 android:gravity="center"
                 android:background="@drawable/action_button_bg"
                 android:clickable="true"
-                android:focusable="true">
+                android:focusable="true"
+                android:visibility="gone">
 
                 <ImageView
                     android:layout_width="18dp"
                     android:layout_height="18dp"
                     android:src="@drawable/ic_close_x"
-                    app:tint="#FFFFFF"
+                    app:tint="#FF6B6B"
                     android:layout_marginEnd="8dp"
-                    android:contentDescription="Leave Group" />
+                    android:contentDescription="Delete Group" />
 
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="Leave Group"
+                    android:text="Delete Group"
                     android:textSize="16sp"
-                    android:textColor="#FFFFFF"
+                    android:textColor="#FF6B6B"
                     android:fontFamily="@font/poppins_medium" />
 
             </LinearLayout>
+
+            <!-- Leave Group button removed - users can swipe-to-leave on the thread list -->
+            <View
+                android:id="@+id/leaveGroupButton"
+                android:layout_width="0dp"
+                android:layout_height="0dp"
+                android:visibility="gone" />
 
             <!-- Hidden legacy buttons (kept for Kotlin compatibility) -->
             <View
@@ -286,27 +523,8 @@
                 android:layout_height="0dp"
                 android:visibility="gone" />
 
-            <View
-                android:id="@+id/permissionsButton"
-                android:layout_width="0dp"
-                android:layout_height="0dp"
-                android:visibility="gone" />
-
         </LinearLayout>
 
     </ScrollView>
-
-    <!-- Bottom Navigation -->
-    <include
-        android:id="@+id/bottomNav"
-        layout="@layout/bottom_navigation"
-        android:layout_width="0dp"
-        android:layout_height="80dp"
-        android:layout_marginStart="50dp"
-        android:layout_marginEnd="50dp"
-        android:layout_marginBottom="20dp"
-        app:layout_constraintBottom_toBottomOf="parent"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintEnd_toEndOf="parent" />
 
 </androidx.constraintlayout.widget.ConstraintLayout>

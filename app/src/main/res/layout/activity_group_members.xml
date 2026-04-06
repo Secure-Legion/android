@@ -6,7 +6,7 @@
     android:layout_height="match_parent"
     android:background="@color/surface_black">
 
-    <!-- Top Bar -->
+    <!-- Top Bar (extends past search bar so search bar sits tucked inside black area) -->
     <LinearLayout
         android:id="@+id/topBar"
         android:layout_width="match_parent"
@@ -14,19 +14,29 @@
         android:orientation="horizontal"
         android:background="@color/header_bg"
         android:paddingTop="48dp"
-        android:paddingBottom="16dp"
+        android:paddingBottom="72dp"
         android:paddingStart="20dp"
         android:paddingEnd="20dp"
         app:layout_constraintTop_toTopOf="parent">
 
-        <!-- Back Button -->
-        <View
+        <!-- Back Button (black oval, white chevron — matches top_icon_bg pattern) -->
+        <FrameLayout
             android:id="@+id/backButton"
-            android:layout_width="35dp"
-            android:layout_height="35dp"
-            android:background="@drawable/back_button_bg"
+            android:layout_width="42dp"
+            android:layout_height="42dp"
+            android:background="@drawable/top_icon_bg"
             android:clickable="true"
-            android:focusable="true" />
+            android:focusable="true">
+
+            <ImageView
+                android:layout_width="24dp"
+                android:layout_height="24dp"
+                android:layout_gravity="center"
+                android:src="@drawable/ic_back_arrow"
+                app:tint="#FFFFFF"
+                android:contentDescription="Back" />
+
+        </FrameLayout>
 
         <!-- Spacer -->
         <View
@@ -51,14 +61,15 @@
             android:layout_height="1dp"
             android:layout_weight="1" />
 
-        <!-- Settings Icon -->
+        <!-- Settings Icon (hidden for now) -->
         <FrameLayout
             android:id="@+id/settingsIcon"
             android:layout_width="42dp"
             android:layout_height="42dp"
             android:background="@drawable/top_icon_bg"
             android:clickable="true"
-            android:focusable="true">
+            android:focusable="true"
+            android:visibility="gone">
 
             <ImageView
                 android:layout_width="24dp"
@@ -72,15 +83,15 @@
 
     </LinearLayout>
 
-    <!-- Search Bar -->
+    <!-- Search Bar — fully tucked inside the bottom of topBar (iOS-style) -->
     <androidx.constraintlayout.widget.ConstraintLayout
         android:id="@+id/searchBarContainer"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_marginStart="20dp"
         android:layout_marginEnd="20dp"
-        android:layout_marginTop="8dp"
-        android:background="@drawable/lock_password_input_bg"
+        android:layout_marginTop="-60dp"
+        android:background="@drawable/search_box_white_bg"
         android:padding="12dp"
         app:layout_constraintTop_toBottomOf="@id/topBar">
 
@@ -134,7 +145,7 @@
         android:layout_height="0dp"
         android:layout_marginTop="16dp"
         app:layout_constraintTop_toBottomOf="@id/searchBarContainer"
-        app:layout_constraintBottom_toTopOf="@id/bottomNav">
+        app:layout_constraintBottom_toBottomOf="parent">
 
         <!-- Members List -->
         <androidx.recyclerview.widget.RecyclerView
@@ -290,18 +301,5 @@
         </LinearLayout>
 
     </FrameLayout>
-
-    <!-- Bottom Navigation -->
-    <include
-        android:id="@+id/bottomNav"
-        layout="@layout/bottom_navigation"
-        android:layout_width="0dp"
-        android:layout_height="80dp"
-        android:layout_marginStart="50dp"
-        android:layout_marginEnd="50dp"
-        android:layout_marginBottom="20dp"
-        app:layout_constraintBottom_toBottomOf="parent"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintEnd_toEndOf="parent" />
 
 </androidx.constraintlayout.widget.ConstraintLayout>

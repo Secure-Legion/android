@@ -38,11 +38,10 @@ abstract class BaseActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
 
         // Security: Prevent screenshots and screen recording app-wide
-        // TODO: Re-enable FLAG_SECURE after demo recording
-        // window.setFlags(
-        // WindowManager.LayoutParams.FLAG_SECURE,
-        // WindowManager.LayoutParams.FLAG_SECURE
-        // )
+        window.setFlags(
+            WindowManager.LayoutParams.FLAG_SECURE,
+            WindowManager.LayoutParams.FLAG_SECURE
+        )
     }
 
     private fun applyThemeMode() {
@@ -112,15 +111,9 @@ abstract class BaseActivity : AppCompatActivity() {
      * Start auto-lock timer that will lock the app after configured timeout
      */
     private fun startAutoLockTimer() {
-        // Don't start timer if we're on certain activities
-        if (this is LockActivity ||
-            this is CreateAccountActivity ||
-            this is AccountCreatedActivity ||
-            this is RestoreAccountActivity ||
-            this is SplashActivity ||
-            this is WelcomeActivity) {
-            return
-        }
+        // Auth-flow activities (LockActivity, CreateAccountActivity, SplashActivity,
+        // WelcomeActivity, AccountCreatedActivity, RestoreAccountActivity) extend
+        // AppCompatActivity directly and don't run this timer at all.
 
         val securityPrefs = getSharedPreferences("security", MODE_PRIVATE)
         val autoLockTimeout = securityPrefs.getLong(
@@ -168,19 +161,8 @@ abstract class BaseActivity : AppCompatActivity() {
      * This is a safety check when returning from background
      */
     private fun checkAutoLock() {
-        // Don't lock if we're already on the LockActivity
-        if (this is LockActivity) {
-            return
-        }
-
-        // Don't lock if we're on CreateAccountActivity or related account creation screens
-        if (this is CreateAccountActivity ||
-            this is AccountCreatedActivity ||
-            this is RestoreAccountActivity ||
-            this is SplashActivity ||
-            this is WelcomeActivity) {
-            return
-        }
+        // Auth-flow activities don't extend BaseActivity, so checkAutoLock never
+        // runs on them — no guard needed here.
 
         val securityPrefs = getSharedPreferences("security", MODE_PRIVATE)
         val autoLockTimeout = securityPrefs.getLong(

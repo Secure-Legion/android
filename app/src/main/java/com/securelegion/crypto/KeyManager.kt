@@ -61,6 +61,8 @@ class KeyManager private constructor(context: Context) {
         private const val VOICE_ONION_ALIAS = "${KEYSTORE_ALIAS_PREFIX}voice_onion"
         private const val CONTACT_PIN_ALIAS = "${KEYSTORE_ALIAS_PREFIX}contact_pin"
         private const val PREVIOUS_PIN_ALIAS = "${KEYSTORE_ALIAS_PREFIX}previous_pin"
+        private const val CONTACT_INVITE_TOKEN_ALIAS = "${KEYSTORE_ALIAS_PREFIX}contact_invite_token"
+        private const val PREVIOUS_INVITE_TOKEN_ALIAS = "${KEYSTORE_ALIAS_PREFIX}previous_invite_token"
         private const val PIN_ROTATION_TIMESTAMP_ALIAS = "${KEYSTORE_ALIAS_PREFIX}pin_rotation_ts"
         private const val PIN_DECRYPT_COUNT_ALIAS = "${KEYSTORE_ALIAS_PREFIX}pin_decrypt_count"
         private const val FRIEND_REQ_ROTATION_COUNT_ALIAS = "${KEYSTORE_ALIAS_PREFIX}friend_req_rotation_count"
@@ -81,6 +83,16 @@ class KeyManager private constructor(context: Context) {
             return instance ?: synchronized(this) {
                 instance ?: KeyManager(context.applicationContext).also { instance = it }
             }
+        }
+
+        /**
+         * Generate a 128-bit opaque invite token encoded as 32 lowercase hex chars.
+         * Used as the cryptographic half of the FR-onion gate (paired with the 10-digit PIN).
+         */
+        fun generateInviteToken(): String {
+            val bytes = ByteArray(16)
+            java.security.SecureRandom().nextBytes(bytes)
+            return bytes.joinToString("") { "%02x".format(it) }
         }
     }
 
@@ -1026,6 +1038,35 @@ class KeyManager private constructor(context: Context) {
         return encryptedPrefs.getString(CONTACT_PIN_ALIAS, null)
     }
 
+    fun storeInviteToken(token: String) {
+        encryptedPrefs.edit { putString(CONTACT_INVITE_TOKEN_ALIAS, token) }
+        Log.i(TAG, "Stored invite token")
+    }
+
+    fun generateAndStoreInviteToken(): String {
+        val token = generateInviteToken()
+        storeInviteToken(token)
+        return token
+    }
+
+    fun getInviteToken(): String? {
+        return encryptedPrefs.getString(CONTACT_INVITE_TOKEN_ALIAS, null)
+    }
+
+    fun storePreviousInviteToken(token: String) {
+        encryptedPrefs.edit { putString(PREVIOUS_INVITE_TOKEN_ALIAS, token) }
+        Log.i(TAG, "Stored previous invite token")
+    }
+
+    fun getPreviousInviteToken(): String? {
+        return encryptedPrefs.getString(PREVIOUS_INVITE_TOKEN_ALIAS, null)
+    }
+
+    fun clearPreviousInviteToken() {
+        encryptedPrefs.edit { remove(PREVIOUS_INVITE_TOKEN_ALIAS) }
+        Log.i(TAG, "Previous invite token cleared")
+    }
+
     // ==================== PIN ROTATION (Forward Secrecy) ====================
 
     fun storePreviousPin(pin: String) {
@@ -1082,15 +1123,19 @@ class KeyManager private constructor(context: Context) {
         if (!timeExpired && !countExceeded) return false
 
         val currentPin = getContactPin() ?: return false
+        val currentToken = getInviteToken() ?: generateAndStoreInviteToken()  // self-heal if missing
         val newPin = cardManager.generateRandomPin()
+        val newToken = generateInviteToken()
 
         // Current → previous, new → current
         storePreviousPin(currentPin)
+        storePreviousInviteToken(currentToken)
         storeContactPin(newPin)
+        storeInviteToken(newToken)
         storePinRotationTimestamp(now)
         resetPinDecryptCount()
 
-        Log.i(TAG, "PIN rotated (time=$timeExpired, count=$countExceeded). New PIN active.")
+        Log.i(TAG, "PIN+token rotated (time=$timeExpired, count=$countExceeded). New pair active.")
         return true
     }
 
@@ -1104,6 +1149,7 @@ class KeyManager private constructor(context: Context) {
 
         if (System.currentTimeMillis() - rotationTs >= gracePeriodMs) {
             clearPreviousPin()
+            clearPreviousInviteToken()
         }
     }
 

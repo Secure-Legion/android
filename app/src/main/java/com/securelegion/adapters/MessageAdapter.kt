@@ -1811,7 +1811,8 @@ class MessageAdapter(
      * Show popup menu on message long-press with Copy, Delete, and Resend options
      */
     private fun showMessagePopupMenu(view: View, message: Message) {
-        val popup = PopupMenu(view.context, view)
+        val themedContext = android.view.ContextThemeWrapper(view.context, R.style.ThemeOverlay_MessagePopup)
+        val popup = PopupMenu(themedContext, view)
         popup.inflate(R.menu.message_actions_menu)
 
         // Only show "Resend" for failed/pending messages sent by us

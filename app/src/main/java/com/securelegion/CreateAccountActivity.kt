@@ -78,14 +78,14 @@ class CreateAccountActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
 
         // Security: Prevent screenshots and screen recording
-        // TODO: Re-enable FLAG_SECURE after demo recording
-        // window.setFlags(
-        // WindowManager.LayoutParams.FLAG_SECURE,
-        // WindowManager.LayoutParams.FLAG_SECURE
-        // )
+        window.setFlags(
+            WindowManager.LayoutParams.FLAG_SECURE,
+            WindowManager.LayoutParams.FLAG_SECURE
+        )
 
         // Make status bar transparent with light icons (matches dark theme)
-        window.statusBarColor = android.graphics.Color.BLACK
+        @Suppress("DEPRECATION") // edge-to-edge refactor pending
+        run { window.statusBarColor = android.graphics.Color.BLACK }
 
         setContentView(R.layout.activity_create_account)
 
@@ -339,7 +339,13 @@ class CreateAccountActivity : AppCompatActivity() {
                     // Get or generate seed phrase
                     val mnemonic: String
                     if (isRestore) {
-                        val prefs = getSharedPreferences("restore_temp", MODE_PRIVATE)
+                        val masterKey = androidx.security.crypto.MasterKey.Builder(this@CreateAccountActivity)
+                            .setKeyScheme(androidx.security.crypto.MasterKey.KeyScheme.AES256_GCM).build()
+                        val prefs = androidx.security.crypto.EncryptedSharedPreferences.create(
+                            this@CreateAccountActivity, "restore_temp", masterKey,
+                            androidx.security.crypto.EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+                            androidx.security.crypto.EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
+                        )
                         mnemonic = prefs.getString("seed_phrase", "")!!
                         // Clear temporary storage immediately
                         prefs.edit().remove("seed_phrase").apply()
@@ -491,11 +497,13 @@ class CreateAccountActivity : AppCompatActivity() {
                         messagingOnion = onionAddress,
                         voiceOnion = voiceOnionAddress,
                         contactPin = contactCardPin,
+                        inviteToken = keyManager.getInviteToken() ?: keyManager.generateAndStoreInviteToken(),
                         ipfsCid = ipfsCid,
                         timestamp = System.currentTimeMillis()
                     )
                     // Store contact card info in encrypted storage
                     keyManager.storeContactPin(contactCardPin)
+                    keyManager.generateAndStoreInviteToken()
                     keyManager.storePinRotationTimestamp(System.currentTimeMillis())
                     keyManager.storeIPFSCID(ipfsCid)
                     // Note: friendRequestOnion already stored by createFriendRequestOnion()

@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="horizontal"
+    android:background="@drawable/wallet_token_bg"
+    android:paddingStart="20dp"
+    android:paddingEnd="20dp"
+    android:paddingTop="14dp"
+    android:paddingBottom="14dp"
+    android:layout_marginBottom="8dp"
+    android:gravity="center_vertical">
+
+    <LinearLayout
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="1"
+        android:orientation="vertical">
+
+        <TextView
+            android:id="@+id/nameText"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Banned User"
+            android:textSize="16sp"
+            android:fontFamily="@font/poppins_medium"
+            android:textColor="#FFFFFF" />
+
+        <TextView
+            android:id="@+id/pubkeyText"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:textSize="12sp"
+            android:textColor="@color/text_muted"
+            android:fontFamily="@font/poppins_regular"
+            android:layout_marginTop="2dp" />
+
+    </LinearLayout>
+
+    <TextView
+        android:id="@+id/unbanButton"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:paddingStart="14dp"
+        android:paddingEnd="14dp"
+        android:paddingTop="8dp"
+        android:paddingBottom="8dp"
+        android:text="Unban"
+        android:textSize="14sp"
+        android:textColor="#FFFFFF"
+        android:fontFamily="@font/poppins_medium"
+        android:background="@drawable/top_icon_bg"
+        android:clickable="true"
+        android:focusable="true" />
+
+</LinearLayout>

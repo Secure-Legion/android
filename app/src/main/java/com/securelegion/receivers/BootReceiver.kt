@@ -65,6 +65,17 @@ class BootReceiver : BroadcastReceiver() {
                 return
             }
 
+            // Don't publish the user's .onion address on boot if the seed is still wrapped.
+            // Without an unlocked seed we cannot decrypt incoming messages, and publishing
+            // the HS would leak reachability + crash every inbound handler on DB access.
+            // TorService will be started by LockActivity after the user unlocks.
+            if (keyManager.isSeedWrapped()) {
+                Log.i(TAG, "Seed is wrapped - deferring TorService startup until user unlocks")
+                // Still schedule the retry worker (it's a no-op while locked, idempotent to schedule)
+                MessageRetryWorker.schedule(context)
+                return
+            }
+
             Log.i(TAG, "Account found - starting background services")
 
             // Show a visible notification that the app is restarting

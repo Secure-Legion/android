@@ -1178,7 +1178,8 @@ object RustBridge {
         recipientOnion: String,
         encryptedMessage: ByteArray,
         messageTypeByte: Byte,
-        messageId: String
+        messageId: String,
+        pingIdHex: String
     ): String?
 
     /**
@@ -1316,16 +1317,22 @@ object RustBridge {
     ): Boolean
 
     /**
-     * Send ACK on an existing connection (instant reply)
-     * Avoids SOCKS5 connection failures when sender's hidden service isn't reachable yet
-     * @param connectionId The connection ID to send ACK on
-     * @param itemId The item ID (ping ID or message ID)
-     * @param ackType The ACK type (PING_ACK, MESSAGE_ACK, etc.)
-     * @param recipientX25519Pubkey Recipient's X25519 encryption public key (32 bytes)
-     * @return True if ACK was sent successfully on the connection
+     * Send ACK on an existing connection (instant reply, C-Tor era)
      */
     external fun sendAckOnConnection(
         connectionId: Long,
+        itemId: String,
+        ackType: String,
+        recipientX25519Pubkey: ByteArray
+    ): Boolean
+
+    /**
+     * Send ACK on the SAME Arti DataStream the message arrived on (instant, no circuit setup).
+     * Returns true on success; false if stream was already dropped/stale.
+     * Caller should fall back to sendDeliveryAck on failure.
+     */
+    external fun sendAckOnArtiStream(
+        connId: Long,
         itemId: String,
         ackType: String,
         recipientX25519Pubkey: ByteArray
@@ -1578,6 +1585,52 @@ object RustBridge {
      * @return Decrypted plaintext, or null on authentication failure
      */
     external fun xchacha20Decrypt(ciphertext: ByteArray, key: ByteArray, nonce: ByteArray): ByteArray?
+
+    // ==================== CONTACT LIST SYNC (0x80/0x81/0x82) ====================
+    // Binary backup-mesh protocol — see CONTACT_LIST_SYNC_PROTOCOL.md at repo root.
+    // All sends are blocking; expect them to take up to ~60s over Tor with retries.
+
+    /**
+     * Send a CONTACT_LIST_PUSH (0x82) frame to a friend's messaging .onion.
+     * Used on friend-add and on every mutation of our own contact list.
+     * @param recipientOnion friend's messaging .onion (without port)
+     * @param cid our own deterministic contact-list CID
+     * @param blob AES-256-GCM encrypted contact list (seed-derived PIN)
+     * @return 1 on success, 0 on failure
+     */
+    external fun sendContactListPush(recipientOnion: String, cid: String, blob: ByteArray): Int
+
+    /**
+     * Send a CONTACT_LIST_REQUEST (0x80) frame — "send me the blob at CID X".
+     * Used during recovery on a new device.
+     * @param recipientOnion friend's messaging .onion (without port)
+     * @param cid CID we want back (normally OUR own CID during recovery)
+     * @return 1 on success, 0 on failure
+     */
+    external fun sendContactListRequest(recipientOnion: String, cid: String): Int
+
+    /**
+     * Send a CONTACT_LIST_RESPONSE (0x81) frame — reply to a REQUEST.
+     * Empty `blob` = NACK (we don't hold that CID / not authorized).
+     * @param recipientOnion original requester's messaging .onion
+     * @param cid CID being returned
+     * @param blob the encrypted contact-list blob, or empty bytes for NACK
+     * @return 1 on success, 0 on failure
+     */
+    external fun sendContactListResponse(recipientOnion: String, cid: String, blob: ByteArray): Int
+
+    /**
+     * Poll the inbound contact-list queue. Returns null if empty.
+     * Serialized layout (caller must unpack):
+     *   [type:1][sender_pk:32][timestamp:8 BE][cid_len:2 BE][cid:N][blob_len:4 BE][blob:M]
+     * The signature has already been verified by Rust — caller only does authorization.
+     */
+    external fun pollContactListFrame(): ByteArray?
+
+    /**
+     * Current depth of the inbound queue (diagnostic / backpressure signal).
+     */
+    external fun contactListInboundQueueLen(): Int
 
     // ==================== HELPER FUNCTIONS ====================
 

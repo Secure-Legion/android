@@ -216,6 +216,16 @@ class ContactOptionsActivity : BaseActivity() {
 
                 updateTrustedContactUI()
 
+                // Re-backup + broadcast: isDistressContact is part of the exported contact-list schema
+                withContext(Dispatchers.IO) {
+                    try {
+                        com.securelegion.services.ContactListManager.getInstance(this@ContactOptionsActivity).backupToIPFS()
+                        com.securelegion.services.ContactListSyncService.getInstance(this@ContactOptionsActivity).broadcastToAllFriends()
+                    } catch (e: Exception) {
+                        Log.w(TAG, "CL_SYNC broadcast after distress toggle failed", e)
+                    }
+                }
+
                 val message = if (isTrustedContact) "Trusted contact enabled" else "Trusted contact disabled"
                 ThemedToast.show(this@ContactOptionsActivity, message)
                 Log.i(TAG, "Trusted contact status updated: $isTrustedContact")
@@ -245,6 +255,16 @@ class ContactOptionsActivity : BaseActivity() {
                 }
 
                 updateBlockUI()
+
+                // Re-backup + broadcast: isBlocked is part of the exported contact-list schema
+                withContext(Dispatchers.IO) {
+                    try {
+                        com.securelegion.services.ContactListManager.getInstance(this@ContactOptionsActivity).backupToIPFS()
+                        com.securelegion.services.ContactListSyncService.getInstance(this@ContactOptionsActivity).broadcastToAllFriends()
+                    } catch (e: Exception) {
+                        Log.w(TAG, "CL_SYNC broadcast after block toggle failed", e)
+                    }
+                }
 
                 val message = if (isBlocked) "Contact blocked" else "Contact unblocked"
                 ThemedToast.show(this@ContactOptionsActivity, message)
@@ -652,7 +672,7 @@ class ContactOptionsActivity : BaseActivity() {
                         val h = holder as GroupViewHolder
                         h.icon.text = group.groupIcon ?: "\uD83D\uDC65"
                         h.name.text = group.name
-                        h.members.text = "${group.memberCount} members"
+                        h.members.text = "${group.memberCount}/${com.securelegion.AddGroupMembersActivity.MAX_GROUP_MEMBERS} members"
                     }
 
                     override fun getItemCount(): Int = sharedGroups.size
@@ -684,15 +704,25 @@ class ContactOptionsActivity : BaseActivity() {
 
         view.findViewById<View>(R.id.openLinkButton).setOnClickListener {
             bottomSheet.dismiss()
-            try {
-                val intent = Intent(Intent.ACTION_VIEW, Uri.parse(
-                    if (url.startsWith("http://") || url.startsWith("https://")) url
-                    else "https://$url"
-                ))
-                startActivity(intent)
-            } catch (e: Exception) {
-                ThemedToast.show(this, "Failed to open link")
-            }
+            // Warn: opening links goes through clearnet and may reveal the user's real IP
+            val dialog = com.securelegion.utils.GlassDialog.builder(this)
+                .setTitle("Privacy Warning")
+                .setMessage("Opening this link will use your regular browser, which may reveal your real IP address. Continue?")
+                .setPositiveButton("Open Anyway") { d, _ ->
+                    d.dismiss()
+                    try {
+                        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(
+                            if (url.startsWith("http://") || url.startsWith("https://")) url
+                            else "https://$url"
+                        ))
+                        startActivity(intent)
+                    } catch (e: Exception) {
+                        ThemedToast.show(this, "Failed to open link")
+                    }
+                }
+                .setNegativeButton("Cancel", null)
+                .create()
+            com.securelegion.utils.GlassDialog.show(dialog)
         }
 
         view.findViewById<View>(R.id.cancelLinkButton).setOnClickListener {
@@ -803,6 +833,11 @@ class ContactOptionsActivity : BaseActivity() {
                             } else {
                                 Log.w(TAG, "Failed to backup contact list: ${backupResult.exceptionOrNull()?.message}")
                             }
+
+                            // Broadcast updated list (0x82 PUSH) to all remaining friends so they re-pin.
+                            val syncService = com.securelegion.services.ContactListSyncService.getInstance(this@ContactOptionsActivity)
+                            val pushed = syncService.broadcastToAllFriends()
+                            Log.i(TAG, "CL_SYNC post-deletion broadcast: pushed to $pushed friends")
                         } catch (e: Exception) {
                             Log.w(TAG, "Non-critical error during contact list backup", e)
                         }

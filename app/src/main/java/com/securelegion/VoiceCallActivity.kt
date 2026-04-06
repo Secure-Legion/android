@@ -1095,7 +1095,8 @@ class VoiceCallActivity : BaseActivity() {
         }
     }
 
-    @Suppress("GestureBackNavigation") // Minimize call to background instead of ending
+    @Deprecated("Use OnBackPressedDispatcher")
+    @Suppress("GestureBackNavigation", "DEPRECATION")
     override fun onBackPressed() {
         // Back button should minimize app, not end call (like real phone apps)
         // Call continues in background, user can return via ongoing notification

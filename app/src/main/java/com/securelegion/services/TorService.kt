@@ -1,5 +1,6 @@
 package com.securelegion.services
 
+import com.securelegion.BuildConfig
 import android.app.AlarmManager
 import android.app.Notification
 import android.app.NotificationChannel
@@ -121,6 +122,10 @@ class TorService : Service() {
     private val TAP_WAVE2_DELAY_MS = 3000L // 3 seconds after wave 1
     private val TAP_RECENT_WINDOW_MS = 30L * 24 * 60 * 60 * 1000L // 30 days
 
+    // Friend-request replay protection and envelope validation (shared across all incoming Phase 1)
+    private val frNonceCache = NonceReplayCache(ttlMs = 300_000L, maxEntries = 10_000)
+    private val frValidator = FriendRequestValidator(frNonceCache)
+
     // Debounced NEWNYM for network changes and stream failure escalation
     // Uses elapsedRealtime (monotonic) — immune to wall clock jumps
     @Volatile private var lastDebouncedNewnymMs: Long = 0L
@@ -239,10 +244,7 @@ class TorService : Service() {
         val msg = "Tor state: $oldState → $newState${reason?.let { " ($it)" } ?: ""}"
         Log.i(TAG, msg)
 
-        // Update legacy torConnected flag for backward compatibility
-        // TODO: Remove this once all code uses torState directly
-        @Suppress("DEPRECATION")
-        torConnected = (newState == TorState.RUNNING)
+        // (torState is the sole source of truth — no legacy flag sync needed)
 
         // Broadcast state change to UI if needed
         // TODO: Add StateFlow/LiveData for UI observation
@@ -255,17 +257,6 @@ class TorService : Service() {
         return torState == TorState.RUNNING && bootstrapPercent >= 100
     }
 
-    @Deprecated("Use torState instead", ReplaceWith("torState == TorState.RUNNING"))
-    private var torConnected: Boolean
-        get() = torState == TorState.RUNNING
-        set(value) {
-            // For backward compatibility during migration
-            if (value && torState != TorState.RUNNING) {
-                setState(TorState.RUNNING, "legacy setter")
-            } else if (!value && torState == TorState.RUNNING) {
-                setState(TorState.OFF, "legacy setter")
-            }
-        }
 
     /**
      * Monitor bootstrap progress and update state
@@ -423,12 +414,10 @@ class TorService : Service() {
         // Bootstrap succeeded — reset all failure tracking
         resetReconnectBackoff()
 
-        // CRITICAL: Set legacy torConnected flag for compatibility with SplashActivity
-        // SplashActivity checks isMessagingReady() which needs both torConnected AND listenersReady
-        torConnected = true
+        setState(TorState.RUNNING, "bootstrap complete")
         running = true
         isServiceRunning = true
-        Log.w(TAG, "Set torConnected=true, running=true, isServiceRunning=true")
+        Log.w(TAG, "State=RUNNING, running=true, isServiceRunning=true")
 
         // Initialize PendingPingStore DAO for Rust JNI ping persistence
         try {
@@ -893,7 +882,7 @@ class TorService : Service() {
             val torSettings = getSharedPreferences("tor_settings", MODE_PRIVATE)
             val bridgeType = torSettings.getString("bridge_type", "none") ?: "none"
             val usingBridges = bridgeType != "none"
-            val intervalMs = if (usingBridges) 30_000L else 90_000L
+            val intervalMs = 30_000L // 30s — fast-mode ACK recovery needs tight loop (was 90s)
 
             Log.i(TAG, "Starting fast retry loop (interval=${intervalMs}ms, bridges=$usingBridges)")
 
@@ -956,7 +945,36 @@ class TorService : Service() {
                                         retried++
                                     }
                                     com.securelegion.database.entities.Message.STATUS_SENT -> {
-                                        Log.d(TAG, "Fast retry: STATUS_SENT, waiting for ACK ${message.messageId}")
+                                        // Re-send fast-mode message if STATUS_SENT > 30s old without ACK.
+                                        // ACK was likely lost over Tor — receiver will dedup via
+                                        // receivedIdDao and fire a fresh MESSAGE_ACK.
+                                        val ageMs = System.currentTimeMillis() - message.timestamp
+                                        val isFastMode = message.correlationId?.startsWith("blob_") == true
+                                        if (isFastMode && ageMs > 30_000L) {
+                                            Log.i(TAG, "Fast retry: STATUS_SENT stale (${ageMs/1000}s), re-sending fast-mode blob ${message.messageId}")
+                                            try {
+                                                val encryptedBase64 = message.encryptedPayload
+                                                if (!encryptedBase64.isNullOrEmpty()) {
+                                                    val encryptedBytes = android.util.Base64.decode(encryptedBase64, android.util.Base64.NO_WRAP)
+                                                    val msgTypeByte: Byte = when (message.messageType) {
+                                                        com.securelegion.database.entities.Message.MESSAGE_TYPE_STICKER -> 0x0E.toByte()
+                                                        else -> 0x03.toByte()
+                                                    }
+                                                    com.securelegion.crypto.RustBridge.sendMessageDirect(
+                                                        contact.messagingOnion ?: "",
+                                                        encryptedBytes,
+                                                        msgTypeByte,
+                                                        message.messageId,
+                                                        message.pingId ?: ""
+                                                    )
+                                                    retried++
+                                                }
+                                            } catch (e: Exception) {
+                                                Log.w(TAG, "Fast retry: re-send failed ${message.messageId}: ${e.message}")
+                                            }
+                                        } else {
+                                            Log.d(TAG, "Fast retry: STATUS_SENT fresh (${ageMs/1000}s), waiting for ACK ${message.messageId}")
+                                        }
                                     }
                                     com.securelegion.database.entities.Message.STATUS_DELIVERED -> {
                                         Log.d(TAG, "Fast retry: already delivered ${message.messageId}")
@@ -1408,17 +1426,12 @@ class TorService : Service() {
         private var running = false
 
         @Volatile
-        private var torConnected = false
-
-        @Volatile
         private var listenersReady = false
 
         @Volatile
         private var instance: TorService? = null
 
         fun isRunning(): Boolean = running
-
-        fun isTorConnected(): Boolean = torConnected
 
         /**
          * Get current Tor state for UI status indicators
@@ -1472,10 +1485,10 @@ class TorService : Service() {
         fun areListenersReady(): Boolean = listenersReady
 
         /**
-         * Check if messaging is fully ready (Tor connected + listeners ready)
-         * Call this from SplashActivity to ensure 100% messaging functionality
+         * Check if messaging is fully ready (Tor running + listeners ready)
          */
-        fun isMessagingReady(): Boolean = torConnected && listenersReady
+        fun isMessagingReady(): Boolean =
+            (instance?.torState == TorState.RUNNING) && listenersReady
 
         /**
          * Start the Tor service
@@ -1840,7 +1853,7 @@ class TorService : Service() {
                                     }
 
                                     val contact = database.contactDao().getContactById(pending.contactId)
-                                    val senderOnion = contact?.messagingOnion ?: contact?.torOnionAddress
+                                    val senderOnion = contact?.messagingOnion
                                     if (senderOnion.isNullOrBlank()) {
                                         Log.e(TAG, "DP: No onion address for contact ${pending.contactId}")
                                         return@pongSend
@@ -1982,7 +1995,7 @@ class TorService : Service() {
             startupCompleted.set(false) // Reset latch for START_STICKY restart
             isServiceRunning = false
             running = false
-            torConnected = false
+            setState(TorState.OFF, "service stopping")
             pollerScope.cancel() // Clean shutdown of pollers
             pollerJobs.clear()
 
@@ -2487,7 +2500,7 @@ class TorService : Service() {
                             // Reset reconnection state on success
                             isReconnecting = false
                             reconnectAttempts = 0
-                            torConnected = true
+                            setState(TorState.RUNNING, "legacy init success")
 
                             // Ensure SOCKS proxy is running for outgoing connections
                             ensureSocksProxyRunning()
@@ -2508,7 +2521,7 @@ class TorService : Service() {
                             updateNotification("Connected to Tor")
                         } else {
                             Log.e(TAG, "Tor initialization failed - scheduling retry")
-                            torConnected = false
+                            setState(TorState.ERROR, "legacy init failed")
                             updateNotification("Connection failed - Retrying...")
 
                             // Schedule retry with exponential backoff
@@ -2531,7 +2544,7 @@ class TorService : Service() {
                     if (isTorActuallyRunning) {
                         // Tor is still running, just restore state
                         Log.i(TAG, "Tor already running - restoring service state")
-                        torConnected = true
+                        setState(TorState.RUNNING, "tor already running")
                         updateNotification("Connected to Tor")
 
                         // Ensure SOCKS proxy is running for outgoing connections
@@ -2555,7 +2568,7 @@ class TorService : Service() {
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Error during Tor initialization", e)
-                torConnected = false
+                setState(TorState.ERROR, "init exception: ${e.message}")
                 updateNotification("Error - Retrying...")
                 consecutiveBootstrapFailures++
                 scheduleReconnect("legacy init exception: ${e.message}")
@@ -2733,6 +2746,10 @@ class TorService : Service() {
         } else {
             Log.e(TAG, "Friend request listener failed to start")
         }
+
+        // Start contact-list sync poller (wire types 0x80/0x81/0x82 — see CONTACT_LIST_SYNC_PROTOCOL.md)
+        Log.d(TAG, "Starting contact-list sync poller...")
+        com.securelegion.services.ContactListSyncService.getInstance(this).startPolling()
     }
 
     /**
@@ -3228,10 +3245,12 @@ class TorService : Service() {
             // Dual-PIN decryption: try current PIN first, then previous (grace period)
             var decryptedJson: String? = null
             var usedCurrentPin = false
+            var decryptingPin: String = myPin
 
             try {
                 decryptedJson = cardManager.decryptWithPin(encryptedPayload, myPin)
                 usedCurrentPin = true
+                decryptingPin = myPin
                 Log.i(TAG, "Phase 1 decrypted with current PIN")
             } catch (e: Exception) {
                 Log.d(TAG, "Current PIN failed, trying previous PIN...")
@@ -3239,6 +3258,7 @@ class TorService : Service() {
                 if (previousPin != null) {
                     try {
                         decryptedJson = cardManager.decryptWithPin(encryptedPayload, previousPin)
+                        decryptingPin = previousPin
                         Log.i(TAG, "Phase 1 decrypted with previous PIN (grace period)")
                     } catch (e2: Exception) {
                         Log.e(TAG, "Both current and previous PIN failed")
@@ -3262,17 +3282,52 @@ class TorService : Service() {
             val maxDecrypts = securityPrefs.getInt("pin_max_uses", 5)
             keyManager.rotatePinIfNeeded(cardManager, intervalMs, maxDecrypts)
 
-            Log.i(TAG, "Phase 1 decrypted successfully: $decryptedJson")
+            Log.i(TAG, "Phase 1 decrypted successfully, parsing envelope")
 
-            // Parse the JSON to extract friend request data
-            val json = org.json.JSONObject(decryptedJson)
-            val username = json.getString("username")
-            val friendRequestOnion = json.getString("friend_request_onion")
-            val x25519PublicKey = json.getString("x25519_public_key")
+            val envelope = FriendRequestEnvelope.parse(decryptedJson!!)
+            if (envelope == null) {
+                Log.w(TAG, "Invalid envelope schema (wrong version/type/missing fields) — rejecting")
+                return
+            }
+
+            val currentPin = keyManager.getContactPin()
+            val currentToken = keyManager.getInviteToken()
+            if (currentPin == null || currentToken == null) {
+                Log.e(TAG, "No PIN or invite token stored — cannot validate FR")
+                return
+            }
+
+            val validationResult = frValidator.validate(
+                incomingPin = decryptingPin,
+                incomingToken = envelope.inviteToken,
+                nonce = envelope.nonce,
+                timestampSec = envelope.timestampSec,
+                currentPin = currentPin,
+                currentToken = currentToken,
+                previousPin = keyManager.getPreviousPin(),
+                previousToken = keyManager.getPreviousInviteToken()
+            )
+
+            if (validationResult != FriendRequestValidator.Result.OK) {
+                Log.w(TAG, "FR validation failed — rejecting (invalid invite)")
+                return
+            }
+
+            Log.i(TAG, "FR envelope validated (PIN + token + nonce + timestamp all OK)")
+            val senderCard = com.securelegion.models.ContactCard.fromJson(envelope.senderCardJson)
+            if (senderCard == null) {
+                Log.w(TAG, "Sender ContactCard JSON malformed — rejecting")
+                return
+            }
+            val username = senderCard.displayName
+            val friendRequestOnion = senderCard.friendRequestOnion
+            val x25519PublicKey = android.util.Base64.encodeToString(senderCard.x25519PublicKey, android.util.Base64.NO_WRAP)
 
             Log.i(TAG, "Phase 1 Friend Request from: $username")
-            Log.i(TAG, "Friend Request .onion: $friendRequestOnion")
-            Log.i(TAG, "X25519 Public Key: $x25519PublicKey")
+            if (BuildConfig.DEBUG) {
+                Log.d(TAG, "Friend Request .onion: $friendRequestOnion")
+                Log.d(TAG, "X25519 Public Key: $x25519PublicKey")
+            }
 
             // Guard: silently drop if sender is already a confirmed friend
             val dbPassphrase = keyManager.getDatabasePassphrase()
@@ -3293,7 +3348,7 @@ class TorService : Service() {
                 direction = com.securelegion.models.PendingFriendRequest.DIRECTION_INCOMING,
                 status = com.securelegion.models.PendingFriendRequest.STATUS_PENDING,
                 timestamp = System.currentTimeMillis(),
-                contactCardJson = decryptedJson // Store Phase 1 data for later use
+                contactCardJson = envelope.senderCardJson // Store sender card JSON for later use
             )
 
             savePendingFriendRequest(pendingRequest)
@@ -3551,6 +3606,7 @@ class TorService : Service() {
                 messagingOnion = keyManager.getMessagingOnion() ?: "",
                 voiceOnion = torManager.getVoiceOnionAddress() ?: "",
                 contactPin = keyManager.getContactPin() ?: "",
+                inviteToken = keyManager.getInviteToken() ?: keyManager.generateAndStoreInviteToken(),
                 ipfsCid = keyManager.getIPFSCID(),
                 timestamp = System.currentTimeMillis() / 1000
             )
@@ -3640,6 +3696,7 @@ class TorService : Service() {
 
             // Parse the full ContactCard from the ACK
             val contactCard = com.securelegion.models.ContactCard.fromJson(decryptedJson)
+                ?: run { Log.e(TAG, "Phase 3 ACK ContactCard missing invite_token (schema v4 required)"); return }
             Log.i(TAG, "Friend request fully confirmed by: ${contactCard.displayName}")
 
             // Add to contacts database and initialize key chain (both in coroutine)
@@ -4374,6 +4431,7 @@ class TorService : Service() {
             Log.i(TAG, "VOICE signaling signature verified (Ed25519)")
 
             // Process call signaling through MessageService
+            @OptIn(kotlinx.coroutines.DelicateCoroutinesApi::class)
             kotlinx.coroutines.GlobalScope.launch(Dispatchers.IO) {
                 try {
                     val messageService = MessageService(this@TorService)
@@ -4491,7 +4549,9 @@ class TorService : Service() {
             // Direct: decrypt -> store -> MESSAGE_ACK -> broadcast.
             // No typing indicator, no DMS, no Ping-Pong dance.
             val pingWireType = if (encryptedPingWire.isNotEmpty()) encryptedPingWire[0].toInt() and 0xFF else -1
-            if (pingWireType == 0x10 && contactId != null && senderPublicKey != null) {
+            // contactId guaranteed non-null by the guard at line 4531; senderPublicKey non-null
+            // because contactInfo was only populated when senderPublicKey was non-null.
+            if (pingWireType == 0x10) {
                 Log.i(TAG, "INLINE REACTION: ping $pingId from $senderName — bypassing PingInbox")
                 serviceScope.launch(Dispatchers.IO) {
                     try {
@@ -4506,7 +4566,7 @@ class TorService : Service() {
                         val msgService = com.securelegion.services.MessageService(this@TorService)
                         val result = msgService.receiveMessage(
                             encryptedData = encBase64,
-                            senderPublicKey = senderPublicKey,
+                            senderPublicKey = senderPublicKey!!,
                             senderOnionAddress = contactInfo?.messagingOnion ?: "",
                             messageType = com.securelegion.database.entities.Message.MESSAGE_TYPE_REACTION,
                             pingId = pingId
@@ -4694,7 +4754,7 @@ class TorService : Service() {
                                 }
 
                                 val contact = database.contactDao().getContactById(contactId)
-                                val senderOnion = contact?.messagingOnion ?: contact?.torOnionAddress
+                                val senderOnion = contact?.messagingOnion
                                 if (senderOnion.isNullOrBlank()) {
                                     Log.e(TAG, "DP cooldown: No onion address for contact $contactId")
                                     return@launch
@@ -4865,8 +4925,8 @@ class TorService : Service() {
         itemId: String,
         ackType: String,
         contactId: Long,
-        maxRetries: Int = 3,
-        initialDelayMs: Long = 1000L
+        maxRetries: Int = 6,          // Bumped from 3 → 6 for flaky-Tor reliability
+        initialDelayMs: Long = 500L   // Bumped window: 500ms, 1s, 2s, 4s, 8s, 16s ≈ 31s total
     ) {
         // Wait for transport gate (quick timeout — ACKs are best-effort, retryable)
         Log.d(TAG, "ACK send: waiting for transport gate to open...")
@@ -4893,12 +4953,29 @@ class TorService : Service() {
         var attempt = 0
         var delayMs = initialDelayMs
 
+        // PATH 0: Try same-connection ACK on the Arti stream the message arrived on.
+        // This is instant (no circuit setup) and most reliable — the circuit is proven working.
+        // Only attempt once (first try). If it fails, fall through to outbound retries.
+        if (connectionId != null && connectionId >= 0) {
+            try {
+                val sameConnOk = RustBridge.sendAckOnArtiStream(
+                    connectionId, itemId, ackType, senderX25519Pubkey
+                )
+                if (sameConnOk) {
+                    Log.i(TAG, "$ackType sent via SAME-CONNECTION for $itemId (conn_id=$connectionId)")
+                    return
+                }
+                Log.d(TAG, "$ackType same-connection failed for $itemId — falling back to outbound")
+            } catch (e: Exception) {
+                Log.w(TAG, "$ackType same-connection error for $itemId: ${e.message}")
+            }
+        }
+
         while (attempt < maxRetries) {
             try {
                 var ackSuccess = false
 
-                // Narrow reuse: only PING_ACK can safely ride the still-open incoming connection.
-                // MESSAGE_ACK usually happens after the blob path has already detached.
+                // PATH 1 (legacy C-Tor): only PING_ACK on live TcpStream connection
                 if (ackType == "PING_ACK" && connectionId != null) {
                     val liveConnection = try {
                         RustBridge.isConnectionAlive(connectionId)
@@ -5173,25 +5250,20 @@ class TorService : Service() {
                 else -> false
             }
             val trackedMinLen = 1 + 32 + 24 + 64 + 1
+            // For trackedWireEligible types, sender ALWAYS uses tracked wire (pingId on wire).
+            // Previously we fell back to "legacy" parsing when pingId wasn't known locally, but
+            // that mis-aligned the ciphertext boundary and caused signature verification to fail
+            // for fast-mode-retry scenarios (sender has pingId, receiver never saw the PING).
+            // Now we always parse as tracked — unknown pingIds are just accepted and used for ACK.
             val trackedWire = if (!isUnsignedType && trackedWireEligible && encryptedMessageWire.size >= trackedMinLen) {
                 val candidatePingIdRawBytes = encryptedMessageWire.copyOfRange(33, 57)
                 val candidatePingIdHex = candidatePingIdRawBytes.joinToString("") { "%02x".format(it) }
-                val pingKnown = kotlinx.coroutines.runBlocking {
-                    database.pingInboxDao().getByPingId(candidatePingIdHex) != null ||
-                        database.messageDao().getMessageByPingId(candidatePingIdHex) != null
-                }
-
-                if (pingKnown) {
-                    wirePingIdRawBytes = candidatePingIdRawBytes
-                    wirePingIdHex = candidatePingIdHex
-                    signatureBytes = encryptedMessageWire.copyOfRange(encryptedMessageWire.size - 64, encryptedMessageWire.size)
-                    encryptedPayload = encryptedMessageWire.copyOfRange(57, encryptedMessageWire.size - 64)
-                    Log.i(TAG, "Tracked blob correlation pingId=${candidatePingIdHex.take(8)}...")
-                    true
-                } else {
-                    Log.d(TAG, "Blob parse fell back to legacy layout (candidate pingId ${candidatePingIdHex.take(8)}... not present locally)")
-                    false
-                }
+                wirePingIdRawBytes = candidatePingIdRawBytes
+                wirePingIdHex = candidatePingIdHex
+                signatureBytes = encryptedMessageWire.copyOfRange(encryptedMessageWire.size - 64, encryptedMessageWire.size)
+                encryptedPayload = encryptedMessageWire.copyOfRange(57, encryptedMessageWire.size - 64)
+                Log.i(TAG, "Tracked blob pingId=${candidatePingIdHex.take(8)}... (no local lookup required)")
+                true
             } else {
                 false
             }
@@ -5296,6 +5368,36 @@ class TorService : Service() {
                 Log.i(TAG, "Message signature verified (Ed25519, ${if (trackedWire) "tracked" else "legacy"} wire)")
             } else if (!isUnsignedType) {
                 Log.e(TAG, "Missing message signature for signed type - dropping")
+                return
+            }
+
+            // ═══ PRE-DECRYPT DEDUP CHECK ═══
+            // If the ciphertext hash matches a message already in receivedIdDao, this is a
+            // duplicate from a sender retry. We MUST short-circuit here — running decryption
+            // on a duplicate ciphertext would trigger the ratchet's replay-attack detection
+            // (sequence N < expected N+1), drop the message silently, and skip the ACK.
+            // Signature is already verified above, so we can trust this is from the real sender.
+            val dedupHash = java.security.MessageDigest.getInstance("SHA-256").digest(encryptedPayload)
+            val dedupMessageId = "blob_" + android.util.Base64.encodeToString(dedupHash, android.util.Base64.NO_WRAP).take(28)
+            val isKnownDuplicate = kotlinx.coroutines.runBlocking {
+                database.receivedIdDao().exists(dedupMessageId, com.securelegion.database.entities.ReceivedId.TYPE_MESSAGE)
+            }
+            if (isKnownDuplicate) {
+                Log.i(TAG, "PRE-DECRYPT DEDUP: already stored $dedupMessageId (sender retry, ratchet advanced) — re-sending ACK")
+                // Re-send MESSAGE_ACK so sender can mark delivered and stop retrying.
+                // Use pingId when wire is tracked (advanced mode), otherwise use the blob hash
+                // (fast mode — sender matches via correlationId).
+                val dupAckItemId = wirePingIdHex ?: dedupMessageId
+                serviceScope.launch {
+                    sendAckWithRetry(
+                        connectionId = null,
+                        itemId = dupAckItemId,
+                        ackType = "MESSAGE_ACK",
+                        contactId = contact.id,
+                        maxRetries = 6,
+                        initialDelayMs = 250L
+                    )
+                }
                 return
             }
 
@@ -5784,7 +5886,11 @@ class TorService : Service() {
                     val isDuplicate = database.receivedIdDao().exists(messageId, com.securelegion.database.entities.ReceivedId.TYPE_MESSAGE)
                     if (isDuplicate) {
                         Log.w(TAG, "MESSAGE SAVE: DUPLICATE MESSAGE BLOB BLOCKED! MessageId=$messageId already in tracking table")
-                        // ACK duplicates only when the wire carried an explicit pingId.
+                        // ACK duplicates in BOTH wire formats so sender stops retrying.
+                        // Advanced (tracked) wire carries pingId → ACK with pingId.
+                        // Fast mode (legacy) wire has no pingId → ACK with blob_<hash> messageId
+                        // (sender matches via correlationId). Without this, FAST_MODE_RETRY
+                        // re-sends forever when the original ACK was lost over Tor.
                         val dupPingId = wirePingIdHex
                         if (dupPingId != null) {
                             serviceScope.launch {
@@ -5796,6 +5902,20 @@ class TorService : Service() {
                                 )
                             }
                             Log.d(TAG, "MESSAGE SAVE: Sent dup blob MESSAGE_ACK (pingId=${dupPingId.take(8)})")
+                        } else if (incomingConnectionId >= 0) {
+                            // FAST MODE duplicate: re-send the MESSAGE_ACK with our messageId
+                            // so sender's correlationId lookup can mark it delivered.
+                            serviceScope.launch {
+                                sendAckWithRetry(
+                                    connectionId = null,
+                                    itemId = messageId,
+                                    ackType = "MESSAGE_ACK",
+                                    contactId = contact.id,
+                                    maxRetries = 6,
+                                    initialDelayMs = 250L
+                                )
+                            }
+                            Log.i(TAG, "[FAST_MODE] Re-sent duplicate ACK for $messageId")
                         }
                         return@launch
                     }
@@ -6071,38 +6191,23 @@ class TorService : Service() {
                     }
                     Log.i(TAG, "MESSAGE SAVE: Atomic transaction committed! DB row ID=$savedMessageId")
 
-                    // Send MESSAGE_ACK from blob path so sender marks delivered immediately,
-                    // even if DMS path hasn't processed yet. Uses pingId from PingInbox.
-                    if (downloadPingId != null) {
+                    // Send MESSAGE_ACK — tries same-connection (instant) then falls back to outbound.
+                    // incomingConnectionId passed so sendAckWithRetry can use the stored Arti stream.
+                    val ackItemId = downloadPingId ?: if (incomingConnectionId >= 0) messageId else null
+                    if (ackItemId != null) {
                         serviceScope.launch {
                             sendAckWithRetry(
-                                connectionId = null,
-                                itemId = downloadPingId,
-                                ackType = "MESSAGE_ACK",
-                                contactId = contact.id
-                            )
-                        }
-                        Log.d(TAG, "MESSAGE SAVE: Sent blob MESSAGE_ACK (pingId=${downloadPingId.take(8)})")
-                    } else if (incomingConnectionId >= 0) {
-                        // FAST MODE: No pingId in wire — send ACK via outbound connection.
-                        // Arti DataStream can't be stored in PENDING_CONNECTIONS, so we
-                        // can't reply on the incoming connection. The sender's ACK listener
-                        // will receive this and update to DELIVERED status.
-                        // Use more retries than normal (6 vs 3) because this is the only
-                        // way the sender learns about delivery — Tor is flaky.
-                        serviceScope.launch {
-                            sendAckWithRetry(
-                                connectionId = null,
-                                itemId = messageId,
+                                connectionId = incomingConnectionId,
+                                itemId = ackItemId,
                                 ackType = "MESSAGE_ACK",
                                 contactId = contact.id,
                                 maxRetries = 6,
-                                initialDelayMs = 2000L
+                                initialDelayMs = 500L
                             )
-                            Log.i(TAG, "[FAST_MODE] ACK sent outbound for $messageId")
                         }
+                        Log.d(TAG, "MESSAGE SAVE: ACK queued (item=$ackItemId, conn=$incomingConnectionId)")
                     } else {
-                        Log.d(TAG, "MESSAGE SAVE: No pingId for blob ACK (DMS will ACK later)")
+                        Log.d(TAG, "MESSAGE SAVE: No item for ACK (DMS will ACK later)")
                     }
 
                     // Broadcast to ChatActivity so it can refresh and perform atomic swap (explicit broadcast)
@@ -6118,6 +6223,16 @@ class TorService : Service() {
                     intentMain.putExtra("CONTACT_ID", contact.id)
                     sendBroadcast(intentMain)
                     Log.i(TAG, "Broadcast explicit NEW_PING to refresh MainActivity chat list")
+
+                    // Post per-sender system notification with Reply action.
+                    // Skip PROFILE_UPDATE / REACTION (silent types).
+                    val isNotifiable = messageType != com.securelegion.database.entities.Message.MESSAGE_TYPE_PROFILE_UPDATE &&
+                                       messageType != com.securelegion.database.entities.Message.MESSAGE_TYPE_REACTION
+                    if (isNotifiable) {
+                        android.os.Handler(android.os.Looper.getMainLooper()).post {
+                            showMessageNotification(contact.nickname ?: contact.displayName, messageContent, contact.id)
+                        }
+                    }
                 } catch (e: Exception) {
                     Log.e(TAG, "MESSAGE SAVE: CRITICAL ERROR - Exception occurred while saving message!", e)
                     Log.e(TAG, "contactId=${contact.id}")
@@ -6250,9 +6365,9 @@ class TorService : Service() {
                     if (phase2Obj.has("kyber_ciphertext")) {
                         val ciphertextBase64 = phase2Obj.getString("kyber_ciphertext")
                         kyberCiphertext = android.util.Base64.decode(ciphertextBase64, android.util.Base64.NO_WRAP)
-                        Log.i(TAG, "Phase 2 (quantum): Received ContactCard + Kyber ciphertext (${kyberCiphertext.size} bytes) from: ${contactCard.displayName}")
+                        Log.i(TAG, "Phase 2 (quantum): Received ContactCard + Kyber ciphertext (${kyberCiphertext.size} bytes) from: ${contactCard?.displayName}")
                     } else {
-                        Log.i(TAG, "Phase 2 (legacy): Received ContactCard from: ${contactCard.displayName}")
+                        Log.i(TAG, "Phase 2 (legacy): Received ContactCard from: ${contactCard?.displayName}")
                     }
 
                     // Verify Ed25519 signature (defense-in-depth against .onion MitM)
@@ -6293,7 +6408,7 @@ class TorService : Service() {
                     // Try old Phase 2 format (just ContactCard)
                     contactCard = com.securelegion.models.ContactCard.fromJson(decryptedJson)
                     isPhase2 = true
-                    Log.i(TAG, "Phase 2 (old format): Received ContactCard from: ${contactCard.displayName}")
+                    Log.i(TAG, "Phase 2 (old format): Received ContactCard from: ${contactCard?.displayName}")
                 }
             } catch (e: Exception) {
                 Log.d(TAG, "Not a Phase 2 ContactCard, trying old v1.0 format... ${e.message}")
@@ -6441,6 +6556,7 @@ class TorService : Service() {
                                 messagingOnion = keyManager.getMessagingOnion() ?: "",
                                 voiceOnion = torManager.getVoiceOnionAddress() ?: "",
                                 contactPin = keyManager.getContactPin() ?: "",
+                                inviteToken = keyManager.getInviteToken() ?: keyManager.generateAndStoreInviteToken(),
                                 ipfsCid = keyManager.deriveContactListCID(),
                                 timestamp = System.currentTimeMillis() / 1000
                             )
@@ -6538,6 +6654,7 @@ class TorService : Service() {
 
             try {
                 val contactCard = com.securelegion.models.ContactCard.fromJson(matchingRequest.contactCardJson)
+                    ?: throw Exception("ContactCard missing invite_token (schema v4 required)")
                 Log.d(TAG, "Parsed contact card for: ${contactCard.displayName}")
 
                 // Add to Contacts database
@@ -7056,8 +7173,9 @@ class TorService : Service() {
                                 successCount++
                                 prefs.edit().putLong("last_tap_${contact.id}", now).apply()
 
-                                // Friend-side push recovery: check if this contact is recovering
-                                checkAndPushRecoveryBlob(contact)
+                                // Recovery beacon HTTP path removed — replaced by binary
+                                // contact-list-sync protocol (0x80/0x81/0x82) on messaging HS.
+                                // See CONTACT_LIST_SYNC_PROTOCOL.md.
                             } else {
                                 Log.w(TAG, "Failed to send tap to ${contact.displayName}")
                                 failureCount++
@@ -7083,71 +7201,6 @@ class TorService : Service() {
                 Log.i(TAG, "Tap broadcast complete: $successCount success, $failureCount failed")
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to send taps to contacts", e)
-            }
-        }
-    }
-
-    /**
-     * Friend-side push recovery: after a successful TAP to a contact, check if they're
-     * in recovery mode. If so, push their encrypted contact list blob from our local pin.
-     *
-     * Flow:
-     * 1. GET http://{friendRequestOnion}/recovery/beacon → {"recovering":true}
-     * 2. Read local ipfs_pins/{contact.ipfsCid} (we pinned their list when we added them)
-     * 3. POST raw bytes to http://{friendRequestOnion}/recovery/push/{cid}
-     * 4. Their device writes to disk → Kotlin GCM decrypts → contacts imported
-     */
-    private fun checkAndPushRecoveryBlob(contact: com.securelegion.database.entities.Contact) {
-        // Need their friend request .onion (HTTP server) and their contact list CID
-        val friendOnion = contact.friendRequestOnion
-        val friendCid = contact.ipfsCid
-        if (friendOnion.isNullOrEmpty() || friendCid.isNullOrEmpty()) return
-
-        serviceScope.launch(Dispatchers.IO) {
-            try {
-                // Step 1: Check recovery beacon
-                val beaconUrl = "http://$friendOnion/recovery/beacon"
-                val beaconResponse = try {
-                    RustBridge.httpGetViaTor(beaconUrl)
-                } catch (e: Exception) {
-                    // Not reachable or no beacon endpoint — normal for non-recovering devices
-                    return@launch
-                }
-
-                if (beaconResponse == null || !beaconResponse.contains("\"recovering\":true")) {
-                    return@launch // Not recovering
-                }
-
-                Log.i(TAG, "${contact.displayName} is in recovery mode! Checking if we have their contact list...")
-
-                // Step 2: Read their pinned contact list from our local storage
-                val ipfsManager = com.securelegion.services.IPFSManager.getInstance(this@TorService)
-                val pinnedBlob = ipfsManager.getContactList(friendCid)
-
-                if (pinnedBlob == null) {
-                    Log.w(TAG, "Don't have ${contact.displayName}'s contact list pinned (CID: ${friendCid.take(20)}...)")
-                    return@launch
-                }
-
-                Log.i(TAG, "Pushing ${pinnedBlob.size} bytes to ${contact.displayName} for recovery...")
-
-                // Step 3: POST raw bytes to their recovery endpoint
-                val pushUrl = "http://$friendOnion/recovery/push/$friendCid"
-                val response = try {
-                    RustBridge.httpPostBinaryViaTor(pushUrl, pinnedBlob)
-                } catch (e: Exception) {
-                    Log.w(TAG, "Failed to push recovery blob to ${contact.displayName}: ${e.message}")
-                    return@launch
-                }
-
-                if (response != null) {
-                    Log.i(TAG, "Recovery push to ${contact.displayName} accepted!")
-                } else {
-                    Log.w(TAG, "Recovery push to ${contact.displayName} returned null")
-                }
-
-            } catch (e: Exception) {
-                Log.e(TAG, "Error checking recovery beacon for ${contact.displayName}", e)
             }
         }
     }
@@ -7180,16 +7233,18 @@ class TorService : Service() {
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
 
-        // Count pending pings from DB (single source of truth)
+        // Count unread received messages (single source of truth). This covers BOTH:
+        //   - fast-mode messages (delivered straight to messages table, no pingInbox entry)
+        //   - advanced-mode messages (after blob save, before user reads them)
         val pendingCount = try {
             val keyManager = com.securelegion.crypto.KeyManager.getInstance(this)
             val dbPassphrase = keyManager.getDatabasePassphrase()
             val database = com.securelegion.database.SecureLegionDatabase.getInstance(this, dbPassphrase)
             kotlinx.coroutines.runBlocking(kotlinx.coroutines.Dispatchers.IO) {
-                database.pingInboxDao().countGlobalPending()
+                database.messageDao().getTotalUnreadCount()
             }
         } catch (e: Exception) {
-            Log.w(TAG, "Failed to count pending pings from DB", e)
+            Log.w(TAG, "Failed to count unread messages from DB", e)
             0
         }
 
@@ -7422,13 +7477,17 @@ class TorService : Service() {
                 }
                 Log.i(TAG, "Atomic transaction committed (messageId: $deterministicMessageId, rowId: $insertedMessage)")
 
-                // Send MESSAGE_ACK with pingId (sender's delivery tracker is keyed by pingId)
+                // Send MESSAGE_ACK with pingId (sender's delivery tracker is keyed by pingId).
+                // Bumped to 6 retries / 500ms initial for better reliability over flaky Tor circuits
+                // (500ms, 1s, 2s, 4s, 8s, 16s → ~31s total retry window vs default 7s).
                 serviceScope.launch {
                     sendAckWithRetry(
                         connectionId = null,
                         itemId = pingId,
                         ackType = "MESSAGE_ACK",
-                        contactId = contact.id
+                        contactId = contact.id,
+                        maxRetries = 6,
+                        initialDelayMs = 500L
                     )
                 }
 
@@ -7490,13 +7549,23 @@ class TorService : Service() {
      * Show notification for received message with preview and actions
      */
     private fun showMessageNotification(senderName: String, messageText: String, contactId: Long) {
-        // Create intent to open chat when notification is tapped
-        // Launch via LockActivity to prevent showing chat before authentication
-        val openChatIntent = Intent(this, LockActivity::class.java).apply {
-            putExtra("TARGET_ACTIVITY", "ChatActivity")
-            putExtra(ChatActivity.EXTRA_CONTACT_ID, contactId)
-            putExtra(ChatActivity.EXTRA_CONTACT_NAME, senderName)
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        // If user is already unlocked, tap the notification straight into ChatActivity.
+        // If locked, go through LockActivity with the chat as the post-unlock target.
+        val isUnlocked = com.securelegion.utils.SessionManager.isUnlocked(this)
+
+        val openChatIntent = if (isUnlocked) {
+            Intent(this, ChatActivity::class.java).apply {
+                putExtra(ChatActivity.EXTRA_CONTACT_ID, contactId)
+                putExtra(ChatActivity.EXTRA_CONTACT_NAME, senderName)
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            }
+        } else {
+            Intent(this, LockActivity::class.java).apply {
+                putExtra("TARGET_ACTIVITY", "ChatActivity")
+                putExtra(ChatActivity.EXTRA_CONTACT_ID, contactId)
+                putExtra(ChatActivity.EXTRA_CONTACT_NAME, senderName)
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            }
         }
         val openChatPendingIntent = PendingIntent.getActivity(
             this,
@@ -7505,13 +7574,21 @@ class TorService : Service() {
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
 
-        // Create reply action intent (also via LockActivity)
-        val replyIntent = Intent(this, LockActivity::class.java).apply {
-            putExtra("TARGET_ACTIVITY", "ChatActivity")
-            putExtra(ChatActivity.EXTRA_CONTACT_ID, contactId)
-            putExtra(ChatActivity.EXTRA_CONTACT_NAME, senderName)
-            putExtra("FOCUS_INPUT", true)
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        val replyIntent = if (isUnlocked) {
+            Intent(this, ChatActivity::class.java).apply {
+                putExtra(ChatActivity.EXTRA_CONTACT_ID, contactId)
+                putExtra(ChatActivity.EXTRA_CONTACT_NAME, senderName)
+                putExtra("FOCUS_INPUT", true)
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            }
+        } else {
+            Intent(this, LockActivity::class.java).apply {
+                putExtra("TARGET_ACTIVITY", "ChatActivity")
+                putExtra(ChatActivity.EXTRA_CONTACT_ID, contactId)
+                putExtra(ChatActivity.EXTRA_CONTACT_NAME, senderName)
+                putExtra("FOCUS_INPUT", true)
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            }
         }
         val replyPendingIntent = PendingIntent.getActivity(
             this,
@@ -7859,6 +7936,7 @@ class TorService : Service() {
                     val encryptedPayload = wireMessage.copyOfRange(33, wireMessage.size - 64)
 
                     // Lookup contact by X25519 public key
+                    @OptIn(kotlinx.coroutines.DelicateCoroutinesApi::class)
                     kotlinx.coroutines.GlobalScope.launch(kotlinx.coroutines.Dispatchers.IO) {
                         try {
                             val keyManager = com.securelegion.crypto.KeyManager.getInstance(applicationContext)
@@ -8368,7 +8446,7 @@ class TorService : Service() {
             is NetworkWatcher.NetworkEvent.AirplaneModeChanged -> {
                 Log.i(TAG, "Airplane mode: ${if (event.isEnabled) "ON" else "OFF"}")
 
-                if (!event.isEnabled && event.hasInternet && torConnected) {
+                if (!event.isEnabled && event.hasInternet && torState == TorState.RUNNING) {
                     // Airplane mode turned OFF and network is back
                     Log.i(TAG, "Airplane mode disabled - waiting 45 seconds for Tor circuits to stabilize")
 
@@ -8451,7 +8529,7 @@ class TorService : Service() {
                     vpnActive = intent.getBooleanExtra(EXTRA_VPN_ACTIVE, false)
 
                     // Update notification with new VPN stats
-                    if (torConnected) {
+                    if (torState == TorState.RUNNING) {
                         updateNotification("Connected to the Tor Network")
                     }
                 }
@@ -8476,8 +8554,8 @@ class TorService : Service() {
 
             if (!isInitialized && hasNetworkConnection() && !isReconnecting) {
                 Log.w(TAG, "Health check failed: Tor not initialized but network available - attempting reconnect")
-                if (torConnected) {
-                    torConnected = false
+                if (torState == TorState.RUNNING) {
+                    setState(TorState.ERROR, "health check: tor uninitialized")
                     // Stop SOCKS proxy when Tor disconnects
                     if (RustBridge.isSocksProxyRunning()) {
                         Log.d(TAG, "Stopping SOCKS proxy due to Tor disconnection")
@@ -8486,9 +8564,9 @@ class TorService : Service() {
                 }
                 scheduleReconnect("health check: tor not initialized")
             } else if (isInitialized) {
-                if (!torConnected && !isReconnecting) {
+                if (torState != TorState.RUNNING && !isReconnecting) {
                     Log.i(TAG, "Health check: Tor reconnected successfully")
-                    torConnected = true
+                    setState(TorState.RUNNING, "health check: reconnected")
                     resetReconnectBackoff()
                     isServiceRunning = true
                     running = true
@@ -8518,7 +8596,7 @@ class TorService : Service() {
                 }
             } else if (!hasNetworkConnection()) {
                 Log.d(TAG, "Health check: No network connection available")
-                torConnected = false
+                setState(TorState.OFF, "no network")
             }
         } catch (e: Exception) {
             Log.e(TAG, "Error during health check", e)
@@ -8805,7 +8883,7 @@ class TorService : Service() {
         Log.d(TAG, "TorService destroyed")
 
         running = false
-        torConnected = false
+        setState(TorState.OFF, "onDestroy")
         listenersReady = false
         isServiceRunning = false
         isListenerRunning = false

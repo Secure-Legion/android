@@ -1649,7 +1649,8 @@ class CrdtGroupManager private constructor(private val context: Context) {
     suspend fun removeMember(
         groupId: String,
         targetPubkeyHex: String,
-        reason: String = "Kick"
+        reason: String = "Kick",
+        ban: Boolean = false
     ): ByteArray {
         val authorPubkey = keyManager.getSigningPublicKey()
         val authorPrivkey = keyManager.getSigningKeyBytes()
@@ -1657,6 +1658,7 @@ class CrdtGroupManager private constructor(private val context: Context) {
         val paramsJson = JSONObject().apply {
             put("target_pubkey_hex", targetPubkeyHex)
             put("reason", reason)
+            put("ban", ban)
         }.toString()
 
         val resultJson = RustBridge.crdtCreateOp(
@@ -1676,6 +1678,88 @@ class CrdtGroupManager private constructor(private val context: Context) {
             Log.w(TAG, "removeMember: cleanup failed for ${targetPubkeyHex.take(8)}", e)
         }
 
+        return opBytes
+    }
+
+    /**
+     * Promote a member to Admin with the given rights + optional custom title,
+     * OR update an existing Admin's rights/title (same RoleSet op). Broadcasts.
+     *
+     * Rust enforces: Owner cannot be re-assigned; title ≤ 32 bytes; Admin
+     * authors can only grant rights they themselves hold.
+     */
+    suspend fun setAdminRole(
+        groupId: String,
+        targetPubkeyHex: String,
+        rights: AdminRights,
+        customTitle: String? = null
+    ): ByteArray {
+        val authorPubkey = keyManager.getSigningPublicKey()
+        val authorPrivkey = keyManager.getSigningKeyBytes()
+
+        val paramsJson = JSONObject().apply {
+            put("target_pubkey_hex", targetPubkeyHex)
+            put("new_role", "Admin")
+            put("admin_rights", rights.toJson())
+            if (!customTitle.isNullOrBlank()) put("custom_title", customTitle)
+        }.toString()
+
+        val resultJson = RustBridge.crdtCreateOp(
+            groupId, "RoleSet", paramsJson,
+            authorPubkey, authorPrivkey
+        )
+        val opBytes = storeOpFromResult(resultJson, groupId, "RoleSet")
+        broadcastOpToGroup(groupId, opBytes)
+        return opBytes
+    }
+
+    /**
+     * Unban a previously-banned user so they can be re-invited. Broadcasts.
+     * The target remains removed — admins must still re-invite them separately.
+     */
+    suspend fun unbanMember(groupId: String, targetPubkeyHex: String): ByteArray {
+        val authorPubkey = keyManager.getSigningPublicKey()
+        val authorPrivkey = keyManager.getSigningKeyBytes()
+
+        val paramsJson = JSONObject().apply {
+            put("target_pubkey_hex", targetPubkeyHex)
+        }.toString()
+
+        val resultJson = RustBridge.crdtCreateOp(
+            groupId, "MemberUnban", paramsJson,
+            authorPubkey, authorPrivkey
+        )
+        val opBytes = storeOpFromResult(resultJson, groupId, "MemberUnban")
+        broadcastOpToGroup(groupId, opBytes)
+        return opBytes
+    }
+
+    /**
+     * List all currently-banned members (removed + banned).
+     */
+    suspend fun queryBannedMembers(groupId: String): List<CrdtMember> {
+        return queryMembers(groupId).filter { it.banned }
+    }
+
+    /**
+     * Demote an Admin back to regular Member. Broadcasts.
+     * Clears admin_rights and custom_title on the target.
+     */
+    suspend fun demoteAdmin(groupId: String, targetPubkeyHex: String): ByteArray {
+        val authorPubkey = keyManager.getSigningPublicKey()
+        val authorPrivkey = keyManager.getSigningKeyBytes()
+
+        val paramsJson = JSONObject().apply {
+            put("target_pubkey_hex", targetPubkeyHex)
+            put("new_role", "Member")
+        }.toString()
+
+        val resultJson = RustBridge.crdtCreateOp(
+            groupId, "RoleSet", paramsJson,
+            authorPubkey, authorPrivkey
+        )
+        val opBytes = storeOpFromResult(resultJson, groupId, "RoleSet")
+        broadcastOpToGroup(groupId, opBytes)
         return opBytes
     }
 
@@ -1715,18 +1799,26 @@ class CrdtGroupManager private constructor(private val context: Context) {
         val db = getDatabase()
         val now = System.currentTimeMillis()
         db.groupDao().updateLastActivity(groupId, now)
-        // Cache preview: truncate to 80 chars for list display
-        val preview = if (plaintext.length > 80) plaintext.take(80) + "..." else plaintext
+        // Cache preview: strip system-message sentinels + truncate to 80 chars.
+        val previewBase = stripSystemPrefix(plaintext)
+        val preview = if (previewBase.length > 80) previewBase.take(80) + "..." else previewBase
         db.groupDao().updateLastMessagePreview(groupId, preview)
 
         return Pair(opBytes, msgIdHex)
     }
 
+    /** Remove system-message prefixes so previews/UI never show the tag. */
+    private fun stripSystemPrefix(text: String): String =
+        text.removePrefix("\u0002").removePrefix("[SYSTEM] ")
+
     /**
      * Send a system message to the group (renders with SYSTEM theme in UI).
      */
     suspend fun sendSystemMessage(groupId: String, text: String): ByteArray {
-        val systemText = "[SYSTEM] $text"
+        // Invisible U+0002 (STX) sentinel — detected on the render side and
+        // stripped before display. Unlike "[SYSTEM] " this leaves no visible
+        // artifact if the stripping step is ever missed.
+        val systemText = "\u0002$text"
         val (opBytes, _) = sendMessage(groupId, systemText)
         broadcastOpToGroup(groupId, opBytes)
         return opBytes
@@ -1899,6 +1991,24 @@ class CrdtGroupManager private constructor(private val context: Context) {
             Log.w(TAG, "applyReceivedOps: checkPendingInvites failed (non-fatal)", e)
         }
 
+        // 3b. If a GroupDelete op was just applied, cascade local cleanup.
+        if (applied > 0) {
+            try {
+                val (deleted, _) = queryGroupStatus(groupId)
+                if (deleted) {
+                    Log.i(TAG, "applyReceivedOps: group deleted remotely, cascading local cleanup — $groupId")
+                    cascadeDeleteLocal(groupId)
+                    val intent = android.content.Intent("com.securelegion.action.GROUP_DELETED").apply {
+                        putExtra("groupId", groupId)
+                    }
+                    context.sendBroadcast(intent)
+                    return Pair(applied, rejected)
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "applyReceivedOps: group_status check failed (non-fatal)", e)
+            }
+        }
+
         // 4. Update cache fields if Group entity exists
         try {
             if (db.groupDao().groupExists(groupId)) {
@@ -1919,7 +2029,8 @@ class CrdtGroupManager private constructor(private val context: Context) {
                         if (lastMsg != null && !lastMsg.deleted) {
                             val text = decryptMessage(lastMsg, groupSecretBytes)
                             if (text != null) {
-                                val preview = if (text.length > 80) text.take(80) + "..." else text
+                                val previewBase = stripSystemPrefix(text)
+                                val preview = if (previewBase.length > 80) previewBase.take(80) + "..." else previewBase
                                 db.groupDao().updateLastMessagePreview(groupId, preview)
                             }
                         }
@@ -2008,7 +2119,11 @@ class CrdtGroupManager private constructor(private val context: Context) {
                 accepted = obj.getBoolean("accepted"),
                 removed = obj.getBoolean("removed"),
                 invitedByOpId = obj.optString("invited_by_op_id", ""),
-                encryptedGroupSecretB64 = obj.optString("encrypted_group_secret_b64", "")
+                encryptedGroupSecretB64 = obj.optString("encrypted_group_secret_b64", ""),
+                adminRights = AdminRights.fromJson(obj.optJSONObject("admin_rights")),
+                customTitle = if (obj.isNull("custom_title")) null else obj.optString("custom_title"),
+                promotedByDeviceHex = if (obj.isNull("promoted_by_device_id")) null else obj.optString("promoted_by_device_id"),
+                banned = obj.optBoolean("banned", false)
             )
         }
     }
@@ -2095,11 +2210,51 @@ class CrdtGroupManager private constructor(private val context: Context) {
         if (!ensureLoaded(groupId)) return CrdtMetadata(null, null, null)
         val json = RustBridge.crdtQuery(groupId, "metadata", "{}")
         val obj = JSONObject(json)
+        fun optBool(key: String): Boolean? = if (obj.has(key)) obj.getBoolean(key) else null
         return CrdtMetadata(
-            name = obj.optString("name", null),
-            topic = obj.optString("topic", null),
-            avatarB64 = obj.optString("avatar_b64", null)
+            name = if (obj.has("name")) obj.optString("name") else null,
+            topic = if (obj.has("topic")) obj.optString("topic") else null,
+            avatarB64 = if (obj.has("avatar_b64")) obj.optString("avatar_b64") else null,
+            allowMemberSendMessages = optBool("allow_member_send_messages"),
+            allowMemberInvites = optBool("allow_member_invites"),
+            allowMemberPin = optBool("allow_member_pin"),
+            allowMemberChangeInfo = optBool("allow_member_change_info")
         )
+    }
+
+    /**
+     * Update one or more member-tier permission toggles. Emits a MetadataSet
+     * op per non-null key. Owner-only (Rust rejects non-admin authors).
+     */
+    suspend fun updateMemberPermissions(
+        groupId: String,
+        allowSendMessages: Boolean? = null,
+        allowInvites: Boolean? = null,
+        allowPin: Boolean? = null,
+        allowChangeInfo: Boolean? = null
+    ) {
+        val authorPubkey = keyManager.getSigningPublicKey()
+        val authorPrivkey = keyManager.getSigningKeyBytes()
+
+        val changes = mutableListOf<Pair<String, Boolean>>()
+        allowSendMessages?.let { changes += "AllowMemberSendMessages" to it }
+        allowInvites?.let { changes += "AllowMemberInvites" to it }
+        allowPin?.let { changes += "AllowMemberPin" to it }
+        allowChangeInfo?.let { changes += "AllowMemberChangeInfo" to it }
+
+        for ((key, value) in changes) {
+            val valueByte = if (value) byteArrayOf(1) else byteArrayOf(0)
+            val valueB64 = Base64.encodeToString(valueByte, Base64.NO_WRAP)
+            val paramsJson = JSONObject().apply {
+                put("key", key)
+                put("value_b64", valueB64)
+            }.toString()
+            val resultJson = RustBridge.crdtCreateOp(
+                groupId, "MetadataSet", paramsJson, authorPubkey, authorPrivkey
+            )
+            val opBytes = storeOpFromResult(resultJson, groupId, "MetadataSet")
+            broadcastOpToGroup(groupId, opBytes)
+        }
     }
 
     /**
@@ -2114,16 +2269,56 @@ class CrdtGroupManager private constructor(private val context: Context) {
     // ==================== Delete Group ====================
 
     /**
-     * Delete a group locally (removes ops + Group entity, unloads from Rust).
+     * Owner-initiated group deletion: emits a `GroupDelete` CRDT op,
+     * broadcasts to all members, then cascades local cleanup.
+     * Rust rejects this op unless the author is the Owner.
+     *
+     * @throws RuntimeException from the Rust layer if the caller isn't Owner.
      */
-    suspend fun deleteGroup(groupId: String) {
+    suspend fun deleteGroup(groupId: String, reason: String? = null) {
+        val authorPubkey = keyManager.getSigningPublicKey()
+        val authorPrivkey = keyManager.getSigningKeyBytes()
+
+        val paramsJson = JSONObject().apply {
+            if (!reason.isNullOrBlank()) put("reason", reason)
+        }.toString()
+
+        val resultJson = RustBridge.crdtCreateOp(
+            groupId, "GroupDelete", paramsJson,
+            authorPubkey, authorPrivkey
+        )
+        val opBytes = storeOpFromResult(resultJson, groupId, "GroupDelete")
+        broadcastOpToGroup(groupId, opBytes)
+
+        // Local cleanup
+        cascadeDeleteLocal(groupId)
+    }
+
+    /**
+     * Drop local rows for a group without emitting an op. Called internally
+     * by deleteGroup() on the authoring device, and by TorService when a
+     * peer's `GroupDelete` op is received.
+     */
+    suspend fun cascadeDeleteLocal(groupId: String) {
         unloadGroup(groupId)
         val db = getDatabase()
         db.crdtOpLogDao().deleteOpsForGroup(groupId)
         db.groupPeerDao().deletePeersForGroup(groupId)
         db.pendingGroupDeliveryDao().deleteForGroup(groupId)
         db.groupDao().deleteGroupById(groupId)
-        Log.i(TAG, "Deleted group: $groupId")
+        Log.i(TAG, "Cascaded local delete for group: $groupId")
+    }
+
+    /**
+     * Query group deletion status from Rust state. Returns (deleted, reason).
+     */
+    suspend fun queryGroupStatus(groupId: String): Pair<Boolean, String?> {
+        if (!ensureLoaded(groupId)) return Pair(false, null)
+        val json = RustBridge.crdtQuery(groupId, "group_status", "{}")
+        val obj = JSONObject(json)
+        val deleted = obj.optBoolean("deleted", false)
+        val reason = if (obj.isNull("delete_reason")) null else obj.optString("delete_reason")
+        return Pair(deleted, reason)
     }
 
     // ==================== Internal Helpers ====================
@@ -2232,8 +2427,49 @@ class CrdtGroupManager private constructor(private val context: Context) {
         val accepted: Boolean,
         val removed: Boolean,
         val invitedByOpId: String = "",
-        val encryptedGroupSecretB64: String = ""
+        val encryptedGroupSecretB64: String = "",
+        val adminRights: AdminRights? = null,
+        val customTitle: String? = null,
+        val promotedByDeviceHex: String? = null,
+        val banned: Boolean = false
     )
+
+    /**
+     * Per-admin rights bitfield. `null` on non-Admin members.
+     * Owner has all rights implicitly (stored as null).
+     */
+    data class AdminRights(
+        val canInvite: Boolean,
+        val canRemove: Boolean,
+        val canChangeInfo: Boolean,
+        val canDeleteMessages: Boolean,
+        val canPinMessages: Boolean,
+        val canAddAdmins: Boolean
+    ) {
+        fun toJson(): JSONObject = JSONObject().apply {
+            put("can_invite", canInvite)
+            put("can_remove", canRemove)
+            put("can_change_info", canChangeInfo)
+            put("can_delete_messages", canDeleteMessages)
+            put("can_pin_messages", canPinMessages)
+            put("can_add_admins", canAddAdmins)
+        }
+
+        companion object {
+            fun allFalse() = AdminRights(false, false, false, false, false, false)
+            fun allTrue() = AdminRights(true, true, true, true, true, true)
+            fun fromJson(obj: JSONObject?): AdminRights? = obj?.let {
+                AdminRights(
+                    canInvite = it.optBoolean("can_invite", false),
+                    canRemove = it.optBoolean("can_remove", false),
+                    canChangeInfo = it.optBoolean("can_change_info", false),
+                    canDeleteMessages = it.optBoolean("can_delete_messages", false),
+                    canPinMessages = it.optBoolean("can_pin_messages", false),
+                    canAddAdmins = it.optBoolean("can_add_admins", false)
+                )
+            }
+        }
+    }
 
     data class CrdtMessage(
         val msgIdHex: String,
@@ -2254,6 +2490,17 @@ class CrdtGroupManager private constructor(private val context: Context) {
     data class CrdtMetadata(
         val name: String?,
         val topic: String?,
-        val avatarB64: String?
-    )
+        val avatarB64: String?,
+        // Member-tier permission toggles. Nullable → not yet set by Owner.
+        // Defaults (when null): send=true, invites=false, pin=false, changeInfo=false.
+        val allowMemberSendMessages: Boolean? = null,
+        val allowMemberInvites: Boolean? = null,
+        val allowMemberPin: Boolean? = null,
+        val allowMemberChangeInfo: Boolean? = null
+    ) {
+        fun effectiveAllowSend() = allowMemberSendMessages ?: true
+        fun effectiveAllowInvites() = allowMemberInvites ?: false
+        fun effectiveAllowPin() = allowMemberPin ?: false
+        fun effectiveAllowChangeInfo() = allowMemberChangeInfo ?: false
+    }
 }

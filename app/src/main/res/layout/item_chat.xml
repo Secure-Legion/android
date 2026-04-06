@@ -132,7 +132,7 @@
         <View
             android:layout_width="match_parent"
             android:layout_height="1dp"
-            android:background="?attr/colorSurfaceContainerHigh" />
+            android:background="@color/list_item_divider" />
 
         <!-- Chat content -->
         <LinearLayout
@@ -259,7 +259,7 @@
             android:text="2"
             android:textSize="12sp"
             android:textStyle="bold"
-            android:textColor="?attr/colorOnSurface"
+            android:textColor="@color/unread_badge_text"
             android:visibility="gone" />
 
         <!-- Hidden elements (not shown, kept for compatibility) -->
@@ -281,7 +281,7 @@
         <View
             android:layout_width="match_parent"
             android:layout_height="1dp"
-            android:background="?attr/colorSurfaceContainerHigh" />
+            android:background="@color/list_item_divider" />
 
     </LinearLayout>
 

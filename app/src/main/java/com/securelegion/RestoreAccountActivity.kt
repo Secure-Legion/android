@@ -2,6 +2,7 @@ package com.securelegion
 
 import android.content.Intent
 import android.os.Bundle
+import android.view.WindowManager
 import android.text.Editable
 import android.text.TextWatcher
 import android.view.View
@@ -28,14 +29,14 @@ class RestoreAccountActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
 
         // Security: Prevent screenshots and screen recording
-        // TODO: Re-enable FLAG_SECURE after demo recording
-        // window.setFlags(
-        // WindowManager.LayoutParams.FLAG_SECURE,
-        // WindowManager.LayoutParams.FLAG_SECURE
-        // )
+        window.setFlags(
+            WindowManager.LayoutParams.FLAG_SECURE,
+            WindowManager.LayoutParams.FLAG_SECURE
+        )
 
         // Make status bar transparent with light icons (matches dark theme)
-        window.statusBarColor = android.graphics.Color.TRANSPARENT
+        @Suppress("DEPRECATION") // edge-to-edge refactor pending
+        run { window.statusBarColor = android.graphics.Color.TRANSPARENT }
 
         setContentView(R.layout.activity_restore_account)
 
@@ -116,7 +117,13 @@ class RestoreAccountActivity : AppCompatActivity() {
             }
 
             // Store seed temporarily and go to CreateAccountActivity
-            val prefs = getSharedPreferences("restore_temp", MODE_PRIVATE)
+            val masterKey = androidx.security.crypto.MasterKey.Builder(this)
+                .setKeyScheme(androidx.security.crypto.MasterKey.KeyScheme.AES256_GCM).build()
+            val prefs = androidx.security.crypto.EncryptedSharedPreferences.create(
+                this, "restore_temp", masterKey,
+                androidx.security.crypto.EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+                androidx.security.crypto.EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
+            )
             prefs.edit().putString("seed_phrase", seedPhrase).apply()
 
             val intent = Intent(this, CreateAccountActivity::class.java)

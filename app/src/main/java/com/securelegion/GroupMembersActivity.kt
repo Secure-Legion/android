@@ -21,6 +21,7 @@ import com.securelegion.database.entities.ed25519PublicKeyBytes
 import com.securelegion.services.CrdtGroupManager
 import androidx.activity.result.contract.ActivityResultContracts
 import com.securelegion.utils.GlassDialog
+import com.securelegion.utils.applySlideInTransition
 import com.securelegion.utils.ThemedToast
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -333,6 +334,12 @@ class GroupMembersActivity : BaseActivity() {
         groupId: String,
         contacts: List<com.securelegion.database.entities.Contact>
     ) {
+        // Role check — only Owner/Admin can invite (matches Rust can_author_op rule)
+        if (currentUserRole !in listOf("Owner", "Admin")) {
+            ThemedToast.show(this, "Only admins can add friends")
+            return
+        }
+
         // Enforce 20-member group limit
         val existing = allMembers.size
         if (existing + contacts.size > AddGroupMembersActivity.MAX_GROUP_MEMBERS) {
@@ -377,58 +384,90 @@ class GroupMembersActivity : BaseActivity() {
             .setMessage("Remove ${member.displayName} from this group?")
             .setPositiveButton("Remove") { d, _ ->
                 d.dismiss()
-                lifecycleScope.launch {
-                    try {
-                        withContext(Dispatchers.IO) {
-                            val mgr = CrdtGroupManager.getInstance(this@GroupMembersActivity)
-                            val opBytes = mgr.removeMember(currentGroupId, member.pubkeyHex)
-                            mgr.broadcastOpToGroup(currentGroupId, opBytes)
-                            val authorName = KeyManager.getInstance(this@GroupMembersActivity).getUsername() ?: "Someone"
-                            mgr.sendSystemMessage(currentGroupId, "$authorName removed ${member.displayName}")
-                        }
-                        ThemedToast.show(this@GroupMembersActivity, "${member.displayName} removed")
-                        loadGroupMembers()
-                    } catch (e: Exception) {
-                        Log.e(TAG, "Failed to remove member", e)
-                        ThemedToast.show(this@GroupMembersActivity, "Failed to remove: ${e.message}")
+                // Follow-up: ask whether to also ban (prevents re-invite)
+                val banDialog = GlassDialog.builder(this)
+                    .setTitle("Ban ${member.displayName}?")
+                    .setMessage("Banning prevents them from being re-invited to this group.")
+                    .setPositiveButton("Remove & Ban") { d2, _ ->
+                        d2.dismiss()
+                        doRemoveMember(currentGroupId, member, ban = true)
                     }
-                }
+                    .setNegativeButton("Just Remove") { d2, _ ->
+                        d2.dismiss()
+                        doRemoveMember(currentGroupId, member, ban = false)
+                    }
+                    .create()
+                GlassDialog.show(banDialog)
             }
             .setNegativeButton("Cancel", null)
             .create()
         GlassDialog.show(dialog)
+    }
+
+    private fun doRemoveMember(groupId: String, member: GroupMemberItem, ban: Boolean) {
+        lifecycleScope.launch {
+            try {
+                withContext(Dispatchers.IO) {
+                    val mgr = CrdtGroupManager.getInstance(this@GroupMembersActivity)
+                    mgr.removeMember(groupId, member.pubkeyHex, reason = "Kick", ban = ban)
+                    val authorName = KeyManager.getInstance(this@GroupMembersActivity).getUsername() ?: "Someone"
+                    val verb = if (ban) "banned" else "removed"
+                    mgr.sendSystemMessage(groupId, "$authorName $verb ${member.displayName}")
+                }
+                val msg = if (ban) "${member.displayName} banned" else "${member.displayName} removed"
+                ThemedToast.show(this@GroupMembersActivity, msg)
+                loadGroupMembers()
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to remove member", e)
+                ThemedToast.show(this@GroupMembersActivity, "Failed to remove: ${e.message}")
+            }
+        }
     }
 
     private fun confirmPromoteMember(member: GroupMemberItem) {
-        val dialog = GlassDialog.builder(this)
-            .setTitle("Promote Member")
-            .setMessage("Promote ${member.displayName} to Admin?")
-            .setPositiveButton("Promote") { d, _ ->
-                d.dismiss()
-                // TODO: CRDT MetadataSet for role change when role ops are implemented
-                ThemedToast.show(this, "Promote — Coming soon")
-                Log.i(TAG, "Promote: ${member.displayName}")
+        val gid = groupId ?: return
+
+        if (member.role == "Owner") {
+            ThemedToast.show(this, "Owner role cannot be changed")
+            return
+        }
+
+        // Authorization: Owner always allowed; Admins need can_add_admins bit.
+        lifecycleScope.launch {
+            val canPromote = withContext(Dispatchers.IO) {
+                if (currentUserRole == "Owner") return@withContext true
+                if (currentUserRole != "Admin") return@withContext false
+                val mgr = CrdtGroupManager.getInstance(this@GroupMembersActivity)
+                val myPubkeyHex = KeyManager.getInstance(this@GroupMembersActivity)
+                    .getSigningPublicKey().joinToString("") { "%02x".format(it) }
+                val me = mgr.queryMembers(gid).firstOrNull { it.pubkeyHex == myPubkeyHex }
+                me?.adminRights?.canAddAdmins == true
             }
-            .setNegativeButton("Cancel", null)
-            .create()
-        GlassDialog.show(dialog)
+            if (!canPromote) {
+                ThemedToast.show(this@GroupMembersActivity,
+                    "Only owners and admins with 'Add Admins' right can promote")
+                return@launch
+            }
+
+            val intent = Intent(
+                this@GroupMembersActivity, EditAdminRightsActivity::class.java
+            ).apply {
+                putExtra(EditAdminRightsActivity.EXTRA_GROUP_ID, gid)
+                putExtra(EditAdminRightsActivity.EXTRA_MEMBER_PUBKEY, member.pubkeyHex)
+                putExtra(EditAdminRightsActivity.EXTRA_MEMBER_NAME, member.displayName)
+            }
+            startActivity(intent)
+        }
     }
 
     private fun setupBottomNav() {
+        // Bottom nav removed from this screen — keep edge-to-edge window handling.
         WindowCompat.setDecorFitsSystemWindows(window, false)
-        val bottomNav = findViewById<View>(R.id.bottomNav)
-        ViewCompat.setOnApplyWindowInsetsListener(findViewById(android.R.id.content)) { _, windowInsets ->
-            val insets = windowInsets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())
-            bottomNav?.setPadding(bottomNav.paddingLeft, bottomNav.paddingTop, bottomNav.paddingRight, insets.bottom)
-            windowInsets
-        }
-
-        BottomNavigationHelper.setupBottomNavigation(this)
     }
 
     private fun startActivityWithSlideAnimation(intent: Intent) {
         startActivity(intent)
-        overridePendingTransition(R.anim.slide_in_right, R.anim.slide_out_left)
+        applySlideInTransition(R.anim.slide_in_right, R.anim.slide_out_left)
     }
 
     private fun lockApp() {

@@ -47,6 +47,7 @@ import com.securelegion.services.SolanaService
 import com.securelegion.services.TorService
 import com.securelegion.services.ZcashService
 import com.securelegion.utils.startActivityWithSlideAnimation
+import com.securelegion.utils.applySlideInTransition
 import com.securelegion.utils.BadgeUtils
 import com.securelegion.utils.GlassDialog
 import com.securelegion.utils.ThemedToast
@@ -170,6 +171,12 @@ class MainActivity : BaseActivity() {
             startActivity(intent)
             finish()
             return
+        }
+
+        // Migrate pre-v4 accounts — generate invite token if missing.
+        if (keyManager.getContactPin() != null && keyManager.getInviteToken() == null) {
+            keyManager.generateAndStoreInviteToken()
+            Log.i("MainActivity", "Generated invite token for pre-v4 account")
         }
 
         // Pre-warm SQLCipher database while views inflate
@@ -981,7 +988,7 @@ class MainActivity : BaseActivity() {
                         val preview = when {
                             group.isPendingInvite -> "Pending invite - tap to accept"
                             !group.lastMessagePreview.isNullOrEmpty() -> group.lastMessagePreview
-                            else -> "${group.memberCount} members"
+                            else -> "${group.memberCount}/${com.securelegion.AddGroupMembersActivity.MAX_GROUP_MEMBERS} members"
                         }
                         val groupChat = Chat(
                             id = group.groupId,
@@ -1029,7 +1036,7 @@ class MainActivity : BaseActivity() {
                             intent.putExtra(GroupChatActivity.EXTRA_GROUP_ID, chat.groupId)
                             intent.putExtra(GroupChatActivity.EXTRA_GROUP_NAME, chat.nickname)
                             startActivity(intent)
-                            overridePendingTransition(R.anim.slide_in_right, R.anim.slide_out_left)
+                            applySlideInTransition(R.anim.slide_in_right, R.anim.slide_out_left)
                         } else {
                             lifecycleScope.launch {
                                 val contact = withContext(Dispatchers.IO) {
@@ -1345,7 +1352,7 @@ class MainActivity : BaseActivity() {
                                 intent.putExtra(GroupChatActivity.EXTRA_GROUP_ID, group.groupId)
                                 intent.putExtra(GroupChatActivity.EXTRA_GROUP_NAME, group.name)
                                 startActivity(intent)
-                                overridePendingTransition(R.anim.slide_in_right, R.anim.slide_out_left)
+                                applySlideInTransition(R.anim.slide_in_right, R.anim.slide_out_left)
                             },
                             onMuteClick = { group ->
                                 toggleGroupMute(group)
@@ -1819,41 +1826,18 @@ class MainActivity : BaseActivity() {
 
         lifecycleScope.launch {
             try {
-                val phase1Obj = org.json.JSONObject(request.contactCardJson)
-                val senderUsername = phase1Obj.getString("username")
-                val senderFriendRequestOnion = phase1Obj.getString("friend_request_onion")
-                val senderX25519PublicKeyBase64 = phase1Obj.getString("x25519_public_key")
-                val senderX25519PublicKey = android.util.Base64.decode(senderX25519PublicKeyBase64, android.util.Base64.NO_WRAP)
-
-                val senderKyberPublicKey = if (phase1Obj.has("kyber_public_key")) {
-                    android.util.Base64.decode(phase1Obj.getString("kyber_public_key"), android.util.Base64.NO_WRAP)
-                } else null
-
-                // Verify Ed25519 signature if present
-                if (phase1Obj.has("signature") && phase1Obj.has("ed25519_public_key")) {
-                    val signature = android.util.Base64.decode(phase1Obj.getString("signature"), android.util.Base64.NO_WRAP)
-                    val senderEd25519PubKey = android.util.Base64.decode(phase1Obj.getString("ed25519_public_key"), android.util.Base64.NO_WRAP)
-
-                    // Use exact signed bytes if available (v2.0.8+), fall back to reconstruction
-                    val unsignedBytes = if (phase1Obj.has("signed_payload")) {
-                        android.util.Base64.decode(phase1Obj.getString("signed_payload"), android.util.Base64.NO_WRAP)
-                    } else {
-                        // Legacy fallback: reconstruct with known key order
-                        org.json.JSONObject().apply {
-                            put("username", phase1Obj.getString("username"))
-                            put("friend_request_onion", phase1Obj.getString("friend_request_onion"))
-                            put("x25519_public_key", phase1Obj.getString("x25519_public_key"))
-                            put("kyber_public_key", phase1Obj.getString("kyber_public_key"))
-                            put("phase", phase1Obj.getInt("phase"))
-                        }.toString().toByteArray(Charsets.UTF_8)
-                    }
-
-                    if (!com.securelegion.crypto.RustBridge.verifySignature(
-                            unsignedBytes, signature, senderEd25519PubKey)) {
-                        com.securelegion.utils.ThemedToast.show(this@MainActivity, "Invalid signature — rejecting")
-                        return@launch
-                    }
+                // Stored contactCardJson is the sender's ContactCard v4 JSON (from envelope.senderCardJson).
+                // PIN+token were already validated when the FR was received, so no signature check here.
+                val senderCard = com.securelegion.models.ContactCard.fromJson(request.contactCardJson)
+                if (senderCard == null) {
+                    com.securelegion.utils.ThemedToast.show(this@MainActivity, "Sender card malformed — cannot accept")
+                    return@launch
                 }
+                val senderUsername = senderCard.displayName
+                val senderFriendRequestOnion = senderCard.friendRequestOnion
+                val senderX25519PublicKey = senderCard.x25519PublicKey
+                val senderX25519PublicKeyBase64 = android.util.Base64.encodeToString(senderX25519PublicKey, android.util.Base64.NO_WRAP)
+                val senderKyberPublicKey: ByteArray? = senderCard.kyberPublicKey.takeIf { it.isNotEmpty() }
 
                 // Build own contact card
                 val keyManager = KeyManager.getInstance(this@MainActivity)
@@ -1867,6 +1851,7 @@ class MainActivity : BaseActivity() {
                     messagingOnion = keyManager.getMessagingOnion() ?: throw Exception("Messaging onion not set"),
                     voiceOnion = keyManager.getVoiceOnion().takeUnless { it.isNullOrBlank() } ?: "",
                     contactPin = keyManager.getContactPin() ?: throw Exception("Contact PIN not set"),
+                    inviteToken = keyManager.getInviteToken() ?: keyManager.generateAndStoreInviteToken(),
                     ipfsCid = keyManager.deriveContactListCID(),
                     timestamp = System.currentTimeMillis() / 1000
                 )
@@ -2061,11 +2046,13 @@ class MainActivity : BaseActivity() {
                     val maxUses = securityPrefs.getInt("pin_max_uses", 5)
                     val mintText = if (maxUses > 0) "$decryptCount/$maxUses" else null
 
+                    val inviteToken = keyManager.getInviteToken() ?: keyManager.generateAndStoreInviteToken()
                     val qrContent = buildString {
                         if (username.isNotEmpty()) append("$username@")
                         append(friendRequestOnion)
                         if (pin.isNotEmpty()) append("@$pin")
                         if (expiryMs > 0) append("@exp$expiryMs")
+                        append("@tok$inviteToken")
                     }
 
                     val bitmap = com.securelegion.utils.BrandedQrGenerator.generate(

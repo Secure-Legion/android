@@ -86,7 +86,7 @@ class HelpActivity : BaseActivity() {
                     line.contains("securelegion", ignoreCase = true) ||
                     line.contains("SecureLegion", ignoreCase = true) ||
                     line.contains("Tor", ignoreCase = false)
-                }.forEach { sb.appendLine(it) }
+                }.forEach { sb.appendLine(redactSensitive(it)) }
             }
         } catch (e: Exception) {
             sb.appendLine("Failed to read logcat: ${e.message}")
@@ -94,5 +94,15 @@ class HelpActivity : BaseActivity() {
 
         file.writeText(sb.toString())
         return file
+    }
+
+    /** Redact .onion addresses, hex keys (32+ chars), and base64 key material from log lines. */
+    private fun redactSensitive(line: String): String {
+        var result = line
+        // Redact .onion addresses (56-char v3 onion)
+        result = result.replace(Regex("[a-z2-7]{56}\\.onion"), "[REDACTED].onion")
+        // Redact long hex strings (likely keys/hashes — 32+ hex chars)
+        result = result.replace(Regex("(?<![a-fA-F0-9])[a-fA-F0-9]{64,}(?![a-fA-F0-9])"), "[REDACTED_KEY]")
+        return result
     }
 }

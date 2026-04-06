@@ -27,6 +27,7 @@ data class ContactCard(
 
     // NEW - Additional fields
     val contactPin: String, // 10-digit PIN (formatted XXX-XXX-XXXX)
+    val inviteToken: String, // 128-bit opaque token as 32 lowercase hex chars (schema v4+)
     val ipfsCid: String? = null, // IPFS CID for this card (deterministic)
 
     // Profile picture (v2.1)
@@ -51,7 +52,7 @@ data class ContactCard(
         // v2: friend_request_onion + messaging_onion + voice_onion
         // v2.1: added profile_picture
         // v3: explicit schema_version field (this card and forward)
-        json.put("schema_version", 3)
+        json.put("schema_version", 4)
 
         // Convert Ed25519 public key to array
         val pubKeyArray = JSONArray()
@@ -76,6 +77,7 @@ data class ContactCard(
         json.put("messaging_onion", messagingOnion)
         json.put("voice_onion", voiceOnion)
         json.put("contact_pin", contactPin)
+        json.put("invite_token", inviteToken)
         if (ipfsCid != null) {
             json.put("ipfs_cid", ipfsCid)
         }
@@ -107,7 +109,7 @@ data class ContactCard(
          * Parse from JSON (after decryption from IPFS)
          * Supports both v1.0 (single .onion) and v2.0 (two .onion) formats
          */
-        fun fromJson(jsonString: String): ContactCard {
+        fun fromJson(jsonString: String): ContactCard? {
             val json = JSONObject(jsonString)
 
             // Parse Ed25519 public key from array
@@ -146,6 +148,10 @@ data class ContactCard(
             val voiceOnion = json.optString("voice_onion", "")
 
             val contactPin = json.optString("contact_pin", "000-000-0000")
+            val inviteTokenValue = json.optString("invite_token", "")
+            if (inviteTokenValue.length != 32) {
+                return null  // schema v4+ requires 32-hex-char invite_token; reject pre-v4 cards
+            }
 
             val ipfsCid = if (json.has("ipfs_cid")) {
                 json.getString("ipfs_cid")
@@ -165,6 +171,7 @@ data class ContactCard(
                 messagingOnion = messagingOnion,
                 voiceOnion = voiceOnion,
                 contactPin = contactPin,
+                inviteToken = inviteTokenValue,
                 ipfsCid = ipfsCid,
                 profilePictureBase64 = profilePictureBase64,
                 timestamp = json.getLong("timestamp")
@@ -187,6 +194,7 @@ data class ContactCard(
         if (messagingOnion != other.messagingOnion) return false
         if (voiceOnion != other.voiceOnion) return false
         if (contactPin != other.contactPin) return false
+        if (inviteToken != other.inviteToken) return false
         if (timestamp != other.timestamp) return false
 
         return true
@@ -202,6 +210,7 @@ data class ContactCard(
         result = 31 * result + messagingOnion.hashCode()
         result = 31 * result + voiceOnion.hashCode()
         result = 31 * result + contactPin.hashCode()
+        result = 31 * result + inviteToken.hashCode()
         result = 31 * result + timestamp.hashCode()
         return result
     }

@@ -224,7 +224,7 @@ class ChatActivity : BaseActivity() {
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
         if (result.resultCode == android.app.Activity.RESULT_OK) {
-            val bitmap = result.data?.extras?.get("data") as? Bitmap
+            val bitmap = result.data?.extras?.let { androidx.core.os.BundleCompat.getParcelable(it, "data", Bitmap::class.java) }
             val base64 = com.securelegion.utils.ImagePicker.processImageBitmap(bitmap)
             if (base64 != null) {
                 saveContactPhoto(base64)
@@ -2215,7 +2215,12 @@ class ChatActivity : BaseActivity() {
 
         Log.d(TAG, "Sending message: $messageText (self-destruct=$enableSelfDestruct, read-receipt=$enableReadReceipt)")
 
-        // Clear input synchronously on main thread before any async work
+        // Clear input synchronously on main thread before any async work.
+        // restartInput() MUST come before clear() — it tells the IME to discard its in-flight
+        // composition (which would otherwise get re-pushed into the Editable after we clear,
+        // leaving the sent text visible in the input bar).
+        val imm = getSystemService(android.content.Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager
+        imm.restartInput(messageInput)
         messageInput.text.clear()
 
         // Post to ensure the cleared-text frame renders before the send coroutine

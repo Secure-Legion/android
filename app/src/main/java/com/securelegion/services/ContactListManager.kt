@@ -161,11 +161,11 @@ class ContactListManager private constructor(private val context: Context) {
                     publicKeyBase64 = contactJson.getString("publicKeyBase64"),
                     x25519PublicKeyBase64 = contactJson.getString("x25519PublicKeyBase64"),
                     friendRequestOnion = contactJson.getString("friendRequestOnion"),
-                    messagingOnion = contactJson.optString("messagingOnion", null),
+                    messagingOnion = contactJson.let { if (it.isNull("messagingOnion")) null else it.optString("messagingOnion") },
                     isDistressContact = contactJson.optBoolean("isDistressContact", false),
                     isBlocked = contactJson.optBoolean("isBlocked", false),
-                    ipfsCid = contactJson.optString("ipfsCid", null),
-                    contactPin = contactJson.optString("contactPin", null),
+                    ipfsCid = contactJson.let { if (it.isNull("ipfsCid")) null else it.optString("ipfsCid") },
+                    contactPin = contactJson.let { if (it.isNull("contactPin")) null else it.optString("contactPin") },
                     addedTimestamp = contactJson.getLong("addedTimestamp")
                 )
                 contacts.add(contact)
@@ -273,49 +273,15 @@ class ContactListManager private constructor(private val context: Context) {
             val contactsRestored = importResult.getOrThrow()
             Log.i(TAG, "Contact list recovered from IPFS: $contactsRestored contacts restored")
 
-            // Re-pin all friends' contact lists (restore mesh participation)
-            repinFriendsContactLists()
+            // Mesh re-participation is now handled by ContactListSyncService (binary protocol
+            // 0x80/0x81/0x82 over messaging HS). Friends auto-push updates on their next change,
+            // which organically re-populates this device's local pins.
 
             Result.success(contactsRestored)
 
         } catch (e: Exception) {
             Log.e(TAG, "Failed to recover contact list from IPFS", e)
             Result.failure(e)
-        }
-    }
-
-    /**
-     * Re-pin all friends' contact lists
-     *
-     * Called after recovering from seed to restore participation in IPFS mesh.
-     * Ensures user contributes backup redundancy to all friends.
-     */
-    private suspend fun repinFriendsContactLists() {
-        try {
-            val keyManager = KeyManager.getInstance(context)
-            val dbPassphrase = keyManager.getDatabasePassphrase()
-            val database = SecureLegionDatabase.getInstance(context, dbPassphrase)
-
-            val contacts = database.contactDao().getAllContacts()
-            val ipfsManager = IPFSManager.getInstance(context)
-
-            Log.d(TAG, "Re-pinning ${contacts.size} friends' contact lists...")
-
-            contacts.forEach { contact ->
-                if (contact.ipfsCid != null) {
-                    // Pin friend's contact list (not individual card - that's old v4 architecture)
-                    // In v5, each friend has a contact list CID stored in ipfsCid field
-                    val pinResult = ipfsManager.pinFriendContactList(contact.ipfsCid, contact.displayName)
-                    if (pinResult.isSuccess) {
-                        Log.d(TAG, "Re-pinned ${contact.displayName}'s contact list")
-                    }
-                }
-            }
-
-            Log.i(TAG, "Re-pinned all friends' contact lists")
-
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to re-pin friends' contact lists", e)
         }
     }
 

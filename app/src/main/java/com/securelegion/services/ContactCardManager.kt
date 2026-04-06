@@ -106,6 +106,7 @@ class ContactCardManager(private val context: Context) {
 
                 // Parse JSON to ContactCard
                 val contactCard = ContactCard.fromJson(decrypted)
+                    ?: throw Exception("ContactCard missing invite_token (schema v4 required)")
                 Log.i(TAG, "Successfully decrypted contact card for: ${contactCard.displayName}")
 
                 Result.success(contactCard)
@@ -114,68 +115,6 @@ class ContactCardManager(private val context: Context) {
                 Result.failure(e)
             }
         }
-    }
-
-    /**
-     * Download contact card via Tor .onion address (v2.0)
-     * Uses HTTP GET through SOCKS5 to friend request .onion
-     * @param friendRequestOnion Friend request .onion address
-     * @param pin 6-digit PIN for decryption
-     * @return Decrypted ContactCard
-     */
-    suspend fun downloadContactCardViaTor(friendRequestOnion: String, pin: String): Result<ContactCard> {
-        return withContext(Dispatchers.IO) {
-            try {
-                validatePin(pin)
-
-                Log.d(TAG, "Downloading contact card via Tor from .onion: $friendRequestOnion")
-
-                // Build URL: http://friendrequest.onion:9152/contact-card
-                val url = "http://$friendRequestOnion:9152/contact-card"
-                Log.d(TAG, "GET $url")
-
-                // Download via Tor SOCKS5
-                val response = com.securelegion.crypto.RustBridge.httpGetViaTor(url)
-                    ?: throw Exception("HTTP GET failed - no response from .onion address")
-
-                Log.d(TAG, "Received response from .onion (${response.length} bytes)")
-
-                // Parse HTTP response to extract body (encrypted contact card)
-                val encrypted = parseHttpResponse(response)
-                Log.d(TAG, "Extracted encrypted contact card: ${encrypted.size} bytes")
-
-                // Decrypt with PIN
-                val decrypted = decryptWithPin(encrypted, pin)
-                Log.d(TAG, "Decrypted contact card: ${decrypted.length} bytes")
-
-                // Parse JSON to ContactCard
-                val contactCard = ContactCard.fromJson(decrypted)
-                Log.i(TAG, "Successfully downloaded contact card via Tor for: ${contactCard.displayName}")
-
-                Result.success(contactCard)
-            } catch (e: Exception) {
-                Log.e(TAG, "Failed to download contact card via Tor", e)
-                Result.failure(e)
-            }
-        }
-    }
-
-    /**
-     * Parse HTTP response to extract binary body (contact card)
-     * Handles both text and binary HTTP responses
-     */
-    private fun parseHttpResponse(response: String): ByteArray {
-        // Find double CRLF (end of headers)
-        val bodyStart = response.indexOf("\r\n\r\n")
-        if (bodyStart == -1) {
-            throw Exception("Invalid HTTP response - no headers delimiter")
-        }
-
-        // Extract body (everything after headers)
-        val body = response.substring(bodyStart + 4)
-
-        // Convert to bytes (contact card is binary encrypted data)
-        return body.toByteArray(StandardCharsets.ISO_8859_1)
     }
 
     /**
