@@ -2,6 +2,7 @@ pub mod tor;
 pub mod arti;
 pub mod friend_request_server;
 pub mod socks5_client;
+pub mod contact_list_sync;
 
 pub use tor::{TorManager, PENDING_CONNECTIONS, PendingConnection, compute_onion_address_from_ed25519_seed};
 pub use friend_request_server::{ContactExchangeEndpoint, get_endpoint};

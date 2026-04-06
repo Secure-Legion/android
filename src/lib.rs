@@ -1,7 +1,10 @@
 pub mod crypto;
 pub mod crdt;
+#[cfg(not(target_os = "windows"))]
 pub mod audio;
+#[cfg(not(target_os = "windows"))]
 pub mod network;
+#[cfg(not(target_os = "windows"))]
 pub mod nlx402;
 pub mod util;
 

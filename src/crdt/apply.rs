@@ -47,6 +47,9 @@ pub enum ApplyError {
 
     #[error("Op error: {0}")]
     Op(#[from] OpError),
+
+    #[error("Group was deleted")]
+    GroupDeleted,
 }
 
 // ---------------------------------------------------------------------------
@@ -67,6 +70,10 @@ pub struct GroupState {
     applied_ops: HashSet<OpID>,
     /// Total applied op count (for limit checking).
     pub op_count: usize,
+    /// Once true, all future ops are rejected. Set by `GroupDelete`.
+    pub group_deleted: bool,
+    /// Optional reason recorded from the GroupDelete op (for UI).
+    pub delete_reason: Option<String>,
 }
 
 impl GroupState {
@@ -81,6 +88,8 @@ impl GroupState {
             max_lamport: BTreeMap::new(),
             applied_ops: HashSet::new(),
             op_count: 0,
+            group_deleted: false,
+            delete_reason: None,
         }
     }
 
@@ -103,6 +112,12 @@ impl GroupState {
             return Ok(false);
         }
 
+        // 3b. Group-delete poison pill. Once the group is terminated, reject
+        //     every further op (idempotent GroupDelete replays short-circuit above).
+        if self.group_deleted {
+            return Err(ApplyError::GroupDeleted);
+        }
+
         // 4. Op limit check (hard cap — membership ops always bypass)
         if !op.op_type.is_membership_op() {
             if let OpLimitStatus::HardCapReached = check_op_limits(self.op_count) {
@@ -115,7 +130,7 @@ impl GroupState {
         //    Its own apply function validates lamport=1 and no prior creation.
         let author_device = DeviceID::from_pubkey(&op.author_pubkey);
         if op.op_type != OpType::GroupCreate {
-            if !self.membership.can_author_op(&author_device, &op.op_type) {
+            if !self.membership.can_author_op(&author_device, &op.op_type, &self.metadata) {
                 return Err(ApplyError::Unauthorized(format!(
                     "{:?} cannot author {:?}",
                     author_device, op.op_type
@@ -129,12 +144,20 @@ impl GroupState {
             OpType::MemberInvite => self.membership.apply_member_invite(op)?,
             OpType::MemberAccept => self.membership.apply_member_accept(op)?,
             OpType::MemberRemove => self.membership.apply_member_remove(op)?,
+            OpType::MemberUnban => self.membership.apply_member_unban(op)?,
             OpType::RoleSet => self.membership.apply_role_set(op)?,
             OpType::MsgAdd => self.messages.apply_msg_add(op)?,
             OpType::MsgEdit => self.messages.apply_msg_edit(op)?,
             OpType::MsgDelete => self.messages.apply_msg_delete(op, &self.membership)?,
             OpType::ReactionSet => self.messages.apply_reaction_set(op)?,
             OpType::MetadataSet => self.metadata.apply_metadata_set(op)?,
+            OpType::GroupDelete => {
+                let payload: crate::crdt::ops::GroupDeletePayload = op
+                    .decode_payload()
+                    .map_err(|e| ApplyError::Op(e))?;
+                self.group_deleted = true;
+                self.delete_reason = payload.reason;
+            }
         }
 
         // 7. Bookkeeping
@@ -256,9 +279,9 @@ impl GroupState {
 mod tests {
     use super::*;
     use crate::crdt::ops::{
-        GroupCreatePayload, MemberAcceptPayload, MemberInvitePayload, MemberRemovePayload,
-        MetadataKey, MetadataSetPayload, MsgAddPayload, MsgDeletePayload, ReactionSetPayload,
-        RemoveReason, Role,
+        GroupCreatePayload, GroupDeletePayload, MemberAcceptPayload, MemberInvitePayload,
+        MemberRemovePayload, MetadataKey, MetadataSetPayload, MsgAddPayload, MsgDeletePayload,
+        ReactionSetPayload, RemoveReason, Role,
     };
 
     fn keypair() -> ([u8; 32], [u8; 32]) {
@@ -366,6 +389,7 @@ mod tests {
         let payload = MemberRemovePayload {
             target_device_id: DeviceID::from_pubkey(&target_pub),
             reason,
+            ban: false,
         };
         OpEnvelope::create_signed(
             gid,
@@ -497,6 +521,82 @@ mod tests {
         state.apply_op(&msg).unwrap();
         assert_eq!(state.messages.message_count(), 1);
         assert_eq!(state.op_count, 4);
+    }
+
+    fn op_group_delete(
+        gid: GroupID, author_pub: [u8; 32], author_priv: &[u8; 32],
+        reason: Option<String>, lamport: u64, nonce: u64,
+    ) -> OpEnvelope {
+        let payload = GroupDeletePayload { reason };
+        OpEnvelope::create_signed(
+            gid, OpType::GroupDelete, &payload, lamport, nonce, author_pub, author_priv,
+        ).unwrap()
+    }
+
+    #[test]
+    fn test_group_delete_by_owner_succeeds() {
+        let (gid, owner_pub, owner_priv, _, _, ops) = setup_group();
+        let mut state = GroupState::new(gid);
+        for op in &ops { state.apply_op(op).unwrap(); }
+
+        let delete = op_group_delete(
+            gid, owner_pub, &owner_priv, Some("bye".to_string()), 4, 400,
+        );
+        state.apply_op(&delete).unwrap();
+        assert!(state.group_deleted);
+        assert_eq!(state.delete_reason, Some("bye".to_string()));
+    }
+
+    #[test]
+    fn test_group_delete_blocks_future_ops() {
+        let (gid, owner_pub, owner_priv, alice_pub, alice_priv, ops) = setup_group();
+        let mut state = GroupState::new(gid);
+        for op in &ops { state.apply_op(op).unwrap(); }
+
+        let delete = op_group_delete(gid, owner_pub, &owner_priv, None, 4, 400);
+        state.apply_op(&delete).unwrap();
+
+        // Any subsequent op is rejected with GroupDeleted
+        let msg = op_msg_add(gid, alice_pub, &alice_priv, [0x01; 32], 5, 500);
+        let err = state.apply_op(&msg).unwrap_err();
+        assert!(matches!(err, ApplyError::GroupDeleted));
+    }
+
+    #[test]
+    fn test_group_delete_by_non_owner_rejected() {
+        // Alice is just a Member — cannot delete the group
+        let (gid, _, _, alice_pub, alice_priv, ops) = setup_group();
+        let mut state = GroupState::new(gid);
+        for op in &ops { state.apply_op(op).unwrap(); }
+
+        let delete = op_group_delete(gid, alice_pub, &alice_priv, None, 4, 400);
+        let err = state.apply_op(&delete).unwrap_err();
+        assert!(matches!(err, ApplyError::Unauthorized(_)));
+        assert!(!state.group_deleted);
+    }
+
+    #[test]
+    fn test_group_delete_by_admin_rejected() {
+        // Promote Alice to Admin with all rights — still can't GroupDelete.
+        let (gid, owner_pub, owner_priv, alice_pub, alice_priv, ops) = setup_group();
+        let mut state = GroupState::new(gid);
+        for op in &ops { state.apply_op(op).unwrap(); }
+
+        use crate::crdt::ops::{AdminRights, RoleSetPayload};
+        let role_payload = RoleSetPayload {
+            target_device_id: DeviceID::from_pubkey(&alice_pub),
+            new_role: Role::Admin,
+            admin_rights: Some(AdminRights::all_true()),
+            custom_title: None,
+        };
+        let promote = OpEnvelope::create_signed(
+            gid, OpType::RoleSet, &role_payload, 4, 400, owner_pub, &owner_priv,
+        ).unwrap();
+        state.apply_op(&promote).unwrap();
+
+        let delete = op_group_delete(gid, alice_pub, &alice_priv, None, 5, 500);
+        let err = state.apply_op(&delete).unwrap_err();
+        assert!(matches!(err, ApplyError::Unauthorized(_)));
     }
 
     #[test]

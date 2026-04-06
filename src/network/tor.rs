@@ -1032,6 +1032,13 @@ pub const MSG_TYPE_SYNC_CHUNK: u8 = 0x33;      // Sync chunk response: [groupId:
 pub const MSG_TYPE_ROUTING_UPDATE: u8 = 0x35;   // Routing directory: [groupId:32][senderPk:32][sig:64][count:u16 BE][entries...]
 pub const MSG_TYPE_ROUTING_REQUEST: u8 = 0x36;  // Routing request: [groupId:32][senderPk:32][sig:64][requestedPubkey:32]
 
+// Contact list backup mesh wire types (see CONTACT_LIST_SYNC_PROTOCOL.md)
+// Transported over messaging HS. Each frame is Ed25519-signed with sender's identity key.
+// Payload (contact list blob) is AES-256-GCM encrypted by the owner with a seed-derived PIN.
+pub const MSG_TYPE_CONTACT_LIST_REQUEST: u8 = 0x80;  // "Send me the blob for CID X" (recovery)
+pub const MSG_TYPE_CONTACT_LIST_RESPONSE: u8 = 0x81; // Reply to REQUEST with blob (or empty NACK)
+pub const MSG_TYPE_CONTACT_LIST_PUSH: u8 = 0x82;     // "Pin this list for me" (friend-add + updates)
+
 /// Canonical port constants (from PORT_MAP.md)
 pub const PORT_HS_PING_PONG: u16 = 9150; // Message HS: PING/PONG/ACK
 pub const PORT_HS_PONG_LOCAL: u16 = 8080; // Message HS: Local PONG response fallback
@@ -2311,7 +2318,10 @@ impl TorManager {
             MSG_TYPE_SYNC_REQUEST |
             MSG_TYPE_SYNC_CHUNK |
             MSG_TYPE_ROUTING_UPDATE |
-            MSG_TYPE_ROUTING_REQUEST => {
+            MSG_TYPE_ROUTING_REQUEST |
+            MSG_TYPE_CONTACT_LIST_REQUEST |
+            MSG_TYPE_CONTACT_LIST_RESPONSE |
+            MSG_TYPE_CONTACT_LIST_PUSH => {
                 // Valid type, continue to length check
             }
             _ => {
@@ -2339,6 +2349,8 @@ impl TorManager {
         let min_wire_len: usize = match msg_type {
             MSG_TYPE_CRDT_OPS | MSG_TYPE_SYNC_REQUEST | MSG_TYPE_SYNC_CHUNK |
             MSG_TYPE_ROUTING_UPDATE | MSG_TYPE_ROUTING_REQUEST => 1 + 32 + 32 + sig_len, // type + X25519 + groupId + sig?
+            MSG_TYPE_CONTACT_LIST_REQUEST | MSG_TYPE_CONTACT_LIST_RESPONSE | MSG_TYPE_CONTACT_LIST_PUSH
+                => 1 + 32 + 8 + 2 + 1 + 64, // header + 1-byte CID + Ed25519 sig
             _ => 1 + 32 + 16 + sig_len, // type + pubkey + smallest possible ciphertext + sig?
         };
         if buf.len() < min_wire_len {
@@ -2477,6 +2489,12 @@ impl TorManager {
                 log::info!("→ Routing to TAP handler");
                 // Send full buffer (INCLUDING type byte at offset 0)
                 ping_tx.send((conn_id, buf)).ok();
+            }
+            MSG_TYPE_CONTACT_LIST_REQUEST | MSG_TYPE_CONTACT_LIST_RESPONSE | MSG_TYPE_CONTACT_LIST_PUSH => {
+                log::info!("→ Routing to CONTACT_LIST_SYNC handler (type=0x{:02x})", msg_type);
+                if let Err(e) = crate::network::contact_list_sync::handle_inbound(&buf) {
+                    log::warn!("CONTACT_LIST_SYNC drop: {}", e);
+                }
             }
             MSG_TYPE_DELIVERY_CONFIRMATION => {
                 log::info!("Received ACK on main listener (port 8080)");

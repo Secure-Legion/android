@@ -71,6 +71,14 @@ impl MetadataState {
             .and_then(|r| std::str::from_utf8(&r.value).ok())
     }
 
+    /// Read a single-byte boolean metadata value (0x00 = false, 0x01 = true).
+    /// Returns `None` if the key was never set.
+    pub fn get_bool(&self, key: MetadataKey) -> Option<bool> {
+        self.registers
+            .get(&key)
+            .and_then(|r| r.value.first().map(|b| *b != 0))
+    }
+
     // -----------------------------------------------------------------------
     // Apply
     // -----------------------------------------------------------------------

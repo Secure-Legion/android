@@ -57,6 +57,7 @@ pub enum OpType {
     MemberInvite,
     MemberAccept,
     MemberRemove,
+    MemberUnban,
     RoleSet,
 
     // Messages
@@ -67,6 +68,9 @@ pub enum OpType {
 
     // Metadata (LWW registers)
     MetadataSet,
+
+    // Group lifecycle terminator — Owner-only, poisons the group.
+    GroupDelete,
 }
 
 impl OpType {
@@ -78,7 +82,9 @@ impl OpType {
                 | OpType::MemberInvite
                 | OpType::MemberAccept
                 | OpType::MemberRemove
+                | OpType::MemberUnban
                 | OpType::RoleSet
+                | OpType::GroupDelete
         )
     }
 
@@ -89,12 +95,14 @@ impl OpType {
             OpType::MemberInvite => "MemberInvite",
             OpType::MemberAccept => "MemberAccept",
             OpType::MemberRemove => "MemberRemove",
+            OpType::MemberUnban => "MemberUnban",
             OpType::RoleSet => "RoleSet",
             OpType::MsgAdd => "MsgAdd",
             OpType::MsgEdit => "MsgEdit",
             OpType::MsgDelete => "MsgDelete",
             OpType::ReactionSet => "ReactionSet",
             OpType::MetadataSet => "MetadataSet",
+            OpType::GroupDelete => "GroupDelete",
         }
     }
 }
@@ -118,12 +126,55 @@ pub enum RemoveReason {
     Leave,
 }
 
+/// Per-admin rights bitfield. Owner has all rights implicitly (no AdminRights
+/// stored). Plain Members consult group-level metadata instead of this struct.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct AdminRights {
+    pub can_invite: bool,
+    pub can_remove: bool,
+    pub can_change_info: bool,
+    pub can_delete_messages: bool,
+    pub can_pin_messages: bool,
+    pub can_add_admins: bool,
+}
+
+impl AdminRights {
+    pub fn all_false() -> Self {
+        Self {
+            can_invite: false,
+            can_remove: false,
+            can_change_info: false,
+            can_delete_messages: false,
+            can_pin_messages: false,
+            can_add_admins: false,
+        }
+    }
+
+    pub fn all_true() -> Self {
+        Self {
+            can_invite: true,
+            can_remove: true,
+            can_change_info: true,
+            can_delete_messages: true,
+            can_pin_messages: true,
+            can_add_admins: true,
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(u8)]
 pub enum MetadataKey {
     Name = 0,
     Avatar = 1,
     Topic = 2,
+    // Group-wide member-tier permission toggles (Phase 3).
+    // Owner writes these; Rust consults them in can_author_op for plain Members.
+    // Values are stored as single-byte booleans: 0x00 = false, 0x01 = true.
+    AllowMemberSendMessages = 10,
+    AllowMemberInvites = 11,
+    AllowMemberPin = 12,
+    AllowMemberChangeInfo = 13,
 }
 
 // ---------------------------------------------------------------------------
@@ -156,12 +207,39 @@ pub struct MemberAcceptPayload {
 pub struct MemberRemovePayload {
     pub target_device_id: DeviceID,
     pub reason: RemoveReason,
+    /// When true, the target is added to the banned list and cannot be
+    /// re-invited until unbanned. Always false for `Leave` removals.
+    #[serde(default)]
+    pub ban: bool,
+}
+
+/// Unban a previously-banned member so they can be re-invited.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct MemberUnbanPayload {
+    pub target_device_id: DeviceID,
+}
+
+/// Owner-only group terminator. Once applied, all subsequent ops on this
+/// group are rejected (group is "poisoned"). Clients should also cascade
+/// local cleanup on receive.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct GroupDeletePayload {
+    /// Optional human-readable reason (shown in audit log / system message).
+    #[serde(default)]
+    pub reason: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct RoleSetPayload {
     pub target_device_id: DeviceID,
     pub new_role: Role,
+    /// Per-admin rights bitfield. `Some` when promoting to Admin, `None`
+    /// when demoting (or when role is Owner/Member/ReadOnly).
+    #[serde(default)]
+    pub admin_rights: Option<AdminRights>,
+    /// Optional free-text title shown next to the admin's name (max 32 bytes).
+    #[serde(default)]
+    pub custom_title: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -659,14 +737,27 @@ mod tests {
         let p = MemberRemovePayload {
             target_device_id: DeviceID::from_bytes([4; 16]),
             reason: RemoveReason::Kick,
+            ban: true,
         };
         let bytes = cbor_encode(&p).unwrap();
         let _: MemberRemovePayload = cbor_decode(&bytes).unwrap();
+
+        // MemberUnban
+        let p = MemberUnbanPayload { target_device_id: DeviceID::from_bytes([9; 16]) };
+        let bytes = cbor_encode(&p).unwrap();
+        let _: MemberUnbanPayload = cbor_decode(&bytes).unwrap();
+
+        // GroupDelete
+        let p = GroupDeletePayload { reason: Some("Project ended".to_string()) };
+        let bytes = cbor_encode(&p).unwrap();
+        let _: GroupDeletePayload = cbor_decode(&bytes).unwrap();
 
         // RoleSet
         let p = RoleSetPayload {
             target_device_id: DeviceID::from_bytes([5; 16]),
             new_role: Role::Admin,
+            admin_rights: Some(AdminRights::all_true()),
+            custom_title: Some("Moderator".to_string()),
         };
         let bytes = cbor_encode(&p).unwrap();
         let _: RoleSetPayload = cbor_decode(&bytes).unwrap();

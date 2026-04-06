@@ -26,9 +26,9 @@ pub mod apply;
 pub use ids::{DeviceID, GroupID, OpID};
 pub use ops::{
     OpEnvelope, OpType, OpError,
-    Role, RemoveReason, MetadataKey,
+    Role, RemoveReason, MetadataKey, AdminRights,
     GroupCreatePayload, MemberInvitePayload, MemberAcceptPayload,
-    MemberRemovePayload, RoleSetPayload,
+    MemberRemovePayload, MemberUnbanPayload, RoleSetPayload, GroupDeletePayload,
     MsgAddPayload, MsgEditPayload, MsgDeletePayload,
     ReactionSetPayload, MetadataSetPayload,
     cbor_encode, cbor_decode, generate_msg_id,

@@ -87,7 +87,7 @@ pub fn hybrid_encapsulate(
 
     // 2. ML-KEM-1024 encapsulation
     let ek = <MlKem1024 as KemCore>::EncapsulationKey::from_bytes(
-        ml_kem::array::Array::from_slice(their_kyber_public)
+        their_kyber_public.into()
     );
     let (ct, mlkem_ss) = ek.encapsulate(&mut OsRng).unwrap();
 
@@ -119,9 +119,9 @@ pub fn hybrid_decapsulate(
 
     // 2. ML-KEM-1024 decapsulation (timing-safe, unlike pqc_kyber)
     let dk = <MlKem1024 as KemCore>::DecapsulationKey::from_bytes(
-        ml_kem::array::Array::from_slice(our_kyber_secret)
+        our_kyber_secret.into()
     );
-    let ct = ml_kem::array::Array::from_slice(&ciphertext.kyber_ciphertext);
+    let ct = (&ciphertext.kyber_ciphertext).into();
     let mlkem_ss = dk.decapsulate(ct)
         .map_err(|_| HybridKEMError::MlKemDecapsFailed)?;
 

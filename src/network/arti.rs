@@ -11,6 +11,7 @@ use std::error::Error;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::sync::Mutex as StdMutex;
+use once_cell::sync::Lazy;
 
 use arti_client::TorClient;
 use arti_client::config::TorClientConfigBuilder;
@@ -26,17 +27,58 @@ use crate::network::tor::{
     BOOTSTRAP_STATUS, CIRCUIT_ESTABLISHED, LAST_CIRCUIT_ESTABLISHED_MS,
     MESSAGE_TX, VOICE_TX, ACK_TX, FRIEND_REQUEST_TX, TAP_TX,
     CONNECTION_ID_COUNTER,
-    touch_hs_accept_heartbeat, reset_hs_heartbeats,
+    touch_hs_accept_heartbeat, touch_hs_loop_heartbeat, reset_hs_heartbeats,
+};
+use crate::network::tor::{
     MSG_TYPE_PING, MSG_TYPE_PONG, MSG_TYPE_TEXT, MSG_TYPE_VOICE, MSG_TYPE_TAP,
     MSG_TYPE_DELIVERY_CONFIRMATION, MSG_TYPE_FRIEND_REQUEST, MSG_TYPE_FRIEND_REQUEST_ACCEPTED,
     MSG_TYPE_IMAGE, MSG_TYPE_PAYMENT_REQUEST, MSG_TYPE_PAYMENT_SENT, MSG_TYPE_PAYMENT_ACCEPTED,
     MSG_TYPE_CALL_SIGNALING, MSG_TYPE_STICKER, MSG_TYPE_PROFILE_UPDATE, MSG_TYPE_REACTION,
     MSG_TYPE_CRDT_OPS, MSG_TYPE_SYNC_REQUEST, MSG_TYPE_SYNC_CHUNK,
     MSG_TYPE_ROUTING_UPDATE, MSG_TYPE_ROUTING_REQUEST,
+    MSG_TYPE_CONTACT_LIST_REQUEST, MSG_TYPE_CONTACT_LIST_RESPONSE, MSG_TYPE_CONTACT_LIST_PUSH,
 };
 use crate::util::lock_recover;
 
 // ───── Global Arti State ─────
+
+/// Stored Arti DataStreams from incoming connections, keyed by conn_id.
+/// After reading a message, the stream is held here so Kotlin can write an ACK
+/// back on the SAME connection (instant, no circuit setup).
+/// Entries are cleaned up after 60s or when used.
+static ARTI_PENDING_STREAMS: Lazy<StdMutex<std::collections::HashMap<u64, arti_client::DataStream>>> =
+    Lazy::new(|| StdMutex::new(std::collections::HashMap::new()));
+
+/// Write an ACK on a stored Arti stream, then remove it from the map.
+pub async fn write_ack_on_stored_stream(conn_id: u64, wire_bytes: &[u8]) -> Result<(), String> {
+    use futures::io::AsyncWriteExt as FuturesWriteExt;
+
+    let mut stream = {
+        let mut map: std::sync::MutexGuard<'_, std::collections::HashMap<u64, arti_client::DataStream>> =
+            match ARTI_PENDING_STREAMS.lock() { Ok(g) => g, Err(p) => p.into_inner() };
+        map.remove(&conn_id).ok_or_else(|| format!("no stored stream for conn_id={}", conn_id))?
+    };
+
+    let len = wire_bytes.len() as u32;
+    stream.write_all(&len.to_be_bytes()).await.map_err(|e| format!("write len failed: {}", e))?;
+    stream.write_all(wire_bytes).await.map_err(|e| format!("write body failed: {}", e))?;
+    stream.flush().await.map_err(|e| format!("flush failed: {}", e))?;
+
+    log::info!("ACK_SAME_CONN: wrote {} bytes on conn_id={}", wire_bytes.len(), conn_id);
+    Ok(())
+}
+
+/// Clean up stale stored streams. Caps at 50 entries.
+pub fn cleanup_stale_streams() {
+    let mut map: std::sync::MutexGuard<'_, std::collections::HashMap<u64, arti_client::DataStream>> =
+        match ARTI_PENDING_STREAMS.lock() { Ok(g) => g, Err(p) => p.into_inner() };
+    while map.len() > 50 {
+        if let Some(&oldest_key) = map.keys().min() {
+            map.remove(&oldest_key);
+            log::debug!("ARTI_PENDING_STREAMS: pruned stale conn_id={}", oldest_key);
+        }
+    }
+}
 
 /// The in-process Arti TorClient — replaces C Tor subprocess entirely.
 /// Uses Mutex<Option<>> instead of OnceCell so it can be reset on Android service restart.
@@ -600,6 +642,8 @@ where
 
     runtime_spawn(async move {
         log::info!("Arti: HS acceptor task started");
+        // Prime the loop heartbeat so the watchdog sees the acceptor as alive.
+        touch_hs_loop_heartbeat();
 
         // Convert RendRequest stream → StreamRequest stream
         // handle_rend_requests automatically accepts all rendezvous handshakes
@@ -611,7 +655,15 @@ where
                     log::info!("Arti: HS acceptor cancelled");
                     break;
                 }
+                _ = tokio::time::sleep(std::time::Duration::from_secs(30)) => {
+                    // Periodic heartbeat tick — proves the select loop is alive even when
+                    // no streams are arriving. Required for the Kotlin TorHealthMonitorWorker
+                    // watchdog to detect a wedged acceptor (loop alive + accept stale → self-test).
+                    touch_hs_loop_heartbeat();
+                }
                 maybe_req = stream_requests.next() => {
+                    // Any wake on this branch means the loop is running — refresh the heartbeat.
+                    touch_hs_loop_heartbeat();
                     match maybe_req {
                         Some(stream_req) => {
                             let conn_id = CONNECTION_ID_COUNTER.fetch_add(1, Ordering::SeqCst) + 1;
@@ -696,7 +748,8 @@ async fn handle_arti_incoming(
         MSG_TYPE_PAYMENT_ACCEPTED | MSG_TYPE_CALL_SIGNALING |
         MSG_TYPE_STICKER | MSG_TYPE_PROFILE_UPDATE | MSG_TYPE_REACTION |
         MSG_TYPE_CRDT_OPS | MSG_TYPE_SYNC_REQUEST | MSG_TYPE_SYNC_CHUNK |
-        MSG_TYPE_ROUTING_UPDATE | MSG_TYPE_ROUTING_REQUEST => {}
+        MSG_TYPE_ROUTING_UPDATE | MSG_TYPE_ROUTING_REQUEST |
+        MSG_TYPE_CONTACT_LIST_REQUEST | MSG_TYPE_CONTACT_LIST_RESPONSE | MSG_TYPE_CONTACT_LIST_PUSH => {}
         _ => {
             log::error!("ARTI INVALID_MSG_TYPE_DROP: 0x{:02x}", msg_type);
             return Err(format!("Invalid message type: 0x{:02x}", msg_type).into());
@@ -714,6 +767,10 @@ async fn handle_arti_incoming(
     let min_wire_len: usize = match msg_type {
         MSG_TYPE_CRDT_OPS | MSG_TYPE_SYNC_REQUEST | MSG_TYPE_SYNC_CHUNK |
         MSG_TYPE_ROUTING_UPDATE | MSG_TYPE_ROUTING_REQUEST => 1 + 32 + 32 + sig_len,
+        // Contact-list frames: type(1) + sender_pk(32) + timestamp(8) + cid_len(2) + cid(>=1) + sig(64)
+        // = 108 minimum (no blob, 1-byte CID). contact_list_sync handles exact validation.
+        MSG_TYPE_CONTACT_LIST_REQUEST | MSG_TYPE_CONTACT_LIST_RESPONSE | MSG_TYPE_CONTACT_LIST_PUSH
+            => 1 + 32 + 8 + 2 + 1 + 64,
         _ => 1 + 32 + 16 + sig_len,
     };
     if buf.len() < min_wire_len {
@@ -751,6 +808,22 @@ async fn handle_arti_incoming(
         MSG_TYPE_CRDT_OPS | MSG_TYPE_SYNC_REQUEST | MSG_TYPE_SYNC_CHUNK |
         MSG_TYPE_ROUTING_UPDATE | MSG_TYPE_ROUTING_REQUEST => {
             log::info!("ARTI → MESSAGE handler (type=0x{:02x})", msg_type);
+
+            // Store the stream for same-connection ACK reply (TEXT/VOICE/IMAGE/PAYMENT/STICKER).
+            // Kotlin calls sendAckOnArtiStream(conn_id) → writes ACK on this stream → instant.
+            // Falls back to outbound connection if stream is stale/dropped.
+            let needs_ack = matches!(msg_type,
+                MSG_TYPE_TEXT | MSG_TYPE_VOICE | MSG_TYPE_IMAGE |
+                MSG_TYPE_PAYMENT_REQUEST | MSG_TYPE_PAYMENT_SENT | MSG_TYPE_PAYMENT_ACCEPTED |
+                MSG_TYPE_STICKER
+            );
+            if needs_ack {
+                let mut map: std::sync::MutexGuard<'_, std::collections::HashMap<u64, arti_client::DataStream>> =
+                    match ARTI_PENDING_STREAMS.lock() { Ok(g) => g, Err(p) => p.into_inner() };
+                map.insert(conn_id, stream);
+                log::debug!("ARTI: stored stream conn_id={} for same-connection ACK ({} total)", conn_id, map.len());
+            }
+
             if let Some(message_tx) = MESSAGE_TX.load_full() {
                 let tx_lock = lock_recover(&message_tx);
                 if let Err(e) = tx_lock.send((conn_id, buf)) {
@@ -794,6 +867,12 @@ async fn handle_arti_incoming(
                 }
             } else {
                 log::error!("ARTI: ACK channel not initialized");
+            }
+        }
+        MSG_TYPE_CONTACT_LIST_REQUEST | MSG_TYPE_CONTACT_LIST_RESPONSE | MSG_TYPE_CONTACT_LIST_PUSH => {
+            log::info!("ARTI → CONTACT_LIST_SYNC handler (type=0x{:02x})", msg_type);
+            if let Err(e) = crate::network::contact_list_sync::handle_inbound(&buf) {
+                log::warn!("ARTI CONTACT_LIST_SYNC drop: {}", e);
             }
         }
         MSG_TYPE_FRIEND_REQUEST | MSG_TYPE_FRIEND_REQUEST_ACCEPTED => {
