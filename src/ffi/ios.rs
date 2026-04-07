@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::ffi::{c_char, CStr, CString};
+use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::ptr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};
@@ -20,7 +21,8 @@ use crate::crdt::ids::{DeviceID, GroupID, OpID};
 use crate::crdt::limits::{HARD_CAP_OPS_PER_GROUP, MAX_OP_PAYLOAD_BYTES};
 use crate::crdt::messages::MessageEntry;
 use crate::crdt::ops::{
-    generate_msg_id, GroupCreatePayload, MemberAcceptPayload, MemberInvitePayload, MemberRemovePayload,
+    generate_msg_id, AdminRights, GroupCreatePayload, GroupDeletePayload, MemberAcceptPayload,
+    MemberInvitePayload, MemberRemovePayload, MemberUnbanPayload,
     MetadataKey, MetadataSetPayload, MsgAddPayload, MsgDeletePayload, MsgEditPayload, OpEnvelope, OpType,
     ReactionSetPayload, RemoveReason, Role, RoleSetPayload,
 };
@@ -174,6 +176,10 @@ fn parse_metadata_key(s: &str) -> Result<MetadataKey, String> {
         "Name" => Ok(MetadataKey::Name),
         "Avatar" => Ok(MetadataKey::Avatar),
         "Topic" => Ok(MetadataKey::Topic),
+        "AllowMemberSendMessages" => Ok(MetadataKey::AllowMemberSendMessages),
+        "AllowMemberInvites" => Ok(MetadataKey::AllowMemberInvites),
+        "AllowMemberPin" => Ok(MetadataKey::AllowMemberPin),
+        "AllowMemberChangeInfo" => Ok(MetadataKey::AllowMemberChangeInfo),
         other => Err(format!("unknown metadata key: {}", other)),
     }
 }
@@ -199,7 +205,7 @@ fn b64_to_24(s: &str, field_name: &str) -> Result<[u8; 24], String> {
 }
 
 fn next_lamport(group_id: &GroupID, state: &GroupState) -> u64 {
-    let mut lmap = get_lamport_map().lock().unwrap();
+    let mut lmap = get_lamport_map().lock().unwrap_or_else(|e| e.into_inner());
     let group_max = state.max_lamport.values().max().copied().unwrap_or(0);
     let my_current = *lmap.get(group_id).unwrap_or(&0);
     let next = std::cmp::max(group_max, my_current) + 1;
@@ -611,7 +617,14 @@ pub unsafe extern "C" fn securelegion_decrypt_with_evolution(
             ptr::copy_nonoverlapping(result.evolved_chain_key.as_ptr(), evolved_key_out, 32);
             write_bytes_with_len(plaintext_out, plaintext_len_out, &result.plaintext)
         }
-        Err(_) => -1,
+        Err(e) => match e {
+            crate::crypto::encryption::EncryptionError::ReplayAttack { .. } => -10,
+            crate::crypto::encryption::EncryptionError::OutOfOrder { .. } => -11,
+            crate::crypto::encryption::EncryptionError::SequenceTooFar { .. } => -12,
+            crate::crypto::encryption::EncryptionError::DecryptionFailed => -13,
+            crate::crypto::encryption::EncryptionError::InvalidKeyLength => -14,
+            _ => -1,
+        },
     }
 }
 
@@ -710,6 +723,28 @@ pub unsafe extern "C" fn securelegion_create_pong_token(
         Ok(bytes) => write_bytes_with_len(token_out, token_len_out, &bytes),
         Err(_) => -1,
     }
+}
+
+/// Extract the hex-encoded pingId (nonce) from a decrypted PingToken.
+/// Returns the number of bytes written to `ping_id_out` (48 for a valid token), or -1 on error.
+/// The caller must provide a buffer of at least 48 bytes.
+#[no_mangle]
+pub unsafe extern "C" fn securelegion_extract_ping_id(
+    ping_token: *const u8,
+    ping_token_len: u32,
+    ping_id_out: *mut u8,
+    ping_id_len_out: *mut u32,
+) -> i32 {
+    let ping_bytes = match bytes_from_ptr(ping_token, ping_token_len as usize) {
+        Ok(v) => v,
+        Err(_) => return -1,
+    };
+    let token = match PingToken::from_bytes(ping_bytes) {
+        Ok(t) => t,
+        Err(_) => return -1,
+    };
+    let hex_id = hex::encode(&token.nonce);
+    write_bytes_with_len(ping_id_out, ping_id_len_out, hex_id.as_bytes())
 }
 
 #[no_mangle]
@@ -1003,40 +1038,44 @@ pub unsafe extern "C" fn securelegion_crdt_load_group(
     serialized_ops: *const u8,
     serialized_ops_len: u32,
 ) -> i32 {
-    let gid_s = match cstr_to_string(group_id_hex) {
-        Ok(v) => v,
-        Err(_) => return -1,
-    };
-    let gid = match GroupID::from_hex(&gid_s) {
-        Ok(v) => v,
-        Err(_) => return -1,
-    };
-    let data = bytes_from_ptr_opt(serialized_ops, serialized_ops_len as usize);
-    let ops = match decode_length_prefixed_ops(data, HARD_CAP_OPS_PER_GROUP, MAX_SERIALIZED_OP_BYTES) {
-        Ok(v) => v,
-        Err(_) => return -1,
-    };
-    let state = match GroupState::rebuild_from_ops(gid, &ops) {
-        Ok(v) => v,
-        Err(_) => return -1,
-    };
-    get_groups().lock().unwrap().insert(gid, state);
-    0
+    catch_unwind(AssertUnwindSafe(|| {
+        let gid_s = match cstr_to_string(group_id_hex) {
+            Ok(v) => v,
+            Err(_) => return -1,
+        };
+        let gid = match GroupID::from_hex(&gid_s) {
+            Ok(v) => v,
+            Err(_) => return -1,
+        };
+        let data = bytes_from_ptr_opt(serialized_ops, serialized_ops_len as usize);
+        let ops = match decode_length_prefixed_ops(data, HARD_CAP_OPS_PER_GROUP, MAX_SERIALIZED_OP_BYTES) {
+            Ok(v) => v,
+            Err(_) => return -1,
+        };
+        let state = match GroupState::rebuild_from_ops(gid, &ops) {
+            Ok(v) => v,
+            Err(_) => return -1,
+        };
+        get_groups().lock().unwrap_or_else(|e| e.into_inner()).insert(gid, state);
+        0
+    })).unwrap_or(-1)
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn securelegion_crdt_unload_group(group_id_hex: *const c_char) -> i32 {
-    let gid_s = match cstr_to_string(group_id_hex) {
-        Ok(v) => v,
-        Err(_) => return -1,
-    };
-    let gid = match GroupID::from_hex(&gid_s) {
-        Ok(v) => v,
-        Err(_) => return -1,
-    };
-    get_groups().lock().unwrap().remove(&gid);
-    get_lamport_map().lock().unwrap().remove(&gid);
-    0
+    catch_unwind(AssertUnwindSafe(|| {
+        let gid_s = match cstr_to_string(group_id_hex) {
+            Ok(v) => v,
+            Err(_) => return -1,
+        };
+        let gid = match GroupID::from_hex(&gid_s) {
+            Ok(v) => v,
+            Err(_) => return -1,
+        };
+        get_groups().lock().unwrap_or_else(|e| e.into_inner()).remove(&gid);
+        get_lamport_map().lock().unwrap_or_else(|e| e.into_inner()).remove(&gid);
+        0
+    })).unwrap_or(-1)
 }
 
 #[no_mangle]
@@ -1047,43 +1086,45 @@ pub unsafe extern "C" fn securelegion_crdt_apply_ops(
     result_json_out: *mut u8,
     result_json_len: *mut u32,
 ) -> i32 {
-    let gid_s = match cstr_to_string(group_id_hex) {
-        Ok(v) => v,
-        Err(_) => return -1,
-    };
-    let gid = match GroupID::from_hex(&gid_s) {
-        Ok(v) => v,
-        Err(_) => return -1,
-    };
-    let data = match bytes_from_ptr(serialized_ops, serialized_ops_len as usize) {
-        Ok(v) => v,
-        Err(_) => return -1,
-    };
-    let ops = match decode_length_prefixed_ops(data, MAX_OPS_PER_APPLY_BATCH, MAX_SERIALIZED_OP_BYTES) {
-        Ok(v) => v,
-        Err(_) => return -1,
-    };
-    let mut groups = get_groups().lock().unwrap();
-    let state = match groups.get_mut(&gid) {
-        Some(v) => v,
-        None => return -1,
-    };
-    let mut applied = 0u64;
-    let mut rejected = 0u64;
-    for op in &ops {
-        match state.apply_op(op) {
-            Ok(true) => applied += 1,
-            Ok(false) => {}
-            Err(_) => rejected += 1,
+    catch_unwind(AssertUnwindSafe(|| {
+        let gid_s = match cstr_to_string(group_id_hex) {
+            Ok(v) => v,
+            Err(_) => return -1,
+        };
+        let gid = match GroupID::from_hex(&gid_s) {
+            Ok(v) => v,
+            Err(_) => return -1,
+        };
+        let data = match bytes_from_ptr(serialized_ops, serialized_ops_len as usize) {
+            Ok(v) => v,
+            Err(_) => return -1,
+        };
+        let ops = match decode_length_prefixed_ops(data, MAX_OPS_PER_APPLY_BATCH, MAX_SERIALIZED_OP_BYTES) {
+            Ok(v) => v,
+            Err(_) => return -1,
+        };
+        let mut groups = get_groups().lock().unwrap_or_else(|e| e.into_inner());
+        let state = match groups.get_mut(&gid) {
+            Some(v) => v,
+            None => return -1,
+        };
+        let mut applied = 0u64;
+        let mut rejected = 0u64;
+        for op in &ops {
+            match state.apply_op(op) {
+                Ok(true) => applied += 1,
+                Ok(false) => {}
+                Err(_) => rejected += 1,
+            }
         }
-    }
-    let json = serde_json::json!({
-        "applied": applied,
-        "rejected": rejected,
-        "limit_status": format!("{:?}", state.limit_status()),
-    })
-    .to_string();
-    write_bytes_with_len(result_json_out, result_json_len, json.as_bytes())
+        let json = serde_json::json!({
+            "applied": applied,
+            "rejected": rejected,
+            "limit_status": format!("{:?}", state.limit_status()),
+        })
+        .to_string();
+        write_bytes_with_len(result_json_out, result_json_len, json.as_bytes())
+    })).unwrap_or(-1)
 }
 
 #[no_mangle]
@@ -1096,187 +1137,216 @@ pub unsafe extern "C" fn securelegion_crdt_create_op(
     result_out: *mut u8,
     result_len: *mut u32,
 ) -> i32 {
-    let gid_s = match cstr_to_string(group_id_hex) {
-        Ok(v) => v,
-        Err(_) => return -1,
-    };
-    let gid = match GroupID::from_hex(&gid_s) {
-        Ok(v) => v,
-        Err(_) => return -1,
-    };
-    let otype_s = match cstr_to_string(op_type_str) {
-        Ok(v) => v,
-        Err(_) => return -1,
-    };
-    let otype = match parse_op_type(&otype_s) {
-        Ok(v) => v,
-        Err(_) => return -1,
-    };
-    let params_s = match cstr_to_string(params_json) {
-        Ok(v) => v,
-        Err(_) => return -1,
-    };
-    let params: serde_json::Value = match serde_json::from_str(&params_s) {
-        Ok(v) => v,
-        Err(_) => return -1,
-    };
-    let pub_key = match copy_fixed::<32>(author_pubkey) {
-        Ok(v) => v,
-        Err(_) => return -1,
-    };
-    let priv_key = match copy_fixed::<32>(author_privkey) {
-        Ok(v) => v,
-        Err(_) => return -1,
-    };
-    let author_device = DeviceID::from_pubkey(&pub_key);
+    catch_unwind(AssertUnwindSafe(|| {
+        let gid_s = match cstr_to_string(group_id_hex) {
+            Ok(v) => v,
+            Err(_) => return -1,
+        };
+        let gid = match GroupID::from_hex(&gid_s) {
+            Ok(v) => v,
+            Err(_) => return -1,
+        };
+        let otype_s = match cstr_to_string(op_type_str) {
+            Ok(v) => v,
+            Err(_) => return -1,
+        };
+        let otype = match parse_op_type(&otype_s) {
+            Ok(v) => v,
+            Err(_) => return -1,
+        };
+        let params_s = match cstr_to_string(params_json) {
+            Ok(v) => v,
+            Err(_) => return -1,
+        };
+        let params: serde_json::Value = match serde_json::from_str(&params_s) {
+            Ok(v) => v,
+            Err(_) => return -1,
+        };
+        let pub_key = match copy_fixed::<32>(author_pubkey) {
+            Ok(v) => v,
+            Err(_) => return -1,
+        };
+        let priv_key = match copy_fixed::<32>(author_privkey) {
+            Ok(v) => v,
+            Err(_) => return -1,
+        };
+        let author_device = DeviceID::from_pubkey(&pub_key);
 
-    let mut groups = get_groups().lock().unwrap();
-    if otype == OpType::GroupCreate && !groups.contains_key(&gid) {
-        groups.insert(gid, GroupState::new(gid));
-    }
-    let state = match groups.get_mut(&gid) {
-        Some(v) => v,
-        None => return -1,
-    };
+        let mut groups = get_groups().lock().unwrap_or_else(|e| e.into_inner());
+        if otype == OpType::GroupCreate && !groups.contains_key(&gid) {
+            groups.insert(gid, GroupState::new(gid));
+        }
+        let state = match groups.get_mut(&gid) {
+            Some(v) => v,
+            None => return -1,
+        };
 
-    let lamport = if otype == OpType::GroupCreate { 1 } else { next_lamport(&gid, state) };
-    let op_nonce: u64 = rand::random();
+        let lamport = if otype == OpType::GroupCreate { 1 } else { next_lamport(&gid, state) };
+        let op_nonce: u64 = rand::random();
 
-    let envelope = match otype {
-        OpType::GroupCreate => {
-            let group_name = params["group_name"].as_str().unwrap_or("").to_string();
-            let secret = B64.decode(params["encrypted_group_secret_b64"].as_str().unwrap_or("")).unwrap_or_default();
-            let payload = GroupCreatePayload { group_name, encrypted_group_secret: secret };
-            OpEnvelope::create_signed(gid, otype, &payload, lamport, op_nonce, pub_key, &priv_key)
+        let envelope = match otype {
+            OpType::GroupCreate => {
+                let group_name = params["group_name"].as_str().unwrap_or("").to_string();
+                let secret = B64.decode(params["encrypted_group_secret_b64"].as_str().unwrap_or("")).unwrap_or_default();
+                let payload = GroupCreatePayload { group_name, encrypted_group_secret: secret };
+                OpEnvelope::create_signed(gid, otype, &payload, lamport, op_nonce, pub_key, &priv_key)
+            }
+            OpType::MemberInvite => {
+                let invited_pubkey = match hex_to_32(params["invited_pubkey_hex"].as_str().unwrap_or(""), "invited_pubkey") {
+                    Ok(v) => v,
+                    Err(_) => return -1,
+                };
+                let role = match parse_role(params["role"].as_str().unwrap_or("Member")) {
+                    Ok(v) => v,
+                    Err(_) => return -1,
+                };
+                let secret = B64.decode(params["encrypted_group_secret_b64"].as_str().unwrap_or("")).unwrap_or_default();
+                let invited_device_id = DeviceID::from_pubkey(&invited_pubkey);
+                let payload = MemberInvitePayload { invited_device_id, invited_pubkey, role, encrypted_group_secret: secret };
+                OpEnvelope::create_signed(gid, otype, &payload, lamport, op_nonce, pub_key, &priv_key)
+            }
+            OpType::MemberAccept => {
+                let invite_op_id = match OpID::from_hex(params["invite_op_id_hex"].as_str().unwrap_or("")) {
+                    Ok(v) => v,
+                    Err(_) => return -1,
+                };
+                let payload = MemberAcceptPayload { invite_op_id };
+                OpEnvelope::create_signed(gid, otype, &payload, lamport, op_nonce, pub_key, &priv_key)
+            }
+            OpType::MemberRemove => {
+                let target_pk = match hex_to_32(params["target_pubkey_hex"].as_str().unwrap_or(""), "target_pubkey") {
+                    Ok(v) => v,
+                    Err(_) => return -1,
+                };
+                let reason = match parse_remove_reason(params["reason"].as_str().unwrap_or("Kick")) {
+                    Ok(v) => v,
+                    Err(_) => return -1,
+                };
+                let target_device_id = DeviceID::from_pubkey(&target_pk);
+                let ban = params["ban"].as_bool().unwrap_or(false);
+                let payload = MemberRemovePayload { target_device_id, reason, ban };
+                OpEnvelope::create_signed(gid, otype, &payload, lamport, op_nonce, pub_key, &priv_key)
+            }
+            OpType::RoleSet => {
+                let target_pk = match hex_to_32(params["target_pubkey_hex"].as_str().unwrap_or(""), "target_pubkey") {
+                    Ok(v) => v,
+                    Err(_) => return -1,
+                };
+                let new_role = match parse_role(params["new_role"].as_str().unwrap_or("Member")) {
+                    Ok(v) => v,
+                    Err(_) => return -1,
+                };
+                let target_device_id = DeviceID::from_pubkey(&target_pk);
+                let admin_rights = params.get("admin_rights").and_then(|ar| {
+                    if ar.is_null() || !ar.is_object() { return None; }
+                    Some(AdminRights {
+                        can_invite: ar["can_invite"].as_bool().unwrap_or(false),
+                        can_remove: ar["can_remove"].as_bool().unwrap_or(false),
+                        can_change_info: ar["can_change_info"].as_bool().unwrap_or(false),
+                        can_delete_messages: ar["can_delete_messages"].as_bool().unwrap_or(false),
+                        can_pin_messages: ar["can_pin_messages"].as_bool().unwrap_or(false),
+                        can_add_admins: ar["can_add_admins"].as_bool().unwrap_or(false),
+                    })
+                });
+                let custom_title = params["custom_title"].as_str().map(|s| s.to_string());
+                let payload = RoleSetPayload { target_device_id, new_role, admin_rights, custom_title };
+                OpEnvelope::create_signed(gid, otype, &payload, lamport, op_nonce, pub_key, &priv_key)
+            }
+            OpType::MsgAdd => {
+                let msg_id = generate_msg_id(&author_device, lamport, op_nonce);
+                let ciphertext = B64.decode(params["ciphertext_b64"].as_str().unwrap_or("")).unwrap_or_default();
+                let nonce = match b64_to_24(params["nonce_b64"].as_str().unwrap_or(""), "nonce") {
+                    Ok(v) => v,
+                    Err(_) => return -1,
+                };
+                let payload = MsgAddPayload { msg_id, ciphertext, nonce };
+                OpEnvelope::create_signed(gid, otype, &payload, lamport, op_nonce, pub_key, &priv_key)
+            }
+            OpType::MsgEdit => {
+                let msg_id = match hex_to_32(params["msg_id_hex"].as_str().unwrap_or(""), "msg_id") {
+                    Ok(v) => v,
+                    Err(_) => return -1,
+                };
+                let new_ciphertext = B64.decode(params["new_ciphertext_b64"].as_str().unwrap_or("")).unwrap_or_default();
+                let nonce = match b64_to_24(params["nonce_b64"].as_str().unwrap_or(""), "nonce") {
+                    Ok(v) => v,
+                    Err(_) => return -1,
+                };
+                let payload = MsgEditPayload { msg_id, new_ciphertext, nonce };
+                OpEnvelope::create_signed(gid, otype, &payload, lamport, op_nonce, pub_key, &priv_key)
+            }
+            OpType::MsgDelete => {
+                let msg_id = match hex_to_32(params["msg_id_hex"].as_str().unwrap_or(""), "msg_id") {
+                    Ok(v) => v,
+                    Err(_) => return -1,
+                };
+                let payload = MsgDeletePayload { msg_id };
+                OpEnvelope::create_signed(gid, otype, &payload, lamport, op_nonce, pub_key, &priv_key)
+            }
+            OpType::ReactionSet => {
+                let msg_id = match hex_to_32(params["msg_id_hex"].as_str().unwrap_or(""), "msg_id") {
+                    Ok(v) => v,
+                    Err(_) => return -1,
+                };
+                let emoji = params["emoji"].as_str().unwrap_or("").to_string();
+                let present = params["present"].as_bool().unwrap_or(true);
+                let payload = ReactionSetPayload { msg_id, emoji, present };
+                OpEnvelope::create_signed(gid, otype, &payload, lamport, op_nonce, pub_key, &priv_key)
+            }
+            OpType::MetadataSet => {
+                let key = match parse_metadata_key(params["key"].as_str().unwrap_or("")) {
+                    Ok(v) => v,
+                    Err(_) => return -1,
+                };
+                let value = B64.decode(params["value_b64"].as_str().unwrap_or("")).unwrap_or_default();
+                let payload = MetadataSetPayload { key, value };
+                OpEnvelope::create_signed(gid, otype, &payload, lamport, op_nonce, pub_key, &priv_key)
+            }
+            OpType::MemberUnban => {
+                let target_pk = match hex_to_32(params["target_pubkey_hex"].as_str().unwrap_or(""), "target_pubkey") {
+                    Ok(v) => v,
+                    Err(_) => return -1,
+                };
+                let target_device_id = DeviceID::from_pubkey(&target_pk);
+                let payload = MemberUnbanPayload { target_device_id };
+                OpEnvelope::create_signed(gid, otype, &payload, lamport, op_nonce, pub_key, &priv_key)
+            }
+            OpType::GroupDelete => {
+                let reason = params["reason"].as_str().map(|s| s.to_string());
+                let payload = GroupDeletePayload { reason };
+                OpEnvelope::create_signed(gid, otype, &payload, lamport, op_nonce, pub_key, &priv_key)
+            }
+        };
+
+        let envelope = match envelope {
+            Ok(v) => v,
+            Err(_) => return -1,
+        };
+        if state.apply_op(&envelope).is_err() {
+            return -1;
         }
-        OpType::MemberInvite => {
-            let invited_pubkey = match hex_to_32(params["invited_pubkey_hex"].as_str().unwrap_or(""), "invited_pubkey") {
-                Ok(v) => v,
-                Err(_) => return -1,
-            };
-            let role = match parse_role(params["role"].as_str().unwrap_or("Member")) {
-                Ok(v) => v,
-                Err(_) => return -1,
-            };
-            let secret = B64.decode(params["encrypted_group_secret_b64"].as_str().unwrap_or("")).unwrap_or_default();
-            let invited_device_id = DeviceID::from_pubkey(&invited_pubkey);
-            let payload = MemberInvitePayload { invited_device_id, invited_pubkey, role, encrypted_group_secret: secret };
-            OpEnvelope::create_signed(gid, otype, &payload, lamport, op_nonce, pub_key, &priv_key)
+        {
+            let mut lmap = get_lamport_map().lock().unwrap_or_else(|e| e.into_inner());
+            lmap.entry(gid)
+                .and_modify(|l| *l = (*l).max(lamport))
+                .or_insert(lamport);
         }
-        OpType::MemberAccept => {
-            let invite_op_id = match OpID::from_hex(params["invite_op_id_hex"].as_str().unwrap_or("")) {
-                Ok(v) => v,
-                Err(_) => return -1,
-            };
-            let payload = MemberAcceptPayload { invite_op_id };
-            OpEnvelope::create_signed(gid, otype, &payload, lamport, op_nonce, pub_key, &priv_key)
-        }
-        OpType::MemberRemove => {
-            let target_pk = match hex_to_32(params["target_pubkey_hex"].as_str().unwrap_or(""), "target_pubkey") {
-                Ok(v) => v,
-                Err(_) => return -1,
-            };
-            let reason = match parse_remove_reason(params["reason"].as_str().unwrap_or("Kick")) {
-                Ok(v) => v,
-                Err(_) => return -1,
-            };
-            let target_device_id = DeviceID::from_pubkey(&target_pk);
-            let payload = MemberRemovePayload { target_device_id, reason };
-            OpEnvelope::create_signed(gid, otype, &payload, lamport, op_nonce, pub_key, &priv_key)
-        }
-        OpType::RoleSet => {
-            let target_pk = match hex_to_32(params["target_pubkey_hex"].as_str().unwrap_or(""), "target_pubkey") {
-                Ok(v) => v,
-                Err(_) => return -1,
-            };
-            let new_role = match parse_role(params["new_role"].as_str().unwrap_or("Member")) {
-                Ok(v) => v,
-                Err(_) => return -1,
-            };
-            let target_device_id = DeviceID::from_pubkey(&target_pk);
-            let payload = RoleSetPayload { target_device_id, new_role };
-            OpEnvelope::create_signed(gid, otype, &payload, lamport, op_nonce, pub_key, &priv_key)
-        }
-        OpType::MsgAdd => {
+        let op_bytes = match envelope.to_bytes() {
+            Ok(v) => v,
+            Err(_) => return -1,
+        };
+        let mut json = serde_json::json!({
+            "op_bytes_b64": B64.encode(&op_bytes),
+            "op_id": envelope.op_id.to_hex(),
+            "op_type": otype_s,
+            "lamport": lamport,
+        });
+        if otype == OpType::MsgAdd {
             let msg_id = generate_msg_id(&author_device, lamport, op_nonce);
-            let ciphertext = B64.decode(params["ciphertext_b64"].as_str().unwrap_or("")).unwrap_or_default();
-            let nonce = match b64_to_24(params["nonce_b64"].as_str().unwrap_or(""), "nonce") {
-                Ok(v) => v,
-                Err(_) => return -1,
-            };
-            let payload = MsgAddPayload { msg_id, ciphertext, nonce };
-            OpEnvelope::create_signed(gid, otype, &payload, lamport, op_nonce, pub_key, &priv_key)
+            json["msg_id_hex"] = serde_json::Value::String(hex::encode(msg_id));
         }
-        OpType::MsgEdit => {
-            let msg_id = match hex_to_32(params["msg_id_hex"].as_str().unwrap_or(""), "msg_id") {
-                Ok(v) => v,
-                Err(_) => return -1,
-            };
-            let new_ciphertext = B64.decode(params["new_ciphertext_b64"].as_str().unwrap_or("")).unwrap_or_default();
-            let nonce = match b64_to_24(params["nonce_b64"].as_str().unwrap_or(""), "nonce") {
-                Ok(v) => v,
-                Err(_) => return -1,
-            };
-            let payload = MsgEditPayload { msg_id, new_ciphertext, nonce };
-            OpEnvelope::create_signed(gid, otype, &payload, lamport, op_nonce, pub_key, &priv_key)
-        }
-        OpType::MsgDelete => {
-            let msg_id = match hex_to_32(params["msg_id_hex"].as_str().unwrap_or(""), "msg_id") {
-                Ok(v) => v,
-                Err(_) => return -1,
-            };
-            let payload = MsgDeletePayload { msg_id };
-            OpEnvelope::create_signed(gid, otype, &payload, lamport, op_nonce, pub_key, &priv_key)
-        }
-        OpType::ReactionSet => {
-            let msg_id = match hex_to_32(params["msg_id_hex"].as_str().unwrap_or(""), "msg_id") {
-                Ok(v) => v,
-                Err(_) => return -1,
-            };
-            let emoji = params["emoji"].as_str().unwrap_or("").to_string();
-            let present = params["present"].as_bool().unwrap_or(true);
-            let payload = ReactionSetPayload { msg_id, emoji, present };
-            OpEnvelope::create_signed(gid, otype, &payload, lamport, op_nonce, pub_key, &priv_key)
-        }
-        OpType::MetadataSet => {
-            let key = match parse_metadata_key(params["key"].as_str().unwrap_or("")) {
-                Ok(v) => v,
-                Err(_) => return -1,
-            };
-            let value = B64.decode(params["value_b64"].as_str().unwrap_or("")).unwrap_or_default();
-            let payload = MetadataSetPayload { key, value };
-            OpEnvelope::create_signed(gid, otype, &payload, lamport, op_nonce, pub_key, &priv_key)
-        }
-    };
-
-    let envelope = match envelope {
-        Ok(v) => v,
-        Err(_) => return -1,
-    };
-    if state.apply_op(&envelope).is_err() {
-        return -1;
-    }
-    {
-        let mut lmap = get_lamport_map().lock().unwrap();
-        lmap.entry(gid)
-            .and_modify(|l| *l = (*l).max(lamport))
-            .or_insert(lamport);
-    }
-    let op_bytes = match envelope.to_bytes() {
-        Ok(v) => v,
-        Err(_) => return -1,
-    };
-    let mut json = serde_json::json!({
-        "op_bytes_b64": B64.encode(&op_bytes),
-        "op_id": envelope.op_id.to_hex(),
-        "op_type": otype_s,
-        "lamport": lamport,
-    });
-    if otype == OpType::MsgAdd {
-        let msg_id = generate_msg_id(&author_device, lamport, op_nonce);
-        json["msg_id_hex"] = serde_json::Value::String(hex::encode(msg_id));
-    }
-    write_bytes_with_len(result_out, result_len, json.to_string().as_bytes())
+        write_bytes_with_len(result_out, result_len, json.to_string().as_bytes())
+    })).unwrap_or(-1)
 }
 
 #[no_mangle]
@@ -1287,90 +1357,139 @@ pub unsafe extern "C" fn securelegion_crdt_query(
     result_out: *mut u8,
     result_len: *mut u32,
 ) -> i32 {
-    let gid_s = match cstr_to_string(group_id_hex) {
-        Ok(v) => v,
-        Err(_) => return -1,
-    };
-    let gid = match GroupID::from_hex(&gid_s) {
-        Ok(v) => v,
-        Err(_) => return -1,
-    };
-    let qt = match cstr_to_string(query_type) {
-        Ok(v) => v,
-        Err(_) => return -1,
-    };
-    let params_s = cstr_to_string(params_json).unwrap_or_else(|_| "{}".to_string());
+    catch_unwind(AssertUnwindSafe(|| {
+        let gid_s = match cstr_to_string(group_id_hex) {
+            Ok(v) => v,
+            Err(_) => return -1,
+        };
+        let gid = match GroupID::from_hex(&gid_s) {
+            Ok(v) => v,
+            Err(_) => return -1,
+        };
+        let qt = match cstr_to_string(query_type) {
+            Ok(v) => v,
+            Err(_) => return -1,
+        };
+        let params_s = cstr_to_string(params_json).unwrap_or_else(|_| "{}".to_string());
 
-    let groups = get_groups().lock().unwrap();
-    let state = match groups.get(&gid) {
-        Some(v) => v,
-        None => return -1,
-    };
+        let groups = get_groups().lock().unwrap_or_else(|e| e.into_inner());
+        let state = match groups.get(&gid) {
+            Some(v) => v,
+            None => return -1,
+        };
 
-    let json = match qt.as_str() {
-        "members" => {
-            let members: Vec<serde_json::Value> = state
-                .membership
-                .members()
-                .iter()
-                .map(|(did, entry)| {
-                    serde_json::json!({
-                        "device_id": did.to_hex(),
-                        "pubkey_hex": hex::encode(entry.pubkey),
-                        "role": format!("{:?}", entry.role),
-                        "accepted": entry.accepted,
-                        "removed": entry.removed,
-                        "rekey_required": entry.rekey_required,
-                        "invited_by_op_id": entry.invited_by.to_hex(),
-                        "encrypted_group_secret_b64": B64.encode(&entry.encrypted_group_secret),
+        let json = match qt.as_str() {
+            "members" => {
+                let members: Vec<serde_json::Value> = state
+                    .membership
+                    .members()
+                    .iter()
+                    .map(|(did, entry)| {
+                        serde_json::json!({
+                            "device_id": did.to_hex(),
+                            "pubkey_hex": hex::encode(entry.pubkey),
+                            "role": format!("{:?}", entry.role),
+                            "accepted": entry.accepted,
+                            "removed": entry.removed,
+                            "banned": entry.banned,
+                            "rekey_required": entry.rekey_required,
+                            "invited_by_op_id": entry.invited_by.to_hex(),
+                            "encrypted_group_secret_b64": B64.encode(&entry.encrypted_group_secret),
+                            "admin_rights": entry.admin_rights.map(|ar| serde_json::json!({
+                                "can_invite": ar.can_invite,
+                                "can_remove": ar.can_remove,
+                                "can_change_info": ar.can_change_info,
+                                "can_delete_messages": ar.can_delete_messages,
+                                "can_pin_messages": ar.can_pin_messages,
+                                "can_add_admins": ar.can_add_admins,
+                            })),
+                            "custom_title": entry.custom_title,
+                        })
                     })
-                })
-                .collect();
-            serde_json::Value::Array(members)
-        }
-        "messages" => {
-            let msgs: Vec<serde_json::Value> = state.renderable_messages().iter().map(|m| message_to_json(m)).collect();
-            serde_json::Value::Array(msgs)
-        }
-        "messages_after" => {
-            let params: serde_json::Value = serde_json::from_str(&params_s).unwrap_or_default();
-            let after_lamport = params["after_lamport"].as_u64().unwrap_or(0);
-            let limit = params["limit"].as_u64().unwrap_or(50) as usize;
-            let mut msgs: Vec<&MessageEntry> = state
-                .renderable_messages()
-                .into_iter()
-                .filter(|m| m.create_op.lamport > after_lamport)
-                .collect();
-            msgs.sort_by(|a, b| a.create_op.cmp(&b.create_op));
-            msgs.truncate(limit);
-            serde_json::Value::Array(msgs.iter().map(|m| message_to_json(m)).collect())
-        }
-        "metadata" => {
-            let mut obj = serde_json::Map::new();
-            if let Some(name) = state.metadata.name() {
-                obj.insert("name".into(), serde_json::Value::String(name.to_string()));
+                    .collect();
+                serde_json::Value::Array(members)
             }
-            if let Some(topic) = state.metadata.topic() {
-                obj.insert("topic".into(), serde_json::Value::String(topic.to_string()));
+            "messages" => {
+                let msgs: Vec<serde_json::Value> = state.renderable_messages().iter().map(|m| message_to_json(m)).collect();
+                serde_json::Value::Array(msgs)
             }
-            if let Some(avatar) = state.metadata.get(&MetadataKey::Avatar) {
-                obj.insert("avatar_b64".into(), serde_json::Value::String(B64.encode(&avatar.value)));
+            "messages_after" => {
+                let params: serde_json::Value = serde_json::from_str(&params_s).unwrap_or_default();
+                let after_lamport = params["after_lamport"].as_u64().unwrap_or(0);
+                let limit = params["limit"].as_u64().unwrap_or(50) as usize;
+                let mut msgs: Vec<&MessageEntry> = state
+                    .renderable_messages()
+                    .into_iter()
+                    .filter(|m| m.create_op.lamport > after_lamport)
+                    .collect();
+                msgs.sort_by(|a, b| a.create_op.cmp(&b.create_op));
+                msgs.truncate(limit);
+                serde_json::Value::Array(msgs.iter().map(|m| message_to_json(m)).collect())
             }
-            serde_json::Value::Object(obj)
-        }
-        "heads" => {
-            let heads: Vec<String> = state.heads.iter().map(|h| h.to_hex()).collect();
-            let per_author: serde_json::Map<String, serde_json::Value> = state
-                .max_lamport
-                .iter()
-                .map(|(did, l)| (did.to_hex(), serde_json::Value::Number((*l).into())))
-                .collect();
-            serde_json::json!({ "heads": heads, "per_author_lamport": per_author })
-        }
-        "state_hash" => serde_json::json!({ "hash": hex::encode(state.state_hash()) }),
-        "limit_status" => serde_json::json!({ "status": format!("{:?}", state.limit_status()), "op_count": state.op_count }),
-        _ => return -1,
-    };
+            "metadata" => {
+                let mut obj = serde_json::Map::new();
+                if let Some(name) = state.metadata.name() {
+                    obj.insert("name".into(), serde_json::Value::String(name.to_string()));
+                }
+                if let Some(topic) = state.metadata.topic() {
+                    obj.insert("topic".into(), serde_json::Value::String(topic.to_string()));
+                }
+                if let Some(avatar) = state.metadata.get(&MetadataKey::Avatar) {
+                    obj.insert("avatar_b64".into(), serde_json::Value::String(B64.encode(&avatar.value)));
+                }
+                for (key, name) in [
+                    (MetadataKey::AllowMemberSendMessages, "allow_member_send_messages"),
+                    (MetadataKey::AllowMemberInvites, "allow_member_invites"),
+                    (MetadataKey::AllowMemberPin, "allow_member_pin"),
+                    (MetadataKey::AllowMemberChangeInfo, "allow_member_change_info"),
+                ] {
+                    if let Some(v) = state.metadata.get_bool(key) {
+                        obj.insert(name.into(), serde_json::Value::Bool(v));
+                    }
+                }
+                serde_json::Value::Object(obj)
+            }
+            "heads" => {
+                let heads: Vec<String> = state.heads.iter().map(|h| h.to_hex()).collect();
+                let per_author: serde_json::Map<String, serde_json::Value> = state
+                    .max_lamport
+                    .iter()
+                    .map(|(did, l)| (did.to_hex(), serde_json::Value::Number((*l).into())))
+                    .collect();
+                serde_json::json!({ "heads": heads, "per_author_lamport": per_author })
+            }
+            "state_hash" => serde_json::json!({ "hash": hex::encode(state.state_hash()) }),
+            "group_status" => serde_json::json!({
+                "deleted": state.group_deleted,
+                "delete_reason": state.delete_reason,
+            }),
+            "limit_status" => serde_json::json!({ "status": format!("{:?}", state.limit_status()), "op_count": state.op_count }),
+            _ => return -1,
+        };
 
-    write_bytes_with_len(result_out, result_len, json.to_string().as_bytes())
+        write_bytes_with_len(result_out, result_len, json.to_string().as_bytes())
+    })).unwrap_or(-1)
+}
+
+/// Compute DeviceID from Ed25519 public key — BLAKE3(pubkey)[0..16] → 32 hex chars.
+/// Swift uses this to match the author field returned by CRDT queries.
+#[no_mangle]
+pub unsafe extern "C" fn securelegion_device_id_from_pubkey(
+    pubkey: *const u8,       // 32-byte Ed25519 public key
+    out_buf: *mut u8,        // buffer for hex string output
+    out_len: *mut u32,       // set to actual length written
+) -> i32 {
+    if pubkey.is_null() || out_buf.is_null() || out_len.is_null() { return -1; }
+    let pk: [u8; 32] = {
+        let mut buf = [0u8; 32];
+        std::ptr::copy_nonoverlapping(pubkey, buf.as_mut_ptr(), 32);
+        buf
+    };
+    let did = DeviceID::from_pubkey(&pk);
+    let hex_str = did.to_hex();
+    let hex_bytes = hex_str.as_bytes();
+    if hex_bytes.len() > 64 { return -1; }
+    std::ptr::copy_nonoverlapping(hex_bytes.as_ptr(), out_buf, hex_bytes.len());
+    *out_len = hex_bytes.len() as u32;
+    0
 }
