@@ -26,8 +26,10 @@ import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.room.withTransaction
 import com.securelegion.ChatActivity
+import com.securelegion.GroupChatActivity
 import com.securelegion.LockActivity
 import com.securelegion.MainActivity
+import com.securelegion.crypto.KeyManager
 import com.securelegion.R
 import com.securelegion.SecurityModeActivity
 import com.securelegion.crypto.TorManager
@@ -94,8 +96,7 @@ class TorService : Service() {
     private val isAckPollerRunning: Boolean get() = pollerJobs["ACK"]?.isActive == true
     private var isListenerRunning = false
 
-    // AlarmManager for service restart
-    private var alarmManager: AlarmManager? = null
+    // AlarmManager removed — WorkManager handles service health monitoring
 
     // Reconnection state
     private var isReconnecting = false
@@ -2135,8 +2136,7 @@ class TorService : Service() {
         // Keep CPU alive during bootstrap/reconnect
         acquireWakeLock("startTor")
 
-        // AlarmManager backup restart (for aggressive OEM kills)
-        scheduleServiceRestart()
+        // AlarmManager backup removed — WorkManager TorHealthMonitorWorker handles this
 
         try {
             // Stop any previous event listener before spawning a new one
@@ -2475,8 +2475,7 @@ class TorService : Service() {
         isServiceRunning = true
         running = true
 
-        // Schedule AlarmManager backup for service restart
-        scheduleServiceRestart()
+        // AlarmManager backup removed — WorkManager handles health monitoring
 
         // Initialize Tor in BACKGROUND THREAD to avoid ANR
         Thread {
@@ -2616,14 +2615,22 @@ class TorService : Service() {
                 val onionAddress = RustBridge.createHiddenService()
                 Log.i(TAG, "Arti hidden service created: $onionAddress")
             } catch (e: Exception) {
-                Log.e(TAG, "FATAL: Failed to create Arti hidden service: ${e.message}", e)
-                // Schedule retry — without the HS, the listener can't accept connections
-                serviceScope.launch {
-                    kotlinx.coroutines.delay(5000)
-                    Log.w(TAG, "Retrying listener start after HS creation failure...")
-                    startIncomingListener()
+                val msg = e.message ?: ""
+                if (msg.contains("AlreadyLocked") || msg.contains("already in use")) {
+                    // HS is still alive in Arti (state dir locked by running instance).
+                    // The acceptor task died but the onion service itself is fine.
+                    // Skip re-creation, just restart pollers + acceptor.
+                    Log.w(TAG, "Arti HS already running (lock held) — restarting pollers only")
+                    isListenerRunning = true
+                } else {
+                    Log.e(TAG, "FATAL: Failed to create Arti hidden service: ${e.message}", e)
+                    serviceScope.launch {
+                        kotlinx.coroutines.delay(5000)
+                        Log.w(TAG, "Retrying listener start after HS creation failure...")
+                        startIncomingListener()
+                    }
+                    return
                 }
-                return
             }
 
             // PHASE 3: Now safe to start main listener on port 8080
@@ -3510,14 +3517,14 @@ class TorService : Service() {
                 contactPin = contactCard.contactPin,
                 ipfsCid = contactCard.ipfsCid,
                 addedTimestamp = System.currentTimeMillis(),
-                friendshipStatus = com.securelegion.database.entities.Contact.FRIENDSHIP_CONFIRMED
+                friendshipStatus = com.securelegion.database.entities.Contact.FRIENDSHIP_PENDING_SENT
             )
 
             val contactId = kotlinx.coroutines.runBlocking {
                 database.contactDao().insertContact(contact)
             }
 
-            Log.i(TAG, "Contact added to database: ${contactCard.displayName} (ID: $contactId)")
+            Log.i(TAG, "Contact added to database (pending ACK): ${contactCard.displayName} (ID: $contactId)")
 
             // Initialize key chain with kyber ciphertext if present
             serviceScope.launch(kotlinx.coroutines.Dispatchers.IO) {
@@ -3702,12 +3709,29 @@ class TorService : Service() {
             // Add to contacts database and initialize key chain (both in coroutine)
             serviceScope.launch(kotlinx.coroutines.Dispatchers.IO) {
                 try {
-                    // Add contact to database first
-                    val contactId = addContactToDatabase(contactCard)
-
-                    if (contactId == null) {
-                        Log.e(TAG, "Failed to add contact to database")
-                        return@launch
+                    // Confirm the pending contact created in Phase 2 (or add fresh if missing)
+                    val keyManager2 = com.securelegion.crypto.KeyManager.getInstance(this@TorService)
+                    val dbPassphrase2 = keyManager2.getDatabasePassphrase()
+                    val db = com.securelegion.database.SecureLegionDatabase.getInstance(this@TorService, dbPassphrase2)
+                    val x25519Base64 = android.util.Base64.encodeToString(contactCard.x25519PublicKey, android.util.Base64.NO_WRAP)
+                    val existingContact = db.contactDao().getContactByX25519PublicKey(x25519Base64)
+                    val contactId: Long
+                    if (existingContact != null) {
+                        // Upgrade from PENDING_SENT to CONFIRMED
+                        val confirmed = existingContact.copy(
+                            friendshipStatus = com.securelegion.database.entities.Contact.FRIENDSHIP_CONFIRMED
+                        )
+                        db.contactDao().updateContact(confirmed)
+                        contactId = existingContact.id
+                        Log.i(TAG, "Contact confirmed: ${contactCard.displayName} (ID: $contactId)")
+                    } else {
+                        // Fallback: add fresh if Phase 2 didn't create one
+                        val newId = addContactToDatabase(contactCard)
+                        if (newId == null) {
+                            Log.e(TAG, "Failed to add contact to database")
+                            return@launch
+                        }
+                        contactId = newId
                     }
 
                     // Extract precomputed shared secret from saved Phase 2 state
@@ -4264,9 +4288,36 @@ class TorService : Service() {
                             "TAP_ACK" -> {
                                 Log.i(TAG, "Received TAP_ACK - contact ${message.contactId} confirmed online! Triggering retry for all pending messages")
 
+                                // CLEAR PEER BACKOFF: TAP_ACK = peer is online, reset cooldown
+                                val tapContact = database.contactDao().getContactById(message.contactId)
+                                val tapOnion = tapContact?.messagingOnion
+                                if (tapOnion != null) {
+                                    com.securelegion.services.MessageService.clearRetryableFailureState(tapOnion)
+                                    Log.i(TAG, "Cleared peer backoff for ${tapOnion.take(16)} after TAP_ACK")
+                                }
+
                                 // TAP_ACK means peer is online and ready to receive - retry all pending messages
                                 serviceScope.launch(Dispatchers.IO) {
                                     try {
+                                        // RESET MESSAGE COOLDOWNS: Make all queued messages immediately retryable
+                                        val tapNow = System.currentTimeMillis()
+                                        val pendingForReset = database.messageDao().getPendingMessages()
+                                            .filter { it.contactId == message.contactId }
+                                        val awaitingForReset = database.messageDao().getMessagesAwaitingPong()
+                                            .filter { it.contactId == message.contactId }
+                                        val allQueued = (pendingForReset + awaitingForReset).distinctBy { it.id }
+
+                                        for (msg in allQueued) {
+                                            if (msg.nextRetryAtMs != null && msg.nextRetryAtMs > tapNow) {
+                                                database.messageDao().updateRetrySchedule(
+                                                    msg.id, msg.retryCount, tapNow, tapNow
+                                                )
+                                            }
+                                        }
+                                        if (allQueued.isNotEmpty()) {
+                                            Log.i(TAG, "Reset nextRetryAtMs for ${allQueued.size} messages after TAP_ACK")
+                                        }
+
                                         // Query ALL pending/failed messages for this contact
                                         val pendingMessages = database.messageDao().getPendingMessages()
                                             .filter { it.contactId == message.contactId }
@@ -4589,6 +4640,42 @@ class TorService : Service() {
                         }
                     } catch (e: Exception) {
                         Log.e(TAG, "Failed to process inline reaction from $senderName", e)
+                    }
+                }
+                return // Skip PingInbox + DMS entirely
+            }
+
+            // INLINE EDIT: wire type 0x12 bypasses PingInbox (no visible message created)
+            if (pingWireType == 0x12) {
+                Log.i(TAG, "INLINE EDIT: ping $pingId from $senderName — bypassing PingInbox")
+                serviceScope.launch(Dispatchers.IO) {
+                    try {
+                        if (encryptedPingWire.size < 34) {
+                            Log.e(TAG, "Edit wire too short: ${encryptedPingWire.size} bytes")
+                            return@launch
+                        }
+                        val ciphertext = encryptedPingWire.copyOfRange(33, encryptedPingWire.size)
+                        val encBase64 = android.util.Base64.encodeToString(ciphertext, android.util.Base64.NO_WRAP)
+
+                        val msgService = com.securelegion.services.MessageService(this@TorService)
+                        msgService.receiveMessage(
+                            encryptedData = encBase64,
+                            senderPublicKey = senderPublicKey!!,
+                            senderOnionAddress = contactInfo?.messagingOnion ?: "",
+                            messageType = com.securelegion.database.entities.Message.MESSAGE_TYPE_TEXT,
+                            pingId = pingId
+                        )
+                        // receiveMessage handles 0x12 prefix internally — applyEdit + broadcast
+
+                        sendAckWithRetry(
+                            connectionId = null,
+                            itemId = pingId,
+                            ackType = "MESSAGE_ACK",
+                            contactId = contactId
+                        )
+                        Log.i(TAG, "Inline edit processed for $senderName (silent)")
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Failed to process inline edit from $senderName", e)
                     }
                 }
                 return // Skip PingInbox + DMS entirely
@@ -5095,6 +5182,16 @@ class TorService : Service() {
                                 Log.i(TAG, "CRDT_OPS applied=$applied rejected=$rejected group=${groupIdHex.take(16)}...")
                                 if (applied > 0) {
                                     mgr.incrementUnreadCount(groupIdHex)
+                                    // Show notification for group message
+                                    val keyManager = KeyManager.getInstance(this@TorService)
+                                    val db = com.securelegion.database.SecureLegionDatabase.getInstance(
+                                        this@TorService, keyManager.getDatabasePassphrase()
+                                    )
+                                    val group = db.groupDao().getGroupById(groupIdHex)
+                                    val name = group?.name ?: "Group"
+                                    android.os.Handler(android.os.Looper.getMainLooper()).post {
+                                        showGroupMessageNotification(groupIdHex, name)
+                                    }
                                 }
                                 sendBroadcast(android.content.Intent("com.securelegion.NEW_GROUP_MESSAGE").apply {
                                     setPackage(packageName)
@@ -5135,11 +5232,11 @@ class TorService : Service() {
                                 Log.i(TAG, "SYNC_CHUNK applied=$applied rejected=$rejected group=${groupIdHex.take(16)}...")
                                 if (applied > 0) {
                                     mgr.incrementUnreadCount(groupIdHex)
+                                    sendBroadcast(android.content.Intent("com.securelegion.NEW_GROUP_MESSAGE").apply {
+                                        setPackage(packageName)
+                                        putExtra("GROUP_ID", groupIdHex)
+                                    })
                                 }
-                                sendBroadcast(android.content.Intent("com.securelegion.NEW_GROUP_MESSAGE").apply {
-                                    setPackage(packageName)
-                                    putExtra("GROUP_ID", groupIdHex)
-                                })
                             } catch (e: Exception) {
                                 Log.e(TAG, "Error processing SYNC_CHUNK", e)
                             }
@@ -5702,6 +5799,7 @@ class TorService : Service() {
 
             // Variable to hold the actual message content (after stripping type/metadata)
             var messageContent: String = plaintext // Default: use full plaintext
+            var blobReplyToMessageId: String? = null
 
             when (appType) {
                 0x00 -> {
@@ -5804,6 +5902,55 @@ class TorService : Service() {
                     Log.d(TAG, "Message type: REACTION (from plaintext)")
                 }
 
+                0x11 -> {
+                    // REPLY: parse JSON, extract text + reply target + quoted text
+                    messageType = com.securelegion.database.entities.Message.MESSAGE_TYPE_TEXT
+                    try {
+                        val replyJson = org.json.JSONObject(String(body, Charsets.UTF_8))
+                        messageContent = replyJson.getString("text")
+                        val replyId = replyJson.optString("reply_to_message_id")
+                        val replyText = replyJson.optString("reply_to_text")
+                        val replySelf = replyJson.optBoolean("reply_to_self", false)
+                        // Encode ID, sender flag, and quoted text: "id||S||text" or "id||R||text"
+                        // S = sender quoted their own msg (receiver shows contact name)
+                        // R = sender quoted receiver's msg (receiver shows "you")
+                        val senderFlag = if (replySelf) "S" else "R"
+                        blobReplyToMessageId = if (replyText.isNotBlank()) "$replyId||$senderFlag||$replyText" else replyId
+                        Log.d(TAG, "Message type: REPLY (text=${messageContent.take(30)}, replyTo=${replyId.take(16)})")
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Failed to parse REPLY JSON, storing raw body", e)
+                        messageContent = String(body, Charsets.UTF_8)
+                    }
+                }
+
+                0x12 -> {
+                    // EDIT: process and return early (no new message row)
+                    Log.d(TAG, "Message type: EDIT (appType=0x12) — applying in-place")
+                    serviceScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                        try {
+                            val editJson = org.json.JSONObject(String(body, Charsets.UTF_8))
+                            val targetId = editJson.getString("target_message_id")
+                            val targetBlobId = editJson.optString("target_blob_id")
+                            val newText = editJson.getString("new_text")
+                            val resolvedId = com.securelegion.services.MessageService.resolveReactionTargetIdForContact(
+                                database, contact.id, targetId, targetBlobId
+                            )
+                            if (!resolvedId.isNullOrBlank()) {
+                                val keyMgr = KeyManager.getInstance(this@TorService)
+                                val newEncrypted = keyMgr.encryptMessageContent(newText)
+                                database.messageDao().applyEdit(resolvedId, newEncrypted)
+                            }
+                            sendBroadcast(android.content.Intent("com.securelegion.MESSAGE_RECEIVED").apply {
+                                setPackage(packageName)
+                                putExtra("CONTACT_ID", contact.id)
+                            })
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Failed to apply edit from blob handler", e)
+                        }
+                    }
+                    return // Don't create a new message row
+                }
+
                 0x20 -> {
                     // Legacy GROUP_INVITE — superseded by CRDT (0x30). Ignore.
                     Log.w(TAG, "Ignoring legacy GROUP_INVITE (0x20) — use CRDT groups")
@@ -5833,6 +5980,16 @@ class TorService : Service() {
                             Log.i(TAG, "CRDT_OPS applied=$applied rejected=$rejected group=${groupIdHex.take(16)}...")
                             if (applied > 0) {
                                 mgr.incrementUnreadCount(groupIdHex)
+                                // Show notification for group message
+                                val keyManager = KeyManager.getInstance(this@TorService)
+                                val db = com.securelegion.database.SecureLegionDatabase.getInstance(
+                                    this@TorService, keyManager.getDatabasePassphrase()
+                                )
+                                val group = db.groupDao().getGroupById(groupIdHex)
+                                val name = group?.name ?: "Group"
+                                android.os.Handler(android.os.Looper.getMainLooper()).post {
+                                    showGroupMessageNotification(groupIdHex, name)
+                                }
                             }
                             val intent = android.content.Intent("com.securelegion.NEW_GROUP_MESSAGE").apply {
                                 setPackage(packageName)
@@ -6111,7 +6268,8 @@ class TorService : Service() {
                         paymentAmount = paymentAmount,
                         paymentStatus = paymentStatus,
                         txSignature = txSignature,
-                        pingId = downloadPingId // ← Associate with download ping
+                        pingId = downloadPingId, // ← Associate with download ping
+                        replyToMessageId = blobReplyToMessageId
                     )
 
                     // ATOMIC SAVE: dedup INSERT + message INSERT + ping transition in one transaction
@@ -6830,17 +6988,19 @@ class TorService : Service() {
             // Use hashCode to create stable ID for each unique sender
             val friendRequestNotificationId = 5000 + Math.abs(senderName.hashCode() % 10000)
 
-            // Check if user is already unlocked - if so, go directly to MainActivity
+            // Skip LockActivity if no password is set or app is already unlocked.
             val isUnlocked = com.securelegion.utils.SessionManager.isUnlocked(this)
+            val hasPassword = try {
+                KeyManager.getInstance(this).isDevicePasswordSet()
+            } catch (_: Exception) { false }
+            val needsLock = !isUnlocked && hasPassword
 
-            val intent = if (isUnlocked) {
-                // User is already logged in - go directly to MainActivity
+            val intent = if (!needsLock) {
                 android.content.Intent(this, com.securelegion.MainActivity::class.java).apply {
                     putExtra("SHOW_FRIEND_REQUESTS", true)
                     flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
                 }
             } else {
-                // User is locked - go through LockActivity
                 android.content.Intent(this, com.securelegion.LockActivity::class.java).apply {
                     putExtra("TARGET_ACTIVITY", "MainActivity")
                     putExtra("SHOW_FRIEND_REQUESTS", true)
@@ -6933,17 +7093,19 @@ class TorService : Service() {
             // Use hashCode to create stable ID for each unique contact (different range from friend requests)
             val acceptedNotificationId = 6000 + Math.abs(contactName.hashCode() % 10000)
 
-            // Check if user is already unlocked - if so, go directly to MainActivity
+            // Skip LockActivity if no password is set or app is already unlocked.
             val isUnlocked = com.securelegion.utils.SessionManager.isUnlocked(this)
+            val hasPassword = try {
+                KeyManager.getInstance(this).isDevicePasswordSet()
+            } catch (_: Exception) { false }
+            val needsLock = !isUnlocked && hasPassword
 
-            val intent = if (isUnlocked) {
-                // User is already logged in - go directly to MainActivity (Contacts tab)
+            val intent = if (!needsLock) {
                 android.content.Intent(this, com.securelegion.MainActivity::class.java).apply {
                     putExtra("SHOW_CONTACTS", true)
                     flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
                 }
             } else {
-                // User is locked - go through LockActivity
                 android.content.Intent(this, com.securelegion.LockActivity::class.java).apply {
                     putExtra("TARGET_ACTIVITY", "MainActivity")
                     putExtra("SHOW_CONTACTS", true)
@@ -7209,17 +7371,18 @@ class TorService : Service() {
      * Show simple notification that a message is waiting
      */
     private fun showNewMessageNotification() {
-        // Check if user is already unlocked - if so, go directly to MainActivity
-        // If locked, go through LockActivity for authentication
+        // Skip LockActivity if no password is set or app is already unlocked.
         val isUnlocked = com.securelegion.utils.SessionManager.isUnlocked(this)
+        val hasPassword = try {
+            KeyManager.getInstance(this).isDevicePasswordSet()
+        } catch (_: Exception) { false }
+        val needsLock = !isUnlocked && hasPassword
 
-        val openAppIntent = if (isUnlocked) {
-            // User is already logged in - go directly to MainActivity
+        val openAppIntent = if (!needsLock) {
             Intent(this, MainActivity::class.java).apply {
                 flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
             }
         } else {
-            // User is locked - go through LockActivity
             Intent(this, LockActivity::class.java).apply {
                 putExtra("TARGET_ACTIVITY", "MainActivity")
                 flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
@@ -7549,11 +7712,14 @@ class TorService : Service() {
      * Show notification for received message with preview and actions
      */
     private fun showMessageNotification(senderName: String, messageText: String, contactId: Long) {
-        // If user is already unlocked, tap the notification straight into ChatActivity.
-        // If locked, go through LockActivity with the chat as the post-unlock target.
+        // Skip LockActivity if no password is set or app is already unlocked.
         val isUnlocked = com.securelegion.utils.SessionManager.isUnlocked(this)
+        val hasPassword = try {
+            KeyManager.getInstance(this).isDevicePasswordSet()
+        } catch (_: Exception) { false }
+        val needsLock = !isUnlocked && hasPassword
 
-        val openChatIntent = if (isUnlocked) {
+        val openChatIntent = if (!needsLock) {
             Intent(this, ChatActivity::class.java).apply {
                 putExtra(ChatActivity.EXTRA_CONTACT_ID, contactId)
                 putExtra(ChatActivity.EXTRA_CONTACT_NAME, senderName)
@@ -7574,7 +7740,7 @@ class TorService : Service() {
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
 
-        val replyIntent = if (isUnlocked) {
+        val replyIntent = if (!needsLock) {
             Intent(this, ChatActivity::class.java).apply {
                 putExtra(ChatActivity.EXTRA_CONTACT_ID, contactId)
                 putExtra(ChatActivity.EXTRA_CONTACT_NAME, senderName)
@@ -7631,6 +7797,61 @@ class TorService : Service() {
         notificationManager.notify(messageNotificationId, notification)
 
         Log.i(TAG, "Message notification shown for $senderName (unique ID: $messageNotificationId)")
+    }
+
+    /**
+     * Show notification for a received group message.
+     */
+    private fun showGroupMessageNotification(groupId: String, groupName: String) {
+        // Skip LockActivity if no password is set or app is already unlocked.
+        val isUnlocked = com.securelegion.utils.SessionManager.isUnlocked(this)
+        val hasPassword = try {
+            KeyManager.getInstance(this).isDevicePasswordSet()
+        } catch (_: Exception) { false }
+        val needsLock = !isUnlocked && hasPassword
+
+        val openChatIntent = if (!needsLock) {
+            Intent(this, GroupChatActivity::class.java).apply {
+                putExtra(GroupChatActivity.EXTRA_GROUP_ID, groupId)
+                putExtra(GroupChatActivity.EXTRA_GROUP_NAME, groupName)
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            }
+        } else {
+            Intent(this, LockActivity::class.java).apply {
+                putExtra("TARGET_ACTIVITY", "GroupChatActivity")
+                putExtra(GroupChatActivity.EXTRA_GROUP_ID, groupId)
+                putExtra(GroupChatActivity.EXTRA_GROUP_NAME, groupName)
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            }
+        }
+        val pendingIntent = PendingIntent.getActivity(
+            this,
+            groupId.hashCode(),
+            openChatIntent,
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
+
+        val notifPrefs = getSharedPreferences("notifications_prefs", android.content.Context.MODE_PRIVATE)
+        val showContent = notifPrefs.getBoolean("message_content_enabled", false)
+        val displayText = if (showContent) "New group message" else "New message"
+
+        val messageNotificationId = (System.currentTimeMillis() % 100000).toInt() + 50000
+
+        val notification = NotificationCompat.Builder(this, AUTH_CHANNEL_ID)
+            .setSmallIcon(R.drawable.ic_shield)
+            .setContentTitle(groupName)
+            .setContentText(displayText)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setCategory(NotificationCompat.CATEGORY_MESSAGE)
+            .setAutoCancel(true)
+            .setContentIntent(pendingIntent)
+            .setGroup("GROUP_MESSAGES_${groupId}")
+            .build()
+
+        val notificationManager = getSystemService(NotificationManager::class.java)
+        notificationManager.notify(messageNotificationId, notification)
+
+        Log.i(TAG, "Group notification shown for $groupName (ID: $messageNotificationId)")
     }
 
     /**
@@ -7798,10 +8019,22 @@ class TorService : Service() {
     }
 
     private fun createNotification(status: String): Notification {
-        // Launch via LockActivity to prevent showing app before authentication
-        val intent = Intent(this, LockActivity::class.java).apply {
-            putExtra("TARGET_ACTIVITY", "MainActivity")
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        // Skip LockActivity if no password is set or app is already unlocked.
+        val isUnlocked = com.securelegion.utils.SessionManager.isUnlocked(this)
+        val hasPassword = try {
+            KeyManager.getInstance(this).isDevicePasswordSet()
+        } catch (_: Exception) { false }
+        val needsLock = !isUnlocked && hasPassword
+
+        val intent = if (!needsLock) {
+            Intent(this, MainActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
+            }
+        } else {
+            Intent(this, LockActivity::class.java).apply {
+                putExtra("TARGET_ACTIVITY", "MainActivity")
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            }
         }
         val pendingIntent = PendingIntent.getActivity(
             this,
@@ -8816,65 +9049,10 @@ class TorService : Service() {
     // ==================== ALARMMANAGER RESTART ====================
 
     /**
-     * Schedule recurring alarm to check if service is running
-     * Provides redundancy beyond START_STICKY for aggressive battery optimization
+     * AlarmManager restart removed — USE_EXACT_ALARM is restricted to alarm/timer apps
+     * and causes Play Store rejection. TorHealthMonitorWorker (WorkManager, every 60s)
+     * provides the same self-healing capability without restricted permissions.
      */
-    @Suppress("MissingPermission") // SCHEDULE_EXACT_ALARM declared in manifest
-    private fun scheduleServiceRestart() {
-        try {
-            alarmManager = getSystemService(Context.ALARM_SERVICE) as AlarmManager
-
-            val restartIntent = Intent(this, com.securelegion.receivers.TorServiceRestartReceiver::class.java)
-            val pendingIntent = PendingIntent.getBroadcast(
-                this,
-                RESTART_REQUEST_CODE,
-                restartIntent,
-                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-            )
-
-            val triggerTime = SystemClock.elapsedRealtime() + RESTART_CHECK_INTERVAL
-
-            // Use setExactAndAllowWhileIdle for Android 6+ to work in Doze mode
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                alarmManager?.setExactAndAllowWhileIdle(
-                    AlarmManager.ELAPSED_REALTIME_WAKEUP,
-                    triggerTime,
-                    pendingIntent
-                )
-            } else {
-                alarmManager?.setExact(
-                    AlarmManager.ELAPSED_REALTIME_WAKEUP,
-                    triggerTime,
-                    pendingIntent
-                )
-            }
-
-            Log.i(TAG, "Service restart alarm scheduled (${RESTART_CHECK_INTERVAL / 60000} minutes)")
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to schedule service restart alarm", e)
-        }
-    }
-
-    /**
-     * Cancel the recurring restart alarm
-     */
-    private fun cancelServiceRestart() {
-        try {
-            alarmManager?.let {
-                val restartIntent = Intent(this, com.securelegion.receivers.TorServiceRestartReceiver::class.java)
-                val pendingIntent = PendingIntent.getBroadcast(
-                    this,
-                    RESTART_REQUEST_CODE,
-                    restartIntent,
-                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-                )
-                it.cancel(pendingIntent)
-                Log.i(TAG, "Service restart alarm cancelled")
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to cancel service restart alarm", e)
-        }
-    }
 
     // ==================== LIFECYCLE ====================
 
@@ -8923,8 +9101,7 @@ class TorService : Service() {
         // Clear instance
         instance = null
 
-        // Cancel AlarmManager restart checks
-        cancelServiceRestart()
+        // AlarmManager restart removed — no cancel needed
 
         // Clean up handlers
         reconnectHandler.removeCallbacksAndMessages(null)

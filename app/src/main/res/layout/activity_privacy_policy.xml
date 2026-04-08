@@ -78,17 +78,18 @@
             <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="Secure Legion is designed with privacy as the foundation."
+                android:text="Secure Legion is designed so that we simply do not have access to your data. Here is how we approach your privacy."
                 android:textSize="14sp"
                 android:textColor="@color/text_muted"
                 android:fontFamily="@font/poppins_regular"
                 android:lineSpacingMultiplier="1.4"
                 android:layout_marginBottom="20dp" />
 
+            <!-- Information You Provide -->
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="Data Collection"
+                android:text="Information You Provide"
                 android:textSize="16sp"
                 android:textStyle="bold"
                 android:textColor="@color/text_primary"
@@ -98,17 +99,48 @@
             <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="We do not collect any personal information. Your account is created with a locally generated cryptographic key pair."
+                android:text="Account Information. When you create a Secure account, your identity is generated locally on your device through a cryptographic key pair. We do not require or collect phone numbers, email addresses, or any personally identifying information. Your username exists only on your device and is shared only with contacts you choose."
+                android:textSize="14sp"
+                android:textColor="@color/text_muted"
+                android:fontFamily="@font/poppins_regular"
+                android:lineSpacingMultiplier="1.4"
+                android:layout_marginBottom="16dp" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Messages. Secure is a peer-to-peer encrypted messaging application. All messages are end-to-end encrypted and travel directly between devices over the Tor network. Secure Legion cannot read your messages, and we do not store them on any server. Message content, media, and conversation history exist only on your device."
+                android:textSize="14sp"
+                android:textColor="@color/text_muted"
+                android:fontFamily="@font/poppins_regular"
+                android:lineSpacingMultiplier="1.4"
+                android:layout_marginBottom="16dp" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Contacts. Your contact list is stored locally on your device. Secure Legion does not have access to your contacts, your social graph, or any information about who you communicate with."
+                android:textSize="14sp"
+                android:textColor="@color/text_muted"
+                android:fontFamily="@font/poppins_regular"
+                android:lineSpacingMultiplier="1.4"
+                android:layout_marginBottom="16dp" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="User Support. If you contact Secure Legion support, any information you provide in your support ticket is used only to respond to your request."
                 android:textSize="14sp"
                 android:textColor="@color/text_muted"
                 android:fontFamily="@font/poppins_regular"
                 android:lineSpacingMultiplier="1.4"
                 android:layout_marginBottom="20dp" />
 
+            <!-- Information We Do Not Have -->
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="Message Privacy"
+                android:text="Information We Do Not Have"
                 android:textSize="16sp"
                 android:textStyle="bold"
                 android:textColor="@color/text_primary"
@@ -118,17 +150,18 @@
             <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="All messages are end-to-end encrypted. Only you and your intended recipient can read them."
+                android:text="Secure is architected with zero-knowledge principles. We cannot access:\n\n• Message content, conversation histories, or media files\n• Communication metadata — who you talk to, when, or how often\n• Cryptographic keys, passwords, or recovery phrases\n• IP addresses or network identifiers\n• Location data or device identifiers\n• Behavioral analytics, usage patterns, or telemetry\n\nSecure Legion does not sell, rent, or monetize your personal data or content in any way — ever."
                 android:textSize="14sp"
                 android:textColor="@color/text_muted"
                 android:fontFamily="@font/poppins_regular"
                 android:lineSpacingMultiplier="1.4"
                 android:layout_marginBottom="20dp" />
 
+            <!-- Information We May Share -->
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="Network Privacy"
+                android:text="Information We May Share"
                 android:textSize="16sp"
                 android:textStyle="bold"
                 android:textColor="@color/text_primary"
@@ -138,18 +171,91 @@
             <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="All traffic is routed through the Tor network, providing strong anonymity."
+                android:text="Secure Legion does not collect, store, or have access to any user data. We have no servers, no accounts, no analytics, and no third-party integrations. There is nothing to share because there is nothing to have. If served with a legal request, we have no meaningful data to produce."
                 android:textSize="14sp"
                 android:textColor="@color/text_muted"
                 android:fontFamily="@font/poppins_regular"
                 android:lineSpacingMultiplier="1.4"
                 android:layout_marginBottom="20dp" />
 
+            <!-- Data Storage and Security -->
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Data Storage and Security"
+                android:textSize="16sp"
+                android:textStyle="bold"
+                android:textColor="@color/text_primary"
+                android:fontFamily="@font/space_grotesk_bold"
+                android:layout_marginBottom="10dp" />
+
             <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="[Full policy to be added]"
+                android:text="All data — including messages, keys, contacts, and settings — is stored exclusively on your device and encrypted using AES-256. Secure Legion has no access to your device storage. If you lose your device or recovery phrase, we cannot restore your data."
                 android:textSize="14sp"
+                android:textColor="@color/text_muted"
+                android:fontFamily="@font/poppins_regular"
+                android:lineSpacingMultiplier="1.4"
+                android:layout_marginBottom="16dp" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Communications are routed through the Tor anonymity network, operated by independent third-party volunteers. Secure Legion does not operate Tor relays or directory authorities."
+                android:textSize="14sp"
+                android:textColor="@color/text_muted"
+                android:fontFamily="@font/poppins_regular"
+                android:lineSpacingMultiplier="1.4"
+                android:layout_marginBottom="20dp" />
+
+            <!-- Updates -->
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Updates"
+                android:textSize="16sp"
+                android:textStyle="bold"
+                android:textColor="@color/text_primary"
+                android:fontFamily="@font/space_grotesk_bold"
+                android:layout_marginBottom="10dp" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="We may update this Privacy Policy from time to time. We will post any changes on this page. Your continued use of Secure after changes to this policy confirms your acceptance of the updated policy."
+                android:textSize="14sp"
+                android:textColor="@color/text_muted"
+                android:fontFamily="@font/poppins_regular"
+                android:lineSpacingMultiplier="1.4"
+                android:layout_marginBottom="20dp" />
+
+            <!-- Contact -->
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Contact Us"
+                android:textSize="16sp"
+                android:textStyle="bold"
+                android:textColor="@color/text_primary"
+                android:fontFamily="@font/space_grotesk_bold"
+                android:layout_marginBottom="10dp" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="If you have questions about this Privacy Policy, contact us at:\nLegal@securelegion.org"
+                android:textSize="14sp"
+                android:textColor="@color/text_muted"
+                android:fontFamily="@font/poppins_regular"
+                android:lineSpacingMultiplier="1.4"
+                android:layout_marginBottom="16dp" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Last Modified: March 3, 2026"
+                android:textSize="13sp"
                 android:textColor="@color/text_muted"
                 android:fontFamily="@font/poppins_regular"
                 android:lineSpacingMultiplier="1.4" />

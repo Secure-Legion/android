@@ -65,7 +65,7 @@
     <color name="top_icon_border">#18FFFFFF</color>
 
     <!-- Action Button (Dark Mode) -->
-    <color name="action_button_bg_color">#2A2A2A</color>
+    <color name="action_button_bg_color">#D9080808</color>
 
     <!-- Accent Colors (same in both modes) -->
     <color name="primary_blue">#1E90FF</color>
@@ -77,6 +77,20 @@
     <color name="call_blue">#4A9EFF</color>
     <color name="call_end_red">#FF6B6B</color>
     <color name="answer_green">#00CC66</color>
+
+    <!-- Reply/Edit UI -->
+    <color name="reply_accent">#1E90FF</color>
+    <color name="reply_quote_bg_sent">#1E90FF</color>
+    <color name="reply_quote_bg_received">#1A1A1A</color>
+    <color name="reply_quote_bg_self">#1E90FF</color>
+    <color name="reply_quote_border">#1E90FF</color>
+    <color name="reply_quote_text_sent">#BBFFFFFF</color>
+    <color name="reply_quote_text_received">#AAAAAA</color>
+    <color name="reply_quote_label_sent">#FFFFFF</color>
+    <color name="reply_quote_label_received">#CCCCCC</color>
+    <color name="edit_accent">#F59E0B</color>
+    <color name="edit_banner_bg">#1AF59E0B</color>
+    <color name="edited_label">#1E90FF</color>
 
     <!-- Silver Gradient for Crypto Amounts -->
     <color name="silver_gradient_start">#E8E8E8</color>

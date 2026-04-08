@@ -103,6 +103,8 @@
                     android:layout_height="48dp"
                     android:src="@drawable/default_avatar"
                     android:background="@drawable/profile_circle_bg"
+                    android:clipToOutline="true"
+                    android:scaleType="centerCrop"
                     android:contentDescription="Recipient avatar" />
 
                 <TextView

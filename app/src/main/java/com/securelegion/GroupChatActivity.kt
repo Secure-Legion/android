@@ -271,6 +271,30 @@ class GroupChatActivity : BaseActivity() {
             stackFromEnd = true
         }
         messagesRecyclerView.adapter = messageAdapter
+
+        // Show/hide scroll-to-bottom button based on scroll position
+        val scrollToBottomBtn = findViewById<View>(R.id.scrollToBottomBtn)
+        messagesRecyclerView.addOnScrollListener(object : RecyclerView.OnScrollListener() {
+            override fun onScrolled(recyclerView: RecyclerView, dx: Int, dy: Int) {
+                val lm = recyclerView.layoutManager as? LinearLayoutManager ?: return
+                val lastVisible = lm.findLastVisibleItemPosition()
+                val totalItems = lm.itemCount
+                val farFromBottom = totalItems - lastVisible > 5
+                if (farFromBottom && scrollToBottomBtn.visibility != View.VISIBLE) {
+                    scrollToBottomBtn.visibility = View.VISIBLE
+                    scrollToBottomBtn.alpha = 0f
+                    scrollToBottomBtn.animate().alpha(1f).setDuration(150).start()
+                } else if (!farFromBottom && scrollToBottomBtn.visibility == View.VISIBLE) {
+                    scrollToBottomBtn.animate().alpha(0f).setDuration(150).withEndAction {
+                        scrollToBottomBtn.visibility = View.GONE
+                    }.start()
+                }
+            }
+        })
+        scrollToBottomBtn.setOnClickListener {
+            val count = messageAdapter.itemCount
+            if (count > 0) messagesRecyclerView.smoothScrollToPosition(count - 1)
+        }
     }
 
     private fun setupWindowInsets() {
@@ -354,7 +378,13 @@ class GroupChatActivity : BaseActivity() {
 
         lifecycleScope.launch {
             try {
-                val (chatMessages, pendingInvite) = withContext(Dispatchers.IO) {
+                data class LoadResult(
+                    val messages: List<GroupChatMessage>,
+                    val pendingInvite: Boolean,
+                    val canSend: Boolean
+                )
+
+                val result = withContext(Dispatchers.IO) {
                     val mgr = CrdtGroupManager.getInstance(this@GroupChatActivity)
                     val keyManager = KeyManager.getInstance(this@GroupChatActivity)
                     val db = SecureLegionDatabase.getInstance(this@GroupChatActivity, keyManager.getDatabasePassphrase())
@@ -400,7 +430,7 @@ class GroupChatActivity : BaseActivity() {
                     // Safety guard: verify group secret exists before attempting decrypt
                     if (group == null || group.groupSecretB64.isNullOrEmpty()) {
                         Log.w(TAG, "loadMessages: no group secret yet for $currentGroupId — showing empty")
-                        return@withContext Pair(emptyList<GroupChatMessage>(), true)
+                        return@withContext LoadResult(emptyList(), pendingInvite = true, canSend = false)
                     }
 
                     // Auto-accept invite when user opens the group chat
@@ -492,21 +522,41 @@ class GroupChatActivity : BaseActivity() {
                     // Merge and sort by timestamp
                     val allMessages = (mapped + systemMessages).sortedBy { it.timestamp }
 
-                    Pair(allMessages, pending)
+                    // Check send permission: Owner/Admin always can; Members check metadata toggle
+                    val myRole = myEntry?.role ?: "Member"
+                    val canSend = if (myRole in listOf("Owner", "Admin")) {
+                        true
+                    } else {
+                        val metadata = mgr.queryMetadata(currentGroupId)
+                        metadata.effectiveAllowSend()
+                    }
+
+                    LoadResult(allMessages, pending, canSend)
                 }
 
                 withContext(Dispatchers.Main) {
-                    isPendingInvite = pendingInvite
+                    isPendingInvite = result.pendingInvite
                     inviteBanner.visibility = View.GONE
-                    messageInput.isEnabled = !pendingInvite
-                    messageInput.hint = if (pendingInvite) "Accept invite to send messages" else "Message"
 
-                    messageAdapter.submitList(chatMessages)
-                    Log.i(TAG, "Loaded ${chatMessages.size} messages for group: $groupName (pending=$pendingInvite)")
+                    // Determine input bar state: pending invite or send-restricted
+                    val inputEnabled = !result.pendingInvite && result.canSend
+                    messageInput.isEnabled = inputEnabled
+                    sendButton.isEnabled = inputEnabled
+                    sendButton.alpha = if (inputEnabled) 1.0f else 0.4f
+                    plusButton.isEnabled = inputEnabled
+                    plusButton.alpha = if (inputEnabled) 1.0f else 0.4f
+                    messageInput.hint = when {
+                        result.pendingInvite -> "Accept invite to send messages"
+                        !result.canSend -> "Message sending not allowed"
+                        else -> "Message"
+                    }
 
-                    if (chatMessages.isNotEmpty()) {
+                    messageAdapter.submitList(result.messages)
+                    Log.i(TAG, "Loaded ${result.messages.size} messages for group: $groupName (pending=${result.pendingInvite}, canSend=${result.canSend})")
+
+                    if (result.messages.isNotEmpty()) {
                         messagesRecyclerView.post {
-                            messagesRecyclerView.smoothScrollToPosition(chatMessages.size - 1)
+                            messagesRecyclerView.smoothScrollToPosition(result.messages.size - 1)
                         }
                     }
                 }
@@ -585,8 +635,7 @@ class GroupChatActivity : BaseActivity() {
     private fun sendMessageText(messageText: String, restoreTextOnFailure: Boolean) {
         val currentGroupId = groupId
 
-        if (isPendingInvite) {
-            ThemedToast.show(this, "Accept the invite first")
+        if (isPendingInvite || !messageInput.isEnabled) {
             return
         }
 

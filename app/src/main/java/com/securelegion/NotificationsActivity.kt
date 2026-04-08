@@ -105,12 +105,12 @@ class NotificationsActivity : AppCompatActivity() {
                 this,
                 Manifest.permission.POST_NOTIFICATIONS
             ) == PackageManager.PERMISSION_GRANTED
-            prefs.getBoolean("notifications_enabled", false) && hasPermission
+            prefs.getBoolean("notifications_enabled", true) && hasPermission
         } else {
-            prefs.getBoolean("notifications_enabled", false)
+            prefs.getBoolean("notifications_enabled", true)
         }
 
-        val messageContentEnabled = prefs.getBoolean("message_content_enabled", false)
+        val messageContentEnabled = prefs.getBoolean("message_content_enabled", true)
         val soundEnabled = prefs.getBoolean("sound_enabled", true)
 
         // Update UI to reflect loaded settings

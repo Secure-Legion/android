@@ -4,7 +4,7 @@
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
     android:orientation="vertical"
-    android:background="#000000"
+    android:background="@drawable/bottom_sheet_bg"
     android:paddingTop="12dp">
 
     <!-- Drag Handle — thin line across full width -->
@@ -262,7 +262,7 @@
         android:id="@+id/closeAttachmentPanel"
         android:layout_width="match_parent"
         android:layout_height="44dp"
-        android:background="@color/surface_black"
+        android:background="#000000"
         android:clickable="true"
         android:focusable="true">
 
@@ -272,7 +272,7 @@
             android:layout_gravity="start|center_vertical"
             android:layout_marginStart="48dp"
             android:src="@drawable/ic_chevron_down"
-            app:tint="#99FFFFFF"
+            app:tint="#FFFFFF"
             android:contentDescription="Close panel" />
 
     </FrameLayout>

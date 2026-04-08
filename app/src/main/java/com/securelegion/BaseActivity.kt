@@ -196,18 +196,13 @@ abstract class BaseActivity : AppCompatActivity() {
     private fun lockApp() {
         val keyManager = com.securelegion.crypto.KeyManager.getInstance(this)
 
-        // If passwordless (no user password, no biometrics), just re-unlock silently
+        // If passwordless (no user password, no biometrics), close the app on inactivity
         if (!keyManager.hasUserDefinedPassword() &&
             !com.securelegion.utils.BiometricAuthHelper(this).isBiometricEnabled()) {
-            val systemPassword = keyManager.getSystemPassword()
-            if (systemPassword != null) {
-                // Clear and immediately re-unlock
-                keyManager.clearSeedCache()
-                if (keyManager.unlockSeed(systemPassword)) {
-                    Log.i(TAG, "Auto-lock: passwordless account re-unlocked silently")
-                    return  // Stay on current screen, no lock
-                }
-            }
+            Log.i(TAG, "Auto-lock: no lock set - closing app on inactivity")
+            keyManager.clearSeedCache()
+            finishAffinity()
+            return
         }
 
         // Has password or biometrics — go to lock screen

@@ -1,6 +1,6 @@
 # SecureLegion ProGuard Rules
 # Complete configuration for R8/ProGuard optimization
-# Last updated: 2024
+# Last updated: 2026-04-08
 # COMPREHENSIVE AUDIT COMPLETED - DO NOT MODIFY WITHOUT REVIEW
 
 # ==================== GENERAL SETTINGS ====================
@@ -112,6 +112,48 @@
 -keep class com.securelegion.WelcomeActivity { *; }
 -keep class com.securelegion.WipeAccountActivity { *; }
 
+# --- Group/Community Features (added 2025-2026) ---
+-keep class com.securelegion.AddAdminPickerActivity { *; }
+-keep class com.securelegion.AddGroupMembersActivity { *; }
+-keep class com.securelegion.BannedUsersActivity { *; }
+-keep class com.securelegion.CreateGroupActivity { *; }
+-keep class com.securelegion.EditAdminRightsActivity { *; }
+-keep class com.securelegion.GroupAdminsActivity { *; }
+-keep class com.securelegion.GroupChatActivity { *; }
+-keep class com.securelegion.GroupMembersActivity { *; }
+-keep class com.securelegion.GroupPermissionsActivity { *; }
+-keep class com.securelegion.GroupProfileActivity { *; }
+-keep class com.securelegion.RecentActionsActivity { *; }
+
+# --- Voice Calling Features ---
+-keep class com.securelegion.CallHistoryActivity { *; }
+-keep class com.securelegion.CallLogActivity { *; }
+-keep class com.securelegion.ContactCallActivity { *; }
+-keep class com.securelegion.IncomingCallActivity { *; }
+-keep class com.securelegion.NewCallActivity { *; }
+-keep class com.securelegion.VoiceCallActivity { *; }
+
+# --- Settings, System & Monitoring ---
+-keep class com.securelegion.AppearanceActivity { *; }
+-keep class com.securelegion.CommunicationModeActivity { *; }
+-keep class com.securelegion.DeveloperActivity { *; }
+-keep class com.securelegion.DeviceProtectionUnlockActivity { *; }
+-keep class com.securelegion.DevicesActivity { *; }
+-keep class com.securelegion.ImagePreviewActivity { *; }
+-keep class com.securelegion.QrSettingsActivity { *; }
+-keep class com.securelegion.SystemLogActivity { *; }
+-keep class com.securelegion.TorHealthActivity { *; }
+
+# --- Help & Legal ---
+-keep class com.securelegion.HelpActivity { *; }
+-keep class com.securelegion.HelpCenterActivity { *; }
+-keep class com.securelegion.PrivacyPolicyActivity { *; }
+-keep class com.securelegion.SupportComposerActivity { *; }
+-keep class com.securelegion.TermsOfServiceActivity { *; }
+
+# --- Test ---
+-keep class com.securelegion.stresstest.StressTestActivity { *; }
+
 # ==================== SERVICES (MANIFEST + INTENT REFERENCED) ====================
 
 # Keep all services — many are started by intent/class name or referenced from JNI
@@ -144,6 +186,16 @@
 -keep class com.securelegion.database.entities.Wallet { *; }
 -keep class com.securelegion.database.entities.ReceivedId { *; }
 -keep class com.securelegion.database.entities.UsedSignature { *; }
+-keep class com.securelegion.database.entities.CallHistory { *; }
+-keep class com.securelegion.database.entities.CallQualityLog { *; }
+-keep class com.securelegion.database.entities.ContactKeyChain { *; }
+-keep class com.securelegion.database.entities.CrdtOpLog { *; }
+-keep class com.securelegion.database.entities.Group { *; }
+-keep class com.securelegion.database.entities.GroupPeer { *; }
+-keep class com.securelegion.database.entities.MessageReaction { *; }
+-keep class com.securelegion.database.entities.PendingGroupDelivery { *; }
+-keep class com.securelegion.database.entities.PingInbox { *; }
+-keep class com.securelegion.database.entities.SkippedMessageKey { *; }
 
 # Room type converters
 -keep class com.securelegion.database.converters.** { *; }
@@ -165,6 +217,9 @@
 -keep class com.securelegion.models.FriendRequest { *; }
 -keep class com.securelegion.models.PendingFriendRequest { *; }
 -keep class com.securelegion.models.PendingPing { *; }
+-keep class com.securelegion.models.AckState { *; }
+-keep class com.securelegion.models.OutOfOrderBuffer { *; }
+-keep class com.securelegion.models.TorHealthStatus { *; }
 
 # Keep companion object factory methods (fromJson, toJson)
 -keepclassmembers class com.securelegion.models.** {
@@ -213,6 +268,11 @@
 -keep class com.securelegion.workers.MessageRetryWorker { *; }
 -keep class com.securelegion.workers.ImmediateRetryWorker { *; }
 -keep class com.securelegion.workers.SelfDestructWorker { *; }
+-keep class com.securelegion.workers.AckWorker { *; }
+-keep class com.securelegion.workers.FriendRequestWorker { *; }
+-keep class com.securelegion.workers.SkippedKeyCleanupWorker { *; }
+-keep class com.securelegion.workers.TapSyncWorker { *; }
+-keep class com.securelegion.workers.TorHealthMonitorWorker { *; }
 
 # ==================== RECYCLER VIEW ADAPTERS ====================
 
@@ -229,8 +289,38 @@
 -keep class com.securelegion.adapters.WalletAdapter { *; }
 -keep class com.securelegion.adapters.WalletAdapter$* { *; }
 
+# New adapters (added 2025-2026)
+-keep class com.securelegion.adapters.CallHistoryAdapter { *; }
+-keep class com.securelegion.adapters.CallHistoryAdapter$* { *; }
+-keep class com.securelegion.adapters.FriendRequestAdapter { *; }
+-keep class com.securelegion.adapters.FriendRequestAdapter$* { *; }
+-keep class com.securelegion.adapters.GroupAdapter { *; }
+-keep class com.securelegion.adapters.GroupAdapter$* { *; }
+-keep class com.securelegion.adapters.GroupMemberAdapter { *; }
+-keep class com.securelegion.adapters.GroupMemberAdapter$* { *; }
+-keep class com.securelegion.adapters.MediaGridAdapter { *; }
+-keep class com.securelegion.adapters.MediaGridAdapter$* { *; }
+-keep class com.securelegion.adapters.NewCallContactsAdapter { *; }
+-keep class com.securelegion.adapters.NewCallContactsAdapter$* { *; }
+-keep class com.securelegion.adapters.PhotoPreviewAdapter { *; }
+-keep class com.securelegion.adapters.PhotoPreviewAdapter$* { *; }
+-keep class com.securelegion.adapters.VoiceClipAdapter { *; }
+-keep class com.securelegion.adapters.VoiceClipAdapter$* { *; }
+
+# UI adapters (separate package)
+-keep class com.securelegion.ui.adapters.** { *; }
+-keep class com.securelegion.ui.adapters.AddToGroupAdapter { *; }
+-keep class com.securelegion.ui.adapters.AddToGroupAdapter$* { *; }
+-keep class com.securelegion.ui.adapters.ContactSelectionAdapter { *; }
+-keep class com.securelegion.ui.adapters.ContactSelectionAdapter$* { *; }
+-keep class com.securelegion.ui.adapters.GroupMessageAdapter { *; }
+-keep class com.securelegion.ui.adapters.GroupMessageAdapter$* { *; }
+-keep class com.securelegion.ui.adapters.SelectedMembersAdapter { *; }
+-keep class com.securelegion.ui.adapters.SelectedMembersAdapter$* { *; }
+
 # Keep all ViewHolder inner classes
 -keepclassmembers class com.securelegion.adapters.**$*ViewHolder { *; }
+-keepclassmembers class com.securelegion.ui.adapters.**$*ViewHolder { *; }
 
 # ==================== UTILITY CLASSES ====================
 
@@ -244,6 +334,18 @@
 -keep class com.securelegion.utils.ThemedToast { *; }
 -keep class com.securelegion.utils.VoicePlayer { *; }
 -keep class com.securelegion.utils.VoiceRecorder { *; }
+-keep class com.securelegion.utils.AccountDetector { *; }
+-keep class com.securelegion.utils.BrandedQrGenerator { *; }
+-keep class com.securelegion.utils.DeviceProtectionGate { *; }
+-keep class com.securelegion.utils.GlassBottomSheetDialog { *; }
+-keep class com.securelegion.utils.GlassDialog { *; }
+-keep class com.securelegion.utils.GlassEffect { *; }
+-keep class com.securelegion.utils.ImagePicker { *; }
+-keep class com.securelegion.utils.SessionManager { *; }
+-keep class com.securelegion.utils.SupportChatRepository { *; }
+-keep class com.securelegion.utils.TextGradient { *; }
+-keep class com.securelegion.utils.TorHealthHelper { *; }
+-keep class com.securelegion.utils.ZcashAddressDeriver { *; }
 
 # ==================== TOR LIBRARIES (CRITICAL!) ====================
 
@@ -363,6 +465,10 @@
 
 # Custom views — inflated by class name in XML layouts
 -keep class com.securelegion.views.** { *; }
+-keep class com.securelegion.views.AvatarView { *; }
+-keep class com.securelegion.views.GifPickerView { *; }
+-keep class com.securelegion.views.MediaKeyboardView { *; }
+-keep class com.securelegion.views.StickerPickerView { *; }
 
 # ==================== ENUMS ====================
 
@@ -406,3 +512,13 @@
 -dontwarn afu.org.checkerframework.**
 -dontwarn com.google.j2objc.annotations.**
 -dontwarn javax.lang.model.element.Modifier
+
+# ==================== LOTTIE (STICKER ANIMATIONS) ====================
+
+-keep class com.airbnb.lottie.** { *; }
+-dontwarn com.airbnb.lottie.**
+
+# ==================== UCROP (IMAGE CROPPING) ====================
+
+-keep class com.yalantis.ucrop.** { *; }
+-dontwarn com.yalantis.ucrop.**

@@ -98,44 +98,6 @@
 
     </LinearLayout>
 
-    <LinearLayout
-        android:id="@+id/optionAddManually"
-        android:layout_width="match_parent"
-        android:layout_height="56dp"
-        android:orientation="horizontal"
-        android:gravity="center_vertical"
-        android:background="@drawable/action_button_bg"
-        android:paddingStart="16dp"
-        android:paddingEnd="16dp"
-        android:clickable="true"
-        android:focusable="true">
-
-        <ImageView
-            android:layout_width="22dp"
-            android:layout_height="22dp"
-            android:src="@drawable/ic_keyboard"
-            app:tint="#FFFFFF"
-            android:layout_marginEnd="14dp"
-            android:contentDescription="Manual" />
-
-        <TextView
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:text="Add Manually"
-            android:textSize="16sp"
-            android:textColor="#FFFFFF"
-            android:fontFamily="@font/poppins_medium" />
-
-        <ImageView
-            android:layout_width="16dp"
-            android:layout_height="16dp"
-            android:src="@drawable/ic_chevron_right"
-            app:tint="#FFFFFF"
-            android:contentDescription="Go" />
-
-    </LinearLayout>
-
     <!-- Thin divider separating add actions from share -->
     <View
         android:layout_width="match_parent"

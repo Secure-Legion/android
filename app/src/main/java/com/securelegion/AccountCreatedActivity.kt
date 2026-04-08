@@ -174,7 +174,7 @@ class AccountCreatedActivity : AppCompatActivity() {
             startActivity(intent)
             finish()
             @Suppress("DEPRECATION")
-            overridePendingTransition(0, 0)
+            overridePendingTransition(android.R.anim.fade_in, android.R.anim.fade_out)
         }
     }
 

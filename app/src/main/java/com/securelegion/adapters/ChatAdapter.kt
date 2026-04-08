@@ -55,10 +55,13 @@ class ChatAdapter(
     override fun onBindViewHolder(holder: ChatViewHolder, position: Int) {
         val chat = chats[position]
 
-        // Set avatar photo or initials
+        // Set avatar photo, group default silhouette, or initials
         holder.chatAvatar.setName(chat.nickname.removePrefix("@"))
         if (!chat.profilePictureBase64.isNullOrEmpty()) {
             holder.chatAvatar.setPhotoBase64(chat.profilePictureBase64)
+        } else if (chat.isGroup) {
+            holder.chatAvatar.clearPhoto()
+            holder.chatAvatar.setGroupDefault()
         } else {
             holder.chatAvatar.clearPhoto()
         }
@@ -68,8 +71,16 @@ class ChatAdapter(
         holder.chatName.paint.shader = null
         com.securelegion.utils.TextGradient.apply(holder.chatName)
 
-        // Set message preview
-        holder.chatMessage.text = chat.lastMessage
+        // Set message preview (groups show member count prefix)
+        if (chat.isGroup && chat.memberCount > 1) {
+            holder.chatMessage.text = if (chat.lastMessage.isNotEmpty()) {
+                "${chat.memberCount} members | ${chat.lastMessage}"
+            } else {
+                "${chat.memberCount} members"
+            }
+        } else {
+            holder.chatMessage.text = chat.lastMessage
+        }
 
         // Set timestamp
         holder.chatTime.text = chat.time

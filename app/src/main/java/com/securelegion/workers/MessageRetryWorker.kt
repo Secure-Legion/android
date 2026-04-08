@@ -225,7 +225,7 @@ class MessageRetryWorker(
         // - Backpressure: max 10 messages per worker cycle (oldest first)
         val messages = database.messageDao().getMessagesNeedingRetry(
             currentTimeMs = now,
-            giveupAfterDays = 365 // Extended from 7 days to 1 year (indefinite for practical purposes)
+            giveupAfterDays = 2 // 48-hour expiry
         ).filter { !it.messageDelivered && (it.nextRetryAtMs == null || it.nextRetryAtMs <= now) }
             .take(10) // Backpressure: cap per cycle to prevent retry storm
 
@@ -239,6 +239,13 @@ class MessageRetryWorker(
 
         for (message in messages) {
             val contact = contactMap[message.contactId] ?: continue
+
+            // 48-HOUR EXPIRY: Terminal — stop retrying this message
+            if (now - message.timestamp > com.securelegion.database.entities.Message.MESSAGE_EXPIRY_MS) {
+                database.messageDao().updateMessageStatus(message.id, com.securelegion.database.entities.Message.STATUS_EXPIRED)
+                Log.w(TAG, "Message expired (48h): ${message.messageId}")
+                continue
+            }
 
             // Use DB status as source of truth — NOT in-memory AckStateTracker.
             // AckStateTracker is ephemeral (lost on restart) and not hydrated from DB,
@@ -344,7 +351,7 @@ class MessageRetryWorker(
 
             val messages = database.messageDao().getMessagesNeedingRetry(
                 currentTimeMs = now,
-                giveupAfterDays = 365 // Extended from 7 days to 1 year (indefinite for practical purposes)
+                giveupAfterDays = 2 // 48-hour expiry
             ).filter {
                 it.contactId == contactId && !it.messageDelivered
                     && (it.nextRetryAtMs == null || it.nextRetryAtMs <= now)
@@ -360,6 +367,13 @@ class MessageRetryWorker(
             var retriedCount = 0
 
             for (message in messages) {
+                // 48-HOUR EXPIRY: Terminal — stop retrying this message
+                if (now - message.timestamp > com.securelegion.database.entities.Message.MESSAGE_EXPIRY_MS) {
+                    database.messageDao().updateMessageStatus(message.id, com.securelegion.database.entities.Message.STATUS_EXPIRED)
+                    Log.w(TAG, "Message expired (48h): ${message.messageId}")
+                    continue
+                }
+
                 // Use DB status as source of truth (same as periodic path)
                 val dbStatus = message.status
 
@@ -414,18 +428,16 @@ class MessageRetryWorker(
 
     /**
      * Calculate next retry time with exponential backoff
-     * Schedule: 2s, 5s, 10s, 20s, 40s, 2m, 5m, 10m (cap)
+     * Schedule: 5s, 15s, 1m, 5m, 15m, 30m (cap)
      */
     private fun calculateNextRetryTime(retryCount: Int, nowMs: Long): Long {
         val delayMs = when (retryCount) {
-            0 -> 2000L // First retry: 2 seconds
-            1 -> 5000L // Second: 5 seconds
-            2 -> 10000L // Third: 10 seconds
-            3 -> 20000L // Fourth: 20 seconds
-            4 -> 40000L // Fifth: 40 seconds
-            5 -> 120000L // Sixth: 2 minutes
-            6 -> 300000L // Seventh: 5 minutes
-            else -> 600000L // Eighth+: 10 minutes (cap)
+            0 -> 5_000L        // First retry: 5 seconds
+            1 -> 15_000L       // Second: 15 seconds
+            2 -> 60_000L       // Third: 1 minute
+            3 -> 300_000L      // Fourth: 5 minutes
+            4 -> 900_000L      // Fifth: 15 minutes
+            else -> 1_800_000L // Sixth+: 30 minutes (cap)
         }
         return nowMs + delayMs
     }

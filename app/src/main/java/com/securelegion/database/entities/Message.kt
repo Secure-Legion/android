@@ -332,6 +332,8 @@ data class Message(
     /**
      * Whether this message is pinned locally (device-only, not synced)
      */
+    val replyToMessageId: String? = null,
+    val isEdited: Boolean = false,
     val isPinned: Boolean = false
 ) {
     companion object {
@@ -345,6 +347,7 @@ data class Message(
         const val MESSAGE_TYPE_PAYMENT_SENT = "PAYMENT_SENT"
         const val MESSAGE_TYPE_PAYMENT_ACCEPTED = "PAYMENT_ACCEPTED"
         const val MESSAGE_TYPE_PROFILE_UPDATE = "PROFILE_UPDATE"
+        const val MESSAGE_TYPE_EDIT = "EDIT"
 
         // Payment status constants
         const val PAYMENT_STATUS_PENDING = "pending"
@@ -361,13 +364,17 @@ data class Message(
         const val STATUS_PING_SENT = 5 // Ping sent, waiting for Pong
         const val STATUS_PONG_SENT = 6 // Pong sent, waiting for message blob (receiver side)
         const val STATUS_PONG_RECEIVED = 7 // Protocol v2: PONG received, blob send ready
+        const val STATUS_EXPIRED = 8 // Message expired after 48 hours — terminal, no more retries
 
         // Self-destruct duration (24 hours in milliseconds)
         const val SELF_DESTRUCT_DURATION = 24 * 60 * 60 * 1000L
 
-        // Retry backoff settings
+        // Message expiry: stop retrying after this duration from first send
+        const val MESSAGE_EXPIRY_MS = 48 * 60 * 60 * 1000L // 48 hours
+
+        // Retry backoff settings (unified schedule: 5s, 15s, 1m, 5m, 15m, 30m cap)
         const val INITIAL_RETRY_DELAY_MS = 5000L // 5 seconds
-        const val MAX_RETRY_DELAY_MS = 300000L // 5 minutes
-        const val RETRY_BACKOFF_MULTIPLIER = 2.0 // Double each time
+        const val MAX_RETRY_DELAY_MS = 1_800_000L // 30 minutes (raised from 5min)
+        const val RETRY_BACKOFF_MULTIPLIER = 3.0 // Triple each time (was 2x — reaches ceiling faster)
     }
 }

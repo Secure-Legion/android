@@ -405,14 +405,26 @@ class TorHealthMonitorWorker(
     }
 
     /**
-     * Test if own onion is reachable.
-     * Under Arti there is no SOCKS5 proxy, so SOCKS-based self-test is not possible.
-     * HS liveness is determined by heartbeats (loop + accept) in the main check instead.
-     * Always returns false so the caller falls through to heartbeat-based liveness.
+     * Check if the messaging HS is actually reachable by querying Arti's internal status.
+     * Replaces the old hardcoded `return true` that assumed Arti-managed HS was always healthy.
      */
     private suspend fun checkCircuitToOnion(onionAddress: String, port: Int): Boolean {
-        Log.d(TAG, "HS self-test skipped (no SOCKS proxy under Arti) — relying on heartbeats")
-        return false
+        return withContext(Dispatchers.IO) {
+            try {
+                val hsStatus = com.securelegion.crypto.RustBridge.getHsPublisherStatus()
+                Log.d(TAG, "HS publisher status: $hsStatus")
+                when (hsStatus) {
+                    "Running", "DegradedReachable" -> true
+                    else -> {
+                        Log.w(TAG, "HS not healthy: status=$hsStatus")
+                        false
+                    }
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to check HS publisher status: ${e.message}")
+                false
+            }
+        }
     }
 
     /**

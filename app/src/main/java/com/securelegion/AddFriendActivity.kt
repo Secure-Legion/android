@@ -590,6 +590,7 @@ class AddFriendActivity : BaseActivity() {
         val filter = IntentFilter().apply {
             addAction(com.securelegion.services.TorService.ACTION_FRIEND_REQUEST_STATUS_CHANGED)
             addAction("com.securelegion.FRIEND_REQUEST_RECEIVED")
+            addAction("com.securelegion.FRIEND_REQUEST_COMPLETED")
         }
         registerReceiver(friendRequestStatusReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
     }
@@ -1708,6 +1709,8 @@ class AddFriendActivity : BaseActivity() {
                     mainIntent.putExtra("SHOW_REQUESTS_TAB", true)
                     startActivity(mainIntent)
                     finish()
+                    @Suppress("DEPRECATION")
+                    overridePendingTransition(android.R.anim.fade_in, android.R.anim.fade_out)
                 } else {
                     // Reload UI — shows clock icon for "sending" entry
                     loadPendingFriendRequests()

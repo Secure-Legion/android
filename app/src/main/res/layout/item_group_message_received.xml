@@ -86,7 +86,7 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:text="Message content"
-                android:textColor="#000000"
+                android:textColor="@color/text_primary"
                 android:textSize="17sp"
                 android:fontFamily="sans-serif-medium"
                 android:lineSpacingMultiplier="1.2" />

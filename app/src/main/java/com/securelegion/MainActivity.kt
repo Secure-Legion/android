@@ -85,6 +85,7 @@ class MainActivity : BaseActivity() {
     private var dbDeferred: Deferred<SecureLegionDatabase>? = null // Pre-warmed DB connection
     private var chatRefreshJob: Job? = null // Cancel-on-reentry guard for setupChatList
     private var chatScrollGateListener: RecyclerView.OnScrollListener? = null
+    private var groupScrollGateListener: RecyclerView.OnScrollListener? = null
 
     // BroadcastReceiver to listen for incoming Pings and message status updates
     private val pingReceiver = object : BroadcastReceiver() {
@@ -122,10 +123,11 @@ class MainActivity : BaseActivity() {
                 runOnUiThread {
                     updateFriendRequestBadge()
                     updateRequestsPillBadge()
-                    // Refresh both lists regardless of current tab
-                    // so when user navigates to contacts tab, fresh data is ready
+                    // Refresh all lists regardless of current tab
+                    // so when user navigates, fresh data is ready
                     setupContactsList()
                     setupRequestsList()
+                    setupChatList()
                 }
             }
         }
@@ -341,10 +343,10 @@ class MainActivity : BaseActivity() {
                                 .setAutoCancel(true)
                                 .build()
 
-                            notificationManager.notify(999, notification)
+                            notificationManager.notify(998, notification) // Badge notification (was 999, conflicted with pending messages)
                         } else {
                             // Clear badge
-                            notificationManager.cancel(999)
+                            notificationManager.cancel(998)
                         }
                     }
                 }
@@ -656,6 +658,14 @@ class MainActivity : BaseActivity() {
             Log.d("MainActivity", "onNewIntent - showing chats tab (default)")
             showAllChatsTab()
         }
+
+        // Always refresh friend requests + badges on any intent (notification tap, etc.)
+        // Fixes: FR not removed from UI after acceptance notification arrives
+        setupRequestsList()
+        updateRequestsPillBadge()
+        updateFriendRequestBadge()
+        setupContactsList()
+        setupChatList()
     }
 
     override fun onResume() {
@@ -684,10 +694,13 @@ class MainActivity : BaseActivity() {
         } else if (currentTab == "contacts") {
             // Reload contacts list to show updates (e.g., after deleting a contact)
             setupContactsList()
-            // Also reload requests list to show new/updated friend requests
-            setupRequestsList()
-            updateRequestsPillBadge()
         }
+
+        // Always refresh friend requests on resume regardless of tab —
+        // acceptance notifications can arrive while app is backgrounded on any tab.
+        // This ensures stale FR entries are cleared when user returns.
+        setupRequestsList()
+        updateRequestsPillBadge()
 
         // Update badge counts
         updateFriendRequestBadge()
@@ -998,7 +1011,8 @@ class MainActivity : BaseActivity() {
                             isPinned = true,
                             profilePictureBase64 = group.groupIcon,
                             isGroup = true,
-                            groupId = group.groupId
+                            groupId = group.groupId,
+                            memberCount = group.memberCount
                         )
                         chatsList.add(Pair(groupChat, group.lastActivityTimestamp))
                     }
@@ -1368,6 +1382,15 @@ class MainActivity : BaseActivity() {
                         groupsRecyclerView.layoutManager = LinearLayoutManager(this@MainActivity)
                         groupsRecyclerView.adapter = groupAdapter
 
+                        // Block taps while list is scrolling (matches ChatAdapter pattern)
+                        groupScrollGateListener?.let { groupsRecyclerView.removeOnScrollListener(it) }
+                        groupScrollGateListener = object : RecyclerView.OnScrollListener() {
+                            override fun onScrollStateChanged(rv: RecyclerView, newState: Int) {
+                                groupAdapter.listIsScrolling = newState != RecyclerView.SCROLL_STATE_IDLE
+                            }
+                        }
+                        groupsRecyclerView.addOnScrollListener(groupScrollGateListener!!)
+
                         Log.d("MainActivity", "Loaded ${groupsWithCounts.size} groups")
                     } else {
                         groupsRecyclerView.visibility = View.GONE
@@ -1478,7 +1501,8 @@ class MainActivity : BaseActivity() {
                 val keyManager = KeyManager.getInstance(this@MainActivity)
 
                 withContext(Dispatchers.IO) {
-                    // Try to broadcast MemberRemove, but don't block local delete on failure
+                    // Try to broadcast MemberRemove so other members know we left.
+                    // Don't block local cleanup on failure — we're leaving regardless.
                     try {
                         mgr.loadGroup(group.groupId)
                         val localPubkeyHex = keyManager.getSigningPublicKey()
@@ -1489,8 +1513,9 @@ class MainActivity : BaseActivity() {
                         Log.w(TAG, "Could not broadcast leave op (deleting locally anyway): ${e.message}")
                     }
 
-                    // Always delete group locally
-                    mgr.deleteGroup(group.groupId)
+                    // Clean up locally — cascadeDeleteLocal just removes DB rows,
+                    // doesn't create a GroupDelete CRDT op (which requires owner permission).
+                    mgr.cascadeDeleteLocal(group.groupId)
                 }
 
                 ThemedToast.show(this@MainActivity, "Left group: ${group.name}")
@@ -2005,13 +2030,6 @@ class MainActivity : BaseActivity() {
         view.findViewById<View>(R.id.optionShareInvite).setOnClickListener {
             bottomSheet.dismiss()
             showShareInviteBottomSheet()
-        }
-
-        // Option 4: Add Manually — open manual .onion + PIN entry
-        view.findViewById<View>(R.id.optionAddManually).setOnClickListener {
-            bottomSheet.dismiss()
-            val intent = Intent(this, AddFriendActivity::class.java)
-            startActivityWithSlideAnimation(intent)
         }
 
         bottomSheet.show()

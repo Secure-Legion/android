@@ -824,22 +824,16 @@ class ContactOptionsActivity : BaseActivity() {
                             }
                         }
 
-                        try {
-                            val contactListManager = com.securelegion.services.ContactListManager.getInstance(this@ContactOptionsActivity)
-                            val backupResult = contactListManager.backupToIPFS()
-                            if (backupResult.isSuccess) {
-                                val ourCID = backupResult.getOrThrow()
-                                Log.i(TAG, "Contact list backed up after deletion: $ourCID")
-                            } else {
-                                Log.w(TAG, "Failed to backup contact list: ${backupResult.exceptionOrNull()?.message}")
+                        // Backup + broadcast in background — don't block UI on Tor connections
+                        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+                            try {
+                                val contactListManager = com.securelegion.services.ContactListManager.getInstance(this@ContactOptionsActivity)
+                                contactListManager.backupToIPFS()
+                                val syncService = com.securelegion.services.ContactListSyncService.getInstance(this@ContactOptionsActivity)
+                                syncService.broadcastToAllFriends()
+                            } catch (e: Exception) {
+                                Log.w(TAG, "Non-critical error during post-delete backup", e)
                             }
-
-                            // Broadcast updated list (0x82 PUSH) to all remaining friends so they re-pin.
-                            val syncService = com.securelegion.services.ContactListSyncService.getInstance(this@ContactOptionsActivity)
-                            val pushed = syncService.broadcastToAllFriends()
-                            Log.i(TAG, "CL_SYNC post-deletion broadcast: pushed to $pushed friends")
-                        } catch (e: Exception) {
-                            Log.w(TAG, "Non-critical error during contact list backup", e)
                         }
 
                         database.pingInboxDao().deleteByContact(contact.id)

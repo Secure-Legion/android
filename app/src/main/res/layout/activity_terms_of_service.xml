@@ -85,6 +85,7 @@
                 android:lineSpacingMultiplier="1.4"
                 android:layout_marginBottom="20dp" />
 
+            <!-- About Our Services -->
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
@@ -98,7 +99,7 @@
             <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="Minimum Age. You must be at least 13 years old to use Secure Legion."
+                android:text="Minimum Age. You must be at least 13 years old to use Secure. If you are under 18, you must have parental consent to use our services."
                 android:textSize="14sp"
                 android:textColor="@color/text_muted"
                 android:fontFamily="@font/poppins_regular"
@@ -108,7 +109,7 @@
             <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="Account Registration. Your identity is established through a locally generated cryptographic key pair. We do not require a phone number, email address, or any personal information."
+                android:text="Account Registration. When you create an account, your identity is established through a locally generated cryptographic key pair. Secure does not require a phone number, email address, or any personal information to register. Your username is your identity within the app."
                 android:textSize="14sp"
                 android:textColor="@color/text_muted"
                 android:fontFamily="@font/poppins_regular"
@@ -118,18 +119,243 @@
             <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="Privacy. All messages are end-to-end encrypted and routed through the Tor network."
+                android:text="Privacy of User Data. Secure Legion does not sell, rent, or monetize your personal data or content in any way — ever. Please read our Privacy Policy to understand how we safeguard the information you provide when using our services."
+                android:textSize="14sp"
+                android:textColor="@color/text_muted"
+                android:fontFamily="@font/poppins_regular"
+                android:lineSpacingMultiplier="1.4"
+                android:layout_marginBottom="16dp" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Software. In order to enable new features and enhanced functionality, you consent to downloading and installing updates to Secure."
+                android:textSize="14sp"
+                android:textColor="@color/text_muted"
+                android:fontFamily="@font/poppins_regular"
+                android:lineSpacingMultiplier="1.4"
+                android:layout_marginBottom="16dp" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Fees and Taxes. You are responsible for data and mobile carrier fees and taxes associated with the devices on which you use Secure."
                 android:textSize="14sp"
                 android:textColor="@color/text_muted"
                 android:fontFamily="@font/poppins_regular"
                 android:lineSpacingMultiplier="1.4"
                 android:layout_marginBottom="20dp" />
 
+            <!-- Using Secure -->
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Using Secure"
+                android:textSize="16sp"
+                android:textStyle="bold"
+                android:textColor="@color/text_primary"
+                android:fontFamily="@font/space_grotesk_bold"
+                android:layout_marginBottom="10dp" />
+
             <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="[Full terms to be added]"
+                android:text="Our Terms and Policies. You must use Secure consistent with these Terms and all applicable laws, regulations, and third-party agreements. You are responsible for your use of Secure and for any consequences thereof."
                 android:textSize="14sp"
+                android:textColor="@color/text_muted"
+                android:fontFamily="@font/poppins_regular"
+                android:lineSpacingMultiplier="1.4"
+                android:layout_marginBottom="16dp" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Legal and Acceptable Use. You agree to use Secure only for legal, authorized, and acceptable purposes. You will not use or assist others in using Secure in ways that violate the rights of Secure Legion or others, including intellectual property rights."
+                android:textSize="14sp"
+                android:textColor="@color/text_muted"
+                android:fontFamily="@font/poppins_regular"
+                android:lineSpacingMultiplier="1.4"
+                android:layout_marginBottom="16dp" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Harm to Secure Legion. You must not, and must not attempt to, access or use our services in unauthorized ways, disrupt the integrity of our services, or gather information in an unreasonable or intrusive fashion."
+                android:textSize="14sp"
+                android:textColor="@color/text_muted"
+                android:fontFamily="@font/poppins_regular"
+                android:lineSpacingMultiplier="1.4"
+                android:layout_marginBottom="16dp" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Keeping Your Account Secure. Secure employs peer-to-peer encryption with no central servers. You are responsible for keeping your device and your recovery phrase safe and secure. If you lose your recovery phrase, Secure Legion cannot restore your account or data."
+                android:textSize="14sp"
+                android:textColor="@color/text_muted"
+                android:fontFamily="@font/poppins_regular"
+                android:lineSpacingMultiplier="1.4"
+                android:layout_marginBottom="16dp" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="No Access to Emergency Services. Secure does not provide access to emergency service providers like police, fire departments, hospitals, or other public safety organizations. Make sure you can contact emergency service providers through a mobile, fixed-line telephone, or other service."
+                android:textSize="14sp"
+                android:textColor="@color/text_muted"
+                android:fontFamily="@font/poppins_regular"
+                android:lineSpacingMultiplier="1.4"
+                android:layout_marginBottom="16dp" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Third-Party Services. Secure may allow you to access or interact with third-party websites, apps, content, and other products and services. When you use third-party services, their terms and privacy policies govern your use of those services."
+                android:textSize="14sp"
+                android:textColor="@color/text_muted"
+                android:fontFamily="@font/poppins_regular"
+                android:lineSpacingMultiplier="1.4"
+                android:layout_marginBottom="20dp" />
+
+            <!-- Your Rights and License -->
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Your Rights and License with Secure Legion"
+                android:textSize="16sp"
+                android:textStyle="bold"
+                android:textColor="@color/text_primary"
+                android:fontFamily="@font/space_grotesk_bold"
+                android:layout_marginBottom="10dp" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Your Rights. You own the information you submit through Secure. All messages and content are end-to-end encrypted and stored only on your device."
+                android:textSize="14sp"
+                android:textColor="@color/text_muted"
+                android:fontFamily="@font/poppins_regular"
+                android:lineSpacingMultiplier="1.4"
+                android:layout_marginBottom="16dp" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Secure Legion&apos;s Rights. The Secure application, its design, branding, and proprietary components are owned by Secure Legion LLC. Open-source components included in Secure are licensed under their respective licenses. These Terms do not grant you any rights to Secure Legion&apos;s trademarks, logos, or branding."
+                android:textSize="14sp"
+                android:textColor="@color/text_muted"
+                android:fontFamily="@font/poppins_regular"
+                android:lineSpacingMultiplier="1.4"
+                android:layout_marginBottom="16dp" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Secure Legion&apos;s License to You. Secure Legion grants you a limited, revocable, non-exclusive, and non-transferable license to use Secure in accordance with these Terms."
+                android:textSize="14sp"
+                android:textColor="@color/text_muted"
+                android:fontFamily="@font/poppins_regular"
+                android:lineSpacingMultiplier="1.4"
+                android:layout_marginBottom="20dp" />
+
+            <!-- Disclaimers -->
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Disclaimers and Limitations"
+                android:textSize="16sp"
+                android:textStyle="bold"
+                android:textColor="@color/text_primary"
+                android:fontFamily="@font/space_grotesk_bold"
+                android:layout_marginBottom="10dp" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="YOU USE SECURE AT YOUR OWN RISK AND SUBJECT TO THE FOLLOWING DISCLAIMERS. SECURE IS PROVIDED ON AN &quot;AS IS&quot; BASIS WITHOUT ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING BUT NOT LIMITED TO WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, TITLE, NON-INFRINGEMENT, AND FREEDOM FROM COMPUTER VIRUSES OR OTHER HARMFUL CODE. SECURE LEGION DOES NOT WARRANT THAT ANY INFORMATION PROVIDED IS ACCURATE, COMPLETE, OR USEFUL, THAT OUR SERVICES WILL BE OPERATIONAL, ERROR-FREE, SECURE, OR SAFE, OR THAT OUR SERVICES WILL FUNCTION WITHOUT DISRUPTIONS, DELAYS, OR IMPERFECTIONS."
+                android:textSize="12sp"
+                android:textColor="@color/text_muted"
+                android:fontFamily="@font/poppins_regular"
+                android:lineSpacingMultiplier="1.4"
+                android:layout_marginBottom="16dp" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="TO THE EXTENT PERMITTED BY LAW, THE TOTAL LIABILITY OF SECURE LEGION LLC IS LIMITED TO ONE HUNDRED US DOLLARS ($100). SECURE LEGION SHALL NOT BE LIABLE FOR ANY INDIRECT, INCIDENTAL, SPECIAL, CONSEQUENTIAL, OR PUNITIVE DAMAGES."
+                android:textSize="12sp"
+                android:textColor="@color/text_muted"
+                android:fontFamily="@font/poppins_regular"
+                android:lineSpacingMultiplier="1.4"
+                android:layout_marginBottom="20dp" />
+
+            <!-- Resolving Disputes -->
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Resolving Disputes and Ending Terms"
+                android:textSize="16sp"
+                android:textStyle="bold"
+                android:textColor="@color/text_primary"
+                android:fontFamily="@font/space_grotesk_bold"
+                android:layout_marginBottom="10dp" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Resolving Disputes. These Terms are governed by the laws of the state of Wyoming, United States. Any disputes arising from these Terms shall be brought exclusively in the courts of Wyoming, United States."
+                android:textSize="14sp"
+                android:textColor="@color/text_muted"
+                android:fontFamily="@font/poppins_regular"
+                android:lineSpacingMultiplier="1.4"
+                android:layout_marginBottom="16dp" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Ending Terms. You may end these Terms at any time by deleting Secure from your device and discontinuing use. All locally stored data — including messages, keys, and contacts — will be removed."
+                android:textSize="14sp"
+                android:textColor="@color/text_muted"
+                android:fontFamily="@font/poppins_regular"
+                android:lineSpacingMultiplier="1.4"
+                android:layout_marginBottom="20dp" />
+
+            <!-- General -->
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="General"
+                android:textSize="16sp"
+                android:textStyle="bold"
+                android:textColor="@color/text_primary"
+                android:fontFamily="@font/space_grotesk_bold"
+                android:layout_marginBottom="10dp" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Secure Legion may update these Terms from time to time. When we update our Terms, we will update the &quot;Last Modified&quot; date. Your continued use of our services confirms your acceptance of our updated Terms. If you do not agree to our updated Terms, you must stop using our services."
+                android:textSize="14sp"
+                android:textColor="@color/text_muted"
+                android:fontFamily="@font/poppins_regular"
+                android:lineSpacingMultiplier="1.4"
+                android:layout_marginBottom="16dp" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="If you have questions about these Terms, contact us at:\nLegal@securelegion.org"
+                android:textSize="14sp"
+                android:textColor="@color/text_muted"
+                android:fontFamily="@font/poppins_regular"
+                android:lineSpacingMultiplier="1.4"
+                android:layout_marginBottom="16dp" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Last Modified: March 3, 2026"
+                android:textSize="13sp"
                 android:textColor="@color/text_muted"
                 android:fontFamily="@font/poppins_regular"
                 android:lineSpacingMultiplier="1.4" />

@@ -308,9 +308,11 @@
     <!-- Already have account text -->
     <TextView
         android:id="@+id/alreadyHaveAccountText"
-        android:layout_width="wrap_content"
+        android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_marginBottom="48dp"
+        android:gravity="center"
+        android:textAlignment="center"
         android:fontFamily="@font/poppins_medium"
         android:textSize="14sp"
         app:layout_constraintBottom_toBottomOf="parent"

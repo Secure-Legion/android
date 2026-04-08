@@ -85,7 +85,9 @@ private object ChatListItemDiffCallback : DiffUtil.ItemCallback<ChatListItem>() 
                 oldItem.message.pingDelivered == newItem.message.pingDelivered &&
                 oldItem.message.messageDelivered == newItem.message.messageDelivered &&
                 // Compare reaction summaries so DiffUtil rebinds only changed items
-                oldItem.reactionSummary == newItem.reactionSummary
+                oldItem.reactionSummary == newItem.reactionSummary &&
+                oldItem.message.isEdited == newItem.message.isEdited &&
+                oldItem.message.replyToMessageId == newItem.message.replyToMessageId
             oldItem is ChatListItem.PendingPingItem && newItem is ChatListItem.PendingPingItem ->
                 // Compare all fields that affect display
                 oldItem.pingInbox.pingId == newItem.pingInbox.pingId &&
@@ -127,10 +129,84 @@ class MessageAdapter(
     private val onDeleteMessage: ((Message) -> Unit)? = null, // Delete single message callback
     private val onResendMessage: ((Message) -> Unit)? = null, // Resend failed message callback
     private val onPinMessage: ((Message) -> Unit)? = null, // Pin/unpin message callback
-    private val onReactMessage: ((Message) -> Unit)? = null, // Add/change reaction callback
+    private val onReactMessage: ((Message, View) -> Unit)? = null, // Add/change reaction callback (Message + anchor view)
+    private val onReplyMessage: ((Message) -> Unit)? = null,
+    private val onEditMessage: ((Message) -> Unit)? = null,
     private val decryptImageFile: ((ByteArray) -> ByteArray)? = null, // Decrypt AES-GCM encrypted image files
     private val decryptContent: ((String) -> String)? = null // Decrypt AES-GCM encrypted message content
 ) : ListAdapter<ChatListItem, RecyclerView.ViewHolder>(ChatListItemDiffCallback) {
+
+    /** Contact name shown in reply quote labels. Set by ChatActivity. */
+    var chatContactName: String = ""
+
+    /** Current user's own display name. Set by ChatActivity. */
+    var myDisplayName: String = "you"
+
+    /**
+     * Bind reply quote block for both sent and received messages.
+     * replyToMessageId format: "id" or "id||S||text" or "id||R||text"
+     * S = sender quoted their own message → receiver shows chatContactName
+     * R = sender quoted receiver's message → receiver shows "you"
+     * For locally-created replies (no flags), lookup from currentList.
+     */
+    private fun bindReplyQuote(
+        message: Message,
+        quoteBlock: LinearLayout,
+        quoteLabel: TextView,
+        quoteText: TextView
+    ) {
+        val rawReplyId = message.replyToMessageId
+        if (rawReplyId == null) {
+            quoteBlock.visibility = View.GONE
+            return
+        }
+
+        quoteBlock.visibility = View.VISIBLE
+
+        // Parse "id||flag||text" format (3 parts) or "id" (1 part)
+        val parts = rawReplyId.split("||", limit = 3)
+        val replyId = parts[0]
+        val senderFlag = if (parts.size >= 3) parts[1] else null  // "S" or "R"
+        val inlineText = if (parts.size >= 3) parts[2] else if (parts.size == 2) parts[1] else null
+
+        // Try to find original message in current list
+        val originalMsg = currentList.filterIsInstance<ChatListItem.MessageItem>()
+            .firstOrNull { it.message.messageId == replyId }
+
+        // Determine quoted text: inline wire text > local lookup > fallback
+        val displayText = inlineText
+            ?: originalMsg?.let { resolveContent(it.message.encryptedContent) }?.take(100)
+            ?: ""
+
+        // Determine if the quoted message is from "me" (current user)
+        val isQuotingSelf = when {
+            originalMsg != null -> originalMsg.message.isSentByMe
+            senderFlag == "R" -> true  // sender quoted receiver = me
+            senderFlag == "S" -> false // sender quoted themselves = contact
+            else -> false
+        }
+
+        // Show username, not "you"
+        val senderName = if (isQuotingSelf) myDisplayName else chatContactName
+
+        quoteLabel.text = senderName
+        quoteText.text = displayText
+
+        // Set quote bg color: blue tint when quoting self, subtle overlay otherwise
+        val ctx = quoteBlock.context
+        val bgRes = if (isQuotingSelf && message.isSentByMe) {
+            // My sent bubble quoting my own message — subtle overlay on sent bg
+            R.drawable.reply_quote_sent_bg
+        } else if (isQuotingSelf) {
+            // Received bubble quoting me — blue tint
+            R.drawable.reply_quote_self_bg
+        } else if (message.isSentByMe) {
+            R.drawable.reply_quote_sent_bg
+        } else {
+            R.drawable.reply_quote_received_bg
+        }
+        quoteBlock.setBackgroundResource(bgRes)
+    }
 
     /** Decrypt stored content, returning plaintext. Falls back to raw value on error. */
     private fun resolveContent(stored: String): String {
@@ -329,6 +405,10 @@ class MessageAdapter(
         val messageCheckbox: CheckBox = view.findViewById(R.id.messageCheckbox)
         val pinIndicator: TextView = view.findViewById(R.id.pinIndicator)
         val reactionSummary: TextView = view.findViewById(R.id.reactionSummary)
+        val replyQuoteBlock: LinearLayout = view.findViewById(R.id.replyQuoteBlock)
+        val replyQuoteLabel: TextView = view.findViewById(R.id.replyQuoteLabel)
+        val replyQuoteText: TextView = view.findViewById(R.id.replyQuoteText)
+        val editedLabel: TextView = view.findViewById(R.id.editedLabel)
     }
 
     class ReceivedMessageViewHolder(view: View) : RecyclerView.ViewHolder(view) {
@@ -339,6 +419,10 @@ class MessageAdapter(
         val messageCheckbox: CheckBox = view.findViewById(R.id.messageCheckbox)
         val pinIndicator: TextView = view.findViewById(R.id.pinIndicator)
         val reactionSummary: TextView = view.findViewById(R.id.reactionSummary)
+        val replyQuoteBlock: LinearLayout = view.findViewById(R.id.replyQuoteBlock)
+        val replyQuoteLabel: TextView = view.findViewById(R.id.replyQuoteLabel)
+        val replyQuoteText: TextView = view.findViewById(R.id.replyQuoteText)
+        val editedLabel: TextView = view.findViewById(R.id.editedLabel)
     }
 
     class PendingMessageViewHolder(view: View) : RecyclerView.ViewHolder(view) {
@@ -680,6 +764,12 @@ class MessageAdapter(
             }
         }
 
+        // Reply quote
+        bindReplyQuote(message, holder.replyQuoteBlock, holder.replyQuoteLabel, holder.replyQuoteText)
+
+        // Edited label
+        holder.editedLabel.visibility = if (message.isEdited) View.VISIBLE else View.GONE
+
         // Setup swipe gesture (disabled in selection mode)
         if (!isSelectionMode) {
             setupSwipeGesture(holder.messageBubble, holder.swipeRevealedTime, holder.messageStatus, position, isSent = true)
@@ -741,6 +831,12 @@ class MessageAdapter(
             }
         }
 
+        // Reply quote
+        bindReplyQuote(message, holder.replyQuoteBlock, holder.replyQuoteLabel, holder.replyQuoteText)
+
+        // Edited label
+        holder.editedLabel.visibility = if (message.isEdited) View.VISIBLE else View.GONE
+
         // Setup swipe gesture (disabled in selection mode)
         if (!isSelectionMode) {
             setupSwipeGesture(holder.messageBubble, holder.swipeRevealedTime, null, position, isSent = false)
@@ -757,12 +853,12 @@ class MessageAdapter(
         // ChatActivity pre-filters: only passes PendingPingItems when DOWNLOADING or PAUSED.
         // IDLE/BACKOFF → no PendingPingItems at all (invisible).
         if (showTyping) {
-            // DOWNLOADING: active network I/O → typing dots
+            // DOWNLOADING: active network I/O → hide everything (no typing indicator)
             holder.downloadButton.visibility = View.GONE
             holder.downloadingText.visibility = View.GONE
-            holder.typingIndicator.visibility = View.VISIBLE
+            holder.typingIndicator.visibility = View.GONE
             stopEllipsisAnimation(holder.downloadingText)
-            startTypingAnimation(holder.typingDot1, holder.typingDot2, holder.typingDot3)
+            stopTypingAnimation(holder.typingDot1, holder.typingDot2, holder.typingDot3)
         } else {
             // PAUSED / manual mode: lock icon (delivery stopped, user action may be required)
             holder.downloadButton.visibility = View.VISIBLE
@@ -1831,8 +1927,26 @@ class MessageAdapter(
         // Toggle pin label based on current state
         popup.menu.findItem(R.id.action_pin)?.title = if (message.isPinned) "Unpin" else "Pin"
 
+        // Reply: visible on TEXT messages only
+        popup.menu.findItem(R.id.action_reply)?.isVisible =
+            message.messageType == Message.MESSAGE_TYPE_TEXT
+
+        // Edit: visible only on own sent TEXT messages that are delivered
+        popup.menu.findItem(R.id.action_edit)?.isVisible =
+            message.isSentByMe &&
+            message.messageType == Message.MESSAGE_TYPE_TEXT &&
+            message.status == Message.STATUS_DELIVERED
+
         popup.setOnMenuItemClickListener { menuItem ->
             when (menuItem.itemId) {
+                R.id.action_reply -> {
+                    onReplyMessage?.invoke(message)
+                    true
+                }
+                R.id.action_edit -> {
+                    onEditMessage?.invoke(message)
+                    true
+                }
                 R.id.action_resend -> {
                     // Resend failed message
                     onResendMessage?.invoke(message)
@@ -1851,7 +1965,7 @@ class MessageAdapter(
                     true
                 }
                 R.id.action_react -> {
-                    onReactMessage?.invoke(message)
+                    onReactMessage?.invoke(message, view)
                     true
                 }
                 R.id.action_delete -> {

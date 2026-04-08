@@ -134,6 +134,16 @@ class ChatActivity : BaseActivity() {
     private var isShowingSendButton = false
     private var isSelectionMode = false
 
+    // Reply/Edit compose state
+    private var replyToMessageId: String? = null
+    private var editingMessageId: String? = null
+    private var editingOriginalText: String? = null
+    private lateinit var replyEditPreviewBar: LinearLayout
+    private lateinit var previewAccentBar: View
+    private lateinit var previewLabel: TextView
+    private lateinit var previewText: TextView
+    private lateinit var previewDismissButton: ImageView
+
     // Auto-download: Track if user has manually downloaded at least one message this session
     // (Device Protection ON only - enables auto-PONG for subsequent pings in same session)
     private var hasDownloadedOnce = false
@@ -715,8 +725,14 @@ class ChatActivity : BaseActivity() {
             onPinMessage = { message ->
                 pinMessage(message)
             },
-            onReactMessage = { message ->
-                showReactionPicker(message)
+            onReactMessage = { message, anchorView ->
+                showReactionPicker(message, anchorView)
+            },
+            onReplyMessage = { message ->
+                enterReplyMode(message)
+            },
+            onEditMessage = { message ->
+                enterEditMode(message)
             },
             decryptContent = { stored ->
                 KeyManager.getInstance(this).decryptMessageContent(stored)
@@ -727,6 +743,10 @@ class ChatActivity : BaseActivity() {
         fetchCryptoPrices()
 
         // Enable stable IDs BEFORE attaching adapter (must be done before observers register)
+        messageAdapter.chatContactName = contactName
+        messageAdapter.myDisplayName = try {
+            KeyManager.getInstance(this).getUsername() ?: "you"
+        } catch (_: Exception) { "you" }
         messageAdapter.setHasStableIds(true)
 
         messagesRecyclerView.apply {
@@ -746,6 +766,27 @@ class ChatActivity : BaseActivity() {
                     }
                 }
             })
+
+            // Show/hide scroll-to-bottom button based on scroll position
+            val scrollToBottomBtn = this@ChatActivity.findViewById<View>(R.id.scrollToBottomBtn)
+            addOnScrollListener(object : RecyclerView.OnScrollListener() {
+                override fun onScrolled(recyclerView: RecyclerView, dx: Int, dy: Int) {
+                    val lm = recyclerView.layoutManager as? LinearLayoutManager ?: return
+                    val lastVisible = lm.findLastVisibleItemPosition()
+                    val totalItems = lm.itemCount
+                    val farFromBottom = totalItems - lastVisible > 5
+                    if (farFromBottom && scrollToBottomBtn.visibility != View.VISIBLE) {
+                        scrollToBottomBtn.visibility = View.VISIBLE
+                        scrollToBottomBtn.alpha = 0f
+                        scrollToBottomBtn.animate().alpha(1f).setDuration(150).start()
+                    } else if (!farFromBottom && scrollToBottomBtn.visibility == View.VISIBLE) {
+                        scrollToBottomBtn.animate().alpha(0f).setDuration(150).withEndAction {
+                            scrollToBottomBtn.visibility = View.GONE
+                        }.start()
+                    }
+                }
+            })
+            scrollToBottomBtn.setOnClickListener { scrollToBottom(smooth = true) }
         }
     }
 
@@ -762,6 +803,14 @@ class ChatActivity : BaseActivity() {
         recordingTimer = findViewById(R.id.recordingTimer)
         cancelRecordingButton = findViewById(R.id.cancelRecordingButton)
         sendVoiceButton = findViewById(R.id.sendVoiceButton)
+
+        // Reply/Edit preview bar
+        replyEditPreviewBar = findViewById(R.id.replyEditPreviewBar)
+        previewAccentBar = findViewById(R.id.previewAccentBar)
+        previewLabel = findViewById(R.id.previewLabel)
+        previewText = findViewById(R.id.previewText)
+        previewDismissButton = findViewById(R.id.previewDismissButton)
+        previewDismissButton.setOnClickListener { clearReplyEditState() }
 
         // Back button
         findViewById<View>(R.id.backButton).setOnClickListener {
@@ -866,7 +915,16 @@ class ChatActivity : BaseActivity() {
 
         // Fallback click handler for sending text
         sendButton.setOnClickListener {
-            if (isShowingSendButton) {
+            if (editingMessageId != null) {
+                val newText = messageInput.text.toString().trim()
+                if (newText.isNotEmpty() && newText != editingOriginalText) {
+                    sendEditMessage(editingMessageId!!, newText)
+                }
+                val imm = getSystemService(INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager
+                imm.restartInput(messageInput)
+                messageInput.text.clear()
+                clearReplyEditState()
+            } else if (isShowingSendButton) {
                 sendMessage(enableSelfDestruct = false, enableReadReceipt = true)
             }
         }
@@ -1088,6 +1146,11 @@ class ChatActivity : BaseActivity() {
             hideMediaKeyboard()
             // System GIFs are bundled assets - send as text code like stickers
             sendStickerMessage(gifAssetPath)
+        }
+
+        mediaKeyboardPanel.setOnSwipeDismissListener {
+            hideMediaKeyboard()
+            showSoftKeyboard()
         }
     }
 
@@ -1598,6 +1661,31 @@ class ChatActivity : BaseActivity() {
             }
 
             dialog.setContentView(view)
+
+            // Push save/close buttons below status bar so they aren't hidden behind the clock
+            dialog.window?.let { window ->
+                androidx.core.view.WindowCompat.setDecorFitsSystemWindows(window, false)
+                androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(view) { _, windowInsets ->
+                    val insets = windowInsets.getInsets(
+                        androidx.core.view.WindowInsetsCompat.Type.systemBars()
+                            or androidx.core.view.WindowInsetsCompat.Type.displayCutout()
+                    )
+                    view.findViewById<View>(R.id.closeButton).let { btn ->
+                        val lp = btn.layoutParams as android.widget.FrameLayout.LayoutParams
+                        lp.topMargin = insets.top + 16
+                        lp.marginEnd = 16
+                        btn.layoutParams = lp
+                    }
+                    view.findViewById<View>(R.id.saveImageButton).let { btn ->
+                        val lp = btn.layoutParams as android.widget.FrameLayout.LayoutParams
+                        lp.topMargin = insets.top + 16
+                        lp.marginStart = 16
+                        btn.layoutParams = lp
+                    }
+                    windowInsets
+                }
+            }
+
             dialog.show()
         } catch (e: Exception) {
             Log.e(TAG, "Failed to show full image", e)
@@ -2027,32 +2115,15 @@ class ChatActivity : BaseActivity() {
 
             // Decide which pending pings to show and whether to display typing dots
             val (pingsForAdapter, showTyping) = if (!devProtection) {
-                // Instant mode: typing = DOWNLOADING, lock = never, hidden otherwise
-                when (contactState) {
-                    com.securelegion.services.DownloadStateManager.State.DOWNLOADING -> {
-                        // Show 1 typing indicator (first pending ping is the visual anchor)
-                        if (pendingPingsToShow.isNotEmpty()) {
-                            listOf(pendingPingsToShow.first()) to true
-                        } else {
-                            emptyList<com.securelegion.database.entities.PingInbox>() to false
-                        }
-                    }
-                    else -> {
-                        // IDLE, BACKOFF, or PAUSED - everything invisible, retries happen silently
-                        emptyList<com.securelegion.database.entities.PingInbox>() to false
-                    }
-                }
+                // Instant mode: no typing indicator, hide everything during download
+                emptyList<com.securelegion.database.entities.PingInbox>() to false
             } else {
                 // Manual mode (Device Protection ON): show all pending pings as lock icons
-                // User taps lock -> DownloadMessageService starts -> state flips to DOWNLOADING -> typing
+                // User taps lock -> DownloadMessageService starts -> state flips to DOWNLOADING -> hidden
                 when (contactState) {
                     com.securelegion.services.DownloadStateManager.State.DOWNLOADING -> {
-                        // Show 1 typing indicator (cap at 1 to avoid duplicate dots)
-                        if (pendingPingsToShow.isNotEmpty()) {
-                            listOf(pendingPingsToShow.first()) to true
-                        } else {
-                            emptyList<com.securelegion.database.entities.PingInbox>() to false
-                        }
+                        // Downloading — hide pending pings (no typing indicator)
+                        emptyList<com.securelegion.database.entities.PingInbox>() to false
                     }
                     else -> {
                         // Show lock icons for all pending pings (manual download required)
@@ -2115,16 +2186,29 @@ class ChatActivity : BaseActivity() {
         }
     }
 
-    private fun showReactionPicker(message: Message) {
-        val choices = listOf("👍", "❤️", "😂", "😮", "😢", "🔥", "🙏", "👎")
+    private fun showReactionPicker(message: Message, anchorView: View) {
+        val choices = listOf(
+            "👍", "❤️", "😂", "😮", "😢", "🔥", "🙏", "👎",
+            "🎉", "💯", "👀", "💀", "🤔", "😍", "🥺", "😤",
+            "✅", "❌", "⭐", "💪", "🤝", "🫡", "😈", "💔"
+        )
         val currentMine = myReactionByMessageId[message.messageId]
-        val dialogView = LayoutInflater.from(this).inflate(R.layout.dialog_reaction_picker, null)
-        val emojiContainer = dialogView.findViewById<LinearLayout>(R.id.reactionEmojiContainer)
-        val removeButton = dialogView.findViewById<TextView>(R.id.reactionRemoveButton)
+        val pickerView = LayoutInflater.from(this).inflate(R.layout.dialog_reaction_picker, null)
+        val emojiContainer = pickerView.findViewById<LinearLayout>(R.id.reactionEmojiContainer)
+        val removeButton = pickerView.findViewById<TextView>(R.id.reactionRemoveButton)
 
-        val dialog = GlassDialog.builder(this)
-            .setView(dialogView)
-            .create()
+        // Cap width to 280dp so the pill doesn't stretch edge-to-edge — emojis scroll inside
+        val maxWidthPx = dp(280)
+        val popup = android.widget.PopupWindow(
+            pickerView,
+            maxWidthPx,
+            ViewGroup.LayoutParams.WRAP_CONTENT,
+            true
+        ).apply {
+            elevation = 8f
+            setBackgroundDrawable(ContextCompat.getDrawable(this@ChatActivity, R.drawable.reaction_picker_pill_bg))
+            isOutsideTouchable = true
+        }
 
         fun sendReaction(emoji: String, present: Boolean) {
             lifecycleScope.launch {
@@ -2145,7 +2229,7 @@ class ChatActivity : BaseActivity() {
                 }
                 loadMessagesDebounced()
             }
-            dialog.dismiss()
+            popup.dismiss()
         }
 
         choices.forEach { emoji ->
@@ -2153,9 +2237,9 @@ class ChatActivity : BaseActivity() {
                 text = emoji
                 textSize = 22f
                 gravity = Gravity.CENTER
-                background = ContextCompat.getDrawable(this@ChatActivity, R.drawable.glass_circle_bg)
+                // No individual chip background — inherits from the pill container
                 layoutParams = LinearLayout.LayoutParams(dp(44), dp(44)).apply {
-                    marginEnd = dp(8)
+                    marginEnd = dp(4)
                 }
                 setOnClickListener {
                     sendReaction(emoji, present = true)
@@ -2173,7 +2257,30 @@ class ChatActivity : BaseActivity() {
             removeButton.visibility = View.GONE
         }
 
-        dialog.show()
+        // Measure the picker to position it above the anchor
+        pickerView.measure(
+            View.MeasureSpec.makeMeasureSpec(resources.displayMetrics.widthPixels, View.MeasureSpec.AT_MOST),
+            View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED)
+        )
+        val pickerHeight = pickerView.measuredHeight
+
+        // Position above the message bubble
+        val location = IntArray(2)
+        anchorView.getLocationOnScreen(location)
+        val anchorX = location[0]
+        val anchorY = location[1]
+
+        // Show above the anchor, horizontally centered on screen
+        val screenWidth = resources.displayMetrics.widthPixels
+        val pickerWidth = pickerView.measuredWidth.coerceAtMost(screenWidth - dp(32))
+        val xOffset = (screenWidth - pickerWidth) / 2
+
+        popup.showAtLocation(
+            anchorView,
+            Gravity.NO_GRAVITY,
+            xOffset,
+            anchorY - pickerHeight - dp(8)
+        )
     }
 
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
@@ -2219,6 +2326,10 @@ class ChatActivity : BaseActivity() {
         // restartInput() MUST come before clear() — it tells the IME to discard its in-flight
         // composition (which would otherwise get re-pushed into the Editable after we clear,
         // leaving the sent text visible in the input bar).
+        // Capture reply state before clearing
+        val currentReplyId = replyToMessageId
+        clearReplyEditState()
+
         val imm = getSystemService(android.content.Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager
         imm.restartInput(messageInput)
         messageInput.text.clear()
@@ -2234,6 +2345,7 @@ class ChatActivity : BaseActivity() {
                 val result = messageService.sendMessage(
                     contactId = contactId,
                     plaintext = messageText,
+                    replyToMessageId = currentReplyId,
                     selfDestructDurationMs = if (enableSelfDestruct) 24 * 60 * 60 * 1000L else null,
                     enableReadReceipt = enableReadReceipt,
                     onMessageSaved = { savedMessage ->
@@ -2299,6 +2411,75 @@ class ChatActivity : BaseActivity() {
         messageAdapter.setSelectionMode(isSelectionMode)
 
         Log.d(TAG, "Selection mode: $isSelectionMode")
+    }
+
+    // ==================== REPLY / EDIT ====================
+
+    private fun enterReplyMode(message: Message) {
+        clearReplyEditState()
+        replyToMessageId = message.messageId
+        replyEditPreviewBar.visibility = View.VISIBLE
+        previewAccentBar.setBackgroundColor(getColor(R.color.reply_accent))
+        val senderName = if (message.isSentByMe) "yourself" else contactName
+        previewLabel.text = "Replying to $senderName"
+        previewLabel.setTextColor(getColor(R.color.text_primary))
+        val decrypted = try {
+            KeyManager.getInstance(this).decryptMessageContent(message.encryptedContent)
+        } catch (_: Exception) { message.encryptedContent }
+        previewText.text = decrypted.take(100)
+        messageInput.requestFocus()
+        val imm = getSystemService(INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager
+        imm.showSoftInput(messageInput, 0)
+    }
+
+    private fun enterEditMode(message: Message) {
+        clearReplyEditState()
+        editingMessageId = message.messageId
+        val decrypted = try {
+            KeyManager.getInstance(this).decryptMessageContent(message.encryptedContent)
+        } catch (_: Exception) { message.encryptedContent }
+        editingOriginalText = decrypted
+        replyEditPreviewBar.visibility = View.VISIBLE
+        previewAccentBar.setBackgroundColor(getColor(R.color.reply_accent))
+        previewLabel.text = "Editing message"
+        previewLabel.setTextColor(getColor(R.color.text_primary))
+        previewText.text = decrypted.take(100)
+        messageInput.setText(decrypted)
+        messageInput.setSelection(messageInput.text.length)
+        messageInput.requestFocus()
+        sendButtonIcon.setImageResource(R.drawable.ic_check)
+    }
+
+    private fun clearReplyEditState() {
+        replyToMessageId = null
+        editingMessageId = null
+        editingOriginalText = null
+        replyEditPreviewBar.visibility = View.GONE
+        val hasText = messageInput.text.toString().trim().isNotEmpty()
+        sendButtonIcon.setImageResource(if (hasText) R.drawable.ic_send else R.drawable.ic_mic)
+    }
+
+    private fun sendEditMessage(messageId: String, newText: String) {
+        lifecycleScope.launch {
+            try {
+                // Resolve both target IDs (same pattern as reactions)
+                val originalMsg = withContext(Dispatchers.IO) {
+                    database.messageDao().getMessageByMessageId(messageId)
+                }
+                val blobId = if (originalMsg != null) {
+                    withContext(Dispatchers.IO) {
+                        val (_, blobMessageId) = resolveReactionTargetIds(originalMsg)
+                        blobMessageId
+                    }
+                } else null
+
+                messageService.sendEditMessage(contactId, messageId, newText, blobId)
+                loadMessages()
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to send edit", e)
+                ThemedToast.show(this@ChatActivity, "Failed to edit message")
+            }
+        }
     }
 
     /**

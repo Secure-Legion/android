@@ -2,7 +2,9 @@ package com.securelegion.views
 
 import android.content.Context
 import android.util.AttributeSet
+import android.view.GestureDetector
 import android.view.LayoutInflater
+import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.widget.ImageView
@@ -34,8 +36,19 @@ class MediaKeyboardView @JvmOverloads constructor(
     private var onEmojiSelected: ((String) -> Unit)? = null
     private var onStickerSelected: ((String) -> Unit)? = null
     private var onGifSelected: ((String) -> Unit)? = null
+    private var onSwipeDismiss: (() -> Unit)? = null
 
     private var currentTab = 0
+
+    private val gestureDetector = GestureDetector(context, object : GestureDetector.SimpleOnGestureListener() {
+        override fun onFling(e1: MotionEvent?, e2: MotionEvent, velocityX: Float, velocityY: Float): Boolean {
+            if (e1 != null && velocityY > 800 && (e2.y - e1.y) > 100) {
+                onSwipeDismiss?.invoke()
+                return true
+            }
+            return false
+        }
+    })
 
     init {
         orientation = VERTICAL
@@ -54,6 +67,15 @@ class MediaKeyboardView @JvmOverloads constructor(
 
         setupEmojiGrid()
         setupTabs()
+    }
+
+    override fun onInterceptTouchEvent(ev: MotionEvent): Boolean {
+        gestureDetector.onTouchEvent(ev)
+        return super.onInterceptTouchEvent(ev)
+    }
+
+    fun setOnSwipeDismissListener(listener: () -> Unit) {
+        onSwipeDismiss = listener
     }
 
     fun setOnEmojiSelectedListener(listener: (String) -> Unit) {

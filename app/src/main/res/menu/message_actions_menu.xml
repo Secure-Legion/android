@@ -1,8 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
 <menu xmlns:android="http://schemas.android.com/apk/res/android">
     <item
+        android:id="@+id/action_reply"
+        android:title="Reply" />
+    <item
         android:id="@+id/action_react"
         android:title="React" />
+    <item
+        android:id="@+id/action_edit"
+        android:title="Edit" />
     <item
         android:id="@+id/action_resend"
         android:title="Resend" />

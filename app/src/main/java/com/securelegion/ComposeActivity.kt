@@ -172,7 +172,7 @@ class ComposeActivity : BaseActivity() {
 
         override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): ContactViewHolder {
             val view = LayoutInflater.from(parent.context)
-                .inflate(R.layout.item_compose_contact, parent, false)
+                .inflate(R.layout.item_contact, parent, false)
             return ContactViewHolder(view, onContactClick)
         }
 
@@ -188,11 +188,12 @@ class ComposeActivity : BaseActivity() {
         ) : RecyclerView.ViewHolder(itemView) {
 
             private val contactName: TextView = itemView.findViewById(R.id.contactName)
+            private val contactUsername: TextView = itemView.findViewById(R.id.contactUsername)
             private val avatarView: com.securelegion.views.AvatarView = itemView.findViewById(R.id.contactAvatar)
-            private val onlineIndicator: View = itemView.findViewById(R.id.onlineIndicator)
 
             fun bind(contact: DbContact) {
                 contactName.text = contact.displayName
+                contactUsername.text = "@${contact.displayName.lowercase().replace(" ", "")}"
 
                 // Set avatar with photo or initials fallback
                 avatarView.setName(contact.displayName)
@@ -201,9 +202,6 @@ class ComposeActivity : BaseActivity() {
                 } else {
                     avatarView.clearPhoto()
                 }
-
-                // Show online indicator (placeholder - can be implemented later)
-                onlineIndicator.visibility = View.GONE
 
                 itemView.setOnClickListener {
                     onContactClick(contact)

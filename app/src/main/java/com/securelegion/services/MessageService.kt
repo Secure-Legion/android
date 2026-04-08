@@ -63,11 +63,11 @@ class MessageService(private val context: Context) {
             )
         }
         private const val PRECHECK_TIMEOUT_MS = 3500
-        private const val RETRYABLE_BACKOFF_BASE_MS = 200L
-        private const val RETRYABLE_BACKOFF_MAX_MS = 500L
-        private const val HOST_UNREACHABLE_BACKOFF_BASE_MS = 300L
-        private const val HOST_UNREACHABLE_BACKOFF_MAX_MS = 500L
-        private const val RETRYABLE_JITTER_MAX_MS = 50L
+        private const val RETRYABLE_BACKOFF_BASE_MS = 5_000L
+        private const val RETRYABLE_BACKOFF_MAX_MS = 300_000L
+        private const val HOST_UNREACHABLE_BACKOFF_BASE_MS = 10_000L
+        private const val HOST_UNREACHABLE_BACKOFF_MAX_MS = 300_000L
+        private const val RETRYABLE_JITTER_MAX_MS = 2_000L
         private const val STATUS4_DIAG_COOLDOWN_MS = 30_000L
 
         private data class RetryablePeerState(
@@ -96,7 +96,7 @@ class MessageService(private val context: Context) {
             val key = peerKey(onion)
             val state = retryablePeerState.computeIfAbsent(key) { RetryablePeerState() }
             return synchronized(state) {
-                state.streak = (state.streak + 1).coerceAtMost(3)
+                state.streak = (state.streak + 1).coerceAtMost(6)
                 val baseMs = if (isHostUnreachable) HOST_UNREACHABLE_BACKOFF_BASE_MS else RETRYABLE_BACKOFF_BASE_MS
                 val capMs = if (isHostUnreachable) HOST_UNREACHABLE_BACKOFF_MAX_MS else RETRYABLE_BACKOFF_MAX_MS
                 val exponential = (baseMs * (1L shl (state.streak - 1))).coerceAtMost(capMs)
@@ -107,7 +107,7 @@ class MessageService(private val context: Context) {
             }
         }
 
-        private fun clearRetryableFailureState(onion: String) {
+        internal fun clearRetryableFailureState(onion: String) {
             retryablePeerState.remove(peerKey(onion))
         }
 
@@ -1043,6 +1043,60 @@ class MessageService(private val context: Context) {
     }
 
     /**
+     * Send an edit for an existing message.
+     * 1. Updates local message in place + marks "(edited)"
+     * 2. Sends new text as a regular message through ping-pong pipeline (retry, ACK, the works)
+     * 3. Receiver sees 0x12 inner prefix → replaces old message, marks "(edited)"
+     * 4. Edit message stored locally as MESSAGE_TYPE_EDIT (hidden from chat UI)
+     */
+    suspend fun sendEditMessage(
+        contactId: Long,
+        targetMessageId: String,
+        newText: String,
+        targetBlobId: String? = null
+    ): Result<Unit> = withContext(Dispatchers.IO) {
+        try {
+            val dbPassphrase = keyManager.getDatabasePassphrase()
+            val database = SecureLegionDatabase.getInstance(context, dbPassphrase)
+
+            // 1. Update local message in place — user sees the edit immediately
+            val newEncrypted = keyManager.encryptMessageContent(newText)
+            database.messageDao().applyEdit(targetMessageId, newEncrypted)
+
+            // 2. Build edit JSON payload
+            val editPayload = org.json.JSONObject().apply {
+                put("target_message_id", targetMessageId)
+                if (!targetBlobId.isNullOrBlank()) put("target_blob_id", targetBlobId)
+                put("new_text", newText)
+            }.toString()
+
+            // 3. Send through normal message pipeline — ping-pong, retry workers, ACKs
+            //    The 0x12 prefix is set via isEditMessage flag in sendMessage
+            val result = sendMessage(
+                contactId = contactId,
+                plaintext = editPayload,
+                isEditMessage = true
+            )
+
+            if (result.isFailure) {
+                Log.w(TAG, "Edit send queued/failed: ${result.exceptionOrNull()?.message}")
+            }
+
+            // 4. Broadcast UI refresh for local edit
+            val refreshIntent = android.content.Intent("com.securelegion.MESSAGE_RECEIVED").apply {
+                setPackage(context.packageName)
+                putExtra("CONTACT_ID", contactId)
+            }
+            context.sendBroadcast(refreshIntent)
+
+            Result.success(Unit)
+        } catch (e: Exception) {
+            Log.e(TAG, "sendEditMessage failed", e)
+            Result.failure(e)
+        }
+    }
+
+    /**
      * Send a profile photo update to a single contact via Tor
      * Sends directly via RustBridge without saving to messages table (zero trace).
      * @param contactId Database ID of the recipient contact
@@ -1179,6 +1233,8 @@ class MessageService(private val context: Context) {
     suspend fun sendMessage(
         contactId: Long,
         plaintext: String,
+        replyToMessageId: String? = null,
+        isEditMessage: Boolean = false,
         selfDestructDurationMs: Long? = null,
         enableReadReceipt: Boolean = true,
         correlationId: String? = null, // For stress test tracing
@@ -1230,15 +1286,41 @@ class MessageService(private val context: Context) {
             // ATOMIC ENCRYPTION + KEY EVOLUTION
             // Encrypts and evolves key in one indivisible operation to prevent desync
             // Wire format: [version:1][sequence:8][nonce:24][ciphertext][tag:16]
-            // NEW: Prepend message type byte INSIDE plaintext before encryption
+            // Prepend message type byte INSIDE plaintext before encryption
             // TEXT format: [0x00][utf8 text bytes...]
-            val plaintextWithType = byteArrayOf(0x00) + plaintext.toByteArray(Charsets.UTF_8)
+            // REPLY format: [0x11][json with text + reply_to_message_id]
+            val plaintextWithType = if (replyToMessageId != null) {
+                // Look up original message text to include in payload (receiver may not have same ID)
+                val originalMsg = database.messageDao().getMessageByMessageId(replyToMessageId)
+                val originalText = originalMsg?.let {
+                    try { keyManager.decryptMessageContent(it.encryptedContent) } catch (_: Exception) { null }
+                }
+                val isSelfReply = originalMsg?.isSentByMe == true
+                val replyPayload = org.json.JSONObject().apply {
+                    put("text", plaintext)
+                    put("reply_to_message_id", replyToMessageId)
+                    if (!originalText.isNullOrBlank()) put("reply_to_text", originalText.take(100))
+                    // "self" means sender is quoting their own message; receiver should show their own name
+                    put("reply_to_self", isSelfReply)
+                }.toString()
+                byteArrayOf(0x11) + replyPayload.toByteArray(Charsets.UTF_8)
+            } else if (isEditMessage) {
+                // EDIT format: [0x12][json payload] — sent through normal pipeline
+                byteArrayOf(0x12) + plaintext.toByteArray(Charsets.UTF_8)
+            } else {
+                byteArrayOf(0x00) + plaintext.toByteArray(Charsets.UTF_8)
+            }
             val plaintextForEncryption = String(plaintextWithType, Charsets.ISO_8859_1)
+            val typeLabel = when {
+                replyToMessageId != null -> "0x11 REPLY"
+                isEditMessage -> "0x12 EDIT"
+                else -> "0x00 TEXT"
+            }
             Log.d(TAG, "SEND KEY EVOLUTION: About to encrypt and evolve send chain key")
             Log.d(TAG, "contactId=$contactId (${contact.displayName})")
             Log.d(TAG, "Current sendCounter=${keyChain.sendCounter}")
             Log.d(TAG, "Will encrypt with sequence ${keyChain.sendCounter}")
-            Log.d(TAG, "Plaintext with type prefix: ${plaintextWithType.size} bytes (type=0x00 TEXT)")
+            Log.d(TAG, "Plaintext with type prefix: ${plaintextWithType.size} bytes (type=$typeLabel)")
             val result = RustBridge.encryptMessageWithEvolution(
                 plaintextForEncryption,
                 keyChain.sendChainKeyBytes,
@@ -1290,6 +1372,7 @@ class MessageService(private val context: Context) {
                 contactId = contactId,
                 messageId = messageId,
                 encryptedContent = keyManager.encryptMessageContent(plaintext),
+                messageType = if (isEditMessage) Message.MESSAGE_TYPE_EDIT else Message.MESSAGE_TYPE_TEXT,
                 isSentByMe = true,
                 timestamp = currentTime,
                 status = initialStatus,
@@ -1304,7 +1387,8 @@ class MessageService(private val context: Context) {
                 encryptedPayload = encryptedBase64, // Store encrypted payload to send after Pong
                 retryCount = 0, // Initialize retry counter
                 lastRetryTimestamp = currentTime, // Track when we last attempted
-                correlationId = blobMessageId ?: correlationId // Fast mode: blob hash for ACK matching; else stress test tracing
+                correlationId = blobMessageId ?: correlationId, // Fast mode: blob hash for ACK matching; else stress test tracing
+                replyToMessageId = replyToMessageId
             )
 
             val durationText = selfDestructDurationMs?.let { duration ->
@@ -1952,7 +2036,9 @@ class MessageService(private val context: Context) {
         0x0C, // PAYMENT_ACCEPTED
         0x0E, // STICKER
         0x0F, // PROFILE_UPDATE
-        0x10  // REACTION
+        0x10, // REACTION
+        0x11, // REPLY
+        0x12  // EDIT
     )
 
     /**
@@ -2578,10 +2664,11 @@ class MessageService(private val context: Context) {
                     Log.d(TAG, "Decoded payload: appType=0x${String.format("%02X", decoded.appType)}, body=${decoded.bodyBytes.size} bytes")
 
                     // Determine actual content and type from inner prefix
-                    val actualContent: String
-                    val actualMessageType: String
-                    val actualAttachmentType: String?
-                    val actualAttachmentData: String?
+                    var actualContent: String
+                    var actualMessageType: String
+                    var actualAttachmentType: String?
+                    var actualAttachmentData: String?
+                    var parsedReplyToMessageId: String? = null
 
                     when (decoded.appType) {
                         0x00, -1 -> {
@@ -2636,6 +2723,58 @@ class MessageService(private val context: Context) {
                                 Log.w(TAG, "Failed to parse misrouted reaction payload", e)
                             }
                         }
+                        0x11 -> {
+                            // REPLY: JSON with text + reply_to_message_id + reply_to_text
+                            try {
+                                val obj = JSONObject(decoded.bodyUtf8)
+                                actualContent = obj.getString("text")
+                                actualMessageType = Message.MESSAGE_TYPE_TEXT
+                                actualAttachmentType = null
+                                actualAttachmentData = null
+                                val replyId = obj.optString("reply_to_message_id")
+                                val replyText = obj.optString("reply_to_text")
+                                val replySelf = obj.optBoolean("reply_to_self", false)
+                                val resolvedId = resolveReactionTargetIdForContact(
+                                    database, contact.id, replyId, obj.optString("reply_to_blob_id")
+                                )
+                                val baseId = resolvedId ?: replyId
+                                val senderFlag = if (replySelf) "S" else "R"
+                                parsedReplyToMessageId = if (replyText.isNotBlank()) "$baseId||$senderFlag||$replyText" else baseId
+                                Log.d(TAG, "REPLY received: replyTo=$baseId, quotedText=${replyText.take(30)}")
+                            } catch (e: Exception) {
+                                Log.w(TAG, "Failed to parse REPLY payload, falling back to TEXT", e)
+                                actualContent = decoded.bodyUtf8
+                                actualMessageType = Message.MESSAGE_TYPE_TEXT
+                                actualAttachmentType = null
+                                actualAttachmentData = null
+                            }
+                        }
+                        0x12 -> {
+                            // EDIT: update existing message in place, no new row
+                            try {
+                                val obj = JSONObject(decoded.bodyUtf8)
+                                val targetId = obj.getString("target_message_id")
+                                val targetBlobId = obj.optString("target_blob_id")
+                                val newText = obj.getString("new_text")
+                                val resolvedId = resolveReactionTargetIdForContact(
+                                    database, contact.id, targetId, targetBlobId
+                                )
+                                if (!resolvedId.isNullOrBlank()) {
+                                    val newEncrypted = keyManager.encryptMessageContent(newText)
+                                    database.messageDao().applyEdit(resolvedId, newEncrypted)
+                                    Log.i(TAG, "EDIT applied to message $resolvedId")
+                                }
+                                // Broadcast UI refresh
+                                val refreshIntent = android.content.Intent("com.securelegion.MESSAGE_RECEIVED").apply {
+                                    setPackage(context.packageName)
+                                    putExtra("CONTACT_ID", contact.id)
+                                }
+                                context.sendBroadcast(refreshIntent)
+                            } catch (e: Exception) {
+                                Log.w(TAG, "Failed to apply EDIT", e)
+                            }
+                            return@withContext Result.failure(Exception("Edit applied"))
+                        }
                         else -> {
                             // Other known type misrouted here - decode body, store as TEXT
                             Log.w(TAG, "Unexpected appType 0x${String.format("%02X", decoded.appType)} in TEXT branch, storing body as TEXT")
@@ -2677,7 +2816,8 @@ class MessageService(private val context: Context) {
                         selfDestructAt = selfDestructAt,
                         requiresReadReceipt = requiresReadReceipt,
                         pingId = pingId,
-                        encryptedPayload = encryptedData // Store ciphertext for blob ID computation (reaction mapping)
+                        encryptedPayload = encryptedData, // Store ciphertext for blob ID computation (reaction mapping)
+                        replyToMessageId = parsedReplyToMessageId
                     )
                 }
             }
@@ -3511,35 +3651,63 @@ class MessageService(private val context: Context) {
         try {
             val dbPassphrase = keyManager.getDatabasePassphrase()
             val database = SecureLegionDatabase.getInstance(context, dbPassphrase)
+            val now = System.currentTimeMillis()
 
             // Phase 0: Re-send fast-mode messages that haven't received ACK after 30s.
             // These are STATUS_SENT with correlationId starting with "blob_" (fast mode marker).
             // The receiver may have stored the message but the outbound ACK was lost over Tor.
-            val cutoff = System.currentTimeMillis() - 30_000L
+            val cutoff = now - 30_000L
             val fastModePending = database.messageDao().getFastModePendingAck(cutoff)
             if (fastModePending.isNotEmpty()) {
                 Log.i(TAG, "[FAST_MODE_RETRY] Phase 0: ${fastModePending.size} messages pending ACK")
             }
             for (msg in fastModePending) {
                 try {
+                    // 48-HOUR EXPIRY: Terminal — stop retrying
+                    if (now - msg.timestamp > com.securelegion.database.entities.Message.MESSAGE_EXPIRY_MS) {
+                        database.messageDao().updateMessageStatus(msg.id, com.securelegion.database.entities.Message.STATUS_EXPIRED)
+                        Log.w(TAG, "[FAST_MODE_RETRY] Message expired (48h): ${msg.messageId}")
+                        continue
+                    }
+
                     val contact = database.contactDao().getContactById(msg.contactId) ?: continue
                     val onion = contact.messagingOnion ?: continue
+
+                    // PEER COOLDOWN GATE: Don't retry against a known-broken peer
+                    if (getRetryableCooldownMs(onion) > 0L) {
+                        Log.d(TAG, "[FAST_MODE_RETRY] Skipping ${msg.messageId}: peer cooldown active")
+                        continue
+                    }
+
+                    // MESSAGE COOLDOWN GATE: Respect nextRetryAtMs backoff
+                    if (msg.nextRetryAtMs != null && msg.nextRetryAtMs > now) {
+                        Log.d(TAG, "[FAST_MODE_RETRY] Skipping ${msg.messageId}: message backoff active")
+                        continue
+                    }
+
                     val encryptedBase64 = msg.encryptedPayload ?: continue
                     val encryptedBytes = android.util.Base64.decode(encryptedBase64, android.util.Base64.NO_WRAP)
 
                     val messageTypeByte: Byte = when (msg.messageType) {
-                        Message.MESSAGE_TYPE_STICKER -> 0x0E.toByte()
+                        com.securelegion.database.entities.Message.MESSAGE_TYPE_STICKER -> 0x0E.toByte()
                         else -> 0x03.toByte()
                     }
 
-                    Log.i(TAG, "[FAST_MODE_RETRY] Re-sending ${msg.messageId} (age=${(System.currentTimeMillis() - msg.timestamp) / 1000}s)")
+                    Log.i(TAG, "[FAST_MODE_RETRY] Re-sending ${msg.messageId} (age=${(now - msg.timestamp) / 1000}s)")
                     val resultJson = com.securelegion.crypto.RustBridge.sendMessageDirect(
                         onion, encryptedBytes, messageTypeByte, msg.messageId, msg.pingId ?: ""
                     )
                     if (resultJson != null && org.json.JSONObject(resultJson).optBoolean("success")) {
                         Log.i(TAG, "[FAST_MODE_RETRY] Re-sent, ACK will arrive via listener: ${msg.messageId}")
                     } else {
-                        Log.w(TAG, "[FAST_MODE_RETRY] Failed, will try again next cycle: ${msg.messageId}")
+                        // BACKOFF ON FAILURE: Was missing — now tracks retry state properly
+                        registerRetryableFailure(onion, false)
+                        val newRetryCount = msg.retryCount + 1
+                        val nextDelay = (com.securelegion.database.entities.Message.INITIAL_RETRY_DELAY_MS *
+                            Math.pow(com.securelegion.database.entities.Message.RETRY_BACKOFF_MULTIPLIER, (newRetryCount - 1).toDouble())).toLong()
+                            .coerceAtMost(com.securelegion.database.entities.Message.MAX_RETRY_DELAY_MS)
+                        database.messageDao().updateRetrySchedule(msg.id, newRetryCount, now, now + nextDelay)
+                        Log.w(TAG, "[FAST_MODE_RETRY] Failed ${msg.messageId}, next retry in ${nextDelay}ms")
                     }
                 } catch (e: Exception) {
                     Log.w(TAG, "[FAST_MODE_RETRY] Error: ${e.message}")
@@ -3692,6 +3860,14 @@ class MessageService(private val context: Context) {
                 return
             }
 
+            // PEER COOLDOWN GATE: Don't hammer a peer that's known unreachable.
+            // Same check as sendPingForMessage() — blob path was missing this.
+            val retryableCooldownMs = getRetryableCooldownMs(recipientOnion)
+            if (retryableCooldownMs > 0L) {
+                Log.w(TAG, "Blob send skipped: peer cooldown active for ${recipientOnion.take(16)} (${retryableCooldownMs}ms remaining)")
+                return
+            }
+
             val dbPassphrase = keyManager.getDatabasePassphrase()
             val database = SecureLegionDatabase.getInstance(context, dbPassphrase)
 
@@ -3750,23 +3926,28 @@ class MessageService(private val context: Context) {
                 val newRetryCount = message.retryCount + 1
                 Log.e(TAG, "Failed to send message blob for ${message.messageId} (attempt $newRetryCount)")
 
+                // Register peer-level backoff (was missing — blob path ignored peer state)
+                registerRetryableFailure(contact.messagingOnion ?: "", false)
+
                 if (newRetryCount >= 3 && message.status == com.securelegion.database.entities.Message.STATUS_FAILED) {
                     // 3+ consecutive blob failures — downgrade to PING_SENT to force full handshake.
-                    // The old circuit/connection path is clearly broken; start fresh.
                     database.messageDao().updateMessageStatus(message.id, com.securelegion.database.entities.Message.STATUS_PING_SENT)
                     Log.w(TAG, "${message.messageId}: 3 blob failures — downgraded to PING_SENT for full re-handshake")
                 } else {
-                    // Normal failure: mark FAILED so retry worker picks it up for blob re-send
                     database.messageDao().updateMessageStatus(message.id, com.securelegion.database.entities.Message.STATUS_FAILED)
                 }
 
-                // CRITICAL: Use partial update to avoid overwriting delivery status
-                // (fixes race where MESSAGE_ACK sets delivered=true between read and write)
-                database.messageDao().updateRetryState(
+                // CRITICAL: Set nextRetryAtMs so the message respects backoff (was missing!)
+                val nextRetryDelay = (com.securelegion.database.entities.Message.INITIAL_RETRY_DELAY_MS *
+                    Math.pow(com.securelegion.database.entities.Message.RETRY_BACKOFF_MULTIPLIER, (newRetryCount - 1).toDouble())).toLong()
+                    .coerceAtMost(com.securelegion.database.entities.Message.MAX_RETRY_DELAY_MS)
+                database.messageDao().updateRetrySchedule(
                     message.id,
                     newRetryCount,
-                    System.currentTimeMillis()
+                    System.currentTimeMillis(),
+                    System.currentTimeMillis() + nextRetryDelay
                 )
+                Log.d(TAG, "${message.messageId}: blob failure, next retry in ${nextRetryDelay}ms")
             }
         } catch (e: Exception) {
             Log.e(TAG, "Error sending message blob after PONG: ${e.message}", e)

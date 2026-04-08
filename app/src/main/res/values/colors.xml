@@ -78,6 +78,20 @@
     <color name="call_end_red">#FF6B6B</color>
     <color name="answer_green">#00CC66</color>
 
+    <!-- Reply/Edit UI -->
+    <color name="reply_accent">#1E90FF</color>
+    <color name="reply_quote_bg_sent">#E8E8ED</color>
+    <color name="reply_quote_bg_received">#D8D8DD</color>
+    <color name="reply_quote_bg_self">#E8E8ED</color>
+    <color name="reply_quote_border">#1E90FF</color>
+    <color name="reply_quote_text_sent">#CCCCCC</color>
+    <color name="reply_quote_text_received">#555555</color>
+    <color name="reply_quote_label_sent">#FFFFFF</color>
+    <color name="reply_quote_label_received">#000000</color>
+    <color name="edit_accent">#F59E0B</color>
+    <color name="edit_banner_bg">#0DF59E0B</color>
+    <color name="edited_label">#9CA3AF</color>
+
     <!-- Silver Gradient for Crypto Amounts -->
     <color name="silver_gradient_start">#E8E8E8</color>
     <color name="silver_gradient_end">#B8B8B8</color>

@@ -85,3 +85,4 @@ app/src/test/java/com/securelegion/services/ReplayCacheTest.kt
 app/src/test/java/com/securelegion/services/FriendRequestValidatorTest.kt
 app/src/androidTest/java/com/securelegion/services/FriendRequestEnvelopeTest.kt
 
+.superpowers/

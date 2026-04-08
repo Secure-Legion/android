@@ -88,6 +88,8 @@
                 android:layout_height="140dp"
                 android:src="@drawable/default_avatar"
                 android:background="@drawable/profile_circle_bg"
+                android:clipToOutline="true"
+                android:scaleType="centerCrop"
                 android:layout_marginTop="24dp"
                 android:layout_marginBottom="16dp"
                 android:contentDescription="Profile Picture" />

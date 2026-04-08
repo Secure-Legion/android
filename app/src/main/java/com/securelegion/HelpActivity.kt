@@ -27,11 +27,11 @@ class HelpActivity : BaseActivity() {
         }
 
         findViewById<View>(R.id.chatSupportItem).setOnClickListener {
-            startActivity(Intent(this, SupportComposerActivity::class.java))
+            ThemedToast.show(this, "Support coming soon")
         }
 
         findViewById<View>(R.id.helpCenterItem).setOnClickListener {
-            startActivity(Intent(this, HelpCenterActivity::class.java))
+            ThemedToast.show(this, "Support coming soon")
         }
 
         findViewById<View>(R.id.exportLogsItem).setOnClickListener {

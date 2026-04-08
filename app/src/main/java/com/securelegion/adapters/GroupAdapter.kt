@@ -37,6 +37,9 @@ class GroupAdapter(
     // Track which item is currently swiped open (-1 = none)
     private var openPosition = -1
 
+    /** Set from RecyclerView.OnScrollListener — blocks taps while list is scrolling/settling. */
+    var listIsScrolling = false
+
     class GroupViewHolder(view: View) : RecyclerView.ViewHolder(view) {
         val groupAvatar: AvatarView = view.findViewById(R.id.groupAvatar)
         val groupName: TextView = view.findViewById(R.id.groupName)
@@ -85,9 +88,12 @@ class GroupAdapter(
         // Set last activity time
         holder.lastMessageTime.text = formatTimestamp(group.lastActivityTimestamp)
 
-        // Show invite badge for pending groups
+        // Show badge: "!" for pending invites, unread count for messages
         if (group.isPendingInvite) {
             holder.unreadBadge.text = "!"
+            holder.unreadBadge.visibility = View.VISIBLE
+        } else if (group.unreadCount > 0) {
+            holder.unreadBadge.text = group.unreadCount.toString()
             holder.unreadBadge.visibility = View.VISIBLE
         } else {
             holder.unreadBadge.visibility = View.GONE
@@ -131,16 +137,20 @@ class GroupAdapter(
 
         // Swipe gesture handling (same pattern as ChatAdapter)
         var startX = 0f
+        var startY = 0f
         var startTranslationX = 0f
         var isSwiping = false
-        val touchSlop = 10f
+        var isScrolling = false
+        val touchSlop = android.view.ViewConfiguration.get(holder.itemView.context).scaledTouchSlop.toFloat()
 
         holder.foreground.setOnTouchListener { v, event ->
             when (event.action) {
                 MotionEvent.ACTION_DOWN -> {
                     startX = event.rawX
+                    startY = event.rawY
                     startTranslationX = holder.foreground.translationX
                     isSwiping = false
+                    isScrolling = false
 
                     // If another item is open, close it
                     if (openPosition != -1 && openPosition != holder.bindingAdapterPosition) {
@@ -148,15 +158,24 @@ class GroupAdapter(
                         openPosition = -1
                     }
 
+                    // Allow parent to intercept until we know the gesture direction
                     v.parent?.requestDisallowInterceptTouchEvent(false)
                     true
                 }
                 MotionEvent.ACTION_MOVE -> {
                     val deltaX = event.rawX - startX
+                    val deltaY = event.rawY - startY
 
-                    if (abs(deltaX) > touchSlop && !isSwiping) {
-                        isSwiping = true
-                        v.parent?.requestDisallowInterceptTouchEvent(true)
+                    if (!isSwiping && !isScrolling) {
+                        if (abs(deltaY) > touchSlop && abs(deltaY) > abs(deltaX)) {
+                            // Vertical scroll — let RecyclerView handle it
+                            isScrolling = true
+                            v.parent?.requestDisallowInterceptTouchEvent(false)
+                        } else if (abs(deltaX) > touchSlop && abs(deltaX) > abs(deltaY)) {
+                            // Horizontal swipe — we handle it
+                            isSwiping = true
+                            v.parent?.requestDisallowInterceptTouchEvent(true)
+                        }
                     }
 
                     if (isSwiping) {
@@ -169,7 +188,7 @@ class GroupAdapter(
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                     v.parent?.requestDisallowInterceptTouchEvent(false)
 
-                    if (!isSwiping) {
+                    if (!isSwiping && !isScrolling && !listIsScrolling) {
                         // Tap: if item is open, close it; otherwise trigger click
                         if (holder.foreground.translationX > 0f) {
                             closeItem(holder)
@@ -177,7 +196,7 @@ class GroupAdapter(
                         } else {
                             onGroupClick(group)
                         }
-                    } else {
+                    } else if (isSwiping) {
                         val currentTranslation = holder.foreground.translationX
                         val threshold = ACTION_WIDTH * 0.35f
 

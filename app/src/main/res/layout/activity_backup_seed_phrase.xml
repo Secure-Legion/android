@@ -4,7 +4,7 @@
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="#000000">
+    android:background="@color/surface_black">
 
 <ScrollView
     android:layout_width="match_parent"
@@ -17,17 +17,31 @@
         android:layout_height="wrap_content"
         android:orientation="vertical"
         android:fitsSystemWindows="true"
-        android:padding="24dp">
+        android:paddingStart="24dp"
+        android:paddingEnd="24dp"
+        android:paddingTop="24dp"
+        android:paddingBottom="32dp">
 
         <!-- Seed Phrase Grid -->
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:text="Your Account Recovery Seed"
-            android:textSize="16sp"
+            android:textSize="18sp"
             android:textStyle="bold"
             android:textColor="?attr/colorOnSurface"
-            android:layout_marginBottom="200dp" />
+            android:fontFamily="@font/space_grotesk_bold"
+            android:layout_marginBottom="8dp" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Write down these 12 words in order and store them somewhere safe."
+            android:textSize="13sp"
+            android:textColor="@color/text_muted"
+            android:fontFamily="@font/poppins_regular"
+            android:lineSpacingMultiplier="1.4"
+            android:layout_marginBottom="24dp" />
 
         <LinearLayout
             android:layout_width="match_parent"

@@ -81,6 +81,55 @@
                 android:background="@drawable/message_received_bg"
                 android:padding="12dp">
 
+                    <!-- Reply quote block (shown when this message is a reply) -->
+                    <LinearLayout
+                        android:id="@+id/replyQuoteBlock"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:minWidth="200dp"
+                        android:orientation="horizontal"
+                        android:background="@drawable/reply_quote_received_bg"
+                        android:paddingStart="0dp"
+                        android:paddingEnd="10dp"
+                        android:paddingTop="5dp"
+                        android:paddingBottom="5dp"
+                        android:layout_marginBottom="4dp"
+                        android:visibility="gone">
+
+                        <View
+                            android:layout_width="3dp"
+                            android:layout_height="match_parent"
+                            android:background="@color/reply_quote_border" />
+
+                        <LinearLayout
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:orientation="vertical"
+                            android:layout_marginStart="8dp">
+
+                            <TextView
+                                android:id="@+id/replyQuoteLabel"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="Replying to"
+                                android:textColor="@color/reply_quote_label_received"
+                                android:textSize="12sp"
+                                android:fontFamily="@font/poppins_medium" />
+
+                            <TextView
+                                android:id="@+id/replyQuoteText"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:textColor="@color/reply_quote_text_received"
+                                android:textSize="12sp"
+                                android:maxLines="2"
+                                android:ellipsize="end" />
+
+                        </LinearLayout>
+
+                    </LinearLayout>
+
                 <TextView
                     android:id="@+id/pinIndicator"
                     android:layout_width="wrap_content"
@@ -100,10 +149,21 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="Message content"
-                    android:textColor="#000000"
+                    android:textColor="@color/text_primary"
                     android:textSize="17sp"
                     android:fontFamily="sans-serif-medium"
                     android:lineSpacingMultiplier="1.2" />
+
+                <TextView
+                    android:id="@+id/editedLabel"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="(edited)"
+                    android:textColor="@color/edited_label"
+                    android:textSize="11sp"
+                    android:fontStyle="italic"
+                    android:layout_marginTop="2dp"
+                    android:visibility="gone" />
 
             </LinearLayout>
 

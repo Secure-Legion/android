@@ -72,13 +72,13 @@ interface ContactDao {
      * Get all contacts ordered by most recent contact
      * Returns Flow for reactive updates
      */
-    @Query("SELECT * FROM contacts ORDER BY lastContactTimestamp DESC")
+    @Query("SELECT * FROM contacts WHERE friendshipStatus = 'CONFIRMED' ORDER BY lastContactTimestamp DESC")
     fun getAllContactsFlow(): Flow<List<Contact>>
 
     /**
-     * Get all contacts (one-shot query)
+     * Get all contacts (one-shot query, confirmed only)
      */
-    @Query("SELECT * FROM contacts ORDER BY displayName ASC")
+    @Query("SELECT * FROM contacts WHERE friendshipStatus = 'CONFIRMED' ORDER BY displayName ASC")
     suspend fun getAllContacts(): List<Contact>
 
     /**

@@ -38,8 +38,9 @@
     <!-- Battery optimization exemption (keeps Tor service alive in background) -->
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
-    <!-- Exact Alarm for Service Restart (Android 13+, automatically granted) -->
-    <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
+    <!-- Exact alarm removed — USE_EXACT_ALARM is restricted to alarm/timer apps
+         and will cause Play Store rejection. TorHealthMonitorWorker (WorkManager)
+         already handles service health checks every 60s. -->
 
     <!-- Boot Receiver - Start services after device reboot -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
@@ -115,7 +116,8 @@
 
         <activity
             android:name=".TorHealthActivity"
-            android:exported="false" />
+            android:exported="false"
+            android:screenOrientation="portrait" />
 
         <activity
             android:name=".ComposeActivity"
@@ -180,7 +182,8 @@
 
         <activity
             android:name=".WalletIdentityActivity"
-            android:exported="false" />
+            android:exported="false"
+            android:screenOrientation="portrait" />
 
         <activity
             android:name=".WalletActivity"
@@ -226,11 +229,13 @@
 
         <activity
             android:name=".BridgeActivity"
-            android:exported="false" />
+            android:exported="false"
+            android:screenOrientation="portrait" />
 
         <activity
             android:name=".CommunicationModeActivity"
-            android:exported="false" />
+            android:exported="false"
+            android:screenOrientation="portrait" />
 
         <activity
             android:name=".AutoLockActivity"
@@ -435,11 +440,7 @@
             </intent-filter>
         </service>
 
-        <!-- Broadcast receiver for TorService restart via AlarmManager -->
-        <receiver
-            android:name=".receivers.TorServiceRestartReceiver"
-            android:enabled="true"
-            android:exported="false" />
+        <!-- AlarmManager restart receiver removed — WorkManager handles service health -->
 
         <!-- Boot receiver - Start services after device reboot -->
         <receiver

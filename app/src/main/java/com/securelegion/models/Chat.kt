@@ -19,5 +19,6 @@ data class Chat(
     val isPinned: Boolean = false,
     val profilePictureBase64: String? = null,
     val isGroup: Boolean = false,
-    val groupId: String? = null
+    val groupId: String? = null,
+    val memberCount: Int = 0
 )

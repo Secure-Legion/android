@@ -743,6 +743,13 @@ object RustBridge {
     external fun getCircuitEstablished(): Int
 
     /**
+     * Get messaging HS publisher status string.
+     * Returns: "Running", "Bootstrapping", "Broken", "Shutdown", "NotLaunched", etc.
+     * Used by TorHealthMonitorWorker to check real HS state instead of assuming healthy.
+     */
+    external fun getHsPublisherStatus(): String?
+
+    /**
      * Get event listener heartbeat (epoch millis of last successful control port operation).
      * Returns 0 if the listener has never run or the control port connection is dead.
      * Use to detect stale/frozen listener: if heartbeat > 30s old and tor state is RUNNING,
