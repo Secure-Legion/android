@@ -2261,9 +2261,9 @@ impl TorManager {
         socket.read_exact(&mut len_buf).await?;
         let total_len = u32::from_be_bytes(len_buf) as usize;
 
-        // Increased limit to support voice messages (typical voice: ~50KB, allow up to 10MB)
-        if total_len > 10_000_000 {
-            return Err("Message too large (>10MB)".into());
+        // iOS parity: 6MB max wire frame (images ~300-800KB, voice ~4.8MB max)
+        if total_len > 6_291_456 {
+            return Err("Message too large (>6MB)".into());
         }
 
         // Read full buffer INCLUDING type byte (don't strip it)
@@ -2357,6 +2357,19 @@ impl TorManager {
             log::error!("WIRE_TOO_SHORT_DROP: type=0x{:02x}, len={} (min={})", msg_type, buf.len(), min_wire_len);
             log::error!("Connection {}, rejecting packet (likely garbage/corruption)", conn_id);
             return Err(format!("Wire message too short: {} bytes (min {})", buf.len(), min_wire_len).into());
+        }
+
+        // Per-type size caps (iOS parity): drop oversized payloads before routing
+        match msg_type {
+            MSG_TYPE_IMAGE if buf.len() > 1_572_864 => {
+                log::warn!("IMAGE_TOO_LARGE_DROP: conn={} len={} (max 1.5MB)", conn_id, buf.len());
+                return Err(format!("Image payload too large: {} bytes (max 1.5MB)", buf.len()).into());
+            }
+            MSG_TYPE_VOICE if buf.len() > 5_242_880 => {
+                log::warn!("VOICE_TOO_LARGE_DROP: conn={} len={} (max 5MB)", conn_id, buf.len());
+                return Err(format!("Voice payload too large: {} bytes (max 5MB)", buf.len()).into());
+            }
+            _ => {}
         }
 
         // Valid protocol frame confirmed (type + min length) — touch accept heartbeat.
@@ -2929,8 +2942,8 @@ impl TorManager {
                 let msg_len = u32::from_be_bytes(len_buf) as usize;
                 log::info!("Incoming message length: {} bytes", msg_len);
 
-                if msg_len > 10_000_000 { // 10MB limit (consistent with voice message support)
-                    return Err("Message too large (>10MB)".into());
+                if msg_len > 6_291_456 { // 6MB limit (iOS parity)
+                    return Err("Message too large (>6MB)".into());
                 }
 
                 // Read message data
@@ -3063,8 +3076,8 @@ impl TorConnection {
         self.stream.read_exact(&mut len_buf).await?;
         let data_len = u32::from_be_bytes(len_buf) as usize;
 
-        if data_len > 10_000_000 {
-            return Err("Message too large (>10MB)".into());
+        if data_len > 6_291_456 {
+            return Err("Message too large (>6MB)".into());
         }
 
         // Read data

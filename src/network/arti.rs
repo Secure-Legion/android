@@ -205,6 +205,13 @@ pub async fn initialize_arti(data_dir: &str) -> Result<(), Box<dyn Error + Send 
     // The env vars above are fallbacks; this direct call bypasses env var timing issues.
     config_builder.storage().permissions().dangerously_trust_everyone();
 
+    // Pre-build circuits so HS intro points and outbound connections don't block on lazy construction.
+    // Default is threshold=12, min_exit_circs=2. We raise both to have more circuits ready
+    // for our 2 onion services (each needs 3 intro point circuits) + outbound .onion connections.
+    config_builder.preemptive_circuits()
+        .disable_at_threshold(16)
+        .min_exit_circs_for_port(4);
+
     let config = config_builder.build()?;
 
     // Create client without blocking on bootstrap
@@ -285,6 +292,21 @@ pub fn get_arti_client() -> Option<Arc<TorClient<PreferredRuntime>>> {
 pub fn is_arti_ready() -> bool {
     let guard = lock_recover(&ARTI_CLIENT);
     guard.is_some() && BOOTSTRAP_STATUS.load(Ordering::SeqCst) >= 100
+}
+
+/// Get the messaging HS overall state as a string for the health monitor.
+/// Returns one of: "Running", "Bootstrapping", "Broken", "DegradedReachable",
+/// "DegradedUnreachable", "Recovering", "Shutdown", or "NotLaunched".
+pub fn get_hs_publisher_status() -> String {
+    let guard = lock_recover(&RUNNING_HS);
+    match guard.as_ref() {
+        Some(svc) => {
+            let status = svc.status();
+            let state = status.state();
+            format!("{:?}", state)
+        }
+        None => "NotLaunched".to_string(),
+    }
 }
 
 // ───── Bootstrap Event Listener ─────
@@ -445,8 +467,8 @@ impl ArtiStream {
         self.stream.read_exact(&mut len_buf).await?;
         let total_len = u32::from_be_bytes(len_buf) as usize;
 
-        if total_len > 10_000_000 {
-            return Err("Message too large (>10MB)".into());
+        if total_len > 6_291_456 {
+            return Err("Message too large (>6MB)".into());
         }
 
         let mut buf = vec![0u8; total_len];
@@ -547,13 +569,32 @@ pub async fn create_onion_service(
         let mut proof_set = false;
         loop {
             let status = svc_clone.status();
-            log::info!("Arti: messaging HS status update: {:?} for {}", status, addr_clone);
-            // Once HS has an onion address and is running, set proof so UI goes green
-            if !proof_set && svc_clone.onion_address().is_some() {
+            let state = status.state();
+            log::info!("Arti: messaging HS status update: state={:?} for {}", state, addr_clone);
+
+            // Only set proof when HS is ACTUALLY Running — not just when onion_address exists.
+            // onion_address().is_some() is true immediately after launch, which was the old
+            // (broken) check that set proof_ok while HS was still Bootstrapping.
+            if !proof_set && state == tor_hsservice::status::State::Running {
                 super::tor::set_tor_proof_ok();
-                log::info!("Arti: HS reachable for {} — set_tor_proof_ok()", addr_clone);
+                log::info!("Arti: HS RUNNING for {} — set_tor_proof_ok()", addr_clone);
                 proof_set = true;
             }
+
+            // Log degraded/broken states for debugging
+            match state {
+                tor_hsservice::status::State::Broken => {
+                    log::error!("Arti: messaging HS is BROKEN for {} — needs restart", addr_clone);
+                }
+                tor_hsservice::status::State::DegradedUnreachable => {
+                    log::warn!("Arti: messaging HS DEGRADED (unreachable) for {}", addr_clone);
+                }
+                tor_hsservice::status::State::Recovering => {
+                    log::warn!("Arti: messaging HS RECOVERING for {}", addr_clone);
+                }
+                _ => {}
+            }
+
             // Wait for next status change (or timeout after 60s)
             tokio::select! {
                 _ = events.next() => {}
@@ -776,6 +817,19 @@ async fn handle_arti_incoming(
     if buf.len() < min_wire_len {
         log::error!("ARTI WIRE_TOO_SHORT_DROP: type=0x{:02x}, len={} (min={})", msg_type, buf.len(), min_wire_len);
         return Err(format!("Wire message too short: {} bytes (min {})", buf.len(), min_wire_len).into());
+    }
+
+    // Per-type size caps (iOS parity): drop oversized payloads before routing
+    match msg_type {
+        MSG_TYPE_IMAGE if buf.len() > 1_572_864 => {
+            log::warn!("ARTI IMAGE_TOO_LARGE_DROP: conn={} len={} (max 1.5MB)", conn_id, buf.len());
+            return Err(format!("Image payload too large: {} bytes (max 1.5MB)", buf.len()).into());
+        }
+        MSG_TYPE_VOICE if buf.len() > 5_242_880 => {
+            log::warn!("ARTI VOICE_TOO_LARGE_DROP: conn={} len={} (max 5MB)", conn_id, buf.len());
+            return Err(format!("Voice payload too large: {} bytes (max 5MB)", buf.len()).into());
+        }
+        _ => {}
     }
 
     // Valid frame — touch heartbeat
