@@ -5362,6 +5362,22 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_getCircuitEstablished(
     }, 0 as jint)
 }
 
+/// Get messaging HS publisher status as a string.
+/// Returns: "Running", "Bootstrapping", "Broken", "Shutdown", etc.
+#[no_mangle]
+pub extern "C" fn Java_com_securelegion_crypto_RustBridge_getHsPublisherStatus(
+    mut env: JNIEnv,
+    _class: JClass,
+) -> jstring {
+    catch_panic!(env, {
+        let status = crate::network::arti::get_hs_publisher_status();
+        log::debug!("HS publisher status: {}", status);
+        env.new_string(&status)
+            .map(|s| s.into_raw())
+            .unwrap_or(std::ptr::null_mut())
+    }, std::ptr::null_mut())
+}
+
 /// Get event listener heartbeat (epoch millis of last successful operation).
 /// Returns 0 if the listener has never run or the control port connection is dead.
 /// Kotlin uses this to detect a frozen/stale listener — if heartbeat is >30s old
