@@ -16,9 +16,11 @@ import kotlin.math.abs
  */
 data class GroupMemberItem(
     val pubkeyHex: String,
+    val deviceIdHex: String = "",
     val displayName: String,
     val role: String,       // "Admin", "Member", "Pending"
     val isMe: Boolean,
+    val accepted: Boolean = true,
     val isMuted: Boolean = false,
     val profilePhotoBase64: String? = null
 )
@@ -28,7 +30,8 @@ class GroupMemberAdapter(
     private val onMemberClick: (GroupMemberItem) -> Unit,
     private val onMuteClick: (GroupMemberItem) -> Unit,
     private val onRemoveClick: (GroupMemberItem) -> Unit,
-    private val onPromoteClick: (GroupMemberItem) -> Unit
+    private val onPromoteClick: (GroupMemberItem) -> Unit,
+    private val onReinviteClick: ((GroupMemberItem) -> Unit)? = null
 ) : RecyclerView.Adapter<GroupMemberAdapter.MemberViewHolder>() {
 
     private var openPosition = -1

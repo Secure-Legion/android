@@ -25,8 +25,8 @@ android {
         applicationId = "com.securelegion"
         minSdk = 27  // Increased from 26 for Zcash SDK compatibility
         targetSdk = 36
-        versionCode = 208
-        versionName = "Beta 2.0.8"
+        versionCode = 1
+        versionName = "1.0.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -97,13 +97,13 @@ android {
 
         create("googleplay") {
             dimension = "version"
-            applicationId = "com.securelegion"
+            applicationId = "org.securelegion"
 
             buildConfigField("boolean", "ENABLE_TOR", "true")
             buildConfigField("boolean", "ENABLE_VOICE", "true")
             buildConfigField("boolean", "ENABLE_MESHTASTIC", "false")
-            buildConfigField("boolean", "ENABLE_ZCASH_WALLET", "true")
-            buildConfigField("boolean", "ENABLE_SOLANA_WALLET", "true")
+            buildConfigField("boolean", "ENABLE_ZCASH_WALLET", "false")
+            buildConfigField("boolean", "ENABLE_SOLANA_WALLET", "false")
             buildConfigField("boolean", "ENABLE_DEVELOPER_MENU", "false")
             buildConfigField("boolean", "ENABLE_STRESS_TESTING", "false")
             buildConfigField("boolean", "ENABLE_DEBUG_LOGS", "false")

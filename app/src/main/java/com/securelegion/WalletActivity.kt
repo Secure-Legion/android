@@ -38,6 +38,10 @@ class WalletActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        if (!BuildConfig.ENABLE_ZCASH_WALLET && !BuildConfig.ENABLE_SOLANA_WALLET) {
+            finish()
+            return
+        }
         setContentView(R.layout.activity_wallet)
 
         // Enable edge-to-edge and handle system bar insets (matches MainActivity)

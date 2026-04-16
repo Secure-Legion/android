@@ -65,6 +65,15 @@
             android:windowSoftInputMode="adjustPan" />
 
         <activity
+            android:name=".VaultActivity"
+            android:exported="false"
+            android:screenOrientation="portrait" />
+
+        <activity
+            android:name=".PremiumActivity"
+            android:exported="false" />
+
+        <activity
             android:name=".ChatActivity"
             android:exported="false"
             android:windowSoftInputMode="adjustPan" />

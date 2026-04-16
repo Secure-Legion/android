@@ -270,7 +270,26 @@ class ContactListSyncService private constructor(private val context: Context) {
                 if (pin != null) {
                     val importResult = ContactListManager.getInstance(context).importContactList(frame.blob, pin)
                     if (importResult.isSuccess) {
-                        Log.i(TAG, "RECOVERY import success: ${importResult.getOrDefault(0)} contacts restored")
+                        val imported = importResult.getOrDefault(0)
+                        Log.i(TAG, "RECOVERY import success: $imported contacts restored")
+
+                        // If we actually imported anything and this response
+                        // matches the CID we armed recovery with, tear down
+                        // the recovery state and re-push our own (now-restored)
+                        // list to the rest of the mesh so every friend re-pins
+                        // it under our new identity's CID.
+                        val armedCid = RecoveryState.getExpectedCid(context)
+                        if (imported > 0 && armedCid == frame.cid) {
+                            RecoveryState.clear(context)
+                            scope.launch {
+                                try {
+                                    val okCount = broadcastToAllFriends()
+                                    Log.i(TAG, "RECOVERY mesh re-broadcast: $okCount friend(s) re-pinned")
+                                } catch (e: Exception) {
+                                    Log.w(TAG, "RECOVERY mesh re-broadcast failed", e)
+                                }
+                            }
+                        }
                     } else {
                         Log.e(TAG, "RECOVERY import failed", importResult.exceptionOrNull())
                     }
@@ -337,6 +356,33 @@ class ContactListSyncService private constructor(private val context: Context) {
             synchronized(inFlightLock) { inFlightRequests.remove(ourCid) }
         }
         rc == 1
+    }
+
+    /**
+     * If this device was just restored from seed and is still within the 48h
+     * recovery window, fire a signed `0x80` REQUEST at a newly-added friend so
+     * they serve our encrypted contact list back. Matches the iOS flow in
+     * `docs/contact-list-recovery-android-sync.md` §5: 2s delay to let the
+     * FR_ACCEPTED frame settle first, then one REQUEST.
+     *
+     * Call this after a FR-completion path inserts a new contact. Safe to
+     * call unconditionally — it no-ops when `RecoveryState.isActive` is false.
+     *
+     * Runs on the service's own scope so the caller's coroutine can return
+     * immediately; the 2s delay and Tor send should never block the FR UI.
+     */
+    fun maybeRequestRecovery(friendMessagingOnion: String?) {
+        if (friendMessagingOnion.isNullOrEmpty()) return
+        if (!RecoveryState.isActive(context)) return
+        Log.i(TAG, "Recovery active — will request own list from new friend after 2s")
+        scope.launch {
+            try {
+                delay(2_000L)
+                requestOwnListFrom(friendMessagingOnion)
+            } catch (e: Exception) {
+                Log.w(TAG, "Recovery request failed", e)
+            }
+        }
     }
 
     // ─── Local storage helper ─────────────────────────────────────────────────

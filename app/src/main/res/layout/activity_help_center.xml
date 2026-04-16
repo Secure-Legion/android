@@ -109,9 +109,9 @@
                 </LinearLayout>
 
                 <TextView
+                    android:id="@+id/connectionIssuesBody"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:text="Check the connection pill at the top of the Messages screen. It shows your current Tor connection status.\n\n• Green (Connected) - Your connection is active and working normally.\n• Yellow (Connecting) - The app is still establishing a Tor connection. Wait a moment for it to finish.\n• Red (Disconnected) - The connection has failed or dropped. Tap the pill to open the VPN connect screen and reconnect.\n\nIf tapping the pill does not resolve the issue, go to Settings &gt; Tor VPN Settings and toggle the tunnel off, then back on to restart the connection."
                     android:textSize="14sp"
                     android:textColor="@color/text_muted"
                     android:fontFamily="@font/poppins_regular"
@@ -153,9 +153,9 @@
                 </LinearLayout>
 
                 <TextView
+                    android:id="@+id/bootstrapBody"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:text="When connecting, you will see a bootstrap percentage that indicates how far along the Tor connection process is.\n\n• 0-24% - Starting up. The app is initializing the Tor client.\n• 25-49% - Loading network consensus.\n• 50-74% - Building circuits through the Tor network.\n• 75-99% - Almost ready. Circuits are being tested.\n• 100% - Fully connected.\n\n&quot;Established Circuit&quot; means your device has successfully built an encrypted route through multiple Tor relays."
                     android:textSize="14sp"
                     android:textColor="@color/text_muted"
                     android:fontFamily="@font/poppins_regular"
@@ -197,9 +197,9 @@
                 </LinearLayout>
 
                 <TextView
+                    android:id="@+id/torNodesBody"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:text="Your connection is routed through multiple relays (nodes) for privacy. Each node only knows the node before and after it, so no single relay can see your full path.\n\n• Entry Node (Guard) - The first relay your device connects to. It knows your real IP address but cannot see your destination or message content.\n• Middle Node (Relay) - An intermediate relay that passes encrypted traffic between entry and exit nodes.\n• Exit Node - The final relay in the circuit. For hidden services (.onion addresses), there is no traditional exit node since traffic stays within the Tor network."
                     android:textSize="14sp"
                     android:textColor="@color/text_muted"
                     android:fontFamily="@font/poppins_regular"
@@ -242,7 +242,7 @@
                 <TextView
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:text="If you are still experiencing issues or have questions not covered here:"
+                    android:text="If you are still experiencing issues or have questions not covered here, you have two options:"
                     android:textSize="14sp"
                     android:textColor="@color/text_muted"
                     android:fontFamily="@font/poppins_regular"
@@ -266,12 +266,22 @@
                 <TextView
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:text="Or visit our help desk from any browser at:\nsecurelegion.org/help"
+                    android:text="Or visit our help desk from any browser at:"
                     android:textSize="14sp"
                     android:textColor="@color/text_muted"
                     android:fontFamily="@font/poppins_regular"
                     android:gravity="center"
                     android:lineSpacingMultiplier="1.4" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="securelegion.org/help"
+                    android:textSize="14sp"
+                    android:textColor="@color/text_muted"
+                    android:fontFamily="@font/poppins_medium"
+                    android:gravity="center"
+                    android:paddingTop="4dp" />
 
             </LinearLayout>
 

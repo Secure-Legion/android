@@ -52,4 +52,10 @@ interface SkippedMessageKeyDao {
      */
     @Query("SELECT COUNT(*) FROM skipped_message_keys WHERE contactId = :contactId")
     suspend fun getKeyCount(contactId: Long): Int
+
+    /**
+     * Delete all skipped keys for a contact (used on contact delete)
+     */
+    @Query("DELETE FROM skipped_message_keys WHERE contactId = :contactId")
+    suspend fun deleteByContact(contactId: Long)
 }

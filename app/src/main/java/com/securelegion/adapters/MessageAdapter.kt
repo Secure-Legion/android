@@ -1208,24 +1208,41 @@ class MessageAdapter(
     private fun bindStickerSentMessage(holder: StickerSentMessageViewHolder, message: Message, position: Int) {
         val assetPath = message.attachmentData ?: ""
         if (assetPath.isNotEmpty()) {
-            val isGif = assetPath.endsWith(".gif", ignoreCase = true)
-            if (isGif) {
-                holder.stickerAnimation.visibility = View.GONE
-                holder.gifImage.visibility = View.VISIBLE
-                try {
-                    val gifDrawable = GifDrawable(holder.gifImage.context.assets, assetPath)
-                    holder.gifImage.setImageDrawable(gifDrawable)
-                } catch (e: Exception) {
-                    Log.e(TAG, "Failed to load GIF: $assetPath", e)
+            val lowered = assetPath.lowercase()
+            val isGif = lowered.endsWith(".gif")
+            val isStaticImage = lowered.endsWith(".png") || lowered.endsWith(".jpg") || lowered.endsWith(".jpeg") || lowered.endsWith(".webp")
+            when {
+                isGif -> {
+                    holder.stickerAnimation.visibility = View.GONE
+                    holder.gifImage.visibility = View.VISIBLE
+                    try {
+                        val gifDrawable = GifDrawable(holder.gifImage.context.assets, assetPath)
+                        holder.gifImage.setImageDrawable(gifDrawable)
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Failed to load GIF: $assetPath", e)
+                    }
                 }
-            } else {
-                holder.gifImage.visibility = View.GONE
-                holder.stickerAnimation.visibility = View.VISIBLE
-                try {
-                    holder.stickerAnimation.setAnimation(assetPath)
-                    holder.stickerAnimation.playAnimation()
-                } catch (e: Exception) {
-                    Log.e(TAG, "Failed to load sticker: $assetPath", e)
+                isStaticImage -> {
+                    holder.stickerAnimation.visibility = View.GONE
+                    holder.gifImage.visibility = View.VISIBLE
+                    try {
+                        val stream = holder.gifImage.context.assets.open(assetPath)
+                        val bitmap = BitmapFactory.decodeStream(stream)
+                        stream.close()
+                        holder.gifImage.setImageBitmap(bitmap)
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Failed to load static sticker image: $assetPath", e)
+                    }
+                }
+                else -> {
+                    holder.gifImage.visibility = View.GONE
+                    holder.stickerAnimation.visibility = View.VISIBLE
+                    try {
+                        holder.stickerAnimation.setAnimation(assetPath)
+                        holder.stickerAnimation.playAnimation()
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Failed to load sticker: $assetPath", e)
+                    }
                 }
             }
         }
@@ -1264,24 +1281,41 @@ class MessageAdapter(
     private fun bindStickerReceivedMessage(holder: StickerReceivedMessageViewHolder, message: Message, position: Int) {
         val assetPath = message.attachmentData ?: ""
         if (assetPath.isNotEmpty()) {
-            val isGif = assetPath.endsWith(".gif", ignoreCase = true)
-            if (isGif) {
-                holder.stickerAnimation.visibility = View.GONE
-                holder.gifImage.visibility = View.VISIBLE
-                try {
-                    val gifDrawable = GifDrawable(holder.gifImage.context.assets, assetPath)
-                    holder.gifImage.setImageDrawable(gifDrawable)
-                } catch (e: Exception) {
-                    Log.e(TAG, "Failed to load GIF: $assetPath", e)
+            val lowered = assetPath.lowercase()
+            val isGif = lowered.endsWith(".gif")
+            val isStaticImage = lowered.endsWith(".png") || lowered.endsWith(".jpg") || lowered.endsWith(".jpeg") || lowered.endsWith(".webp")
+            when {
+                isGif -> {
+                    holder.stickerAnimation.visibility = View.GONE
+                    holder.gifImage.visibility = View.VISIBLE
+                    try {
+                        val gifDrawable = GifDrawable(holder.gifImage.context.assets, assetPath)
+                        holder.gifImage.setImageDrawable(gifDrawable)
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Failed to load GIF: $assetPath", e)
+                    }
                 }
-            } else {
-                holder.gifImage.visibility = View.GONE
-                holder.stickerAnimation.visibility = View.VISIBLE
-                try {
-                    holder.stickerAnimation.setAnimation(assetPath)
-                    holder.stickerAnimation.playAnimation()
-                } catch (e: Exception) {
-                    Log.e(TAG, "Failed to load sticker: $assetPath", e)
+                isStaticImage -> {
+                    holder.stickerAnimation.visibility = View.GONE
+                    holder.gifImage.visibility = View.VISIBLE
+                    try {
+                        val stream = holder.gifImage.context.assets.open(assetPath)
+                        val bitmap = BitmapFactory.decodeStream(stream)
+                        stream.close()
+                        holder.gifImage.setImageBitmap(bitmap)
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Failed to load static sticker image: $assetPath", e)
+                    }
+                }
+                else -> {
+                    holder.gifImage.visibility = View.GONE
+                    holder.stickerAnimation.visibility = View.VISIBLE
+                    try {
+                        holder.stickerAnimation.setAnimation(assetPath)
+                        holder.stickerAnimation.playAnimation()
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Failed to load sticker: $assetPath", e)
+                    }
                 }
             }
         }
@@ -1954,6 +1988,11 @@ class MessageAdapter(
                 }
                 R.id.action_pin -> {
                     onPinMessage?.invoke(message)
+                    true
+                }
+                R.id.action_save_to_vault -> {
+                    // Premium feature — coming soon (per ANDROID_PARITY.md spec)
+                    ThemedToast.show(view.context, "Save to Vault — coming soon (premium)")
                     true
                 }
                 R.id.action_copy -> {

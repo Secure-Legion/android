@@ -1544,9 +1544,20 @@ object RustBridge {
 
     /**
      * Apply batch of received ops to a group. Ops must already be signed.
-     * @return JSON: {"applied": N, "rejected": N, "limit_status": "Ok|..."}
+     *
+     * `selfPubkeyHex` is the caller's Ed25519 identity (64 hex chars). Used to
+     * count MsgAdd ops authored by others vs by this user, so notification/
+     * badge logic can suppress self-echo. Pass an empty string to disable
+     * self filtering (every applied MsgAdd will count as "from others").
+     *
+     * @return JSON: {"applied": N, "rejected": N, "applied_messages": N,
+     *               "applied_messages_from_others": N, "limit_status": "Ok|..."}
      */
-    external fun crdtApplyOps(groupIdHex: String, serializedOpsBytes: ByteArray): String
+    external fun crdtApplyOps(
+        groupIdHex: String,
+        serializedOpsBytes: ByteArray,
+        selfPubkeyHex: String
+    ): String
 
     /**
      * Create a signed op, apply it locally, and return JSON with serialized bytes + metadata.

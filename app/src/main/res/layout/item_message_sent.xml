@@ -71,17 +71,15 @@
                 android:baselineAligned="false">
 
                 <LinearLayout
-                    android:layout_width="0dp"
+                    android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:layout_weight="1"
                     android:orientation="vertical">
 
                     <!-- Reply quote block (shown when this message is a reply) -->
                     <LinearLayout
                         android:id="@+id/replyQuoteBlock"
-                        android:layout_width="match_parent"
+                        android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:minWidth="200dp"
                         android:orientation="horizontal"
                         android:background="@drawable/reply_quote_sent_bg"
                         android:paddingStart="0dp"
@@ -94,12 +92,11 @@
                         <View
                             android:layout_width="3dp"
                             android:layout_height="match_parent"
-                            android:background="@color/reply_quote_border" />
+                            android:background="@color/reply_quote_border_sent" />
 
                         <LinearLayout
-                            android:layout_width="0dp"
+                            android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
-                            android:layout_weight="1"
                             android:orientation="vertical"
                             android:layout_marginStart="8dp">
 
@@ -154,9 +151,9 @@
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:text="(edited)"
-                        android:textColor="@color/edited_label"
+                        android:textColor="@color/edited_label_sent"
                         android:textSize="11sp"
-                        android:fontStyle="italic"
+                        android:textStyle="italic"
                         android:layout_marginTop="2dp"
                         android:visibility="gone" />
 

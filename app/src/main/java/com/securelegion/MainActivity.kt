@@ -117,17 +117,33 @@ class MainActivity : BaseActivity() {
     // BroadcastReceiver to listen for friend requests and update badge
     private val friendRequestReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
-            if (intent?.action == "com.securelegion.FRIEND_REQUEST_RECEIVED" ||
-                intent?.action == "com.securelegion.FRIEND_REQUEST_STATUS_CHANGED") {
-                Log.d("MainActivity", "Received ${intent.action} broadcast - updating badges and lists")
-                runOnUiThread {
-                    updateFriendRequestBadge()
-                    updateRequestsPillBadge()
-                    // Refresh all lists regardless of current tab
-                    // so when user navigates, fresh data is ready
-                    setupContactsList()
-                    setupRequestsList()
-                    setupChatList()
+            when (intent?.action) {
+                "com.securelegion.FRIEND_REQUEST_RECEIVED",
+                "com.securelegion.FRIEND_REQUEST_STATUS_CHANGED" -> {
+                    Log.d("MainActivity", "Received ${intent.action} broadcast - updating badges and lists")
+                    runOnUiThread {
+                        updateFriendRequestBadge()
+                        updateRequestsPillBadge()
+                        // Refresh all lists regardless of current tab
+                        // so when user navigates, fresh data is ready
+                        setupContactsList()
+                        setupRequestsList()
+                        setupChatList()
+                    }
+                }
+                "com.securelegion.FRIEND_REQUEST_COMPLETED" -> {
+                    // Full handshake finished — a contact just became CONFIRMED. Refresh all
+                    // lists so the new contact is visible, then jump to the Contacts sub-tab.
+                    Log.d("MainActivity", "Received FRIEND_REQUEST_COMPLETED broadcast - navigating to contacts")
+                    runOnUiThread {
+                        updateFriendRequestBadge()
+                        updateRequestsPillBadge()
+                        setupContactsList()
+                        setupRequestsList()
+                        setupChatList()
+                        isCallMode = false
+                        showContactsTab()
+                    }
                 }
             }
         }
@@ -301,6 +317,7 @@ class MainActivity : BaseActivity() {
         val friendRequestFilter = IntentFilter().apply {
             addAction("com.securelegion.FRIEND_REQUEST_RECEIVED")
             addAction("com.securelegion.FRIEND_REQUEST_STATUS_CHANGED")
+            addAction("com.securelegion.FRIEND_REQUEST_COMPLETED")
         }
         registerReceiver(friendRequestReceiver, friendRequestFilter, Context.RECEIVER_NOT_EXPORTED)
         Log.d("MainActivity", "Registered FRIEND_REQUEST_RECEIVED broadcast receiver in onCreate")
@@ -708,6 +725,13 @@ class MainActivity : BaseActivity() {
 
         // Cancel non-Tor system notifications when user is actively in the app
         cancelStaleNotifications()
+
+        // Process any pending profile photo retries (iOS parity)
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                com.securelegion.services.MessageService(this@MainActivity).processProfilePhotoQueue()
+            } catch (_: Exception) {}
+        }
     }
 
     /**
@@ -1745,12 +1769,9 @@ class MainActivity : BaseActivity() {
         // Update search bar hint
         findViewById<android.widget.EditText>(R.id.searchBar).hint = "Search contacts..."
 
-        // Show whichever sub-tab was last active
-        if (contactsSubTab == "requests") {
-            showRequestsSubTab()
-        } else {
-            showContactsSubTab()
-        }
+        // Always default to the Contacts sub-tab. Callers that want Requests
+        // (e.g. SHOW_REQUESTS_TAB intent) call showRequestsSubTab() explicitly after this.
+        showContactsSubTab()
     }
 
     private fun showContactsSubTab() {
@@ -1971,9 +1992,21 @@ class MainActivity : BaseActivity() {
 
     private fun savePendingFriendRequest(request: com.securelegion.models.PendingFriendRequest) {
         val prefs = getSharedPreferences("friend_requests", android.content.Context.MODE_PRIVATE)
-        val requestsSet = prefs.getStringSet("pending_requests_v2", mutableSetOf())?.toMutableSet() ?: mutableSetOf()
-        requestsSet.add(request.toJson())
-        prefs.edit().putStringSet("pending_requests_v2", requestsSet).apply()
+        val existing = prefs.getStringSet("pending_requests_v2", mutableSetOf()) ?: mutableSetOf()
+        // Dedup by (direction, ipfsCid) so re-adds replace rather than accumulate.
+        val newSet = mutableSetOf<String>()
+        for (json in existing) {
+            try {
+                val e = com.securelegion.models.PendingFriendRequest.fromJson(json)
+                if (e.ipfsCid != request.ipfsCid || e.direction != request.direction) {
+                    newSet.add(json)
+                }
+            } catch (_: Exception) {
+                newSet.add(json)
+            }
+        }
+        newSet.add(request.toJson())
+        prefs.edit().putStringSet("pending_requests_v2", newSet).apply()
     }
 
     private fun removePendingRequest(request: com.securelegion.models.PendingFriendRequest) {

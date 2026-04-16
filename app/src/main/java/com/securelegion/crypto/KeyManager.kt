@@ -1733,6 +1733,18 @@ class KeyManager private constructor(context: Context) {
             ?: throw IllegalStateException("Wallet seed not found")
 
         if (isSeedWrapped()) {
+            // Background rehydration for passwordless accounts. Android can restart
+            // the sticky TorService process without routing through SplashActivity,
+            // so cachedSeedHex is null even though the account can auto-unlock.
+            // User-defined-password accounts fall through intentionally — they must
+            // unlock the app for anything to happen anyway (e.g. accept an FR).
+            if (!hasUserDefinedPassword()) {
+                val systemPassword = getSystemPassword()
+                if (systemPassword != null && unlockSeed(systemPassword)) {
+                    Log.i(TAG, "Background rehydration: auto-unlocked seed from system password")
+                    cachedSeedHex?.let { return hexToBytes(it) }
+                }
+            }
             throw IllegalStateException("Seed is wrapped — call unlockSeed() first")
         }
 

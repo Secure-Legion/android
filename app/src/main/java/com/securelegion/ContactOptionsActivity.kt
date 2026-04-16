@@ -810,14 +810,45 @@ class ContactOptionsActivity : BaseActivity() {
                         database.messageDao().deleteMessagesForContact(contact.id)
                         database.contactDao().deleteContact(contact)
 
+                        // Crumb cleanup — see deleteContact audit. Each of these stores survives
+                        // the `contacts` row delete and otherwise accumulates stale per-contact
+                        // state (old usernames, ratchet keys, retry work, call log, etc.) that
+                        // can re-surface on re-add.
+                        try { database.callHistoryDao().deleteByContact(contact.id) } catch (e: Exception) {
+                            Log.w(TAG, "Non-critical: call history cleanup failed", e)
+                        }
+                        try { database.skippedMessageKeyDao().deleteByContact(contact.id) } catch (e: Exception) {
+                            Log.w(TAG, "Non-critical: skipped-key cleanup failed", e)
+                        }
+                        try {
+                            val frDao = database.pendingFriendRequestDao()
+                            if (contact.friendRequestOnion.isNotBlank()) frDao.deleteByRecipientOnion(contact.friendRequestOnion)
+                            contact.messagingOnion?.takeIf { it.isNotBlank() }?.let { frDao.deleteByRecipientOnion(it) }
+                        } catch (e: Exception) {
+                            Log.w(TAG, "Non-critical: pending_friend_requests cleanup failed", e)
+                        }
+                        try {
+                            val signerBytes = android.util.Base64.decode(contact.publicKeyBase64, android.util.Base64.NO_WRAP)
+                            database.pendingPingDao().deleteBySigner(signerBytes)
+                        } catch (e: Exception) {
+                            Log.w(TAG, "Non-critical: pending_pings cleanup failed", e)
+                        }
+
                         if (contact.ipfsCid != null) {
                             try {
                                 val ipfsManager = com.securelegion.services.IPFSManager.getInstance(this@ContactOptionsActivity)
-                                val unpinResult = ipfsManager.unpinFriendContactList(contact.ipfsCid)
-                                if (unpinResult.isSuccess) {
+                                val unpinListResult = ipfsManager.unpinFriendContactList(contact.ipfsCid)
+                                if (unpinListResult.isSuccess) {
                                     Log.i(TAG, "Unpinned friend's contact list from IPFS mesh: ${contact.ipfsCid}")
                                 } else {
-                                    Log.w(TAG, "Failed to unpin friend's contact list: ${unpinResult.exceptionOrNull()?.message}")
+                                    Log.w(TAG, "Failed to unpin friend's contact list: ${unpinListResult.exceptionOrNull()?.message}")
+                                }
+                                // Also unpin the contact's own ContactCard blob (separate from the
+                                // contact-list backup). Prevents us from continuing to host their
+                                // encrypted card on our device after they've been removed.
+                                val unpinCardResult = ipfsManager.unpinContactCard(contact.ipfsCid)
+                                if (unpinCardResult.isFailure) {
+                                    Log.w(TAG, "Failed to unpin contact card: ${unpinCardResult.exceptionOrNull()?.message}")
                                 }
                             } catch (e: Exception) {
                                 Log.w(TAG, "Non-critical error during unpinning", e)
@@ -840,6 +871,38 @@ class ContactOptionsActivity : BaseActivity() {
 
                         getSharedPreferences("muted_contacts", MODE_PRIVATE)
                             .edit().remove("muted_$contactId").apply()
+
+                        // Drop any stale SharedPrefs pending-friend-request entries whose
+                        // ipfsCid field points at this contact's onions or card CID. These
+                        // carry Phase 1/2 payloads with stale usernames and are otherwise
+                        // never cleaned up; leaving them behind is how "wrong username on
+                        // re-add" bugs sneak in.
+                        try {
+                            val frPrefs = getSharedPreferences("friend_requests", MODE_PRIVATE)
+                            val staleTargets = setOf(
+                                contact.friendRequestOnion,
+                                contact.messagingOnion ?: "",
+                                contact.ipfsCid ?: ""
+                            ).filter { it.isNotBlank() }.toSet()
+                            if (staleTargets.isNotEmpty()) {
+                                val current = frPrefs.getStringSet("pending_requests_v2", emptySet()) ?: emptySet()
+                                val filtered = current.filter { json ->
+                                    try {
+                                        val req = com.securelegion.models.PendingFriendRequest.fromJson(json)
+                                        req.ipfsCid !in staleTargets
+                                    } catch (_: Exception) {
+                                        // Keep unparseable entries — they're not ours to touch.
+                                        true
+                                    }
+                                }.toMutableSet()
+                                if (filtered.size != current.size) {
+                                    frPrefs.edit().putStringSet("pending_requests_v2", filtered).apply()
+                                    Log.i(TAG, "Cleared ${current.size - filtered.size} stale pending-friend-request entries")
+                                }
+                            }
+                        } catch (e: Exception) {
+                            Log.w(TAG, "Non-critical: pending_requests_v2 SharedPrefs cleanup failed", e)
+                        }
 
                         Log.i(TAG, "Contact and all messages securely deleted (DOD 3-pass): ${contact.displayName}")
                     }

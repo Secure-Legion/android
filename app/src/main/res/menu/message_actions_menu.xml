@@ -16,6 +16,9 @@
         android:id="@+id/action_pin"
         android:title="Pin" />
     <item
+        android:id="@+id/action_save_to_vault"
+        android:title="Save to Vault (coming soon)" />
+    <item
         android:id="@+id/action_copy"
         android:title="Copy" />
     <item

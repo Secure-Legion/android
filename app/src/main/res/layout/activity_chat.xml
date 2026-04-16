@@ -273,7 +273,7 @@
             android:layout_height="20dp"
             android:layout_gravity="center"
             android:src="@drawable/ic_arrow_down"
-            app:tint="@color/text_primary"
+            app:tint="#FFFFFF"
             android:contentDescription="Scroll to bottom" />
     </FrameLayout>
 
@@ -349,6 +349,26 @@
                     android:maxLines="4"
                     android:saveEnabled="false"
                     android:inputType="textCapSentences|textMultiLine" />
+
+                <!-- Self-destruct timer button -->
+                <FrameLayout
+                    android:id="@+id/timerButton"
+                    android:layout_width="40dp"
+                    android:layout_height="40dp"
+                    android:background="?attr/selectableItemBackgroundBorderless"
+                    android:clickable="true"
+                    android:focusable="true">
+
+                    <ImageView
+                        android:id="@+id/timerButtonIcon"
+                        android:layout_width="20dp"
+                        android:layout_height="20dp"
+                        android:layout_gravity="center"
+                        android:src="@drawable/ic_timer"
+                        app:tint="?attr/colorOnSurfaceVariant"
+                        android:contentDescription="Disappearing messages timer" />
+
+                </FrameLayout>
 
                 <!-- Emoji Button inside pill (opens emoji/gif/sticker panel) -->
                 <FrameLayout

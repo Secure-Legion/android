@@ -358,6 +358,24 @@ class CreateAccountActivity : AppCompatActivity() {
                         Log.d("CreateAccount", "Generated 12-word mnemonic seed phrase")
                     }
 
+                    // Auto-wipe any existing on-device account before provisioning the new one.
+                    // Covers "forgot password" (user can't reach WipeAccountActivity) and
+                    // seed-phrase restore (explicit overwrite). Runs AFTER the restore-seed
+                    // capture above, since wipeAllData clears `restore_temp` SharedPrefs too.
+                    val preCheckKeyManager = KeyManager.getInstance(this@CreateAccountActivity)
+                    if (preCheckKeyManager.isAccountSetupComplete()) {
+                        Log.w("CreateAccount", "Existing account detected — wiping before provisioning new one")
+                        try {
+                            stopService(Intent(this@CreateAccountActivity, com.securelegion.services.TorService::class.java))
+                        } catch (e: Exception) {
+                            Log.w("CreateAccount", "Failed to stop TorService before wipe", e)
+                        }
+                        SecureLegionDatabase.clearInstance()
+                        preCheckKeyManager.wipeAllKeys()
+                        com.securelegion.utils.SecureWipe.wipeAllData(this@CreateAccountActivity)
+                        Log.i("CreateAccount", "Existing account wiped, proceeding with new account provisioning")
+                    }
+
                     // Initialize KeyManager with the mnemonic
                     val keyManager = KeyManager.getInstance(this@CreateAccountActivity)
                     keyManager.initializeFromSeed(mnemonic)
@@ -399,56 +417,58 @@ class CreateAccountActivity : AppCompatActivity() {
                     Log.i("CreateAccount", "Solana address: $walletAddress")
 
                     // Initialize Zcash wallet (async - runs in background)
-                    Log.i("CreateAccount", "Starting Zcash wallet initialization in background...")
-                    val zcashPrefs = getSharedPreferences("zcash_init", MODE_PRIVATE)
-                    zcashPrefs.edit().putBoolean("initializing", true).apply()
+                    if (BuildConfig.ENABLE_ZCASH_WALLET) {
+                        Log.i("CreateAccount", "Starting Zcash wallet initialization in background...")
+                        val zcashPrefs = getSharedPreferences("zcash_init", MODE_PRIVATE)
+                        zcashPrefs.edit().putBoolean("initializing", true).apply()
 
-                    CoroutineScope(Dispatchers.IO).launch {
-                        try {
-                            val zcashService = com.securelegion.services.ZcashService.getInstance(this@CreateAccountActivity)
-                            val result = zcashService.initialize(mnemonic, useTestnet = false)
-                            if (result.isSuccess) {
-                                val zcashAddress = result.getOrNull()
-                                Log.i("CreateAccount", "Zcash wallet initialized: $zcashAddress")
+                        CoroutineScope(Dispatchers.IO).launch {
+                            try {
+                                val zcashService = com.securelegion.services.ZcashService.getInstance(this@CreateAccountActivity)
+                                val result = zcashService.initialize(mnemonic, useTestnet = false)
+                                if (result.isSuccess) {
+                                    val zcashAddress = result.getOrNull()
+                                    Log.i("CreateAccount", "Zcash wallet initialized: $zcashAddress")
 
-                                // Create wallet entry in database now that initialization is complete
-                                if (zcashAddress != null) {
-                                    val km = KeyManager.getInstance(this@CreateAccountActivity)
-                                    val dbPassphrase = km.getDatabasePassphrase()
-                                    val database = SecureLegionDatabase.getInstance(this@CreateAccountActivity, dbPassphrase)
+                                    // Create wallet entry in database now that initialization is complete
+                                    if (zcashAddress != null) {
+                                        val km = KeyManager.getInstance(this@CreateAccountActivity)
+                                        val dbPassphrase = km.getDatabasePassphrase()
+                                        val database = SecureLegionDatabase.getInstance(this@CreateAccountActivity, dbPassphrase)
 
-                                    // Get birthday height from ZcashService
-                                    val birthdayHeight = zcashService.getBirthdayHeight()
-                                    Log.i("CreateAccount", "Zcash birthday height: $birthdayHeight")
+                                        // Get birthday height from ZcashService
+                                        val birthdayHeight = zcashService.getBirthdayHeight()
+                                        Log.i("CreateAccount", "Zcash birthday height: $birthdayHeight")
 
-                                    val zcashWalletId = "wallet_zcash_${System.currentTimeMillis()}"
-                                    val defaultZcashWallet = Wallet(
-                                        walletId = zcashWalletId,
-                                        name = "Wallet 2",
-                                        solanaAddress = "",
-                                        zcashUnifiedAddress = zcashAddress,
-                                        zcashAccountIndex = 0,
-                                        zcashBirthdayHeight = birthdayHeight,
-                                        isActiveZcash = true,
-                                        isMainWallet = false,
-                                        createdAt = System.currentTimeMillis(),
-                                        lastUsedAt = System.currentTimeMillis() - 1
-                                    )
-                                    database.walletDao().insertWallet(defaultZcashWallet)
+                                        val zcashWalletId = "wallet_zcash_${System.currentTimeMillis()}"
+                                        val defaultZcashWallet = Wallet(
+                                            walletId = zcashWalletId,
+                                            name = "Wallet 2",
+                                            solanaAddress = "",
+                                            zcashUnifiedAddress = zcashAddress,
+                                            zcashAccountIndex = 0,
+                                            zcashBirthdayHeight = birthdayHeight,
+                                            isActiveZcash = true,
+                                            isMainWallet = false,
+                                            createdAt = System.currentTimeMillis(),
+                                            lastUsedAt = System.currentTimeMillis() - 1
+                                        )
+                                        database.walletDao().insertWallet(defaultZcashWallet)
 
-                                    // Store seed phrase for Zcash wallet
-                                    km.storeWalletSeed(zcashWalletId, mnemonic)
-                                    Log.i("CreateAccount", "Zcash wallet entry created in database with birthday height: $birthdayHeight")
+                                        // Store seed phrase for Zcash wallet
+                                        km.storeWalletSeed(zcashWalletId, mnemonic)
+                                        Log.i("CreateAccount", "Zcash wallet entry created in database with birthday height: $birthdayHeight")
+                                    }
+                                } else {
+                                    Log.e("CreateAccount", "Failed to initialize Zcash wallet: ${result.exceptionOrNull()?.message}")
                                 }
-                            } else {
-                                Log.e("CreateAccount", "Failed to initialize Zcash wallet: ${result.exceptionOrNull()?.message}")
+                            } catch (e: Exception) {
+                                Log.e("CreateAccount", "Error initializing Zcash wallet", e)
+                            } finally {
+                                // Mark initialization as complete
+                                zcashPrefs.edit().putBoolean("initializing", false).apply()
+                                Log.i("CreateAccount", "Zcash initialization complete")
                             }
-                        } catch (e: Exception) {
-                            Log.e("CreateAccount", "Error initializing Zcash wallet", e)
-                        } finally {
-                            // Mark initialization as complete
-                            zcashPrefs.edit().putBoolean("initializing", false).apply()
-                            Log.i("CreateAccount", "Zcash initialization complete")
                         }
                     }
 
@@ -548,14 +568,15 @@ class CreateAccountActivity : AppCompatActivity() {
                         // Restored from seed — user already has it
                         setupPrefs.edit().putBoolean("seed_phrase_confirmed", true).apply()
 
-                        // Enable push recovery mode — TorService will activate beacon
-                        // so friends can push our contact list when Tor comes online
+                        // Arm contact-list recovery: the first friend we re-add after
+                        // this restore gets a signed 0x80 REQUEST so they push our
+                        // encrypted list back. Also keeps the passive-push path working
+                        // (TorService / ContactListSyncService poller consumes the blob
+                        // if a friend pushes unsolicited 0x82 first). Expires in 48h.
                         val contactListCID = keyManager.deriveContactListCIDFromSeed(mnemonic)
-                        val recoveryPrefs = getSharedPreferences("recovery_state", MODE_PRIVATE)
-                        recoveryPrefs.edit()
-                            .putBoolean("recovery_needed", true)
-                            .putString("expected_cid", contactListCID)
-                            .apply()
+                        com.securelegion.services.RecoveryState.setActive(
+                            this@CreateAccountActivity, contactListCID
+                        )
                         Log.i("CreateAccount", "Recovery mode enabled (CID: ${contactListCID.take(20)}...)")
 
                         // Restart TorService so it picks up new hidden service keys

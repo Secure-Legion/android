@@ -56,6 +56,21 @@ class CrdtGroupManager private constructor(private val context: Context) {
         }
     }
 
+    /**
+     * Result of applying a batch of received CRDT ops.
+     *
+     * `appliedMessagesFromOthers` is the count of newly-applied MsgAdd ops
+     * whose author is NOT this device's identity. UI code must use this —
+     * not `applied` — to decide whether to surface a notification or bump
+     * an unread badge, otherwise membership changes, reactions, edits, etc.
+     * produce ghost "new message" notifications.
+     */
+    data class ApplyOpsResult(
+        val applied: Int,
+        val rejected: Int,
+        val appliedMessagesFromOthers: Int
+    )
+
     private val keyManager = KeyManager.getInstance(context)
     private val secureRandom = SecureRandom()
 
@@ -1204,6 +1219,18 @@ class CrdtGroupManager private constructor(private val context: Context) {
     }
 
     /**
+     * Bulk-increment unread count by [delta] — single SQL UPDATE instead of N.
+     */
+    suspend fun addUnreadCount(groupId: String, delta: Int) {
+        if (delta <= 0) return
+        try {
+            getDatabase().groupDao().addUnreadCount(groupId, delta)
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to add $delta to unread count for $groupId", e)
+        }
+    }
+
+    /**
      * Clear unread count for a group (called when user opens the chat).
      */
     suspend fun clearUnreadCount(groupId: String) {
@@ -1285,6 +1312,136 @@ class CrdtGroupManager private constructor(private val context: Context) {
 
         Log.i(TAG, "SYNC_REQUEST: group=${groupId.take(16)} afterLamport=$afterLamport limit=$limit")
         broadcastRaw(groupId, 0x32.toByte(), payload)
+    }
+
+    /**
+     * Full sync orchestrator — replaces the old photo-only refresh.
+     * Called by the refresh button in group chat.
+     *
+     * Steps:
+     * 1. Flush pending deliveries (retry any queued ops)
+     * 2. Send routing requests (exchange onion addresses with peers)
+     * 3. Send sync requests (pull missing ops from all peers)
+     * 4. Send profile photo
+     */
+    suspend fun fullSync(groupId: String) {
+        Log.i(TAG, "FULL_SYNC: starting for group ${groupId.take(16)}")
+
+        // 1. Flush pending deliveries
+        try {
+            processPendingDeliveries(groupId)
+        } catch (e: Exception) {
+            Log.w(TAG, "FULL_SYNC: pending delivery flush failed", e)
+        }
+
+        // 2. Exchange routing info with peers
+        try {
+            sendRoutingRequestsToAll(groupId)
+        } catch (e: Exception) {
+            Log.w(TAG, "FULL_SYNC: routing exchange failed", e)
+        }
+
+        // 3. Request missing ops from all peers
+        try {
+            requestSyncToAllPeers(groupId)
+        } catch (e: Exception) {
+            Log.w(TAG, "FULL_SYNC: sync request failed", e)
+        }
+
+        // 4. Send profile photo
+        try {
+            sendGroupProfilePhoto(groupId)
+        } catch (e: Exception) {
+            Log.w(TAG, "FULL_SYNC: profile photo send failed", e)
+        }
+
+        Log.i(TAG, "FULL_SYNC: complete for group ${groupId.take(16)}")
+    }
+
+    /**
+     * Flush all pending deliveries for a specific group.
+     */
+    private suspend fun processPendingDeliveries(groupId: String) {
+        val db = getDatabase()
+        val allPending = db.pendingGroupDeliveryDao().getForGroup(groupId)
+        if (allPending.isEmpty()) return
+        Log.i(TAG, "PROCESS_PENDING: ${allPending.size} deliveries for group ${groupId.take(16)}")
+
+        for (delivery in allPending) {
+            val routing = resolveRouting(db, delivery.targetPubkeyHex, groupId)
+            if (routing == null) {
+                Log.w(TAG, "PROCESS_PENDING: no routing for ${delivery.targetPubkeyHex.take(8)} — skipping")
+                continue
+            }
+            try {
+                val success = RustBridge.sendMessageBlob(routing.onion, delivery.payload, delivery.wireType.toByte())
+                if (success) {
+                    db.pendingGroupDeliveryDao().deleteById(delivery.id)
+                    Log.d(TAG, "PROCESS_PENDING: delivered id=${delivery.id}")
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "PROCESS_PENDING: failed id=${delivery.id}", e)
+            }
+        }
+    }
+
+    /**
+     * Send routing requests to all reachable peers in a group.
+     */
+    private suspend fun sendRoutingRequestsToAll(groupId: String) {
+        val members = queryMembers(groupId).filter { it.accepted && !it.removed }
+        val localPubkeyHex = bytesToHex(keyManager.getSigningPublicKey())
+        val db = getDatabase()
+        val allZeros = "0".repeat(64)
+
+        for (member in members) {
+            if (member.pubkeyHex == localPubkeyHex) continue
+            val routing = resolveRouting(db, member.pubkeyHex, groupId)
+            if (routing != null) {
+                try {
+                    sendRoutingRequest(groupId, allZeros, routing.onion)
+                } catch (e: Exception) {
+                    Log.w(TAG, "ROUTING_REQ failed for ${member.deviceIdHex.take(8)}", e)
+                }
+            }
+        }
+    }
+
+    /**
+     * Reinvite a member who is stuck in accepted=false.
+     * Resends the full op bundle (same as original invite delivery).
+     * Does NOT create a new CRDT op — just retransmits existing ops.
+     */
+    suspend fun reinviteMember(groupId: String, targetDeviceIdHex: String) {
+        val db = getDatabase()
+        val members = queryMembers(groupId)
+        val target = members.find { it.deviceIdHex == targetDeviceIdHex }
+            ?: throw IllegalStateException("Member $targetDeviceIdHex not found in group")
+
+        val routing = resolveRouting(db, target.pubkeyHex, groupId)
+            ?: throw IllegalStateException("No routing for ${targetDeviceIdHex.take(8)}")
+
+        // Clear stale pending deliveries for this peer
+        db.pendingGroupDeliveryDao().deleteForTarget(groupId, target.pubkeyHex)
+
+        // Fetch all ops and send as CRDT_OPS (0x30)
+        val allOps = db.crdtOpLogDao().getOpsForGroup(groupId)
+        if (allOps.isEmpty()) {
+            Log.w(TAG, "REINVITE: no ops to send for group ${groupId.take(16)}")
+            return
+        }
+
+        val packed = packOps(allOps)
+        val payload = hexToBytes(groupId) + packed
+        Log.i(TAG, "REINVITE: sending ${allOps.size} ops (${payload.size} bytes) to ${targetDeviceIdHex.take(8)}")
+
+        val success = RustBridge.sendMessageBlob(routing.onion, payload, 0x30.toByte())
+        if (success) {
+            Log.i(TAG, "REINVITE: sent successfully to ${targetDeviceIdHex.take(8)}")
+        } else {
+            queuePendingDelivery(groupId, target.pubkeyHex, 0x30.toByte(), payload)
+            Log.w(TAG, "REINVITE: send failed, queued for retry")
+        }
     }
 
     /**
@@ -1944,9 +2101,12 @@ class CrdtGroupManager private constructor(private val context: Context) {
      * MemberInvite for our local device, creates a Group entity so the
      * group appears in the list.
      *
-     * @return Pair(applied count, rejected count)
+     * @return ApplyOpsResult with applied/rejected totals and the count of
+     *   newly-applied MsgAdd ops authored by someone other than this user —
+     *   the last field is what UI code must use to decide whether to show a
+     *   notification or increment an unread badge.
      */
-    suspend fun applyReceivedOps(groupId: String, rawPackedBytes: ByteArray): Pair<Int, Int> {
+    suspend fun applyReceivedOps(groupId: String, rawPackedBytes: ByteArray): ApplyOpsResult {
         val db = getDatabase()
 
         // 1. Persist individual ops in DB (persistence before state)
@@ -1955,17 +2115,25 @@ class CrdtGroupManager private constructor(private val context: Context) {
             db.crdtOpLogDao().insertOp(op)
         }
 
+        // Self pubkey for MsgAdd filtering in Rust — lets Rust tell us which
+        // new messages were authored by *other* users (ghost-notification fix).
+        val localPubkeyHex = bytesToHex(keyManager.getSigningPublicKey())
+
         // 2. Try to load group + apply ops in Rust
         // This may fail for brand-new groups (e.g., invite bundle with GroupCreate).
         // In that case, ops are still persisted in DB — loadGroup will retry on next access.
         var applied = 0
         var rejected = 0
+        var appliedMessagesFromOthers = 0
         try {
             ensureLoaded(groupId)
-            val resultJson = RustBridge.crdtApplyOps(groupId, rawPackedBytes)
+            val resultJson = RustBridge.crdtApplyOps(groupId, rawPackedBytes, localPubkeyHex)
             val result = JSONObject(resultJson)
             applied = result.getInt("applied")
             rejected = result.getInt("rejected")
+            // optInt — older .so that predates this field returns 0, which correctly
+            // suppresses notifications until the rebuilt library ships.
+            appliedMessagesFromOthers = result.optInt("applied_messages_from_others", 0)
         } catch (e: Exception) {
             // Group may not be loadable yet (e.g., ops arrived out of order).
             // Ops are persisted — they'll be applied on next loadGroup attempt.
@@ -1975,10 +2143,11 @@ class CrdtGroupManager private constructor(private val context: Context) {
             synchronized(loadedGroups) { loadedGroups.remove(groupId) }
             try {
                 ensureLoaded(groupId)
-                val resultJson = RustBridge.crdtApplyOps(groupId, rawPackedBytes)
+                val resultJson = RustBridge.crdtApplyOps(groupId, rawPackedBytes, localPubkeyHex)
                 val result = JSONObject(resultJson)
                 applied = result.getInt("applied")
                 rejected = result.getInt("rejected")
+                appliedMessagesFromOthers = result.optInt("applied_messages_from_others", 0)
             } catch (e2: Exception) {
                 Log.w(TAG, "applyReceivedOps: retry also failed — ops are persisted for later", e2)
             }
@@ -2002,7 +2171,7 @@ class CrdtGroupManager private constructor(private val context: Context) {
                         putExtra("groupId", groupId)
                     }
                     context.sendBroadcast(intent)
-                    return Pair(applied, rejected)
+                    return ApplyOpsResult(applied, rejected, appliedMessagesFromOthers)
                 }
             } catch (e: Exception) {
                 Log.w(TAG, "applyReceivedOps: group_status check failed (non-fatal)", e)
@@ -2039,8 +2208,8 @@ class CrdtGroupManager private constructor(private val context: Context) {
             }
         } catch (_: Exception) { /* Group entity may not exist yet */ }
 
-        Log.i(TAG, "applyReceivedOps: $groupId applied=$applied rejected=$rejected")
-        return Pair(applied, rejected)
+        Log.i(TAG, "applyReceivedOps: $groupId applied=$applied rejected=$rejected msgsFromOthers=$appliedMessagesFromOthers")
+        return ApplyOpsResult(applied, rejected, appliedMessagesFromOthers)
     }
 
     /**

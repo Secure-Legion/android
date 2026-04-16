@@ -89,13 +89,28 @@
         android:layout_height="0dp"
         android:layout_weight="1">
 
-        <!-- Tab 0: Emoji grid -->
-        <androidx.recyclerview.widget.RecyclerView
-            android:id="@+id/emojiGrid"
+        <!-- Tab 0: Fluent Emoji picker (category pills + PNG grid) -->
+        <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="match_parent"
-            android:clipToPadding="false"
-            android:padding="4dp" />
+            android:orientation="vertical">
+
+            <androidx.recyclerview.widget.RecyclerView
+                android:id="@+id/fluentCategoryPills"
+                android:layout_width="match_parent"
+                android:layout_height="36dp"
+                android:clipToPadding="false"
+                android:paddingStart="8dp"
+                android:paddingEnd="8dp" />
+
+            <androidx.recyclerview.widget.RecyclerView
+                android:id="@+id/emojiGrid"
+                android:layout_width="match_parent"
+                android:layout_height="0dp"
+                android:layout_weight="1"
+                android:clipToPadding="false"
+                android:padding="4dp" />
+        </LinearLayout>
 
         <!-- Tab 1: Sticker picker -->
         <com.securelegion.views.StickerPickerView

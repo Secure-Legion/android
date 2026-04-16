@@ -442,6 +442,15 @@ class TorService : Service() {
         // Converge any offline friend-request phases now that Tor is ready.
         triggerFriendRequestRetryConvergence("tor_ready")
 
+        // Flush profile photo retry queue now that we have a fresh circuit (iOS parity)
+        serviceScope.launch(Dispatchers.IO) {
+            try {
+                com.securelegion.services.MessageService(this@TorService).flushProfilePhotoQueue()
+            } catch (e: Exception) {
+                Log.w(TAG, "Profile photo queue flush failed: ${e.message}")
+            }
+        }
+
         // Activate push recovery mode if needed (restored from seed, no contacts found locally)
         activateRecoveryModeIfNeeded()
 
@@ -1407,6 +1416,15 @@ class TorService : Service() {
 
         // CRDT group ID length in bytes (GroupID is [u8; 32] in Rust)
         private const val CRDT_GROUP_ID_LEN = 32
+
+        /**
+         * Group ID of the GroupChatActivity currently on-screen, or null if none.
+         * Set by GroupChatActivity.onResume / cleared by onPause.
+         * Used to suppress group-message notifications while the user is
+         * already viewing that chat.
+         */
+        @Volatile
+        var activeGroupId: String? = null
 
         const val ACTION_START_TOR = "com.securelegion.action.START_TOR"
         const val ACTION_STOP_TOR = "com.securelegion.action.STOP_TOR"
@@ -3336,16 +3354,21 @@ class TorService : Service() {
                 Log.d(TAG, "X25519 Public Key: $x25519PublicKey")
             }
 
-            // Guard: silently drop if sender is already a confirmed friend
+            // Guard: silently drop if sender is already a CONFIRMED friend.
+            // PENDING_SENT falls through — this is the mutual-FR case. The Phase 3 ACK handler
+            // upgrades PENDING_SENT → CONFIRMED once the user accepts the incoming request.
             val dbPassphrase = keyManager.getDatabasePassphrase()
             val database = com.securelegion.database.SecureLegionDatabase.getInstance(this, dbPassphrase)
             val existingContact = kotlinx.coroutines.runBlocking(kotlinx.coroutines.Dispatchers.IO) {
                 database.contactDao().getContactByX25519PublicKey(x25519PublicKey)
                     ?: if (friendRequestOnion.isNotBlank()) database.contactDao().getContactByOnionAddress(friendRequestOnion) else null
             }
-            if (existingContact != null) {
-                Log.i(TAG, "Phase 1 friend request from already-known contact '${existingContact.displayName}' (status=${existingContact.friendshipStatus}) — ignoring")
+            if (existingContact != null && existingContact.friendshipStatus == com.securelegion.database.entities.Contact.FRIENDSHIP_CONFIRMED) {
+                Log.i(TAG, "Phase 1 FR from already-confirmed contact '${existingContact.displayName}' — ignoring")
                 return
+            }
+            if (existingContact != null) {
+                Log.i(TAG, "Phase 1 FR from '${existingContact.displayName}' (status=${existingContact.friendshipStatus}) — mutual-FR, falling through to pending inbox")
             }
 
             // Store as pending friend request
@@ -3634,6 +3657,24 @@ class TorService : Service() {
 
                 if (success) {
                     Log.i(TAG, "Phase 3 ACK sent to ${contactCard.displayName}")
+
+                    // Two-phase commit complete on our side: flip PENDING_SENT → CONFIRMED.
+                    // Mirror of the receiver-side flip at the Phase 3 ACK handler.
+                    try {
+                        val dbPassphrase = keyManager.getDatabasePassphrase()
+                        val db = com.securelegion.database.SecureLegionDatabase.getInstance(this@TorService, dbPassphrase)
+                        val x25519Base64 = android.util.Base64.encodeToString(contactCard.x25519PublicKey, android.util.Base64.NO_WRAP)
+                        val existing = db.contactDao().getContactByX25519PublicKey(x25519Base64)
+                        if (existing != null && existing.friendshipStatus == com.securelegion.database.entities.Contact.FRIENDSHIP_PENDING_SENT) {
+                            db.contactDao().updateContact(
+                                existing.copy(friendshipStatus = com.securelegion.database.entities.Contact.FRIENDSHIP_CONFIRMED)
+                            )
+                            Log.i(TAG, "Local contact ${contactCard.displayName} → CONFIRMED after Phase 3 ACK send")
+                            sendBroadcast(Intent(ACTION_FRIEND_REQUEST_STATUS_CHANGED))
+                        }
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Failed to flip contact to CONFIRMED after Phase 3 ACK send", e)
+                    }
                 } else {
                     Log.e(TAG, "Failed to send Phase 3 ACK to ${contactCard.displayName}")
                 }
@@ -3841,6 +3882,12 @@ class TorService : Service() {
                 val contactId = database.contactDao().insertContact(contact)
                 Log.i(TAG, "Contact added to database: ${contact.displayName} (ID: $contactId)")
 
+                // Seed-restore recovery hook: if we were just restored from seed,
+                // ask this new friend to send our contact list back. No-op otherwise.
+                com.securelegion.services.ContactListSyncService
+                    .getInstance(this@TorService)
+                    .maybeRequestRecovery(contact.messagingOnion)
+
                 // NOTE: Key chain initialization is handled by the caller (Phase 2/3 handlers)
                 // Do NOT initialize here without quantum parameters - causes encryption mismatch!
 
@@ -3891,8 +3938,20 @@ class TorService : Service() {
             val prefs = getSharedPreferences("friend_requests", MODE_PRIVATE)
             val pendingRequestsSet = prefs.getStringSet("pending_requests_v2", mutableSetOf()) ?: mutableSetOf()
 
-            // Add new request
-            val newSet = pendingRequestsSet.toMutableSet()
+            // Dedup by (direction, ipfsCid) — replace instead of append. Appending
+            // blindly would let stale Phase 1 payloads accumulate across re-adds,
+            // which is how wrong usernames can leak back in.
+            val newSet = mutableSetOf<String>()
+            for (existingJson in pendingRequestsSet) {
+                try {
+                    val existing = com.securelegion.models.PendingFriendRequest.fromJson(existingJson)
+                    if (existing.ipfsCid != request.ipfsCid || existing.direction != request.direction) {
+                        newSet.add(existingJson)
+                    }
+                } catch (e: Exception) {
+                    newSet.add(existingJson)
+                }
+            }
             newSet.add(request.toJson())
 
             prefs.edit()
@@ -5178,21 +5237,9 @@ class TorService : Service() {
                         serviceScope.launch(kotlinx.coroutines.Dispatchers.IO) {
                             try {
                                 val mgr = CrdtGroupManager.getInstance(this@TorService)
-                                val (applied, rejected) = mgr.applyReceivedOps(groupIdHex, rest)
-                                Log.i(TAG, "CRDT_OPS applied=$applied rejected=$rejected group=${groupIdHex.take(16)}...")
-                                if (applied > 0) {
-                                    mgr.incrementUnreadCount(groupIdHex)
-                                    // Show notification for group message
-                                    val keyManager = KeyManager.getInstance(this@TorService)
-                                    val db = com.securelegion.database.SecureLegionDatabase.getInstance(
-                                        this@TorService, keyManager.getDatabasePassphrase()
-                                    )
-                                    val group = db.groupDao().getGroupById(groupIdHex)
-                                    val name = group?.name ?: "Group"
-                                    android.os.Handler(android.os.Looper.getMainLooper()).post {
-                                        showGroupMessageNotification(groupIdHex, name)
-                                    }
-                                }
+                                val result = mgr.applyReceivedOps(groupIdHex, rest)
+                                Log.i(TAG, "CRDT_OPS applied=${result.applied} rejected=${result.rejected} msgsFromOthers=${result.appliedMessagesFromOthers} group=${groupIdHex.take(16)}...")
+                                handleAppliedGroupOps(groupIdHex, result)
                                 sendBroadcast(android.content.Intent("com.securelegion.NEW_GROUP_MESSAGE").apply {
                                     setPackage(packageName)
                                     putExtra("GROUP_ID", groupIdHex)
@@ -5228,10 +5275,11 @@ class TorService : Service() {
                         serviceScope.launch(kotlinx.coroutines.Dispatchers.IO) {
                             try {
                                 val mgr = CrdtGroupManager.getInstance(this@TorService)
-                                val (applied, rejected) = mgr.applyReceivedOps(groupIdHex, rest)
-                                Log.i(TAG, "SYNC_CHUNK applied=$applied rejected=$rejected group=${groupIdHex.take(16)}...")
-                                if (applied > 0) {
-                                    mgr.incrementUnreadCount(groupIdHex)
+                                val result = mgr.applyReceivedOps(groupIdHex, rest)
+                                Log.i(TAG, "SYNC_CHUNK applied=${result.applied} rejected=${result.rejected} msgsFromOthers=${result.appliedMessagesFromOthers} group=${groupIdHex.take(16)}...")
+                                // Sync chunks don't ring — only backfill unread badge and poke the UI.
+                                handleAppliedGroupOps(groupIdHex, result, allowNotification = false)
+                                if (result.applied > 0) {
                                     sendBroadcast(android.content.Intent("com.securelegion.NEW_GROUP_MESSAGE").apply {
                                         setPackage(packageName)
                                         putExtra("GROUP_ID", groupIdHex)
@@ -5436,12 +5484,9 @@ class TorService : Service() {
                 return
             }
 
-            // Known contact - check if this is a FRIEND_REQUEST_ACCEPTED notification
-            if (contact.friendshipStatus == com.securelegion.database.entities.Contact.FRIENDSHIP_PENDING_SENT) {
-                Log.i(TAG, "→ Known contact with PENDING status - treating as FRIEND_REQUEST_ACCEPTED")
-                handleFriendRequestAccepted(contact, senderX25519PublicKey, encryptedPayload)
-                return
-            }
+            // v2 protocol: Phase 3 ACK on FR channel handles the CONFIRMED flip.
+            // Regular messages from PENDING_SENT contacts decrypt via the chain-key path below.
+            // (Legacy v1 dispatch to handleFriendRequestAccepted removed — was using wrong crypto.)
 
             // Known contact - this is a regular message
             // All message types (TEXT, VOICE, IMAGES, PAYMENTS) come through this handler
@@ -5748,11 +5793,10 @@ class TorService : Service() {
                                 serviceScope.launch(kotlinx.coroutines.Dispatchers.IO) {
                                     try {
                                         val mgr = CrdtGroupManager.getInstance(this@TorService)
-                                        val (applied, rejected) = mgr.applyReceivedOps(groupIdHex, packedOps)
-                                        Log.i(TAG, "CRDT_OPS applied=$applied rejected=$rejected group=${groupIdHex.take(16)}...")
-                                        if (applied > 0) {
-                                            mgr.incrementUnreadCount(groupIdHex)
-                                        }
+                                        val result = mgr.applyReceivedOps(groupIdHex, packedOps)
+                                        Log.i(TAG, "CRDT_OPS applied=${result.applied} rejected=${result.rejected} msgsFromOthers=${result.appliedMessagesFromOthers} group=${groupIdHex.take(16)}...")
+                                        // Legacy-decryption fallback path didn't ring before — keep that behavior.
+                                        handleAppliedGroupOps(groupIdHex, result, allowNotification = false)
                                         val intent = android.content.Intent("com.securelegion.NEW_GROUP_MESSAGE")
                                         intent.setPackage(packageName)
                                         intent.putExtra("GROUP_ID", groupIdHex)
@@ -5951,6 +5995,97 @@ class TorService : Service() {
                     return // Don't create a new message row
                 }
 
+                0x13 -> {
+                    // SELF_DESTRUCT: set pending TTL on target message (start-on-read)
+                    Log.i(TAG, "SELF_DESTRUCT received (appType=0x13) body=${body.size} bytes")
+                    Log.d(TAG, "SELF_DESTRUCT raw JSON: ${String(body, Charsets.UTF_8)}")
+                    serviceScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                        try {
+                            val sdJson = org.json.JSONObject(String(body, Charsets.UTF_8))
+                            val targetId = sdJson.getString("target_message_id")
+                            val targetBlobId = sdJson.optString("target_blob_id").takeIf { it.isNotBlank() }
+                            val ttl = sdJson.getDouble("ttl")
+                            Log.i(TAG, "SELF_DESTRUCT parsed: target=${targetId.take(32)} blob=${targetBlobId?.take(32) ?: "null"} ttl=${ttl}s")
+                            val resolvedId = com.securelegion.services.MessageService.resolveReactionTargetIdForContact(
+                                database, contact.id, targetId, targetBlobId
+                            )
+                            Log.i(TAG, "SELF_DESTRUCT resolved target: ${resolvedId?.take(32) ?: "NULL"}")
+                            if (!resolvedId.isNullOrBlank()) {
+                                database.messageDao().setSelfDestructTtl(resolvedId, ttl)
+                                Log.i(TAG, "SELF_DESTRUCT TTL stored on $resolvedId (ttl=${ttl}s)")
+                                // Broadcast UI refresh so open chat re-runs activatePendingTtls
+                                val refreshIntent = android.content.Intent("com.securelegion.MESSAGE_RECEIVED").apply {
+                                    setPackage(packageName)
+                                    putExtra("CONTACT_ID", contact.id)
+                                }
+                                sendBroadcast(refreshIntent)
+                            } else {
+                                Log.w(TAG, "SELF_DESTRUCT target not found in DB: target=$targetId blob=$targetBlobId — control dropped")
+                            }
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Failed to apply self-destruct from blob handler", e)
+                        }
+                    }
+                    return // No new message row for control payload
+                }
+
+                0x14 -> {
+                    // DELETE: remove target message (delete-for-everyone)
+                    Log.d(TAG, "Message type: DELETE (appType=0x14)")
+                    serviceScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                        try {
+                            val delJson = org.json.JSONObject(String(body, Charsets.UTF_8))
+                            val targetId = delJson.getString("target_message_id")
+                            val targetBlobId = delJson.optString("target_blob_id")
+                            val resolvedId = com.securelegion.services.MessageService.resolveReactionTargetIdForContact(
+                                database, contact.id, targetId, targetBlobId
+                            )
+                            if (!resolvedId.isNullOrBlank()) {
+                                val rows = database.messageDao().deleteByMessageId(resolvedId)
+                                Log.i(TAG, "DELETE applied: messageId=$resolvedId rows=$rows")
+                                sendBroadcast(android.content.Intent("com.securelegion.MESSAGE_RECEIVED").apply {
+                                    setPackage(packageName)
+                                    putExtra("CONTACT_ID", contact.id)
+                                })
+                            } else {
+                                Log.w(TAG, "DELETE target not found: $targetId (blob=$targetBlobId)")
+                            }
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Failed to apply delete from blob handler", e)
+                        }
+                    }
+                    return // No new message row for control payload
+                }
+
+                0x15 -> {
+                    // PIN: toggle isPinned on target message (pin-for-everyone)
+                    Log.d(TAG, "Message type: PIN (appType=0x15)")
+                    serviceScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                        try {
+                            val pinJson = org.json.JSONObject(String(body, Charsets.UTF_8))
+                            val targetId = pinJson.getString("target_message_id")
+                            val targetBlobId = pinJson.optString("target_blob_id")
+                            val pinned = pinJson.optBoolean("pinned", true)
+                            val resolvedId = com.securelegion.services.MessageService.resolveReactionTargetIdForContact(
+                                database, contact.id, targetId, targetBlobId
+                            )
+                            if (!resolvedId.isNullOrBlank()) {
+                                database.messageDao().setPinnedByMessageId(resolvedId, pinned)
+                                Log.i(TAG, "PIN applied: messageId=$resolvedId pinned=$pinned")
+                                sendBroadcast(android.content.Intent("com.securelegion.MESSAGE_RECEIVED").apply {
+                                    setPackage(packageName)
+                                    putExtra("CONTACT_ID", contact.id)
+                                })
+                            } else {
+                                Log.w(TAG, "PIN target not found: $targetId (blob=$targetBlobId)")
+                            }
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Failed to apply pin from blob handler", e)
+                        }
+                    }
+                    return // No new message row for control payload
+                }
+
                 0x20 -> {
                     // Legacy GROUP_INVITE — superseded by CRDT (0x30). Ignore.
                     Log.w(TAG, "Ignoring legacy GROUP_INVITE (0x20) — use CRDT groups")
@@ -5976,21 +6111,9 @@ class TorService : Service() {
                     serviceScope.launch(kotlinx.coroutines.Dispatchers.IO) {
                         try {
                             val mgr = CrdtGroupManager.getInstance(this@TorService)
-                            val (applied, rejected) = mgr.applyReceivedOps(groupIdHex, packedOps)
-                            Log.i(TAG, "CRDT_OPS applied=$applied rejected=$rejected group=${groupIdHex.take(16)}...")
-                            if (applied > 0) {
-                                mgr.incrementUnreadCount(groupIdHex)
-                                // Show notification for group message
-                                val keyManager = KeyManager.getInstance(this@TorService)
-                                val db = com.securelegion.database.SecureLegionDatabase.getInstance(
-                                    this@TorService, keyManager.getDatabasePassphrase()
-                                )
-                                val group = db.groupDao().getGroupById(groupIdHex)
-                                val name = group?.name ?: "Group"
-                                android.os.Handler(android.os.Looper.getMainLooper()).post {
-                                    showGroupMessageNotification(groupIdHex, name)
-                                }
-                            }
+                            val result = mgr.applyReceivedOps(groupIdHex, packedOps)
+                            Log.i(TAG, "CRDT_OPS applied=${result.applied} rejected=${result.rejected} msgsFromOthers=${result.appliedMessagesFromOthers} group=${groupIdHex.take(16)}...")
+                            handleAppliedGroupOps(groupIdHex, result)
                             val intent = android.content.Intent("com.securelegion.NEW_GROUP_MESSAGE").apply {
                                 setPackage(packageName)
                                 putExtra("GROUP_ID", groupIdHex)
@@ -7797,6 +7920,52 @@ class TorService : Service() {
         notificationManager.notify(messageNotificationId, notification)
 
         Log.i(TAG, "Message notification shown for $senderName (unique ID: $messageNotificationId)")
+    }
+
+    /**
+     * Central predicate + side-effects for a batch of applied CRDT ops.
+     *
+     * The strictest-policy notification rule lives here and nowhere else:
+     * ring only when the batch contains at least one MsgAdd authored by
+     * another user AND the group is not muted AND the user is not already
+     * viewing that group. The unread badge follows the same rule, so
+     * membership changes / reactions / edits don't inflate it either.
+     *
+     * `allowNotification = false` disables the notification side of this
+     * helper without affecting unread-badge bookkeeping — used by code
+     * paths (SYNC_CHUNK, legacy decrypt) that historically didn't ring.
+     */
+    private suspend fun handleAppliedGroupOps(
+        groupId: String,
+        result: com.securelegion.services.CrdtGroupManager.ApplyOpsResult,
+        allowNotification: Boolean = true
+    ) {
+        if (result.appliedMessagesFromOthers <= 0) return
+
+        val mgr = CrdtGroupManager.getInstance(this)
+        val keyManager = KeyManager.getInstance(this)
+        val db = com.securelegion.database.SecureLegionDatabase.getInstance(
+            this, keyManager.getDatabasePassphrase()
+        )
+        val group = db.groupDao().getGroupById(groupId)
+
+        // Unread count only tracks real messages from others — not membership ops.
+        mgr.addUnreadCount(groupId, result.appliedMessagesFromOthers)
+
+        if (!allowNotification) return
+        if (group?.isMuted == true) {
+            Log.d(TAG, "Group notification suppressed (muted): $groupId")
+            return
+        }
+        if (activeGroupId == groupId) {
+            Log.d(TAG, "Group notification suppressed (user is viewing it): $groupId")
+            return
+        }
+
+        val name = group?.name ?: "Group"
+        android.os.Handler(android.os.Looper.getMainLooper()).post {
+            showGroupMessageNotification(groupId, name)
+        }
     }
 
     /**

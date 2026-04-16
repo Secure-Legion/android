@@ -203,7 +203,9 @@ class ComposeActivity : BaseActivity() {
                     avatarView.clearPhoto()
                 }
 
-                itemView.setOnClickListener {
+                // contactRow is marked clickable=true in item_contact.xml and consumes
+                // touches before they reach itemView — attach the listener there, not on the root.
+                itemView.findViewById<View>(R.id.contactRow).setOnClickListener {
                     onContactClick(contact)
                 }
             }

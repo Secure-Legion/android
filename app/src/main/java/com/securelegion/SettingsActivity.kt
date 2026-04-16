@@ -58,12 +58,12 @@ class SettingsActivity : BaseActivity() {
 
         // Premium Features
         findViewById<View>(R.id.premiumFeaturesItem)?.setOnClickListener {
-            ThemedToast.show(this, "Premium features coming soon")
+            startActivity(Intent(this, PremiumActivity::class.java))
         }
 
         // Help
         findViewById<View>(R.id.helpItem)?.setOnClickListener {
-            startActivity(Intent(this, HelpActivity::class.java))
+            startActivity(Intent(this, HelpCenterActivity::class.java))
         }
 
         // Duress PIN

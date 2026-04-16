@@ -126,6 +126,13 @@ class MessageRetryWorker(
                 scheduleNextRecurring(applicationContext)
             }
 
+            // Process profile photo retry queue (iOS parity)
+            try {
+                com.securelegion.services.MessageService(applicationContext).processProfilePhotoQueue()
+            } catch (e: Exception) {
+                Log.w(TAG, "Profile photo queue processing failed: ${e.message}")
+            }
+
             Result.success()
         } catch (e: Exception) {
             Log.e(TAG, "MessageRetryWorker failed", e)

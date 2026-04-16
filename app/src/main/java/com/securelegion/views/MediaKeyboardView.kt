@@ -30,13 +30,20 @@ class MediaKeyboardView @JvmOverloads constructor(
     private val tabGifIcon: TextView
     private val mediaFlipper: ViewFlipper
     private val emojiGrid: RecyclerView
+    private val fluentCategoryPills: RecyclerView
     private val stickerPicker: StickerPickerView
     private val gifPicker: GifPickerView
 
     private var onEmojiSelected: ((String) -> Unit)? = null
     private var onStickerSelected: ((String) -> Unit)? = null
-    private var onGifSelected: ((String) -> Unit)? = null
+    private var onGifSelected: ((ByteArray) -> Unit)? = null
     private var onSwipeDismiss: (() -> Unit)? = null
+
+    // Fluent emoji state
+    private var fluentCatalog: LinkedHashMap<String, List<com.securelegion.models.FluentEmojiEntry>> = LinkedHashMap()
+    private var selectedCategory: String = ""
+    private var fluentEmojiAdapter: FluentEmojiAdapter? = null
+    private var fluentCategoryAdapter: FluentCategoryAdapter? = null
 
     private var currentTab = 0
 
@@ -62,10 +69,11 @@ class MediaKeyboardView @JvmOverloads constructor(
         tabGifIcon = findViewById(R.id.tabGifIcon)
         mediaFlipper = findViewById(R.id.mediaFlipper)
         emojiGrid = findViewById(R.id.emojiGrid)
+        fluentCategoryPills = findViewById(R.id.fluentCategoryPills)
         stickerPicker = findViewById(R.id.stickerPicker)
         gifPicker = findViewById(R.id.gifPicker)
 
-        setupEmojiGrid()
+        setupFluentEmojiPicker()
         setupTabs()
     }
 
@@ -87,7 +95,7 @@ class MediaKeyboardView @JvmOverloads constructor(
         stickerPicker.setOnStickerSelectedListener(listener)
     }
 
-    fun setOnGifSelectedListener(listener: (String) -> Unit) {
+    fun setOnGifSelectedListener(listener: (ByteArray) -> Unit) {
         onGifSelected = listener
         gifPicker.setOnGifSelectedListener(listener)
     }
@@ -114,17 +122,122 @@ class MediaKeyboardView @JvmOverloads constructor(
         tabGifIcon.setTextColor(if (currentTab == 2) activeColor else inactiveColor)
     }
 
-    private fun setupEmojiGrid() {
-        emojiGrid.layoutManager = GridLayoutManager(context, 8)
-        emojiGrid.adapter = EmojiAdapter(EMOJI_LIST) { emoji ->
-            onEmojiSelected?.invoke(emoji)
+    private fun setupFluentEmojiPicker() {
+        // Load Fluent emoji catalog from assets (parsed once, cached)
+        fluentCatalog = com.securelegion.models.FluentEmojiCatalog.load(context)
+
+        if (fluentCatalog.isEmpty()) {
+            // Fallback: use legacy unicode grid if Fluent assets are missing
+            emojiGrid.layoutManager = GridLayoutManager(context, 8)
+            emojiGrid.adapter = LegacyEmojiAdapter(EMOJI_LIST) { emoji ->
+                onEmojiSelected?.invoke(emoji)
+            }
+            fluentCategoryPills.visibility = View.GONE
+            return
         }
+
+        selectedCategory = fluentCatalog.keys.first()
+
+        // Category pills (horizontal)
+        fluentCategoryPills.layoutManager = androidx.recyclerview.widget.LinearLayoutManager(
+            context, androidx.recyclerview.widget.LinearLayoutManager.HORIZONTAL, false
+        )
+        fluentCategoryAdapter = FluentCategoryAdapter(
+            categories = fluentCatalog.keys.toList(),
+            selectedProvider = { selectedCategory },
+            onClick = { category ->
+                selectedCategory = category
+                fluentCategoryAdapter?.notifyDataSetChanged()
+                fluentEmojiAdapter?.update(fluentCatalog[category] ?: emptyList())
+            }
+        )
+        fluentCategoryPills.adapter = fluentCategoryAdapter
+
+        // Emoji grid (6 columns of PNG cells)
+        emojiGrid.layoutManager = GridLayoutManager(context, 6)
+        fluentEmojiAdapter = FluentEmojiAdapter(
+            initialEntries = fluentCatalog[selectedCategory] ?: emptyList()
+        ) { entry ->
+            // Send via existing sticker pipeline (0x0E + assetPath)
+            onStickerSelected?.invoke(entry.assetPath)
+        }
+        emojiGrid.adapter = fluentEmojiAdapter
     }
 
-    private inner class EmojiAdapter(
+    private inner class FluentCategoryAdapter(
+        private val categories: List<String>,
+        private val selectedProvider: () -> String,
+        private val onClick: (String) -> Unit
+    ) : RecyclerView.Adapter<FluentCategoryAdapter.ViewHolder>() {
+
+        inner class ViewHolder(view: View) : RecyclerView.ViewHolder(view) {
+            val pill: TextView = view.findViewById(R.id.categoryPillText)
+        }
+
+        override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): ViewHolder {
+            val view = LayoutInflater.from(parent.context)
+                .inflate(R.layout.item_fluent_category_pill, parent, false)
+            return ViewHolder(view)
+        }
+
+        override fun onBindViewHolder(holder: ViewHolder, position: Int) {
+            val category = categories[position]
+            holder.pill.text = category
+            val isSelected = category == selectedProvider()
+            holder.pill.setBackgroundResource(
+                if (isSelected) R.drawable.category_pill_active_bg
+                else R.drawable.category_pill_inactive_bg
+            )
+            holder.pill.setOnClickListener { onClick(category) }
+        }
+
+        override fun getItemCount() = categories.size
+    }
+
+    private inner class FluentEmojiAdapter(
+        initialEntries: List<com.securelegion.models.FluentEmojiEntry>,
+        private val onClick: (com.securelegion.models.FluentEmojiEntry) -> Unit
+    ) : RecyclerView.Adapter<FluentEmojiAdapter.ViewHolder>() {
+
+        private var entries: List<com.securelegion.models.FluentEmojiEntry> = initialEntries
+
+        fun update(newEntries: List<com.securelegion.models.FluentEmojiEntry>) {
+            entries = newEntries
+            notifyDataSetChanged()
+        }
+
+        inner class ViewHolder(view: View) : RecyclerView.ViewHolder(view) {
+            val image: ImageView = view.findViewById(R.id.fluentEmojiImage)
+        }
+
+        override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): ViewHolder {
+            val view = LayoutInflater.from(parent.context)
+                .inflate(R.layout.item_fluent_emoji, parent, false)
+            return ViewHolder(view)
+        }
+
+        override fun onBindViewHolder(holder: ViewHolder, position: Int) {
+            val entry = entries[position]
+            // Load PNG from assets/fluent_emoji/<file>
+            try {
+                val stream = holder.itemView.context.assets.open(entry.assetPath)
+                val bitmap = android.graphics.BitmapFactory.decodeStream(stream)
+                stream.close()
+                holder.image.setImageBitmap(bitmap)
+            } catch (e: Exception) {
+                holder.image.setImageDrawable(null)
+                holder.image.contentDescription = entry.glyph
+            }
+            holder.itemView.setOnClickListener { onClick(entry) }
+        }
+
+        override fun getItemCount() = entries.size
+    }
+
+    private inner class LegacyEmojiAdapter(
         private val emojis: List<String>,
         private val onClick: (String) -> Unit
-    ) : RecyclerView.Adapter<EmojiAdapter.ViewHolder>() {
+    ) : RecyclerView.Adapter<LegacyEmojiAdapter.ViewHolder>() {
 
         inner class ViewHolder(view: View) : RecyclerView.ViewHolder(view) {
             val emojiText: EmojiTextView = view.findViewById(R.id.emojiText)

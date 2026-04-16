@@ -110,6 +110,14 @@ interface PendingFriendRequestDao {
     suspend fun deleteAllRequests()
 
     /**
+     * Delete any pending friend requests targeting a given .onion address.
+     * Used on contact delete to remove retry state tied to that peer
+     * (friend-request onion OR messaging onion — caller invokes for each).
+     */
+    @Query("DELETE FROM pending_friend_requests WHERE recipientOnion = :onion")
+    suspend fun deleteByRecipientOnion(onion: String)
+
+    /**
      * Get count of pending friend requests
      */
     @Query("SELECT COUNT(*) FROM pending_friend_requests WHERE isCompleted = 0 AND isFailed = 0")

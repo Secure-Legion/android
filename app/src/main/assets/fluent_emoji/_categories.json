@@ -1,0 +1,3896 @@
+{
+  "Smileys": [
+    {
+      "codepoint": "1f600",
+      "name": "grinning face",
+      "glyph": "😀",
+      "file": "1f600_grinning_face.png"
+    },
+    {
+      "codepoint": "1f603",
+      "name": "grinning face with big eyes",
+      "glyph": "😃",
+      "file": "1f603_grinning_face_with_big_eyes.png"
+    },
+    {
+      "codepoint": "1f604",
+      "name": "grinning face with smiling eyes",
+      "glyph": "😄",
+      "file": "1f604_grinning_face_with_smiling_eyes.png"
+    },
+    {
+      "codepoint": "1f601",
+      "name": "beaming face with smiling eyes",
+      "glyph": "😁",
+      "file": "1f601_beaming_face_with_smiling_eyes.png"
+    },
+    {
+      "codepoint": "1f606",
+      "name": "grinning squinting face",
+      "glyph": "😆",
+      "file": "1f606_grinning_squinting_face.png"
+    },
+    {
+      "codepoint": "1f605",
+      "name": "grinning face with sweat",
+      "glyph": "😅",
+      "file": "1f605_grinning_face_with_sweat.png"
+    },
+    {
+      "codepoint": "1f923",
+      "name": "rolling on the floor laughing",
+      "glyph": "🤣",
+      "file": "1f923_rolling_on_the_floor_laughing.png"
+    },
+    {
+      "codepoint": "1f602",
+      "name": "face with tears of joy",
+      "glyph": "😂",
+      "file": "1f602_face_with_tears_of_joy.png"
+    },
+    {
+      "codepoint": "1f642",
+      "name": "slightly smiling face",
+      "glyph": "🙂",
+      "file": "1f642_slightly_smiling_face.png"
+    },
+    {
+      "codepoint": "1f643",
+      "name": "upside-down face",
+      "glyph": "🙃",
+      "file": "1f643_upside_down_face.png"
+    },
+    {
+      "codepoint": "1f609",
+      "name": "winking face",
+      "glyph": "😉",
+      "file": "1f609_winking_face.png"
+    },
+    {
+      "codepoint": "1f60a",
+      "name": "smiling face with smiling eyes",
+      "glyph": "😊",
+      "file": "1f60a_smiling_face_with_smiling_eyes.png"
+    },
+    {
+      "codepoint": "1f607",
+      "name": "smiling face with halo",
+      "glyph": "😇",
+      "file": "1f607_smiling_face_with_halo.png"
+    },
+    {
+      "codepoint": "1f970",
+      "name": "smiling face with hearts",
+      "glyph": "🥰",
+      "file": "1f970_smiling_face_with_hearts.png"
+    },
+    {
+      "codepoint": "1f60d",
+      "name": "smiling face with heart-eyes",
+      "glyph": "😍",
+      "file": "1f60d_smiling_face_with_heart_eyes.png"
+    },
+    {
+      "codepoint": "1f929",
+      "name": "star-struck",
+      "glyph": "🤩",
+      "file": "1f929_star_struck.png"
+    },
+    {
+      "codepoint": "1f618",
+      "name": "face blowing a kiss",
+      "glyph": "😘",
+      "file": "1f618_face_blowing_a_kiss.png"
+    },
+    {
+      "codepoint": "1f617",
+      "name": "kissing face",
+      "glyph": "😗",
+      "file": "1f617_kissing_face.png"
+    },
+    {
+      "codepoint": "263a",
+      "name": "smiling face",
+      "glyph": "☺️",
+      "file": "263a_smiling_face.png"
+    },
+    {
+      "codepoint": "1f61a",
+      "name": "kissing face with closed eyes",
+      "glyph": "😚",
+      "file": "1f61a_kissing_face_with_closed_eyes.png"
+    },
+    {
+      "codepoint": "1f619",
+      "name": "kissing face with smiling eyes",
+      "glyph": "😙",
+      "file": "1f619_kissing_face_with_smiling_eyes.png"
+    },
+    {
+      "codepoint": "1f972",
+      "name": "smiling face with tear",
+      "glyph": "🥲",
+      "file": "1f972_smiling_face_with_tear.png"
+    },
+    {
+      "codepoint": "1f60b",
+      "name": "face savoring food",
+      "glyph": "😋",
+      "file": "1f60b_face_savoring_food.png"
+    },
+    {
+      "codepoint": "1f61b",
+      "name": "face with tongue",
+      "glyph": "😛",
+      "file": "1f61b_face_with_tongue.png"
+    },
+    {
+      "codepoint": "1f61c",
+      "name": "winking face with tongue",
+      "glyph": "😜",
+      "file": "1f61c_winking_face_with_tongue.png"
+    },
+    {
+      "codepoint": "1f92a",
+      "name": "zany face",
+      "glyph": "🤪",
+      "file": "1f92a_zany_face.png"
+    },
+    {
+      "codepoint": "1f61d",
+      "name": "squinting face with tongue",
+      "glyph": "😝",
+      "file": "1f61d_squinting_face_with_tongue.png"
+    },
+    {
+      "codepoint": "1f911",
+      "name": "money-mouth face",
+      "glyph": "🤑",
+      "file": "1f911_money_mouth_face.png"
+    },
+    {
+      "codepoint": "1f917",
+      "name": "hugging face",
+      "glyph": "🤗",
+      "file": "1f917_hugging_face.png"
+    },
+    {
+      "codepoint": "1f92d",
+      "name": "face with hand over mouth",
+      "glyph": "🤭",
+      "file": "1f92d_face_with_hand_over_mouth.png"
+    },
+    {
+      "codepoint": "1f92b",
+      "name": "shushing face",
+      "glyph": "🤫",
+      "file": "1f92b_shushing_face.png"
+    },
+    {
+      "codepoint": "1f914",
+      "name": "thinking face",
+      "glyph": "🤔",
+      "file": "1f914_thinking_face.png"
+    },
+    {
+      "codepoint": "1f910",
+      "name": "zipper-mouth face",
+      "glyph": "🤐",
+      "file": "1f910_zipper_mouth_face.png"
+    },
+    {
+      "codepoint": "1f928",
+      "name": "face with raised eyebrow",
+      "glyph": "🤨",
+      "file": "1f928_face_with_raised_eyebrow.png"
+    },
+    {
+      "codepoint": "1f610",
+      "name": "neutral face",
+      "glyph": "😐",
+      "file": "1f610_neutral_face.png"
+    },
+    {
+      "codepoint": "1f611",
+      "name": "expressionless face",
+      "glyph": "😑",
+      "file": "1f611_expressionless_face.png"
+    },
+    {
+      "codepoint": "1f636",
+      "name": "face without mouth",
+      "glyph": "😶",
+      "file": "1f636_face_without_mouth.png"
+    },
+    {
+      "codepoint": "1f60f",
+      "name": "smirking face",
+      "glyph": "😏",
+      "file": "1f60f_smirking_face.png"
+    },
+    {
+      "codepoint": "1f612",
+      "name": "unamused face",
+      "glyph": "😒",
+      "file": "1f612_unamused_face.png"
+    },
+    {
+      "codepoint": "1f644",
+      "name": "face with rolling eyes",
+      "glyph": "🙄",
+      "file": "1f644_face_with_rolling_eyes.png"
+    },
+    {
+      "codepoint": "1f62c",
+      "name": "grimacing face",
+      "glyph": "😬",
+      "file": "1f62c_grimacing_face.png"
+    },
+    {
+      "codepoint": "1f925",
+      "name": "lying face",
+      "glyph": "🤥",
+      "file": "1f925_lying_face.png"
+    },
+    {
+      "codepoint": "1f60c",
+      "name": "relieved face",
+      "glyph": "😌",
+      "file": "1f60c_relieved_face.png"
+    },
+    {
+      "codepoint": "1f614",
+      "name": "pensive face",
+      "glyph": "😔",
+      "file": "1f614_pensive_face.png"
+    },
+    {
+      "codepoint": "1f62a",
+      "name": "sleepy face",
+      "glyph": "😪",
+      "file": "1f62a_sleepy_face.png"
+    },
+    {
+      "codepoint": "1f924",
+      "name": "drooling face",
+      "glyph": "🤤",
+      "file": "1f924_drooling_face.png"
+    },
+    {
+      "codepoint": "1f634",
+      "name": "sleeping face",
+      "glyph": "😴",
+      "file": "1f634_sleeping_face.png"
+    },
+    {
+      "codepoint": "1f637",
+      "name": "face with medical mask",
+      "glyph": "😷",
+      "file": "1f637_face_with_medical_mask.png"
+    },
+    {
+      "codepoint": "1f912",
+      "name": "face with thermometer",
+      "glyph": "🤒",
+      "file": "1f912_face_with_thermometer.png"
+    },
+    {
+      "codepoint": "1f915",
+      "name": "face with head-bandage",
+      "glyph": "🤕",
+      "file": "1f915_face_with_head_bandage.png"
+    },
+    {
+      "codepoint": "1f922",
+      "name": "nauseated face",
+      "glyph": "🤢",
+      "file": "1f922_nauseated_face.png"
+    },
+    {
+      "codepoint": "1f92e",
+      "name": "face vomiting",
+      "glyph": "🤮",
+      "file": "1f92e_face_vomiting.png"
+    },
+    {
+      "codepoint": "1f927",
+      "name": "sneezing face",
+      "glyph": "🤧",
+      "file": "1f927_sneezing_face.png"
+    },
+    {
+      "codepoint": "1f975",
+      "name": "hot face",
+      "glyph": "🥵",
+      "file": "1f975_hot_face.png"
+    },
+    {
+      "codepoint": "1f976",
+      "name": "cold face",
+      "glyph": "🥶",
+      "file": "1f976_cold_face.png"
+    },
+    {
+      "codepoint": "1f974",
+      "name": "woozy face",
+      "glyph": "🥴",
+      "file": "1f974_woozy_face.png"
+    },
+    {
+      "codepoint": "1f635",
+      "name": "knocked-out face",
+      "glyph": "😵",
+      "file": "1f635_knocked_out_face.png"
+    },
+    {
+      "codepoint": "1f92f",
+      "name": "exploding head",
+      "glyph": "🤯",
+      "file": "1f92f_exploding_head.png"
+    },
+    {
+      "codepoint": "1f920",
+      "name": "cowboy hat face",
+      "glyph": "🤠",
+      "file": "1f920_cowboy_hat_face.png"
+    },
+    {
+      "codepoint": "1f973",
+      "name": "partying face",
+      "glyph": "🥳",
+      "file": "1f973_partying_face.png"
+    },
+    {
+      "codepoint": "1f978",
+      "name": "disguised face",
+      "glyph": "🥸",
+      "file": "1f978_disguised_face.png"
+    },
+    {
+      "codepoint": "1f60e",
+      "name": "smiling face with sunglasses",
+      "glyph": "😎",
+      "file": "1f60e_smiling_face_with_sunglasses.png"
+    },
+    {
+      "codepoint": "1f913",
+      "name": "nerd face",
+      "glyph": "🤓",
+      "file": "1f913_nerd_face.png"
+    },
+    {
+      "codepoint": "1f9d0",
+      "name": "face with monocle",
+      "glyph": "🧐",
+      "file": "1f9d0_face_with_monocle.png"
+    },
+    {
+      "codepoint": "1f615",
+      "name": "confused face",
+      "glyph": "😕",
+      "file": "1f615_confused_face.png"
+    },
+    {
+      "codepoint": "1f61f",
+      "name": "worried face",
+      "glyph": "😟",
+      "file": "1f61f_worried_face.png"
+    },
+    {
+      "codepoint": "1f641",
+      "name": "slightly frowning face",
+      "glyph": "🙁",
+      "file": "1f641_slightly_frowning_face.png"
+    },
+    {
+      "codepoint": "2639",
+      "name": "frowning face",
+      "glyph": "☹️",
+      "file": "2639_frowning_face.png"
+    },
+    {
+      "codepoint": "1f62e",
+      "name": "face with open mouth",
+      "glyph": "😮",
+      "file": "1f62e_face_with_open_mouth.png"
+    },
+    {
+      "codepoint": "1f62f",
+      "name": "hushed face",
+      "glyph": "😯",
+      "file": "1f62f_hushed_face.png"
+    },
+    {
+      "codepoint": "1f632",
+      "name": "astonished face",
+      "glyph": "😲",
+      "file": "1f632_astonished_face.png"
+    },
+    {
+      "codepoint": "1f633",
+      "name": "flushed face",
+      "glyph": "😳",
+      "file": "1f633_flushed_face.png"
+    },
+    {
+      "codepoint": "1f97a",
+      "name": "pleading face",
+      "glyph": "🥺",
+      "file": "1f97a_pleading_face.png"
+    },
+    {
+      "codepoint": "1f626",
+      "name": "frowning face with open mouth",
+      "glyph": "😦",
+      "file": "1f626_frowning_face_with_open_mouth.png"
+    },
+    {
+      "codepoint": "1f627",
+      "name": "anguished face",
+      "glyph": "😧",
+      "file": "1f627_anguished_face.png"
+    },
+    {
+      "codepoint": "1f628",
+      "name": "fearful face",
+      "glyph": "😨",
+      "file": "1f628_fearful_face.png"
+    },
+    {
+      "codepoint": "1f630",
+      "name": "anxious face with sweat",
+      "glyph": "😰",
+      "file": "1f630_anxious_face_with_sweat.png"
+    },
+    {
+      "codepoint": "1f625",
+      "name": "sad but relieved face",
+      "glyph": "😥",
+      "file": "1f625_sad_but_relieved_face.png"
+    },
+    {
+      "codepoint": "1f622",
+      "name": "crying face",
+      "glyph": "😢",
+      "file": "1f622_crying_face.png"
+    },
+    {
+      "codepoint": "1f62d",
+      "name": "loudly crying face",
+      "glyph": "😭",
+      "file": "1f62d_loudly_crying_face.png"
+    },
+    {
+      "codepoint": "1f631",
+      "name": "face screaming in fear",
+      "glyph": "😱",
+      "file": "1f631_face_screaming_in_fear.png"
+    },
+    {
+      "codepoint": "1f616",
+      "name": "confounded face",
+      "glyph": "😖",
+      "file": "1f616_confounded_face.png"
+    },
+    {
+      "codepoint": "1f623",
+      "name": "persevering face",
+      "glyph": "😣",
+      "file": "1f623_persevering_face.png"
+    },
+    {
+      "codepoint": "1f61e",
+      "name": "disappointed face",
+      "glyph": "😞",
+      "file": "1f61e_disappointed_face.png"
+    },
+    {
+      "codepoint": "1f613",
+      "name": "downcast face with sweat",
+      "glyph": "😓",
+      "file": "1f613_downcast_face_with_sweat.png"
+    },
+    {
+      "codepoint": "1f629",
+      "name": "weary face",
+      "glyph": "😩",
+      "file": "1f629_weary_face.png"
+    },
+    {
+      "codepoint": "1f62b",
+      "name": "tired face",
+      "glyph": "😫",
+      "file": "1f62b_tired_face.png"
+    },
+    {
+      "codepoint": "1f971",
+      "name": "yawning face",
+      "glyph": "🥱",
+      "file": "1f971_yawning_face.png"
+    },
+    {
+      "codepoint": "1f624",
+      "name": "face with steam from nose",
+      "glyph": "😤",
+      "file": "1f624_face_with_steam_from_nose.png"
+    },
+    {
+      "codepoint": "1f621",
+      "name": "pouting face",
+      "glyph": "😡",
+      "file": "1f621_pouting_face.png"
+    },
+    {
+      "codepoint": "1f620",
+      "name": "angry face",
+      "glyph": "😠",
+      "file": "1f620_angry_face.png"
+    },
+    {
+      "codepoint": "1f92c",
+      "name": "face with symbols on mouth",
+      "glyph": "🤬",
+      "file": "1f92c_face_with_symbols_on_mouth.png"
+    },
+    {
+      "codepoint": "1f608",
+      "name": "smiling face with horns",
+      "glyph": "😈",
+      "file": "1f608_smiling_face_with_horns.png"
+    },
+    {
+      "codepoint": "1f47f",
+      "name": "angry face with horns",
+      "glyph": "👿",
+      "file": "1f47f_angry_face_with_horns.png"
+    },
+    {
+      "codepoint": "1f480",
+      "name": "skull",
+      "glyph": "💀",
+      "file": "1f480_skull.png"
+    },
+    {
+      "codepoint": "2620",
+      "name": "skull and crossbones",
+      "glyph": "☠️",
+      "file": "2620_skull_and_crossbones.png"
+    },
+    {
+      "codepoint": "1f4a9",
+      "name": "pile of poo",
+      "glyph": "💩",
+      "file": "1f4a9_pile_of_poo.png"
+    },
+    {
+      "codepoint": "1f921",
+      "name": "clown face",
+      "glyph": "🤡",
+      "file": "1f921_clown_face.png"
+    },
+    {
+      "codepoint": "1f479",
+      "name": "ogre",
+      "glyph": "👹",
+      "file": "1f479_ogre.png"
+    },
+    {
+      "codepoint": "1f47a",
+      "name": "goblin",
+      "glyph": "👺",
+      "file": "1f47a_goblin.png"
+    },
+    {
+      "codepoint": "1f47b",
+      "name": "ghost",
+      "glyph": "👻",
+      "file": "1f47b_ghost.png"
+    },
+    {
+      "codepoint": "1f47d",
+      "name": "alien",
+      "glyph": "👽",
+      "file": "1f47d_alien.png"
+    },
+    {
+      "codepoint": "1f47e",
+      "name": "alien monster",
+      "glyph": "👾",
+      "file": "1f47e_alien_monster.png"
+    },
+    {
+      "codepoint": "1f916",
+      "name": "robot",
+      "glyph": "🤖",
+      "file": "1f916_robot.png"
+    },
+    {
+      "codepoint": "1f63a",
+      "name": "grinning cat",
+      "glyph": "😺",
+      "file": "1f63a_grinning_cat.png"
+    },
+    {
+      "codepoint": "1f638",
+      "name": "grinning cat with smiling eyes",
+      "glyph": "😸",
+      "file": "1f638_grinning_cat_with_smiling_eyes.png"
+    },
+    {
+      "codepoint": "1f639",
+      "name": "cat with tears of joy",
+      "glyph": "😹",
+      "file": "1f639_cat_with_tears_of_joy.png"
+    },
+    {
+      "codepoint": "1f63b",
+      "name": "smiling cat with heart-eyes",
+      "glyph": "😻",
+      "file": "1f63b_smiling_cat_with_heart_eyes.png"
+    },
+    {
+      "codepoint": "1f63c",
+      "name": "cat with wry smile",
+      "glyph": "😼",
+      "file": "1f63c_cat_with_wry_smile.png"
+    },
+    {
+      "codepoint": "1f63d",
+      "name": "kissing cat",
+      "glyph": "😽",
+      "file": "1f63d_kissing_cat.png"
+    },
+    {
+      "codepoint": "1f640",
+      "name": "weary cat",
+      "glyph": "🙀",
+      "file": "1f640_weary_cat.png"
+    },
+    {
+      "codepoint": "1f63f",
+      "name": "crying cat",
+      "glyph": "😿",
+      "file": "1f63f_crying_cat.png"
+    },
+    {
+      "codepoint": "1f63e",
+      "name": "pouting cat",
+      "glyph": "😾",
+      "file": "1f63e_pouting_cat.png"
+    }
+  ],
+  "Hearts": [
+    {
+      "codepoint": "2764",
+      "name": "red heart",
+      "glyph": "❤️",
+      "file": "2764_red_heart.png"
+    },
+    {
+      "codepoint": "1f9e1",
+      "name": "orange heart",
+      "glyph": "🧡",
+      "file": "1f9e1_orange_heart.png"
+    },
+    {
+      "codepoint": "1f49b",
+      "name": "yellow heart",
+      "glyph": "💛",
+      "file": "1f49b_yellow_heart.png"
+    },
+    {
+      "codepoint": "1f49a",
+      "name": "green heart",
+      "glyph": "💚",
+      "file": "1f49a_green_heart.png"
+    },
+    {
+      "codepoint": "1f499",
+      "name": "blue heart",
+      "glyph": "💙",
+      "file": "1f499_blue_heart.png"
+    },
+    {
+      "codepoint": "1f49c",
+      "name": "purple heart",
+      "glyph": "💜",
+      "file": "1f49c_purple_heart.png"
+    },
+    {
+      "codepoint": "1f5a4",
+      "name": "black heart",
+      "glyph": "🖤",
+      "file": "1f5a4_black_heart.png"
+    },
+    {
+      "codepoint": "1f90d",
+      "name": "white heart",
+      "glyph": "🤍",
+      "file": "1f90d_white_heart.png"
+    },
+    {
+      "codepoint": "1f90e",
+      "name": "brown heart",
+      "glyph": "🤎",
+      "file": "1f90e_brown_heart.png"
+    },
+    {
+      "codepoint": "1f494",
+      "name": "broken heart",
+      "glyph": "💔",
+      "file": "1f494_broken_heart.png"
+    },
+    {
+      "codepoint": "2764_200d_1f525",
+      "name": "heart on fire",
+      "glyph": "❤️‍🔥",
+      "file": "2764_200d_1f525_heart_on_fire.png"
+    },
+    {
+      "codepoint": "2764_200d_1fa79",
+      "name": "mending heart",
+      "glyph": "❤️‍🩹",
+      "file": "2764_200d_1fa79_mending_heart.png"
+    },
+    {
+      "codepoint": "1f495",
+      "name": "two hearts",
+      "glyph": "💕",
+      "file": "1f495_two_hearts.png"
+    },
+    {
+      "codepoint": "1f49e",
+      "name": "revolving hearts",
+      "glyph": "💞",
+      "file": "1f49e_revolving_hearts.png"
+    },
+    {
+      "codepoint": "1f493",
+      "name": "beating heart",
+      "glyph": "💓",
+      "file": "1f493_beating_heart.png"
+    },
+    {
+      "codepoint": "1f497",
+      "name": "growing heart",
+      "glyph": "💗",
+      "file": "1f497_growing_heart.png"
+    },
+    {
+      "codepoint": "1f496",
+      "name": "sparkling heart",
+      "glyph": "💖",
+      "file": "1f496_sparkling_heart.png"
+    },
+    {
+      "codepoint": "1f49d",
+      "name": "heart with ribbon",
+      "glyph": "💝",
+      "file": "1f49d_heart_with_ribbon.png"
+    },
+    {
+      "codepoint": "1f498",
+      "name": "heart with arrow",
+      "glyph": "💘",
+      "file": "1f498_heart_with_arrow.png"
+    },
+    {
+      "codepoint": "1f48c",
+      "name": "love letter",
+      "glyph": "💌",
+      "file": "1f48c_love_letter.png"
+    }
+  ],
+  "Hand gestures": [
+    {
+      "codepoint": "1f44b",
+      "name": "waving hand",
+      "glyph": "👋",
+      "file": "1f44b_waving_hand.png"
+    },
+    {
+      "codepoint": "1f91a",
+      "name": "raised back of hand",
+      "glyph": "🤚",
+      "file": "1f91a_raised_back_of_hand.png"
+    },
+    {
+      "codepoint": "270b",
+      "name": "raised hand",
+      "glyph": "✋",
+      "file": "270b_raised_hand.png"
+    },
+    {
+      "codepoint": "1f590",
+      "name": "hand with fingers splayed",
+      "glyph": "🖐️",
+      "file": "1f590_hand_with_fingers_splayed.png"
+    },
+    {
+      "codepoint": "1f596",
+      "name": "vulcan salute",
+      "glyph": "🖖",
+      "file": "1f596_vulcan_salute.png"
+    },
+    {
+      "codepoint": "1f44c",
+      "name": "OK hand",
+      "glyph": "👌",
+      "file": "1f44c_ok_hand.png"
+    },
+    {
+      "codepoint": "1f90c",
+      "name": "pinched fingers",
+      "glyph": "🤌",
+      "file": "1f90c_pinched_fingers.png"
+    },
+    {
+      "codepoint": "1f90f",
+      "name": "pinching hand",
+      "glyph": "🤏",
+      "file": "1f90f_pinching_hand.png"
+    },
+    {
+      "codepoint": "270c",
+      "name": "victory hand",
+      "glyph": "✌️",
+      "file": "270c_victory_hand.png"
+    },
+    {
+      "codepoint": "1f91e",
+      "name": "crossed fingers",
+      "glyph": "🤞",
+      "file": "1f91e_crossed_fingers.png"
+    },
+    {
+      "codepoint": "1f91f",
+      "name": "love-you gesture",
+      "glyph": "🤟",
+      "file": "1f91f_love_you_gesture.png"
+    },
+    {
+      "codepoint": "1f918",
+      "name": "sign of the horns",
+      "glyph": "🤘",
+      "file": "1f918_sign_of_the_horns.png"
+    },
+    {
+      "codepoint": "1f919",
+      "name": "call me hand",
+      "glyph": "🤙",
+      "file": "1f919_call_me_hand.png"
+    },
+    {
+      "codepoint": "1f448",
+      "name": "backhand index pointing left",
+      "glyph": "👈",
+      "file": "1f448_backhand_index_pointing_left.png"
+    },
+    {
+      "codepoint": "1f449",
+      "name": "backhand index pointing right",
+      "glyph": "👉",
+      "file": "1f449_backhand_index_pointing_right.png"
+    },
+    {
+      "codepoint": "1f446",
+      "name": "backhand index pointing up",
+      "glyph": "👆",
+      "file": "1f446_backhand_index_pointing_up.png"
+    },
+    {
+      "codepoint": "1f595",
+      "name": "middle finger",
+      "glyph": "🖕",
+      "file": "1f595_middle_finger.png"
+    },
+    {
+      "codepoint": "1f447",
+      "name": "backhand index pointing down",
+      "glyph": "👇",
+      "file": "1f447_backhand_index_pointing_down.png"
+    },
+    {
+      "codepoint": "261d",
+      "name": "index pointing up",
+      "glyph": "☝️",
+      "file": "261d_index_pointing_up.png"
+    },
+    {
+      "codepoint": "1f44d",
+      "name": "thumbs up",
+      "glyph": "👍",
+      "file": "1f44d_thumbs_up.png"
+    },
+    {
+      "codepoint": "1f44e",
+      "name": "thumbs down",
+      "glyph": "👎",
+      "file": "1f44e_thumbs_down.png"
+    },
+    {
+      "codepoint": "270a",
+      "name": "raised fist",
+      "glyph": "✊",
+      "file": "270a_raised_fist.png"
+    },
+    {
+      "codepoint": "1f44a",
+      "name": "oncoming fist",
+      "glyph": "👊",
+      "file": "1f44a_oncoming_fist.png"
+    },
+    {
+      "codepoint": "1f91b",
+      "name": "left-facing fist",
+      "glyph": "🤛",
+      "file": "1f91b_left_facing_fist.png"
+    },
+    {
+      "codepoint": "1f91c",
+      "name": "right-facing fist",
+      "glyph": "🤜",
+      "file": "1f91c_right_facing_fist.png"
+    },
+    {
+      "codepoint": "1f44f",
+      "name": "clapping hands",
+      "glyph": "👏",
+      "file": "1f44f_clapping_hands.png"
+    },
+    {
+      "codepoint": "1f64c",
+      "name": "raising hands",
+      "glyph": "🙌",
+      "file": "1f64c_raising_hands.png"
+    },
+    {
+      "codepoint": "1f450",
+      "name": "open hands",
+      "glyph": "👐",
+      "file": "1f450_open_hands.png"
+    },
+    {
+      "codepoint": "1f932",
+      "name": "palms up together",
+      "glyph": "🤲",
+      "file": "1f932_palms_up_together.png"
+    },
+    {
+      "codepoint": "1f64f",
+      "name": "folded hands",
+      "glyph": "🙏",
+      "file": "1f64f_folded_hands.png"
+    },
+    {
+      "codepoint": "270d",
+      "name": "writing hand",
+      "glyph": "✍️",
+      "file": "270d_writing_hand.png"
+    },
+    {
+      "codepoint": "1f4aa",
+      "name": "flexed biceps",
+      "glyph": "💪",
+      "file": "1f4aa_flexed_biceps.png"
+    }
+  ],
+  "People": [
+    {
+      "codepoint": "1f476",
+      "name": "baby",
+      "glyph": "👶",
+      "file": "1f476_baby.png"
+    },
+    {
+      "codepoint": "1f9d2",
+      "name": "child",
+      "glyph": "🧒",
+      "file": "1f9d2_child.png"
+    },
+    {
+      "codepoint": "1f466",
+      "name": "boy",
+      "glyph": "👦",
+      "file": "1f466_boy.png"
+    },
+    {
+      "codepoint": "1f467",
+      "name": "girl",
+      "glyph": "👧",
+      "file": "1f467_girl.png"
+    },
+    {
+      "codepoint": "1f9d1",
+      "name": "person",
+      "glyph": "🧑",
+      "file": "1f9d1_person.png"
+    },
+    {
+      "codepoint": "1f468",
+      "name": "man",
+      "glyph": "👨",
+      "file": "1f468_man.png"
+    },
+    {
+      "codepoint": "1f469",
+      "name": "woman",
+      "glyph": "👩",
+      "file": "1f469_woman.png"
+    },
+    {
+      "codepoint": "1f9d3",
+      "name": "older person",
+      "glyph": "🧓",
+      "file": "1f9d3_older_person.png"
+    },
+    {
+      "codepoint": "1f474",
+      "name": "old man",
+      "glyph": "👴",
+      "file": "1f474_old_man.png"
+    },
+    {
+      "codepoint": "1f475",
+      "name": "old woman",
+      "glyph": "👵",
+      "file": "1f475_old_woman.png"
+    },
+    {
+      "codepoint": "1f46e",
+      "name": "police officer",
+      "glyph": "👮",
+      "file": "1f46e_police_officer.png"
+    },
+    {
+      "codepoint": "1f482",
+      "name": "guard",
+      "glyph": "💂",
+      "file": "1f482_guard.png"
+    },
+    {
+      "codepoint": "1f477",
+      "name": "construction worker",
+      "glyph": "👷",
+      "file": "1f477_construction_worker.png"
+    },
+    {
+      "codepoint": "1f9d1_200d_1f680",
+      "name": "astronaut",
+      "glyph": "🧑‍🚀",
+      "file": "1f9d1_200d_1f680_astronaut.png"
+    },
+    {
+      "codepoint": "1f478",
+      "name": "princess",
+      "glyph": "👸",
+      "file": "1f478_princess.png"
+    },
+    {
+      "codepoint": "1f934",
+      "name": "prince",
+      "glyph": "🤴",
+      "file": "1f934_prince.png"
+    },
+    {
+      "codepoint": "1f470",
+      "name": "person with veil",
+      "glyph": "👰",
+      "file": "1f470_person_with_veil.png"
+    },
+    {
+      "codepoint": "1f935",
+      "name": "person in tuxedo",
+      "glyph": "🤵",
+      "file": "1f935_person_in_tuxedo.png"
+    },
+    {
+      "codepoint": "1f47c",
+      "name": "baby angel",
+      "glyph": "👼",
+      "file": "1f47c_baby_angel.png"
+    },
+    {
+      "codepoint": "1f385",
+      "name": "Santa Claus",
+      "glyph": "🎅",
+      "file": "1f385_santa_claus.png"
+    },
+    {
+      "codepoint": "1f936",
+      "name": "Mrs. Claus",
+      "glyph": "🤶",
+      "file": "1f936_mrs_claus.png"
+    }
+  ],
+  "Animals": [
+    {
+      "codepoint": "1f436",
+      "name": "dog face",
+      "glyph": "🐶",
+      "file": "1f436_dog_face.png"
+    },
+    {
+      "codepoint": "1f431",
+      "name": "cat face",
+      "glyph": "🐱",
+      "file": "1f431_cat_face.png"
+    },
+    {
+      "codepoint": "1f42d",
+      "name": "mouse face",
+      "glyph": "🐭",
+      "file": "1f42d_mouse_face.png"
+    },
+    {
+      "codepoint": "1f439",
+      "name": "hamster",
+      "glyph": "🐹",
+      "file": "1f439_hamster.png"
+    },
+    {
+      "codepoint": "1f430",
+      "name": "rabbit face",
+      "glyph": "🐰",
+      "file": "1f430_rabbit_face.png"
+    },
+    {
+      "codepoint": "1f98a",
+      "name": "fox",
+      "glyph": "🦊",
+      "file": "1f98a_fox.png"
+    },
+    {
+      "codepoint": "1f43b",
+      "name": "bear",
+      "glyph": "🐻",
+      "file": "1f43b_bear.png"
+    },
+    {
+      "codepoint": "1f43c",
+      "name": "panda",
+      "glyph": "🐼",
+      "file": "1f43c_panda.png"
+    },
+    {
+      "codepoint": "1f428",
+      "name": "koala",
+      "glyph": "🐨",
+      "file": "1f428_koala.png"
+    },
+    {
+      "codepoint": "1f42f",
+      "name": "tiger face",
+      "glyph": "🐯",
+      "file": "1f42f_tiger_face.png"
+    },
+    {
+      "codepoint": "1f981",
+      "name": "lion",
+      "glyph": "🦁",
+      "file": "1f981_lion.png"
+    },
+    {
+      "codepoint": "1f42e",
+      "name": "cow face",
+      "glyph": "🐮",
+      "file": "1f42e_cow_face.png"
+    },
+    {
+      "codepoint": "1f437",
+      "name": "pig face",
+      "glyph": "🐷",
+      "file": "1f437_pig_face.png"
+    },
+    {
+      "codepoint": "1f43d",
+      "name": "pig nose",
+      "glyph": "🐽",
+      "file": "1f43d_pig_nose.png"
+    },
+    {
+      "codepoint": "1f438",
+      "name": "frog",
+      "glyph": "🐸",
+      "file": "1f438_frog.png"
+    },
+    {
+      "codepoint": "1f435",
+      "name": "monkey face",
+      "glyph": "🐵",
+      "file": "1f435_monkey_face.png"
+    },
+    {
+      "codepoint": "1f648",
+      "name": "see-no-evil monkey",
+      "glyph": "🙈",
+      "file": "1f648_see_no_evil_monkey.png"
+    },
+    {
+      "codepoint": "1f649",
+      "name": "hear-no-evil monkey",
+      "glyph": "🙉",
+      "file": "1f649_hear_no_evil_monkey.png"
+    },
+    {
+      "codepoint": "1f64a",
+      "name": "speak-no-evil monkey",
+      "glyph": "🙊",
+      "file": "1f64a_speak_no_evil_monkey.png"
+    },
+    {
+      "codepoint": "1f412",
+      "name": "monkey",
+      "glyph": "🐒",
+      "file": "1f412_monkey.png"
+    },
+    {
+      "codepoint": "1f414",
+      "name": "chicken",
+      "glyph": "🐔",
+      "file": "1f414_chicken.png"
+    },
+    {
+      "codepoint": "1f427",
+      "name": "penguin",
+      "glyph": "🐧",
+      "file": "1f427_penguin.png"
+    },
+    {
+      "codepoint": "1f426",
+      "name": "bird",
+      "glyph": "🐦",
+      "file": "1f426_bird.png"
+    },
+    {
+      "codepoint": "1f424",
+      "name": "baby chick",
+      "glyph": "🐤",
+      "file": "1f424_baby_chick.png"
+    },
+    {
+      "codepoint": "1f425",
+      "name": "front-facing baby chick",
+      "glyph": "🐥",
+      "file": "1f425_front_facing_baby_chick.png"
+    },
+    {
+      "codepoint": "1f423",
+      "name": "hatching chick",
+      "glyph": "🐣",
+      "file": "1f423_hatching_chick.png"
+    },
+    {
+      "codepoint": "1f986",
+      "name": "duck",
+      "glyph": "🦆",
+      "file": "1f986_duck.png"
+    },
+    {
+      "codepoint": "1f985",
+      "name": "eagle",
+      "glyph": "🦅",
+      "file": "1f985_eagle.png"
+    },
+    {
+      "codepoint": "1f989",
+      "name": "owl",
+      "glyph": "🦉",
+      "file": "1f989_owl.png"
+    },
+    {
+      "codepoint": "1f987",
+      "name": "bat",
+      "glyph": "🦇",
+      "file": "1f987_bat.png"
+    },
+    {
+      "codepoint": "1f43a",
+      "name": "wolf",
+      "glyph": "🐺",
+      "file": "1f43a_wolf.png"
+    },
+    {
+      "codepoint": "1f417",
+      "name": "boar",
+      "glyph": "🐗",
+      "file": "1f417_boar.png"
+    },
+    {
+      "codepoint": "1f434",
+      "name": "horse face",
+      "glyph": "🐴",
+      "file": "1f434_horse_face.png"
+    },
+    {
+      "codepoint": "1f984",
+      "name": "unicorn",
+      "glyph": "🦄",
+      "file": "1f984_unicorn.png"
+    },
+    {
+      "codepoint": "1f41d",
+      "name": "honeybee",
+      "glyph": "🐝",
+      "file": "1f41d_honeybee.png"
+    },
+    {
+      "codepoint": "1f41b",
+      "name": "bug",
+      "glyph": "🐛",
+      "file": "1f41b_bug.png"
+    },
+    {
+      "codepoint": "1f98b",
+      "name": "butterfly",
+      "glyph": "🦋",
+      "file": "1f98b_butterfly.png"
+    },
+    {
+      "codepoint": "1f40c",
+      "name": "snail",
+      "glyph": "🐌",
+      "file": "1f40c_snail.png"
+    },
+    {
+      "codepoint": "1f422",
+      "name": "turtle",
+      "glyph": "🐢",
+      "file": "1f422_turtle.png"
+    },
+    {
+      "codepoint": "1f40d",
+      "name": "snake",
+      "glyph": "🐍",
+      "file": "1f40d_snake.png"
+    },
+    {
+      "codepoint": "1f432",
+      "name": "dragon face",
+      "glyph": "🐲",
+      "file": "1f432_dragon_face.png"
+    },
+    {
+      "codepoint": "1f996",
+      "name": "T-Rex",
+      "glyph": "🦖",
+      "file": "1f996_t_rex.png"
+    },
+    {
+      "codepoint": "1f419",
+      "name": "octopus",
+      "glyph": "🐙",
+      "file": "1f419_octopus.png"
+    },
+    {
+      "codepoint": "1f991",
+      "name": "squid",
+      "glyph": "🦑",
+      "file": "1f991_squid.png"
+    },
+    {
+      "codepoint": "1f988",
+      "name": "shark",
+      "glyph": "🦈",
+      "file": "1f988_shark.png"
+    },
+    {
+      "codepoint": "1f433",
+      "name": "spouting whale",
+      "glyph": "🐳",
+      "file": "1f433_spouting_whale.png"
+    },
+    {
+      "codepoint": "1f40b",
+      "name": "whale",
+      "glyph": "🐋",
+      "file": "1f40b_whale.png"
+    },
+    {
+      "codepoint": "1f42c",
+      "name": "dolphin",
+      "glyph": "🐬",
+      "file": "1f42c_dolphin.png"
+    }
+  ],
+  "Food and drink": [
+    {
+      "codepoint": "1f34e",
+      "name": "red apple",
+      "glyph": "🍎",
+      "file": "1f34e_red_apple.png"
+    },
+    {
+      "codepoint": "1f350",
+      "name": "pear",
+      "glyph": "🍐",
+      "file": "1f350_pear.png"
+    },
+    {
+      "codepoint": "1f34a",
+      "name": "tangerine",
+      "glyph": "🍊",
+      "file": "1f34a_tangerine.png"
+    },
+    {
+      "codepoint": "1f34b",
+      "name": "lemon",
+      "glyph": "🍋",
+      "file": "1f34b_lemon.png"
+    },
+    {
+      "codepoint": "1f34c",
+      "name": "banana",
+      "glyph": "🍌",
+      "file": "1f34c_banana.png"
+    },
+    {
+      "codepoint": "1f349",
+      "name": "watermelon",
+      "glyph": "🍉",
+      "file": "1f349_watermelon.png"
+    },
+    {
+      "codepoint": "1f347",
+      "name": "grapes",
+      "glyph": "🍇",
+      "file": "1f347_grapes.png"
+    },
+    {
+      "codepoint": "1f353",
+      "name": "strawberry",
+      "glyph": "🍓",
+      "file": "1f353_strawberry.png"
+    },
+    {
+      "codepoint": "1f348",
+      "name": "melon",
+      "glyph": "🍈",
+      "file": "1f348_melon.png"
+    },
+    {
+      "codepoint": "1f352",
+      "name": "cherries",
+      "glyph": "🍒",
+      "file": "1f352_cherries.png"
+    },
+    {
+      "codepoint": "1f351",
+      "name": "peach",
+      "glyph": "🍑",
+      "file": "1f351_peach.png"
+    },
+    {
+      "codepoint": "1f96d",
+      "name": "mango",
+      "glyph": "🥭",
+      "file": "1f96d_mango.png"
+    },
+    {
+      "codepoint": "1f34d",
+      "name": "pineapple",
+      "glyph": "🍍",
+      "file": "1f34d_pineapple.png"
+    },
+    {
+      "codepoint": "1f965",
+      "name": "coconut",
+      "glyph": "🥥",
+      "file": "1f965_coconut.png"
+    },
+    {
+      "codepoint": "1f95d",
+      "name": "kiwi fruit",
+      "glyph": "🥝",
+      "file": "1f95d_kiwi_fruit.png"
+    },
+    {
+      "codepoint": "1f345",
+      "name": "tomato",
+      "glyph": "🍅",
+      "file": "1f345_tomato.png"
+    },
+    {
+      "codepoint": "1f346",
+      "name": "eggplant",
+      "glyph": "🍆",
+      "file": "1f346_eggplant.png"
+    },
+    {
+      "codepoint": "1f951",
+      "name": "avocado",
+      "glyph": "🥑",
+      "file": "1f951_avocado.png"
+    },
+    {
+      "codepoint": "1f966",
+      "name": "broccoli",
+      "glyph": "🥦",
+      "file": "1f966_broccoli.png"
+    },
+    {
+      "codepoint": "1f9c4",
+      "name": "garlic",
+      "glyph": "🧄",
+      "file": "1f9c4_garlic.png"
+    },
+    {
+      "codepoint": "1f955",
+      "name": "carrot",
+      "glyph": "🥕",
+      "file": "1f955_carrot.png"
+    },
+    {
+      "codepoint": "1f33d",
+      "name": "ear of corn",
+      "glyph": "🌽",
+      "file": "1f33d_ear_of_corn.png"
+    },
+    {
+      "codepoint": "1f9c5",
+      "name": "onion",
+      "glyph": "🧅",
+      "file": "1f9c5_onion.png"
+    },
+    {
+      "codepoint": "1f95c",
+      "name": "peanuts",
+      "glyph": "🥜",
+      "file": "1f95c_peanuts.png"
+    },
+    {
+      "codepoint": "1f330",
+      "name": "chestnut",
+      "glyph": "🌰",
+      "file": "1f330_chestnut.png"
+    },
+    {
+      "codepoint": "1f35e",
+      "name": "bread",
+      "glyph": "🍞",
+      "file": "1f35e_bread.png"
+    },
+    {
+      "codepoint": "1f950",
+      "name": "croissant",
+      "glyph": "🥐",
+      "file": "1f950_croissant.png"
+    },
+    {
+      "codepoint": "1f956",
+      "name": "baguette bread",
+      "glyph": "🥖",
+      "file": "1f956_baguette_bread.png"
+    },
+    {
+      "codepoint": "1f968",
+      "name": "pretzel",
+      "glyph": "🥨",
+      "file": "1f968_pretzel.png"
+    },
+    {
+      "codepoint": "1f96f",
+      "name": "bagel",
+      "glyph": "🥯",
+      "file": "1f96f_bagel.png"
+    },
+    {
+      "codepoint": "1f9c0",
+      "name": "cheese wedge",
+      "glyph": "🧀",
+      "file": "1f9c0_cheese_wedge.png"
+    },
+    {
+      "codepoint": "1f356",
+      "name": "meat on bone",
+      "glyph": "🍖",
+      "file": "1f356_meat_on_bone.png"
+    },
+    {
+      "codepoint": "1f357",
+      "name": "poultry leg",
+      "glyph": "🍗",
+      "file": "1f357_poultry_leg.png"
+    },
+    {
+      "codepoint": "1f969",
+      "name": "cut of meat",
+      "glyph": "🥩",
+      "file": "1f969_cut_of_meat.png"
+    },
+    {
+      "codepoint": "1f354",
+      "name": "hamburger",
+      "glyph": "🍔",
+      "file": "1f354_hamburger.png"
+    },
+    {
+      "codepoint": "1f35f",
+      "name": "french fries",
+      "glyph": "🍟",
+      "file": "1f35f_french_fries.png"
+    },
+    {
+      "codepoint": "1f355",
+      "name": "pizza",
+      "glyph": "🍕",
+      "file": "1f355_pizza.png"
+    },
+    {
+      "codepoint": "1f32d",
+      "name": "hot dog",
+      "glyph": "🌭",
+      "file": "1f32d_hot_dog.png"
+    },
+    {
+      "codepoint": "1f96a",
+      "name": "sandwich",
+      "glyph": "🥪",
+      "file": "1f96a_sandwich.png"
+    },
+    {
+      "codepoint": "1f32e",
+      "name": "taco",
+      "glyph": "🌮",
+      "file": "1f32e_taco.png"
+    },
+    {
+      "codepoint": "1f32f",
+      "name": "burrito",
+      "glyph": "🌯",
+      "file": "1f32f_burrito.png"
+    },
+    {
+      "codepoint": "1f959",
+      "name": "stuffed flatbread",
+      "glyph": "🥙",
+      "file": "1f959_stuffed_flatbread.png"
+    },
+    {
+      "codepoint": "1f9c6",
+      "name": "falafel",
+      "glyph": "🧆",
+      "file": "1f9c6_falafel.png"
+    },
+    {
+      "codepoint": "1f95a",
+      "name": "egg",
+      "glyph": "🥚",
+      "file": "1f95a_egg.png"
+    },
+    {
+      "codepoint": "1f373",
+      "name": "cooking",
+      "glyph": "🍳",
+      "file": "1f373_cooking.png"
+    },
+    {
+      "codepoint": "1f958",
+      "name": "shallow pan of food",
+      "glyph": "🥘",
+      "file": "1f958_shallow_pan_of_food.png"
+    },
+    {
+      "codepoint": "1f372",
+      "name": "pot of food",
+      "glyph": "🍲",
+      "file": "1f372_pot_of_food.png"
+    },
+    {
+      "codepoint": "1f963",
+      "name": "bowl with spoon",
+      "glyph": "🥣",
+      "file": "1f963_bowl_with_spoon.png"
+    },
+    {
+      "codepoint": "1f371",
+      "name": "bento box",
+      "glyph": "🍱",
+      "file": "1f371_bento_box.png"
+    },
+    {
+      "codepoint": "1f35c",
+      "name": "steaming bowl",
+      "glyph": "🍜",
+      "file": "1f35c_steaming_bowl.png"
+    },
+    {
+      "codepoint": "1f35b",
+      "name": "curry rice",
+      "glyph": "🍛",
+      "file": "1f35b_curry_rice.png"
+    },
+    {
+      "codepoint": "1f35d",
+      "name": "spaghetti",
+      "glyph": "🍝",
+      "file": "1f35d_spaghetti.png"
+    },
+    {
+      "codepoint": "1f35a",
+      "name": "cooked rice",
+      "glyph": "🍚",
+      "file": "1f35a_cooked_rice.png"
+    },
+    {
+      "codepoint": "1f359",
+      "name": "rice ball",
+      "glyph": "🍙",
+      "file": "1f359_rice_ball.png"
+    },
+    {
+      "codepoint": "1f358",
+      "name": "rice cracker",
+      "glyph": "🍘",
+      "file": "1f358_rice_cracker.png"
+    },
+    {
+      "codepoint": "1f365",
+      "name": "fish cake with swirl",
+      "glyph": "🍥",
+      "file": "1f365_fish_cake_with_swirl.png"
+    },
+    {
+      "codepoint": "1f960",
+      "name": "fortune cookie",
+      "glyph": "🥠",
+      "file": "1f960_fortune_cookie.png"
+    },
+    {
+      "codepoint": "1f961",
+      "name": "takeout box",
+      "glyph": "🥡",
+      "file": "1f961_takeout_box.png"
+    },
+    {
+      "codepoint": "1f364",
+      "name": "fried shrimp",
+      "glyph": "🍤",
+      "file": "1f364_fried_shrimp.png"
+    },
+    {
+      "codepoint": "1f368",
+      "name": "ice cream",
+      "glyph": "🍨",
+      "file": "1f368_ice_cream.png"
+    },
+    {
+      "codepoint": "1f367",
+      "name": "shaved ice",
+      "glyph": "🍧",
+      "file": "1f367_shaved_ice.png"
+    },
+    {
+      "codepoint": "1f366",
+      "name": "soft ice cream",
+      "glyph": "🍦",
+      "file": "1f366_soft_ice_cream.png"
+    },
+    {
+      "codepoint": "1f370",
+      "name": "shortcake",
+      "glyph": "🍰",
+      "file": "1f370_shortcake.png"
+    },
+    {
+      "codepoint": "1f382",
+      "name": "birthday cake",
+      "glyph": "🎂",
+      "file": "1f382_birthday_cake.png"
+    },
+    {
+      "codepoint": "1f9c1",
+      "name": "cupcake",
+      "glyph": "🧁",
+      "file": "1f9c1_cupcake.png"
+    },
+    {
+      "codepoint": "1f36d",
+      "name": "lollipop",
+      "glyph": "🍭",
+      "file": "1f36d_lollipop.png"
+    },
+    {
+      "codepoint": "1f36c",
+      "name": "candy",
+      "glyph": "🍬",
+      "file": "1f36c_candy.png"
+    },
+    {
+      "codepoint": "1f36b",
+      "name": "chocolate bar",
+      "glyph": "🍫",
+      "file": "1f36b_chocolate_bar.png"
+    },
+    {
+      "codepoint": "1f37f",
+      "name": "popcorn",
+      "glyph": "🍿",
+      "file": "1f37f_popcorn.png"
+    },
+    {
+      "codepoint": "1f36a",
+      "name": "cookie",
+      "glyph": "🍪",
+      "file": "1f36a_cookie.png"
+    },
+    {
+      "codepoint": "1f95e",
+      "name": "pancakes",
+      "glyph": "🥞",
+      "file": "1f95e_pancakes.png"
+    },
+    {
+      "codepoint": "1f9c2",
+      "name": "salt",
+      "glyph": "🧂",
+      "file": "1f9c2_salt.png"
+    },
+    {
+      "codepoint": "1f36f",
+      "name": "honey pot",
+      "glyph": "🍯",
+      "file": "1f36f_honey_pot.png"
+    },
+    {
+      "codepoint": "1f37c",
+      "name": "baby bottle",
+      "glyph": "🍼",
+      "file": "1f37c_baby_bottle.png"
+    },
+    {
+      "codepoint": "1f95b",
+      "name": "glass of milk",
+      "glyph": "🥛",
+      "file": "1f95b_glass_of_milk.png"
+    },
+    {
+      "codepoint": "2615",
+      "name": "hot beverage",
+      "glyph": "☕",
+      "file": "2615_hot_beverage.png"
+    },
+    {
+      "codepoint": "1f375",
+      "name": "teacup without handle",
+      "glyph": "🍵",
+      "file": "1f375_teacup_without_handle.png"
+    },
+    {
+      "codepoint": "1f37e",
+      "name": "bottle with popping cork",
+      "glyph": "🍾",
+      "file": "1f37e_bottle_with_popping_cork.png"
+    },
+    {
+      "codepoint": "1f377",
+      "name": "wine glass",
+      "glyph": "🍷",
+      "file": "1f377_wine_glass.png"
+    },
+    {
+      "codepoint": "1f378",
+      "name": "cocktail glass",
+      "glyph": "🍸",
+      "file": "1f378_cocktail_glass.png"
+    },
+    {
+      "codepoint": "1f379",
+      "name": "tropical drink",
+      "glyph": "🍹",
+      "file": "1f379_tropical_drink.png"
+    },
+    {
+      "codepoint": "1f37a",
+      "name": "beer mug",
+      "glyph": "🍺",
+      "file": "1f37a_beer_mug.png"
+    },
+    {
+      "codepoint": "1f37b",
+      "name": "clinking beer mugs",
+      "glyph": "🍻",
+      "file": "1f37b_clinking_beer_mugs.png"
+    },
+    {
+      "codepoint": "1f942",
+      "name": "clinking glasses",
+      "glyph": "🥂",
+      "file": "1f942_clinking_glasses.png"
+    },
+    {
+      "codepoint": "1f943",
+      "name": "tumbler glass",
+      "glyph": "🥃",
+      "file": "1f943_tumbler_glass.png"
+    },
+    {
+      "codepoint": "1f964",
+      "name": "cup with straw",
+      "glyph": "🥤",
+      "file": "1f964_cup_with_straw.png"
+    },
+    {
+      "codepoint": "1f9c3",
+      "name": "beverage box",
+      "glyph": "🧃",
+      "file": "1f9c3_beverage_box.png"
+    },
+    {
+      "codepoint": "1f9c9",
+      "name": "mate",
+      "glyph": "🧉",
+      "file": "1f9c9_mate.png"
+    },
+    {
+      "codepoint": "1f9cb",
+      "name": "bubble tea",
+      "glyph": "🧋",
+      "file": "1f9cb_bubble_tea.png"
+    }
+  ],
+  "Activities": [
+    {
+      "codepoint": "26bd",
+      "name": "soccer ball",
+      "glyph": "⚽",
+      "file": "26bd_soccer_ball.png"
+    },
+    {
+      "codepoint": "1f3c0",
+      "name": "basketball",
+      "glyph": "🏀",
+      "file": "1f3c0_basketball.png"
+    },
+    {
+      "codepoint": "1f3c8",
+      "name": "american football",
+      "glyph": "🏈",
+      "file": "1f3c8_american_football.png"
+    },
+    {
+      "codepoint": "26be",
+      "name": "baseball",
+      "glyph": "⚾",
+      "file": "26be_baseball.png"
+    },
+    {
+      "codepoint": "1f94e",
+      "name": "softball",
+      "glyph": "🥎",
+      "file": "1f94e_softball.png"
+    },
+    {
+      "codepoint": "1f3be",
+      "name": "tennis",
+      "glyph": "🎾",
+      "file": "1f3be_tennis.png"
+    },
+    {
+      "codepoint": "1f3d0",
+      "name": "volleyball",
+      "glyph": "🏐",
+      "file": "1f3d0_volleyball.png"
+    },
+    {
+      "codepoint": "1f3c9",
+      "name": "rugby football",
+      "glyph": "🏉",
+      "file": "1f3c9_rugby_football.png"
+    },
+    {
+      "codepoint": "1f3b1",
+      "name": "pool 8 ball",
+      "glyph": "🎱",
+      "file": "1f3b1_pool_8_ball.png"
+    },
+    {
+      "codepoint": "1f3f8",
+      "name": "badminton",
+      "glyph": "🏸",
+      "file": "1f3f8_badminton.png"
+    },
+    {
+      "codepoint": "1f94a",
+      "name": "boxing glove",
+      "glyph": "🥊",
+      "file": "1f94a_boxing_glove.png"
+    },
+    {
+      "codepoint": "1f94b",
+      "name": "martial arts uniform",
+      "glyph": "🥋",
+      "file": "1f94b_martial_arts_uniform.png"
+    },
+    {
+      "codepoint": "1f945",
+      "name": "goal net",
+      "glyph": "🥅",
+      "file": "1f945_goal_net.png"
+    },
+    {
+      "codepoint": "26f3",
+      "name": "flag in hole",
+      "glyph": "⛳",
+      "file": "26f3_flag_in_hole.png"
+    },
+    {
+      "codepoint": "1f3a3",
+      "name": "fishing pole",
+      "glyph": "🎣",
+      "file": "1f3a3_fishing_pole.png"
+    },
+    {
+      "codepoint": "1f3bd",
+      "name": "running shirt",
+      "glyph": "🎽",
+      "file": "1f3bd_running_shirt.png"
+    },
+    {
+      "codepoint": "1f3bf",
+      "name": "skis",
+      "glyph": "🎿",
+      "file": "1f3bf_skis.png"
+    },
+    {
+      "codepoint": "1f6f7",
+      "name": "sled",
+      "glyph": "🛷",
+      "file": "1f6f7_sled.png"
+    },
+    {
+      "codepoint": "1f94c",
+      "name": "curling stone",
+      "glyph": "🥌",
+      "file": "1f94c_curling_stone.png"
+    },
+    {
+      "codepoint": "1f3af",
+      "name": "bullseye",
+      "glyph": "🎯",
+      "file": "1f3af_bullseye.png"
+    },
+    {
+      "codepoint": "1f52b",
+      "name": "water pistol",
+      "glyph": "🔫",
+      "file": "1f52b_water_pistol.png"
+    },
+    {
+      "codepoint": "1f3a8",
+      "name": "artist palette",
+      "glyph": "🎨",
+      "file": "1f3a8_artist_palette.png"
+    },
+    {
+      "codepoint": "1f3ad",
+      "name": "performing arts",
+      "glyph": "🎭",
+      "file": "1f3ad_performing_arts.png"
+    },
+    {
+      "codepoint": "1f3aa",
+      "name": "circus tent",
+      "glyph": "🎪",
+      "file": "1f3aa_circus_tent.png"
+    },
+    {
+      "codepoint": "1f3b0",
+      "name": "slot machine",
+      "glyph": "🎰",
+      "file": "1f3b0_slot_machine.png"
+    },
+    {
+      "codepoint": "1f3b2",
+      "name": "game die",
+      "glyph": "🎲",
+      "file": "1f3b2_game_die.png"
+    },
+    {
+      "codepoint": "1f9e9",
+      "name": "puzzle piece",
+      "glyph": "🧩",
+      "file": "1f9e9_puzzle_piece.png"
+    },
+    {
+      "codepoint": "1f9f8",
+      "name": "teddy bear",
+      "glyph": "🧸",
+      "file": "1f9f8_teddy_bear.png"
+    },
+    {
+      "codepoint": "1f9ff",
+      "name": "nazar amulet",
+      "glyph": "🧿",
+      "file": "1f9ff_nazar_amulet.png"
+    },
+    {
+      "codepoint": "1f380",
+      "name": "ribbon",
+      "glyph": "🎀",
+      "file": "1f380_ribbon.png"
+    },
+    {
+      "codepoint": "1f381",
+      "name": "wrapped gift",
+      "glyph": "🎁",
+      "file": "1f381_wrapped_gift.png"
+    },
+    {
+      "codepoint": "1f3ab",
+      "name": "ticket",
+      "glyph": "🎫",
+      "file": "1f3ab_ticket.png"
+    },
+    {
+      "codepoint": "1f3c6",
+      "name": "trophy",
+      "glyph": "🏆",
+      "file": "1f3c6_trophy.png"
+    },
+    {
+      "codepoint": "1f3c5",
+      "name": "sports medal",
+      "glyph": "🏅",
+      "file": "1f3c5_sports_medal.png"
+    },
+    {
+      "codepoint": "1f947",
+      "name": "1st place medal",
+      "glyph": "🥇",
+      "file": "1f947_1st_place_medal.png"
+    },
+    {
+      "codepoint": "1f948",
+      "name": "2nd place medal",
+      "glyph": "🥈",
+      "file": "1f948_2nd_place_medal.png"
+    },
+    {
+      "codepoint": "1f949",
+      "name": "3rd place medal",
+      "glyph": "🥉",
+      "file": "1f949_3rd_place_medal.png"
+    }
+  ],
+  "Travel": [
+    {
+      "codepoint": "1f697",
+      "name": "automobile",
+      "glyph": "🚗",
+      "file": "1f697_automobile.png"
+    },
+    {
+      "codepoint": "1f695",
+      "name": "taxi",
+      "glyph": "🚕",
+      "file": "1f695_taxi.png"
+    },
+    {
+      "codepoint": "1f699",
+      "name": "sport utility vehicle",
+      "glyph": "🚙",
+      "file": "1f699_sport_utility_vehicle.png"
+    },
+    {
+      "codepoint": "1f69a",
+      "name": "delivery truck",
+      "glyph": "🚚",
+      "file": "1f69a_delivery_truck.png"
+    },
+    {
+      "codepoint": "1f69b",
+      "name": "articulated lorry",
+      "glyph": "🚛",
+      "file": "1f69b_articulated_lorry.png"
+    },
+    {
+      "codepoint": "1f69c",
+      "name": "tractor",
+      "glyph": "🚜",
+      "file": "1f69c_tractor.png"
+    },
+    {
+      "codepoint": "1f3cd",
+      "name": "motorcycle",
+      "glyph": "🏍️",
+      "file": "1f3cd_motorcycle.png"
+    },
+    {
+      "codepoint": "1f6f5",
+      "name": "motor scooter",
+      "glyph": "🛵",
+      "file": "1f6f5_motor_scooter.png"
+    },
+    {
+      "codepoint": "1f6b2",
+      "name": "bicycle",
+      "glyph": "🚲",
+      "file": "1f6b2_bicycle.png"
+    },
+    {
+      "codepoint": "1f68c",
+      "name": "bus",
+      "glyph": "🚌",
+      "file": "1f68c_bus.png"
+    },
+    {
+      "codepoint": "1f68e",
+      "name": "trolleybus",
+      "glyph": "🚎",
+      "file": "1f68e_trolleybus.png"
+    },
+    {
+      "codepoint": "1f693",
+      "name": "police car",
+      "glyph": "🚓",
+      "file": "1f693_police_car.png"
+    },
+    {
+      "codepoint": "1f691",
+      "name": "ambulance",
+      "glyph": "🚑",
+      "file": "1f691_ambulance.png"
+    },
+    {
+      "codepoint": "1f692",
+      "name": "fire engine",
+      "glyph": "🚒",
+      "file": "1f692_fire_engine.png"
+    },
+    {
+      "codepoint": "1f690",
+      "name": "minibus",
+      "glyph": "🚐",
+      "file": "1f690_minibus.png"
+    },
+    {
+      "codepoint": "1f694",
+      "name": "oncoming police car",
+      "glyph": "🚔",
+      "file": "1f694_oncoming_police_car.png"
+    },
+    {
+      "codepoint": "1f6fa",
+      "name": "auto rickshaw",
+      "glyph": "🛺",
+      "file": "1f6fa_auto_rickshaw.png"
+    },
+    {
+      "codepoint": "1f681",
+      "name": "helicopter",
+      "glyph": "🚁",
+      "file": "1f681_helicopter.png"
+    },
+    {
+      "codepoint": "2708",
+      "name": "airplane",
+      "glyph": "✈️",
+      "file": "2708_airplane.png"
+    },
+    {
+      "codepoint": "1f680",
+      "name": "rocket",
+      "glyph": "🚀",
+      "file": "1f680_rocket.png"
+    },
+    {
+      "codepoint": "1f6f8",
+      "name": "flying saucer",
+      "glyph": "🛸",
+      "file": "1f6f8_flying_saucer.png"
+    },
+    {
+      "codepoint": "26f5",
+      "name": "sailboat",
+      "glyph": "⛵",
+      "file": "26f5_sailboat.png"
+    },
+    {
+      "codepoint": "1f6a2",
+      "name": "ship",
+      "glyph": "🚢",
+      "file": "1f6a2_ship.png"
+    },
+    {
+      "codepoint": "1f6a4",
+      "name": "speedboat",
+      "glyph": "🚤",
+      "file": "1f6a4_speedboat.png"
+    },
+    {
+      "codepoint": "23f0",
+      "name": "alarm clock",
+      "glyph": "⏰",
+      "file": "23f0_alarm_clock.png"
+    },
+    {
+      "codepoint": "231b",
+      "name": "hourglass done",
+      "glyph": "⌛",
+      "file": "231b_hourglass_done.png"
+    },
+    {
+      "codepoint": "23f3",
+      "name": "hourglass not done",
+      "glyph": "⏳",
+      "file": "23f3_hourglass_not_done.png"
+    },
+    {
+      "codepoint": "1f6ce",
+      "name": "bellhop bell",
+      "glyph": "🛎️",
+      "file": "1f6ce_bellhop_bell.png"
+    },
+    {
+      "codepoint": "1f3d4",
+      "name": "snow-capped mountain",
+      "glyph": "🏔️",
+      "file": "1f3d4_snow_capped_mountain.png"
+    },
+    {
+      "codepoint": "26f0",
+      "name": "mountain",
+      "glyph": "⛰️",
+      "file": "26f0_mountain.png"
+    },
+    {
+      "codepoint": "1f30b",
+      "name": "volcano",
+      "glyph": "🌋",
+      "file": "1f30b_volcano.png"
+    },
+    {
+      "codepoint": "1f3d6",
+      "name": "beach with umbrella",
+      "glyph": "🏖️",
+      "file": "1f3d6_beach_with_umbrella.png"
+    },
+    {
+      "codepoint": "1f3dc",
+      "name": "desert",
+      "glyph": "🏜️",
+      "file": "1f3dc_desert.png"
+    },
+    {
+      "codepoint": "1f3dd",
+      "name": "desert island",
+      "glyph": "🏝️",
+      "file": "1f3dd_desert_island.png"
+    },
+    {
+      "codepoint": "1f3de",
+      "name": "national park",
+      "glyph": "🏞️",
+      "file": "1f3de_national_park.png"
+    },
+    {
+      "codepoint": "1f3e0",
+      "name": "house",
+      "glyph": "🏠",
+      "file": "1f3e0_house.png"
+    },
+    {
+      "codepoint": "1f3e1",
+      "name": "house with garden",
+      "glyph": "🏡",
+      "file": "1f3e1_house_with_garden.png"
+    },
+    {
+      "codepoint": "1f3e2",
+      "name": "office building",
+      "glyph": "🏢",
+      "file": "1f3e2_office_building.png"
+    },
+    {
+      "codepoint": "1f3e5",
+      "name": "hospital",
+      "glyph": "🏥",
+      "file": "1f3e5_hospital.png"
+    },
+    {
+      "codepoint": "1f3e9",
+      "name": "love hotel",
+      "glyph": "🏩",
+      "file": "1f3e9_love_hotel.png"
+    },
+    {
+      "codepoint": "1f3eb",
+      "name": "school",
+      "glyph": "🏫",
+      "file": "1f3eb_school.png"
+    },
+    {
+      "codepoint": "1f3ec",
+      "name": "department store",
+      "glyph": "🏬",
+      "file": "1f3ec_department_store.png"
+    },
+    {
+      "codepoint": "1f3ef",
+      "name": "Japanese castle",
+      "glyph": "🏯",
+      "file": "1f3ef_japanese_castle.png"
+    },
+    {
+      "codepoint": "1f3f0",
+      "name": "castle",
+      "glyph": "🏰",
+      "file": "1f3f0_castle.png"
+    },
+    {
+      "codepoint": "26ea",
+      "name": "church",
+      "glyph": "⛪",
+      "file": "26ea_church.png"
+    },
+    {
+      "codepoint": "1f54c",
+      "name": "mosque",
+      "glyph": "🕌",
+      "file": "1f54c_mosque.png"
+    },
+    {
+      "codepoint": "26f2",
+      "name": "fountain",
+      "glyph": "⛲",
+      "file": "26f2_fountain.png"
+    },
+    {
+      "codepoint": "26fa",
+      "name": "tent",
+      "glyph": "⛺",
+      "file": "26fa_tent.png"
+    },
+    {
+      "codepoint": "1f303",
+      "name": "night with stars",
+      "glyph": "🌃",
+      "file": "1f303_night_with_stars.png"
+    },
+    {
+      "codepoint": "1f304",
+      "name": "sunrise over mountains",
+      "glyph": "🌄",
+      "file": "1f304_sunrise_over_mountains.png"
+    },
+    {
+      "codepoint": "1f305",
+      "name": "sunrise",
+      "glyph": "🌅",
+      "file": "1f305_sunrise.png"
+    },
+    {
+      "codepoint": "1f306",
+      "name": "cityscape at dusk",
+      "glyph": "🌆",
+      "file": "1f306_cityscape_at_dusk.png"
+    },
+    {
+      "codepoint": "1f307",
+      "name": "sunset",
+      "glyph": "🌇",
+      "file": "1f307_sunset.png"
+    }
+  ],
+  "Objects": [
+    {
+      "codepoint": "231a",
+      "name": "watch",
+      "glyph": "⌚",
+      "file": "231a_watch.png"
+    },
+    {
+      "codepoint": "1f4f1",
+      "name": "mobile phone",
+      "glyph": "📱",
+      "file": "1f4f1_mobile_phone.png"
+    },
+    {
+      "codepoint": "1f4bb",
+      "name": "laptop",
+      "glyph": "💻",
+      "file": "1f4bb_laptop.png"
+    },
+    {
+      "codepoint": "1f5a5",
+      "name": "desktop computer",
+      "glyph": "🖥️",
+      "file": "1f5a5_desktop_computer.png"
+    },
+    {
+      "codepoint": "1f5b1",
+      "name": "computer mouse",
+      "glyph": "🖱️",
+      "file": "1f5b1_computer_mouse.png"
+    },
+    {
+      "codepoint": "1f5a8",
+      "name": "printer",
+      "glyph": "🖨️",
+      "file": "1f5a8_printer.png"
+    },
+    {
+      "codepoint": "1f4be",
+      "name": "floppy disk",
+      "glyph": "💾",
+      "file": "1f4be_floppy_disk.png"
+    },
+    {
+      "codepoint": "1f4bf",
+      "name": "optical disk",
+      "glyph": "💿",
+      "file": "1f4bf_optical_disk.png"
+    },
+    {
+      "codepoint": "1f4c0",
+      "name": "dvd",
+      "glyph": "📀",
+      "file": "1f4c0_dvd.png"
+    },
+    {
+      "codepoint": "1f4f7",
+      "name": "camera",
+      "glyph": "📷",
+      "file": "1f4f7_camera.png"
+    },
+    {
+      "codepoint": "1f4f9",
+      "name": "video camera",
+      "glyph": "📹",
+      "file": "1f4f9_video_camera.png"
+    },
+    {
+      "codepoint": "1f3a5",
+      "name": "movie camera",
+      "glyph": "🎥",
+      "file": "1f3a5_movie_camera.png"
+    },
+    {
+      "codepoint": "1f4fa",
+      "name": "television",
+      "glyph": "📺",
+      "file": "1f4fa_television.png"
+    },
+    {
+      "codepoint": "1f50d",
+      "name": "magnifying glass tilted left",
+      "glyph": "🔍",
+      "file": "1f50d_magnifying_glass_tilted_left.png"
+    },
+    {
+      "codepoint": "1f56f",
+      "name": "candle",
+      "glyph": "🕯️",
+      "file": "1f56f_candle.png"
+    },
+    {
+      "codepoint": "1f4a1",
+      "name": "light bulb",
+      "glyph": "💡",
+      "file": "1f4a1_light_bulb.png"
+    },
+    {
+      "codepoint": "1f526",
+      "name": "flashlight",
+      "glyph": "🔦",
+      "file": "1f526_flashlight.png"
+    },
+    {
+      "codepoint": "1f4d6",
+      "name": "open book",
+      "glyph": "📖",
+      "file": "1f4d6_open_book.png"
+    },
+    {
+      "codepoint": "1f4da",
+      "name": "books",
+      "glyph": "📚",
+      "file": "1f4da_books.png"
+    },
+    {
+      "codepoint": "1f4dd",
+      "name": "memo",
+      "glyph": "📝",
+      "file": "1f4dd_memo.png"
+    },
+    {
+      "codepoint": "1f4f0",
+      "name": "newspaper",
+      "glyph": "📰",
+      "file": "1f4f0_newspaper.png"
+    },
+    {
+      "codepoint": "1f3f7",
+      "name": "label",
+      "glyph": "🏷️",
+      "file": "1f3f7_label.png"
+    },
+    {
+      "codepoint": "1f4b0",
+      "name": "money bag",
+      "glyph": "💰",
+      "file": "1f4b0_money_bag.png"
+    },
+    {
+      "codepoint": "1f4b3",
+      "name": "credit card",
+      "glyph": "💳",
+      "file": "1f4b3_credit_card.png"
+    },
+    {
+      "codepoint": "1f4b5",
+      "name": "dollar banknote",
+      "glyph": "💵",
+      "file": "1f4b5_dollar_banknote.png"
+    },
+    {
+      "codepoint": "1f4b8",
+      "name": "money with wings",
+      "glyph": "💸",
+      "file": "1f4b8_money_with_wings.png"
+    },
+    {
+      "codepoint": "1f4b9",
+      "name": "chart increasing with yen",
+      "glyph": "💹",
+      "file": "1f4b9_chart_increasing_with_yen.png"
+    },
+    {
+      "codepoint": "2709",
+      "name": "envelope",
+      "glyph": "✉️",
+      "file": "2709_envelope.png"
+    },
+    {
+      "codepoint": "1f4e7",
+      "name": "e-mail",
+      "glyph": "📧",
+      "file": "1f4e7_e_mail.png"
+    },
+    {
+      "codepoint": "1f4e8",
+      "name": "incoming envelope",
+      "glyph": "📨",
+      "file": "1f4e8_incoming_envelope.png"
+    },
+    {
+      "codepoint": "1f4e9",
+      "name": "envelope with arrow",
+      "glyph": "📩",
+      "file": "1f4e9_envelope_with_arrow.png"
+    },
+    {
+      "codepoint": "1f4eb",
+      "name": "closed mailbox with raised flag",
+      "glyph": "📫",
+      "file": "1f4eb_closed_mailbox_with_raised_flag.png"
+    },
+    {
+      "codepoint": "1f4ee",
+      "name": "postbox",
+      "glyph": "📮",
+      "file": "1f4ee_postbox.png"
+    },
+    {
+      "codepoint": "270f",
+      "name": "pencil",
+      "glyph": "✏️",
+      "file": "270f_pencil.png"
+    },
+    {
+      "codepoint": "2712",
+      "name": "black nib",
+      "glyph": "✒️",
+      "file": "2712_black_nib.png"
+    },
+    {
+      "codepoint": "1f58a",
+      "name": "pen",
+      "glyph": "🖊️",
+      "file": "1f58a_pen.png"
+    },
+    {
+      "codepoint": "1f4bc",
+      "name": "briefcase",
+      "glyph": "💼",
+      "file": "1f4bc_briefcase.png"
+    },
+    {
+      "codepoint": "1f4c1",
+      "name": "file folder",
+      "glyph": "📁",
+      "file": "1f4c1_file_folder.png"
+    },
+    {
+      "codepoint": "1f4c2",
+      "name": "open file folder",
+      "glyph": "📂",
+      "file": "1f4c2_open_file_folder.png"
+    },
+    {
+      "codepoint": "1f4c5",
+      "name": "calendar",
+      "glyph": "📅",
+      "file": "1f4c5_calendar.png"
+    },
+    {
+      "codepoint": "1f4c8",
+      "name": "chart increasing",
+      "glyph": "📈",
+      "file": "1f4c8_chart_increasing.png"
+    },
+    {
+      "codepoint": "1f4ca",
+      "name": "bar chart",
+      "glyph": "📊",
+      "file": "1f4ca_bar_chart.png"
+    },
+    {
+      "codepoint": "1f4cb",
+      "name": "clipboard",
+      "glyph": "📋",
+      "file": "1f4cb_clipboard.png"
+    },
+    {
+      "codepoint": "1f4ce",
+      "name": "paperclip",
+      "glyph": "📎",
+      "file": "1f4ce_paperclip.png"
+    },
+    {
+      "codepoint": "1f4cf",
+      "name": "straight ruler",
+      "glyph": "📏",
+      "file": "1f4cf_straight_ruler.png"
+    },
+    {
+      "codepoint": "2702",
+      "name": "scissors",
+      "glyph": "✂️",
+      "file": "2702_scissors.png"
+    },
+    {
+      "codepoint": "1f5d1",
+      "name": "wastebasket",
+      "glyph": "🗑️",
+      "file": "1f5d1_wastebasket.png"
+    },
+    {
+      "codepoint": "1f512",
+      "name": "locked",
+      "glyph": "🔒",
+      "file": "1f512_locked.png"
+    },
+    {
+      "codepoint": "1f513",
+      "name": "unlocked",
+      "glyph": "🔓",
+      "file": "1f513_unlocked.png"
+    },
+    {
+      "codepoint": "1f511",
+      "name": "key",
+      "glyph": "🔑",
+      "file": "1f511_key.png"
+    },
+    {
+      "codepoint": "1f528",
+      "name": "hammer",
+      "glyph": "🔨",
+      "file": "1f528_hammer.png"
+    },
+    {
+      "codepoint": "1f6e0",
+      "name": "hammer and wrench",
+      "glyph": "🛠️",
+      "file": "1f6e0_hammer_and_wrench.png"
+    },
+    {
+      "codepoint": "2692",
+      "name": "hammer and pick",
+      "glyph": "⚒️",
+      "file": "2692_hammer_and_pick.png"
+    },
+    {
+      "codepoint": "1f527",
+      "name": "wrench",
+      "glyph": "🔧",
+      "file": "1f527_wrench.png"
+    },
+    {
+      "codepoint": "1f529",
+      "name": "nut and bolt",
+      "glyph": "🔩",
+      "file": "1f529_nut_and_bolt.png"
+    },
+    {
+      "codepoint": "2699",
+      "name": "gear",
+      "glyph": "⚙️",
+      "file": "2699_gear.png"
+    },
+    {
+      "codepoint": "2696",
+      "name": "balance scale",
+      "glyph": "⚖️",
+      "file": "2696_balance_scale.png"
+    },
+    {
+      "codepoint": "1f517",
+      "name": "link",
+      "glyph": "🔗",
+      "file": "1f517_link.png"
+    },
+    {
+      "codepoint": "26d3",
+      "name": "chains",
+      "glyph": "⛓️",
+      "file": "26d3_chains.png"
+    },
+    {
+      "codepoint": "1f9f0",
+      "name": "toolbox",
+      "glyph": "🧰",
+      "file": "1f9f0_toolbox.png"
+    },
+    {
+      "codepoint": "1f9f2",
+      "name": "magnet",
+      "glyph": "🧲",
+      "file": "1f9f2_magnet.png"
+    },
+    {
+      "codepoint": "1f9ed",
+      "name": "compass",
+      "glyph": "🧭",
+      "file": "1f9ed_compass.png"
+    },
+    {
+      "codepoint": "1f9ea",
+      "name": "test tube",
+      "glyph": "🧪",
+      "file": "1f9ea_test_tube.png"
+    },
+    {
+      "codepoint": "1f4e1",
+      "name": "satellite antenna",
+      "glyph": "📡",
+      "file": "1f4e1_satellite_antenna.png"
+    },
+    {
+      "codepoint": "1f489",
+      "name": "syringe",
+      "glyph": "💉",
+      "file": "1f489_syringe.png"
+    },
+    {
+      "codepoint": "1f48a",
+      "name": "pill",
+      "glyph": "💊",
+      "file": "1f48a_pill.png"
+    },
+    {
+      "codepoint": "1f6aa",
+      "name": "door",
+      "glyph": "🚪",
+      "file": "1f6aa_door.png"
+    },
+    {
+      "codepoint": "1f6cf",
+      "name": "bed",
+      "glyph": "🛏️",
+      "file": "1f6cf_bed.png"
+    },
+    {
+      "codepoint": "1f6cb",
+      "name": "couch and lamp",
+      "glyph": "🛋️",
+      "file": "1f6cb_couch_and_lamp.png"
+    },
+    {
+      "codepoint": "1f6bd",
+      "name": "toilet",
+      "glyph": "🚽",
+      "file": "1f6bd_toilet.png"
+    },
+    {
+      "codepoint": "1f6bf",
+      "name": "shower",
+      "glyph": "🚿",
+      "file": "1f6bf_shower.png"
+    },
+    {
+      "codepoint": "1f6c1",
+      "name": "bathtub",
+      "glyph": "🛁",
+      "file": "1f6c1_bathtub.png"
+    },
+    {
+      "codepoint": "1f9f4",
+      "name": "lotion bottle",
+      "glyph": "🧴",
+      "file": "1f9f4_lotion_bottle.png"
+    },
+    {
+      "codepoint": "1f9f9",
+      "name": "broom",
+      "glyph": "🧹",
+      "file": "1f9f9_broom.png"
+    },
+    {
+      "codepoint": "1f9fa",
+      "name": "basket",
+      "glyph": "🧺",
+      "file": "1f9fa_basket.png"
+    },
+    {
+      "codepoint": "1f9fb",
+      "name": "roll of paper",
+      "glyph": "🧻",
+      "file": "1f9fb_roll_of_paper.png"
+    },
+    {
+      "codepoint": "1f9fd",
+      "name": "sponge",
+      "glyph": "🧽",
+      "file": "1f9fd_sponge.png"
+    },
+    {
+      "codepoint": "1f9ef",
+      "name": "fire extinguisher",
+      "glyph": "🧯",
+      "file": "1f9ef_fire_extinguisher.png"
+    },
+    {
+      "codepoint": "1f6d2",
+      "name": "shopping cart",
+      "glyph": "🛒",
+      "file": "1f6d2_shopping_cart.png"
+    },
+    {
+      "codepoint": "1f6ac",
+      "name": "cigarette",
+      "glyph": "🚬",
+      "file": "1f6ac_cigarette.png"
+    },
+    {
+      "codepoint": "26b0",
+      "name": "coffin",
+      "glyph": "⚰️",
+      "file": "26b0_coffin.png"
+    }
+  ],
+  "Symbols": [
+    {
+      "codepoint": "26a0",
+      "name": "warning",
+      "glyph": "⚠️",
+      "file": "26a0_warning.png"
+    },
+    {
+      "codepoint": "26d4",
+      "name": "no entry",
+      "glyph": "⛔",
+      "file": "26d4_no_entry.png"
+    },
+    {
+      "codepoint": "1f6ab",
+      "name": "prohibited",
+      "glyph": "🚫",
+      "file": "1f6ab_prohibited.png"
+    },
+    {
+      "codepoint": "2622",
+      "name": "radioactive",
+      "glyph": "☢️",
+      "file": "2622_radioactive.png"
+    },
+    {
+      "codepoint": "2623",
+      "name": "biohazard",
+      "glyph": "☣️",
+      "file": "2623_biohazard.png"
+    },
+    {
+      "codepoint": "2b06",
+      "name": "up arrow",
+      "glyph": "⬆️",
+      "file": "2b06_up_arrow.png"
+    },
+    {
+      "codepoint": "27a1",
+      "name": "right arrow",
+      "glyph": "➡️",
+      "file": "27a1_right_arrow.png"
+    },
+    {
+      "codepoint": "2b07",
+      "name": "down arrow",
+      "glyph": "⬇️",
+      "file": "2b07_down_arrow.png"
+    },
+    {
+      "codepoint": "2b05",
+      "name": "left arrow",
+      "glyph": "⬅️",
+      "file": "2b05_left_arrow.png"
+    },
+    {
+      "codepoint": "2934",
+      "name": "right arrow curving up",
+      "glyph": "⤴️",
+      "file": "2934_right_arrow_curving_up.png"
+    },
+    {
+      "codepoint": "2935",
+      "name": "right arrow curving down",
+      "glyph": "⤵️",
+      "file": "2935_right_arrow_curving_down.png"
+    },
+    {
+      "codepoint": "1f504",
+      "name": "counterclockwise arrows button",
+      "glyph": "🔄",
+      "file": "1f504_counterclockwise_arrows_button.png"
+    },
+    {
+      "codepoint": "1f519",
+      "name": "BACK arrow",
+      "glyph": "🔙",
+      "file": "1f519_back_arrow.png"
+    },
+    {
+      "codepoint": "269b",
+      "name": "atom symbol",
+      "glyph": "⚛️",
+      "file": "269b_atom_symbol.png"
+    },
+    {
+      "codepoint": "2638",
+      "name": "wheel of dharma",
+      "glyph": "☸️",
+      "file": "2638_wheel_of_dharma.png"
+    },
+    {
+      "codepoint": "262f",
+      "name": "yin yang",
+      "glyph": "☯️",
+      "file": "262f_yin_yang.png"
+    },
+    {
+      "codepoint": "271d",
+      "name": "latin cross",
+      "glyph": "✝️",
+      "file": "271d_latin_cross.png"
+    },
+    {
+      "codepoint": "2721",
+      "name": "star of David",
+      "glyph": "✡️",
+      "file": "2721_star_of_david.png"
+    },
+    {
+      "codepoint": "2626",
+      "name": "orthodox cross",
+      "glyph": "☦️",
+      "file": "2626_orthodox_cross.png"
+    },
+    {
+      "codepoint": "262a",
+      "name": "star and crescent",
+      "glyph": "☪️",
+      "file": "262a_star_and_crescent.png"
+    },
+    {
+      "codepoint": "262e",
+      "name": "peace symbol",
+      "glyph": "☮️",
+      "file": "262e_peace_symbol.png"
+    },
+    {
+      "codepoint": "2648",
+      "name": "Aries",
+      "glyph": "♈",
+      "file": "2648_aries.png"
+    },
+    {
+      "codepoint": "2649",
+      "name": "Taurus",
+      "glyph": "♉",
+      "file": "2649_taurus.png"
+    },
+    {
+      "codepoint": "264a",
+      "name": "Gemini",
+      "glyph": "♊",
+      "file": "264a_gemini.png"
+    },
+    {
+      "codepoint": "264b",
+      "name": "Cancer",
+      "glyph": "♋",
+      "file": "264b_cancer.png"
+    },
+    {
+      "codepoint": "264c",
+      "name": "Leo",
+      "glyph": "♌",
+      "file": "264c_leo.png"
+    },
+    {
+      "codepoint": "264d",
+      "name": "Virgo",
+      "glyph": "♍",
+      "file": "264d_virgo.png"
+    },
+    {
+      "codepoint": "264e",
+      "name": "Libra",
+      "glyph": "♎",
+      "file": "264e_libra.png"
+    },
+    {
+      "codepoint": "264f",
+      "name": "Scorpio",
+      "glyph": "♏",
+      "file": "264f_scorpio.png"
+    },
+    {
+      "codepoint": "2650",
+      "name": "Sagittarius",
+      "glyph": "♐",
+      "file": "2650_sagittarius.png"
+    },
+    {
+      "codepoint": "2651",
+      "name": "Capricorn",
+      "glyph": "♑",
+      "file": "2651_capricorn.png"
+    },
+    {
+      "codepoint": "2652",
+      "name": "Aquarius",
+      "glyph": "♒",
+      "file": "2652_aquarius.png"
+    },
+    {
+      "codepoint": "2653",
+      "name": "Pisces",
+      "glyph": "♓",
+      "file": "2653_pisces.png"
+    },
+    {
+      "codepoint": "26ce",
+      "name": "Ophiuchus",
+      "glyph": "⛎",
+      "file": "26ce_ophiuchus.png"
+    },
+    {
+      "codepoint": "25b6",
+      "name": "play button",
+      "glyph": "▶️",
+      "file": "25b6_play_button.png"
+    },
+    {
+      "codepoint": "23ed",
+      "name": "next track button",
+      "glyph": "⏭️",
+      "file": "23ed_next_track_button.png"
+    },
+    {
+      "codepoint": "25c0",
+      "name": "reverse button",
+      "glyph": "◀️",
+      "file": "25c0_reverse_button.png"
+    },
+    {
+      "codepoint": "23ee",
+      "name": "last track button",
+      "glyph": "⏮️",
+      "file": "23ee_last_track_button.png"
+    },
+    {
+      "codepoint": "23f8",
+      "name": "pause button",
+      "glyph": "⏸️",
+      "file": "23f8_pause_button.png"
+    },
+    {
+      "codepoint": "23f9",
+      "name": "stop button",
+      "glyph": "⏹️",
+      "file": "23f9_stop_button.png"
+    },
+    {
+      "codepoint": "1f3a6",
+      "name": "cinema",
+      "glyph": "🎦",
+      "file": "1f3a6_cinema.png"
+    },
+    {
+      "codepoint": "1f4f6",
+      "name": "antenna bars",
+      "glyph": "📶",
+      "file": "1f4f6_antenna_bars.png"
+    },
+    {
+      "codepoint": "1f4f3",
+      "name": "vibration mode",
+      "glyph": "📳",
+      "file": "1f4f3_vibration_mode.png"
+    },
+    {
+      "codepoint": "2640",
+      "name": "female sign",
+      "glyph": "♀️",
+      "file": "2640_female_sign.png"
+    },
+    {
+      "codepoint": "2642",
+      "name": "male sign",
+      "glyph": "♂️",
+      "file": "2642_male_sign.png"
+    },
+    {
+      "codepoint": "2716",
+      "name": "multiply",
+      "glyph": "✖️",
+      "file": "2716_multiply.png"
+    },
+    {
+      "codepoint": "2795",
+      "name": "plus",
+      "glyph": "➕",
+      "file": "2795_plus.png"
+    },
+    {
+      "codepoint": "2796",
+      "name": "minus",
+      "glyph": "➖",
+      "file": "2796_minus.png"
+    },
+    {
+      "codepoint": "2797",
+      "name": "divide",
+      "glyph": "➗",
+      "file": "2797_divide.png"
+    },
+    {
+      "codepoint": "267e",
+      "name": "infinity",
+      "glyph": "♾️",
+      "file": "267e_infinity.png"
+    },
+    {
+      "codepoint": "203c",
+      "name": "double exclamation mark",
+      "glyph": "‼️",
+      "file": "203c_double_exclamation_mark.png"
+    },
+    {
+      "codepoint": "2049",
+      "name": "exclamation question mark",
+      "glyph": "⁉️",
+      "file": "2049_exclamation_question_mark.png"
+    },
+    {
+      "codepoint": "2753",
+      "name": "red question mark",
+      "glyph": "❓",
+      "file": "2753_red_question_mark.png"
+    },
+    {
+      "codepoint": "2754",
+      "name": "white question mark",
+      "glyph": "❔",
+      "file": "2754_white_question_mark.png"
+    },
+    {
+      "codepoint": "2755",
+      "name": "white exclamation mark",
+      "glyph": "❕",
+      "file": "2755_white_exclamation_mark.png"
+    },
+    {
+      "codepoint": "2757",
+      "name": "red exclamation mark",
+      "glyph": "❗",
+      "file": "2757_red_exclamation_mark.png"
+    },
+    {
+      "codepoint": "1f4b1",
+      "name": "currency exchange",
+      "glyph": "💱",
+      "file": "1f4b1_currency_exchange.png"
+    },
+    {
+      "codepoint": "267b",
+      "name": "recycling symbol",
+      "glyph": "♻️",
+      "file": "267b_recycling_symbol.png"
+    },
+    {
+      "codepoint": "2b55",
+      "name": "hollow red circle",
+      "glyph": "⭕",
+      "file": "2b55_hollow_red_circle.png"
+    },
+    {
+      "codepoint": "2705",
+      "name": "check mark button",
+      "glyph": "✅",
+      "file": "2705_check_mark_button.png"
+    },
+    {
+      "codepoint": "2611",
+      "name": "check box with check",
+      "glyph": "☑️",
+      "file": "2611_check_box_with_check.png"
+    },
+    {
+      "codepoint": "2714",
+      "name": "check mark",
+      "glyph": "✔️",
+      "file": "2714_check_mark.png"
+    },
+    {
+      "codepoint": "274c",
+      "name": "cross mark",
+      "glyph": "❌",
+      "file": "274c_cross_mark.png"
+    },
+    {
+      "codepoint": "274e",
+      "name": "cross mark button",
+      "glyph": "❎",
+      "file": "274e_cross_mark_button.png"
+    },
+    {
+      "codepoint": "303d",
+      "name": "part alternation mark",
+      "glyph": "〽️",
+      "file": "303d_part_alternation_mark.png"
+    },
+    {
+      "codepoint": "2733",
+      "name": "eight-spoked asterisk",
+      "glyph": "✳️",
+      "file": "2733_eight_spoked_asterisk.png"
+    },
+    {
+      "codepoint": "2734",
+      "name": "eight-pointed star",
+      "glyph": "✴️",
+      "file": "2734_eight_pointed_star.png"
+    },
+    {
+      "codepoint": "2747",
+      "name": "sparkle",
+      "glyph": "❇️",
+      "file": "2747_sparkle.png"
+    },
+    {
+      "codepoint": "00a9",
+      "name": "copyright",
+      "glyph": "©️",
+      "file": "00a9_copyright.png"
+    },
+    {
+      "codepoint": "00ae",
+      "name": "registered",
+      "glyph": "®️",
+      "file": "00ae_registered.png"
+    },
+    {
+      "codepoint": "2122",
+      "name": "trade mark",
+      "glyph": "™️",
+      "file": "2122_trade_mark.png"
+    },
+    {
+      "codepoint": "1f534",
+      "name": "red circle",
+      "glyph": "🔴",
+      "file": "1f534_red_circle.png"
+    },
+    {
+      "codepoint": "1f7e0",
+      "name": "orange circle",
+      "glyph": "🟠",
+      "file": "1f7e0_orange_circle.png"
+    },
+    {
+      "codepoint": "1f7e1",
+      "name": "yellow circle",
+      "glyph": "🟡",
+      "file": "1f7e1_yellow_circle.png"
+    },
+    {
+      "codepoint": "1f7e2",
+      "name": "green circle",
+      "glyph": "🟢",
+      "file": "1f7e2_green_circle.png"
+    },
+    {
+      "codepoint": "1f535",
+      "name": "blue circle",
+      "glyph": "🔵",
+      "file": "1f535_blue_circle.png"
+    },
+    {
+      "codepoint": "1f7e3",
+      "name": "purple circle",
+      "glyph": "🟣",
+      "file": "1f7e3_purple_circle.png"
+    },
+    {
+      "codepoint": "1f7e4",
+      "name": "brown circle",
+      "glyph": "🟤",
+      "file": "1f7e4_brown_circle.png"
+    },
+    {
+      "codepoint": "26ab",
+      "name": "black circle",
+      "glyph": "⚫",
+      "file": "26ab_black_circle.png"
+    },
+    {
+      "codepoint": "26aa",
+      "name": "white circle",
+      "glyph": "⚪",
+      "file": "26aa_white_circle.png"
+    },
+    {
+      "codepoint": "1f7e5",
+      "name": "red square",
+      "glyph": "🟥",
+      "file": "1f7e5_red_square.png"
+    },
+    {
+      "codepoint": "1f7e7",
+      "name": "orange square",
+      "glyph": "🟧",
+      "file": "1f7e7_orange_square.png"
+    },
+    {
+      "codepoint": "1f7e8",
+      "name": "yellow square",
+      "glyph": "🟨",
+      "file": "1f7e8_yellow_square.png"
+    },
+    {
+      "codepoint": "1f7e9",
+      "name": "green square",
+      "glyph": "🟩",
+      "file": "1f7e9_green_square.png"
+    },
+    {
+      "codepoint": "1f7e6",
+      "name": "blue square",
+      "glyph": "🟦",
+      "file": "1f7e6_blue_square.png"
+    },
+    {
+      "codepoint": "1f7ea",
+      "name": "purple square",
+      "glyph": "🟪",
+      "file": "1f7ea_purple_square.png"
+    },
+    {
+      "codepoint": "1f7eb",
+      "name": "brown square",
+      "glyph": "🟫",
+      "file": "1f7eb_brown_square.png"
+    },
+    {
+      "codepoint": "2b1b",
+      "name": "black large square",
+      "glyph": "⬛",
+      "file": "2b1b_black_large_square.png"
+    },
+    {
+      "codepoint": "2b1c",
+      "name": "white large square",
+      "glyph": "⬜",
+      "file": "2b1c_white_large_square.png"
+    }
+  ],
+  "Nature": [
+    {
+      "codepoint": "1f33b",
+      "name": "sunflower",
+      "glyph": "🌻",
+      "file": "1f33b_sunflower.png"
+    },
+    {
+      "codepoint": "1f339",
+      "name": "rose",
+      "glyph": "🌹",
+      "file": "1f339_rose.png"
+    },
+    {
+      "codepoint": "1f337",
+      "name": "tulip",
+      "glyph": "🌷",
+      "file": "1f337_tulip.png"
+    },
+    {
+      "codepoint": "1f33a",
+      "name": "hibiscus",
+      "glyph": "🌺",
+      "file": "1f33a_hibiscus.png"
+    },
+    {
+      "codepoint": "1f338",
+      "name": "cherry blossom",
+      "glyph": "🌸",
+      "file": "1f338_cherry_blossom.png"
+    },
+    {
+      "codepoint": "1f490",
+      "name": "bouquet",
+      "glyph": "💐",
+      "file": "1f490_bouquet.png"
+    },
+    {
+      "codepoint": "1f33c",
+      "name": "blossom",
+      "glyph": "🌼",
+      "file": "1f33c_blossom.png"
+    },
+    {
+      "codepoint": "1f343",
+      "name": "leaf fluttering in wind",
+      "glyph": "🍃",
+      "file": "1f343_leaf_fluttering_in_wind.png"
+    },
+    {
+      "codepoint": "1f342",
+      "name": "fallen leaf",
+      "glyph": "🍂",
+      "file": "1f342_fallen_leaf.png"
+    },
+    {
+      "codepoint": "1f341",
+      "name": "maple leaf",
+      "glyph": "🍁",
+      "file": "1f341_maple_leaf.png"
+    },
+    {
+      "codepoint": "1f344",
+      "name": "mushroom",
+      "glyph": "🍄",
+      "file": "1f344_mushroom.png"
+    },
+    {
+      "codepoint": "1f331",
+      "name": "seedling",
+      "glyph": "🌱",
+      "file": "1f331_seedling.png"
+    },
+    {
+      "codepoint": "1f333",
+      "name": "deciduous tree",
+      "glyph": "🌳",
+      "file": "1f333_deciduous_tree.png"
+    },
+    {
+      "codepoint": "1f332",
+      "name": "evergreen tree",
+      "glyph": "🌲",
+      "file": "1f332_evergreen_tree.png"
+    },
+    {
+      "codepoint": "1f334",
+      "name": "palm tree",
+      "glyph": "🌴",
+      "file": "1f334_palm_tree.png"
+    },
+    {
+      "codepoint": "1f335",
+      "name": "cactus",
+      "glyph": "🌵",
+      "file": "1f335_cactus.png"
+    },
+    {
+      "codepoint": "1f33e",
+      "name": "sheaf of rice",
+      "glyph": "🌾",
+      "file": "1f33e_sheaf_of_rice.png"
+    },
+    {
+      "codepoint": "1f33f",
+      "name": "herb",
+      "glyph": "🌿",
+      "file": "1f33f_herb.png"
+    },
+    {
+      "codepoint": "2618",
+      "name": "shamrock",
+      "glyph": "☘️",
+      "file": "2618_shamrock.png"
+    },
+    {
+      "codepoint": "1f340",
+      "name": "four leaf clover",
+      "glyph": "🍀",
+      "file": "1f340_four_leaf_clover.png"
+    },
+    {
+      "codepoint": "26c5",
+      "name": "sun behind cloud",
+      "glyph": "⛅",
+      "file": "26c5_sun_behind_cloud.png"
+    },
+    {
+      "codepoint": "2601",
+      "name": "cloud",
+      "glyph": "☁️",
+      "file": "2601_cloud.png"
+    },
+    {
+      "codepoint": "1f327",
+      "name": "cloud with rain",
+      "glyph": "🌧️",
+      "file": "1f327_cloud_with_rain.png"
+    },
+    {
+      "codepoint": "26c8",
+      "name": "cloud with lightning and rain",
+      "glyph": "⛈️",
+      "file": "26c8_cloud_with_lightning_and_rain.png"
+    },
+    {
+      "codepoint": "1f300",
+      "name": "cyclone",
+      "glyph": "🌀",
+      "file": "1f300_cyclone.png"
+    },
+    {
+      "codepoint": "1f308",
+      "name": "rainbow",
+      "glyph": "🌈",
+      "file": "1f308_rainbow.png"
+    },
+    {
+      "codepoint": "2602",
+      "name": "umbrella",
+      "glyph": "☂️",
+      "file": "2602_umbrella.png"
+    },
+    {
+      "codepoint": "2614",
+      "name": "umbrella with rain drops",
+      "glyph": "☔",
+      "file": "2614_umbrella_with_rain_drops.png"
+    },
+    {
+      "codepoint": "26a1",
+      "name": "high voltage",
+      "glyph": "⚡",
+      "file": "26a1_high_voltage.png"
+    },
+    {
+      "codepoint": "2744",
+      "name": "snowflake",
+      "glyph": "❄️",
+      "file": "2744_snowflake.png"
+    },
+    {
+      "codepoint": "2603",
+      "name": "snowman",
+      "glyph": "☃️",
+      "file": "2603_snowman.png"
+    },
+    {
+      "codepoint": "26c4",
+      "name": "snowman without snow",
+      "glyph": "⛄",
+      "file": "26c4_snowman_without_snow.png"
+    },
+    {
+      "codepoint": "1f30a",
+      "name": "water wave",
+      "glyph": "🌊",
+      "file": "1f30a_water_wave.png"
+    },
+    {
+      "codepoint": "1f4a7",
+      "name": "droplet",
+      "glyph": "💧",
+      "file": "1f4a7_droplet.png"
+    },
+    {
+      "codepoint": "1f4a6",
+      "name": "sweat droplets",
+      "glyph": "💦",
+      "file": "1f4a6_sweat_droplets.png"
+    },
+    {
+      "codepoint": "1f31e",
+      "name": "sun with face",
+      "glyph": "🌞",
+      "file": "1f31e_sun_with_face.png"
+    },
+    {
+      "codepoint": "1f31d",
+      "name": "full moon face",
+      "glyph": "🌝",
+      "file": "1f31d_full_moon_face.png"
+    },
+    {
+      "codepoint": "1f31a",
+      "name": "new moon face",
+      "glyph": "🌚",
+      "file": "1f31a_new_moon_face.png"
+    },
+    {
+      "codepoint": "1f31b",
+      "name": "first quarter moon face",
+      "glyph": "🌛",
+      "file": "1f31b_first_quarter_moon_face.png"
+    },
+    {
+      "codepoint": "1f31c",
+      "name": "last quarter moon face",
+      "glyph": "🌜",
+      "file": "1f31c_last_quarter_moon_face.png"
+    },
+    {
+      "codepoint": "1f31f",
+      "name": "glowing star",
+      "glyph": "🌟",
+      "file": "1f31f_glowing_star.png"
+    },
+    {
+      "codepoint": "1f320",
+      "name": "shooting star",
+      "glyph": "🌠",
+      "file": "1f320_shooting_star.png"
+    },
+    {
+      "codepoint": "2600",
+      "name": "sun",
+      "glyph": "☀️",
+      "file": "2600_sun.png"
+    },
+    {
+      "codepoint": "2b50",
+      "name": "star",
+      "glyph": "⭐",
+      "file": "2b50_star.png"
+    },
+    {
+      "codepoint": "1f30d",
+      "name": "globe showing Europe-Africa",
+      "glyph": "🌍",
+      "file": "1f30d_globe_showing_europe_africa.png"
+    },
+    {
+      "codepoint": "1f30e",
+      "name": "globe showing Americas",
+      "glyph": "🌎",
+      "file": "1f30e_globe_showing_americas.png"
+    },
+    {
+      "codepoint": "1f30f",
+      "name": "globe showing Asia-Australia",
+      "glyph": "🌏",
+      "file": "1f30f_globe_showing_asia_australia.png"
+    },
+    {
+      "codepoint": "1f314",
+      "name": "waxing gibbous moon",
+      "glyph": "🌔",
+      "file": "1f314_waxing_gibbous_moon.png"
+    },
+    {
+      "codepoint": "1f315",
+      "name": "full moon",
+      "glyph": "🌕",
+      "file": "1f315_full_moon.png"
+    },
+    {
+      "codepoint": "1f316",
+      "name": "waning gibbous moon",
+      "glyph": "🌖",
+      "file": "1f316_waning_gibbous_moon.png"
+    },
+    {
+      "codepoint": "1f317",
+      "name": "last quarter moon",
+      "glyph": "🌗",
+      "file": "1f317_last_quarter_moon.png"
+    },
+    {
+      "codepoint": "1f318",
+      "name": "waning crescent moon",
+      "glyph": "🌘",
+      "file": "1f318_waning_crescent_moon.png"
+    },
+    {
+      "codepoint": "1f319",
+      "name": "crescent moon",
+      "glyph": "🌙",
+      "file": "1f319_crescent_moon.png"
+    },
+    {
+      "codepoint": "1f311",
+      "name": "new moon",
+      "glyph": "🌑",
+      "file": "1f311_new_moon.png"
+    },
+    {
+      "codepoint": "1f312",
+      "name": "waxing crescent moon",
+      "glyph": "🌒",
+      "file": "1f312_waxing_crescent_moon.png"
+    },
+    {
+      "codepoint": "1f313",
+      "name": "first quarter moon",
+      "glyph": "🌓",
+      "file": "1f313_first_quarter_moon.png"
+    }
+  ],
+  "Flags": [
+    {
+      "codepoint": "1f3c1",
+      "name": "chequered flag",
+      "glyph": "🏁",
+      "file": "1f3c1_chequered_flag.png"
+    },
+    {
+      "codepoint": "1f6a9",
+      "name": "triangular flag",
+      "glyph": "🚩",
+      "file": "1f6a9_triangular_flag.png"
+    },
+    {
+      "codepoint": "1f3f4",
+      "name": "black flag",
+      "glyph": "🏴",
+      "file": "1f3f4_black_flag.png"
+    },
+    {
+      "codepoint": "1f3f3",
+      "name": "white flag",
+      "glyph": "🏳️",
+      "file": "1f3f3_white_flag.png"
+    },
+    {
+      "codepoint": "1f3f3_200d_1f308",
+      "name": "rainbow flag",
+      "glyph": "🏳️‍🌈",
+      "file": "1f3f3_200d_1f308_rainbow_flag.png"
+    },
+    {
+      "codepoint": "1f3f4_200d_2620",
+      "name": "pirate flag",
+      "glyph": "🏴‍☠️",
+      "file": "1f3f4_200d_2620_pirate_flag.png"
+    }
+  ]
+}

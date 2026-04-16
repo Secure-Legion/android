@@ -64,7 +64,7 @@ interface MessageDao {
             retryCount, lastRetryTimestamp, nextRetryAtMs, lastError,
             pingDelivered, messageDelivered, tapDelivered, pongDelivered,
             pingWireBytes, paymentQuoteJson, paymentStatus, txSignature, paymentToken, paymentAmount,
-            correlationId, replyToMessageId, isEdited, isPinned"""
+            correlationId, replyToMessageId, isEdited, selfDestructTtl, isPinned"""
     }
 
     /**
@@ -90,6 +90,28 @@ interface MessageDao {
     @Query("UPDATE messages SET encryptedContent = :newEncryptedContent, isEdited = 1 WHERE messageId = :messageId")
     suspend fun applyEdit(messageId: String, newEncryptedContent: String)
 
+    /**
+     * Store a pending self-destruct TTL on a message (disappearing messages start-on-read).
+     * Only sets TTL if the message exists AND doesn't already have a selfDestructAt
+     * (preserves sender's explicit timestamp).
+     */
+    @Query("UPDATE messages SET selfDestructTtl = :ttl WHERE messageId = :messageId AND selfDestructAt IS NULL")
+    suspend fun setSelfDestructTtl(messageId: String, ttl: Double)
+
+    /**
+     * Activate all pending self-destruct TTLs for a contact (called when user opens chat).
+     * Converts TTL seconds into an absolute expiry timestamp and clears the TTL field.
+     */
+    @Query("""
+        UPDATE messages
+        SET selfDestructAt = :now + CAST(selfDestructTtl * 1000 AS INTEGER),
+            selfDestructTtl = NULL
+        WHERE contactId = :contactId
+          AND selfDestructTtl IS NOT NULL
+          AND selfDestructAt IS NULL
+    """)
+    suspend fun activatePendingTtls(contactId: Long, now: Long = System.currentTimeMillis()): Int
+
     @Query("SELECT ${LITE_COLS} FROM messages WHERE messageId = :messageId LIMIT 1")
     suspend fun getMessageByMessageId(messageId: String): Message?
 
@@ -106,10 +128,25 @@ interface MessageDao {
     suspend fun deleteMessageById(messageId: Long)
 
     /**
-     * Pin or unpin a message locally
+     * Delete a message by its deterministic messageId (wire protocol path).
+     * Used by the 0x14 DELETE handler when a peer tells us to delete a message
+     * (delete-for-everyone).
+     */
+    @Query("DELETE FROM messages WHERE messageId = :messageId")
+    suspend fun deleteByMessageId(messageId: String): Int
+
+    /**
+     * Pin or unpin a message locally (by numeric row id)
      */
     @Query("UPDATE messages SET isPinned = :pinned WHERE id = :messageId")
     suspend fun setPinned(messageId: Long, pinned: Boolean)
+
+    /**
+     * Pin or unpin a message by its deterministic messageId (wire protocol path).
+     * Used by the 0x15 PIN handler when the peer tells us to (un)pin a message.
+     */
+    @Query("UPDATE messages SET isPinned = :pinned WHERE messageId = :messageId")
+    suspend fun setPinnedByMessageId(messageId: String, pinned: Boolean)
 
     /**
      * Get pinned messages for a contact (most recent first)

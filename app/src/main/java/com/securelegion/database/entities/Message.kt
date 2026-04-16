@@ -334,6 +334,15 @@ data class Message(
      */
     val replyToMessageId: String? = null,
     val isEdited: Boolean = false,
+
+    /**
+     * Raw TTL in seconds for disappearing messages (start-on-read).
+     * When set, the message has a pending self-destruct timer that hasn't
+     * started yet. On the next chat open, this is converted to an absolute
+     * `selfDestructAt = now + (ttl * 1000)` and this field is cleared.
+     */
+    val selfDestructTtl: Double? = null,
+
     val isPinned: Boolean = false
 ) {
     companion object {

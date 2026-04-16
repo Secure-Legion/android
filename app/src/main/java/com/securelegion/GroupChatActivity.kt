@@ -6,8 +6,6 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.os.Build
 import android.os.Bundle
-import android.text.Editable
-import android.text.TextWatcher
 import android.util.Log
 import android.view.View
 import android.widget.EditText
@@ -75,7 +73,6 @@ class GroupChatActivity : BaseActivity() {
     private var groupName: String = "Group"
     private var isBottomSheetVisible = false
     private var isPendingInvite = false
-    private var isShowingSendButton = false
     private lateinit var messageAdapter: GroupMessageAdapter
 
     // Local device ID hex (computed once on load)
@@ -194,7 +191,7 @@ class GroupChatActivity : BaseActivity() {
                 try {
                     withContext(Dispatchers.IO) {
                         CrdtGroupManager.getInstance(this@GroupChatActivity)
-                            .requestSyncToAllPeers(currentGroupId)
+                            .fullSync(currentGroupId)
                     }
                     loadMessages()
                     refreshMemberCount()
@@ -204,32 +201,9 @@ class GroupChatActivity : BaseActivity() {
             }
         }
 
-        plusButton.setOnClickListener { showBottomSheet() }
-
-        // Send/Mic button — sends text when text present, voice coming soon
-        sendButton.setOnClickListener {
-            if (isShowingSendButton) {
-                sendMessage()
-            } else {
-                ThemedToast.show(this, "Voice messages - Coming soon")
-            }
-        }
-
-        // Monitor text input to switch between mic and send icon
-        messageInput.addTextChangedListener(object : TextWatcher {
-            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
-            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
-                val hasText = !s.isNullOrBlank()
-                if (hasText && !isShowingSendButton) {
-                    sendButtonIcon.setImageResource(R.drawable.ic_send)
-                    isShowingSendButton = true
-                } else if (!hasText && isShowingSendButton) {
-                    sendButtonIcon.setImageResource(R.drawable.ic_mic)
-                    isShowingSendButton = false
-                }
-            }
-            override fun afterTextChanged(s: Editable?) {}
-        })
+        // Plus button is hidden for groups for now — no click listener needed.
+        // Send button — voice for groups is disabled for now, always sends text.
+        sendButton.setOnClickListener { sendMessage() }
 
         bottomSheetOverlay.setOnClickListener { hideBottomSheet() }
 
@@ -693,9 +667,10 @@ class GroupChatActivity : BaseActivity() {
             bottomSheet.dismiss()
             sendStickerMessage(assetPath)
         }
-        mediaKeyboard.setOnGifSelectedListener { assetPath ->
+        mediaKeyboard.setOnGifSelectedListener { _ ->
             bottomSheet.dismiss()
-            sendStickerMessage(assetPath)
+            // TODO: Group image/GIF send not yet implemented
+            com.securelegion.utils.ThemedToast.show(this, "GIFs in groups coming soon")
         }
         mediaKeyboard.setOnEmojiSelectedListener { emoji ->
             val start = messageInput.selectionStart.coerceAtLeast(0)
@@ -857,6 +832,24 @@ class GroupChatActivity : BaseActivity() {
             registerReceiver(groupMessageReceiver, filter)
         }
 
+        // Tell TorService this group is on-screen so new-message notifications
+        // for it are suppressed while the user is here.
+        com.securelegion.services.TorService.activeGroupId = groupId
+
+        // Dismiss any lingering notifications for this group (e.g. queued while
+        // the user was elsewhere but tapped into the group list).
+        groupId?.let { gid ->
+            try {
+                val nm = getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
+                // Group-message notifications use a group key of "GROUP_MESSAGES_${groupId}"
+                for (notif in nm.activeNotifications) {
+                    if (notif.notification.group == "GROUP_MESSAGES_$gid") {
+                        nm.cancel(notif.id)
+                    }
+                }
+            } catch (_: Exception) { }
+        }
+
         refreshMemberCount()
 
         // Clear unread badge when user opens this group chat
@@ -867,21 +860,29 @@ class GroupChatActivity : BaseActivity() {
             } catch (_: Exception) { }
         }
 
-        // Pull-based sync: request missing ops from peers on every resume
+        // Full sync on resume: flush pending + routing + pull ops + profile photo
         lifecycleScope.launch {
             try {
                 kotlinx.coroutines.withContext(Dispatchers.IO) {
                     CrdtGroupManager.getInstance(this@GroupChatActivity)
-                        .requestSyncToAllPeers(currentGroupId)
+                        .fullSync(currentGroupId)
                 }
+                loadMessages()
+                refreshMemberCount()
             } catch (e: Exception) {
-                Log.w(TAG, "Sync request failed (non-fatal)", e)
+                Log.w(TAG, "Full sync failed (non-fatal)", e)
             }
         }
     }
 
     override fun onPause() {
         super.onPause()
+        // Clear active-group marker only if it still points at us — avoids
+        // clobbering if another GroupChatActivity already took over (e.g. deep
+        // linking from one group notification while another is on-screen).
+        if (com.securelegion.services.TorService.activeGroupId == groupId) {
+            com.securelegion.services.TorService.activeGroupId = null
+        }
         try {
             unregisterReceiver(groupMessageReceiver)
         } catch (e: Exception) {

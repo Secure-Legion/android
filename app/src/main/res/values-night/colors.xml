@@ -80,17 +80,31 @@
 
     <!-- Reply/Edit UI -->
     <color name="reply_accent">#1E90FF</color>
-    <color name="reply_quote_bg_sent">#1E90FF</color>
+    <!-- Dark mode: the sent bubble is solid blue so a blue quote bg vanishes.
+         Use the same dark gray as the received-bubble reply quote (#1A1A1A,
+         matches `surface_variant`) so the embedded quote reads as muted gray
+         rather than harsh black. -->
+    <color name="reply_quote_bg_sent">#1A1A1A</color>
     <color name="reply_quote_bg_received">#1A1A1A</color>
     <color name="reply_quote_bg_self">#1E90FF</color>
     <color name="reply_quote_border">#1E90FF</color>
+    <!-- Split variants: sent bubble is solid blue in dark mode so the separator
+         and label must be a light contrast color; received bubble is dark so
+         the blue accent still reads. -->
+    <color name="reply_quote_border_sent">#FFFFFF</color>
+    <color name="reply_quote_border_received">#1E90FF</color>
     <color name="reply_quote_text_sent">#BBFFFFFF</color>
     <color name="reply_quote_text_received">#AAAAAA</color>
     <color name="reply_quote_label_sent">#FFFFFF</color>
-    <color name="reply_quote_label_received">#CCCCCC</color>
+    <color name="reply_quote_label_received">#1E90FF</color>
     <color name="edit_accent">#F59E0B</color>
     <color name="edit_banner_bg">#1AF59E0B</color>
     <color name="edited_label">#1E90FF</color>
+    <!-- Sent bubble is solid blue in dark mode — blue-on-blue makes the
+         "(edited)" label invisible (regression from the dark-mode redesign).
+         Match iOS's muted-white (~50% white) for sent, keep blue for received. -->
+    <color name="edited_label_sent">#80FFFFFF</color>
+    <color name="edited_label_received">#9CA3AF</color>
 
     <!-- Silver Gradient for Crypto Amounts -->
     <color name="silver_gradient_start">#E8E8E8</color>

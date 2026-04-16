@@ -29,4 +29,11 @@ interface PendingPingDao {
 
     @Query("SELECT COUNT(*) FROM pending_pings")
     fun count(): Int
+
+    /**
+     * Delete all pending ping rows whose signer matches the given Ed25519 pubkey.
+     * Used on contact delete to drop retry/verification state tied to that peer.
+     */
+    @Query("DELETE FROM pending_pings WHERE signerPubKey = :signerPubKey")
+    fun deleteBySigner(signerPubKey: ByteArray)
 }

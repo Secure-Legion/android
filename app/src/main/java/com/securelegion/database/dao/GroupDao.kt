@@ -128,6 +128,14 @@ interface GroupDao {
     suspend fun incrementUnreadCount(groupId: String)
 
     /**
+     * Bulk-increment unread count for a group by a specific amount.
+     * Used when a single CRDT op batch delivers multiple new messages so
+     * we don't issue one UPDATE per message.
+     */
+    @Query("UPDATE groups SET unreadCount = unreadCount + :delta WHERE groupId = :groupId")
+    suspend fun addUnreadCount(groupId: String, delta: Int)
+
+    /**
      * Clear unread count for a group (when user opens chat)
      */
     @Query("UPDATE groups SET unreadCount = 0 WHERE groupId = :groupId")

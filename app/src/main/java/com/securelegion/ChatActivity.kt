@@ -138,6 +138,11 @@ class ChatActivity : BaseActivity() {
     private var replyToMessageId: String? = null
     private var editingMessageId: String? = null
     private var editingOriginalText: String? = null
+
+    // Disappearing message TTL in seconds (null = off)
+    private var selfDestructTtlSeconds: Double? = null
+    private lateinit var timerButton: View
+    private lateinit var timerButtonIcon: ImageView
     private lateinit var replyEditPreviewBar: LinearLayout
     private lateinit var previewAccentBar: View
     private lateinit var previewLabel: TextView
@@ -812,6 +817,11 @@ class ChatActivity : BaseActivity() {
         previewDismissButton = findViewById(R.id.previewDismissButton)
         previewDismissButton.setOnClickListener { clearReplyEditState() }
 
+        // Disappearing messages timer button
+        timerButton = findViewById(R.id.timerButton)
+        timerButtonIcon = findViewById(R.id.timerButtonIcon)
+        timerButton.setOnClickListener { showTimerPicker() }
+
         // Back button
         findViewById<View>(R.id.backButton).setOnClickListener {
             finish()
@@ -1142,10 +1152,11 @@ class ChatActivity : BaseActivity() {
             sendStickerMessage(assetPath)
         }
 
-        mediaKeyboardPanel.setOnGifSelectedListener { gifAssetPath ->
+        mediaKeyboardPanel.setOnGifSelectedListener { gifBytes ->
             hideMediaKeyboard()
-            // System GIFs are bundled assets - send as text code like stickers
-            sendStickerMessage(gifAssetPath)
+            // Send raw GIF bytes via the image pipeline (matches iOS parity).
+            // No compression — preserves animation frames.
+            sendImageMessage(gifBytes)
         }
 
         mediaKeyboardPanel.setOnSwipeDismissListener {
@@ -1381,8 +1392,8 @@ class ChatActivity : BaseActivity() {
                 val imageSizeKB = compressedImageData.size / 1024
                 Log.d(TAG, "Edited image size: ${imageSizeKB}KB")
 
-                if (imageSizeKB > 500) {
-                    ThemedToast.show(this@ChatActivity, "Image too large (${imageSizeKB}KB). Max 500KB.")
+                if (imageSizeKB > 4096) {
+                    ThemedToast.show(this@ChatActivity, "Image too large (${imageSizeKB}KB). Max 4MB.")
                     return@launch
                 }
 
@@ -1412,8 +1423,8 @@ class ChatActivity : BaseActivity() {
                 val imageSizeKB = compressedImageData.size / 1024
                 Log.d(TAG, "Compressed image size: ${imageSizeKB}KB")
 
-                if (imageSizeKB > 500) {
-                    ThemedToast.show(this@ChatActivity, "Image too large (${imageSizeKB}KB). Max 500KB.")
+                if (imageSizeKB > 4096) {
+                    ThemedToast.show(this@ChatActivity, "Image too large (${imageSizeKB}KB). Max 4MB.")
                     return@launch
                 }
 
@@ -1429,6 +1440,28 @@ class ChatActivity : BaseActivity() {
 
     private fun compressImage(uri: Uri): ByteArray? {
         try {
+            // GIF short-circuit: detect by magic bytes and return raw to preserve animation.
+            // BitmapFactory would decode to first frame only — kills the animation.
+            val gifCheck = contentResolver.openInputStream(uri)?.use { stream ->
+                val header = ByteArray(4)
+                val read = stream.read(header)
+                if (read >= 4 &&
+                    header[0] == 0x47.toByte() && header[1] == 0x49.toByte() &&
+                    header[2] == 0x46.toByte() && header[3] == 0x38.toByte()) {
+                    // It's a GIF — read the entire file and return raw
+                    val rest = stream.readBytes()
+                    header + rest
+                } else null
+            }
+            if (gifCheck != null) {
+                if (gifCheck.size > 4_194_304) {
+                    Log.w(TAG, "GIF too large: ${gifCheck.size / 1024}KB")
+                    return null
+                }
+                Log.d(TAG, "GIF detected — sending raw (${gifCheck.size / 1024}KB)")
+                return gifCheck
+            }
+
             // Get input stream
             val inputStream = contentResolver.openInputStream(uri) ?: return null
 
@@ -1580,6 +1613,14 @@ class ChatActivity : BaseActivity() {
     }
 
     private fun sendImageMessage(imageData: ByteArray) {
+        // Enforce 1.5 MB cap (matches iOS parity — image + GIF wire limit)
+        val maxImageBytes = 1_572_864
+        if (imageData.size > maxImageBytes) {
+            ThemedToast.show(this, "Image too large (max 1.5 MB)")
+            Log.w(TAG, "Image rejected: ${imageData.size} bytes > $maxImageBytes")
+            return
+        }
+
         lifecycleScope.launch {
             try {
                 val imageBase64 = Base64.encodeToString(imageData, Base64.NO_WRAP)
@@ -1655,9 +1696,11 @@ class ChatActivity : BaseActivity() {
                 dialog.dismiss()
             }
 
-            // Save button
+            // Save button — hand the ORIGINAL decrypted bytes to the saver so
+            // GIFs keep their animation instead of being re-encoded as a
+            // single-frame JPEG.
             view.findViewById<View>(R.id.saveImageButton).setOnClickListener {
-                saveImageToGallery(bitmap)
+                saveImageToGallery(imageBytes, bitmap)
             }
 
             dialog.setContentView(view)
@@ -1693,12 +1736,28 @@ class ChatActivity : BaseActivity() {
         }
     }
 
-    private fun saveImageToGallery(bitmap: android.graphics.Bitmap) {
+    /**
+     * Save an image to the Pictures/SecureLegion folder.
+     *
+     * GIFs (detected via the "GIF8" magic header on the decrypted bytes)
+     * are written byte-for-byte with MIME `image/gif` so animation is
+     * preserved. Everything else is JPEG-encoded from the decoded bitmap
+     * as before.
+     */
+    private fun saveImageToGallery(originalBytes: ByteArray, bitmap: android.graphics.Bitmap) {
         try {
-            val filename = "SecureLegion_${System.currentTimeMillis()}.jpg"
+            val isGif = originalBytes.size >= 4 &&
+                originalBytes[0] == 'G'.code.toByte() &&
+                originalBytes[1] == 'I'.code.toByte() &&
+                originalBytes[2] == 'F'.code.toByte() &&
+                originalBytes[3] == '8'.code.toByte()
+
+            val filename = "SecureLegion_${System.currentTimeMillis()}." + if (isGif) "gif" else "jpg"
+            val mime = if (isGif) "image/gif" else "image/jpeg"
+
             val contentValues = android.content.ContentValues().apply {
                 put(android.provider.MediaStore.Images.Media.DISPLAY_NAME, filename)
-                put(android.provider.MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
+                put(android.provider.MediaStore.Images.Media.MIME_TYPE, mime)
                 put(android.provider.MediaStore.Images.Media.RELATIVE_PATH, android.os.Environment.DIRECTORY_PICTURES + "/SecureLegion")
             }
 
@@ -1707,10 +1766,14 @@ class ChatActivity : BaseActivity() {
 
             if (imageUri != null) {
                 resolver.openOutputStream(imageUri)?.use { outputStream ->
-                    bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 95, outputStream)
+                    if (isGif) {
+                        outputStream.write(originalBytes)
+                    } else {
+                        bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 95, outputStream)
+                    }
                 }
-                ThemedToast.show(this, "Image saved to gallery")
-                Log.i(TAG, "Image saved to gallery: $filename")
+                ThemedToast.show(this, if (isGif) "GIF saved to gallery" else "Image saved to gallery")
+                Log.i(TAG, "Image saved to gallery: $filename (gif=$isGif)")
             } else {
                 ThemedToast.show(this, "Failed to save image")
                 Log.e(TAG, "Failed to create MediaStore entry")
@@ -1858,6 +1921,18 @@ class ChatActivity : BaseActivity() {
             CAMERA_PERMISSION_REQUEST_CODE -> {
                 if (granted) {
                     // Camera permission was granted, retry camera action
+                }
+            }
+            com.securelegion.views.GifPickerView.REQUEST_CODE_MEDIA_PERMISSION -> {
+                if (granted) {
+                    // Refresh the GIF picker in-place so the grid loads without reopening
+                    try {
+                        findViewById<com.securelegion.views.MediaKeyboardView>(R.id.mediaKeyboardPanel)
+                            ?.findViewById<com.securelegion.views.GifPickerView>(R.id.gifPicker)
+                            ?.refreshPickerState()
+                    } catch (_: Exception) {}
+                } else {
+                    ThemedToast.show(this, "GIF access denied — enable in Settings")
                 }
             }
         }
@@ -2026,6 +2101,22 @@ class ChatActivity : BaseActivity() {
     private suspend fun loadMessages() {
         try {
             Log.d(TAG, "Loading messages for contact: $contactId")
+
+            // Activate any pending self-destruct TTLs (start-on-read behavior)
+            // Converts selfDestructTtl seconds → absolute selfDestructAt timestamp
+            withContext(Dispatchers.IO) {
+                try {
+                    val activated = database.messageDao().activatePendingTtls(
+                        contactId, System.currentTimeMillis()
+                    )
+                    if (activated > 0) {
+                        Log.i(TAG, "Activated $activated pending self-destruct timers for contact $contactId")
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "Failed to activate pending TTLs", e)
+                }
+            }
+
             val messages = withContext(Dispatchers.IO) {
                 messageService.getMessagesForContact(contactId)
             }
@@ -2189,8 +2280,8 @@ class ChatActivity : BaseActivity() {
     private fun showReactionPicker(message: Message, anchorView: View) {
         val choices = listOf(
             "👍", "❤️", "😂", "😮", "😢", "🔥", "🙏", "👎",
-            "🎉", "💯", "👀", "💀", "🤔", "😍", "🥺", "😤",
-            "✅", "❌", "⭐", "💪", "🤝", "🫡", "😈", "💔"
+            "🎉", "💯", "👀", "💀", "🤔", "😍", "😤", "✅",
+            "❌", "⭐", "💪", "🤝", "🙌", "😈", "💔"
         )
         val currentMine = myReactionByMessageId[message.messageId]
         val pickerView = LayoutInflater.from(this).inflate(R.layout.dialog_reaction_picker, null)
@@ -2340,13 +2431,17 @@ class ChatActivity : BaseActivity() {
         lifecycleScope.launch {
             try {
 
+                // Self-destruct TTL in seconds (from picker, or 24h fallback if intent-triggered)
+                val ttlSeconds: Double? = selfDestructTtlSeconds
+                    ?: if (enableSelfDestruct) 24.0 * 60.0 * 60.0 else null
+
                 // Send message with security options
                 // Use callback to update UI immediately when message is saved (before Tor send)
                 val result = messageService.sendMessage(
                     contactId = contactId,
                     plaintext = messageText,
                     replyToMessageId = currentReplyId,
-                    selfDestructDurationMs = if (enableSelfDestruct) 24 * 60 * 60 * 1000L else null,
+                    selfDestructDurationMs = ttlSeconds?.let { (it * 1000).toLong() },
                     enableReadReceipt = enableReadReceipt,
                     onMessageSaved = { savedMessage ->
                         // Message saved to DB - update UI immediately to show PENDING message
@@ -2360,6 +2455,31 @@ class ChatActivity : BaseActivity() {
 
                 if (result.isFailure) {
                     Log.e(TAG, "Failed to send message", result.exceptionOrNull())
+                }
+
+                // After message send, enqueue the 0x13 SELF_DESTRUCT control
+                // to the receiver (start-on-read: receiver's TTL kicks in when
+                // they open the chat).
+                //
+                // Delivery is handled by SelfDestructControlWorker via WorkManager
+                // so it survives process kill — if Android terminates the app
+                // before Tor finishes the send, WorkManager resumes on next boot
+                // and finishes delivering the TTL. A detached coroutine would
+                // lose it. The worker wraps MessageService.sendSelfDestructControl,
+                // which already re-encrypts per internal retry so each attempt
+                // lands as a fresh in-order message on the peer.
+                if (ttlSeconds != null && result.isSuccess) {
+                    val sentMessage = result.getOrNull()
+                    if (sentMessage != null) {
+                        val (targetId, blobId) = resolveReactionTargetIds(sentMessage)
+                        com.securelegion.workers.SelfDestructControlWorker.enqueue(
+                            context = applicationContext,
+                            contactId = contactId,
+                            targetMessageId = targetId,
+                            targetBlobId = blobId,
+                            ttlSeconds = ttlSeconds
+                        )
+                    }
                 }
             } catch (e: Exception) {
                 // Silent failure - message saved to database, will retry later
@@ -2459,6 +2579,34 @@ class ChatActivity : BaseActivity() {
         sendButtonIcon.setImageResource(if (hasText) R.drawable.ic_send else R.drawable.ic_mic)
     }
 
+    private fun showTimerPicker() {
+        val labels = arrayOf("Off", "5 minutes", "1 hour", "24 hours", "7 days")
+        val seconds = arrayOf<Double?>(null, 300.0, 3600.0, 86400.0, 604800.0)
+        val currentIdx = seconds.indexOf(selfDestructTtlSeconds).coerceAtLeast(0)
+
+        android.app.AlertDialog.Builder(this)
+            .setTitle("Disappearing messages")
+            .setSingleChoiceItems(labels, currentIdx) { dialog, which ->
+                selfDestructTtlSeconds = seconds[which]
+                updateTimerIcon()
+                val label = if (selfDestructTtlSeconds == null) "Off" else labels[which]
+                ThemedToast.show(this, "Disappearing messages: $label")
+                dialog.dismiss()
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun updateTimerIcon() {
+        // Highlight timer icon when active (blue) vs inactive (muted)
+        val tint = if (selfDestructTtlSeconds != null) {
+            getColor(R.color.reply_accent)
+        } else {
+            getColor(R.color.text_muted)
+        }
+        timerButtonIcon.setColorFilter(tint)
+    }
+
     private fun sendEditMessage(messageId: String, newText: String) {
         lifecycleScope.launch {
             try {
@@ -2514,6 +2662,22 @@ class ChatActivity : BaseActivity() {
                     Log.d(TAG, "Deleted message ${message.id}")
                 }
 
+                // Send 0x14 DELETE wire control to peer (only for messages sent by us — iOS parity)
+                if (message.isSentByMe) {
+                    lifecycleScope.launch(Dispatchers.IO) {
+                        try {
+                            val (targetMessageId, targetBlobId) = resolveReactionTargetIds(message)
+                            messageService.sendDeleteMessage(
+                                contactId = contactId,
+                                targetMessageId = targetMessageId,
+                                targetBlobId = targetBlobId
+                            )
+                        } catch (e: Exception) {
+                            Log.w(TAG, "Failed to send delete wire sync", e)
+                        }
+                    }
+                }
+
                 // Update UI on main thread
                 withContext(Dispatchers.Main) {
                     loadMessages()
@@ -2540,6 +2704,22 @@ class ChatActivity : BaseActivity() {
                     this@ChatActivity,
                     if (newPinned) "Message pinned" else "Message unpinned"
                 )
+
+                // Send 0x15 PIN wire control to peer so they mirror the state (iOS parity)
+                lifecycleScope.launch(Dispatchers.IO) {
+                    try {
+                        val (targetMessageId, targetBlobId) = resolveReactionTargetIds(message)
+                        val messageService = MessageService(this@ChatActivity)
+                        messageService.sendPinMessage(
+                            contactId = contactId,
+                            targetMessageId = targetMessageId,
+                            targetBlobId = targetBlobId,
+                            pinned = newPinned
+                        )
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Failed to send pin wire sync", e)
+                    }
+                }
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to pin/unpin message", e)
             }

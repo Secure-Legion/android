@@ -512,9 +512,12 @@ class MessageService(private val context: Context) {
             val voiceRecorder = com.securelegion.utils.VoiceRecorder(context)
             val voiceFilePath = voiceRecorder.saveVoiceMessage(audioBytes, durationSeconds)
 
-            // Calculate self-destruct timestamp if custom duration provided
+            // Self-destruct: store as PENDING TTL (start-on-read), not absolute timestamp.
+            // iOS parity — timer starts when user opens chat (activatePendingTtls), not when sent.
+            // This ensures the sender also sees the timer and their copy disappears in sync.
             val currentTime = System.currentTimeMillis()
-            val selfDestructAt = selfDestructDurationMs?.let { currentTime + it }
+            val selfDestructTtlSeconds: Double? = selfDestructDurationMs?.let { it / 1000.0 }
+            val selfDestructAt: Long? = null // will be set by activatePendingTtls on next chat load
 
             // Generate Ping ID and timestamp ONCE (never changes, prevents ghost pings)
             val pingId = generatePingId() // 24-byte nonce as hex string
@@ -536,6 +539,7 @@ class MessageService(private val context: Context) {
                 nonceBase64 = nonceBase64,
                 messageNonce = messageNonce, // CRITICAL: Stored once, reused on all retries
                 selfDestructAt = selfDestructAt,
+                selfDestructTtl = selfDestructTtlSeconds, // Pending TTL (start-on-read)
                 requiresReadReceipt = false, // Voice messages don't need read receipts
                 pingId = pingId,
                 pingTimestamp = pingTimestamp,
@@ -701,9 +705,12 @@ class MessageService(private val context: Context) {
             val signature = RustBridge.signData(messageData, ourPrivateKey)
             val signatureBase64 = Base64.encodeToString(signature, Base64.NO_WRAP)
 
-            // Calculate self-destruct timestamp if custom duration provided
+            // Self-destruct: store as PENDING TTL (start-on-read), not absolute timestamp.
+            // iOS parity — timer starts when user opens chat (activatePendingTtls), not when sent.
+            // This ensures the sender also sees the timer and their copy disappears in sync.
             val currentTime = System.currentTimeMillis()
-            val selfDestructAt = selfDestructDurationMs?.let { currentTime + it }
+            val selfDestructTtlSeconds: Double? = selfDestructDurationMs?.let { it / 1000.0 }
+            val selfDestructAt: Long? = null // will be set by activatePendingTtls on next chat load
 
             // Generate Ping ID for persistent messaging
             val pingId = generatePingId() // 24-byte nonce as hex string
@@ -734,6 +741,7 @@ class MessageService(private val context: Context) {
                 nonceBase64 = nonceBase64,
                 messageNonce = messageNonce, // CRITICAL: Stored once, reused on all retries
                 selfDestructAt = selfDestructAt,
+                selfDestructTtl = selfDestructTtlSeconds, // Pending TTL (start-on-read)
                 requiresReadReceipt = false, // Image messages don't need read receipts
                 pingId = pingId,
                 pingTimestamp = pingTimestamp,
@@ -871,6 +879,11 @@ class MessageService(private val context: Context) {
             val currentTime = System.currentTimeMillis()
             val pingId = generatePingId()
 
+            val blobMessageId = run {
+                val hash = java.security.MessageDigest.getInstance("SHA-256").digest(encryptedBytes)
+                "blob_" + Base64.encodeToString(hash, Base64.NO_WRAP).take(28)
+            }
+
             val message = Message(
                 contactId = contactId,
                 messageId = messageId,
@@ -889,7 +902,8 @@ class MessageService(private val context: Context) {
                 pingTimestamp = currentTime,
                 encryptedPayload = encryptedBase64,
                 retryCount = 0,
-                lastRetryTimestamp = currentTime
+                lastRetryTimestamp = currentTime,
+                correlationId = blobMessageId
             )
 
             val savedMessageId = database.withTransaction {
@@ -1097,6 +1111,261 @@ class MessageService(private val context: Context) {
     }
 
     /**
+     * Send a 0x13 SELF_DESTRUCT control message telling the receiver to start a
+     * disappearing-message TTL on the target message (start-on-read behavior).
+     *
+     * Fire-and-forget — no DB row, no retry. Uses same pattern as reactions (0x10 outer wire).
+     *
+     * @param targetMessageId The deterministic messageId of the message to apply TTL to
+     * @param targetBlobId The blob_<hash> ID (for fast-mode resolution). REQUIRED when available.
+     * @param ttlSeconds Time-to-live in seconds (300 = 5min, 3600 = 1hr, 86400 = 24hr, 604800 = 7d)
+     */
+    suspend fun sendSelfDestructControl(
+        contactId: Long,
+        targetMessageId: String,
+        targetBlobId: String?,
+        ttlSeconds: Double
+    ): Result<Unit> = withContext(Dispatchers.IO) {
+        try {
+            val dbPassphrase = keyManager.getDatabasePassphrase()
+            val database = SecureLegionDatabase.getInstance(context, dbPassphrase)
+            val contact = database.contactDao().getContactById(contactId)
+                ?: return@withContext Result.failure(Exception("Contact not found"))
+
+            val onionAddress = contact.messagingOnion
+                ?: return@withContext Result.failure(Exception("No messaging onion"))
+
+            // Build JSON payload — same bytes across retries, but each retry is
+            // encrypted under a NEW chain-key counter so it arrives at the peer
+            // as a distinct in-order message.
+            val payload = org.json.JSONObject().apply {
+                put("target_message_id", targetMessageId)
+                if (!targetBlobId.isNullOrBlank()) put("target_blob_id", targetBlobId)
+                put("ttl", ttlSeconds)
+            }.toString()
+
+            // Prepend 0x13 inner-type byte once — the plaintext is identical
+            // across retries, so the peer's handler sees the same control every
+            // time; only the ciphertext/sequence differ per retry.
+            val plaintextWithType = byteArrayOf(0x13) + payload.toByteArray(Charsets.UTF_8)
+            val plaintextForEncryption = String(plaintextWithType, Charsets.ISO_8859_1)
+
+            // Retry strategy — RE-ENCRYPT per attempt, not send-same-ciphertext.
+            //
+            // WHY re-encrypt: iOS's decrypt path evolves its recv chain on the
+            // first successful arrival (PATH 4 in `MessageReceiver.swift`) and
+            // does NOT store the used key in the skipped-key table. A duplicate
+            // arrival of the same ciphertext at the same sequence lands in
+            // PATH 1 (past message) with no skipped key available, so the
+            // decrypt silently fails and `handleSelfDestructPayload` is never
+            // re-invoked. That defeated the point of retrying, particularly for
+            // the race case where the self-destruct arrives before the main
+            // TEXT and the first resolution attempt fails.
+            //
+            // With a fresh encryption (new counter) per retry, every attempt is
+            // a distinct in-order message on iOS; each one re-runs the resolve
+            // + apply, so whichever attempt arrives AFTER the main TEXT wins.
+            // iOS's `updateSelfDestructTtl` is idempotent, so double-apply is
+            // harmless.
+            val maxAttempts = 5
+            val backoffMs = longArrayOf(0L, 1_000L, 3_000L, 8_000L, 20_000L)
+            var lastError: String? = null
+
+            for (attempt in 0 until maxAttempts) {
+                if (backoffMs[attempt] > 0) {
+                    kotlinx.coroutines.delay(backoffMs[attempt])
+                }
+                // Give Tor a short window to come up if it's currently closed.
+                TorService.getTransportGate()?.awaitOpen(
+                    com.securelegion.network.TransportGate.TIMEOUT_QUICK_MS
+                )
+
+                // Re-load the key chain and encrypt fresh each attempt so we
+                // advance the counter even if the send below fails. A failed
+                // send leaves a sequence gap that the receiver's skipped-keys
+                // table tolerates; a successful later retry will be recognized
+                // as a new in-order delivery.
+                val keyChain = KeyChainManager.getKeyChain(context, contactId)
+                    ?: throw Exception("Key chain not found for contact ${contact.displayName}")
+
+                val encrypted = RustBridge.encryptMessageWithEvolution(
+                    plaintextForEncryption,
+                    keyChain.sendChainKeyBytes,
+                    keyChain.sendCounter
+                )
+
+                database.contactKeyChainDao().updateSendChainKey(
+                    contactId = contactId,
+                    newSendChainKeyBase64 = android.util.Base64.encodeToString(encrypted.evolvedChainKey, android.util.Base64.NO_WRAP),
+                    newSendCounter = keyChain.sendCounter + 1,
+                    timestamp = System.currentTimeMillis()
+                )
+
+                val success = try {
+                    RustBridge.sendMessageBlob(
+                        onionAddress,
+                        encrypted.ciphertext,
+                        0x10.toByte() // Same outer wire type as reactions
+                    )
+                } catch (e: Exception) {
+                    lastError = e.message
+                    Log.w(TAG, "SELF_DESTRUCT attempt ${attempt + 1}/$maxAttempts threw: ${e.message}")
+                    false
+                }
+
+                if (success) {
+                    Log.i(TAG, "SELF_DESTRUCT control delivered on attempt ${attempt + 1}: target=${targetMessageId.take(16)}, ttl=${ttlSeconds}s, seq=${keyChain.sendCounter}")
+                    return@withContext Result.success(Unit)
+                }
+
+                Log.w(TAG, "SELF_DESTRUCT attempt ${attempt + 1}/$maxAttempts failed for ${targetMessageId.take(16)} (seq=${keyChain.sendCounter})")
+            }
+
+            Log.e(TAG, "SELF_DESTRUCT control gave up after $maxAttempts attempts: target=${targetMessageId.take(16)}, lastError=$lastError")
+            Result.failure(Exception("Self-destruct control delivery failed after $maxAttempts attempts"))
+        } catch (e: Exception) {
+            Log.e(TAG, "sendSelfDestructControl failed", e)
+            Result.failure(e)
+        }
+    }
+
+    /**
+     * Send a 0x14 DELETE control message telling the receiver to delete a message
+     * (delete-for-everyone). Fire-and-forget, idempotent — no ACK, no retry.
+     *
+     * Spec: only the original sender of a message can delete it for everyone.
+     * The sender's local copy is deleted first, then the wire message is fired.
+     *
+     * @param contactId Recipient contact
+     * @param targetMessageId The deterministic messageId of the message to delete
+     * @param targetBlobId Optional blob_<hash> ID for fast-mode resolution
+     */
+    suspend fun sendDeleteMessage(
+        contactId: Long,
+        targetMessageId: String,
+        targetBlobId: String?
+    ): Result<Unit> = withContext(Dispatchers.IO) {
+        try {
+            val dbPassphrase = keyManager.getDatabasePassphrase()
+            val database = SecureLegionDatabase.getInstance(context, dbPassphrase)
+            val contact = database.contactDao().getContactById(contactId)
+                ?: return@withContext Result.failure(Exception("Contact not found"))
+
+            // Build JSON payload
+            val payload = org.json.JSONObject().apply {
+                put("target_message_id", targetMessageId)
+                if (!targetBlobId.isNullOrBlank()) put("target_blob_id", targetBlobId)
+            }.toString()
+
+            // Prepend 0x14 prefix
+            val plaintextWithType = byteArrayOf(0x14) + payload.toByteArray(Charsets.UTF_8)
+            val plaintextForEncryption = String(plaintextWithType, Charsets.ISO_8859_1)
+
+            // Encrypt with key chain evolution
+            val keyChain = KeyChainManager.getKeyChain(context, contactId)
+                ?: throw Exception("Key chain not found for contact ${contact.displayName}")
+
+            val result = RustBridge.encryptMessageWithEvolution(
+                plaintextForEncryption,
+                keyChain.sendChainKeyBytes,
+                keyChain.sendCounter
+            )
+
+            // Persist evolved send chain key
+            database.contactKeyChainDao().updateSendChainKey(
+                contactId = contactId,
+                newSendChainKeyBase64 = android.util.Base64.encodeToString(result.evolvedChainKey, android.util.Base64.NO_WRAP),
+                newSendCounter = keyChain.sendCounter + 1,
+                timestamp = System.currentTimeMillis()
+            )
+
+            // Send via Tor (fire-and-forget). Outer wire 0x03 (TEXT) to match iOS parity.
+            val onionAddress = contact.messagingOnion ?: return@withContext Result.failure(Exception("No messaging onion"))
+            val success = RustBridge.sendMessageBlob(
+                onionAddress,
+                result.ciphertext,
+                0x03.toByte()
+            )
+            Log.i(TAG, "DELETE control sent: target=${targetMessageId.take(16)}, success=$success")
+
+            if (success) Result.success(Unit)
+            else Result.failure(Exception("Delete control delivery failed"))
+        } catch (e: Exception) {
+            Log.e(TAG, "sendDeleteMessage failed", e)
+            Result.failure(e)
+        }
+    }
+
+    /**
+     * Send a 0x15 PIN control message telling the receiver to pin/unpin a message
+     * (pin-for-everyone). Fire-and-forget, idempotent — no ACK, no retry.
+     *
+     * Unlike delete, pin does NOT require isSentByMe — either side can pin.
+     *
+     * @param contactId Recipient contact
+     * @param targetMessageId The deterministic messageId of the target
+     * @param targetBlobId Optional blob_<hash> ID for fast-mode resolution
+     * @param pinned true to pin, false to unpin
+     */
+    suspend fun sendPinMessage(
+        contactId: Long,
+        targetMessageId: String,
+        targetBlobId: String?,
+        pinned: Boolean
+    ): Result<Unit> = withContext(Dispatchers.IO) {
+        try {
+            val dbPassphrase = keyManager.getDatabasePassphrase()
+            val database = SecureLegionDatabase.getInstance(context, dbPassphrase)
+            val contact = database.contactDao().getContactById(contactId)
+                ?: return@withContext Result.failure(Exception("Contact not found"))
+
+            // Build JSON payload
+            val payload = org.json.JSONObject().apply {
+                put("target_message_id", targetMessageId)
+                if (!targetBlobId.isNullOrBlank()) put("target_blob_id", targetBlobId)
+                put("pinned", pinned)
+            }.toString()
+
+            // Prepend 0x15 prefix
+            val plaintextWithType = byteArrayOf(0x15) + payload.toByteArray(Charsets.UTF_8)
+            val plaintextForEncryption = String(plaintextWithType, Charsets.ISO_8859_1)
+
+            // Encrypt with key chain evolution
+            val keyChain = KeyChainManager.getKeyChain(context, contactId)
+                ?: throw Exception("Key chain not found for contact ${contact.displayName}")
+
+            val result = RustBridge.encryptMessageWithEvolution(
+                plaintextForEncryption,
+                keyChain.sendChainKeyBytes,
+                keyChain.sendCounter
+            )
+
+            // Persist evolved send chain key
+            database.contactKeyChainDao().updateSendChainKey(
+                contactId = contactId,
+                newSendChainKeyBase64 = android.util.Base64.encodeToString(result.evolvedChainKey, android.util.Base64.NO_WRAP),
+                newSendCounter = keyChain.sendCounter + 1,
+                timestamp = System.currentTimeMillis()
+            )
+
+            // Send via Tor (fire-and-forget). Use outer wire 0x03 (TEXT) to match iOS parity.
+            val onionAddress = contact.messagingOnion ?: return@withContext Result.failure(Exception("No messaging onion"))
+            val success = RustBridge.sendMessageBlob(
+                onionAddress,
+                result.ciphertext,
+                0x03.toByte() // TEXT outer wire (matches iOS), inner 0x15 routes the pin
+            )
+            Log.i(TAG, "PIN control sent: target=${targetMessageId.take(16)}, pinned=$pinned, success=$success")
+
+            if (success) Result.success(Unit)
+            else Result.failure(Exception("Pin control delivery failed"))
+        } catch (e: Exception) {
+            Log.e(TAG, "sendPinMessage failed", e)
+            Result.failure(e)
+        }
+    }
+
+    /**
      * Send a profile photo update to a single contact via Tor
      * Sends directly via RustBridge without saving to messages table (zero trace).
      * @param contactId Database ID of the recipient contact
@@ -1105,7 +1374,8 @@ class MessageService(private val context: Context) {
      */
     suspend fun sendProfileUpdate(
         contactId: Long,
-        photoBase64: String
+        photoBase64: String,
+        autoQueue: Boolean = true
     ): Result<Unit> = withContext(Dispatchers.IO) {
         try {
             Log.d(TAG, "Sending profile update to contact ID: $contactId (${photoBase64.length} Base64 chars)")
@@ -1162,16 +1432,117 @@ class MessageService(private val context: Context) {
 
             if (success) {
                 Log.i(TAG, "Profile update sent to ${contact.displayName} via message blob")
+                // Remove any pending retry entry (best-effort)
+                if (!autoQueue) {
+                    try { database.pendingProfilePhotoDao().delete(contactId) } catch (_: Exception) {}
+                }
+                Result.success(Unit)
             } else {
                 Log.w(TAG, "Profile update delivery failed for ${contact.displayName}")
+                if (autoQueue) queueProfilePhotoDelivery(contactId)
+                Result.failure(Exception("Profile update delivery failed"))
             }
-
-            Result.success(Unit)
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e // Don't swallow cancellation - rethrow for structured concurrency
         } catch (e: Exception) {
             Log.e(TAG, "Failed to send profile update to contact $contactId", e)
+            if (autoQueue) queueProfilePhotoDelivery(contactId)
             Result.failure(e)
+        }
+    }
+
+    /**
+     * Queue a profile photo delivery retry. Called automatically when
+     * sendProfileUpdate() fails (unless called from the queue processor itself).
+     * INSERT OR IGNORE ensures at most one pending entry per contact.
+     */
+    suspend fun queueProfilePhotoDelivery(contactId: Long) = withContext(Dispatchers.IO) {
+        try {
+            val dbPassphrase = keyManager.getDatabasePassphrase()
+            val database = SecureLegionDatabase.getInstance(context, dbPassphrase)
+            val now = System.currentTimeMillis()
+            database.pendingProfilePhotoDao().insertIfAbsent(
+                com.securelegion.database.entities.PendingProfilePhoto(
+                    contactId = contactId,
+                    retryCount = 0,
+                    nextRetryAtMs = now + 30_000L, // First retry in 30s
+                    createdAtMs = now
+                )
+            )
+            Log.d(TAG, "Queued profile photo retry for contact $contactId")
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to queue profile photo retry: ${e.message}")
+        }
+    }
+
+    /**
+     * Process the profile photo retry queue. Loads the CURRENT profile photo
+     * at retry time (no blob stored) so contacts get the latest version.
+     * - On success: entry deleted
+     * - On failure with retryCount+1 >= 10: entry deleted (give up)
+     * - Otherwise: retryCount incremented, next retry scheduled via exponential backoff
+     *   Schedule: 30s, 60s, 120s, 240s, 300s cap
+     */
+    suspend fun processProfilePhotoQueue() = withContext(Dispatchers.IO) {
+        try {
+            val dbPassphrase = keyManager.getDatabasePassphrase()
+            val database = SecureLegionDatabase.getInstance(context, dbPassphrase)
+            val now = System.currentTimeMillis()
+            val due = database.pendingProfilePhotoDao().getDue(now)
+            if (due.isEmpty()) return@withContext
+
+            // Load current profile photo from SharedPreferences (single source of truth)
+            val currentPhoto = try {
+                context.getSharedPreferences("secure_legion_settings", Context.MODE_PRIVATE)
+                    .getString("profile_photo_base64", null) ?: ""
+            } catch (_: Exception) { "" }
+
+            if (currentPhoto.isBlank()) {
+                // User has no photo — drop all pending entries, nothing to send
+                Log.d(TAG, "No profile photo set — clearing ${due.size} pending entries")
+                database.pendingProfilePhotoDao().deleteAll()
+                return@withContext
+            }
+
+            Log.i(TAG, "Processing ${due.size} pending profile photo deliveries")
+            for (entry in due) {
+                val result = sendProfileUpdate(entry.contactId, currentPhoto, autoQueue = false)
+                if (result.isSuccess) {
+                    database.pendingProfilePhotoDao().delete(entry.contactId)
+                    Log.d(TAG, "Profile photo retry succeeded for contact ${entry.contactId}")
+                } else {
+                    val newRetryCount = entry.retryCount + 1
+                    if (newRetryCount >= 10) {
+                        database.pendingProfilePhotoDao().delete(entry.contactId)
+                        Log.w(TAG, "Profile photo retry giving up for contact ${entry.contactId} after 10 attempts")
+                    } else {
+                        // Exponential backoff: min(300, 30 * 2^newRetryCount) seconds
+                        val delaySec = minOf(300L, 30L * (1L shl newRetryCount))
+                        val nextRetryAt = System.currentTimeMillis() + (delaySec * 1000L)
+                        database.pendingProfilePhotoDao().updateRetryState(
+                            entry.contactId, newRetryCount, nextRetryAt
+                        )
+                        Log.d(TAG, "Profile photo retry rescheduled for contact ${entry.contactId} in ${delaySec}s (attempt $newRetryCount)")
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to process profile photo queue", e)
+        }
+    }
+
+    /**
+     * Flush the profile photo queue — resets all retry timers to immediate
+     * and processes the queue. Called when the Tor circuit comes up.
+     */
+    suspend fun flushProfilePhotoQueue() = withContext(Dispatchers.IO) {
+        try {
+            val dbPassphrase = keyManager.getDatabasePassphrase()
+            val database = SecureLegionDatabase.getInstance(context, dbPassphrase)
+            database.pendingProfilePhotoDao().resetAllRetryTimers()
+            processProfilePhotoQueue()
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to flush profile photo queue", e)
         }
     }
 
@@ -1296,10 +1667,36 @@ class MessageService(private val context: Context) {
                     try { keyManager.decryptMessageContent(it.encryptedContent) } catch (_: Exception) { null }
                 }
                 val isSelfReply = originalMsg?.isSentByMe == true
+
+                // Compute a cross-device-resolvable identifier for the original message.
+                // Android's local "msg_xxx" IDs are NOT peer-resolvable — if we only send
+                // reply_to_message_id, iOS (and any other client) cannot find the original
+                // message and falls back to a "Message expired" placeholder in the quote.
+                // The blob_id is deterministic: SHA-256 of the encrypted bytes the sender
+                // wrote to the wire. Every receiver (Android or iOS) computes the same id,
+                // so it is safe to reference the original across platforms.
+                //
+                //   - Replying to our own sent message: hash the stored encryptedPayload.
+                //   - Replying to a received message: the local messageId is already a
+                //     "blob_*" id (that's how inbound messages are stored), so reuse it.
+                val replyToBlobId: String? = when {
+                    isSelfReply && !originalMsg?.encryptedPayload.isNullOrEmpty() -> try {
+                        val encryptedBytes = Base64.decode(originalMsg!!.encryptedPayload, Base64.NO_WRAP)
+                        val hash = java.security.MessageDigest.getInstance("SHA-256").digest(encryptedBytes)
+                        "blob_" + Base64.encodeToString(hash, Base64.NO_WRAP).take(28)
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Failed to compute blob id for self-reply quote", e)
+                        null
+                    }
+                    replyToMessageId.startsWith("blob_") -> replyToMessageId
+                    else -> null
+                }
+
                 val replyPayload = org.json.JSONObject().apply {
                     put("text", plaintext)
                     put("reply_to_message_id", replyToMessageId)
                     if (!originalText.isNullOrBlank()) put("reply_to_text", originalText.take(100))
+                    if (!replyToBlobId.isNullOrBlank()) put("reply_to_blob_id", replyToBlobId)
                     // "self" means sender is quoting their own message; receiver should show their own name
                     put("reply_to_self", isSelfReply)
                 }.toString()
@@ -1346,9 +1743,12 @@ class MessageService(private val context: Context) {
             val signature = RustBridge.signData(messageData, ourPrivateKey)
             val signatureBase64 = Base64.encodeToString(signature, Base64.NO_WRAP)
 
-            // Calculate self-destruct timestamp if custom duration provided
+            // Self-destruct: store as PENDING TTL (start-on-read), not absolute timestamp.
+            // iOS parity — timer starts when user opens chat (activatePendingTtls), not when sent.
+            // This ensures the sender also sees the timer and their copy disappears in sync.
             val currentTime = System.currentTimeMillis()
-            val selfDestructAt = selfDestructDurationMs?.let { currentTime + it }
+            val selfDestructTtlSeconds: Double? = selfDestructDurationMs?.let { it / 1000.0 }
+            val selfDestructAt: Long? = null // will be set by activatePendingTtls on next chat load
 
             // Determine if this message is eligible for Fast Mode (2-hop, no PING/PONG)
             val isFastMode = isFastModeEligible(Message.MESSAGE_TYPE_TEXT)
@@ -1381,6 +1781,7 @@ class MessageService(private val context: Context) {
                 nonceBase64 = nonceBase64,
                 messageNonce = messageNonce, // CRITICAL: Stored once, reused on all retries
                 selfDestructAt = selfDestructAt,
+                selfDestructTtl = selfDestructTtlSeconds, // Pending TTL (start-on-read)
                 requiresReadReceipt = enableReadReceipt,
                 pingId = pingId, // Generated ONCE, used for all retries
                 pingTimestamp = pingTimestamp, // Generated ONCE with pingId
@@ -2038,7 +2439,10 @@ class MessageService(private val context: Context) {
         0x0F, // PROFILE_UPDATE
         0x10, // REACTION
         0x11, // REPLY
-        0x12  // EDIT
+        0x12, // EDIT
+        0x13, // SELF_DESTRUCT (disappearing messages control)
+        0x14, // DELETE (delete-for-everyone control)
+        0x15  // PIN (pin-for-everyone control)
     )
 
     /**
@@ -2774,6 +3178,79 @@ class MessageService(private val context: Context) {
                                 Log.w(TAG, "Failed to apply EDIT", e)
                             }
                             return@withContext Result.failure(Exception("Edit applied"))
+                        }
+                        0x13 -> {
+                            // SELF_DESTRUCT: set pending TTL on target message (start-on-read)
+                            try {
+                                val obj = JSONObject(decoded.bodyUtf8)
+                                val targetId = obj.getString("target_message_id")
+                                val targetBlobId = obj.optString("target_blob_id")
+                                val ttl = obj.getDouble("ttl")
+                                val resolvedId = resolveReactionTargetIdForContact(
+                                    database, contact.id, targetId, targetBlobId
+                                )
+                                if (!resolvedId.isNullOrBlank()) {
+                                    database.messageDao().setSelfDestructTtl(resolvedId, ttl)
+                                    Log.i(TAG, "SELF_DESTRUCT TTL set on message $resolvedId (ttl=${ttl}s)")
+                                } else {
+                                    Log.w(TAG, "SELF_DESTRUCT target not found: $targetId (blob=$targetBlobId)")
+                                }
+                            } catch (e: Exception) {
+                                Log.w(TAG, "Failed to apply SELF_DESTRUCT", e)
+                            }
+                            return@withContext Result.failure(Exception("Self-destruct control applied"))
+                        }
+                        0x14 -> {
+                            // DELETE: remove target message (delete-for-everyone)
+                            try {
+                                val obj = JSONObject(decoded.bodyUtf8)
+                                val targetId = obj.getString("target_message_id")
+                                val targetBlobId = obj.optString("target_blob_id")
+                                val resolvedId = resolveReactionTargetIdForContact(
+                                    database, contact.id, targetId, targetBlobId
+                                )
+                                if (!resolvedId.isNullOrBlank()) {
+                                    val rows = database.messageDao().deleteByMessageId(resolvedId)
+                                    Log.i(TAG, "DELETE applied: messageId=$resolvedId rows=$rows")
+                                    val refreshIntent = android.content.Intent("com.securelegion.MESSAGE_RECEIVED").apply {
+                                        setPackage(context.packageName)
+                                        putExtra("CONTACT_ID", contact.id)
+                                    }
+                                    context.sendBroadcast(refreshIntent)
+                                } else {
+                                    Log.w(TAG, "DELETE target could not be resolved: $targetId (blob=$targetBlobId)")
+                                }
+                            } catch (e: Exception) {
+                                Log.w(TAG, "Failed to apply DELETE", e)
+                            }
+                            return@withContext Result.failure(Exception("Delete control applied"))
+                        }
+                        0x15 -> {
+                            // PIN: set isPinned flag on target message (pin-for-everyone)
+                            try {
+                                val obj = JSONObject(decoded.bodyUtf8)
+                                val targetId = obj.getString("target_message_id")
+                                val targetBlobId = obj.optString("target_blob_id")
+                                val pinned = obj.optBoolean("pinned", true)
+                                val resolvedId = resolveReactionTargetIdForContact(
+                                    database, contact.id, targetId, targetBlobId
+                                )
+                                if (!resolvedId.isNullOrBlank()) {
+                                    database.messageDao().setPinnedByMessageId(resolvedId, pinned)
+                                    Log.i(TAG, "PIN applied: messageId=$resolvedId pinned=$pinned")
+                                    // Broadcast UI refresh so chat view picks up new pin state
+                                    val refreshIntent = android.content.Intent("com.securelegion.MESSAGE_RECEIVED").apply {
+                                        setPackage(context.packageName)
+                                        putExtra("CONTACT_ID", contact.id)
+                                    }
+                                    context.sendBroadcast(refreshIntent)
+                                } else {
+                                    Log.w(TAG, "PIN target could not be resolved: $targetId (blob=$targetBlobId)")
+                                }
+                            } catch (e: Exception) {
+                                Log.w(TAG, "Failed to apply PIN", e)
+                            }
+                            return@withContext Result.failure(Exception("Pin control applied"))
                         }
                         else -> {
                             // Other known type misrouted here - decode body, store as TEXT

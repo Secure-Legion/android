@@ -58,8 +58,8 @@ import net.zetetic.database.sqlcipher.SupportOpenHelperFactory
  * Database file location: /data/data/com.securelegion/databases/secure_legion.db
  */
 @Database(
-    entities = [Contact::class, Message::class, MessageReaction::class, Wallet::class, ReceivedId::class, UsedSignature::class, Group::class, CrdtOpLog::class, CallHistory::class, CallQualityLog::class, PingInbox::class, ContactKeyChain::class, SkippedMessageKey::class, PendingFriendRequest::class, PendingPing::class, GroupPeer::class, PendingGroupDelivery::class],
-    version = 51,
+    entities = [Contact::class, Message::class, MessageReaction::class, Wallet::class, ReceivedId::class, UsedSignature::class, Group::class, CrdtOpLog::class, CallHistory::class, CallQualityLog::class, PingInbox::class, ContactKeyChain::class, SkippedMessageKey::class, PendingFriendRequest::class, PendingPing::class, GroupPeer::class, PendingGroupDelivery::class, com.securelegion.database.entities.PendingProfilePhoto::class, com.securelegion.database.entities.VaultItem::class],
+    version = 54,
     exportSchema = false
 )
 abstract class SecureLegionDatabase : RoomDatabase() {
@@ -81,6 +81,8 @@ abstract class SecureLegionDatabase : RoomDatabase() {
     abstract fun pendingPingDao(): PendingPingDao
     abstract fun groupPeerDao(): GroupPeerDao
     abstract fun pendingGroupDeliveryDao(): PendingGroupDeliveryDao
+    abstract fun pendingProfilePhotoDao(): com.securelegion.database.dao.PendingProfilePhotoDao
+    abstract fun vaultItemDao(): com.securelegion.database.dao.VaultItemDao
 
     companion object {
         private const val TAG = "SecureLegionDatabase"
@@ -1110,6 +1112,46 @@ abstract class SecureLegionDatabase : RoomDatabase() {
             }
         }
 
+        private val MIGRATION_51_52 = object : Migration(51, 52) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE messages ADD COLUMN selfDestructTtl REAL")
+                Log.i(TAG, "Migration 51→52: added selfDestructTtl to messages (disappearing messages start-on-read)")
+            }
+        }
+
+        private val MIGRATION_52_53 = object : Migration(52, 53) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS pending_profile_photo (" +
+                        "contactId INTEGER NOT NULL PRIMARY KEY, " +
+                        "retryCount INTEGER NOT NULL DEFAULT 0, " +
+                        "nextRetryAtMs INTEGER NOT NULL, " +
+                        "createdAtMs INTEGER NOT NULL" +
+                        ")"
+                )
+                Log.i(TAG, "Migration 52→53: added pending_profile_photo retry queue")
+            }
+        }
+
+        private val MIGRATION_53_54 = object : Migration(53, 54) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS vault_items (" +
+                        "id TEXT NOT NULL PRIMARY KEY, " +
+                        "type TEXT NOT NULL, " +
+                        "data TEXT, " +
+                        "fileName TEXT, " +
+                        "duration REAL, " +
+                        "senderName TEXT, " +
+                        "sourceTimestamp INTEGER, " +
+                        "createdAtMs INTEGER NOT NULL" +
+                        ")"
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_vault_items_type ON vault_items(type)")
+                Log.i(TAG, "Migration 53→54: added vault_items table")
+            }
+        }
+
         /**
          * All migrations in a single array for DRY registration + validation.
          * RULE: When adding a new migration, append it here AND bump the @Database version.
@@ -1128,7 +1170,7 @@ abstract class SecureLegionDatabase : RoomDatabase() {
             MIGRATION_41_42, MIGRATION_42_43, MIGRATION_43_44, MIGRATION_44_45,
             MIGRATION_45_46, MIGRATION_46_47, MIGRATION_47_48,
             MIGRATION_48_49, MIGRATION_49_50,
-            MIGRATION_50_51
+            MIGRATION_50_51, MIGRATION_51_52, MIGRATION_52_53, MIGRATION_53_54
         )
 
         /**
@@ -1225,7 +1267,7 @@ abstract class SecureLegionDatabase : RoomDatabase() {
                     DATABASE_NAME
                 )
                     .openHelperFactory(factory)
-                    .addMigrations(*ALL_MIGRATIONS.also { validateMigrationChain(it, 51) })
+                    .addMigrations(*ALL_MIGRATIONS.also { validateMigrationChain(it, 54) })
                     .addCallback(object : RoomDatabase.Callback() {
                         override fun onCreate(db: SupportSQLiteDatabase) {
                             super.onCreate(db)

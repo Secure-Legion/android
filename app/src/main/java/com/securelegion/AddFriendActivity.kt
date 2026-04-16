@@ -71,6 +71,19 @@ class AddFriendActivity : BaseActivity() {
         override fun onReceive(context: Context?, intent: Intent?) {
             Log.d(TAG, "Friend request status changed — refreshing list")
             loadPendingFriendRequests()
+
+            // When a friend request fully completes (contact became CONFIRMED),
+            // jump to the Contacts tab in MainActivity so the user sees the new friend.
+            if (intent?.action == "com.securelegion.FRIEND_REQUEST_COMPLETED") {
+                val mainIntent = Intent(this@AddFriendActivity, MainActivity::class.java).apply {
+                    putExtra("SHOW_CONTACTS", true)
+                    flags = Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
+                }
+                startActivity(mainIntent)
+                finish()
+                @Suppress("DEPRECATION")
+                overridePendingTransition(0, 0)
+            }
         }
     }
 
@@ -1203,6 +1216,13 @@ class AddFriendActivity : BaseActivity() {
                     }
 
                     Log.i(TAG, "SUCCESS! Contact added with ID: $contactId")
+
+                    // Seed-restore recovery hook: if this device was just restored
+                    // from seed, this newly-added friend is the first peer we can
+                    // ask to send our contact list back. No-op otherwise.
+                    com.securelegion.services.ContactListSyncService
+                        .getInstance(this@AddFriendActivity)
+                        .maybeRequestRecovery(contact.messagingOnion)
 
                     // Initialize key chain for progressive ephemeral key evolution
                     try {

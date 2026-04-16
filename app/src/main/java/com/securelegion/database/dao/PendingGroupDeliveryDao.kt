@@ -29,6 +29,9 @@ interface PendingGroupDeliveryDao {
     @Query("DELETE FROM pending_group_delivery WHERE groupId = :groupId AND targetPubkeyHex = :pubkeyHex")
     suspend fun deleteForTarget(groupId: String, pubkeyHex: String)
 
+    @Query("SELECT * FROM pending_group_delivery WHERE groupId = :groupId")
+    suspend fun getForGroup(groupId: String): List<PendingGroupDelivery>
+
     @Query("DELETE FROM pending_group_delivery WHERE groupId = :groupId")
     suspend fun deleteForGroup(groupId: String)
 

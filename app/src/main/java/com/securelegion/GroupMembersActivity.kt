@@ -155,7 +155,17 @@ class GroupMembersActivity : BaseActivity() {
         memberAdapter = GroupMemberAdapter(
             members = emptyList(),
             onMemberClick = { member ->
-                ThemedToast.show(this, "${member.displayName} — ${member.role}")
+                if (!member.accepted && currentUserRole in listOf("Owner", "Admin")) {
+                    // Pending member — offer reinvite
+                    android.app.AlertDialog.Builder(this)
+                        .setTitle(member.displayName)
+                        .setMessage("This member hasn't joined yet. Reinvite?")
+                        .setPositiveButton("Reinvite") { _, _ -> reinviteMember(member) }
+                        .setNegativeButton("Cancel", null)
+                        .show()
+                } else {
+                    ThemedToast.show(this, "${member.displayName} — ${member.role}")
+                }
             },
             onMuteClick = { member ->
                 val currentGroupId = groupId ?: return@GroupMemberAdapter
@@ -183,6 +193,9 @@ class GroupMembersActivity : BaseActivity() {
             },
             onPromoteClick = { member ->
                 confirmPromoteMember(member)
+            },
+            onReinviteClick = { member ->
+                reinviteMember(member)
             }
         )
 
@@ -255,9 +268,11 @@ class GroupMembersActivity : BaseActivity() {
                         if (isMe) {
                             return@mapNotNull GroupMemberItem(
                                 pubkeyHex = member.pubkeyHex,
+                                deviceIdHex = member.deviceIdHex,
                                 displayName = "You",
                                 role = memberRole,
                                 isMe = true,
+                                accepted = member.accepted,
                                 isMuted = isMuted
                             )
                         }
@@ -275,9 +290,11 @@ class GroupMembersActivity : BaseActivity() {
 
                         GroupMemberItem(
                             pubkeyHex = member.pubkeyHex,
+                            deviceIdHex = member.deviceIdHex,
                             displayName = displayName,
                             role = memberRole,
                             isMe = false,
+                            accepted = member.accepted,
                             isMuted = isMuted,
                             profilePhotoBase64 = photo
                         )
@@ -370,6 +387,23 @@ class GroupMembersActivity : BaseActivity() {
         }
     }
 
+
+    private fun reinviteMember(member: GroupMemberItem) {
+        val currentGroupId = groupId ?: return
+        ThemedToast.show(this, "Reinviting ${member.displayName}...")
+        lifecycleScope.launch {
+            try {
+                withContext(Dispatchers.IO) {
+                    CrdtGroupManager.getInstance(this@GroupMembersActivity)
+                        .reinviteMember(currentGroupId, member.deviceIdHex)
+                }
+                ThemedToast.show(this@GroupMembersActivity, "Reinvite sent to ${member.displayName}")
+            } catch (e: Exception) {
+                Log.e(TAG, "Reinvite failed", e)
+                ThemedToast.show(this@GroupMembersActivity, "Reinvite failed: ${e.message}")
+            }
+        }
+    }
 
     private fun confirmRemoveMember(member: GroupMemberItem) {
         val currentGroupId = groupId ?: return

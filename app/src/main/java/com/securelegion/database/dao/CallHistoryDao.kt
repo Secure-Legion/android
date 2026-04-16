@@ -60,6 +60,12 @@ interface CallHistoryDao {
     suspend fun deleteAll()
 
     /**
+     * Delete all call history for a given contact (used on contact delete)
+     */
+    @Query("DELETE FROM call_history WHERE contactId = :contactId")
+    suspend fun deleteByContact(contactId: Long)
+
+    /**
      * Delete call history older than X days
      */
     @Query("DELETE FROM call_history WHERE timestamp < :timestampBefore")
