@@ -339,13 +339,20 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_crdtUnloadGroup(
 
 /// Apply one or more ops to a group. Ops must already be signed.
 ///
-/// Returns JSON: `{"applied": N, "rejected": N, "limit_status": "Ok|..."}`
+/// `self_pubkey_hex` is the caller's Ed25519 identity (64 hex chars). Used to
+/// distinguish MsgAdd ops authored by this user from those authored by others,
+/// so the UI can suppress notifications for self-echo. Pass an empty string to
+/// count all MsgAdd as "from others" (disables self filtering).
+///
+/// Returns JSON: `{"applied": N, "rejected": N, "applied_messages": N,
+/// "applied_messages_from_others": N, "limit_status": "Ok|..."}`
 #[no_mangle]
 pub extern "C" fn Java_com_securelegion_crypto_RustBridge_crdtApplyOps(
     mut env: JNIEnv,
     _class: JClass,
     group_id_hex: JString,
     serialized_ops_bytes: JByteArray,
+    self_pubkey_hex: JString,
 ) -> jstring {
     catch_panic!(env, {
         let gid = match parse_group_id(&mut env, group_id_hex) {
@@ -355,6 +362,20 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_crdtApplyOps(
 
         let data = match jbytearray_to_vec(&mut env, serialized_ops_bytes) {
             Ok(d) => d,
+            Err(e) => throw_arg!(env, e),
+        };
+
+        // Optional self pubkey: empty string disables self filtering.
+        let self_pk: Option<[u8; 32]> = match jstring_to_string(&mut env, self_pubkey_hex) {
+            Ok(s) if s.is_empty() => None,
+            Ok(s) => match hex::decode(&s) {
+                Ok(v) if v.len() == 32 => {
+                    let mut a = [0u8; 32];
+                    a.copy_from_slice(&v);
+                    Some(a)
+                }
+                _ => throw_arg!(env, "self_pubkey_hex must be 64 hex chars or empty"),
+            },
             Err(e) => throw_arg!(env, e),
         };
 
@@ -372,10 +393,21 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_crdtApplyOps(
 
         let mut applied = 0u64;
         let mut rejected = 0u64;
+        let mut applied_messages = 0u64;
+        let mut applied_messages_from_others = 0u64;
 
         for op in &ops {
             match state.apply_op(op) {
-                Ok(true) => applied += 1,
+                Ok(true) => {
+                    applied += 1;
+                    if op.op_type == OpType::MsgAdd {
+                        applied_messages += 1;
+                        let from_self = self_pk.map(|pk| pk == op.author_pubkey).unwrap_or(false);
+                        if !from_self {
+                            applied_messages_from_others += 1;
+                        }
+                    }
+                }
                 Ok(false) => {} // duplicate — silently skip
                 Err(e) => {
                     log::warn!("crdtApplyOps: rejected op {:?}: {}", op.op_id, e);
@@ -387,6 +419,8 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_crdtApplyOps(
         let json = serde_json::json!({
             "applied": applied,
             "rejected": rejected,
+            "applied_messages": applied_messages,
+            "applied_messages_from_others": applied_messages_from_others,
             "limit_status": format!("{:?}", state.limit_status()),
         });
 
