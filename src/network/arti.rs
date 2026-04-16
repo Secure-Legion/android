@@ -821,9 +821,9 @@ async fn handle_arti_incoming(
 
     // Per-type size caps (iOS parity): drop oversized payloads before routing
     match msg_type {
-        MSG_TYPE_IMAGE if buf.len() > 1_572_864 => {
-            log::warn!("ARTI IMAGE_TOO_LARGE_DROP: conn={} len={} (max 1.5MB)", conn_id, buf.len());
-            return Err(format!("Image payload too large: {} bytes (max 1.5MB)", buf.len()).into());
+        MSG_TYPE_IMAGE if buf.len() > 4_194_304 => {
+            log::warn!("ARTI IMAGE_TOO_LARGE_DROP: conn={} len={} (max 4MB)", conn_id, buf.len());
+            return Err(format!("Image payload too large: {} bytes (max 4MB)", buf.len()).into());
         }
         MSG_TYPE_VOICE if buf.len() > 5_242_880 => {
             log::warn!("ARTI VOICE_TOO_LARGE_DROP: conn={} len={} (max 5MB)", conn_id, buf.len());
