@@ -445,6 +445,23 @@ interface MessageDao {
     suspend fun getMessagesNeedingRetry(currentTimeMs: Long, giveupAfterDays: Long = 7): List<Message>
 
     /**
+     * Clear `nextRetryAtMs` for every outbound message that hasn't reached a terminal state.
+     *
+     * Called when a transport-level event invalidates prior backoff timers — e.g. the
+     * device's network changed (WiFi↔LTE) and Tor restarts. Backoffs computed against the
+     * old, dead transport shouldn't keep messages waiting once a new transport is up.
+     *
+     * Excludes statuses 2 (DELIVERED), 3 (READ), 8 (EXPIRED).
+     */
+    @Query("""
+        UPDATE messages
+        SET nextRetryAtMs = NULL
+        WHERE isSentByMe = 1
+          AND status NOT IN (2, 3, 8)
+    """)
+    suspend fun clearAllRetryBackoff(): Int
+
+    /**
      * Mark PING as delivered when PING_ACK is successfully sent
      * Updates the message status to reflect ACK confirmation
      */

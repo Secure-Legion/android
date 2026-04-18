@@ -217,6 +217,24 @@ class TorService : Service() {
     // Fast message retry loop (runs in TorService, not subject to WorkManager 15-min limit)
     private var fastRetryJob: kotlinx.coroutines.Job? = null
 
+    // Rate limiter for kickRetryOnIncoming(): any inbound wire traffic proves connectivity,
+    // so nudge the retry worker — but cap at once per KICK_RETRY_MIN_INTERVAL_MS to avoid
+    // flooding WorkManager when a burst of messages arrives.
+    @Volatile private var lastIncomingRetryKickMs: Long = 0L
+    private val KICK_RETRY_MIN_INTERVAL_MS = 10_000L
+
+    /**
+     * Kick the retry worker because we just received inbound wire traffic from a peer.
+     * Proof of connectivity beats any network-callback signal. Rate-limited to 10s.
+     */
+    private fun kickRetryOnIncoming(reason: String) {
+        val now = SystemClock.elapsedRealtime()
+        if (now - lastIncomingRetryKickMs < KICK_RETRY_MIN_INTERVAL_MS) return
+        lastIncomingRetryKickMs = now
+        Log.i(TAG, "Incoming $reason → kicking MessageRetryWorker (connectivity proven)")
+        com.securelegion.workers.MessageRetryWorker.schedule(this@TorService)
+    }
+
     // Tor health monitoring (ControlPort-based)
     private var healthMonitorJob: kotlinx.coroutines.Job? = null
     private var socksHealthJob: kotlinx.coroutines.Job? = null
@@ -3018,6 +3036,7 @@ class TorService : Service() {
     private fun handleIncomingTap(tapWireBytes: ByteArray) {
         try {
             Log.i(TAG, "Handling incoming tap (${tapWireBytes.size} bytes)")
+            kickRetryOnIncoming("TAP")
 
             // Decrypt tap to get sender's X25519 public key
             val senderX25519PubKey = RustBridge.decryptIncomingTap(tapWireBytes)
@@ -3973,6 +3992,7 @@ class TorService : Service() {
     private fun handleIncomingPong(pongWireBytes: ByteArray) {
         try {
             Log.i(TAG, "Handling incoming Pong (${pongWireBytes.size} bytes)")
+            kickRetryOnIncoming("PONG")
 
             // Decrypt and store Pong in GLOBAL_PONG_SESSIONS
             val success = RustBridge.decryptAndStorePongFromListener(pongWireBytes)
@@ -4182,6 +4202,7 @@ class TorService : Service() {
      */
     private fun handleIncomingAck(itemId: String, ackType: String) {
         try {
+            kickRetryOnIncoming("ACK:$ackType")
             // Protocol v2: PONG_ACK eliminated. PONG itself is the sender-side acknowledgment.
             // State machine: NONE → PONG_RECEIVED → DELIVERED (normal)
             //                NONE → PING_ACKED → PONG_RECEIVED → DELIVERED (DP)
@@ -4473,6 +4494,9 @@ class TorService : Service() {
             val encryptedMessageBlob = encodedData.copyOfRange(8, encodedData.size)
 
             Log.i(TAG, "Received MESSAGE on connection $connectionId via direct routing: ${encryptedMessageBlob.size} bytes")
+
+            // Inbound traffic = proof of connectivity → immediately retry any pending outbound.
+            kickRetryOnIncoming("MESSAGE")
 
             // Process message blob directly (no trial decryption needed!)
             handleIncomingMessageBlob(encryptedMessageBlob, connectionId)
@@ -8680,6 +8704,26 @@ class TorService : Service() {
                                     RustBridge.notifyNetworkChanged() // Resets bootstrap to 0
                                 }
                                 restartTor("network_transport_change:${lastNetworkIsWifi}→${event.isWifi}")
+
+                                // Stale backoffs were computed against a transport that no longer
+                                // exists. Clear them so the worker can immediately attempt every
+                                // undelivered message, oldest-first, once Tor is back up.
+                                try {
+                                    val keyManager = com.securelegion.crypto.KeyManager.getInstance(this@TorService)
+                                    val db = com.securelegion.database.SecureLegionDatabase.getInstance(
+                                        this@TorService,
+                                        keyManager.getDatabasePassphrase()
+                                    )
+                                    val cleared = withContext(Dispatchers.IO) { db.messageDao().clearAllRetryBackoff() }
+                                    Log.i(TAG, "Network change: cleared backoff on $cleared pending messages")
+                                } catch (e: Exception) {
+                                    Log.w(TAG, "Network change: failed to clear retry backoffs: ${e.message}")
+                                }
+
+                                // Kick the retry worker now (REPLACE policy means it runs immediately
+                                // even if a future-scheduled worker exists). Internal Tor-health gates
+                                // make it idempotent if circuits aren't up yet.
+                                com.securelegion.workers.MessageRetryWorker.schedule(this@TorService)
                             }
                         }
                     }
@@ -8778,7 +8822,25 @@ class TorService : Service() {
                         }
                     }
                     delayedRetryRunnable = retryRunnable
-                    reconnectHandler.postDelayed(retryRunnable, 45000) // 45 second delay for Tor circuit stabilization
+                    reconnectHandler.postDelayed(retryRunnable, 5000) // 5s — worker has its own circuits-up gate
+
+                    // Network just came back — kick worker now too. Worker waits on the
+                    // transport gate internally and re-schedules itself in 5s if circuits
+                    // aren't up yet, which is faster than the original 45s blanket wait.
+                    try {
+                        val keyManager = com.securelegion.crypto.KeyManager.getInstance(this@TorService)
+                        val db = com.securelegion.database.SecureLegionDatabase.getInstance(
+                            this@TorService,
+                            keyManager.getDatabasePassphrase()
+                        )
+                        serviceScope.launch(Dispatchers.IO) {
+                            val cleared = db.messageDao().clearAllRetryBackoff()
+                            if (cleared > 0) Log.i(TAG, "Network restored: cleared backoff on $cleared pending messages")
+                        }
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Network restored: backoff clear failed: ${e.message}")
+                    }
+                    com.securelegion.workers.MessageRetryWorker.schedule(this@TorService)
                 }
             }
 
@@ -8878,7 +8940,25 @@ class TorService : Service() {
                         }
                     }
                     delayedRetryRunnable = retryRunnable
-                    reconnectHandler.postDelayed(retryRunnable, 45000) // 45 second delay for Tor circuit stabilization
+                    reconnectHandler.postDelayed(retryRunnable, 5000) // 5s — worker has its own circuits-up gate
+
+                    // Network just came back — kick worker now too. Worker waits on the
+                    // transport gate internally and re-schedules itself in 5s if circuits
+                    // aren't up yet, which is faster than the original 45s blanket wait.
+                    try {
+                        val keyManager = com.securelegion.crypto.KeyManager.getInstance(this@TorService)
+                        val db = com.securelegion.database.SecureLegionDatabase.getInstance(
+                            this@TorService,
+                            keyManager.getDatabasePassphrase()
+                        )
+                        serviceScope.launch(Dispatchers.IO) {
+                            val cleared = db.messageDao().clearAllRetryBackoff()
+                            if (cleared > 0) Log.i(TAG, "Network restored: cleared backoff on $cleared pending messages")
+                        }
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Network restored: backoff clear failed: ${e.message}")
+                    }
+                    com.securelegion.workers.MessageRetryWorker.schedule(this@TorService)
                 }
             }
 

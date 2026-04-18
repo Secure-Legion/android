@@ -194,11 +194,12 @@ class MessageRetryWorker(
         }
 
         if (circuitsEstablished < 1) {
-            Log.w(TAG, "Tor bootstrap ${bootstrapPercent}% but NO CIRCUITS ESTABLISHED - scheduling fast retry in 30s")
-            // Don't wait the full 3 minutes — circuits may come up any second.
-            // Schedule a 30s one-shot so we retry as soon as circuits are likely ready.
+            Log.w(TAG, "Tor bootstrap ${bootstrapPercent}% but NO CIRCUITS ESTABLISHED - scheduling fast retry in 5s")
+            // Tor circuits typically come up within seconds of bootstrap completing.
+            // Re-check aggressively (5s) so a freshly-restarted Tor doesn't leave
+            // queued messages waiting a full 30s+ for their first attempt.
             val fastRetry = OneTimeWorkRequestBuilder<MessageRetryWorker>()
-                .setInitialDelay(30, TimeUnit.SECONDS)
+                .setInitialDelay(5, TimeUnit.SECONDS)
                 .build()
             WorkManager.getInstance(applicationContext).enqueueUniqueWork(
                 "message_retry_circuits_wait",
@@ -343,10 +344,10 @@ class MessageRetryWorker(
                 return@withContext 0
             }
             if (circuitsEstablished < 1) {
-                Log.w(TAG, "Contact retry for $contactId: no circuits yet, scheduling fast retry in 30s")
+                Log.w(TAG, "Contact retry for $contactId: no circuits yet, scheduling fast retry in 5s")
                 val fastRetry = OneTimeWorkRequestBuilder<MessageRetryWorker>()
                     .setInputData(workDataOf("CONTACT_ID" to contactId))
-                    .setInitialDelay(30, TimeUnit.SECONDS)
+                    .setInitialDelay(5, TimeUnit.SECONDS)
                     .build()
                 WorkManager.getInstance(applicationContext).enqueueUniqueWork(
                     "message_retry_contact_${contactId}",
