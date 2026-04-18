@@ -172,7 +172,13 @@ class SecureLegionApplication : Application() {
 
         // Track current foreground activity
         registerActivityLifecycleCallbacks(object : ActivityLifecycleCallbacks {
-            override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) {}
+            override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) {
+                activity.requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+                activity.window.setFlags(
+                    android.view.WindowManager.LayoutParams.FLAG_SECURE,
+                    android.view.WindowManager.LayoutParams.FLAG_SECURE
+                )
+            }
             override fun onActivityStarted(activity: Activity) {}
 
             override fun onActivityResumed(activity: Activity) {

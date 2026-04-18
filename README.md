@@ -43,7 +43,7 @@
 - **Offline-First Design** - Send messages anytime; they queue locally and deliver automatically when recipient comes online
 - **Ping-Pong Wake Protocol** - Recipient must authenticate via biometrics before message delivery
 - **Hardware-Backed Security** - Private keys stored in Android StrongBox (Pixel, Samsung Knox) or Trusted Execution Environment, never accessible to software
-- **Secure Pay** - Built-in multi-chain cryptocurrency wallet (Zcash + Solana) with in-chat payment protocol
+- **Secure Pay** *(coming soon)* - Built-in multi-chain cryptocurrency wallet (Zcash + Solana) with in-chat payment protocol
 - **Three-Phase Friend Protocol** - PIN-based initial request, post-quantum hybrid (X25519 + Kyber-1024) encrypted acceptance, and mutual acknowledgment for bidirectional contact addition, all over Tor
 
 ## What Makes Secure Unique
@@ -58,13 +58,13 @@
 
 4. **Hardware-Backed Keys** - All cryptographic keys stored in dedicated security hardware (StrongBox/TEE), never exposed to Android OS or apps.
 
-5. **Integrated Private Payments** - Send Zcash (shielded) and Solana payments directly in conversations via Secure Pay protocol.
+5. **Integrated Private Payments** *(coming soon)* - Send Zcash (shielded) and Solana payments directly in conversations via Secure Pay protocol.
 
-6. **Tor VPN Mode** - System-wide Tor routing for ALL apps on your device, not just Secure.
+6. **Tor VPN Mode** - If turned on, routes all device traffic through Tor, not just Secure.
 
-7. **Per-Message Forward Secrecy** - Every message uses a unique ephemeral key that's immediately destroyed after use.
+7. **Per-Message Forward Secrecy** - Our own forward secrecy design: every message uses a unique ephemeral key derived from a bidirectional ratcheting chain and destroyed immediately after use — not Signal's Double Ratchet, a Secure Legion original.
 
-8. **Voice Calls Over Tor** - End-to-end encrypted voice calling routed exclusively through Tor network (experimental).
+8. **Voice Calls Over Tor** *(in development)* - End-to-end encrypted voice calling routed exclusively through Tor network.
 
 9. **Triple Hidden Service Design** - Separate .onion addresses for friend discovery, requests, and messaging provide layered anonymity.
 
@@ -79,11 +79,11 @@
 | **Post-Quantum Crypto** | ML-KEM-1024 | PQXDH (X3DH + Kyber) | No | No | Partial |
 | **Offline Messaging** | Full queue system | Requires servers | Requires SNODEs | Limited | No |
 | **Integrated Wallet** | ZEC + SOL | MobileCoin only | No | No | No |
-| **In-Chat Payments** | Secure Pay | No | No | No | No |
-| **Tor VPN Mode** | System-wide | No | No | No | No |
-| **Voice Calls** | Over Tor | VoIP | No | No | WebRTC |
+| **In-Chat Payments** | Secure Pay (coming soon) | No | No | No | No |
+| **Tor VPN Mode** | System-wide (if turned on) | No | No | No | No |
+| **Voice Calls** | Over Tor (in development) | VoIP | No | No | WebRTC |
 | **Hardware Keys** | StrongBox/TEE | Software only | Software only | Software only | Software only |
-| **Friend Requests** | 2-phase Tor | Phone number | Session ID | Bloom filter | QR code |
+| **Friend Requests** | 3-phase Tor + opaque token | Phone number | Session ID | Bloom filter | QR code |
 
 ## Features
 
@@ -93,16 +93,18 @@
 - End-to-end encrypted text messaging with post-quantum hybrid encryption
 - Image sharing with automatic compression and EXIF metadata stripping
 - Voice messages with hold-to-record interface
+- Animated GIFs and stickers
+- Message replies (threaded quoting)
+- Message reactions (emoji)
+- Message edits (edit a sent message in place)
 - Self-destruct timers for sensitive messages (1 min to 7 days)
 - Read receipts (optional, recipient-controlled)
 - Secure message deletion with cryptographic wiping
 
-**Voice Calling:**
-- Voice calls over Tor using Opus codec (high-quality audio)
-- End-to-end encrypted with XChaCha20-Poly1305 AEAD
-- Real-time audio streaming via Tor hidden services
-- Call quality indicators and connection statistics
-- No phone number or VoIP service required
+**Group Messaging:**
+- Multi-party encrypted group conversations
+- End-to-end encrypted group messages
+- Membership-gated message rendering
 
 **Offline-First Design:**
 - Send messages whether recipient is online or offline
@@ -111,10 +113,9 @@
 - Ping-Pong wake protocol notifies recipient
 - No message loss, guaranteed delivery
 
-**Coming Soon:**
+**In Development:**
+- Voice calls over Tor (Opus codec, real-time encrypted streaming)
 - File attachments (documents, videos, arbitrary files)
-- Group messaging with multi-party encryption
-- Message reactions and replies
 
 ### Security & Privacy
 
@@ -128,7 +129,7 @@
 **Message Encryption:**
 - **AEAD Encryption**: XChaCha20-Poly1305 (authenticated encryption with associated data)
 - **Digital Signatures**: Ed25519 (message authentication and sender verification)
-- **Forward Secrecy**: Per-message forward secrecy with bidirectional key chains
+- **Forward Secrecy (Secure Legion original design)**: Our own per-message forward secrecy scheme with bidirectional key chains — not the Signal Double Ratchet
   - Every message uses unique ephemeral key derived from ratcheting chain
   - Separate send/receive ratchets prevent key reuse
   - Keys zeroized from memory immediately after use
@@ -158,9 +159,10 @@
 - No DNS queries (Tor handles resolution)
 - Deterministic .onion generation from seed phrase
 
-**Tor VPN Mode (System-Wide):**
-- Routes ALL device traffic through Tor (powered by OnionMasq + Arti)
-- Protects all apps, not just Secure
+**Tor VPN Mode (System-Wide, if turned on):**
+- When turned on, routes ALL device traffic through Tor (powered by OnionMasq + Arti)
+- When enabled, protects all apps on your device, not just Secure
+- Off by default — only active while the user has it turned on
 - Supports bridges for censorship circumvention:
   - obfs4 (obfuscated Tor traffic)
   - Snowflake (domain fronting)
@@ -168,7 +170,9 @@
 - Automatic bridge selection in restrictive networks
 - Battery-optimized Rust implementation (Arti)
 
-### Payments - Secure Pay
+### Payments - Secure Pay *(Coming Soon)*
+
+> Secure Pay is not yet available in the current release. The following describes the planned functionality.
 
 **Multi-Chain Cryptocurrency Wallet:**
 - **Zcash (ZEC)**: Privacy-focused payments with shielded transactions (z-addresses)
@@ -284,14 +288,15 @@ DEVICE A                        DEVICE B
 **Three-Phase Friend Request Protocol:**
 
 **Phase 1 - Initial Request (PIN-encrypted, 0x07):**
-1. You receive friend's friend discovery .onion address and 10-digit PIN via QR code
+1. You receive friend's friend discovery .onion address, 10-digit PIN, and an opaque token via QR code
 2. You send initial contact information to their friend-request.onion:
    - Your username
    - Your friend-request.onion address
    - Your X25519 public key
+   - The opaque token (authorizes this specific friend request)
 3. Encrypted with shared secret derived from PIN (XSalsa20-Poly1305)
 4. Sent directly via Tor hidden service to friend-request.onion
-5. PIN prevents spam and unauthorized friend requests
+5. Opaque token + PIN prevent spam, replay, and unauthorized friend requests — requests without a valid token are dropped before decryption
 6. Recipient receives notification and reviews request
 
 **Phase 2 - Acceptance (Post-Quantum Hybrid Encrypted, 0x08):**
@@ -459,60 +464,13 @@ See [Security Model](https://securelegion.org/security-model) for complete threa
 
 ## Quick Start
 
-### Prerequisites
+### Runtime Requirements
 
-**Development Environment:**
-- Android Studio Hedgehog 2023.1.1 or newer
-- Rust toolchain 1.70+ (install via `rustup`)
-- Android NDK 26.1.10909125 or newer
-- `cargo-ndk` for cross-compilation: `cargo install cargo-ndk`
-
-**Runtime Requirements:**
 - Android 8.1 (API 27) or higher
 - ARMv8-A 64-bit processor (arm64-v8a)
 - Biometric hardware (fingerprint or face unlock)
 - 200 MB free storage minimum
 - Internet connection for Tor (optional for offline messaging)
-
-### Installation
-
-```bash
-# 1. Clone repository
-git clone https://github.com/Secure-Legion/secure-legion-android.git
-cd secure-legion-android
-
-# 2. Install Rust targets for Android
-rustup target add aarch64-linux-android
-rustup target add armv7-linux-androideabi
-rustup target add x86_64-linux-android
-
-# 3. Install cargo-ndk
-cargo install cargo-ndk
-
-# 4. Build Rust core library
-cd secure-legion-core
-./build_android.sh  # Linux/Mac
-# or
-build_android.bat   # Windows
-
-# 5. Verify .so files were created
-ls -lh ../app/src/main/jniLibs/arm64-v8a/libsecurelegion.so
-
-# 6. Open project in Android Studio
-cd ..
-# File > Open > select secure-legion-android folder
-
-# 7. Create keystore.properties (optional, for release builds)
-echo "storeFile=release.keystore" > keystore.properties
-echo "storePassword=YOUR_PASSWORD" >> keystore.properties
-echo "keyAlias=secure" >> keystore.properties
-echo "keyPassword=YOUR_PASSWORD" >> keystore.properties
-
-# 8. Build and run
-# Click Run in Android Studio (Shift+F10)
-# Or via command line:
-./gradlew installDebug
-```
 
 ### First Run
 
@@ -520,7 +478,6 @@ echo "keyPassword=YOUR_PASSWORD" >> keystore.properties
 2. **Set Biometric Lock**: Configure fingerprint or face unlock
 3. **Set Duress PIN**: Emergency wipe trigger (optional but highly recommended)
 4. **Add Contacts**: Share your friend discovery .onion address via QR code
-5. **Fund Wallet** (optional): Send SOL/ZEC to your wallet addresses to enable Secure Pay
 
 ## Project Structure
 
@@ -604,29 +561,32 @@ secure-legion-android/
 - [x] Text messaging with post-quantum hybrid encryption
 - [x] Image sharing with compression and EXIF stripping
 - [x] Voice messages with hold-to-record interface
+- [x] Group messaging (multi-party encrypted conversations)
+- [x] Message replies (threaded quoting)
+- [x] Message reactions (emoji)
+- [x] Message edits
+- [x] Animated GIFs and stickers
 - [x] Biometric authentication (fingerprint/face)
 - [x] Duress PIN with instant cryptographic wipe
-- [x] Solana wallet integration (SOL, USDC, USDT)
-- [x] Zcash wallet integration (shielded transactions)
-- [x] Secure Pay payment protocol (based on NLx402 core logic)
 - [x] Two-phase friend request protocol (PIN + ephemeral key)
-- [x] Self-destruct timers for messages
+- [x] Self-destruct timers for messages (disappearing messages)
+- [x] Disappearing messages (auto-delete after configurable time)
 - [x] Read receipts (optional, recipient-controlled)
-- [x] Testnet mode for safe development
 - [x] Background service architecture with battery optimization
 - [x] Message queue persistence and offline support
 - [x] Triple .onion architecture (discovery, requests, messaging)
 - [x] Deterministic hidden service generation from seed phrase
-- [x] Voice calling over Tor (Opus codec, real-time streaming)
 - [x] Tor VPN mode (OnionMasq system-wide routing with Arti)
 - [x] Per-message forward secrecy with bidirectional key ratcheting
 - [x] Post-quantum cryptography (Hybrid X25519 + ML-KEM-1024)
 
 ### In Development
 
-- [ ] Post-quantum Double Ratchet (PQC-enhanced Signal Protocol)
+- [ ] Voice calling over Tor (Opus codec, real-time streaming)
+- [ ] Secure Pay payment protocol (Zcash + Solana, based on NLx402 core logic)
+- [ ] Solana wallet integration (SOL, USDC, USDT)
+- [ ] Zcash wallet integration (shielded transactions)
 - [ ] File attachments (documents, videos, arbitrary files)
-- [ ] Group messaging (multi-party encrypted conversations with forward secrecy)
 - [ ] Reproducible builds for security audits
 - [ ] F-Droid release (fully open source distribution)
 - [ ] Google Play Store release
@@ -636,11 +596,8 @@ secure-legion-android/
 - [ ] Device-to-device contact backup mesh via encrypted IPFS
 - [ ] Desktop client (Linux/Windows/macOS with Qt/Rust)
 - [ ] iOS app (Swift + Rust core)
-- [ ] Disappearing messages (auto-delete after configurable time)
 - [ ] Incognito keyboard (disable autocorrect/suggestions/clipboard)
 - [ ] Contact verification via safety numbers (Signal-style)
-- [ ] Message reactions and threaded replies
-- [ ] Animated stickers and GIFs
 
 ### Future Exploration
 
@@ -872,6 +829,10 @@ A: Zero analytics, zero telemetry, zero tracking. No data leaves your device exc
 ## Beta Notice
 
 **This software is in beta and not production-ready.**
+
+**Currently in beta on:**
+- Google Play (Android) — closed/open beta track
+- TestFlight (iOS) — closed beta
 
 **Known Limitations:**
 - Security audit pending (scheduled for Q2 2026)

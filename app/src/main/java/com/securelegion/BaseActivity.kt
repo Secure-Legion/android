@@ -37,12 +37,10 @@ abstract class BaseActivity : AppCompatActivity() {
         applyThemeMode()
         super.onCreate(savedInstanceState)
 
-        // Security: Prevent screenshots and screen recording app-wide
-        // TEMPORARILY DISABLED for iOS design screenshots — re-enable after
-        // window.setFlags(
-        //     WindowManager.LayoutParams.FLAG_SECURE,
-        //     WindowManager.LayoutParams.FLAG_SECURE
-        // )
+        window.setFlags(
+            android.view.WindowManager.LayoutParams.FLAG_SECURE,
+            android.view.WindowManager.LayoutParams.FLAG_SECURE
+        )
     }
 
     private fun applyThemeMode() {

@@ -31,7 +31,7 @@ class HelpActivity : BaseActivity() {
         }
 
         findViewById<View>(R.id.helpCenterItem).setOnClickListener {
-            ThemedToast.show(this, "Support coming soon")
+            startActivity(Intent(this, HelpCenterActivity::class.java))
         }
 
         findViewById<View>(R.id.exportLogsItem).setOnClickListener {

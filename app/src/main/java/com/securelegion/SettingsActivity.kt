@@ -63,7 +63,7 @@ class SettingsActivity : BaseActivity() {
 
         // Help
         findViewById<View>(R.id.helpItem)?.setOnClickListener {
-            startActivity(Intent(this, HelpCenterActivity::class.java))
+            startActivity(Intent(this, HelpActivity::class.java))
         }
 
         // Duress PIN
