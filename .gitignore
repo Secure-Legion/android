@@ -38,6 +38,10 @@ secure-legion-core/Cargo.lock
 # Old/duplicate projects
 secure-legion-android/
 conductor/
+
+# Internal tooling / asset sources — not for public repo
+tools/
+pulled/
 relay-server/
 
 # Dev scripts
