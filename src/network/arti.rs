@@ -526,27 +526,63 @@ pub async fn create_onion_service(
     // fails with KeyAlreadyExists. In that case, launch_onion_service reads it back.
     // We box the RendRequest stream because the two launch functions return different
     // opaque `impl Stream` types.
-    let (running_service, rend_requests): (Arc<tor_hsservice::RunningOnionService>, Box<dyn futures::Stream<Item = tor_hsservice::RendRequest> + Send + Unpin>) =
+    //
+    // Retry up to 3x on StateDirectoryInaccessible / AlreadyLocked: Arti's async
+    // teardown after a prior stop_arti_listener may still be releasing the keystore
+    // file lock. The outer 2s Thread.sleep on the Kotlin side isn't always enough.
+    type HsTuple = (Arc<tor_hsservice::RunningOnionService>, Box<dyn futures::Stream<Item = tor_hsservice::RendRequest> + Send + Unpin>);
+    let mut final_err: Option<String> = None;
+    let mut launched: Option<HsTuple> = None;
+    for attempt in 1..=3u32 {
+        // Rebuild keypair + config each attempt — both are consumed by launch.
+        let ed_keypair = tor_llcrypto::pk::ed25519::Keypair::from_bytes(ed25519_seed);
+        let expanded = tor_llcrypto::pk::ed25519::ExpandedKeypair::from(&ed_keypair);
+        let hsid_keypair = HsIdKeypair::from(expanded);
+        let nickname = HsNickname::new(nickname_str.clone())
+            .map_err(|e| format!("Invalid HS nickname: {}", e))?;
+        let config = OnionServiceConfig::builder()
+            .nickname(nickname)
+            .build()
+            .map_err(|e| format!("OnionServiceConfig build failed: {}", e))?;
+
         match client.launch_onion_service_with_hsid(config, hsid_keypair) {
-            Ok(Some((svc, stream))) => (svc, Box::new(stream)),
+            Ok(Some((svc, stream))) => {
+                launched = Some((svc, Box::new(stream)));
+                break;
+            }
             Ok(None) => return Err("Onion service was disabled in config".into()),
             Err(e) => {
-                log::warn!("launch_onion_service_with_hsid failed ({}), key may already exist — retrying", e);
-                let nickname2 = HsNickname::new(nickname_str).map_err(|e| format!("Invalid HS nickname: {}", e))?;
+                let es = format!("{:?}", e);
+                if es.contains("AlreadyLocked") && attempt < 3 {
+                    log::warn!("Arti: messaging HS launch attempt {}/3 hit AlreadyLocked; waiting 1s for keystore release", attempt);
+                    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                    continue;
+                }
+                // Not AlreadyLocked (or retries exhausted) — try the non-hsid path
+                // to handle the KeyAlreadyExists case (key persisted from a prior run).
+                log::warn!("launch_onion_service_with_hsid failed ({}), trying launch_onion_service", e);
+                let nickname2 = HsNickname::new(nickname_str.clone())
+                    .map_err(|e| format!("Invalid HS nickname: {}", e))?;
                 let config2 = OnionServiceConfig::builder()
                     .nickname(nickname2)
                     .build()
                     .map_err(|e| format!("OnionServiceConfig rebuild failed: {}", e))?;
-                match client.launch_onion_service(config2)
-                    .map_err(|e| {
-                        log::error!("launch_onion_service also failed: {:?}", e);
-                        format!("launch_onion_service failed: {}", e)
-                    })? {
-                    Some((svc, stream)) => (svc, Box::new(stream)),
-                    None => return Err("Onion service was disabled in config".into()),
+                match client.launch_onion_service(config2) {
+                    Ok(Some((svc, stream))) => {
+                        launched = Some((svc, Box::new(stream)));
+                    }
+                    Ok(None) => return Err("Onion service was disabled in config".into()),
+                    Err(e2) => {
+                        log::error!("launch_onion_service also failed: {:?}", e2);
+                        final_err = Some(format!("launch_onion_service failed: {}", e2));
+                    }
                 }
+                break;
             }
-        };
+        }
+    }
+    let (running_service, rend_requests): HsTuple = launched
+        .ok_or_else(|| final_err.unwrap_or_else(|| "Onion service launch failed".to_string()))?;
 
     log::info!("Arti: onion service launched for {}", expected_addr);
 
@@ -1078,7 +1114,12 @@ pub fn get_onion_address() -> Option<String> {
     lock_recover(&ONION_ADDRESS).clone()
 }
 
-/// Stop the Arti HS acceptor task.
+/// Stop the Arti HS acceptor task and release the onion service.
+///
+/// Dropping `RUNNING_HS` releases the Arti keystore lock on
+/// `sl-msg-<addr>`; without this, the next `launch_onion_service_with_hsid`
+/// fails with `StateDirectoryInaccessible(AlreadyLocked)` and the watchdog
+/// can never recover the listener.
 pub fn stop_arti_listener() {
     let cancel = {
         let mut guard = lock_recover(&HS_ACCEPTOR_CANCEL);
@@ -1086,8 +1127,10 @@ pub fn stop_arti_listener() {
     };
     if let Some(c) = cancel {
         c.cancel();
-        log::info!("Arti: HS acceptor cancelled");
     }
+    let dropped_hs = lock_recover(&RUNNING_HS).take().is_some();
+    lock_recover(&REND_REQUEST_STREAM).take();
+    log::info!("Arti: HS acceptor cancelled (dropped_hs={})", dropped_hs);
 }
 
 // ───── Full Shutdown (Android lifecycle) ─────
@@ -1250,42 +1293,60 @@ pub async fn create_friend_request_onion_service(
     let expected_addr = super::tor::compute_onion_address_from_ed25519_seed(ed25519_seed);
     log::info!("Arti: creating friend-request onion service, expected address: {}", expected_addr);
 
-    let ed_keypair = tor_llcrypto::pk::ed25519::Keypair::from_bytes(ed25519_seed);
-    let expanded = tor_llcrypto::pk::ed25519::ExpandedKeypair::from(&ed_keypair);
-    let hsid_keypair = HsIdKeypair::from(expanded);
-
     // Deterministic nickname tied to FR onion to avoid stale keystore alias/key mismatch.
     let nickname_str = format!("sl-fr-{}", &expected_addr[..12]);
-    let nickname = HsNickname::new(nickname_str.clone()).map_err(|e| {
-        format!("Invalid FR HS nickname: {}", e)
-    })?;
-    let config = OnionServiceConfig::builder()
-        .nickname(nickname)
-        .build()
-        .map_err(|e| format!("FR OnionServiceConfig build failed: {}", e))?;
 
-    // Try insert first, fall back if key already exists (service restart).
-    let (running_service, rend_requests): (Arc<tor_hsservice::RunningOnionService>, Box<dyn futures::Stream<Item = tor_hsservice::RendRequest> + Send + Unpin>) =
+    // Retry up to 3x on AlreadyLocked — see create_onion_service for rationale.
+    type FrHsTuple = (Arc<tor_hsservice::RunningOnionService>, Box<dyn futures::Stream<Item = tor_hsservice::RendRequest> + Send + Unpin>);
+    let mut final_err: Option<String> = None;
+    let mut launched: Option<FrHsTuple> = None;
+    for attempt in 1..=3u32 {
+        let ed_keypair = tor_llcrypto::pk::ed25519::Keypair::from_bytes(ed25519_seed);
+        let expanded = tor_llcrypto::pk::ed25519::ExpandedKeypair::from(&ed_keypair);
+        let hsid_keypair = HsIdKeypair::from(expanded);
+        let nickname = HsNickname::new(nickname_str.clone())
+            .map_err(|e| format!("Invalid FR HS nickname: {}", e))?;
+        let config = OnionServiceConfig::builder()
+            .nickname(nickname)
+            .build()
+            .map_err(|e| format!("FR OnionServiceConfig build failed: {}", e))?;
+
         match client.launch_onion_service_with_hsid(config, hsid_keypair) {
-            Ok(Some((svc, stream))) => (svc, Box::new(stream)),
+            Ok(Some((svc, stream))) => {
+                launched = Some((svc, Box::new(stream)));
+                break;
+            }
             Ok(None) => return Err("FR onion service was disabled in config".into()),
             Err(e) => {
-                log::warn!("FR launch_onion_service_with_hsid failed ({}), retrying", e);
-                let nickname2 = HsNickname::new(nickname_str).map_err(|e| format!("Invalid FR HS nickname: {}", e))?;
+                let es = format!("{:?}", e);
+                if es.contains("AlreadyLocked") && attempt < 3 {
+                    log::warn!("Arti: FR HS launch attempt {}/3 hit AlreadyLocked; waiting 1s for keystore release", attempt);
+                    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                    continue;
+                }
+                log::warn!("FR launch_onion_service_with_hsid failed ({}), trying launch_onion_service", e);
+                let nickname2 = HsNickname::new(nickname_str.clone())
+                    .map_err(|e| format!("Invalid FR HS nickname: {}", e))?;
                 let config2 = OnionServiceConfig::builder()
                     .nickname(nickname2)
                     .build()
                     .map_err(|e| format!("FR OnionServiceConfig rebuild failed: {}", e))?;
-                match client.launch_onion_service(config2)
-                    .map_err(|e| {
-                        log::error!("FR launch_onion_service also failed: {:?}", e);
-                        format!("FR launch_onion_service failed: {}", e)
-                    })? {
-                    Some((svc, stream)) => (svc, Box::new(stream)),
-                    None => return Err("FR onion service was disabled in config".into()),
+                match client.launch_onion_service(config2) {
+                    Ok(Some((svc, stream))) => {
+                        launched = Some((svc, Box::new(stream)));
+                    }
+                    Ok(None) => return Err("FR onion service was disabled in config".into()),
+                    Err(e2) => {
+                        log::error!("FR launch_onion_service also failed: {:?}", e2);
+                        final_err = Some(format!("FR launch_onion_service failed: {}", e2));
+                    }
                 }
+                break;
             }
-        };
+        }
+    }
+    let (running_service, rend_requests): FrHsTuple = launched
+        .ok_or_else(|| final_err.unwrap_or_else(|| "FR onion service launch failed".to_string()))?;
 
     log::info!("Arti: friend-request onion service launched for {}", expected_addr);
 
@@ -1470,7 +1531,9 @@ pub fn get_fr_onion_address() -> Option<String> {
     lock_recover(&FR_ONION_ADDRESS).clone()
 }
 
-/// Stop the FR HS acceptor task.
+/// Stop the FR HS acceptor task and release the FR onion service.
+///
+/// See `stop_arti_listener` for why the Arc must be dropped here.
 pub fn stop_fr_listener() {
     let cancel = {
         let mut guard = lock_recover(&FR_ACCEPTOR_CANCEL);
@@ -1478,8 +1541,10 @@ pub fn stop_fr_listener() {
     };
     if let Some(c) = cancel {
         c.cancel();
-        log::info!("Arti: FR HS acceptor cancelled");
     }
+    let dropped_hs = lock_recover(&RUNNING_FR_HS).take().is_some();
+    lock_recover(&FR_REND_REQUEST_STREAM).take();
+    log::info!("Arti: FR HS acceptor cancelled (dropped_hs={})", dropped_hs);
 }
 
 // ───── Utilities ─────
