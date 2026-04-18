@@ -23,9 +23,9 @@ android {
 
     defaultConfig {
         applicationId = "com.securelegion"
-        minSdk = 27  // Increased from 26 for Zcash SDK compatibility
+        minSdk = 32  // Matches what the AAB/bundletool pipeline emits for splits (was 27)
         targetSdk = 36
-        versionCode = 1
+        versionCode = 2
         versionName = "1.0.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
