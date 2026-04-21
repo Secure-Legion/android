@@ -23,9 +23,9 @@ android {
 
     defaultConfig {
         applicationId = "com.securelegion"
-        minSdk = 32  // Matches what the AAB/bundletool pipeline emits for splits (was 27)
+        minSdk = 29  // Android 10+
         targetSdk = 36
-        versionCode = 2
+        versionCode = 3
         versionName = "1.0.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
