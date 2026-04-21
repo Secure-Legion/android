@@ -5331,6 +5331,25 @@ pub extern "C" fn Java_com_securelegion_crypto_RustBridge_getLastTorProofMs(
     }, 0)
 }
 
+/// Get a JSON snapshot of the current outbound Tor circuit for the Tor Health screen.
+///
+/// Shape: `{"hops":[{"role":"Entry Node","fp":"ABCDEF..","nickname":"foo","country":"DE"}, ...]}`
+/// Empty `hops` array when no outbound connection has been made yet.
+/// Updated on every successful `client.connect()` to a .onion peer.
+#[no_mangle]
+pub extern "C" fn Java_com_securelegion_crypto_RustBridge_getCurrentCircuitInfo(
+    mut env: JNIEnv,
+    _class: JClass,
+) -> jstring {
+    catch_panic!(env, {
+        let json = crate::network::arti::get_current_circuit_info_json();
+        match string_to_jstring(&mut env, &json) {
+            Ok(s) => s.into_raw(),
+            Err(_) => std::ptr::null_mut(),
+        }
+    }, std::ptr::null_mut())
+}
+
 /// Get Tor bootstrap status (0-100%)
 /// Returns the current bootstrap percentage from the global atomic (updated by event listener)
 /// This is much faster than querying the control port and provides real-time updates
