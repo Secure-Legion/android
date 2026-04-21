@@ -22,6 +22,10 @@ use tor_hsservice::{HsNickname, OnionServiceConfig, StreamRequest};
 use tor_cell::relaycell::msg::Connected;
 use tokio_util::sync::CancellationToken;
 use futures::StreamExt;
+use tor_proto::client::stream::ClientStreamCtrl;
+use tor_linkspec::HasRelayIds;
+use tor_netdir::{NetDirProvider, Timeliness};
+use tor_geoip::HasCountryCode;
 
 use crate::network::tor::{
     BOOTSTRAP_STATUS, CIRCUIT_ESTABLISHED, LAST_CIRCUIT_ESTABLISHED_MS,
@@ -380,6 +384,143 @@ pub fn stop_bootstrap_listener() {
     }
 }
 
+// ───── Circuit Introspection ─────
+
+/// A single hop in the currently-displayed outbound circuit.
+///
+/// Role is assigned by position: index 0 = Entry, final index = Rendezvous Point
+/// (for HS connections the terminal hop is always the rendezvous relay), all
+/// others = Middle.
+#[derive(Clone, Debug, serde::Serialize)]
+struct HopInfo {
+    role: String,
+    /// Uppercase 40-char RSA identity hex (matches Tor's `$FINGERPRINT` format).
+    fp: String,
+    /// Relay nickname from the consensus router-status line. `None` when the
+    /// NetDir is not available yet or the relay isn't listed.
+    nickname: Option<String>,
+    /// ISO-3166 two-letter country code from Arti's embedded GeoIP DB.
+    country: Option<String>,
+}
+
+/// Path of the most recent successful `client.connect()`. Displayed on the
+/// Tor Health screen. Overwritten on every new outbound connection, so the
+/// UI shows the user's current route.
+static LAST_CIRCUIT_HOPS: StdMutex<Option<Vec<HopInfo>>> = StdMutex::new(None);
+
+fn role_for_hop(i: usize, n: usize) -> &'static str {
+    if n == 0 {
+        "Hop"
+    } else if i == 0 {
+        "Entry Node"
+    } else if i + 1 == n {
+        "Rendezvous Point"
+    } else {
+        "Middle Node"
+    }
+}
+
+/// Extract the circuit path from a freshly-connected DataStream, resolve
+/// nickname + country via the NetDir, and cache the result in
+/// `LAST_CIRCUIT_HOPS` for the UI to poll.
+///
+/// Silent on any failure — the UI falls back to "—" placeholders when no
+/// data is cached yet.
+fn capture_circuit_path(
+    stream: &arti_client::DataStream,
+    client: &TorClient<PreferredRuntime>,
+) {
+    let ctrl = match stream.client_stream_ctrl() {
+        Some(c) => c,
+        None => {
+            log::warn!("capture_circuit_path: client_stream_ctrl=None (stream-ctrl feature off?)");
+            return;
+        }
+    };
+    let tunnel = match ctrl.tunnel() {
+        Some(t) => t,
+        None => {
+            log::warn!("capture_circuit_path: tunnel=None (stream not attached)");
+            return;
+        }
+    };
+    let paths = tunnel.all_paths();
+    log::info!("capture_circuit_path: all_paths.len()={}", paths.len());
+    let path = match paths.first() {
+        Some(p) => Arc::clone(p),
+        None => {
+            log::warn!("capture_circuit_path: all_paths empty");
+            return;
+        }
+    };
+
+    let hops = path.hops();
+    let n = hops.len();
+    log::info!("capture_circuit_path: hops={}", n);
+    if n == 0 { return; }
+
+    // Timely netdir is preferred; fall back to Unchecked so we still fill in
+    // what we can when the consensus is borderline stale.
+    let netdir = client
+        .dirmgr()
+        .netdir(Timeliness::Timely)
+        .or_else(|_| client.dirmgr().netdir(Timeliness::Unchecked))
+        .ok();
+
+    let mut out: Vec<HopInfo> = Vec::with_capacity(n);
+    for (i, entry) in hops.iter().enumerate() {
+        let ct = match entry.as_chan_target() {
+            Some(c) => c,
+            None => continue, // virtual hop (e.g. the HS itself) — not a network relay
+        };
+        // `HasRelayIds::rsa_identity()` returns `Option<&RsaIdentity>`. In practice
+        // every network-relay hop has one, but fall back to empty so a single
+        // weirdly-built hop can't blank out the whole route card.
+        let fp = ct
+            .rsa_identity()
+            .map(|id| id.as_hex_upper())
+            .unwrap_or_default();
+
+        let (nickname, country) = if let Some(nd) = netdir.as_ref() {
+            let relay = nd.by_ids(ct);
+            let nick = relay.as_ref().map(|r| r.rs().nickname().to_string());
+            let cc = relay
+                .as_ref()
+                .and_then(|r| r.country_code())
+                .map(|c| format!("{}", c));
+            (nick, cc)
+        } else {
+            (None, None)
+        };
+
+        out.push(HopInfo {
+            role: role_for_hop(i, n).to_string(),
+            fp,
+            nickname,
+            country,
+        });
+    }
+
+    log::info!(
+        "capture_circuit_path: captured {} hops; sample nickname={:?} country={:?}",
+        out.len(),
+        out.first().and_then(|h| h.nickname.clone()),
+        out.first().and_then(|h| h.country.clone())
+    );
+    let mut guard = lock_recover(&LAST_CIRCUIT_HOPS);
+    *guard = Some(out);
+}
+
+/// JSON snapshot of the last captured outbound circuit, for Kotlin polling.
+/// Shape: `{"hops":[{"role":..,"fp":..,"nickname":..,"country":..}]}`.
+pub fn get_current_circuit_info_json() -> String {
+    let guard = lock_recover(&LAST_CIRCUIT_HOPS);
+    match guard.as_ref() {
+        Some(hops) => serde_json::json!({ "hops": hops }).to_string(),
+        None => "{\"hops\":[]}".to_string(),
+    }
+}
+
 // ───── Outbound Connections ─────
 
 /// Connect to a .onion address via Arti.
@@ -412,6 +553,7 @@ pub async fn arti_connect_to_onion(
                 } else {
                     log::info!("Arti: connected to {}:{}", onion_address, port);
                 }
+                capture_circuit_path(&stream, &client);
                 return Ok(ArtiStream {
                     stream,
                     onion_address: onion_address.to_string(),

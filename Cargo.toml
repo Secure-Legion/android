@@ -84,14 +84,19 @@ arti-client = { version = "0.40", default-features = false, features = [
     "onion-service-service",
     "experimental-api",
     "static-sqlite",
+    "geoip",
 ] }
 tor-rtcompat = { version = "0.40", features = ["tokio", "rustls"] }
 tor-hsservice = "0.40"
-tor-proto = "0.40"
+tor-proto = { version = "0.40", features = ["stream-ctrl"] }
 tor-cell = "0.40"
 tor-config-path = "0.40"
 tor-llcrypto = "0.40"
 tor-hscrypto = "0.40"
+tor-netdir = { version = "0.40", features = ["geoip", "experimental-api"] }
+tor-linkspec = "0.40"
+tor-dirmgr = "0.40"
+tor-geoip = "0.40"
 
 [features]
 default = ["std"]
