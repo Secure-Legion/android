@@ -111,6 +111,11 @@ class SettingsActivity : BaseActivity() {
             startActivity(Intent(this, SecurityModeActivity::class.java))
         }
 
+        // Tor Health
+        findViewById<View>(R.id.torHealthItem).setOnClickListener {
+            startActivity(Intent(this, TorHealthActivity::class.java))
+        }
+
         // QR Code Settings
         findViewById<View>(R.id.qrSettingsItem).setOnClickListener {
             startActivity(Intent(this, QrSettingsActivity::class.java))

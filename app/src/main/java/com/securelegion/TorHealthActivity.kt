@@ -8,11 +8,16 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.view.LayoutInflater
 import android.view.View
+import android.view.ViewGroup
+import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import com.securelegion.crypto.RustBridge
 import com.securelegion.services.TorService
+import com.securelegion.utils.ThemedToast
+import org.json.JSONObject
 
 /**
  * TorHealthActivity - Real-time Tor health monitoring
@@ -36,14 +41,11 @@ TorHealthActivity : AppCompatActivity() {
     }
 
     // UI Elements
-    private lateinit var mainTorStatusText: TextView
-    private lateinit var mainTorStatusIndicator: View
-    private lateinit var mainCircuitsText: TextView
-    private lateinit var mainBootstrapText: TextView
-
-
     private lateinit var networkStatusText: TextView
     private lateinit var networkStatusIndicator: View
+
+    private lateinit var circuitRouteContainer: LinearLayout
+    private var lastRenderedCircuit: String? = null
 
     // Update handler
     private val updateHandler = Handler(Looper.getMainLooper())
@@ -59,17 +61,29 @@ TorHealthActivity : AppCompatActivity() {
         setContentView(R.layout.activity_tor_health)
 
         // Initialize UI elements
-        mainTorStatusText = findViewById(R.id.mainTorStatusText)
-        mainTorStatusIndicator = findViewById(R.id.mainTorStatusIndicator)
-        mainCircuitsText = findViewById(R.id.mainCircuitsText)
-        mainBootstrapText = findViewById(R.id.mainBootstrapText)
-
         networkStatusText = findViewById(R.id.networkStatusText)
         networkStatusIndicator = findViewById(R.id.networkStatusIndicator)
+        circuitRouteContainer = findViewById(R.id.circuitRouteContainer)
+        renderCircuitPlaceholders()
 
         // Set up back button
         findViewById<View>(R.id.backButton).setOnClickListener {
             finish()
+        }
+
+        // New Circuit button — requests fresh circuits for new outbound streams (Arti: isolated_client swap; C Tor: SIGNAL NEWNYM)
+        findViewById<View>(R.id.newCircuitButton).setOnClickListener { v ->
+            v.isEnabled = false
+            Thread {
+                val ok = try { RustBridge.sendNewnym() } catch (_: Throwable) { false }
+                runOnUiThread {
+                    ThemedToast.show(
+                        this,
+                        if (ok) "New circuit requested" else "Unable to rotate circuits right now"
+                    )
+                    v.isEnabled = true
+                }
+            }.start()
         }
 
         BottomNavigationHelper.setupBottomNavigation(this)
@@ -88,69 +102,112 @@ TorHealthActivity : AppCompatActivity() {
     }
 
     /**
-     * Update all health indicators
+     * Update the collapsed network status + circuit route cards.
+     *
+     * "Live" means the HS is receivable AND the transport is 100% bootstrapped.
+     * Any weaker state ("Connecting", "Offline") is just transient noise; the user
+     * only cares that the combined signal is green.
      */
     private fun updateHealthIndicators() {
         try {
-            // Main Tor Health
-            val bootstrapPercent = RustBridge.getBootstrapStatus()
-            val circuitsEstablished = RustBridge.getCircuitEstablished()
+            val bootstrapPercent = try { RustBridge.getBootstrapStatus() } catch (_: Throwable) { 0 }
+            val circuitsEstablished = try { RustBridge.getCircuitEstablished() } catch (_: Throwable) { 0 }
 
-            // Network check first — Tor's local control socket stays alive even with WiFi dead,
-            // so circuits/bootstrap can look "healthy" while the network path is actually broken.
             val connectivityManager = getSystemService(Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
             val activeNetwork = connectivityManager.activeNetwork
             val capabilities = connectivityManager.getNetworkCapabilities(activeNetwork)
             val hasInternet = capabilities?.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_VALIDATED) == true
 
-            // Proof-based status: HS self-test passed since last network change
-            val lastProofMs = try { RustBridge.getLastTorProofMs() } catch (_: Exception) { 0L }
+            val lastProofMs = try { RustBridge.getLastTorProofMs() } catch (_: Throwable) { 0L }
             val lastNetworkChangeMs = com.securelegion.services.TorService.getLastNetworkChangeMs()
             val hasFreshProof = lastProofMs > 0 && lastProofMs >= lastNetworkChangeMs
-            val hasTransportReady = bootstrapPercent >= 100 && circuitsEstablished == 1
+
+            val isLive = hasInternet && bootstrapPercent >= 100 && hasFreshProof
+            val isConnecting = hasInternet && (bootstrapPercent < 100 || circuitsEstablished != 1 || !hasFreshProof)
 
             when {
                 !hasInternet -> {
-                    mainTorStatusText.text = "Offline"
-                    mainTorStatusText.setTextColor(0xFFFF6666.toInt())
-                    mainTorStatusIndicator.setBackgroundResource(R.drawable.status_error_indicator)
+                    networkStatusText.text = "Offline"
+                    networkStatusText.setTextColor(0xFFFF6666.toInt())
+                    networkStatusIndicator.setBackgroundResource(R.drawable.status_error_indicator)
                 }
-                hasFreshProof -> {
-                    mainTorStatusText.text = "Receivable"
-                    mainTorStatusText.setTextColor(0xFF00CC66.toInt())
-                    mainTorStatusIndicator.setBackgroundResource(R.drawable.status_healthy_indicator)
+                isLive -> {
+                    networkStatusText.text = "Live"
+                    networkStatusText.setTextColor(0xFF00CC66.toInt())
+                    networkStatusIndicator.setBackgroundResource(R.drawable.status_healthy_indicator)
                 }
-                hasTransportReady -> {
-                    // Outbound Tor transport is ready. Inbound proof may still be catching up.
-                    mainTorStatusText.text = "Connected"
-                    mainTorStatusText.setTextColor(0xFF00CC66.toInt())
-                    mainTorStatusIndicator.setBackgroundResource(R.drawable.status_healthy_indicator)
-                }
-                else -> {
-                    mainTorStatusText.text = "Connecting"
-                    mainTorStatusText.setTextColor(0xFFFFAA00.toInt())
-                    mainTorStatusIndicator.setBackgroundResource(R.drawable.status_warning_indicator)
+                isConnecting -> {
+                    networkStatusText.text = "Connecting"
+                    networkStatusText.setTextColor(0xFFFFAA00.toInt())
+                    networkStatusIndicator.setBackgroundResource(R.drawable.status_warning_indicator)
                 }
             }
 
-            mainCircuitsText.text = "Circuits: $circuitsEstablished"
-            mainBootstrapText.text = "Bootstrap: $bootstrapPercent%"
-
-            // Voice Tor Health — disabled in v1
-
-            // Network Status
-            if (hasInternet) {
-                networkStatusText.text = "Live"
-                networkStatusText.setTextColor(0xFF00CC66.toInt())
-                networkStatusIndicator.setBackgroundResource(R.drawable.status_healthy_indicator)
-            } else {
-                networkStatusText.text = "Dead"
-                networkStatusText.setTextColor(0xFFFF6666.toInt())
-                networkStatusIndicator.setBackgroundResource(R.drawable.status_error_indicator)
+            // Current Route
+            val circuitJson = try { RustBridge.getCurrentCircuitInfo() } catch (_: Throwable) { null }
+            if (circuitJson != null && circuitJson != lastRenderedCircuit) {
+                renderCircuitRoute(circuitJson)
+                lastRenderedCircuit = circuitJson
             }
 
         } catch (e: Exception) {
             // Silently handle errors (service might not be bound yet)
         }
+    }
+
+    private fun renderCircuitPlaceholders() {
+        // Shown before any outbound connection has happened (or when Rust returned empty).
+        // Three hops is the common Arti HS client case (Entry / Middle / Rendezvous).
+        val roles = listOf("Entry Node", "Middle Node", "Rendezvous Point")
+        circuitRouteContainer.removeAllViews()
+        for (role in roles) {
+            circuitRouteContainer.addView(makeHopCard(role, location = "—", secondary = null, fingerprint = "—"))
+        }
+    }
+
+    private fun renderCircuitRoute(json: String) {
+        val hops = try {
+            JSONObject(json).optJSONArray("hops")
+        } catch (_: Throwable) {
+            null
+        }
+        if (hops == null || hops.length() == 0) {
+            renderCircuitPlaceholders()
+            return
+        }
+
+        circuitRouteContainer.removeAllViews()
+        for (i in 0 until hops.length()) {
+            val h = hops.optJSONObject(i) ?: continue
+            val role = h.optString("role", "Hop")
+            val fp = h.optString("fp", "")
+            val nickname = h.optString("nickname", "").takeIf { it.isNotBlank() }
+            val country = h.optString("country", "").takeIf { it.isNotBlank() }
+
+            // Match iOS display rule: prefer country, fall back to nickname, fall back to "—".
+            // When country is shown AND nickname exists, show nickname on a second muted line
+            // (so the user sees both without crowding the header row).
+            val location = country ?: nickname ?: "—"
+            val secondary = if (country != null && nickname != null) nickname else null
+            val fingerprint = if (fp.length >= 16) fp.substring(0, 16) + "…" else fp
+
+            circuitRouteContainer.addView(makeHopCard(role, location, secondary, fingerprint))
+        }
+    }
+
+    private fun makeHopCard(role: String, location: String, secondary: String?, fingerprint: String): View {
+        val inflater = LayoutInflater.from(this)
+        val card = inflater.inflate(R.layout.item_tor_hop_card, circuitRouteContainer, false) as ViewGroup
+        card.findViewById<TextView>(R.id.hopRole).text = role
+        card.findViewById<TextView>(R.id.hopLocation).text = location
+        val secondaryView = card.findViewById<TextView>(R.id.hopSecondary)
+        if (secondary != null) {
+            secondaryView.text = secondary
+            secondaryView.visibility = View.VISIBLE
+        } else {
+            secondaryView.visibility = View.GONE
+        }
+        card.findViewById<TextView>(R.id.hopFingerprint).text = fingerprint
+        return card
     }
 }

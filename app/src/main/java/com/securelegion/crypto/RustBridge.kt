@@ -743,6 +743,18 @@ object RustBridge {
     external fun getCircuitEstablished(): Int
 
     /**
+     * Get a JSON snapshot of the current outbound Tor circuit for the Tor Health screen.
+     *
+     * Shape: `{"hops":[{"role":"Entry Node","fp":"ABCDEF..","nickname":"foo","country":"DE"}, ...]}`.
+     * `hops` is empty when no outbound Arti connection has been made yet, or when circuit
+     * introspection fails. `nickname` and `country` may individually be null if the NetDir
+     * isn't populated yet or the relay isn't listed.
+     *
+     * Updated on every successful `client.connect()` to a .onion peer.
+     */
+    external fun getCurrentCircuitInfo(): String?
+
+    /**
      * Get messaging HS publisher status string.
      * Returns: "Running", "Bootstrapping", "Broken", "Shutdown", "NotLaunched", etc.
      * Used by TorHealthMonitorWorker to check real HS state instead of assuming healthy.

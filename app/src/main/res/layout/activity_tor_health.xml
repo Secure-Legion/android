@@ -76,141 +76,93 @@
             android:paddingTop="16dp"
             android:paddingBottom="24dp">
 
-            <!-- Description -->
-            <TextView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="Real-time Tor health monitoring (updates every 2 seconds)"
-                android:textSize="14sp"
-                android:textColor="?attr/colorOnSurfaceVariant"
-                android:fontFamily="@font/poppins_regular"
-                android:lineSpacingMultiplier="1.3"
-                android:layout_marginBottom="20dp" />
-
-            <!-- Main Tor Status -->
+            <!-- Network status (single collapsed line — shows "Live" when receivable and 100% bootstrapped) -->
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:orientation="vertical"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
                 android:background="@drawable/settings_box_bg"
-                android:padding="20dp"
-                android:layout_marginBottom="16dp">
+                android:paddingStart="16dp"
+                android:paddingEnd="16dp"
+                android:paddingTop="14dp"
+                android:paddingBottom="14dp">
+
+                <View
+                    android:id="@+id/networkStatusIndicator"
+                    android:layout_width="12dp"
+                    android:layout_height="12dp"
+                    android:layout_marginEnd="12dp"
+                    android:background="@drawable/status_offline_indicator" />
 
                 <TextView
-                    android:layout_width="wrap_content"
+                    android:layout_width="0dp"
                     android:layout_height="wrap_content"
-                    android:text="Main Tor"
-                    android:textSize="18sp"
+                    android:layout_weight="1"
+                    android:text="Network"
+                    android:textSize="16sp"
                     android:textColor="?attr/colorOnSurface"
-                    android:fontFamily="@font/poppins_semibold"
-                    android:layout_marginBottom="12dp" />
+                    android:fontFamily="@font/poppins_medium" />
 
-                <!-- Status Row -->
-                <LinearLayout
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:orientation="horizontal"
-                    android:gravity="center_vertical"
-                    android:layout_marginBottom="8dp">
-
-                    <View
-                        android:id="@+id/mainTorStatusIndicator"
-                        android:layout_width="12dp"
-                        android:layout_height="12dp"
-                        android:layout_marginEnd="12dp"
-                        android:background="@drawable/status_offline_indicator" />
-
-                    <TextView
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="Status: "
-                        android:textSize="14sp"
-                        android:textColor="#AAAAAA"
-                        android:fontFamily="@font/poppins_regular" />
-
-                    <TextView
-                        android:id="@+id/mainTorStatusText"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="Checking..."
-                        android:textSize="14sp"
-                        android:textColor="@color/text_settings"
-                        android:fontFamily="@font/poppins_medium" />
-
-                </LinearLayout>
-
-                <!-- Circuits Row -->
                 <TextView
-                    android:id="@+id/mainCircuitsText"
+                    android:id="@+id/networkStatusText"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="Circuits: -"
+                    android:text="Checking..."
                     android:textSize="14sp"
-                    android:textColor="#AAAAAA"
-                    android:fontFamily="@font/poppins_regular"
-                    android:layout_marginBottom="4dp" />
-
-                <!-- Bootstrap Row -->
-                <TextView
-                    android:id="@+id/mainBootstrapText"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="Bootstrap: -"
-                    android:textSize="14sp"
-                    android:textColor="#AAAAAA"
-                    android:fontFamily="@font/poppins_regular" />
+                    android:textColor="@color/text_settings"
+                    android:fontFamily="@font/poppins_medium" />
 
             </LinearLayout>
 
-            <!-- Network Status -->
+            <!-- Current Route -->
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Current Route"
+                android:textSize="16sp"
+                android:textColor="?attr/colorOnSurface"
+                android:fontFamily="@font/poppins_semibold"
+                android:layout_marginTop="20dp"
+                android:layout_marginBottom="8dp" />
+
             <LinearLayout
+                android:id="@+id/circuitRouteContainer"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:orientation="vertical"
+                android:orientation="vertical" />
+
+            <!-- New Circuit button (NEWNYM) -->
+            <LinearLayout
+                android:id="@+id/newCircuitButton"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
                 android:background="@drawable/settings_box_bg"
-                android:padding="20dp">
+                android:paddingStart="16dp"
+                android:paddingEnd="16dp"
+                android:paddingTop="14dp"
+                android:paddingBottom="14dp"
+                android:gravity="center_vertical"
+                android:layout_marginTop="16dp"
+                android:clickable="true"
+                android:focusable="true">
+
+                <ImageView
+                    android:layout_width="20dp"
+                    android:layout_height="20dp"
+                    android:layout_marginEnd="12dp"
+                    android:src="@drawable/ic_refresh"
+                    app:tint="?attr/colorOnSurface" />
 
                 <TextView
-                    android:layout_width="wrap_content"
+                    android:layout_width="0dp"
                     android:layout_height="wrap_content"
-                    android:text="Network"
-                    android:textSize="18sp"
+                    android:layout_weight="1"
+                    android:text="New Circuit"
+                    android:textSize="16sp"
                     android:textColor="?attr/colorOnSurface"
-                    android:fontFamily="@font/poppins_semibold"
-                    android:layout_marginBottom="12dp" />
-
-                <!-- Status Row -->
-                <LinearLayout
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:orientation="horizontal"
-                    android:gravity="center_vertical">
-
-                    <View
-                        android:id="@+id/networkStatusIndicator"
-                        android:layout_width="12dp"
-                        android:layout_height="12dp"
-                        android:layout_marginEnd="12dp"
-                        android:background="@drawable/status_offline_indicator" />
-
-                    <TextView
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="Status: "
-                        android:textSize="14sp"
-                        android:textColor="#AAAAAA"
-                        android:fontFamily="@font/poppins_regular" />
-
-                    <TextView
-                        android:id="@+id/networkStatusText"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="Checking..."
-                        android:textSize="14sp"
-                        android:textColor="@color/text_settings"
-                        android:fontFamily="@font/poppins_medium" />
-
-                </LinearLayout>
+                    android:fontFamily="@font/poppins_medium" />
 
             </LinearLayout>
 
