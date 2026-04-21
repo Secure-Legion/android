@@ -1990,11 +1990,6 @@ class MessageAdapter(
                     onPinMessage?.invoke(message)
                     true
                 }
-                R.id.action_save_to_vault -> {
-                    // Premium feature — coming soon (per ANDROID_PARITY.md spec)
-                    ThemedToast.show(view.context, "Save to Vault — coming soon (premium)")
-                    true
-                }
                 R.id.action_copy -> {
                     // Copy message text
                     val clipboard = view.context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
